@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/cosign"
@@ -17,7 +18,8 @@ const replicatorHelperDetailMaxBytes = 2048
 
 // CommandArtifactReplicator adapts an operator-owned artifact handoff helper
 // to ArtifactReplicator. The helper receives exactly two positional
-// arguments: the layer key and its derived signature key. Keeping the
+// arguments: the layer key and its derived signature key, or
+// --runtime-release and an immutable base key. Keeping the
 // transfer policy outside the daemon lets a local split-box install use SSH,
 // while an OCI deployment leaves the hook unset and uses the shared backend.
 type CommandArtifactReplicator struct {
@@ -25,17 +27,36 @@ type CommandArtifactReplicator struct {
 	ExtraEnv []string
 }
 
+// RuntimeReleaseReplicator hands off immutable drive0 bytes and their scan
+// evidence before an application artifact can bind to them (ADR-596).
+type RuntimeReleaseReplicator interface {
+	ReplicateRuntimeRelease(context.Context, string) error
+}
+
+var runtimeReleaseKey = regexp.MustCompile(`^base/releases/runner-(node22|node24|python312|python313|go124|go124-alpine)-(amd64|arm64)-[a-f0-9]{64}\.ext4$`)
+
+func (r CommandArtifactReplicator) ReplicateRuntimeRelease(ctx context.Context, key string) error {
+	if !runtimeReleaseKey.MatchString(key) {
+		return fmt.Errorf("invalid immutable runtime base key")
+	}
+	return r.run(ctx, "--runtime-release", key)
+}
+
 // Replicate runs the configured helper with a cancellable context. Helper
 // output is included only on failure and is capped so a broken transport
 // cannot flood imaged's error log.
 func (r CommandArtifactReplicator) Replicate(ctx context.Context, layerKey string) error {
-	if r.Path == "" {
-		return fmt.Errorf("empty artifact replicator path")
-	}
 	if layerKey == "" {
 		return fmt.Errorf("empty layer key")
 	}
-	cmd := exec.CommandContext(ctx, r.Path, layerKey, cosign.SigKeyFor(layerKey))
+	return r.run(ctx, layerKey, cosign.SigKeyFor(layerKey))
+}
+
+func (r CommandArtifactReplicator) run(ctx context.Context, args ...string) error {
+	if r.Path == "" {
+		return fmt.Errorf("empty artifact replicator path")
+	}
+	cmd := exec.CommandContext(ctx, r.Path, args...)
 	if len(r.ExtraEnv) > 0 {
 		cmd.Env = append(os.Environ(), r.ExtraEnv...)
 	}

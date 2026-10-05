@@ -367,6 +367,7 @@ export type { DeploymentPreviewURL } from './DeploymentPreviewURL.js';
 export type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';
 export type { DeploymentRoutePolicySnapshotResponse } from './DeploymentRoutePolicySnapshotResponse.js';
+export type { DeploymentRuntimeResponse } from './DeploymentRuntimeResponse.js';
 export type { DeploymentSummaryResponse } from './DeploymentSummaryResponse.js';
 export type { DetachEnvironmentGitSourceRequest } from './DetachEnvironmentGitSourceRequest.js';
 export type { DevBridgeActivity } from './DevBridgeActivity.js';
@@ -1158,6 +1159,8 @@ export type { RuntimePolicyComponentStatus } from './RuntimePolicyComponentStatu
 export type { RuntimePolicyNodeStatus } from './RuntimePolicyNodeStatus.js';
 export type { RuntimePolicySchedulerStatus } from './RuntimePolicySchedulerStatus.js';
 export type { RuntimePolicyStatusResponse } from './RuntimePolicyStatusResponse.js';
+export type { RuntimeReleaseResponse } from './RuntimeReleaseResponse.js';
+export type { RuntimeUpgradePreviewResponse } from './RuntimeUpgradePreviewResponse.js';
 export type { SLODuration } from './SLODuration.js';
 export type { SaveAutomationDraftRequest } from './SaveAutomationDraftRequest.js';
 export type { SaveRouteRequirementsRequest } from './SaveRouteRequirementsRequest.js';

@@ -2858,6 +2858,8 @@ type Build struct {
 // nullable columns. sbom_storage_key is empty in this PR — Phase 3's
 // syft populator fills it.
 type BuildProvenance struct {
+	// RuntimeBaseRef is the host-resolved deploy base used by this build.
+	RuntimeBaseRef string
 	ID             string
 	BuildID        string
 	BuildkitVer    string

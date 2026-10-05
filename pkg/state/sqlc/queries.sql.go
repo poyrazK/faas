@@ -1690,6 +1690,31 @@ func (q *Queries) BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx
 	return i, err
 }
 
+const bindDeploymentRuntimeRelease = `-- name: BindDeploymentRuntimeRelease :one
+WITH active AS (
+ SELECT a.account_id,d.rootfs_key FROM deployments d JOIN apps a ON a.id=d.app_id
+ WHERE d.id=$2 AND d.rootfs_key=$3
+ AND d.status IN ('pending','building','imaging') FOR UPDATE OF d
+)
+INSERT INTO runtime_artifact_bindings (account_id,rootfs_key,release_id)
+SELECT account_id,rootfs_key,$1::text FROM active
+ON CONFLICT (account_id,rootfs_key) DO UPDATE SET release_id=runtime_artifact_bindings.release_id
+WHERE runtime_artifact_bindings.release_id=excluded.release_id RETURNING release_id
+`
+
+type BindDeploymentRuntimeReleaseParams struct {
+	ReleaseID    string
+	DeploymentID pgtype.UUID
+	RootfsKey    string
+}
+
+func (q *Queries) BindDeploymentRuntimeRelease(ctx context.Context, db DBTX, arg BindDeploymentRuntimeReleaseParams) (string, error) {
+	row := db.QueryRow(ctx, bindDeploymentRuntimeRelease, arg.ReleaseID, arg.DeploymentID, arg.RootfsKey)
+	var release_id string
+	err := row.Scan(&release_id)
+	return release_id, err
+}
+
 const bindEnvironmentGitOpsQueue = `-- name: BindEnvironmentGitOpsQueue :execrows
 INSERT INTO environment_gitops_queue_bindings(source_id, resource, field_path, binding_id)
 VALUES ($1::uuid, $2::text, $3::text, $4::uuid)
@@ -11824,6 +11849,40 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 	return i, err
 }
 
+const findRuntimeRelease = `-- name: FindRuntimeRelease :one
+SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE runtime=$1 AND architecture=$2 AND source_ref=$3 AND guest_init_sha256=$4 AND layout_version=$5
+`
+
+type FindRuntimeReleaseParams struct {
+	Runtime         string
+	Architecture    string
+	SourceRef       string
+	GuestInitSha256 string
+	LayoutVersion   string
+}
+
+func (q *Queries) FindRuntimeRelease(ctx context.Context, db DBTX, arg FindRuntimeReleaseParams) (RuntimeRelease, error) {
+	row := db.QueryRow(ctx, findRuntimeRelease,
+		arg.Runtime,
+		arg.Architecture,
+		arg.SourceRef,
+		arg.GuestInitSha256,
+		arg.LayoutVersion,
+	)
+	var i RuntimeRelease
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const finishAppHealthCollection = `-- name: FinishAppHealthCollection :exec
 UPDATE app_health_collection_state SET assessment = $1::jsonb, assessment_key = $2::text,
  notification_state = $3::jsonb,
@@ -12968,6 +13027,43 @@ func (q *Queries) GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAp
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getArtifactRuntimeRelease = `-- name: GetArtifactRuntimeRelease :one
+SELECT r.id, r.runtime, r.architecture, r.source_ref, r.guest_init_sha256, r.layout_version, r.base_sha256, r.created_at FROM runtime_artifact_bindings b JOIN runtime_releases r ON r.id=b.release_id
+WHERE b.account_id=$1 AND b.rootfs_key=$2
+`
+
+type GetArtifactRuntimeReleaseParams struct {
+	AccountID pgtype.UUID
+	RootfsKey string
+}
+
+func (q *Queries) GetArtifactRuntimeRelease(ctx context.Context, db DBTX, arg GetArtifactRuntimeReleaseParams) (RuntimeRelease, error) {
+	row := db.QueryRow(ctx, getArtifactRuntimeRelease, arg.AccountID, arg.RootfsKey)
+	var i RuntimeRelease
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getBuildRuntimeBaseRef = `-- name: GetBuildRuntimeBaseRef :one
+SELECT runtime_base_ref FROM build_provenance WHERE build_id=$1
+`
+
+func (q *Queries) GetBuildRuntimeBaseRef(ctx context.Context, db DBTX, buildID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, getBuildRuntimeBaseRef, buildID)
+	var runtime_base_ref string
+	err := row.Scan(&runtime_base_ref)
+	return runtime_base_ref, err
 }
 
 const getCustomerAppSecretForDeletion = `-- name: GetCustomerAppSecretForDeletion :one
@@ -14227,6 +14323,26 @@ func (q *Queries) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db 
 		&i.DeploymentTag,
 		&i.DeploymentCreatedAt,
 		&i.ImageDigest,
+	)
+	return i, err
+}
+
+const getRuntimeRelease = `-- name: GetRuntimeRelease :one
+SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE id=$1
+`
+
+func (q *Queries) GetRuntimeRelease(ctx context.Context, db DBTX, id string) (RuntimeRelease, error) {
+	row := db.QueryRow(ctx, getRuntimeRelease, id)
+	var i RuntimeRelease
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -26093,6 +26209,45 @@ func (q *Queries) ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg Li
 			return nil, err
 		}
 		items = append(items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRuntimeReleases = `-- name: ListRuntimeReleases :many
+SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE runtime=$1 AND architecture=$2 ORDER BY created_at DESC,id LIMIT $3
+`
+
+type ListRuntimeReleasesParams struct {
+	Runtime      string
+	Architecture string
+	Limit        int32
+}
+
+func (q *Queries) ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRuntimeReleasesParams) ([]RuntimeRelease, error) {
+	rows, err := db.Query(ctx, listRuntimeReleases, arg.Runtime, arg.Architecture, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeRelease{}
+	for rows.Next() {
+		var i RuntimeRelease
+		if err := rows.Scan(
+			&i.ID,
+			&i.Runtime,
+			&i.Architecture,
+			&i.SourceRef,
+			&i.GuestInitSha256,
+			&i.LayoutVersion,
+			&i.BaseSha256,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -40374,6 +40529,47 @@ func (q *Queries) PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const publishRuntimeRelease = `-- name: PublishRuntimeRelease :one
+INSERT INTO runtime_releases (id,runtime,architecture,source_ref,guest_init_sha256,layout_version,base_sha256)
+VALUES ($1,$2,$3,$4,$5,$6,$7)
+ON CONFLICT (runtime,architecture,source_ref,guest_init_sha256,layout_version)
+DO UPDATE SET id=runtime_releases.id RETURNING id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at
+`
+
+type PublishRuntimeReleaseParams struct {
+	ID              string
+	Runtime         string
+	Architecture    string
+	SourceRef       string
+	GuestInitSha256 string
+	LayoutVersion   string
+	BaseSha256      string
+}
+
+func (q *Queries) PublishRuntimeRelease(ctx context.Context, db DBTX, arg PublishRuntimeReleaseParams) (RuntimeRelease, error) {
+	row := db.QueryRow(ctx, publishRuntimeRelease,
+		arg.ID,
+		arg.Runtime,
+		arg.Architecture,
+		arg.SourceRef,
+		arg.GuestInitSha256,
+		arg.LayoutVersion,
+		arg.BaseSha256,
+	)
+	var i RuntimeRelease
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
 INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
 VALUES($1::text,$2::uuid,$3::uuid,
@@ -53156,6 +53352,21 @@ func (q *Queries) SetAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg S
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setBuildRuntimeBaseRef = `-- name: SetBuildRuntimeBaseRef :exec
+UPDATE build_provenance SET runtime_base_ref=$2 WHERE build_id=$1
+`
+
+type SetBuildRuntimeBaseRefParams struct {
+	BuildID        pgtype.UUID
+	RuntimeBaseRef string
+}
+
+// Runtime-base generation identity (ADR-596).
+func (q *Queries) SetBuildRuntimeBaseRef(ctx context.Context, db DBTX, arg SetBuildRuntimeBaseRefParams) error {
+	_, err := db.Exec(ctx, setBuildRuntimeBaseRef, arg.BuildID, arg.RuntimeBaseRef)
+	return err
 }
 
 const setCommitSourceConnection = `-- name: SetCommitSourceConnection :execrows

@@ -137,6 +137,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	runtimeReleases             map[string]RuntimeRelease
+	runtimeArtifactBindings     map[string]string
 	operationData               *operationMemory
 	operationCodePins           map[string]time.Time
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus

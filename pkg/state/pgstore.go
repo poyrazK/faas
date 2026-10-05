@@ -11918,12 +11918,18 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 // nullString so an empty input maps to NULL (e.g. cache-hit builds
 // have empty buildkit_version / railpack_version / base_digest).
 func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenance) error {
-	return createBuildProvenance(ctx, s.pool, prov)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := createBuildProvenance(ctx, tx, prov); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-type buildProvenanceWriter interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}
+type buildProvenanceWriter = sqlc.DBTX
 
 func createBuildProvenance(ctx context.Context, writer buildProvenanceWriter, prov BuildProvenance) error {
 	_, err := writer.Exec(ctx,
@@ -11961,7 +11967,14 @@ func createBuildProvenance(ctx context.Context, writer buildProvenanceWriter, pr
 		nullString(prov.SBOMStorageKey),
 		nullString(prov.FrameworkVer),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	buildID, err := uuid.Parse(prov.BuildID)
+	if err != nil {
+		return ErrInvalidArgument
+	}
+	return sqlc.New().SetBuildRuntimeBaseRef(ctx, writer, sqlc.SetBuildRuntimeBaseRefParams{BuildID: NewPgtypeUUID(buildID), RuntimeBaseRef: prov.RuntimeBaseRef})
 }
 
 // BuildProvenanceByBuildID resolves the row by build_id. Returns
@@ -11977,7 +11990,12 @@ func (s *PgStore) BuildProvenanceByBuildID(ctx context.Context, buildID string) 
 		        started_at, finished_at, coalesce(sbom_storage_key,''),
 		        coalesce(framework_version,'')
 		   from build_provenance where build_id = $1`, buildID)
-	return scanBuildProvenance(row)
+	prov, err := scanBuildProvenance(row)
+	if err != nil {
+		return BuildProvenance{}, err
+	}
+	prov.RuntimeBaseRef, err = s.BuildRuntimeBaseRef(ctx, buildID)
+	return prov, err
 }
 
 // UpdateBuildProvenanceSBOM stamps the SBOM storage key onto an

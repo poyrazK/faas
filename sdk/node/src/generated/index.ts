@@ -371,6 +371,7 @@ export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentRoutePolicySnapshotResponse } from './models/DeploymentRoutePolicySnapshotResponse.js';
+export type { DeploymentRuntimeResponse } from './models/DeploymentRuntimeResponse.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
 export type { DeployTokenResponse } from './models/DeployTokenResponse.js';
 export type { DetachEnvironmentGitSourceRequest } from './models/DetachEnvironmentGitSourceRequest.js';
@@ -1164,6 +1165,8 @@ export type { RuntimePolicyComponentStatus } from './models/RuntimePolicyCompone
 export type { RuntimePolicyNodeStatus } from './models/RuntimePolicyNodeStatus.js';
 export type { RuntimePolicySchedulerStatus } from './models/RuntimePolicySchedulerStatus.js';
 export type { RuntimePolicyStatusResponse } from './models/RuntimePolicyStatusResponse.js';
+export type { RuntimeReleaseResponse } from './models/RuntimeReleaseResponse.js';
+export type { RuntimeUpgradePreviewResponse } from './models/RuntimeUpgradePreviewResponse.js';
 export type { SaveAutomationDraftRequest } from './models/SaveAutomationDraftRequest.js';
 export type { SavedRouteRequirements } from './models/SavedRouteRequirements.js';
 export type { SaveRouteRequirementsRequest } from './models/SaveRouteRequirementsRequest.js';

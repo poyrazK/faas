@@ -15186,6 +15186,77 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/runtime:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentRuntime
+      summary: Inspect immutable runtime base identity.
+      description: |
+        Read-only artifact evidence for Gregale-managed function runtimes (ADR-596).
+        Older artifacts return unknown rather than inferring their base from builder
+        provenance. Published candidates are limited to the same family and architecture,
+        at most 50 newest publications. Publication does not establish upgrade compatibility.
+        No VM is booted and no deployment, traffic or environment setting is changed.
+      responses:
+        '200':
+          description: Current binding and published candidates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentRuntimeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: Runtime evidence is temporarily unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/deployments/{id}/runtime/upgrade-preview:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: previewRuntimeUpgrade
+      summary: Preview a runtime base change without applying it.
+      description: |
+        Compares exact published component identities (ADR-596). This planning-only
+        response cannot authorize an update. Runtime family changes, architecture changes
+        and unknown current provenance block the plan. Same-family changes still require
+        native qualification, a rebuilt candidate, fresh readiness and guarded rollout.
+        Execution is unavailable; publication order does not prove a newer interpreter
+        patch or a compatible update. Existing health history is advisory evidence.
+      parameters:
+        - name: target
+          in: query
+          required: true
+          description: Exact published runtime release identity to compare.
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{64}$'
+      responses:
+        '200':
+          description: Read-only component comparison and required steps.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeUpgradePreviewResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: The runtime preview could not read its evidence.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /v1/deployments/{id}/stages:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -28238,6 +28309,99 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    RuntimeReleaseResponse:
+      type: object
+      description: Exact published runtime base bytes; host kernel and function runner are separate components.
+      additionalProperties: false
+      required: [id, runtime, architecture, source_digest, guest_init_digest, base_digest, layout_version, published_at, qualification]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        runtime:
+          type: string
+          enum: [node22, node24, python312, python313, go124, go124-alpine]
+        architecture:
+          type: string
+          enum: [amd64, arm64]
+        source_digest:
+          type: string
+          description: Immutable OCI source manifest digest.
+        guest_init_digest:
+          type: string
+          description: SHA-256 of the PID 1 binary injected into this base.
+        base_digest:
+          type: string
+          description: SHA-256 of the exact published ext4 bytes.
+        layout_version:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+        qualification:
+          type: string
+          enum: [not_evaluated]
+          description: Publication alone establishes no upgrade compatibility verdict.
+    DeploymentRuntimeResponse:
+      description: Recorded deployment runtime binding and published same-family base candidates.
+      type: object
+      additionalProperties: false
+      required: [deployment_id, status, reason, current, releases]
+      properties:
+        deployment_id:
+          type: string
+        status:
+          type: string
+          enum: [pinned, unknown, unsupported]
+        reason:
+          type: string
+        current:
+          anyOf:
+            - $ref: '#/components/schemas/RuntimeReleaseResponse'
+            - type: 'null'
+        releases:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/RuntimeReleaseResponse'
+    RuntimeUpgradePreviewResponse:
+      description: Component comparison and qualification requirements for a read-only runtime update plan.
+      type: object
+      additionalProperties: false
+      required: [deployment_id, current, target, disposition, changes, blockers, required_steps, rebuild_required, cold_start_required, execution_available]
+      properties:
+        deployment_id:
+          type: string
+        current:
+          anyOf:
+            - $ref: '#/components/schemas/RuntimeReleaseResponse'
+            - type: 'null'
+        target:
+          $ref: '#/components/schemas/RuntimeReleaseResponse'
+        disposition:
+          type: string
+          enum: [blocked, no_change, review_required]
+        changes:
+          type: array
+          items:
+            type: string
+            enum: [runtime_source, guest_init, base_layout, base_bytes]
+        blockers:
+          type: array
+          items:
+            type: string
+        required_steps:
+          type: array
+          items:
+            type: string
+        rebuild_required:
+          type: boolean
+        cold_start_required:
+          type: boolean
+        execution_available:
+          type: boolean
+          enum: [false]
+          description: Preview only; no runtime update operation is implemented.
     DetachEnvironmentGitSourceRequest:
       type: object
       description: Release this binding's Git ownership at the supplied generation while retaining its history.

@@ -730,6 +730,8 @@ from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnapshotResponse
+from .deployment_runtime_response import DeploymentRuntimeResponse
+from .deployment_runtime_response_status import DeploymentRuntimeResponseStatus
 from .deployment_summary_response import DeploymentSummaryResponse
 from .detach_environment_git_source_request import DetachEnvironmentGitSourceRequest
 from .dev_bridge_activity import DevBridgeActivity
@@ -2214,6 +2216,13 @@ from .runtime_policy_scheduler_status_scope import RuntimePolicySchedulerStatusS
 from .runtime_policy_scheduler_status_state import RuntimePolicySchedulerStatusState
 from .runtime_policy_status_response import RuntimePolicyStatusResponse
 from .runtime_policy_status_response_state import RuntimePolicyStatusResponseState
+from .runtime_release_response import RuntimeReleaseResponse
+from .runtime_release_response_architecture import RuntimeReleaseResponseArchitecture
+from .runtime_release_response_qualification import RuntimeReleaseResponseQualification
+from .runtime_release_response_runtime import RuntimeReleaseResponseRuntime
+from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
+from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
+from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
 from .save_automation_draft_request import SaveAutomationDraftRequest
 from .save_route_requirements_request import SaveRouteRequirementsRequest
 from .saved_route_requirements import SavedRouteRequirements
@@ -3294,6 +3303,8 @@ __all__ = (
     "DeploymentResponseStageState",
     "DeploymentResponseTag",
     "DeploymentRoutePolicySnapshotResponse",
+    "DeploymentRuntimeResponse",
+    "DeploymentRuntimeResponseStatus",
     "DeploymentSummaryResponse",
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
@@ -4727,6 +4738,13 @@ __all__ = (
     "RuntimePolicySchedulerStatusState",
     "RuntimePolicyStatusResponse",
     "RuntimePolicyStatusResponseState",
+    "RuntimeReleaseResponse",
+    "RuntimeReleaseResponseArchitecture",
+    "RuntimeReleaseResponseQualification",
+    "RuntimeReleaseResponseRuntime",
+    "RuntimeUpgradePreviewResponse",
+    "RuntimeUpgradePreviewResponseChangesItem",
+    "RuntimeUpgradePreviewResponseDisposition",
     "SaveAutomationDraftRequest",
     "SavedRouteRequirements",
     "SaveRouteRequirementsRequest",

@@ -1125,6 +1125,7 @@ type BuildProvenance struct {
 	FinishedAt       pgtype.Timestamptz
 	SbomStorageKey   pgtype.Text
 	FrameworkVersion pgtype.Text
+	RuntimeBaseRef   string
 }
 
 // Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-048. Informational only — not billed.
@@ -5814,6 +5815,12 @@ type RoutePolicyReceipt struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type RuntimeArtifactBinding struct {
+	AccountID pgtype.UUID
+	RootfsKey string
+	ReleaseID string
+}
+
 type RuntimeConfigEntry struct {
 	ID             pgtype.UUID
 	ConfigKey      string
@@ -5885,6 +5892,17 @@ type RuntimeInstanceConfigProof struct {
 	Scope             string
 	SecretFingerprint string
 	ConfigFingerprint string
+}
+
+type RuntimeRelease struct {
+	ID              string
+	Runtime         string
+	Architecture    string
+	SourceRef       string
+	GuestInitSha256 string
+	LayoutVersion   string
+	BaseSha256      string
+	CreatedAt       pgtype.Timestamptz
 }
 
 type RuntimeSnapshot struct {

@@ -13875,3 +13875,33 @@ INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, paylo
 VALUES(sqlc.arg(account_id)::text::uuid, sqlc.arg(app_id)::text::uuid, 'app.health.changed',
  sqlc.arg(source_id)::text::uuid, sqlc.arg(payload)::jsonb, sqlc.arg(recipient_ids)::text[]::uuid[])
 ON CONFLICT (event, source_id) DO NOTHING;
+
+-- Runtime-base generation identity (ADR-596).
+-- name: SetBuildRuntimeBaseRef :exec
+UPDATE build_provenance SET runtime_base_ref=$2 WHERE build_id=$1;
+-- name: GetBuildRuntimeBaseRef :one
+SELECT runtime_base_ref FROM build_provenance WHERE build_id=$1;
+-- name: PublishRuntimeRelease :one
+INSERT INTO runtime_releases (id,runtime,architecture,source_ref,guest_init_sha256,layout_version,base_sha256)
+VALUES ($1,$2,$3,$4,$5,$6,$7)
+ON CONFLICT (runtime,architecture,source_ref,guest_init_sha256,layout_version)
+DO UPDATE SET id=runtime_releases.id RETURNING *;
+-- name: GetRuntimeRelease :one
+SELECT * FROM runtime_releases WHERE id=$1;
+-- name: FindRuntimeRelease :one
+SELECT * FROM runtime_releases WHERE runtime=$1 AND architecture=$2 AND source_ref=$3 AND guest_init_sha256=$4 AND layout_version=$5;
+-- name: ListRuntimeReleases :many
+SELECT * FROM runtime_releases WHERE runtime=$1 AND architecture=$2 ORDER BY created_at DESC,id LIMIT $3;
+-- name: BindDeploymentRuntimeRelease :one
+WITH active AS (
+ SELECT a.account_id,d.rootfs_key FROM deployments d JOIN apps a ON a.id=d.app_id
+ WHERE d.id=sqlc.arg(deployment_id) AND d.rootfs_key=sqlc.arg(rootfs_key)
+ AND d.status IN ('pending','building','imaging') FOR UPDATE OF d
+)
+INSERT INTO runtime_artifact_bindings (account_id,rootfs_key,release_id)
+SELECT account_id,rootfs_key,sqlc.arg(release_id)::text FROM active
+ON CONFLICT (account_id,rootfs_key) DO UPDATE SET release_id=runtime_artifact_bindings.release_id
+WHERE runtime_artifact_bindings.release_id=excluded.release_id RETURNING release_id;
+-- name: GetArtifactRuntimeRelease :one
+SELECT r.* FROM runtime_artifact_bindings b JOIN runtime_releases r ON r.id=b.release_id
+WHERE b.account_id=$1 AND b.rootfs_key=$2;

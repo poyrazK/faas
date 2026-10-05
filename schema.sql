@@ -10355,7 +10355,8 @@ CREATE TABLE public.build_provenance (
     started_at timestamp with time zone NOT NULL,
     finished_at timestamp with time zone NOT NULL,
     sbom_storage_key text,
-    framework_version text
+    framework_version text,
+    runtime_base_ref text DEFAULT ''::text NOT NULL
 );
 
 
@@ -39362,5 +39363,88 @@ ALTER TABLE ONLY public.app_health_history
 
 ALTER TABLE ONLY public.app_health_history
     ADD CONSTRAINT app_health_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+
+--
+-- Name: runtime_artifact_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_artifact_bindings (
+    account_id uuid NOT NULL,
+    rootfs_key text NOT NULL,
+    release_id text NOT NULL,
+    CONSTRAINT runtime_artifact_bindings_rootfs_key_check CHECK (((length(rootfs_key) >= 1) AND (length(rootfs_key) <= 1024)))
+);
+
+
+--
+-- Name: runtime_releases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_releases (
+    id text NOT NULL,
+    runtime text NOT NULL,
+    architecture text NOT NULL,
+    source_ref text NOT NULL,
+    guest_init_sha256 text NOT NULL,
+    layout_version text NOT NULL,
+    base_sha256 text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_releases_architecture_check CHECK ((architecture = ANY (ARRAY['amd64'::text, 'arm64'::text]))),
+    CONSTRAINT runtime_releases_base_sha256_check CHECK ((base_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_releases_guest_init_sha256_check CHECK ((guest_init_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_releases_id_check CHECK ((id ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_releases_layout_version_check CHECK (((length(layout_version) >= 1) AND (length(layout_version) <= 64))),
+    CONSTRAINT runtime_releases_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'go124-alpine'::text]))),
+    CONSTRAINT runtime_releases_source_ref_check CHECK ((source_ref ~ '@sha256:[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: runtime_artifact_bindings runtime_artifact_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_artifact_bindings
+    ADD CONSTRAINT runtime_artifact_bindings_pkey PRIMARY KEY (account_id, rootfs_key);
+
+
+--
+-- Name: runtime_releases runtime_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_releases
+    ADD CONSTRAINT runtime_releases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_releases runtime_releases_runtime_architecture_source_ref_guest_init_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_releases
+    ADD CONSTRAINT runtime_releases_runtime_architecture_source_ref_guest_init_key UNIQUE (runtime, architecture, source_ref, guest_init_sha256, layout_version);
+
+
+--
+-- Name: runtime_releases_catalog_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_releases_catalog_idx ON public.runtime_releases USING btree (runtime, architecture, created_at DESC, id);
+
+
+--
+-- Name: runtime_artifact_bindings runtime_artifact_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_artifact_bindings
+    ADD CONSTRAINT runtime_artifact_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_artifact_bindings runtime_artifact_bindings_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_artifact_bindings
+    ADD CONSTRAINT runtime_artifact_bindings_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
 
 

@@ -2616,6 +2616,24 @@ gregale deployment summary v42 --app my-api
 gregale deployment wait v42 --app my-api
 ```
 
+### deployment runtime
+
+Inspect runtime identity or preview a published runtime change
+
+`gregale deployment runtime [--app <SLUG>] [--target <RELEASE_ID>] <ID|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug for a vN revision |  |
+| `--target <RELEASE_ID>` | published runtime release to preview without applying |  |
+
+Examples:
+
+```sh
+gregale deployment runtime v42 --app my-function
+gregale deployment runtime v42 --app my-function --target RELEASE_ID --json
+```
+
 ### deployment advance
 
 Advance a canary by one stage with route enforcement
