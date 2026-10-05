@@ -8094,10 +8094,12 @@ func (x *PrivateNetworkFirewallRule) GetPorts() []string {
 
 // ResumeWarmInstanceRequest identifies a paused warm-pool VM by instance id.
 type ResumeWarmInstanceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Instance string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	// Exact issued serving placement; omitted only for independent apps.
+	RegionalRuntime []byte `protobuf:"bytes,2,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ResumeWarmInstanceRequest) Reset() {
@@ -8137,12 +8139,21 @@ func (x *ResumeWarmInstanceRequest) GetInstance() string {
 	return ""
 }
 
+func (x *ResumeWarmInstanceRequest) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
+}
+
 // ResumeWarmInstanceResponse acknowledges the in-place resume.
 type ResumeWarmInstanceResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Instance string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	// Echo only after explicit regional resume; older servers cannot acknowledge it.
+	RegionalRuntime []byte `protobuf:"bytes,2,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ResumeWarmInstanceResponse) Reset() {
@@ -8180,6 +8191,13 @@ func (x *ResumeWarmInstanceResponse) GetInstance() string {
 		return x.Instance
 	}
 	return ""
+}
+
+func (x *ResumeWarmInstanceResponse) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
 }
 
 // RestoreAppTaskRequest is the command-free preparation envelope for a
@@ -9712,11 +9730,13 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\tdirection\x18\x01 \x01(\tR\tdirection\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12\x14\n" +
 	"\x05cidrs\x18\x03 \x03(\tR\x05cidrs\x12\x14\n" +
-	"\x05ports\x18\x04 \x03(\tR\x05ports\"7\n" +
+	"\x05ports\x18\x04 \x03(\tR\x05ports\"b\n" +
 	"\x19ResumeWarmInstanceRequest\x12\x1a\n" +
-	"\binstance\x18\x01 \x01(\tR\binstance\"8\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\x12)\n" +
+	"\x10regional_runtime\x18\x02 \x01(\fR\x0fregionalRuntime\"c\n" +
 	"\x1aResumeWarmInstanceResponse\x12\x1a\n" +
-	"\binstance\x18\x01 \x01(\tR\binstance\"\xe6\x01\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\x12)\n" +
+	"\x10regional_runtime\x18\x02 \x01(\fR\x0fregionalRuntime\"\xe6\x01\n" +
 	"\x15RestoreAppTaskRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12\x12\n" +

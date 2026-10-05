@@ -155,7 +155,11 @@ func TestRegionalHostResidentResumeAndWarmCaptureRespectSeatFence(t *testing.T) 
 				v.snapErr = errors.New("capture failed")
 				_, err = m.SnapshotKeepAlive(t.Context(), req.Instance, SnapshotSpec{})
 			}
-			if !errors.Is(err, runtimequotahost.ErrFenced) {
+			want := runtimequotahost.ErrFenced
+			if operation == "resume" {
+				want = runtimequotahost.ErrBinding
+			}
+			if !errors.Is(err, want) {
 				t.Fatalf("resident fence: %v", err)
 			}
 			if len(v.resumed) != 0 || len(m.LiveInstances()) != 1 {

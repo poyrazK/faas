@@ -35,7 +35,7 @@ func Open(dir, nodeID, bootID string) (_ *Journal, err error) {
 	if err != nil {
 		return nil, err
 	}
-	j := &Journal{root: root, epochs: make(map[string]Identity), permits: make(map[string]PermitRecord), seats: make(map[string]SeatRecord), attempts: make(map[string]string), parentPins: make(map[string]runtimequota.CapacityPermit), permitSeats: make(map[string]map[string]bool), active: make(map[string]int), seatOps: make(map[string]int), changed: make(chan struct{})}
+	j := &Journal{root: root, epochs: make(map[string]Identity), permits: make(map[string]PermitRecord), seats: make(map[string]SeatRecord), attempts: make(map[string]string), parentPins: make(map[string]runtimequota.CapacityPermit), permitSeats: make(map[string]map[string]bool), active: make(map[string]int), seatOps: make(map[string]int), resuming: make(map[string]bool), changed: make(chan struct{})}
 	defer func() {
 		if err != nil {
 			if j.lock != nil {

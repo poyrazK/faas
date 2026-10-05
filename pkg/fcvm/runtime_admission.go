@@ -20,6 +20,7 @@ type RuntimeAdmission struct {
 	KeepPaused                                     bool
 	Plan                                           api.Plan
 	PrimeOnly                                      bool
+	RegionalResumePending                          bool
 }
 type RuntimeAuthorizer func(context.Context, RuntimeAdmission) error
 
@@ -33,7 +34,9 @@ func admissionForWake(req WakeRequest) RuntimeAdmission {
 	return RuntimeAdmission{Instance: req.Instance, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, AppTaskOnly: req.AppTaskOnly, ExecutionOnly: req.ExecutionOnly, IsBuilder: req.ExportDir != "", RegionalRuntime: cloneRuntimePlacement(req.RegionalRuntime), KeepPaused: req.KeepPaused, Plan: req.Plan, PrimeOnly: req.PrimeOnly}
 }
 func admissionForInstance(inst *Instance) RuntimeAdmission {
-	return RuntimeAdmission{Instance: inst.Lease.Instance, AppID: inst.AppID, AccountID: inst.AccountID, DeploymentID: inst.DeploymentID, AppTaskOnly: inst.AppTaskOnly, ExecutionOnly: inst.ExecutionOnly, IsBuilder: inst.Lease.IsBuilder, RegionalRuntime: cloneRuntimePlacement(inst.regionalRuntime), Plan: inst.Lease.Plan, PrimeOnly: inst.primeOnly}
+	inst.regionalRuntimeMu.RLock()
+	defer inst.regionalRuntimeMu.RUnlock()
+	return RuntimeAdmission{Instance: inst.Lease.Instance, AppID: inst.AppID, AccountID: inst.AccountID, DeploymentID: inst.DeploymentID, AppTaskOnly: inst.AppTaskOnly, ExecutionOnly: inst.ExecutionOnly, IsBuilder: inst.Lease.IsBuilder, RegionalRuntime: cloneRuntimePlacement(inst.regionalRuntime), Plan: inst.Lease.Plan, PrimeOnly: inst.primeOnly, RegionalResumePending: inst.regionalResumePending}
 }
 func (m *Manager) authorizeRuntimeOwner(ctx context.Context, admission RuntimeAdmission) error {
 	if err := validateRuntimePlacement(admission); err != nil {
@@ -79,7 +82,7 @@ func validateRuntimePlacement(a RuntimeAdmission) error {
 	if a.RegionalRuntime == nil {
 		return nil
 	}
-	if a.IsBuilder || a.ExecutionOnly || (a.PrimeOnly && (a.AppTaskOnly || a.KeepPaused)) || (a.AppTaskOnly && a.KeepPaused) {
+	if a.RegionalResumePending || a.IsBuilder || a.ExecutionOnly || (a.PrimeOnly && (a.AppTaskOnly || a.KeepPaused)) || (a.AppTaskOnly && a.KeepPaused) {
 		return runtimequotahost.ErrBinding
 	}
 	purpose := runtimequota.CapacityServing
@@ -140,6 +143,12 @@ func (m *Manager) resumeAuthorized(ctx context.Context, inst *Instance) error {
 		return err
 	}
 	defer finish()
+	inst.regionalRuntimeMu.RLock()
+	pending := inst.pausedRestorePending
+	inst.regionalRuntimeMu.RUnlock()
+	if pending {
+		return m.completePausedRestore(ctx, inst)
+	}
 	return m.vmm.ResumeVM(ctx, inst.Lease)
 }
 

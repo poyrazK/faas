@@ -985,21 +985,15 @@ func (s *Server) ResumeWarmInstance(ctx context.Context, req *vmmdpb.ResumeWarmI
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	resumer, ok := s.vmm.(interface {
-		ResumeVM(context.Context, string) error
-	})
-	if !ok {
-		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
-			"Warm-pool resume unavailable", "vmmd does not expose in-place resume")
-		s.ops.Observe(op, time.Since(start), err)
-		return nil, grpcerr.ToStatus(err)
+	placement, err := regionalRuntimeFromProto(req.GetRegionalRuntime())
+	if err == nil {
+		err = s.resumeWarmRequest(ctx, req.GetInstance(), placement)
 	}
-	err := resumer.ResumeVM(ctx, req.GetInstance())
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	return &vmmdpb.ResumeWarmInstanceResponse{Instance: req.GetInstance()}, nil
+	return &vmmdpb.ResumeWarmInstanceResponse{Instance: req.GetInstance(), RegionalRuntime: append([]byte(nil), req.GetRegionalRuntime()...)}, nil
 }
 
 // WaitBuilderReady exposes the vmmd-owned serial handoff to builderd. The

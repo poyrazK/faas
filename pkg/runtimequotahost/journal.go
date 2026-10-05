@@ -56,6 +56,7 @@ type Journal struct {
 	permitSeats map[string]map[string]bool
 	active      map[string]int
 	seatOps     map[string]int
+	resuming    map[string]bool
 	changed     chan struct{}
 	poison      error
 	closed      bool
@@ -150,6 +151,9 @@ func (j *Journal) checkPlacement(p runtimequota.Placement, existing bool) error 
 			return ErrBinding
 		}
 	}
+	if !s.Registered && j.active[p.Permit.ID] != 0 {
+		return ErrBusy
+	}
 	return nil
 }
 
@@ -164,17 +168,27 @@ func (j *Journal) Check(p runtimequota.Placement) error {
 // grants it. A new seat is registered only after the old seat has been fenced
 // and its operations have returned; native pause must be proved separately.
 func (j *Journal) Begin(ctx context.Context, p runtimequota.Placement) (func(), error) {
-	return j.begin(ctx, p, false)
+	return j.begin(ctx, p, false, false)
 }
 
 // BeginLaunch durably registers a fresh physical attempt before any host work.
 // Replaying a registered launch is refused even after restart: a failed RPC or
 // empty live map cannot establish that the previous guest has been stopped.
 func (j *Journal) BeginLaunch(ctx context.Context, p runtimequota.Placement) (func(), error) {
-	return j.begin(ctx, p, true)
+	return j.begin(ctx, p, true, false)
 }
 
-func (j *Journal) begin(ctx context.Context, p runtimequota.Placement, launch bool) (func(), error) {
+// BeginResume excludes concurrent host operations while a serving seat is
+// installed and native resume is checked. This barrier is not native pause or
+// stop proof; the cell must independently authorize the exact issued placement.
+func (j *Journal) BeginResume(ctx context.Context, p runtimequota.Placement) (func(), error) {
+	if p.Seat == nil {
+		return nil, runtimequota.ErrInvalid
+	}
+	return j.begin(ctx, p, false, true)
+}
+
+func (j *Journal) begin(ctx context.Context, p runtimequota.Placement, launch, resume bool) (func(), error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -182,6 +196,9 @@ func (j *Journal) begin(ctx context.Context, p runtimequota.Placement, launch bo
 	}
 	if err := j.checkPlacement(p, false); err != nil {
 		return nil, err
+	}
+	if j.resuming[p.Permit.ID] || (resume && j.active[p.Permit.ID] != 0) {
+		return nil, ErrBusy
 	}
 	r := j.permits[p.Permit.ID]
 	if launch == r.Registered {
@@ -210,6 +227,9 @@ func (j *Journal) begin(ctx context.Context, p runtimequota.Placement, launch bo
 	}
 	permitID := p.Permit.ID
 	j.active[permitID]++
+	if resume {
+		j.resuming[permitID] = true
+	}
 	if seatID != "" {
 		j.seatOps[seatID]++
 	}
@@ -219,6 +239,9 @@ func (j *Journal) begin(ctx context.Context, p runtimequota.Placement, launch bo
 			j.mu.Lock()
 			defer j.mu.Unlock()
 			j.active[permitID]--
+			if resume {
+				delete(j.resuming, permitID)
+			}
 			if seatID != "" {
 				j.seatOps[seatID]--
 			}

@@ -2242,11 +2242,15 @@ message PrivateNetworkFirewallRule {
 // ResumeWarmInstanceRequest identifies a paused warm-pool VM by instance id.
 message ResumeWarmInstanceRequest {
   string instance = 1;
+  // Exact issued serving placement; omitted only for independent apps.
+  bytes regional_runtime = 2;
 }
 
 // ResumeWarmInstanceResponse acknowledges the in-place resume.
 message ResumeWarmInstanceResponse {
   string instance = 1;
+  // Echo only after explicit regional resume; older servers cannot acknowledge it.
+  bytes regional_runtime = 2;
 }
 
 // RestoreAppTaskRequest is the command-free preparation envelope for a

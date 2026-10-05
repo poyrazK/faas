@@ -416,11 +416,15 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
-	primeOnly       bool                    // immutable host-only snapshot-prime purpose
-	regionalRuntime *runtimequota.Placement // immutable host-only authority pins
-	Lease           Lease
-	Net             netns.Config
-	Method          WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	primeOnly               bool // immutable host-only snapshot-prime purpose
+	regionalRuntimeMu       sync.RWMutex
+	regionalResumePending   bool
+	pausedRestorePending    bool                    // guarded with regionalRuntimeMu; deferred guest hook/readiness
+	pausedRestoreCompleting bool                    // excludes duplicate independent restore completion
+	regionalRuntime         *runtimequota.Placement // immutable physical pins; seat replacement is guarded
+	Lease                   Lease
+	Net                     netns.Config
+	Method                  WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
@@ -546,7 +550,9 @@ type Instance struct {
 	// WakeRequest. It remains empty for either gRPC readiness or legacy
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
-	HealthcheckPath string
+	HealthcheckPath        string
+	HealthcheckGRPC        bool
+	HealthcheckGRPCService string
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -4463,15 +4469,17 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		executionID = req.Instance
 	}
 	inst := &Instance{
-		primeOnly:       req.PrimeOnly,
-		regionalRuntime: cloneRuntimePlacement(req.RegionalRuntime),
-		Lease:           lease, Net: nc, Method: method,
+		primeOnly:            req.PrimeOnly,
+		pausedRestorePending: req.KeepPaused,
+		regionalRuntime:      cloneRuntimePlacement(req.RegionalRuntime),
+		Lease:                lease, Net: nc, Method: method,
 		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
 		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
+		HealthcheckGRPC: req.HealthcheckGRPC, HealthcheckGRPCService: req.HealthcheckGRPCService,
 		LivenessProbe:    append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:   append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
@@ -5295,9 +5303,22 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	if m.vmm == nil {
 		return fmt.Errorf("resume_vm %s: nil vmm", instance)
 	}
+	if admissionForInstance(inst).RegionalRuntime != nil {
+		return runtimequotahost.ErrBinding
+	}
 	if err := m.resumeAuthorized(ctx, inst); err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if m.live[instance] != inst {
+		m.mu.Unlock()
+		return fmt.Errorf("resume_vm %s: no longer live", instance)
+	}
+	inst.Paused = false
+	m.mu.Unlock()
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
@@ -5669,7 +5690,13 @@ func (m *Manager) NetnsFor(instance string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inst, ok := m.live[instance]
-	if !ok || inst.primeOnly || inst.AppTaskOnly || inst.ExecutionOnly || inst.Lease.IsBuilder {
+	if !ok || inst.Paused || inst.primeOnly || inst.AppTaskOnly || inst.ExecutionOnly || inst.Lease.IsBuilder {
+		return "", false
+	}
+	inst.regionalRuntimeMu.RLock()
+	pending := inst.regionalResumePending
+	inst.regionalRuntimeMu.RUnlock()
+	if pending {
 		return "", false
 	}
 	return inst.Lease.Netns, true
@@ -5935,7 +5962,10 @@ func (m *Manager) applyAppCPULimit(ctx context.Context, inst *Instance, cpuMilli
 	if err := updater.UpdateCPULimit(ctx, inst.Lease, cpuMillicores); err != nil {
 		return err
 	}
-	if inst.Paused || !hasWorkloadName(inst.WorkloadNames, WorkloadNameMain) {
+	m.mu.Lock()
+	paused := inst.Paused
+	m.mu.Unlock()
+	if paused || !hasWorkloadName(inst.WorkloadNames, WorkloadNameMain) {
 		return nil
 	}
 	guestUpdater, ok := m.vmm.(LiveAppWorkloadCPULimitUpdater)
@@ -5982,7 +6012,7 @@ func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision 
 
 	type target struct {
 		instance string
-		workload Instance
+		workload *Instance
 	}
 	var targets []target
 	m.mu.Lock()
@@ -6005,7 +6035,7 @@ func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision 
 	}
 	for instance, live := range m.live {
 		if live.AppID == appID && !live.ExecutionOnly && !live.IsJob {
-			targets = append(targets, target{instance: instance, workload: *live})
+			targets = append(targets, target{instance: instance, workload: &Instance{Lease: live.Lease, Paused: live.Paused, WorkloadNames: append([]string(nil), live.WorkloadNames...)}})
 		}
 	}
 	m.mu.Unlock()
@@ -6016,7 +6046,7 @@ func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision 
 			applyErrors = append(applyErrors, err)
 			break
 		}
-		if err := m.applyAppCPULimit(ctx, &target.workload, cpuMillicores); err != nil {
+		if err := m.applyAppCPULimit(ctx, target.workload, cpuMillicores); err != nil {
 			applyErrors = append(applyErrors, fmt.Errorf("instance %s: %w", target.instance, err))
 			continue
 		}
