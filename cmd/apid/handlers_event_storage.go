@@ -34,7 +34,7 @@ func writeEventStorageCapacity(w http.ResponseWriter, err error) bool {
 	retry := int64(api.EventStorageRetryAfterSeconds)
 	problem := api.NewProblem(http.StatusTooManyRequests, "event_storage_capacity_exhausted", "Event storage capacity exhausted",
 		fmt.Sprintf("retained customer event %s would reach %d; limit %d. Retry the same source and id after retained receipts are pruned or the plan is upgraded; delivery completion alone does not release retained storage.", capacity.Resource, capacity.Observed, capacity.Limit)).
-		WithLimit(capacity.Limit, capacity.Observed).WithDocs("https://gregale.dev/docs/events#storage")
+		WithLimit(capacity.Limit, capacity.Observed).WithDocs("https://gregale.dev/docs/event-driven#internal-event-subscriptions")
 	problem.RetryAfterSeconds = &retry
 	if capacity.Resource == "bytes" {
 		problem.LimitBytes = &capacity.Limit
