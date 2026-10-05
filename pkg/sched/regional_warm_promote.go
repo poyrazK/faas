@@ -69,7 +69,11 @@ func (e *Engine) repairRegionalWarmLedger(ctx context.Context, app state.App, ac
 	if !ok {
 		return runtimequota.ErrBinding
 	}
-	return e.ledger.Admit(Request{Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan, RAMMB: warm.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency, NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpu, CPUBudgetMillicores: e.resolveNodeCPUBudgetMillicores(ctx, warm.NodeID), Kind: KindWarmPool})
+	sidecarRAM, err := deploymentSidecarRAM(dep)
+	if err != nil {
+		return err
+	}
+	return e.ledger.Admit(Request{Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan, RAMMB: warm.RAMMB, SidecarMBs: sidecarRAM, rowShadow: true, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency, NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpu, CPUBudgetMillicores: e.resolveNodeCPUBudgetMillicores(ctx, warm.NodeID), Kind: KindWarmPool})
 }
 
 // A peer may have published the same acknowledged resident. Recover only its

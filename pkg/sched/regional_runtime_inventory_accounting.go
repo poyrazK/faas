@@ -142,8 +142,8 @@ func regionalReservationMatches(source runtimequota.LaunchSource, r Request) boo
 
 // Binding occurs at the captured dispatch boundary, before any RPC. It cannot
 // reconstruct a full permit from an old row during startup or retirement.
-func (l *NodeLedger) bindOriginalRegionalRuntime(source runtimequota.LaunchSource) error {
-	if source.Validate() != nil {
+func (l *NodeLedger) bindOriginalRegionalRuntime(source runtimequota.LaunchSource, resources state.RegionalRuntimeResources) error {
+	if source.Validate() != nil || !resources.Valid() {
 		return runtimequota.ErrBinding
 	}
 	if l == nil {
@@ -152,16 +152,36 @@ func (l *NodeLedger) bindOriginalRegionalRuntime(source runtimequota.LaunchSourc
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	r := l.entries[source.InstanceKey]
-	if r == nil {
-		return nil // Bookkeeping callers allocate no scheduler reservation.
+	if r == nil || r.rowShadow {
+		return runtimequota.ErrBinding
 	}
 	if !regionalReservationMatches(source, Request{Instance: source.InstanceKey, AppID: r.appID, DeploymentID: r.deploymentID, NodeID: r.nodeID, RuntimeRunID: r.runtimeRunID}) ||
-		(r.regionalSource != nil && *r.regionalSource != source) {
+		r.plan != source.Permit.Grant.Policy.Plan || !regionalReservationKindMatches(r.kind, source.Permit.Kind) || (r.regionalSource != nil && *r.regionalSource != source) {
+		return runtimequota.ErrBinding
+	}
+	if r.admissionMB != resources.RAMMB+api.PerVMOverheadMB || r.vcpu != resources.VCPU || r.cpuMillicores+r.cpuBoostMillicores != resources.CPUMillicores ||
+		(r.regionalResources != (state.RegionalRuntimeResources{}) && r.regionalResources != resources) {
 		return runtimequota.ErrBinding
 	}
 	copy := source
 	r.regionalSource = &copy
+	r.regionalResources = resources
 	return nil
+}
+
+func regionalReservationKindMatches(kind Kind, purpose string) bool {
+	switch kind {
+	case KindWake:
+		return purpose == runtimequota.CapacityServing
+	case KindWarmPool:
+		return purpose == runtimequota.CapacityWarm
+	case KindSnapshotPrime:
+		return purpose == runtimequota.CapacityPrime
+	case KindAppTask:
+		return purpose == runtimequota.CapacityAppTask
+	default:
+		return false
+	}
 }
 
 func (e *Engine) seedRegionalRuntimeInventory(ctx context.Context) error {

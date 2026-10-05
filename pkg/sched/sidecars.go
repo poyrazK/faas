@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,39 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// adr: 638
+// Placement and the reservation read the same captured deployment as the
+// eventual workload projection. No image/secret lookup is needed to charge RAM.
+func deploymentSidecarRAM(dep state.Deployment) ([]int, error) {
+	raw := strings.TrimSpace(string(dep.Sidecars))
+	if raw == "" || raw == "null" {
+		return nil, nil
+	}
+	var declarations api.Sidecars
+	if err := json.Unmarshal(dep.Sidecars, &declarations); err != nil {
+		return nil, fmt.Errorf("decode deployment sidecar RAM: %w", err)
+	}
+	if len(declarations) > api.SidecarCapMax {
+		return nil, errors.New("deployment sidecar count exceeds the allocation cap")
+	}
+	ram := make([]int, len(declarations))
+	for i, sidecar := range declarations {
+		if sidecar.RamMB < 0 || sidecar.RamMB > api.RegionalRuntimeResourceValueMax {
+			return nil, errors.New("deployment sidecar RAM is outside the retained resource bounds")
+		}
+		ram[i] = sidecar.RamMB
+	}
+	return ram, nil
+}
+
+func appSpecSidecarRAM(spec AppSpec) []int {
+	ram := make([]int, len(spec.Sidecars))
+	for i, sidecar := range spec.Sidecars {
+		ram[i] = sidecar.RamMB
+	}
+	return ram
+}
 
 func mergeSecretDeliveryCandidates(current, additional []state.AppSecretDeliveryCandidate) ([]state.AppSecretDeliveryCandidate, error) {
 	if len(additional) == 0 {

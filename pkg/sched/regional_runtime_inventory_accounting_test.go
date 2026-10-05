@@ -165,7 +165,7 @@ func TestRegionalRuntimeInventoryStartupBarrierRetainsPartialCharge(t *testing.T
 func TestRegionalRuntimeDispatchReservationRequiresFullPermitForRelease(t *testing.T) {
 	_, app, dep, source, _ := regionalAccountingFixture(t)
 	l := NewNodeLedger()
-	request := Request{Instance: source.InstanceKey, AppID: app.ID, DeploymentID: dep.ID, NodeID: source.Permit.NodeID, RuntimeRunID: source.Permit.RunID, RegionalRuntime: &source, Plan: api.PlanPro, RAMMB: 128, VCPU: 1, MaxConcurrency: 5}
+	request := Request{Instance: source.InstanceKey, AppID: app.ID, DeploymentID: dep.ID, NodeID: source.Permit.NodeID, RuntimeRunID: source.Permit.RunID, RegionalRuntime: &source, Plan: api.PlanPro, RAMMB: 128, VCPU: 1, CPUMillicores: api.DefaultAppCPUMillicores, MaxConcurrency: 5}
 	if err := l.Admit(request); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestRegionalRuntimeDispatchReservationRequiresFullPermitForRelease(t *testi
 	}
 	other := source
 	other.Permit.HostEpochID = uuid.NewString()
-	if err := l.bindOriginalRegionalRuntime(other); !errors.Is(err, runtimequota.ErrBinding) {
+	if err := l.bindOriginalRegionalRuntime(other, state.RegionalRuntimeResources{RAMMB: 128, VCPU: 1, CPUMillicores: api.DefaultAppCPUMillicores}); !errors.Is(err, runtimequota.ErrBinding) {
 		t.Fatal("rebound physical origin", err)
 	}
 	if l.releaseOriginalRegionalRuntime(other) || !l.releaseOriginalRegionalRuntime(source) {

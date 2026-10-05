@@ -212,12 +212,20 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	if err := checkRegionalRuntimeQuota(ctx, e.store, app.ID); err != nil {
 		return err
 	}
+	sidecarRAM, err := deploymentSidecarRAM(dep)
+	if err != nil {
+		return fmt.Errorf("sidecar allocation: %w", err)
+	}
+	startupCPU := effectiveAppCPUMillicores(app)
+	if !dep.DisableStartupCPUBoost {
+		startupCPU = startupCPUBoostQuota(acct.Plan, startupCPU)
+	}
 	warmHint := ""
 	if e.warmAffinity != nil {
 		warmHint, _ = e.warmAffinity.LastWarmNode(app.ID)
 	}
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: app.ID, DeploymentID: dep.ID, ordinaryResident: true, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
+		AppID: app.ID, DeploymentID: dep.ID, ordinaryResident: true, Plan: acct.Plan, RAMMB: app.RAMMB, SidecarMBs: sidecarRAM, VCPU: limits.VCPU, CPUMillicores: startupCPU,
 		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint,
 	})
 	if err != nil {
@@ -248,8 +256,8 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	}
 	e.emitInstanceChanged(ctx, ins.ID, app.ID, state.StateWaking, wakeID)
 	if err := e.ledger.Admit(Request{
-		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan, RuntimeRunID: wakeID,
+		RAMMB: app.RAMMB, SidecarMBs: sidecarRAM, VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency,
 		NodeID: placement.NodeID, NodeCeilingMB: placement.CeilingMB,
 		VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores, Kind: KindWarmPool,
 	}); err != nil {

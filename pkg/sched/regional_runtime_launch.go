@@ -93,10 +93,10 @@ func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance,
 	if !valid {
 		return spec, runtimequota.ErrBinding // A retry must retain any already escaped original placement.
 	}
-	spec.RegionalRuntime = &placement
-	if err := e.ledger.bindOriginalRegionalRuntime(source); err != nil {
+	if err := e.ledger.bindOriginalRegionalRuntime(source, resources); err != nil {
 		return spec, err
 	}
+	spec.RegionalRuntime = &placement
 	if err := e.store.IssueRegionalRuntimeLaunchResources(ctx, placement, source, resources); err != nil {
 		return spec, fmt.Errorf("sched: issue regional launch: %w", err)
 	}
@@ -110,10 +110,7 @@ func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance,
 // Match the guest RAM and conservative CPU peak vmmd will actually launch.
 // VM overhead is charged separately by the ledger, once per physical runtime.
 func regionalRuntimeLaunchResources(spec AppSpec) (state.RegionalRuntimeResources, bool) {
-	sidecarRAM := make([]int, len(spec.Sidecars))
-	for i, sidecar := range spec.Sidecars {
-		sidecarRAM[i] = sidecar.RamMB
-	}
+	sidecarRAM := appSpecSidecarRAM(spec)
 	resources := state.RegionalRuntimeResources{RAMMB: api.BillableRAMMBWithSidecars(int(spec.MemSizeMiB), sidecarRAM) - api.PerVMOverheadMB, VCPU: int(spec.VCPUCount), CPUMillicores: int(spec.CPUMillicores)}
 	period, quota := spec.Plan.CPUPeriodUS(), spec.Plan.CPUQuotaUS()
 	if spec.MemSizeMiB <= 0 || period <= 0 || quota <= 0 {

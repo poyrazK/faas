@@ -63,6 +63,9 @@ type nodeReservation struct {
 // for tests that don't plumb node IDs.
 type reservation struct {
 	appID           string
+	plan            api.Plan
+	kind            Kind
+	rowShadow       bool
 	deploymentID    string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
 	deploymentScope string
 	nodeID          string // empty = legacy box-wide accounting (test seams)
@@ -77,6 +80,7 @@ type reservation struct {
 	countsConc             bool                       // still in {WAKING,COLD_BOOTING,RUNNING}
 	regionalResumePermitID string                     // retained while a regional warm resume may be serving
 	regionalSource         *runtimequota.LaunchSource // exact physical permit, including host epoch
+	regionalResources      state.RegionalRuntimeResources
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -167,6 +171,9 @@ type Request struct {
 	RuntimeRunID string
 	// RegionalRuntime binds a dispatch reservation to its complete original permit.
 	RegionalRuntime *runtimequota.LaunchSource
+	// Row repair may charge existing residency but cannot authorize a new
+	// original physical source. This flag does not bypass admission limits.
+	rowShadow bool
 	// DeploymentID is the target deployment for the wake (ADR-072 /
 	// issue #557 closure). The Engine resolves it from the wake
 	// target before calling Admit — the gateway passes the latest
@@ -478,6 +485,7 @@ func (l *NodeLedger) admit(r Request, recovered bool) error {
 
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, nodeID: r.NodeID,
+		plan: r.Plan, kind: r.Kind, rowShadow: recovered || r.rowShadow,
 		runtimeRunID:    r.RuntimeRunID,
 		deploymentScope: normalizedDeploymentScope(r.DeploymentScope),
 		admissionMB:     r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
@@ -528,7 +536,7 @@ func (l *NodeLedger) expireCPUBoosts_locked(now time.Time) {
 }
 
 func (l *NodeLedger) releaseCPUBoost_locked(r *reservation) {
-	if r == nil || r.cpuBoostMillicores <= 0 {
+	if r == nil || r.cpuBoostMillicores <= 0 || r.regionalSource != nil {
 		return
 	}
 	if node := l.resident[r.nodeID]; node != nil {

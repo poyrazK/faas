@@ -3160,12 +3160,18 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if !dep.DisableStartupCPUBoost {
 		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
 	}
+	sidecarRAM, err := deploymentSidecarRAM(dep)
+	if err != nil {
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: sidecar allocation: %w", err)
+	}
 	placementRequest := Request{
 		AppID:                      appID,
 		DeploymentID:               dep.ID,
 		ordinaryResident:           mode != string(state.InstanceModeNormal) && mode != string(state.InstanceModeService),
 		Plan:                       acct.Plan,
 		RAMMB:                      app.RAMMB,
+		SidecarMBs:                 sidecarRAM,
 		VCPU:                       limits.VCPU,
 		CPUMillicores:              startupCPU,
 		MaxConcurrency:             app.MaxConcurrency,
@@ -3236,6 +3242,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan, RuntimeRunID: wakeID,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		SidecarMBs: sidecarRAM,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
@@ -5883,9 +5890,14 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if !dep.DisableStartupCPUBoost {
 		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
 	}
+	sidecarRAM, err := deploymentSidecarRAM(dep)
+	if err != nil {
+		return fmt.Errorf("sched: prime: sidecar allocation: %w", err)
+	}
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
+		SidecarMBs:      sidecarRAM,
 		PreferredNodeID: app.NodeID,
 	})
 	if err != nil {
@@ -5948,6 +5960,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, DeploymentScope: dep.Scope, Plan: acct.Plan, RuntimeRunID: primeWakeID,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		SidecarMBs:          sidecarRAM,
 		Kind:                KindSnapshotPrime,
 		NodeID:              placement.NodeID,
 		NodeCeilingMB:       placement.CeilingMB,
@@ -7139,6 +7152,12 @@ func (e *Engine) SeedLedger(ctx context.Context) (result error) {
 			request.DeploymentScope = "__unknown__"
 			if dep, depErr := e.store.DeploymentByID(ctx, ins.DeploymentID); depErr == nil && dep.AppID == app.ID {
 				request.DeploymentScope = dep.Scope
+				request.SidecarMBs, depErr = deploymentSidecarRAM(dep)
+				if depErr != nil {
+					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed sidecar allocation %s: %w", ins.ID, depErr))
+				}
+			} else {
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed deployment allocation %s: %w", ins.ID, errors.Join(ErrRegionalRuntimeRecoveryUnresolved, depErr)))
 			}
 
 			if until, ok := startupCPUBoosts[ins.ID]; ok {

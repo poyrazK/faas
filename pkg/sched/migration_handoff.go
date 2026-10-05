@@ -427,6 +427,7 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 	if err := h.ledger.Admit(Request{
 		Instance:            instanceID,
 		RAMMB:               int(appSpec.MemSizeMiB),
+		SidecarMBs:          appSpecSidecarRAM(appSpec),
 		VCPU:                int(appSpec.VCPUCount),
 		CPUMillicores:       int(appSpec.CPUMillicores),
 		Kind:                KindMigration,

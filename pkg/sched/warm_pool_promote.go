@@ -89,6 +89,10 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		return WakeResult{}, false, nil
 	}
 
+	sidecarRAM, err := deploymentSidecarRAM(dep)
+	if err != nil {
+		return WakeResult{}, false, fmt.Errorf("warm pool sidecar allocation: %w", err)
+	}
 	for _, warm := range candidates {
 		// A paused row without runtime identity cannot be resumed safely;
 		// destroy and park it so it cannot consume resident capacity forever.
@@ -108,6 +112,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			if admitErr := e.ledger.Admit(Request{
 				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 				RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+				SidecarMBs: sidecarRAM, rowShadow: true,
 				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, CPUBudgetMillicores: cpuBudgetMillicores, Kind: KindWarmPool,
 			}); admitErr != nil {
 				if e.discardWarmPromotion(ctx, warm, "ledger_repair_failed") {

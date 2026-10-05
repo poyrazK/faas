@@ -1,6 +1,7 @@
 package sched
 
 // adr: 627
+// adr: 638
 import (
 	"context"
 	"crypto/ed25519"
@@ -68,16 +69,19 @@ func newRegionalWarmFixture(t *testing.T) regionalWarmFixture {
 	vmm := &regionalWarmFakeVMM{warmResumeFakeVMM: &warmResumeFakeVMM{fakeVMM: &fakeVMM{statsHook: func(context.Context, string) (*StatsSnapshot, error) {
 		return &StatsSnapshot{RegionalRuntimeHostEpoch: epoch}, nil
 	}}}}
-	e := newEngine(t, s, vmm, &fakeNotifier{}, "1.10.0")
 	freezeRegionalSchedulerApp(t, s, acct, app)
 	head, err := s.RegionalRuntimeQuotaHead(t.Context(), app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := e.issueRegionalRuntimeLaunch(t.Context(), node.ID, warm.ID, warm.WakeID, runtimequota.CapacityWarm, AppSpec{AppID: app.ID, AccountID: acct.ID, DeploymentID: dep.ID, Plan: acct.Plan, MemSizeMiB: int32(app.RAMMB), VCPUCount: int32(api.MustLimitsFor(acct.Plan).VCPU), CPUMillicores: int32(effectiveAppCPUMillicores(app))}, head.Grant)
+	// Seed an already-issued resident, independently of a new producer's
+	// reservation. The fresh production Engine reconstructs both row and hold.
+	bookkeeping := &Engine{store: s, vmm: vmm}
+	issued, err := bookkeeping.issueRegionalRuntimeLaunch(t.Context(), node.ID, warm.ID, warm.WakeID, runtimequota.CapacityWarm, AppSpec{AppID: app.ID, AccountID: acct.ID, DeploymentID: dep.ID, Plan: acct.Plan, MemSizeMiB: int32(app.RAMMB), VCPUCount: int32(api.MustLimitsFor(acct.Plan).VCPU), CPUMillicores: int32(effectiveAppCPUMillicores(app))}, head.Grant)
 	if err != nil {
 		t.Fatal(err)
 	}
+	e := newEngine(t, s, vmm, &fakeNotifier{}, "1.10.0")
 	if err := e.SeedLedger(t.Context()); err != nil || e.ledger.Concurrency(app.ID) != 0 {
 		t.Fatal("paused resident counted as serving", err)
 	}
