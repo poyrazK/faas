@@ -3618,6 +3618,31 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_accounting_reconciliations",
+    "columns": [
+      "account_id",
+      "actor_id",
+      "after_catalog",
+      "backend_fingerprint",
+      "backend_id",
+      "before_catalog",
+      "coverage_before",
+      "created_at",
+      "database_id",
+      "evidence_reference",
+      "evidence_sha256",
+      "policy",
+      "preview_revision",
+      "provider_resource_id",
+      "reason",
+      "reconciliation_id",
+      "request",
+      "request_sha256",
+      "result"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_bindings",
     "columns": [
       "access",

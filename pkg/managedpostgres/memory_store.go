@@ -10,31 +10,33 @@ import (
 // MemoryStore is useful for unit tests and local wiring. Production adapters
 // should enforce the same transitions transactionally in PostgreSQL.
 type MemoryStore struct {
-	cutovers      map[string]Cutover
-	health        map[string]memoryHealthEntry
-	mu            sync.Mutex
-	databases     map[string]Database
-	names         map[string]string
-	bindings      map[string]Binding
-	targets       map[string]string
-	usage         map[usageKey]UsageRecord
-	restoreProofs map[string]RestoreProof
-	usageProgress map[usageProgressKey]UsageProgress
-	usageImports  map[string]usageImportReceipt
+	cutovers                  map[string]Cutover
+	health                    map[string]memoryHealthEntry
+	mu                        sync.Mutex
+	databases                 map[string]Database
+	names                     map[string]string
+	bindings                  map[string]Binding
+	targets                   map[string]string
+	usage                     map[usageKey]UsageRecord
+	restoreProofs             map[string]RestoreProof
+	usageProgress             map[usageProgressKey]UsageProgress
+	usageImports              map[string]usageImportReceipt
+	accountingReconciliations map[string]accountingReconciliationReceipt
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		cutovers:      map[string]Cutover{},
-		health:        map[string]memoryHealthEntry{},
-		databases:     map[string]Database{},
-		names:         map[string]string{},
-		bindings:      map[string]Binding{},
-		targets:       map[string]string{},
-		usage:         map[usageKey]UsageRecord{},
-		restoreProofs: map[string]RestoreProof{},
-		usageProgress: map[usageProgressKey]UsageProgress{},
-		usageImports:  map[string]usageImportReceipt{},
+		cutovers:                  map[string]Cutover{},
+		health:                    map[string]memoryHealthEntry{},
+		databases:                 map[string]Database{},
+		names:                     map[string]string{},
+		bindings:                  map[string]Binding{},
+		targets:                   map[string]string{},
+		usage:                     map[usageKey]UsageRecord{},
+		restoreProofs:             map[string]RestoreProof{},
+		usageProgress:             map[usageProgressKey]UsageProgress{},
+		usageImports:              map[string]usageImportReceipt{},
+		accountingReconciliations: map[string]accountingReconciliationReceipt{},
 	}
 }
 

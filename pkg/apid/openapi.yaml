@@ -2911,6 +2911,70 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/reconciliations/preview:
+    post:
+      operationId: previewManagedPostgresAccountingReconciliation
+      summary: Preview legacy PostgreSQL identity and shutdown reconciliation
+      description: Operator allowlist and admin scope with existing MFA read policy required. Validates retained evidence against local catalog and ledger state without provider calls or writes. Only deleted accountable resources with unknown identities are eligible. Returns the revision required for apply.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account owning the legacy database being reconciled.
+          schema: { type: string, format: uuid }
+      requestBody:
+        description: Operator-verified identity and actual shutdown evidence; maximum 32 KiB.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationRequest' }
+      responses:
+        '200':
+          description: Reconciliation preview with no catalog or accounting changes; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationResult' }
+        default:
+          description: Access denied, invalid evidence, incompatible ledger, conflicting identity, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/reconciliations:
+    post:
+      operationId: applyManagedPostgresAccountingReconciliation
+      security: [{ cookieAuth: [] }]
+      summary: Reconcile a legacy PostgreSQL identity and confirmed shutdown
+      description: Allowlisted operator session with recent MFA step-up, same-origin checks and Idempotency-Key required. Bearer keys cannot apply. Requires a current expected_revision. Atomically attaches the evidence-backed identity and actual shutdown boundary, resets derived coverage and retains immutable before/after evidence. Existing usage quantities and accounting obligations remain intact. Recovery and final corrections remain required; this does not settle an invoice. reconciliation_id permanently deduplicates identical requests by the same actor.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account owning the reviewed legacy database.
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Request replay key; reconciliation_id also provides permanent deduplication.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      requestBody:
+        description: Reviewed identity and shutdown evidence with preview revision; maximum 32 KiB.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationRequest' }
+      responses:
+        '200':
+          description: Committed reconciliation or original durable response; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationResult' }
+        default:
+          description: Access denied, invalid evidence, stale preview, conflicting identity/replay, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/admin/object-storage/usage-reports:
     post:
       operationId: recordObjectStorageUsage
@@ -31608,6 +31672,37 @@ components:
         correction_observed_at: { type: [string, "null"], format: date-time }
         correction_required_at: { type: [string, "null"], format: date-time }
         lease_until: { type: [string, "null"], format: date-time }
+    ManagedPostgresAccountingReconciliationRequest:
+      type: object
+      description: Operator-attested immutable backend identity and actual provider shutdown for one unresolved legacy tombstone. The operator verifies artifact ownership and lineage; the server does not fetch or authenticate the source. Missing lookup results are not shutdown evidence.
+      additionalProperties: false
+      required: [reconciliation_id, database_id, backend_id, backend_fingerprint, provider_resource_id, shutdown_at, observed_at, evidence_reference, evidence_sha256, reason]
+      properties:
+        reconciliation_id: { type: string, format: uuid, description: "Durable reconciliation identity." }
+        database_id: { type: string, format: uuid, description: "Deleted accountable database with no provider identity." }
+        backend_id: { type: string, minLength: 1, maxLength: 128, description: "Exact immutable catalog backend ID." }
+        backend_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$', description: "Exact immutable catalog backend fingerprint." }
+        provider_resource_id: { type: string, minLength: 1, maxLength: 1024, description: "Verified opaque provider identity; include branch identity where required by the adapter." }
+        shutdown_at: { type: string, format: date-time, description: "Actual confirmed provider shutdown at or after catalog creation; microsecond precision." }
+        observed_at: { type: string, format: date-time, description: "Actual evidence observation at or after shutdown and retained ledger observations; no future timestamps." }
+        evidence_reference: { type: string, minLength: 1, maxLength: 256, description: "Retained nonsecret artifact reference; no credentials or signed URLs." }
+        evidence_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: "SHA-256 of the operator-verified source artifact." }
+        reason: { type: string, minLength: 1, maxLength: 512, description: "Audited reason for reconciliation." }
+        expected_revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Omit for preview; required for apply using the returned revision." }
+    ManagedPostgresAccountingReconciliationResult:
+      type: object
+      description: Preview or original committed repair response. Requires usage recovery describes the post-repair state; receipt replay is not a live admission or coverage read. Use accounting diagnostics for current status.
+      required: [reconciliation_id, database_id, revision, applied, shutdown_at, observed_at, shared_accounting, requires_usage_recovery]
+      properties:
+        reconciliation_id: { type: string, format: uuid, description: "Identity of the previewed or committed repair receipt." }
+        database_id: { type: string, format: uuid, description: "Reconciled catalog database." }
+        revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Revision fencing the reviewed request and relevant catalog/ledger/coverage state." }
+        applied: { type: boolean, description: "True for a committed repair or durable replay." }
+        previous_deleted_at: { type: string, format: date-time, description: "Previous logical deletion timestamp retained in the audit; it did not prove shutdown." }
+        shutdown_at: { type: string, format: date-time, description: "Attested actual shutdown boundary." }
+        observed_at: { type: string, format: date-time, description: "Preserved evidence observation time." }
+        shared_accounting: { type: boolean, description: "Restore descendant still shares its existing accounting root." }
+        requires_usage_recovery: { type: boolean, description: "Coverage resets on apply; recovery and final correction evidence must satisfy admission." }
     ManagedPostgresUsageImportReading:
       description: One normalized integer meter quantity from retained provider evidence.
       type: object
