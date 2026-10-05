@@ -41,7 +41,7 @@ func cmdPostgresUsageImport(args []string) int {
 	if !*apply && request.ExpectedRevision != "" {
 		return printErr("Preview file contains expected_revision", fmt.Errorf("remove expected_revision before previewing"))
 	}
-	client, err := postgresUsageImportClient(*sessionFile, *apply)
+	client, err := postgresAccountingClient(*sessionFile, *apply)
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
@@ -67,7 +67,7 @@ func cmdPostgresUsageImport(args []string) int {
 // The ordinary CLI login is an API key and cannot satisfy strict operator
 // step-up. Load an explicit session from a private file; never put it in args,
 // persist it in the normal key store, or combine it with bearer authorization.
-func postgresUsageImportClient(sessionPath string, apply bool) (*api.Client, error) {
+func postgresAccountingClient(sessionPath string, apply bool) (*api.Client, error) {
 	if sessionPath == "" {
 		if apply {
 			return nil, fmt.Errorf("--apply requires --session-file with a recently stepped-up operator session")
@@ -114,18 +114,22 @@ func postgresUsageImportClient(sessionPath string, apply bool) (*api.Client, err
 }
 
 func readPostgresUsageImport(path string) (api.ManagedPostgresUsageImportRequest, error) {
-	var request api.ManagedPostgresUsageImportRequest
+	return readPostgresAccountingEvidence[api.ManagedPostgresUsageImportRequest](path, 1<<20)
+}
+
+func readPostgresAccountingEvidence[T any](path string, limit int64) (T, error) {
+	var request T
 	file, err := openCustomerFile(path)
 	if err != nil {
 		return request, err
 	}
 	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return request, err
 	}
-	if len(data) > 1<<20 {
-		return request, fmt.Errorf("usage import exceeds 1 MiB")
+	if int64(len(data)) > limit {
+		return request, fmt.Errorf("accounting evidence exceeds %d bytes", limit)
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()

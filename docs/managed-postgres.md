@@ -413,8 +413,8 @@ consumption. Deleting a branch of a live root keeps the root's active freshness
 requirement; the branch introduces no separate final-window wait.
 Ready counts remain lifecycle counts, so usage can be stale with zero ready
 databases. This protects the guardrail; it does not establish final invoice
-settlement or qualify Neon history after project deletion. Unavailable history
-requires an operator reconciliation workflow, which is still unfinished.
+settlement or qualify Neon history after project deletion. Operators can recover
+unavailable history using the audited retained-usage import described below.
 Before a provisioning or restore call, the catalog commits a permanent accounting
 obligation. If its response is lost, collection can recover the identity after
 an active lifecycle lease expires. Deletion discovers and persists identity
@@ -518,6 +518,61 @@ Imports preserve source observation times. They cannot establish missing provide
 identities or shutdown, bypass freshness/budget checks, replace newer evidence
 with older readings, overlap daily and hourly accounting, or establish final
 invoice settlement. See [ADR-583](adr/583-managed-postgres-retained-usage-import.md).
+
+Legacy deleted rows whose accounting identity is unknown need identity and
+shutdown evidence before usage recovery. An allowlisted operator can preview
+and apply that repair:
+
+```sh
+gregale postgres reconcile ACCOUNT_ID --file retained-shutdown.json --json
+# Review the confirmed shutdown; put the returned revision in expected_revision.
+gregale postgres reconcile ACCOUNT_ID --file retained-shutdown.json --apply --session-file operator-session --json
+```
+
+The file contains the following fields; replace the illustrative IDs, times,
+fingerprint, and digest with verified retained evidence:
+
+```json
+{
+  "reconciliation_id": "00000000-0000-0000-0000-000000000001",
+  "database_id": "00000000-0000-0000-0000-000000000002",
+  "backend_id": "primary",
+  "backend_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "provider_resource_id": "verified-project-or-branch-id",
+  "shutdown_at": "2026-10-01T12:17:00Z",
+  "observed_at": "2026-10-02T09:00:00Z",
+  "evidence_reference": "retained/provider-shutdown-export",
+  "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "reason": "Repair lost legacy identity using confirmed provider shutdown"
+}
+```
+
+Confirm the resource's ownership, backend mapping, restore lineage, actual
+shutdown, and source observation before submitting. An absent provider lookup
+or the catalog's old logical deletion time does not prove shutdown. The API
+records the operator's attestation without fetching or authenticating artifacts.
+Keep references free of credentials and signed URLs. Requests are limited to
+32 KiB; times require microsecond precision or coarser, with observation at or
+after shutdown and no future time.
+
+Preview uses the operator read policy and changes nothing. Apply uses the same
+recent MFA session policy and private session file as usage import. It accepts
+only accountable deleted rows with no provider ID or active lifecycle lease,
+and rejects an identity already claimed under the same backend fingerprint.
+The preview revision fences concurrent catalog, policy, coverage, and ledger
+changes. Preserve `reconciliation_id`, revision, and the exact request for retries
+by the same operator; a committed replay returns the original result.
+
+Apply attaches the identity and replaces the logical deletion timestamp with
+the confirmed shutdown in one transaction. Its immutable receipt retains both
+catalog versions, the old coverage, actor, policy, and evidence reference/hash.
+Recorded quantities and costs stay intact. Derived coverage is reset, so the
+account remains stale until the collector or retained-usage import establishes
+complete history and final correction observations. Shared restore children
+continue to use their root's aggregate; import quantities against that root.
+Recheck `gregale postgres diagnostics ACCOUNT_ID --json` after recovery. A repair
+receipt reports the committed repair, not current admission or final invoice
+settlement. See [ADR-587](adr/587-managed-postgres-legacy-accounting-reconciliation.md).
 
 Operators with the admin scope and MFA can inspect the same account through
 `GET /v1/admin/managed-postgres/usage/{account_id}`. This bounded view adds the
