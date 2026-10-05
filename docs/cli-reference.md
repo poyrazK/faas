@@ -3995,17 +3995,36 @@ Read candidate/stable counts, selected p95 checks and route verdicts
 
 Investigate route errors or latency with bounded retained evidence
 
-`gregale routes health investigate --deployment <ID> --route <LABEL> [--signal <SIGNAL>] [--status <CODE>] [--customer-id <ID>] [--customer-group-by <DIMENSION>] [--out <PATH>] <slug>`
+`gregale routes health investigate --deployment <ID> --route <LABEL> [--source-impact <PATH>] [--signal <SIGNAL>] [--status <CODE>] [--customer-id <ID>] [--customer-group-by <DIMENSION>] [--out <PATH>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--deployment <ID>` | candidate deployment UUID | required |
 | `--route <LABEL>` | exact configured METHOD /path telemetry label | required |
+| `--source-impact <PATH>` | correlate a local route impact report with both deployment revisions |  |
 | `--signal <SIGNAL>` | errors (default) or latency; requires a configured latency check | one of `errors` · `latency` |
 | `--status <CODE>` | watched 4xx code; 0 (default) selects all 5xx |  |
 | `--customer-id <ID>` | recorded customer UUID; explicitly includes this ID |  |
 | `--customer-group-by <DIMENSION>` | tenant (default) or consumer; requires --customer-id | one of `tenant` · `consumer` |
 | `--out <PATH>` | save the investigation JSON to a new file |  |
+
+#### routes health correlate
+
+Find dependency slowdowns shared by multiple configured latency routes
+
+`gregale routes health correlate --deployment <ID> [--limit <N>] [--out <PATH>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | candidate deployment UUID | required |
+| `--limit <N>` | shared dependency groups to show (default 10; maximum 20) |  |
+| `--out <PATH>` | save correlation JSON to a new file |  |
+
+Examples:
+
+```sh
+gregale routes health correlate api --deployment CANDIDATE_UUID --json
+```
 
 #### routes health explain
 

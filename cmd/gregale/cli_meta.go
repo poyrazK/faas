@@ -1886,11 +1886,17 @@ var cliCommands = []cliCommand{
 			{Name: "investigate", Positionals: []string{"<slug>"}, Short: "Investigate route errors or latency with bounded retained evidence", Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID", Req: true},
 				{Name: "route", Value: "LABEL", Short: "exact configured METHOD /path telemetry label", Req: true},
+				{Name: "source-impact", Value: "PATH", Short: "correlate a local route impact report with both deployment revisions"},
 				{Name: "signal", Value: "SIGNAL", Short: "errors (default) or latency; requires a configured latency check", ClosedSet: []string{"errors", "latency"}},
 				{Name: "status", Value: "CODE", Short: "watched 4xx code; 0 (default) selects all 5xx"},
 				{Name: "customer-id", Value: "ID", Short: "recorded customer UUID; explicitly includes this ID"},
 				{Name: "customer-group-by", Value: "DIMENSION", Short: "tenant (default) or consumer; requires --customer-id", ClosedSet: []string{"tenant", "consumer"}},
 				{Name: "out", Value: "PATH", Short: "save the investigation JSON to a new file"},
+			}},
+			{Name: "correlate", Positionals: []string{"<slug>"}, Short: "Find dependency slowdowns shared by multiple configured latency routes", Examples: []string{"gregale routes health correlate api --deployment CANDIDATE_UUID --json"}, Flags: []cliFlag{
+				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID", Req: true},
+				{Name: "limit", Value: "N", Short: "shared dependency groups to show (default 10; maximum 20)"},
+				{Name: "out", Value: "PATH", Short: "save correlation JSON to a new file"},
 			}},
 			{Name: "explain", Positionals: []string{"<slug>"}, Short: "Explain saved canary health decisions and their evidence timeline", Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID", Req: true},

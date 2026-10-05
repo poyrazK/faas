@@ -47,6 +47,37 @@ in route health. Pre-anchor examples may be present, but their comparison remain
 unknown. Each invocation captures the current live comparison; it does not reopen
 a saved historical decision.
 
+## Correlate a local source-impact report
+
+Pass a source report from the selected stable and candidate revisions to put the
+static route references beside the runtime evidence:
+
+```sh
+gregale routes impact checkout --base STABLE_COMMIT --head CANDIDATE_COMMIT \
+  --path services/checkout --out impact.json
+gregale routes health investigate checkout --deployment CANDIDATE_UUID \
+  --route "POST /checkout" --signal latency --source-impact impact.json \
+  --out investigation.json --json
+```
+
+The CLI checks the report against both deployment details: repository identity,
+stable/candidate commit, source root, app identity and any commit embedded in the
+deployment source reference must agree. A successful result is labeled
+`declared_match`; these metadata checks do not authenticate report bytes against
+the deployment archive. The output includes the local artifact SHA-256 and at
+most eight static evidence chains for the selected route. Whole-segment parameter
+names may differ (for example, `{order_id}` and `{id}`); unsupported or ambiguous
+route mappings remain unresolved.
+
+If deployment metadata is unavailable or does not match, the telemetry
+investigation still succeeds and `source_correlation.status` is `unavailable`
+with a reason; source route evidence is omitted. A bound report that does not
+contain the selected route is labeled `route_not_reported`, which does not mean
+the route is unaffected. Incomplete source analysis and route uncertainties are
+shown explicitly. Static references indicate possible impact, not runtime
+execution or root cause. Use the request and trace commands above to inspect the
+bounded runtime evidence alongside them.
+
 ## Examples and inspection
 
 Top-level examples return at most **three** matching telemetry rows per
@@ -129,3 +160,5 @@ Dependency/stage percentiles cannot be added to each other or to route p95.
 They describe different retained populations and are clues for inspection,
 not proof of root cause. Sparse or pre-anchor route comparisons remain unknown
 even if diagnostic samples exist. The default error investigation is unchanged.
+To compare repeated dependency slowdowns across configured latency routes, use
+[shared dependency correlation](route-dependency-correlation.md).
