@@ -815,6 +815,37 @@ func (q *Queries) AppHealthHistoryTarget(ctx context.Context, db DBTX, arg AppHe
 	return id, err
 }
 
+const appHealthNotificationRecipients = `-- name: AppHealthNotificationRecipients :one
+SELECT a.slug, COALESCE((
+ SELECT jsonb_object_agg(eligible.id::text, eligible.revision) FROM (
+  SELECT w.id, extract(epoch FROM w.updated_at)::text AS revision FROM app_webhooks w JOIN accounts ac ON ac.id = w.account_id
+  WHERE w.app_id = a.id AND w.account_id = a.account_id AND w.scope = 'app' AND w.enabled
+  AND ac.status = 'active' AND ac.abuse_hold_at IS NULL
+  AND 'app.health.changed' = ANY(w.event_filter)
+  ORDER BY w.id LIMIT $1::integer
+ ) eligible
+), '{}'::jsonb)::jsonb AS recipients
+FROM apps a WHERE a.id = $2::text::uuid AND a.account_id = $3::text::uuid
+`
+
+type AppHealthNotificationRecipientsParams struct {
+	RecipientLimit int32
+	AppID          string
+	AccountID      string
+}
+
+type AppHealthNotificationRecipientsRow struct {
+	Slug       string
+	Recipients []byte
+}
+
+func (q *Queries) AppHealthNotificationRecipients(ctx context.Context, db DBTX, arg AppHealthNotificationRecipientsParams) (AppHealthNotificationRecipientsRow, error) {
+	row := db.QueryRow(ctx, appHealthNotificationRecipients, arg.RecipientLimit, arg.AppID, arg.AccountID)
+	var i AppHealthNotificationRecipientsRow
+	err := row.Scan(&i.Slug, &i.Recipients)
+	return i, err
+}
+
 const appManagedPostgresBindingInventory = `-- name: AppManagedPostgresBindingInventory :many
 SELECT b.id AS binding_id, d.name AS database_name, b.scope, b.environment_key, b.access, b.state,
        b.credential_generation, (COALESCE(b.rotation_previous_generation, 0) > 0) AS rotation_pending,
@@ -8183,6 +8214,32 @@ func (q *Queries) EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg
 	return column_1, err
 }
 
+const enqueueAppHealthNotification = `-- name: EnqueueAppHealthNotification :exec
+INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+VALUES($1::text::uuid, $2::text::uuid, 'app.health.changed',
+ $3::text::uuid, $4::jsonb, $5::text[]::uuid[])
+ON CONFLICT (event, source_id) DO NOTHING
+`
+
+type EnqueueAppHealthNotificationParams struct {
+	AccountID    string
+	AppID        string
+	SourceID     string
+	Payload      []byte
+	RecipientIds []string
+}
+
+func (q *Queries) EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg EnqueueAppHealthNotificationParams) error {
+	_, err := db.Exec(ctx, enqueueAppHealthNotification,
+		arg.AccountID,
+		arg.AppID,
+		arg.SourceID,
+		arg.Payload,
+		arg.RecipientIds,
+	)
+	return err
+}
+
 const enqueueEnvironmentGitOps = `-- name: EnqueueEnvironmentGitOps :exec
 INSERT INTO environment_gitops_jobs (source_id, desired_generation, next_attempt_at)
 VALUES ($1::uuid, $2::bigint, $3::timestamptz)
@@ -11769,23 +11826,26 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 
 const finishAppHealthCollection = `-- name: FinishAppHealthCollection :exec
 UPDATE app_health_collection_state SET assessment = $1::jsonb, assessment_key = $2::text,
- checked_at = $3::timestamptz, next_check_at = $4::timestamptz,
+ notification_state = $3::jsonb,
+ checked_at = $4::timestamptz, next_check_at = $5::timestamptz,
  lease_token = NULL, lease_started_at = NULL, lease_until = NULL
-WHERE app_id = $5::text::uuid
+WHERE app_id = $6::text::uuid
 `
 
 type FinishAppHealthCollectionParams struct {
-	Assessment    []byte
-	AssessmentKey string
-	CheckedAt     pgtype.Timestamptz
-	NextCheckAt   pgtype.Timestamptz
-	AppID         string
+	Assessment        []byte
+	AssessmentKey     string
+	NotificationState []byte
+	CheckedAt         pgtype.Timestamptz
+	NextCheckAt       pgtype.Timestamptz
+	AppID             string
 }
 
 func (q *Queries) FinishAppHealthCollection(ctx context.Context, db DBTX, arg FinishAppHealthCollectionParams) error {
 	_, err := db.Exec(ctx, finishAppHealthCollection,
 		arg.Assessment,
 		arg.AssessmentKey,
+		arg.NotificationState,
 		arg.CheckedAt,
 		arg.NextCheckAt,
 		arg.AppID,
@@ -26649,7 +26709,7 @@ func (q *Queries) LockAppEnvironmentSecretReferenceScope(ctx context.Context, db
 }
 
 const lockAppHealthCollection = `-- name: LockAppHealthCollection :one
-SELECT h.assessment, h.assessment_key, h.checked_at FROM app_health_collection_state h
+SELECT h.assessment, h.assessment_key, h.checked_at, h.notification_state FROM app_health_collection_state h
 JOIN apps a ON a.id = h.app_id AND a.account_id = h.account_id
 WHERE h.app_id = $1::text::uuid AND h.account_id = $2::text::uuid
 AND h.lease_token = $3::text AND h.lease_until > $4::timestamptz
@@ -26668,9 +26728,10 @@ type LockAppHealthCollectionParams struct {
 }
 
 type LockAppHealthCollectionRow struct {
-	Assessment    []byte
-	AssessmentKey pgtype.Text
-	CheckedAt     pgtype.Timestamptz
+	Assessment        []byte
+	AssessmentKey     pgtype.Text
+	CheckedAt         pgtype.Timestamptz
+	NotificationState []byte
 }
 
 func (q *Queries) LockAppHealthCollection(ctx context.Context, db DBTX, arg LockAppHealthCollectionParams) (LockAppHealthCollectionRow, error) {
@@ -26682,7 +26743,12 @@ func (q *Queries) LockAppHealthCollection(ctx context.Context, db DBTX, arg Lock
 		arg.StartedAt,
 	)
 	var i LockAppHealthCollectionRow
-	err := row.Scan(&i.Assessment, &i.AssessmentKey, &i.CheckedAt)
+	err := row.Scan(
+		&i.Assessment,
+		&i.AssessmentKey,
+		&i.CheckedAt,
+		&i.NotificationState,
+	)
 	return i, err
 }
 

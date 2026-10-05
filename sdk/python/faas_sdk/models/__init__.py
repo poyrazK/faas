@@ -122,6 +122,13 @@ from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
 from .app_health_capacity import AppHealthCapacity
+from .app_health_changed_webhook_payload import AppHealthChangedWebhookPayload
+from .app_health_changed_webhook_payload_change import AppHealthChangedWebhookPayloadChange
+from .app_health_changed_webhook_payload_phase import AppHealthChangedWebhookPayloadPhase
+from .app_health_changed_webhook_payload_previous_status import AppHealthChangedWebhookPayloadPreviousStatus
+from .app_health_changed_webhook_payload_scope import AppHealthChangedWebhookPayloadScope
+from .app_health_changed_webhook_payload_status import AppHealthChangedWebhookPayloadStatus
+from .app_health_changed_webhook_payload_version import AppHealthChangedWebhookPayloadVersion
 from .app_health_check import AppHealthCheck
 from .app_health_check_action import AppHealthCheckAction
 from .app_health_check_code import AppHealthCheckCode
@@ -2696,6 +2703,13 @@ __all__ = (
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
     "AppHealthCapacity",
+    "AppHealthChangedWebhookPayload",
+    "AppHealthChangedWebhookPayloadChange",
+    "AppHealthChangedWebhookPayloadPhase",
+    "AppHealthChangedWebhookPayloadPreviousStatus",
+    "AppHealthChangedWebhookPayloadScope",
+    "AppHealthChangedWebhookPayloadStatus",
+    "AppHealthChangedWebhookPayloadVersion",
     "AppHealthCheck",
     "AppHealthCheckAction",
     "AppHealthCheckCode",

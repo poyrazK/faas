@@ -9952,7 +9952,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'app.health.changed'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -39264,13 +39264,15 @@ CREATE TABLE public.app_health_collection_state (
     checked_at timestamp with time zone,
     assessment_key text,
     assessment jsonb,
+    notification_state jsonb,
     CONSTRAINT app_health_collection_state_assessment_key_check CHECK ((assessment_key ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT app_health_collection_state_check CHECK (((jsonb_typeof(assessment) = 'object'::text) AND ((assessment ->> 'app_id'::text) = (app_id)::text) AND ((assessment ->> 'scope'::text) = 'default'::text) AND (octet_length((assessment)::text) <= 131072))),
     CONSTRAINT app_health_collection_state_check1 CHECK ((((lease_token IS NULL) = (lease_until IS NULL)) AND ((lease_token IS NULL) = (lease_started_at IS NULL)))),
     CONSTRAINT app_health_collection_state_check2 CHECK (((lease_token IS NULL) OR ((length(lease_token) > 0) AND isfinite(lease_started_at) AND isfinite(lease_until) AND (lease_until > lease_started_at)))),
     CONSTRAINT app_health_collection_state_check3 CHECK ((((checked_at IS NULL) = (assessment IS NULL)) AND ((assessment_key IS NULL) = (assessment IS NULL)))),
     CONSTRAINT app_health_collection_state_checked_at_check CHECK (((checked_at IS NULL) OR isfinite(checked_at))),
-    CONSTRAINT app_health_collection_state_next_check_at_check CHECK (isfinite(next_check_at))
+    CONSTRAINT app_health_collection_state_next_check_at_check CHECK (isfinite(next_check_at)),
+    CONSTRAINT app_health_collection_state_notification_state_check CHECK (((jsonb_typeof(notification_state) = 'object'::text) AND (octet_length((notification_state)::text) <= 8192)))
 );
 
 

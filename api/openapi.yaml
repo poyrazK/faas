@@ -46981,6 +46981,38 @@ components:
           x-since: "2026-08"
           x-issue: "436"
 
+    AppHealthChangedWebhookPayload:
+      type: object
+      additionalProperties: false
+      description: |
+        Versioned app.health.changed data. Explicit app-owned subscriptions
+        receive sampled status changes after a silent baseline. At most one
+        event per app every five minutes; pending changes combine to the latest
+        observed status, and returning to the last announced status cancels them.
+        Evidence gaps reset the comparison without inferring recovery. Unknown
+        is a confidence change, never a confirmed outage or recovery. The
+        transition points to retained history; evaluated_at describes the fresh
+        assessment used to queue this event. Delivery remains at least once.
+      required: [version, app_id, scope, transition_id, transition_observed_at, previous_status, status, change, phase, evaluated_at, queued_at, coalesced, cooldown_seconds, serving_deployment_ids, history_path]
+      properties:
+        version: { type: integer, enum: [1] }
+        app_id: { type: string }
+        scope: { type: string, enum: [default] }
+        transition_id: { type: string, format: uuid }
+        transition_observed_at: { type: string, format: date-time }
+        previous_status: { type: string, enum: [healthy, degraded, unhealthy, unknown], description: Last announced or silently established comparison status. }
+        status: { type: string, enum: [healthy, degraded, unhealthy, unknown] }
+        change: { type: string, enum: [worsened, improved, unconfirmed, confirmed] }
+        phase: { type: string, enum: [serving, idle, deploying, not_deployed, maintenance, unsupported, unknown] }
+        evaluated_at: { type: string, format: date-time }
+        queued_at: { type: string, format: date-time }
+        coalesced: { type: boolean, description: Changes were combined during the notification cooldown. }
+        cooldown_seconds: { type: integer, minimum: 1, description: Minimum spacing between app health notification intents. }
+        latest_deployment_id: { type: string }
+        serving_deployment_ids:
+          type: array
+          items: { type: string }
+        history_path: { type: string, description: Authenticated cursor-paged history; locate transition_id while retained. }
     AppHealthHistoryPage:
       description: Retained default HTTP health observations with independent background collection freshness.
       type: object
@@ -52463,10 +52495,11 @@ components:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
         webhook_secret_sealed_masked: { type: string, enum: ["***"] }
         event_filter:
+          description: Subscribed events; an empty filter selects standard platform events. app.health.changed requires explicit selection.
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "app.health.changed", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -52946,10 +52979,11 @@ components:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
+          description: Events to subscribe to; omit or leave empty for standard platform events. Select app.health.changed explicitly to enable health notifications.
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "app.health.changed", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -53027,10 +53061,11 @@ components:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
+          description: Replacement event selection; an empty array restores standard platform events. Include app.health.changed to opt into health notifications.
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "app.health.changed", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

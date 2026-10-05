@@ -77,6 +77,7 @@ export type { AppErrorSampleResponse } from './models/AppErrorSampleResponse.js'
 export type { AppErrorsSummaryResponse } from './models/AppErrorsSummaryResponse.js';
 export type { AppErrorSummaryItem } from './models/AppErrorSummaryItem.js';
 export type { AppHealthCapacity } from './models/AppHealthCapacity.js';
+export type { AppHealthChangedWebhookPayload } from './models/AppHealthChangedWebhookPayload.js';
 export type { AppHealthCheck } from './models/AppHealthCheck.js';
 export type { AppHealthFinding } from './models/AppHealthFinding.js';
 export type { AppHealthHistoryEntry } from './models/AppHealthHistoryEntry.js';

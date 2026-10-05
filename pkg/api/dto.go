@@ -11826,3 +11826,24 @@ type AppHealthHistoryEntry struct {
 	PreviousStatus string            `json:"previous_status,omitempty"`
 	Assessment     AppHealthResponse `json:"assessment"`
 }
+
+// AppHealthChangedWebhookPayload describes sampled status changes. Unknown
+// transitions are confidence changes, never confirmed outages or recoveries.
+type AppHealthChangedWebhookPayload struct {
+	Version              int      `json:"version"`
+	AppID                string   `json:"app_id"`
+	Scope                string   `json:"scope"`
+	TransitionID         string   `json:"transition_id"`
+	TransitionObservedAt string   `json:"transition_observed_at"`
+	PreviousStatus       string   `json:"previous_status"`
+	Status               string   `json:"status"`
+	Change               string   `json:"change"`
+	Phase                string   `json:"phase"`
+	EvaluatedAt          string   `json:"evaluated_at"`
+	QueuedAt             string   `json:"queued_at"`
+	Coalesced            bool     `json:"coalesced"`
+	CooldownSeconds      int      `json:"cooldown_seconds"`
+	LatestDeploymentID   string   `json:"latest_deployment_id,omitempty"`
+	ServingDeploymentIDs []string `json:"serving_deployment_ids"`
+	HistoryPath          string   `json:"history_path"`
+}

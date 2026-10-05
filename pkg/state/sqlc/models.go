@@ -566,15 +566,16 @@ type AppErrorRequest struct {
 }
 
 type AppHealthCollectionState struct {
-	AppID          pgtype.UUID
-	AccountID      pgtype.UUID
-	NextCheckAt    pgtype.Timestamptz
-	LeaseToken     pgtype.Text
-	LeaseStartedAt pgtype.Timestamptz
-	LeaseUntil     pgtype.Timestamptz
-	CheckedAt      pgtype.Timestamptz
-	AssessmentKey  pgtype.Text
-	Assessment     []byte
+	AppID             pgtype.UUID
+	AccountID         pgtype.UUID
+	NextCheckAt       pgtype.Timestamptz
+	LeaseToken        pgtype.Text
+	LeaseStartedAt    pgtype.Timestamptz
+	LeaseUntil        pgtype.Timestamptz
+	CheckedAt         pgtype.Timestamptz
+	AssessmentKey     pgtype.Text
+	Assessment        []byte
+	NotificationState []byte
 }
 
 type AppHealthHistory struct {

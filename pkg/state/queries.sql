@@ -13803,7 +13803,7 @@ WHERE app_health_collection_state.lease_until IS NULL OR app_health_collection_s
 RETURNING app_id::text, account_id::text, lease_token, lease_started_at, lease_until;
 
 -- name: LockAppHealthCollection :one
-SELECT h.assessment, h.assessment_key, h.checked_at FROM app_health_collection_state h
+SELECT h.assessment, h.assessment_key, h.checked_at, h.notification_state FROM app_health_collection_state h
 JOIN apps a ON a.id = h.app_id AND a.account_id = h.account_id
 WHERE h.app_id = sqlc.arg(app_id)::text::uuid AND h.account_id = sqlc.arg(account_id)::text::uuid
 AND h.lease_token = sqlc.arg(token)::text AND h.lease_until > sqlc.arg(checked_now)::timestamptz
@@ -13814,6 +13814,7 @@ FOR UPDATE OF h;
 
 -- name: FinishAppHealthCollection :exec
 UPDATE app_health_collection_state SET assessment = sqlc.arg(assessment)::jsonb, assessment_key = sqlc.arg(assessment_key)::text,
+ notification_state = sqlc.arg(notification_state)::jsonb,
  checked_at = sqlc.arg(checked_at)::timestamptz, next_check_at = sqlc.arg(next_check_at)::timestamptz,
  lease_token = NULL, lease_started_at = NULL, lease_until = NULL
 WHERE app_id = sqlc.arg(app_id)::text::uuid;
@@ -13856,3 +13857,21 @@ DELETE FROM app_health_history WHERE id IN (
  SELECT id FROM app_health_history WHERE observed_at < sqlc.arg(oldest_at)::timestamptz
  ORDER BY observed_at, id LIMIT sqlc.arg(batch_limit)::integer
 );
+
+-- name: AppHealthNotificationRecipients :one
+SELECT a.slug, COALESCE((
+ SELECT jsonb_object_agg(eligible.id::text, eligible.revision) FROM (
+  SELECT w.id, extract(epoch FROM w.updated_at)::text AS revision FROM app_webhooks w JOIN accounts ac ON ac.id = w.account_id
+  WHERE w.app_id = a.id AND w.account_id = a.account_id AND w.scope = 'app' AND w.enabled
+  AND ac.status = 'active' AND ac.abuse_hold_at IS NULL
+  AND 'app.health.changed' = ANY(w.event_filter)
+  ORDER BY w.id LIMIT sqlc.arg(recipient_limit)::integer
+ ) eligible
+), '{}'::jsonb)::jsonb AS recipients
+FROM apps a WHERE a.id = sqlc.arg(app_id)::text::uuid AND a.account_id = sqlc.arg(account_id)::text::uuid;
+
+-- name: EnqueueAppHealthNotification :exec
+INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+VALUES(sqlc.arg(account_id)::text::uuid, sqlc.arg(app_id)::text::uuid, 'app.health.changed',
+ sqlc.arg(source_id)::text::uuid, sqlc.arg(payload)::jsonb, sqlc.arg(recipient_ids)::text[]::uuid[])
+ON CONFLICT (event, source_id) DO NOTHING;

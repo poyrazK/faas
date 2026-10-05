@@ -26,11 +26,12 @@ type AppHealthHistoryStore interface {
 }
 
 type appHealthRecord struct {
-	Claim       AppHealthClaim
-	NextCheckAt time.Time
-	Latest      *api.AppHealthResponse
-	Key         string
-	Entries     []api.AppHealthHistoryEntry
+	Claim        AppHealthClaim
+	NextCheckAt  time.Time
+	Latest       *api.AppHealthResponse
+	Key          string
+	Entries      []api.AppHealthHistoryEntry
+	Notification appHealthNotificationState
 }
 
 func appHealthEligible(app App) bool {

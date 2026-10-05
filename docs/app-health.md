@@ -84,8 +84,9 @@ not exposed.
 
 This assessment does not prove public reachability, verify artifact existence,
 probe dependencies, or provide an uptime guarantee. It describes evidence that
-Gregale already has. Automatic alerts, active public probes,
-arbitrary environment selection and worker/job checks are future slices.
+Gregale already has. Opt-in notifications for status changes are described
+below. Active public probes, arbitrary environment selection and worker/job
+checks are future slices.
 
 ## Recorded health history
 
@@ -138,3 +139,34 @@ Operators can inspect `app_health_collection_total{outcome="recorded"|"error"}`
 and `app_health_collection_duration_seconds`. A recorded unknown assessment
 counts as a recorded observation, never as healthy. Lease, batch, deadline,
 interval and retention bounds are centralized in `pkg/api/limits.go`.
+
+## Health-change notifications
+
+Subscribe an app webhook explicitly to `app.health.changed` in the console or
+with the existing `gregale webhooks add --app APP --target-url HTTPS_URL --event
+app.health.changed` command and its signing-secret options. Empty event filters
+cover standard platform events and do not opt in to health notifications.
+Existing webhook plan availability, signing, retries, replay and quotas apply.
+
+The first background observation establishes a quiet baseline. Later status
+changes notify; moving counts, phase changes and replica findings without a
+status change do not. Known statuses use `worsened` or `improved`; changes into
+or out of `unknown` use `unconfirmed` or `confirmed`, never an inferred outage
+or recovery. An evidence gap resets the comparison and discards pending changes.
+Notifications describe default-scope HTTP assessments, not public reachability.
+
+A five-minute cooldown combines pending changes into the latest observed
+status. Returning to the last announced status cancels the pending notification.
+The next successful collection after cooldown can send it, so collection load
+or failure can delay notification. Recipients are captured at the change; later
+subscriptions cannot receive that old change, and reconfiguring a subscription
+before a deferred event commits removes it from the pending recipient snapshot.
+No incidents are backfilled.
+
+`AppHealthChangedWebhookPayload` contains the comparison status, current sampled
+status, transition ID and time, fresh assessment and queue times, coalescing
+flag, release IDs and an authenticated history path. With coalescing, the
+comparison can span multiple observations; `transition_id` identifies the last
+status-change entry while `evaluated_at` identifies the fresh assessment used
+to queue it. Retention can remove linked evidence. Deduplicate repeated HTTP
+attempts by the stable delivery ID; delivery is at least once.

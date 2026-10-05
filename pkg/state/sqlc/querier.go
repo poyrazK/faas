@@ -48,6 +48,7 @@ type Querier interface {
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
 	AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlugRow, error)
 	AppHealthHistoryTarget(ctx context.Context, db DBTX, arg AppHealthHistoryTargetParams) (string, error)
+	AppHealthNotificationRecipients(ctx context.Context, db DBTX, arg AppHealthNotificationRecipientsParams) (AppHealthNotificationRecipientsRow, error)
 	AppManagedPostgresBindingInventory(ctx context.Context, db DBTX, arg AppManagedPostgresBindingInventoryParams) ([]AppManagedPostgresBindingInventoryRow, error)
 	AppObjectStorageBindingInventory(ctx context.Context, db DBTX, arg AppObjectStorageBindingInventoryParams) ([]AppObjectStorageBindingInventoryRow, error)
 	AppQueueBindingConsumerInventory(ctx context.Context, db DBTX, arg AppQueueBindingConsumerInventoryParams) ([]AppQueueBindingConsumerInventoryRow, error)
@@ -431,6 +432,7 @@ type Querier interface {
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
 	DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error)
 	EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg EffectiveWorkflowDefinitionsParams) ([]byte, error)
+	EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg EnqueueAppHealthNotificationParams) error
 	EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitOpsParams) error
 	EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, arg EnqueueExclusiveWebhookEffectParams) error
 	EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error)

@@ -8714,4 +8714,7 @@ const (
 	AppHealthHistoryEntryMaxBytes   = 64 * 1024
 	AppHealthHistoryMaxAge          = 30 * 24 * time.Hour
 	AppHealthHistoryPruneBatch      = 100
+	AppHealthNotificationCooldown   = 5 * time.Minute
+	AppHealthNotificationStateBytes = 8 * 1024
+	AppHealthNotificationRecipients = 100
 )

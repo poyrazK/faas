@@ -89,7 +89,13 @@ func (m *MemStore) FinishAppHealth(_ context.Context, claim AppHealthClaim, a ap
 			return ErrConflict
 		}
 	}
-	row.Entries = append(row.Entries, appHealthEntries(row.Latest, row.Key, key, a)...)
+	entries := appHealthEntries(row.Latest, row.Key, key, a)
+	notification, err := prepareAppHealthNotification(row.Notification, row.Latest, a, entries, m.appHealthNotificationRecipientsLocked(app), app.Slug, now)
+	if err != nil {
+		return err
+	}
+	row.Notification = notification.State
+	row.Entries = append(row.Entries, entries...)
 	row.Latest, row.Key, row.NextCheckAt = cloneAppHealth(&a), key, now.Add(api.AppHealthCollectorInterval)
 	row.Claim = AppHealthClaim{}
 	bytes := 0
@@ -105,6 +111,7 @@ func (m *MemStore) FinishAppHealth(_ context.Context, claim AppHealthClaim, a ap
 	}
 	row.Entries = cloneAppHealth(row.Entries[start:])
 	m.appHealthHistory[claim.AppID] = row
+	m.publishAppHealthNotificationLocked(app, notification, now)
 	return nil
 }
 

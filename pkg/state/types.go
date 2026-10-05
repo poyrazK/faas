@@ -3450,7 +3450,8 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
-// An empty filter ([]) means all eligible events for that subscription scope;
+// An empty filter ([]) means standard eligible events for that subscription scope;
+// app.health.changed requires an explicit filter.
 // non-empty filters accept events whose name appears in the array. The delivery
 // ledger also stores bounded custom event names from explicitly addressed
 // application-outbox calls; those names never participate in subscription
@@ -3466,6 +3467,7 @@ const (
 	AppWebhookEventAppScaled                        AppWebhookEvent = "app.scaled"
 	AppWebhookEventAppParked                        AppWebhookEvent = "app.parked"
 	AppWebhookEventAppWoken                         AppWebhookEvent = "app.woken"
+	AppWebhookEventAppHealthChanged                 AppWebhookEvent = "app.health.changed"
 	AppWebhookEventBuildSucceeded                   AppWebhookEvent = "build.succeeded"
 	AppWebhookEventBuildFailed                      AppWebhookEvent = "build.failed"
 	AppWebhookEventDeploymentLive                   AppWebhookEvent = "deployment.live"
@@ -3510,6 +3512,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventAppScaled,
 	AppWebhookEventAppParked,
 	AppWebhookEventAppWoken,
+	AppWebhookEventAppHealthChanged,
 	AppWebhookEventBuildSucceeded,
 	AppWebhookEventBuildFailed,
 	AppWebhookEventDeploymentLive,

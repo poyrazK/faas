@@ -62,13 +62,21 @@ func (s *PgStore) FinishAppHealth(ctx context.Context, claim AppHealthClaim, a a
 	if err != nil {
 		return err
 	}
-	for _, e := range appHealthEntries(previous, row.AssessmentKey.String, key, a) {
+	entries := appHealthEntries(previous, row.AssessmentKey.String, key, a)
+	notification, err := pgPrepareAppHealthNotification(ctx, tx, claim, row.NotificationState, previous, a, entries, now)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
 		if err := insertAppHealthEntry(ctx, tx, claim, e); err != nil {
 			return err
 		}
 	}
-	if err := q.FinishAppHealthCollection(ctx, tx, sqlc.FinishAppHealthCollectionParams{AppID: claim.AppID, Assessment: body, AssessmentKey: key, CheckedAt: NewPgtypeTime(at), NextCheckAt: NewPgtypeTime(now.Add(api.AppHealthCollectorInterval))}); err != nil {
+	if err := q.FinishAppHealthCollection(ctx, tx, sqlc.FinishAppHealthCollectionParams{AppID: claim.AppID, Assessment: body, AssessmentKey: key, NotificationState: notification.StateJSON, CheckedAt: NewPgtypeTime(at), NextCheckAt: NewPgtypeTime(now.Add(api.AppHealthCollectorInterval))}); err != nil {
 		return fmt.Errorf("finish app health observation: %w", err)
+	}
+	if err := pgEnqueueAppHealthNotification(ctx, tx, claim, notification); err != nil {
+		return err
 	}
 	if err := q.PruneAppHealthHistory(ctx, tx, sqlc.PruneAppHealthHistoryParams{AppID: claim.AppID, MaxEntries: api.AppHealthHistoryMaxEntries, MaxBytes: api.AppHealthHistoryMaxBytes, OldestAt: NewPgtypeTime(now.Add(-api.AppHealthHistoryMaxAge))}); err != nil {
 		return fmt.Errorf("prune app health history: %w", err)
