@@ -339,16 +339,14 @@ func routeHealthCorrelationSnapshotMatches(expected, actual api.RouteHealthRepor
 		return false
 	}
 	first := expected.Routes[0].Windows
-	for _, finding := range actual.Routes {
-		if len(finding.Windows) != len(first) {
+	actualWindows := actual.Routes[0].Windows
+	if len(actualWindows) != len(first) {
+		return false
+	}
+	for i := range first {
+		if !actualWindows[i].Start.Equal(first[i].Start) || !actualWindows[i].End.Equal(first[i].End) {
 			return false
 		}
-		for i := range first {
-			if !finding.Windows[i].Start.Equal(first[i].Start) || !finding.Windows[i].End.Equal(first[i].End) {
-				return false
-			}
-		}
-		break
 	}
 	return true
 }
