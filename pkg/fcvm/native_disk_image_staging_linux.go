@@ -163,6 +163,10 @@ func (p *linuxNativeImagePreparation) OwnAnonymousSource(record nativeImageSourc
 	if err != nil {
 		return err
 	}
+	// The live image journal subsequently updates Target/MountID/Ready in
+	// this slice. Retain the immutable pre-anchor claim by value, including
+	// its references, rather than sharing that mutable backing array.
+	record.References = append([]nativeImageReference(nil), record.References...)
 	claim := nativeDiskImageClaim{Version: 1, Directory: identity, JailBase: filepath.Dir(filepath.Dir(filepath.Dir(p.root.Name()))), Anchor: point, Source: record}
 	if err := validateNativeDiskImageClaimRoot(p.diskRoot, claim); err != nil {
 		return err

@@ -11,7 +11,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
 | Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Isolated smoke, restored readiness and native capture publication |
-| Native execution | Fenced journals, private snapshot input/output readers, persistent disk staging and publication intent, pinned one-shot API control and exclusive writers | Production adapter wiring, full native capture publication and capture/restore acceptance |
+| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume and exclusive four-object publication | Production adapter wiring, artifact-generation/cleanup receipts and real capture/restore acceptance |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -165,8 +165,9 @@ The Linux snapshot control primitive pins the original process with a pidfd,
 checks the API socket's kernel PID/UID/GID credentials before sending bytes,
 and sends each pause, create or resume request once. Snapshot creation requires
 the original private drive and both original writable output bindings. A lost
-response supplies no success or retry authority. This primitive does not yet
-implement the complete pause/freeze/resume/publication producer.
+response supplies no success or retry authority. The internal capture producer
+uses these controls in one original pause/create/freeze/resume interval and
+publishes the complete four-object cohort synchronously after confirmed resume.
 
 Optional exclusive storage writers stream GCS capture data and compression
 without named scratch files, or copy into an anonymous local disk inode and
@@ -175,8 +176,8 @@ selected canonical backend; the cache wrapper skips its named spool path.
 Unsupported delegates refuse the capability without falling back to ordinary
 writes. An internal adapter connects original memory/device-state readers to
 these writers and retains their ownership locks through publication. The native
-capture entry point still lacks the complete producer and remains gated; existing
-storage writes keep their current behavior. Publication errors may follow an
+capture entry point remains gated pending artifact receipts and real VM
+capture/restore acceptance. Publication errors may follow an
 uncertain commit, so they supply no overwrite or deletion authority.
 
 `WithNativeSnapshotPublicationRoot`, configured before native recovery, adds a
@@ -187,7 +188,12 @@ writes. Writes require that original capability and unchanged intent inode.
 Startup validates old intents without replaying or deleting them. Losing the
 jail journal or rebooting cannot create publication or cleanup authority from
 an intent. Backend-specific object receipts and artifact retirement remain
-outstanding, along with the full capture producer and restore/smoke evidence.
+outstanding, along with restore/smoke evidence. The internal producer begins
+intent before output preparation, retains the original VM memory fence and
+publishes memory, device state, the frozen private drive and backing identity.
+Live output preparation validates the original process's jail inode and VM
+UID/GID through a retained pidfd. Uncertain controls are never replayed; partial
+objects remain retained without granting cleanup authority.
 
 ## Ownership and source maintenance
 

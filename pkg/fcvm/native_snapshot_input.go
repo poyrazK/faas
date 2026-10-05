@@ -47,7 +47,7 @@ func (v *JailerVMM) withNativeSnapshotDriveInput(ctx context.Context, lease Leas
 // all reads synchronously; it cannot retain the descriptor or its procfs path.
 // Lock order remains incoming qualification (when present), VM, then source.
 func (j *nativeImageSourceJournal) withSnapshotDrive(ctx context.Context, expected nativeLaunchRecord, root string, consume func(*os.File) error) (err error) {
-	backend, ok := j.backend.(nativeSnapshotInputBackend)
+	_, ok := j.backend.(nativeSnapshotInputBackend)
 	if !ok || consume == nil {
 		return errors.New("native snapshot input: pinned source backend or consumer is unavailable")
 	}
@@ -62,6 +62,23 @@ func (j *nativeImageSourceJournal) withSnapshotDrive(ctx context.Context, expect
 		return err
 	}
 	defer func() { err = errors.Join(err, vmLock.Close()) }()
+	return j.withSnapshotDriveLocked(ctx, expected, root, consume)
+}
+
+// The caller must hold the original physical lock through this entire call.
+// This lets the native producer keep one physical ownership interval across
+// freeze, resume and publication without acquiring that lock recursively.
+func (j *nativeImageSourceJournal) withSnapshotDriveLocked(ctx context.Context, expected nativeLaunchRecord, root string, consume func(*os.File) error) (err error) {
+	backend, ok := j.backend.(nativeSnapshotInputBackend)
+	if !ok || consume == nil {
+		return errors.New("native snapshot input: pinned source backend or consumer is unavailable")
+	}
+	if err := expected.validate(expected.Lease.Instance); err != nil {
+		return err
+	}
+	if !liveNativeSnapshotOwner(expected) || !filepath.IsAbs(root) || filepath.Clean(root) != root || filepath.Base(root) != "root" || filepath.Base(filepath.Dir(root)) != expected.Lease.Instance {
+		return errors.New("native snapshot input: original live VM authority is required")
+	}
 	current, err := j.owner.read(expected.Lease.Instance)
 	if err != nil {
 		return err

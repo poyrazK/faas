@@ -13,19 +13,20 @@ import (
 )
 
 type nativeProcessRecoveryRuntime struct {
-	journal      *nativeLaunchJournal
-	retirer      nativeProcessRetirer
-	support      func() error
-	resources    func(Lease, netns.Config) error
-	startTime    func(int) (uint64, error)
-	mounts       func(string) ([]string, error)
-	unmount      func(context.Context, string) error
-	inventory    func([]Lease) error
-	helperGroups nativeHostHelperGroups
-	loopMounts   nativeLoopMountBackend
-	imageSources nativeImageSourceBackend
-	publications nativeSnapshotPublicationJournal
-	tunBinds     nativeTunBindBackend
+	journal         *nativeLaunchJournal
+	retirer         nativeProcessRetirer
+	support         func() error
+	resources       func(Lease, netns.Config) error
+	startTime       func(int) (uint64, error)
+	mounts          func(string) ([]string, error)
+	unmount         func(context.Context, string) error
+	inventory       func([]Lease) error
+	helperGroups    nativeHostHelperGroups
+	loopMounts      nativeLoopMountBackend
+	imageSources    nativeImageSourceBackend
+	publications    nativeSnapshotPublicationJournal
+	snapshotControl nativeSnapshotControlBackend // startup/test wiring; never selected by an RPC
+	tunBinds        nativeTunBindBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
 	helper     string
@@ -47,16 +48,17 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	}
 	tun := newNativeTunBindBackend(v.chrootBase)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase)},
-		retirer:      nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
-		owned:        make(map[string]string),
-		lockWait:     v.readyTimeout,
-		inventory:    nativeNetworkInventory,
-		helperGroups: newNativeHostHelperGroups(),
-		loopMounts:   loops,
-		imageSources: images,
-		publications: newNativeSnapshotPublicationJournal(v.nativeSnapshotPublicationRoot, v.chrootBase, v.nativeImageStagingRoot),
-		tunBinds:     tun,
+		journal:         &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase)},
+		retirer:         nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
+		owned:           make(map[string]string),
+		lockWait:        v.readyTimeout,
+		inventory:       nativeNetworkInventory,
+		helperGroups:    newNativeHostHelperGroups(),
+		loopMounts:      loops,
+		imageSources:    images,
+		publications:    newNativeSnapshotPublicationJournal(v.nativeSnapshotPublicationRoot, v.chrootBase, v.nativeImageStagingRoot),
+		snapshotControl: newNativeSnapshotControlBackend(),
+		tunBinds:        tun,
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())
 			if err != nil {

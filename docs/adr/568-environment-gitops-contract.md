@@ -2635,3 +2635,71 @@ local checkpoint. These are ownership/publication primitive results, not complet
 Firecracker capture/restore or graph activation evidence. The production support
 gates remain closed and the combined PR is deferred until the requested scope is
 ready.
+
+### Native capture sequence contract (2026-10-05)
+
+The internal native producer begins persistent publication intent before output
+preparation or Firecracker effects. It requires the configured private disk
+staging directory, original private drive, output reader/frozen-drive capabilities
+and exclusive publication for the complete four-object cohort before pause.
+Output epochs are prepared once. The original physical VM lock then spans the
+one-shot pause and full snapshot, anonymous drive freeze, one-shot resume and
+synchronous memory, device-state, drive and backing-identity publication. Source
+epoch locks and read-only descriptors remain owned until their IO has joined.
+The drive is frozen while paused; every upload follows confirmed resume.
+
+An uncertain API effect is never replayed, including a failed resume. A failure
+after pause leaves the private VM for the existing revoke/stop owner to retire;
+the producer does not invoke legacy resume or failed-capture deletion. Partial
+objects and durable intent remain retained without granting deletion or recovered
+capture authority. Cancellation, changed original authority, publication failure
+or descriptor/lock close failure yields no usable result. Only the Manager may
+record capture completion, after every object and its own final original-physical
+checks. This sequence uses disk-backed outputs and retains the original VM memory
+fence; it does not use the legacy pathname-based cgroup widening helper.
+
+The native support gate remains closed pending backend object-generation/cleanup
+receipts and real cold-boot/capture/restore/smoke acceptance. Implementing or
+testing this sequence does not enable production qualification polling, native
+capture, graph activation or serving convergence. The combined PR remains
+deferred until the requested scope is ready.
+
+Live output preparation also accounts for the jail ownership handoff at boot.
+Ordinary prepared-root staging continues to require vmmd ownership. The complete
+capture preflight requires the live jail's original VM UID/GID, marker and an
+inode match against the original process's `/proc/PID/root`, with PID/start time
+checked through a retained pidfd. Live output preparation repeats those checks
+and retains the original directory descriptor; it never changes the jail owner
+or creates a replacement live-root marker. Missing capture authority, another
+process/chroot or changed start time refuses before output production.
+
+The complete kernel protocol fixture exposed a normal staging-close bug that
+the earlier crash-only fixtures did not exercise. The immutable disk claim
+shared the live journal's reference slice; binding acknowledgements changed the
+producer's expected claim in memory and prevented retirement of the durable
+pre-anchor claim. Claim creation now copies the reference slice. A focused
+regression mutates the live reference acknowledgements and verifies that the
+original claim remains unchanged and can retire its original temporary link.
+
+### Native capture protocol validation (2026-10-05)
+
+Native/qualification and ordinary snapshot race regressions passed on the
+user-authorized nested KVM node (44.838 s), as did the portable Manager cohort
+and exclusive publication tests on macOS (4.106 s). Normal fcvm/storage lint and
+metal lint filtered to all changed lines, including new files, reported zero
+issues. The existing full-package metal lint baseline remains separate.
+
+Under the shared acceptance lock, `make test-metal` passed eleven native
+ownership/protocol fixtures and seven publication intent fixtures (22.312 s).
+The new capture fixture uses actual anonymous files, bind mounts, a tmpfs jail
+handed to the VM UID, pidfds, kernel Unix peer credentials, disk-backed immutable
+intent and exclusive local storage. Its static chrooted API peer models capture
+and resume effects; it is not Firecracker. The complete, lost-create-response and
+lost-resume-response cases verify original frozen-drive bytes, effect ordering,
+uncertain-result retention and joined process/source retirement. `make leakcheck`
+was clean. SHA-256 checks cover all nineteen changed Go files.
+
+These results establish the internal protocol and kernel ownership boundary.
+They do not establish real VM capture/restore, backend generation/cleanup
+receipts, graph activation or serving convergence. Production support remains
+closed and the combined PR is still deferred.

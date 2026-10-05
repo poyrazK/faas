@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,31 @@ import (
 type qualificationCaptureVMM struct {
 	*recoveryVMMFixture
 	capture func(context.Context, Lease, SnapshotSpec) (SnapshotInfo, error)
+}
+
+type qualificationCohortVMM struct {
+	*qualificationCaptureVMM
+	produce func(context.Context, Lease, BackingIdentity) (SnapshotInfo, error)
+	resumes int
+}
+
+func (v *qualificationCohortVMM) captureEnvironmentQualificationSnapshot(ctx context.Context, lease Lease, backing BackingIdentity) (SnapshotInfo, error) {
+	return v.produce(ctx, lease, backing)
+}
+
+func (v *qualificationCohortVMM) ResumeVM(context.Context, Lease) error {
+	v.resumes++
+	return errors.New("cohort producer borrowed legacy resume")
+}
+
+type qualificationCohortStorage struct {
+	storage.StorageBackend
+	writes int
+}
+
+func (b *qualificationCohortStorage) Put(context.Context, string, io.Reader) error {
+	b.writes++
+	return errors.New("Manager borrowed ordinary publication around native producer")
 }
 
 // This is a portable producer fixture, not a supported native export adapter.
@@ -143,6 +169,70 @@ func TestNativeQualificationSnapshotRealBackendRemainsUnavailableBeforeEffects(t
 			path, _ := j.capturePath(frame.InstanceID)
 			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("unsupported native backend recorded capture start", err)
+			}
+		})
+	}
+}
+
+func TestNativeQualificationSnapshotCohortOwnsResumeAndBackingPublication(t *testing.T) {
+	for _, outcome := range []string{"complete", "uncertain"} {
+		t.Run(outcome, func(t *testing.T) {
+			m, j, frame, ctx, original, legacy := qualificationCaptureFixture(t)
+			v := &qualificationCohortVMM{qualificationCaptureVMM: original}
+			canonical := m.storage
+			observed := &qualificationCohortStorage{StorageBackend: canonical}
+			m.storage = observed
+			productions := 0
+			v.produce = func(ctx context.Context, lease Lease, backing BackingIdentity) (SnapshotInfo, error) {
+				productions++
+				permit, ok := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit)
+				if !ok || !sameNativePhysicalLease(permit.Physical.Lease, lease) || backing != m.instanceBacking[frame.InstanceID] {
+					return SnapshotInfo{}, errors.New("cohort lost original physical/backing authority")
+				}
+				if outcome == "uncertain" {
+					return SnapshotInfo{}, errors.New("modeled native capture outcome uncertain")
+				}
+				keys := qualificationSnapshotProof(permit.Incoming, SnapshotInfo{})
+				for _, key := range []string{keys.StorageKey, keys.VMStateStorageKey, keys.DriveStorageKey} {
+					if err := canonical.Put(ctx, key, bytes.NewReader([]byte("modeled original capture"))); err != nil {
+						return SnapshotInfo{}, err
+					}
+				}
+				body, err := json.Marshal(backing)
+				if err != nil {
+					return SnapshotInfo{}, err
+				}
+				if err := canonical.Put(ctx, keys.BackingStorageKey, bytes.NewReader(body)); err != nil {
+					return SnapshotInfo{}, err
+				}
+				return SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288}, nil
+			}
+			m.vmm = v
+			proof, err := m.CaptureEnvironmentQualification(ctx, frame)
+			if (err == nil) != (outcome == "complete") || v.resumes != 0 || legacy.Load() != 0 || productions != 1 || observed.writes != 0 {
+				t.Fatal("Manager mixed native cohort with legacy effects", err, v.resumes, legacy.Load(), productions)
+			}
+			incoming, err := j.read(frame.InstanceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys := qualificationSnapshotProof(incoming, SnapshotInfo{})
+			body, readErr := m.storage.Get(ctx, keys.BackingStorageKey)
+			if body != nil {
+				_ = body.Close()
+			}
+			if (readErr == nil) != (outcome == "complete") {
+				t.Fatal("cohort did not retain its own backing publication", readErr)
+			}
+			capture, err := j.readCapture(incoming)
+			if err != nil || capture.CompletedAt.IsZero() != (outcome == "uncertain") {
+				t.Fatal("Manager promoted uncertain cohort", err)
+			}
+			if outcome == "complete" && proof.MemBytes != 1024 {
+				t.Fatal("Manager lost original cohort result")
+			}
+			if _, err := m.CaptureEnvironmentQualification(ctx, frame); (err == nil) != (outcome == "complete") || productions != 1 || v.resumes != 0 {
+				t.Fatal("duplicate delivery repeated native effects", err, productions, v.resumes)
 			}
 		})
 	}

@@ -118,9 +118,16 @@ func (b linuxNativeImageSources) Prepare(owner nativeLaunchRecord, root, source,
 	return &linuxNativeImagePreparation{source: input, root: rootFile, identity: identity, namespace: namespace, link: preferLink && uint64(rootStat.Dev) == identity.Device, owner: owner}, nil
 }
 
+func nativeImageRootPlacement(base string, owner nativeLaunchRecord, root, name string) error {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, "\\\x00") || filepath.Base(filepath.Dir(root)) != owner.Lease.Instance || filepath.Base(root) != "root" || filepath.Dir(filepath.Dir(filepath.Dir(root))) != base || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(root))), "firecracker") {
+		return errors.New("native image source: image placement differs from the original jail")
+	}
+	return nil
+}
+
 func (b linuxNativeImageSources) prepareRoot(owner nativeLaunchRecord, root, name string) (file *os.File, stat unix.Stat_t, err error) {
-	if name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, "\\\x00") || filepath.Base(filepath.Dir(root)) != owner.Lease.Instance || filepath.Base(root) != "root" || filepath.Dir(filepath.Dir(filepath.Dir(root))) != b.base || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(root))), "firecracker") {
-		return nil, stat, errors.New("native image source: image placement differs from the original jail")
+	if err := nativeImageRootPlacement(b.base, owner, root, name); err != nil {
+		return nil, stat, err
 	}
 	file, err = os.OpenFile(root, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,33 @@ func TestNativeDiskStagingRequiresDurableClaimBeforeLink(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(b.diskStagingRoot); err != nil || len(entries) != 0 {
 		t.Fatal("successful preparation retained a disk claim or name", entries, err)
+	}
+}
+
+func TestNativeDiskStagingClaimDoesNotBorrowMutableBindingReferences(t *testing.T) {
+	p, b, record, point := nativeDiskStagingFixture(t)
+	if err := p.OwnAnonymousSource(record, point); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := readNativeDiskImageClaim(b.diskStagingRoot, record.Epoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.linkAnonymousSource(point); err != nil {
+		t.Fatal(err)
+	}
+	// These are the live journal mutations made after the initial durable
+	// claim. They must not alter the producer's expected immutable claim.
+	record.References[0].Target = nativeLoopIdentity{Device: 42, Inode: 43}
+	record.References[0].MountID, record.References[0].Ready = 101, true
+	if !reflect.DeepEqual(*p.diskClaim, claim) {
+		t.Fatal("binding acknowledgement changed the producer's immutable disk claim")
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal("normal producer close could not retire original immutable claim", err)
+	}
+	if entries, err := os.ReadDir(b.diskStagingRoot); err != nil || len(entries) != 0 {
+		t.Fatal("normal binding acknowledgement retained disk claim/source", entries, err)
 	}
 }
 

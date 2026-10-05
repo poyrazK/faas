@@ -27,6 +27,16 @@ const (
 	nativeSnapshotResume
 )
 
+type linuxNativeSnapshotControl struct{}
+
+func newNativeSnapshotControlBackend() nativeSnapshotControlBackend {
+	return linuxNativeSnapshotControl{}
+}
+
+func (linuxNativeSnapshotControl) Request(ctx context.Context, socket string, owner nativeLaunchRecord, method, path string, body any) error {
+	return nativeSnapshotProcessRequest(ctx, socket, owner, method, path, body)
+}
+
 // This single-effect primitive grants no capture-completion or publication
 // evidence. The complete producer must own its pause/freeze/resume sequencing
 // and storage publication. The ordinary snapshot entry points remain gated.
@@ -36,8 +46,7 @@ func (v *JailerVMM) controlNativeQualificationSnapshot(ctx context.Context, leas
 	if r == nil || r.journal == nil || r.imageSources == nil || !ok || permit.Incoming.Execution.InstanceID != lease.Instance || !sameNativePhysicalLease(lease, permit.Incoming.NativeLease) {
 		return fmt.Errorf("native snapshot control: original capture capability is required: %w", state.ErrConflict)
 	}
-	method, path, body, err := nativeSnapshotControlRequest(permit.Capture.CaptureID, action)
-	if err != nil {
+	if _, _, _, err := nativeSnapshotControlRequest(permit.Capture.CaptureID, action); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithDeadline(ctx, permit.Incoming.Deadline)
@@ -57,6 +66,23 @@ func (v *JailerVMM) controlNativeQualificationSnapshot(ctx context.Context, leas
 	if err != nil {
 		return err
 	}
+	return v.controlNativeQualificationSnapshotLocked(ctx, lease, permit, owner, action)
+}
+
+// The complete producer holds the physical lock through control, freezing and
+// uploads. This helper must never acquire that lock again or retry an effect.
+func (v *JailerVMM) controlNativeQualificationSnapshotLocked(ctx context.Context, lease Lease, permit nativeSnapshotCapturePermit, owner nativeLaunchRecord, action nativeSnapshotControlAction) error {
+	r := v.nativeRecovery
+	method, path, body, err := nativeSnapshotControlRequest(permit.Capture.CaptureID, action)
+	if err != nil {
+		return err
+	}
+	if r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+		return errors.New("native snapshot control: original local producer is required")
+	}
+	if err := r.checkDaemonOwnership(); err != nil {
+		return err
+	}
 	images := nativeImageSourceJournal{owner: r.journal, backend: r.imageSources}
 	if err := images.captureOutputAuthority(ctx, permit.Physical, owner, permit); err != nil {
 		return err
@@ -64,7 +90,10 @@ func (v *JailerVMM) controlNativeQualificationSnapshot(ctx context.Context, leas
 	if err := images.requireSnapshotControlBindings(owner, v.chrootRoot(lease.Instance), permit.Capture.CaptureID, action); err != nil {
 		return err
 	}
-	if err := nativeSnapshotProcessRequest(ctx, v.socketPath(lease.Instance), owner, method, path, body); err != nil {
+	if r.snapshotControl == nil {
+		return errors.New("native snapshot control: original startup control adapter is required")
+	}
+	if err := r.snapshotControl.Request(ctx, v.socketPath(lease.Instance), owner, method, path, body); err != nil {
 		return err // A lost response never retries a possibly completed effect.
 	}
 	if r.generation(lease.Instance) != permit.Incoming.NativeGeneration {

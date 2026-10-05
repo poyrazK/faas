@@ -36,6 +36,24 @@ func (v *JailerVMM) withNativeSnapshotOutput(ctx context.Context, lease Lease, k
 }
 
 func (j *nativeImageSourceJournal) withCaptureOutput(ctx context.Context, permit nativeSnapshotCapturePermit, root, kind string, consume func(*os.File) error) (err error) {
+	_, ok := j.backend.(nativeSnapshotOutputInputBackend)
+	if !ok || consume == nil {
+		return errors.New("native snapshot output input: pinned output backend or consumer is unavailable")
+	}
+	if _, err := nativeSnapshotOutputName(permit.Capture.CaptureID, kind); err != nil {
+		return err
+	}
+	vmLock, err := j.owner.lock(ctx, permit.Physical.Lease.Instance)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, vmLock.Close()) }()
+	return j.withCaptureOutputLocked(ctx, permit, root, kind, consume)
+}
+
+// The native producer already holds the original physical lock. Source locks
+// and the read-only output descriptor still close within this boundary.
+func (j *nativeImageSourceJournal) withCaptureOutputLocked(ctx context.Context, permit nativeSnapshotCapturePermit, root, kind string, consume func(*os.File) error) (err error) {
 	backend, ok := j.backend.(nativeSnapshotOutputInputBackend)
 	if !ok || consume == nil {
 		return errors.New("native snapshot output input: pinned output backend or consumer is unavailable")
@@ -44,11 +62,6 @@ func (j *nativeImageSourceJournal) withCaptureOutput(ctx context.Context, permit
 	if err != nil {
 		return err
 	}
-	vmLock, err := j.owner.lock(ctx, permit.Physical.Lease.Instance)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, vmLock.Close()) }()
 	owner, err := j.owner.read(permit.Physical.Lease.Instance)
 	if err != nil {
 		return err

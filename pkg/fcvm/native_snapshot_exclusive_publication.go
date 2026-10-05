@@ -99,29 +99,53 @@ func (v *JailerVMM) publishNativeSnapshotOutput(ctx context.Context, lease Lease
 		key = keys.VMStateStorageKey
 	}
 	return v.withNativeSnapshotOutput(ctx, lease, kind, func(file *os.File) error {
-		info, err := file.Stat()
-		if err != nil {
-			return err
-		}
-		if err := storage.PutExclusive(ctx, publication.backend, key, file, info.Size()); err != nil {
-			return err
-		}
-		r := v.nativeRecovery
-		if r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
-			return errors.New("native snapshot publication: original daemon producer changed during IO")
-		}
-		if err := r.checkDaemonOwnership(); err != nil {
-			return err
-		}
-		current, err := r.journal.read(lease.Instance)
-		if err != nil {
-			return err
-		}
-		images := nativeImageSourceJournal{owner: r.journal, backend: r.imageSources}
-		if err := images.captureOutputAuthority(ctx, permit.Physical, current, permit); err != nil {
-			return err
-		}
-		_, err = v.requireNativeSnapshotPublication(ctx, lease)
+		_, err := v.publishNativeSnapshotReader(ctx, lease, publication, key, file)
 		return err
 	})
+}
+
+// Caller holds the physical and source locks through IO and descriptor close.
+// Sizes describe the original source, conservatively accounting logical bytes;
+// they are not backend object-generation or automatic cleanup receipts.
+func (v *JailerVMM) publishNativeSnapshotReader(ctx context.Context, lease Lease, publication nativeSnapshotPublicationPermit, key string, file *os.File) (int64, error) {
+	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+		return 0, err
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 {
+		return 0, errors.Join(err, errors.New("native snapshot publication: original source is incomplete"))
+	}
+	if err := storage.PutExclusive(ctx, publication.backend, key, file, info.Size()); err != nil {
+		return 0, err
+	}
+	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+		return 0, err
+	}
+	return info.Size(), ctx.Err()
+}
+
+// Caller holds the physical lock. Never take an incoming or physical lock
+// recursively while checking the original permit and persistent intent.
+func (v *JailerVMM) checkNativeSnapshotPublicationOwner(ctx context.Context, lease Lease) (nativeLaunchRecord, error) {
+	var owner nativeLaunchRecord
+	if _, err := v.requireNativeSnapshotPublication(ctx, lease); err != nil {
+		return owner, err
+	}
+	permit, _, err := nativeSnapshotPublicationKeys(ctx, lease)
+	if err != nil {
+		return owner, err
+	}
+	r := v.nativeRecovery
+	if r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+		return owner, errors.New("native snapshot publication: original daemon producer changed during IO")
+	}
+	if err := r.checkDaemonOwnership(); err != nil {
+		return owner, err
+	}
+	owner, err = r.journal.read(lease.Instance)
+	if err != nil {
+		return owner, err
+	}
+	images := nativeImageSourceJournal{owner: r.journal, backend: r.imageSources}
+	return owner, images.captureOutputAuthority(ctx, permit.Physical, owner, permit)
 }
