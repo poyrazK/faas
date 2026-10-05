@@ -57,8 +57,10 @@ func newSourceExportFixture(t *testing.T, kind state.DeploymentKind, function, p
 	builder := &fakeBuilder{bytesOut: 9}
 	h := newHandlerWithBuilder(s, builder)
 	h.appsRoot = t.TempDir()
-	f:=sourceExportFixture{store: s, h: h, builder: builder, app: app, dep: dep, acct: owner.Account}
-	if publish { configureSourceBaseFixture(t,&f) }
+	f := sourceExportFixture{store: s, h: h, builder: builder, app: app, dep: dep, acct: owner.Account}
+	if publish {
+		configureSourceBaseFixture(t, &f)
+	}
 	return f
 }
 
@@ -169,7 +171,7 @@ func TestApprovedSourceExportRefusesChangedOrRevokedInput(t *testing.T) {
 			f := newSourceExportFixture(t, state.DeploymentKindTarball, mode == "function legacy seam", true)
 			switch mode {
 			case "function legacy seam":
-				f.h.runtimeBaseStagingEnabled=false
+				f.h.runtimeBaseStagingEnabled = false
 			case "changed archive":
 				body, err := os.ReadFile(f.dep.RootfsPath)
 				if err != nil {
@@ -277,7 +279,7 @@ func TestRequiredSourceExportWithoutPublicationRefusesBeforeConversion(t *testin
 
 func TestApprovedSourceExportStillRequiresValidOCI(t *testing.T) {
 	f := newSourceExportFixture(t, state.DeploymentKindTarball, false, false)
-	configureSourceBaseFixture(t,&f)
+	configureSourceBaseFixture(t, &f)
 	body, err := os.ReadFile(f.dep.RootfsPath)
 	if err != nil {
 		t.Fatal(err)
