@@ -5939,6 +5939,7 @@ func cmdLogs(args []string) int {
 	// --explain` actionable — the customer no longer has to read the
 	// whole stream to know which error fired.
 	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
+	app := fs.String("app", "", appSlugFlagUsage)
 	if err := parseAppLogFlags(fs, args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
 		return 1
@@ -5952,8 +5953,11 @@ func cmdLogs(args []string) int {
 		return 1
 	}
 	slug := ""
-	if fs.NArg() == 1 {
-		slug = fs.Arg(0)
+	if pos, mergeErr := mergeAppFlag(fs.Args(), *app, 1); mergeErr != nil {
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>|--app SLUG] ...\nerror: "+mergeErr.Error(), "logs")
+		return 1
+	} else if len(pos) == 1 {
+		slug = pos[0]
 	} else {
 		var resolveErr error
 		slug, resolveErr = resolveAppFlagOrContext("")

@@ -1,0 +1,120 @@
+package main
+
+import (
+	"errors"
+	"slices"
+	"strings"
+	"testing"
+)
+
+func TestMergeAppFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		positional []string
+		app        string
+		max        int
+		want       []string
+		wantErr    error
+	}{
+		{name: "no flag keeps positionals", positional: []string{"api"}, max: 1, want: []string{"api"}},
+		{name: "flag fills omitted slug", app: "api", max: 1, want: []string{"api"}},
+		{name: "same app twice is fine", positional: []string{"api"}, app: "api", max: 1, want: []string{"api"}},
+		{name: "different apps conflict", positional: []string{"api"}, app: "web", max: 1, wantErr: errAppFlagConflict},
+		{name: "flag fills slug before trailing id", positional: []string{"wake-1"}, app: "api", max: 2, want: []string{"api", "wake-1"}},
+		{name: "full positionals must agree", positional: []string{"web", "wake-1"}, app: "api", max: 2, wantErr: errAppFlagConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mergeAppFlag(tc.positional, tc.app, tc.max)
+			if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && !slices.Equal(got, tc.want)) {
+				t.Fatalf("mergeAppFlag(%q, %q, %d) = (%q, %v), want (%q, %v)", tc.positional, tc.app, tc.max, got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestSlugFirstLeavesAcceptAppFlag reproduces production-us hunt #4:
+// `gregale link` says to pass --app for app-scoped commands, but these
+// leaves rejected it with "flag provided but not defined: -app". A
+// conflicting slug and --app must now reach the leaf's own validation,
+// which happens before any request.
+func TestSlugFirstLeavesAcceptAppFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"ps", "slug-a"},
+		{"logs", "slug-a"},
+		{"metrics", "slug-a"},
+		{"analytics", "slug-a"},
+		{"slo", "slug-a"},
+		{"inspect", "slug-a"},
+		{"throttle-suggestions", "slug-a"},
+		{"wake-timeline", "slug-a", "wake-1"},
+		{"dlq", "list", "slug-a"},
+		{"events", "subscriptions", "slug-a"},
+		{"debug", "requests", "list", "slug-a"},
+		{"bindings", "slug-a"},
+	} {
+		t.Run(strings.Join(args[:len(args)-1], " "), func(t *testing.T) {
+			stderr, restore := captureStderr(t)
+			code := run(append(append([]string(nil), args...), "--app", "slug-b"))
+			restore()
+			out := stderr.String()
+			if code == 0 {
+				t.Fatalf("conflicting slug and --app exited 0; stderr:\n%s", out)
+			}
+			if strings.Contains(out, "not defined") || strings.Contains(out, "unknown flag --app") {
+				t.Fatalf("leaf still rejects --app:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestHumanFlagErrorsUsePublicSpelling reproduces production-us hunt #4:
+// 30 leaves printed the flag package's raw output for a mistyped flag,
+// with single-dash names, every default, and internal FlagSet names
+// such as "Usage of usage-list:".
+func TestHumanFlagErrorsUsePublicSpelling(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{args: []string{"metrics", "--bogus"}, want: []string{"unknown flag --bogus", "run 'gregale metrics --help' for usage"}},
+		{args: []string{"usage", "--bogus"}, want: []string{"unknown flag --bogus", "run 'gregale usage --help' for usage"}},
+		{args: []string{"invocations", "list", "--bogus"}, want: []string{"run 'gregale invocations list --help' for usage"}},
+		{args: []string{"metrics", "x", "--range"}, want: []string{"flag --range needs a value"}},
+		// A leaf's own usage line survives; only the defaults dump is dropped.
+		{args: []string{"dlq", "list", "x", "--limit", "abc"}, want: []string{`invalid value "abc" for flag --limit`, "usage: gregale dlq list <app>"}},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			stderr, restore := captureStderr(t)
+			code := run(tc.args)
+			restore()
+			out := stderr.String()
+			if code == 0 {
+				t.Fatalf("exit 0 for invalid flags; stderr:\n%s", out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("stderr missing %q:\n%s", want, out)
+				}
+			}
+			for _, raw := range []string{"Usage of ", "flag provided but not defined", "usage-list", "\n  -"} {
+				if strings.Contains(out, raw) {
+					t.Errorf("stderr still contains raw flag output %q:\n%s", raw, out)
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeFlagDiagnostic(t *testing.T) {
+	for in, want := range map[string]string{
+		"flag provided but not defined: -app":                 "unknown flag --app",
+		"flag needs an argument: -range":                      "flag --range needs a value",
+		`invalid value "abc" for flag -limit: parse error`:    `invalid value "abc" for flag --limit: parse error`,
+		`invalid boolean value "maybe" for -all: parse error`: `invalid boolean value "maybe" for --all: parse error`,
+		"bad flag syntax: ---x":                               "bad flag syntax: ---x",
+	} {
+		if got := normalizeFlagDiagnostic(in); got != want {
+			t.Errorf("normalizeFlagDiagnostic(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -98,10 +98,11 @@ func init() {
 }
 
 func run(args []string) (status int) {
-	previousJSON, previousUsageHelp := jsonOutput, jsonUsageHelp
+	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
 	defer func() {
 		jsonOutput = previousJSON
 		jsonUsageHelp = previousUsageHelp
+		invokedCommandPath = previousPath
 	}()
 	if invalid := invalidJSONFlagValue(args); invalid != "" {
 		PrintUsage(os.Stderr, "invalid --json value "+invalid+"; use true or false", "cli")
@@ -112,6 +113,7 @@ func run(args []string) (status int) {
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
 	args = applyJSONFlag(args)
 	jsonUsageHelp = hasHelpFlag(args)
+	invokedCommandPath = publicCommandPath(args)
 	if len(args) == 0 {
 		fmt.Print(topLevelUsage(false))
 		return 0

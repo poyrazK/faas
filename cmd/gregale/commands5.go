@@ -84,9 +84,15 @@ func cmdPS(args []string) int {
 	fs := newFlagSet("ps", flag.ContinueOnError)
 	setFlagOutput(fs, os.Stderr)
 	history := fs.Bool("all", false, "include the newest 100 retained history rows (parked rows expire after 30d by default)")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flags, positional := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil || len(positional) > 1 {
 		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]", "ps")
+		return 1
+	}
+	positional, err := mergeAppFlag(positional, *app, 1)
+	if err != nil {
+		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]\nerror: "+err.Error(), "ps")
 		return 1
 	}
 	slug := ""

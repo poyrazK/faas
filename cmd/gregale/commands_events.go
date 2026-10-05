@@ -338,10 +338,12 @@ func cmdEventsFanoutHistory(args []string) int {
 func cmdEventsSubscriptions(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("events subscriptions", flag.ContinueOnError)
+	app := fs.String("app", "", appSlugFlagUsage)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
+	positional, mergeErr := mergeAppFlag(positional, *app, 1)
+	if mergeErr != nil || len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(os.Stderr, "usage: gregale events subscriptions <app>", "events")
 		return 1
 	}

@@ -244,15 +244,17 @@ func cmdDebugRequestsList(args []string) int {
 	cursor := fs.String("cursor", "", "opaque cursor from the previous page")
 	limit := fs.Int("limit", 20, "max rows (1..200)")
 	all := fs.Bool("all", false, "walk every retained page")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
 		"since": true, "route": true, "deployment-id": true, "status": true,
 		"cold-boot": true, "consumer-id": true, "min-latency-ms": true,
-		"cursor": true, "limit": true, "all": false,
+		"cursor": true, "limit": true, "all": false, "app": true,
 	})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if len(positional) != 1 {
+	positional, mergeErr := mergeAppFlag(positional, *app, 1)
+	if mergeErr != nil || len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale debug requests list [--all] [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1
 	}
