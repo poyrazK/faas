@@ -390,13 +390,22 @@ func TestCustomerOperationDeveloperParserAndTenantRoutes(t *testing.T) {
 	}))
 	defer server.Close()
 	client := tenantCustomerOperationsClient{client: api.NewClient(server.URL, "rotated-tenant-token").SetCompletionCache(nil)}
-	c, err := parseCustomerOperationCommand([]string{"watch", developerOperationID, "--self"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	var c customerOperationCommand
 	var out bytes.Buffer
-	if code, err := runCustomerOperationCommand(t.Context(), client, c, &out, true); err != nil || code != 0 {
-		t.Fatal("tenant watch", code, err)
+	for _, args := range [][]string{
+		{"watch", "--self", developerOperationID},
+		{"watch", developerOperationID, "--self"},
+		{"watch", "--self=true", developerOperationID},
+		{"watch", "--timeout", "1s", "--self", developerOperationID},
+	} {
+		var err error
+		c, err = parseCustomerOperationCommand(args)
+		if err != nil || !c.self || c.id != developerOperationID || c.app != "" {
+			t.Fatalf("tenant selector consumed or changed the operation identity: %v %+v %v", args, c, err)
+		}
+		if code, err := runCustomerOperationCommand(t.Context(), client, c, &out, true); err != nil || code != 0 {
+			t.Fatal("tenant watch", code, err)
+		}
 	}
 	c.verb = "events"
 	if _, err := runCustomerOperationCommand(t.Context(), client, c, &out, true); err != nil {

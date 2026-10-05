@@ -39,6 +39,10 @@ type customerOperationCommand struct {
 }
 
 func cmdCustomerOperations(args []string) int {
+	if len(args) == 0 {
+		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|start|list|get|events|executions|watch|download|cancel|recover|delivery|delivery-attempts|retry-delivery>", "customer-operations")
+		return 1
+	}
 	if len(args) > 0 && (args[0] == "delivery" || args[0] == "delivery-attempts" || args[0] == "retry-delivery") {
 		return cmdCustomerOperationDelivery(args)
 	}
@@ -122,7 +126,7 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 	default:
 		return c, fmt.Errorf("unknown customer-operations command %q", c.verb)
 	}
-	flags, positionals := splitArgsForFlags(args[1:])
+	flags, positionals := splitArgsForFlags(args[1:], "self")
 	if err := fs.Parse(flags); err != nil {
 		return c, err
 	}

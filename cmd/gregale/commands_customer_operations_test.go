@@ -240,6 +240,23 @@ func TestCustomerOperationCLIRejectsUnfencedOrAmbiguousCommands(t *testing.T) {
 	}
 }
 
+func TestCustomerOperationMissingVerbPrintsRegisteredUsage(t *testing.T) {
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+	var out bytes.Buffer
+	code := 0
+	if err := captureStderrSwap(t, &out, func() int {
+		code = cmdCustomerOperations(nil)
+		return code
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code != 1 || !strings.HasPrefix(out.String(), "usage: gregale customer-operations ") || !strings.Contains(out.String(), "Docs: "+docsURLForTopic("customer-operations")) {
+		t.Fatalf("missing command did not identify its usage and documentation: exit=%d %q", code, out.String())
+	}
+}
+
 func TestCustomerOperationRecoveryFileValidation(t *testing.T) {
 	dir := t.TempDir()
 	evidence, result := filepath.Join(dir, "evidence"), filepath.Join(dir, "result")
