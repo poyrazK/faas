@@ -361,10 +361,7 @@ func (r pgRouter) appBySlug(ctx context.Context, slug string) (gateway.App, bool
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
-		return gateway.App{}, false, nil
-	}
-	return r.toApp(ctx, app)
+	return r.toPublicApp(ctx, app)
 }
 
 // customDomain — the legacy custom_domains branch (spec §7).
@@ -404,10 +401,7 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
-		return gateway.App{}, false, nil
-	}
-	resolved, found, err := r.toApp(ctx, app)
+	resolved, found, err := r.toPublicApp(ctx, app)
 	if err != nil || !found {
 		return resolved, found, err
 	}
@@ -492,10 +486,7 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 		// same account), but we fail closed rather than route.
 		return gateway.App{}, false, nil
 	}
-	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
-		return gateway.App{}, false, nil
-	}
-	routed, ok, err := r.toApp(ctx, app)
+	routed, ok, err := r.toPublicApp(ctx, app)
 	if err == nil && ok {
 		routed.RoutedSurfaceID = surface.ID
 		routed.PlatformTenantID = binding.TenantID
@@ -551,16 +542,30 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	return r.toAppWithDeployment(ctx, app, nil)
 }
 
+func (r pgRouter) toPublicApp(ctx context.Context, app state.App) (gateway.App, bool, error) {
+	resolved, found, err := r.toApp(ctx, app)
+	if err == nil && found && api.NormalizeAppVisibility(resolved.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
+	}
+	return resolved, found, err
+}
+
 func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
+	if app.Status == state.AppDeleted {
+		return gateway.App{}, false, nil
+	}
 	if exact != nil {
 		resolved, err := state.ResolveAppForDeployment(ctx, r.store, app, *exact)
 		if err != nil {
 			return gateway.App{}, false, err
 		}
 		app = resolved
-	}
-	if app.Status == state.AppDeleted {
-		return gateway.App{}, false, nil
+	} else {
+		resolved, err := r.productionAppSettings(ctx, app)
+		if err != nil {
+			return gateway.App{}, false, err
+		}
+		app = resolved
 	}
 	acct, err := r.store.AccountByID(ctx, app.AccountID)
 	if err != nil {

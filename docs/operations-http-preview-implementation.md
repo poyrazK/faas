@@ -565,3 +565,7 @@ regeneration tripwire excluded. Node passed 106 unit tests, eight generator
 tests and one bridge test. The production CLI generated the current reference,
 including the complete customer-operations command group. Local interrupted
 builds and their disk-guard receipts remain preserved as stopped attempts.
+
+A further clean merge retained main `85b50d0c3d630258ac96ec608d559e0d5dff92c2`,
+including its deployed ingress/worker settings and release-policy invalidation
+migration. No Operations source was replaced by that incoming change.
