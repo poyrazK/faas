@@ -51,6 +51,10 @@ test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale C
 test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completion gates
 	@GO="$(GO)" sh scripts/test-commit-native.sh
 
+.PHONY: test-managed-operation-native
+test-managed-operation-native: ## Run native Firecracker managed workflow recovery and effect delivery acceptance
+	@GO="$(GO)" sh scripts/test-managed-operation-native.sh
+
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 

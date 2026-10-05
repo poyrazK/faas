@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-const workflowRunSelectCols = `id, app_id, workflow_name, status, current_step, input, output,
+const workflowRunSelectCols = `id, app_id, platform_tenant_id, workflow_name, status, current_step, input, output,
        definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, resume_count, cancelled_at`
 
 const workflowStepSelectCols = `run_id, step_name, status, attempt, input, output,
@@ -26,12 +26,16 @@ func scanWorkflowRunCols(scan func(...any) error) (*WorkflowRun, error) {
 	var r WorkflowRun
 	var inputBytes, outputBytes, defBytes []byte
 	var runUUID string
-	if err := scan(&runUUID, &r.AppID, &r.WorkflowName, &r.Status, &r.CurrentStep,
+	var platformTenantID pgtype.UUID
+	if err := scan(&runUUID, &r.AppID, &platformTenantID, &r.WorkflowName, &r.Status, &r.CurrentStep,
 		&inputBytes, &outputBytes, &defBytes, &r.ScheduledFor, &r.StartedAt,
 		&r.FinishedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt, &r.ResumeCount, &r.CancelledAt); err != nil {
 		return nil, err
 	}
 	r.ID = runUUID
+	if platformTenantID.Valid {
+		r.PlatformTenantID = uuid.UUID(platformTenantID.Bytes).String()
+	}
 	if len(inputBytes) > 0 {
 		r.Input = json.RawMessage(inputBytes)
 	}
@@ -99,6 +103,11 @@ func prepareWorkflowRun(r *WorkflowRun) error {
 	if r.ID == "" {
 		r.ID = uuid.NewString()
 	}
+	if r.PlatformTenantID != "" {
+		if _, err := uuid.Parse(r.PlatformTenantID); err != nil {
+			return fmt.Errorf("%w: invalid platform tenant ID", ErrWorkflowInvalidRecord)
+		}
+	}
 	if r.Status == "" {
 		r.Status = WorkflowRunStatusPending
 	}
@@ -123,12 +132,12 @@ func prepareWorkflowRun(r *WorkflowRun) error {
 func insertWorkflowRun(ctx context.Context, q workflowRunQueryer, r *WorkflowRun) error {
 	query := `
 		INSERT INTO workflow_runs (
-			id, app_id, workflow_name, status, input, definition_snapshot, scheduled_for
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			id, app_id, platform_tenant_id, workflow_name, status, input, definition_snapshot, scheduled_for
+		) VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8)
 		RETURNING created_at, updated_at
 	`
 	err := q.QueryRow(ctx, query,
-		r.ID, r.AppID, r.WorkflowName, r.Status, r.Input, r.DefinitionSnapshot, r.ScheduledFor,
+		r.ID, r.AppID, r.PlatformTenantID, r.WorkflowName, r.Status, r.Input, r.DefinitionSnapshot, r.ScheduledFor,
 	).Scan(&r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("pgstore: create workflow run: %w", err)
@@ -550,7 +559,7 @@ func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string,
 
 func workflowRunFromSQLC(row sqlc.WorkflowRun) *WorkflowRun {
 	return &WorkflowRun{
-		ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), WorkflowName: row.WorkflowName,
+		ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), PlatformTenantID: pgUUIDString(row.PlatformTenantID), WorkflowName: row.WorkflowName,
 		Status: row.Status, CurrentStep: workflowPGTextPtr(row.CurrentStep),
 		Input: cloneWorkflowJSON(row.Input), Output: cloneWorkflowJSON(row.Output),
 		DefinitionSnapshot: cloneWorkflowJSON(row.DefinitionSnapshot),

@@ -29,6 +29,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -62,6 +63,114 @@ http.createServer((req, res) => {
 		"package.json":     pkgJSON,
 		"index.js":         indexJS,
 		".faas-fixture":    "node22\n",
+		"faas-build-token": time.Now().UTC().Format(time.RFC3339Nano) + "\n",
+	}
+	return buildTarGz(t, files)
+}
+
+// ManagedWorkflowRecoveryFixture creates a Node application whose first
+// managed workflow invocation saves its response receipt in guest-local
+// writable storage and exits before replying. The guest-init supervisor
+// restarts the process; the operator retry must arrive with the same operation
+// ID at generation 2 and receive the saved response bytes. This qualifies the
+// native guest recovery path. PostgreSQL receipt commit/replay is exercised by
+// the separate operation SDK acceptance gate.
+func ManagedWorkflowRecoveryFixture(t *testing.T, webhookID string) []byte {
+	t.Helper()
+	webhookIDJSON, err := json.Marshal(webhookID)
+	if err != nil {
+		t.Fatalf("marshal managed workflow webhook ID: %v", err)
+	}
+	const pkgJSON = `{
+  "name": "faas-managed-workflow-recovery",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {"node": "22"},
+  "scripts": {"start": "node index.js"},
+  "dependencies": {}
+}
+`
+	indexJS := `const fs = require('fs');
+const http = require('http');
+const receiptPath = '/tmp/gregale-managed-workflow-receipt.json';
+const webhookID = ` + string(webhookIDJSON) + `;
+const port = parseInt(process.env.PORT || '8080', 10);
+
+http.createServer((req, res) => {
+  if (req.url === '/healthz') {
+    res.writeHead(200, {'content-type': 'text/plain'});
+    res.end('ready\n');
+    return;
+  }
+  if (req.method !== 'POST' || req.url !== '/managed/fulfill') {
+    res.writeHead(404);
+    res.end('not found');
+    return;
+  }
+
+  let raw = '';
+  req.setEncoding('utf8');
+  req.on('data', chunk => raw += chunk);
+  req.on('end', () => {
+    const operationID = req.headers['x-gregale-operation-id'];
+    const generation = Number(req.headers['x-gregale-operation-generation']);
+    const resultVersion = req.headers['x-gregale-operation-result-version'];
+    const attempt = Number(req.headers['x-faas-workflow-attempt']);
+    if (!operationID || resultVersion !== '1' || !Number.isInteger(generation) || !Number.isInteger(attempt) || generation !== attempt) {
+      res.writeHead(400);
+      res.end('missing or inconsistent managed operation identity');
+      return;
+    }
+
+    if (!fs.existsSync(receiptPath)) {
+      if (generation !== 1) {
+        res.writeHead(409);
+        res.end('receipt missing on retry');
+        return;
+      }
+      const responseBody = JSON.stringify({
+        gregale_operation_result: 1,
+        result: {order_id: 'ord-native-recovery', status: 'fulfilled'},
+        effects: [{
+          name: 'customer-notification',
+          webhook_id: webhookID,
+          type: 'order.fulfilled',
+          payload: {order_id: 'ord-native-recovery', status: 'fulfilled'}
+        }]
+      });
+      fs.writeFileSync(receiptPath, JSON.stringify({operation_id: operationID, request_body: raw, response_body: responseBody}), {mode: 0o600});
+      // Simulate the customer process dying after durable commit and before its
+      // HTTP response reaches Gregale. guest-init must restart this process.
+      process.exit(73);
+    }
+
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    if (generation !== 2 || operationID !== receipt.operation_id || raw !== receipt.request_body) {
+      res.writeHead(409);
+      res.end('retry identity or input differs from the saved receipt');
+      return;
+    }
+    res.writeHead(200, {'content-type': 'application/json', 'x-fixture-replayed': 'true'});
+    res.end(receipt.response_body);
+  });
+}).listen(port, '0.0.0.0', () => console.log('managed workflow recovery fixture listening on :' + port));
+`
+	const manifest = `schema_version: 1
+workflows:
+  - name: fulfill_order
+    steps:
+      - name: commit_order
+        managed_operation: true
+        path: /managed/fulfill
+        method: POST
+        retry:
+          max_attempts: 1
+`
+	files := map[string]string{
+		"package.json":     pkgJSON,
+		"index.js":         indexJS,
+		"gregale.yaml":     manifest,
+		".faas-fixture":    "node22-managed-workflow-recovery\n",
 		"faas-build-token": time.Now().UTC().Format(time.RFC3339Nano) + "\n",
 	}
 	return buildTarGz(t, files)

@@ -13,6 +13,10 @@ export type WorkflowRunResponse = {
   cancelled_at?: string;
   id: string;
   app_id: string;
+  /**
+   * Platform tenant authorized for this workflow run
+   */
+  platform_tenant_id?: string | null;
   workflow_name: string;
   status: 'pending' | 'running' | 'awaiting_event' | 'succeeded' | 'failed' | 'dead';
   current_step?: string | null;

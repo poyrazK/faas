@@ -56,10 +56,19 @@ func (s *PgStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedWo
 		if err != nil {
 			return fmt.Errorf("pgstore: validate workflow effect app scope: %w", err)
 		}
+		if run.PlatformTenantID != "" {
+			if _, err := q.CommitTenantAppScope(ctx, tx, sqlc.CommitTenantAppScopeParams{
+				AccountID: appScope.AccountID, AppID: run.AppID, TenantID: run.PlatformTenantID,
+			}); errors.Is(err, pgx.ErrNoRows) {
+				return ErrOperationEffectDestination
+			} else if err != nil {
+				return fmt.Errorf("pgstore: validate workflow effect tenant scope: %w", err)
+			}
+		}
 		generation := int64(commit.Attempt)
 		for _, effect := range commit.Effects {
 			hookID, err := q.ResolveExclusiveWebhookEffectTarget(ctx, tx, sqlc.ResolveExclusiveWebhookEffectTargetParams{
-				WebhookID: effect.WebhookID, AccountID: appScope.AccountID, TenantID: "", AppID: run.AppID,
+				WebhookID: effect.WebhookID, AccountID: appScope.AccountID, TenantID: run.PlatformTenantID, AppID: run.AppID,
 			})
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrOperationEffectDestination
@@ -67,7 +76,7 @@ func (s *PgStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedWo
 			if err != nil {
 				return fmt.Errorf("pgstore: resolve workflow effect webhook: %w", err)
 			}
-			body, err := workflowOperationEffectBody(commit.OperationID, run.AppID, generation, effect)
+			body, err := workflowOperationEffectBody(commit.OperationID, run.AppID, run.PlatformTenantID, generation, effect)
 			if err != nil {
 				return fmt.Errorf("pgstore: encode workflow effect: %w", err)
 			}

@@ -8,9 +8,39 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestPgStoreWorkflowRunPlatformTenantIDRoundTrip(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	suffix := uuid.NewString()
+	account, err := store.CreateAccount(ctx, "workflow-tenant-"+suffix+"@example.test", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "workflow-tenant-" + suffix[:8], RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := store.CreatePlatformTenant(ctx, account.ID, "workflow-tenant-"+suffix, "Workflow tenant", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "process",
+		DefinitionSnapshot: json.RawMessage(`{"name":"process","steps":[{"name":"main","path":"/process"}]}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetWorkflowRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PlatformTenantID != tenant.ID {
+		t.Fatalf("workflow tenant round trip = %q, want %q", got.PlatformTenantID, tenant.ID)
+	}
+}
 
 func TestPgStore_WorkflowCallbackWebhookBinding(t *testing.T) {
 	s, _, ctx := pgStoreWithPool(t)

@@ -10,12 +10,14 @@ Register a receiver with an explicit `operation.effect` subscription. For a
 customer-scoped operation, create it under
 `POST /v1/platform-tenants/{tenant_id}/webhooks` with an `event_filter` containing
 `operation.effect`. The customer must belong to your account and have an active
-surface linked to the operation's app. For an account-scoped operation, register
-an app receiver under `POST /v1/apps/{slug}/webhooks` with that same explicit
-filter. A workflow effect can target only a receiver owned by that workflow's
-app; tenant receivers are not supported for workflow steps. An empty app filter
-does not authorize operation effects. Store the receiver's UUID in your
-application's configuration.
+surface linked to the operation's app. For an account-scoped operation or
+workflow run, register an app receiver under
+`POST /v1/apps/{slug}/webhooks` with that same explicit filter. A tenant-bound
+workflow must target an enabled tenant receiver owned by the run's tenant, and
+that tenant must still have an active surface linked to the workflow app. A
+tenant run cannot target another tenant's receiver or an app-wide receiver.
+An empty app filter does not authorize operation effects. Store the receiver's
+UUID in your application's configuration.
 
 Your handler first checks `X-Gregale-Operation-Result-Version: 1`. If it is absent,
 return a failure before doing business work. Both the scheduler and internal

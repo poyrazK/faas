@@ -43,7 +43,7 @@ func (s *MemStore) OperationEffectDeliveryAllowed(ctx context.Context, id string
 			return true, nil
 		}
 	}
-	for _, effects := range s.workflowOperationEffects {
+	for attemptKey, effects := range s.workflowOperationEffects {
 		for _, effect := range effects {
 			if canonicalMemUUID(effect.Record.DeliveryID) != canonicalMemUUID(id) {
 				continue
@@ -67,7 +67,18 @@ func (s *MemStore) OperationEffectDeliveryAllowed(ctx context.Context, id string
 					}
 				}
 			}
-			return managedWorkflowEffectDestinationMatches(delivery.AccountID, delivery.AppID, hook), nil
+			run, runExists := s.workflowRuns[attemptKey.runID]
+			if !runExists || canonicalMemUUID(run.AppID) != canonicalMemUUID(delivery.AppID) {
+				return false, nil
+			}
+			if run.PlatformTenantID != "" {
+				tenant, tenantExists := s.platformTenants[run.PlatformTenantID]
+				op := ExclusiveOperation{AppID: run.AppID, AccountID: delivery.AccountID, PlatformTenantID: run.PlatformTenantID}
+				if !tenantExists || canonicalMemUUID(tenant.AccountID) != canonicalMemUUID(delivery.AccountID) || tenant.Status != PlatformTenantActive || !s.operationEffectSurfaceLinkedLocked(op) {
+					return false, nil
+				}
+			}
+			return managedWorkflowEffectDestinationMatches(delivery.AccountID, delivery.AppID, run.PlatformTenantID, hook), nil
 		}
 	}
 	return false, ErrNotOperationEffect
