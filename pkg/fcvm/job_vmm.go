@@ -261,6 +261,9 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: job cold boot: %w", err)
 	}
+	if err := v.preflightNativeBootConfig(ctx, l, BuildJobColdBootConfig(spec, l.Slot).MachineConfig); err != nil {
+		return fmt.Errorf("vmm: preflight native job boot config: %w", err)
+	}
 	originalImageRef := spec.ImageRef
 	kernelSrc, err := v.restoreSourceFromStorage(ctx, l.Instance, spec.KernelKey)
 	if err != nil {

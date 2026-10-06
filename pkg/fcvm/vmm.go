@@ -840,6 +840,9 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: cold boot: %w", err)
 	}
+	if err := v.preflightNativeBootConfig(ctx, l, BuildColdBootConfig(spec, l.Slot).MachineConfig); err != nil {
+		return fmt.Errorf("vmm: preflight native boot config: %w", err)
+	}
 	breakdown := coldBootTimingBreakdown{}
 	kernelSrc, timing, err := v.resolveColdBootArtifact(ctx, l.Instance, "kernel", spec.KernelKey)
 	if err != nil {
@@ -943,7 +946,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err := v.ensureNativeLaunch(ctx, l); err != nil {
 		return err
 	}
-	stagingOwner, err := v.nativeDriveStagingOwner(ctx, l.Instance)
+	stagingOwner, err := v.nativeBootStagingOwner(ctx, l, cfg.MachineConfig)
 	if err != nil {
 		return err
 	}
@@ -1036,13 +1039,10 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		}
 	}
 	cgroupReadyAt := time.Now()
-	if err = writeConfigFIFO(ctx, cfgPath, cfgBytes); err != nil {
-		return fmt.Errorf("vmm: write config: %w", err)
+	if err = v.releaseNativeBootConfig(ctx, l, jailed.MachineConfig, cfgPath, cfgBytes); err != nil {
+		return fmt.Errorf("vmm: release and verify boot config: %w", err)
 	}
 	configWrittenAt := time.Now()
-	if err = v.checkNativeBootMachine(ctx, l, cfg.MachineConfig); err != nil {
-		return fmt.Errorf("vmm: verify native boot machine: %w", err)
-	}
 	// Vsock is configured via the config-file (top-level `vsock:` field,
 	// see VMConfig). Firecracker attaches it pre-start; the UDS at
 	// vsockUDSSock is created by the time startJailer returns. No
@@ -5579,6 +5579,12 @@ func writeConfigFIFO(ctx context.Context, path string, body []byte) error {
 }
 
 func writeConfigFIFOWithFallback(ctx context.Context, path string, body []byte, fallback time.Duration) error {
+	return writeConfigFIFOChecked(ctx, path, body, fallback, nil)
+}
+
+// A native handoff rechecks the original producer while waiting for the reader
+// and after opening the FIFO, immediately before the first configuration write.
+func writeConfigFIFOChecked(ctx context.Context, path string, body []byte, fallback time.Duration, check func() error) error {
 	if fallback <= 0 {
 		return fmt.Errorf("config reader fallback timeout must be positive")
 	}
@@ -5590,8 +5596,22 @@ func writeConfigFIFOWithFallback(ctx context.Context, path string, body []byte, 
 	poll := time.NewTicker(10 * time.Millisecond)
 	defer poll.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if check != nil {
+			if err := check(); err != nil {
+				return err
+			}
+		}
 		f, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
 		if err == nil {
+			if check != nil {
+				if err := check(); err != nil {
+					_ = f.Close()
+					return err
+				}
+			}
 			_, writeErr := f.Write(body)
 			_ = f.Close()
 			return writeErr

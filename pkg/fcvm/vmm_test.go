@@ -956,12 +956,14 @@ func TestWaitReady_SucceedsOnListener(t *testing.T) {
 	}
 }
 
-// TestWaitReady_TimesOut verifies the readiness budget fires when the
-// listener never accepts (port 1 is reserved and refuses on Linux/macOS).
+// TestWaitReady_TimesOut verifies the readiness budget fires when the probe
+// never connects. Host routing and transparent proxies cannot make it ready.
+// adr: 643
 func TestWaitReady_TimesOut(t *testing.T) {
 	v := NewJailerVMM(t.TempDir(), 150*time.Millisecond)
-	// 192.0.2.1 is TEST-NET-1 (RFC 5737) — guaranteed unrouted, so Dial
-	// fails fast and the loop must time out at readyTimeout.
+	v.tcpReadinessDial = func(string, string, time.Duration) (net.Conn, error) {
+		return nil, context.DeadlineExceeded
+	}
 	lease := Lease{Instance: "slow", HostIP: netip.MustParseAddr("192.0.2.1")}
 	start := time.Now()
 	err := v.waitReady(context.Background(), lease, "")

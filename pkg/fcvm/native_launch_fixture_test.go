@@ -1,10 +1,13 @@
 // adr: 568 — environment intent and runtime ownership contracts.
+// adr: 643
 package fcvm
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -20,7 +23,9 @@ func runNativeLaunchHelperFixture() {
 	gate := os.NewFile(3, "fixture-launch-gate")
 	if err := jailsetup.AwaitLaunchGate(gate); err != nil {
 		if outcome := os.Getenv("GREGALE_NATIVE_GATE_OUTCOME"); outcome != "" {
-			_ = os.WriteFile(outcome, []byte("rejected"), 0o600)
+			if err := publishNativeFixtureOutcome(outcome, []byte("rejected")); err != nil {
+				os.Exit(9)
+			}
 		}
 		os.Exit(2)
 	}
@@ -67,4 +72,19 @@ func runNativeLaunchHelperFixture() {
 		}
 	}
 	os.Exit(0)
+}
+
+// A pathname is the crash fixture's completion signal. Readers must not see
+// the empty file between creation and its outcome write.
+func publishNativeFixtureOutcome(path string, data []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), ".gate-outcome-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close(); _ = os.Remove(file.Name()) }()
+	_, writeErr := file.Write(data)
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
