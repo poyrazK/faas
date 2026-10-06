@@ -63,6 +63,11 @@ func NewUploadHandler(c UploadConfig) (http.Handler, error) {
 	if c.Store == nil || c.Routes == nil || c.Buckets == nil || c.Authenticator == nil || c.Registry == nil || c.Next == nil {
 		return nil, errors.New("object storage upload: store, routes, buckets, authenticator, registry and next are required")
 	}
+	if c.Registry.Accounting.GatewaySafety() {
+		if _, ok := c.RequestMetrics.(state.ObjectStorageGatewayRequestStore); !ok || c.Accounting == nil {
+			return nil, errors.New("object storage upload: gateway safety accounting requires atomic request admission")
+		}
+	}
 	if c.Enabled == nil {
 		c.Enabled = func() bool { return true }
 	}
@@ -328,8 +333,12 @@ func (h *uploadHandler) persistLegacyUpload(w http.ResponseWriter, r *http.Reque
 }
 func (h *uploadHandler) recordUploadAttempt(w http.ResponseWriter, r *http.Request, bucket string) bool {
 	if h.requestMetrics != nil {
-		if err := h.requestMetrics.RecordObjectStorageProviderRequest(r.Context(), bucket, h.now()); err != nil {
-			uploadProblem(w, http.StatusServiceUnavailable, "object storage usage is temporarily unavailable")
+		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket, h.now(), h.registry.Accounting); err != nil {
+			if h.registry.Accounting.GatewaySafety() {
+				uploadAccountingProblem(w, err)
+			} else {
+				uploadProblem(w, http.StatusServiceUnavailable, "object storage usage is temporarily unavailable")
+			}
 			return false
 		}
 	}
