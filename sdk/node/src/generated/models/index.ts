@@ -229,6 +229,7 @@ export type { CancelPendingWorkRequest } from './CancelPendingWorkRequest.js';
 export type { CancelPendingWorkResponse } from './CancelPendingWorkResponse.js';
 export type { CapabilitiesResponse } from './CapabilitiesResponse.js';
 export type { CapabilityStatus } from './CapabilityStatus.js';
+export type { ChangeManagedPostgresComputePolicyRequest } from './ChangeManagedPostgresComputePolicyRequest.js';
 export type { ChangeMemberRoleRequest } from './ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './ChangePlanRequest.js';
 export type { CheckRouteRequirementsRequest } from './CheckRouteRequirementsRequest.js';
@@ -717,6 +718,7 @@ export type { ManagedPostgresAccountingReconciliationResult } from './ManagedPos
 export type { ManagedPostgresBinding } from './ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './ManagedPostgresBindingList.js';
 export type { ManagedPostgresCapabilities } from './ManagedPostgresCapabilities.js';
+export type { ManagedPostgresComputePolicyChange } from './ManagedPostgresComputePolicyChange.js';
 export type { ManagedPostgresCutover } from './ManagedPostgresCutover.js';
 export type { ManagedPostgresCutoverID } from './ManagedPostgresCutoverID.js';
 export type { ManagedPostgresCutoverMember } from './ManagedPostgresCutoverMember.js';

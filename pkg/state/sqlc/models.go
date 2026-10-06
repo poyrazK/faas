@@ -1770,16 +1770,17 @@ type CustomerOperationCodePin struct {
 }
 
 type CustomerOperationDefinition struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	Scope        string
-	Name         string
-	Revision     string
-	DeploymentID pgtype.UUID
-	ReleaseID    string
-	Spec         []byte
-	CreatedAt    pgtype.Timestamptz
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Name             string
+	Revision         string
+	DeploymentID     pgtype.UUID
+	ReleaseID        string
+	Spec             []byte
+	CreatedAt        pgtype.Timestamptz
+	WorkflowSnapshot []byte
 }
 
 type CustomerOperationDeliveryRetry struct {
@@ -3955,6 +3956,7 @@ type ManagedPostgresResize struct {
 	State              string
 	CreatedAt          pgtype.Timestamptz
 	CompletedAt        pgtype.Timestamptz
+	TargetScaleToZero  pgtype.Bool
 }
 
 type ManagedPostgresRestoreProof struct {

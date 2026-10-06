@@ -75,4 +75,11 @@ The application-standard ledger recovery command refuses a stale binding; normal
 daemon migration behavior remains unchanged. Its explicit review/apply workflow
 is documented in [the recovery runbook](../docs/runbooks/application-standard-ledger-recovery.md).
 
+GitHub pull-request CI tests the merged ref. When the base branch adds a
+migration after this snapshot was generated, that ref can contain a larger SQL
+inventory with the previous source digest. The canonical binding and ledger
+recovery tests then refuse it. Merge the updated base and run `schema-dump`
+against a fresh PostgreSQL database to regenerate both files from the complete
+merged inventory. Preserve the source binding checks and frozen SQL bytes.
+
 See ADR-142 for the cutover and runtime safety rules.

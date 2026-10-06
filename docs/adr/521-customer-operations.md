@@ -200,3 +200,17 @@ bounded and may require snapshot resynchronization during a long wait. Once
 work is stopped, ordinary projection/tombstone retention can release capacity.
 Adapters must also preserve usable deployment/release pins across long waits;
 an unlimited timestamp pin is not a substitute for checking active ownership.
+
+## Workflow definition snapshots — 2026-10-06
+
+A definition selects exactly one target: an ordinary HTTP method/path or a
+named workflow from its owner-scoped deployment. Workflow targets declare a
+result step and aggregate progress stage. A private nullable snapshot column
+retains the selected deployment DAG; HTTP definitions keep a null snapshot.
+The ledger checks the target shape and matching snapshot name, and deployment
+lookup checks both the owning app and account. Definition adapters must validate
+the bounded DAG, waits, dependencies and exception routes, and include the
+snapshot content in the immutable revision. Customers cannot supply a private
+snapshot. This schema seam does not enable workflow execution: native admission
+and dispatch remain unavailable until their complete recovery contract is
+qualified.
