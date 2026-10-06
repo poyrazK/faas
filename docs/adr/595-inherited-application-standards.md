@@ -630,7 +630,7 @@ public activation stays disabled.
 - [ ] Effective-state and affected-app views with desired/observed adoption.
 - [ ] End-to-end multi-service onboarding and controlled standard-update scenario.
 - [ ] Product registry, operational guide and recovery evidence.
-- [ ] Verified repair of missing migration ledger entries without changing frozen migrations.
+- [x] Verified repair of missing migration ledger entries without changing frozen migrations.
 
 This ADR records the complete intended feature. Individual green tests do not
 declare the feature launched or satisfy the entire checklist.
@@ -705,13 +705,14 @@ capture. Only the plan comparison is relaxed, and only when both snapshots have
 no adoption or retained managed fields. New boots and managed native grants stay
 strict; current eligibility, controls, artifact identity and capacity still apply.
 
-Fresh install and normal upgrade are verified, but the whole added migration
-set currently fails the missing-ledger replay gate at the frozen initial
-`20260930170711001_application_standard_versions.sql` table creation. Passing
-replay checks for the latest additive migrations does not satisfy this release
-gate. Recovery must verify the expanded schema and repair its ledger explicitly;
-no committed or applied migration may be edited and no runtime authority may be
-manufactured from that repair.
+Fresh install and normal upgrade are verified. Missing frozen ledger entries
+require the explicit reviewed recovery path, which verifies the complete
+expanded schema, exact source hashes, owners, privileges and backfills before
+recording current repair events. The complete 81-migration PR replay now passes
+through that path, including the measured restore/resume migrations. Repair
+preserves an existing promoted runtime and its immutable receipts and catalog.
+Ordinary startup still refuses the missing frozen ledger. No committed or applied
+migration is edited and recovery creates no runtime authority.
 
 A managed node requires vmmd's existing compute-node registration with database
 configuration (including a named default-local node on a single box). A legacy
@@ -2867,5 +2868,28 @@ These software contracts supersede the implementation gaps recorded in the
 preceding resume checkpoints. Jailer restore advertisement remains zero and
 public activation remains disabled. Dedicated native test-metal/leakcheck,
 physical guest entropy/clock/isolation, real fleet recovery, remaining onboarding
-and environment scope, and all eleven release checklist items remain pending.
+and environment scope, and the remaining release checklist items remain pending.
 The user confirmed no dedicated native acceptance host is available.
+
+
+## Reviewed recovery with a measured serving runtime (2026-10-06)
+
+The explicit recovery manifest now covers all 80 frozen standards migrations,
+including restore authority, consumed backing, measured resume and actual serving
+parent selection. The recovery-audit migration retains its separate prepare and
+ordinary replay path. Only reviewed filename/version/SHA-256 entries become
+eligible; no SQL source bytes change.
+
+The complete PR missing-ledger check covers all 81 added migrations. A separate
+real PostgreSQL regression creates a paused measured load, promotes it, removes
+the complete standards ledger and applies its exact reviewed repair. Application
+settings, enrollment, instance residency, admissions, boot/promotion receipts and
+snapshot catalog remain identical. The original repair receipt is returned on
+retry, ordinary upgrade succeeds afterward, and the retained promotion proof
+still cannot authorize boot publication. Existing recovery tests retain schema,
+privilege, owner, backfill, stale/cross-database approval and rollback refusals.
+
+State CI executes through the same private PostgreSQL 16 Unix-socket runtime as
+the other recovery suites. These results satisfy the ledger-recovery checklist
+item. The other ten release items, physical native acceptance, public activation
+and production snapshot capability advertisement remain pending.

@@ -416,6 +416,12 @@
       "postcondition": "ddl-only"
     },
     {
+      "version": 20261005111040937,
+      "filename": "20261005111040937_application_standard_unmanaged_mirror_compatibility.sql",
+      "sha256": "30310895c142f023d01f4bfc02dcebb723278019e8e443fa82979a76ece265ae",
+      "postcondition": "ddl-only"
+    },
+    {
       "version": 20261005112130001,
       "filename": "20261005112130001_application_standard_observation_fences.sql",
       "sha256": "2df0967d16a9b9cd3a2f774954590a47ca54e71b58dc85f971fd0a7a7a0fd3d6",
@@ -437,6 +443,42 @@
       "version": 20261005170030001,
       "filename": "20261005170030001_application_standard_automatic_observation.sql",
       "sha256": "49b6d563da7e327ec35a5a183f366c3bfdb9c9450c34479537b9939582bdff8f",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261005180223326,
+      "filename": "20261005180223326_application_standard_snapshot_restore_authority.sql",
+      "sha256": "548c26f80c715e570322d92dd7565af36fc07bc5a6c7df68f461326e6f12c3b0",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261005180954298,
+      "filename": "20261005180954298_application_standard_snapshot_restore_publication_fence.sql",
+      "sha256": "96677d345123a372333b44895f95258c02fb9d4df7d163f871e007b4bf1643cd",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261005205741272,
+      "filename": "20261005205741272_application_standard_snapshot_consumption.sql",
+      "sha256": "fffe6b5e12179f56d36f5c7dff06bc8ae4aba41bdf7b6b0d4e3afa3a2a03df93",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261005211816538,
+      "filename": "20261005211816538_application_standard_snapshot_consumption_capabilities.sql",
+      "sha256": "19404c5c5139f1c09576530ef24ac783118c5dd3510f608a0703b0f73c6a05df",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261005221849892,
+      "filename": "20261005221849892_application_standard_snapshot_serving_parent.sql",
+      "sha256": "c2ce0395a4086d3ad44a53c43071a2447bb96849fa66b5d43eabb60aab6b1d67",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261006111300001,
+      "filename": "20261006111300001_application_standard_snapshot_resume_receipts.sql",
+      "sha256": "409a78218d358e354f2f76e25be5169df1f9cb09fdbac42ebbd05f58f320a54d",
       "postcondition": "ddl-only"
     }
   ]

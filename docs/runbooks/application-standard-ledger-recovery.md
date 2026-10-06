@@ -52,8 +52,16 @@ canonical source binding refuse recovery. Investigate those failures before
 creating a new plan. Schema and credential bodies do not appear in the plan or
 receipt. Credentials reach `pg_dump` through its child environment.
 
-The unmodified full-feature replay test still fails at the frozen initial
-standards migration when all standards ledger entries are removed. This explicit
-operational recovery path does not make default migration replay pass and does
-not resolve that acceptance gate. Public standards activation also still needs
-consumer verification and dedicated native acceptance.
+The reviewed manifest currently covers 80 frozen standards migrations, including
+measured restore, promotion and serving-parent capture. The complete 81-migration
+PR replay check uses reviewed repair for those exact sources and ordinary Goose
+replay for the separate audit migration. A PostgreSQL regression also removes
+the complete frozen ledger from an application with a published measured
+promotion, repairs it, and verifies that inherited settings, residency, admission
+grants, receipts and snapshot catalog history remain unchanged.
+
+A new frozen migration must be reviewed and added to the manifest explicitly.
+Its filename or prefix never authorizes recovery. Ordinary startup continues to
+refuse missing frozen entries until the exact reviewed repair is applied. Public
+standards activation still needs consumer verification and dedicated native
+acceptance.

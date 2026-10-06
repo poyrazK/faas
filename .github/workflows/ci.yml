@@ -701,10 +701,18 @@ jobs:
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
           go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -check -list-file=coverage/state-inventory.txt
+      - name: install PostgreSQL 16 recovery runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
       - name: state tests (shard ${{ matrix.shard }})
         run: |
+          # Recovery with an actual serving receipt requires local database
+          # authority, just like the db and migration recovery suites.
+          scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
           STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -shard=${{ matrix.shard }})
           go test -race -count=1 -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+          STATE_TESTS
       - name: upload state coverage
         uses: actions/upload-artifact@v4
         with:
