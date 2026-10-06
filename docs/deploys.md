@@ -131,8 +131,9 @@ gregale deploy --canary-preset balanced
 
 `balanced` sends 1% of traffic to the new revision for 2 minutes, then 10%,
 then 50%, then 100%. `slow` and `aggressive` trade speed against exposure, and
-`--canary-stages "5@1m,25@5m,100@0s"` defines your own ladder. Preview how a
-preset would behave against your app's recent traffic before deploying:
+`--canary-preset custom --canary-stages "5@1m,25@5m,100@0s"` defines your own
+ladder. Preview how a preset would behave against your app's recent traffic
+before deploying:
 
 ```bash
 gregale canary simulate my-api --canary-preset balanced

@@ -460,7 +460,7 @@ func run(args []string) (status int) {
 		// PR-D / ADR-012 §7 amendment. Distinct top-level
 		// command; dispatches to a single verb (set) for the
 		// per-tenant webhook secret rotation.
-		return githubWebhookSecretSet(args[1:])
+		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
 	case "alerts":

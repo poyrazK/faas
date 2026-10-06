@@ -123,6 +123,14 @@ func cmdCronsFireNowGet(args []string) int {
 	}
 	resp, err := client.GetFireCronRequest(context.Background(), requestID)
 	if err != nil {
+		// production-us hunt #4: `crons fire-now <cron-id>` reads as "fire
+		// this cron now" and answered only "no such fire-now request". When
+		// the id is a cron, say which command fires it.
+		if isNotFound(err) {
+			if cron, cronErr := client.GetCron(context.Background(), requestID); cronErr == nil && cron.ID != "" {
+				return printErr("Not a fire-now request", fmt.Errorf("%s is a cron rule; fire it with `gregale crons run %s`, which prints the request id that `crons fire-now` follows", requestID, requestID))
+			}
+		}
 		return printErr("Could not load fire-now request", err)
 	}
 	if jsonOutput {

@@ -308,6 +308,19 @@ func TestTierD_AppSecurity_PostureReadOnly(t *testing.T) {
 	}
 }
 
+// production-us hunt #4 (H4-40): a bare `app <slug> security` sent an empty
+// PATCH and printed "security updated". Without a mutation flag it reads.
+func TestTierD_AppSecurity_BareIsRead(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"app_id":"a1","slug":"demo","profile":"public","score":90,"findings":[]}`, http.StatusOK)
+	if code := cmdAppSecurity("demo", nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != "GET" {
+		t.Fatalf("bare security sent %s %s, want a read-only GET", f.sawMethod, f.sawPath)
+	}
+}
+
 // TestTierD_AppSecurity_FalseFlagWorks pins the literal-string gate:
 // `--require-signed=false` (lowercase) must parse to bool(false), not
 // fail closed. strconv.ParseBool's looseness (accepts "1", "t", "T",

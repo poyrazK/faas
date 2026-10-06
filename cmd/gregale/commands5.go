@@ -1985,6 +1985,12 @@ func cmdQueueTail(args []string) int {
 			PrintWarn(os.Stderr, "queue receive failed: %v", err)
 			return 3
 		}
+		if row.ID == "" {
+			// An empty receive (204) is an idle poll like a long-poll
+			// timeout. production-us hunt #4: it printed a blank line
+			// every poll.
+			continue
+		}
 		payload := strings.TrimSpace(string(row.Payload))
 		if payload == "" || !json.Valid(row.Payload) {
 			_, _ = fmt.Fprintf(osStdout, "%s %s\n", row.ID, payload)

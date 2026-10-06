@@ -8,24 +8,44 @@ import (
 	"os"
 )
 
-// cmdDeploymentSummary renders the app-scoped release cockpit. The explicit
-// --app flag keeps the slug-to-deployment ownership check visible to callers
-// and avoids an extra account-wide app lookup in the CLI.
+// cmdDeploymentSummary renders the app-scoped release cockpit. The endpoint
+// is app-scoped, so the slug comes from --app, the linked project, or, for a
+// deployment UUID, the deployment itself. production-us hunt #4: a bare
+// `deployment summary <uuid>` was rejected although the UUID names its app.
 func cmdDeploymentSummary(args []string) int {
 	flags, pos := splitArgsForFlags(args)
 	fs := newFlagSet("deployment summary", flag.ContinueOnError)
-	app := fs.String("app", "", "app slug")
+	app := fs.String("app", "", "app slug (defaults to the linked project, or the deployment's own app)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 || *app == "" || !validCLISlug(*app) || !validDeploymentRef(pos[0]) {
-		PrintUsage(os.Stderr, "usage: gregale deployment summary <id|vN> --app SLUG", "deployment")
+	if len(pos) != 1 || (*app != "" && !validCLISlug(*app)) || !validDeploymentRef(pos[0]) {
+		PrintUsage(os.Stderr, "usage: gregale deployment summary <id|vN> [--app SLUG]", "deployment")
 		return 1
 	}
 
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *app == "" {
+		if linked, linkErr := resolveAppFlagOrContext(""); linkErr == nil && linked != "" {
+			*app = linked
+		}
+	}
+	if *app == "" {
+		if _, isRevision := parseRevisionRef(pos[0]); isRevision {
+			return printErr("Could not resolve deployment", fmt.Errorf("revision %s needs --app <slug> or a linked project", pos[0]))
+		}
+		dep, err := client.GetDeployment(context.Background(), pos[0])
+		if err != nil {
+			return printErr("Could not resolve deployment", err)
+		}
+		slug, ok := appSlugsByID(client)[dep.AppID]
+		if !ok {
+			return printErr("Could not resolve deployment", fmt.Errorf("could not find the app for deployment %s; pass --app <slug>", pos[0]))
+		}
+		*app = slug
 	}
 	// ADR-198 — --app is already required here, so a vN handle is
 	// unambiguous without consulting the linked project.

@@ -488,7 +488,7 @@ var cliCommands = []cliCommand{
 				{Name: "reason", Short: "refund reason text", Req: true, Value: "text"},
 				{Name: "idempotency-key", Short: "stable provider retry key", Value: "key"},
 			}},
-			{Name: "consume-credits", Short: "Consume credits against an invoice"},
+			{Name: "consume-credits", Short: "Consume credits against an invoice", Positionals: []string{"<invoice-id>"}, Flags: []cliFlag{{Name: "idempotency-key", Short: "stable retry key", Value: "K"}}},
 			{Name: "abuse-hold", Short: "Place or release an account abuse hold (place|release)", Flags: []cliFlag{
 				{Name: "note", Short: "audit note", Req: true, Value: "text"},
 			}},
@@ -930,7 +930,7 @@ var cliCommands = []cliCommand{
 				{Name: "host", Short: "match host (default: the app's first verified custom domain)", Value: "HOST"},
 			}, Examples: []string{"gregale cors allow my-api https://app.example.com --method GET --method POST"}},
 			{Name: "ls", Short: "List CORS rules bound to <slug> (defaults to linked context)", Positionals: []string{"[<slug>]"}},
-			{Name: "rm", Short: "Delete a CORS rule by id", Positionals: []string{"<rule-id>"}},
+			{Name: "rm", Short: "Delete a CORS rule by id", Positionals: []string{"[<slug>]", "<rule-id>"}},
 			{Name: "show", Short: "Show per-app default CORS + active rules (defaults to linked context)", Positionals: []string{"[<slug>]"}},
 		},
 	},
@@ -939,7 +939,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "crons",
 		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List cron rules"},
+			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
 			{Name: "add", Short: "Schedule an HTTP request or deployment command", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "schedule", Short: "five-field cron expression", Req: true, Value: "EXPR"},
@@ -1310,9 +1310,9 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug for a vN revision outside a linked project", Value: "SLUG"},
 				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
 				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},
-				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
+				{Name: "timeout", Short: "maximum wait (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},
 			}},
-			{Name: "set-min-instances", Short: "Set the per-deployment cold-wake floor", Positionals: []string{"<id>"}},
+			{Name: "set-min-instances", Short: "Set the per-deployment cold-wake floor", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "min", Short: "minimum warm instances for this deployment", Req: true, Value: "N"}}},
 		},
 		Positionals: []string{"<id|vN>"},
 		Flags: []cliFlag{
@@ -1343,7 +1343,7 @@ var cliCommands = []cliCommand{
 			{Name: "cancel", Short: "Cancel one pending deployment", Positionals: []string{"<id>"}},
 			{Name: "reorder", Short: "Change one pending deployment's queue priority", Positionals: []string{"<id>"}},
 			{Name: "clear", Short: "Hide one deployment from the list", Positionals: []string{"<id>"}},
-			{Name: "clear-obsolete", Short: "Hide obsolete deployments older than a cutoff"},
+			{Name: "clear-obsolete", Short: "Hide obsolete deployments older than a cutoff", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "older-than", Short: "cutoff age (default 168h)", Value: "D"}, {Name: "dry-run", Short: "list what would be hidden"}, {Name: "force", Short: "skip the confirmation"}}},
 			// ADR-117 §Production-ready follow-on, C2 — per-stage
 			// retry. The verb is `retry` (NOT a `--retry` flag on
 			// show/status) because the action mutates state — a
@@ -1444,7 +1444,7 @@ var cliCommands = []cliCommand{
 			{Name: "persist-exclude", Short: "save --exclude slugs for future project deploys"},
 			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
-			{Name: "canary-stages", Short: "custom percent@duration canary stages", Value: "STAGES"},
+			{Name: "canary-stages", Short: "custom percent@duration canary stages (requires --canary-preset custom)", Value: "STAGES"},
 			{Name: "safe", Short: "deploy with the balanced health-gated rollout and first-wake 5xx rollback"},
 			{Name: "require-authn", Short: "require bearer auth on every request"},
 			{Name: "no-require-authn", Short: "drop the token requirement"},
@@ -1697,7 +1697,7 @@ var cliCommands = []cliCommand{
 			{Name: "wait", Short: "Wait for a preview deployment to become ready", Examples: []string{"gregale preview wait pr-42-my-api --progress --open"}, Positionals: []string{"<preview-slug>"}, Flags: []cliFlag{
 				{Name: "progress", Short: "print deployment transitions while waiting"},
 				{Name: "open", Short: "open the preview URL after it becomes ready"},
-				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
+				{Name: "timeout", Short: "maximum wait (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},
 			}},
 			{Name: "destroy", Short: "Tear down a preview app", Examples: []string{"gregale preview destroy pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
 		},
@@ -1712,11 +1712,11 @@ var cliCommands = []cliCommand{
 		Audience: cliAudienceCompatibility,
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List tenant surfaces on an app", Flags: []cliFlag{
-				{Name: "app", Short: "app slug (required)", Value: "slug"},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}},
-			{Name: subAdd, Short: "Add a tenant surface (with seed hostnames)"},
-			{Name: subRm, Short: "Remove a tenant surface (cascades hostnames)"},
-			{Name: "hostname", Short: "Manage hostnames on a surface (add|rm)"},
+			{Name: subAdd, Short: "Add a tenant surface (with seed hostnames)", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "name", Short: "surface name", Req: true, Value: "name"}, {Name: "hostname", Short: "seed hostname (repeat)", Value: "h"}}},
+			{Name: subRm, Short: "Remove a tenant surface (cascades hostnames)", Positionals: []string{"<surface-id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
+			{Name: "hostname", Short: "Manage hostnames on a surface (add|rm)", Positionals: []string{"<add|rm>"}},
 		},
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Value: "slug"},
@@ -2715,18 +2715,18 @@ var cliCommands = []cliCommand{
 		DocSlug: "realtime",
 		Short:   "Manage realtime endpoints, policies, connections, channels, and auth",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List managed realtime endpoints"},
-			{Name: "get", Short: "Show one endpoint and safe auth-rotation status"},
-			{Name: "create", Short: "Create a managed realtime endpoint", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "callback-url", Short: "application callback URL", Req: true, Value: "URL"}, {Name: "callback-auth-token-stdin", Short: "read the callback bearer token from stdin"}, {Name: "connect-path", Short: "callback path for connect events", Value: "PATH"}, {Name: "message-path", Short: "callback path for message events", Value: "PATH"}, {Name: "disconnect-path", Short: "callback path for disconnect events", Value: "PATH"}, {Name: "auth-mode", Short: "client auth mode (none|static_bearer|oidc_jwt)", Value: "MODE"}, {Name: "auth-token-stdin", Short: "read the client static bearer token from stdin"}, {Name: "max-connections", Short: "per-endpoint connection cap (0 inherits the default)", Value: "N"}}},
-			{Name: "update", Short: "Update endpoint callback, auth, or connection policy"},
-			{Name: "delete", Short: "Delete a managed realtime endpoint"},
-			{Name: "connections", Short: "List live connections for an endpoint", Flags: []cliFlag{
+			{Name: "list", Short: "List managed realtime endpoints", Positionals: []string{"<app>"}},
+			{Name: "get", Short: "Show one endpoint and safe auth-rotation status", Positionals: []string{"<app>", "<endpoint-id>"}},
+			{Name: "create", Short: "Create a managed realtime endpoint", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "callback-url", Short: "application callback URL", Req: true, Value: "URL"}, {Name: "callback-auth-token-stdin", Short: "read the callback bearer token from stdin (this or --callback-auth-token is required)"}, {Name: "callback-auth-token", Short: "callback bearer token your app verifies (prefer --callback-auth-token-stdin)", Value: "TOKEN"}, {Name: "connect-path", Short: "callback path for connect events", Value: "PATH"}, {Name: "message-path", Short: "callback path for message events", Value: "PATH"}, {Name: "disconnect-path", Short: "callback path for disconnect events", Value: "PATH"}, {Name: "auth-mode", Short: "client auth mode (none|static_bearer|oidc_jwt)", Value: "MODE"}, {Name: "auth-token-stdin", Short: "read the client static bearer token from stdin"}, {Name: "max-connections", Short: "per-endpoint connection cap (0 inherits the default)", Value: "N"}}},
+			{Name: "update", Short: "Update endpoint callback, auth, or connection policy", Positionals: []string{"<app>", "<endpoint-id>"}},
+			{Name: "delete", Short: "Delete a managed realtime endpoint", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{{Name: "yes", Short: "confirm the deletion", Req: true}}},
+			{Name: "connections", Short: "List live connections for an endpoint", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{
 				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},
 				{Name: "principal", Short: "only connections for this authenticated principal", Value: "PRINCIPAL"},
 				{Name: "limit", Short: "maximum connections to return (1-1000)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous response's next_cursor", Value: "TOKEN"},
 			}},
-			{Name: "drain", Short: "Close a bounded, filtered set of live connections", Flags: []cliFlag{
+			{Name: "drain", Short: "Close a bounded, filtered set of live connections", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{
 				{Name: "reason", Short: "required audit reason", Req: true, Value: "TEXT"},
 				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},
 				{Name: "principal", Short: "only connections for this principal", Value: "PRINCIPAL"},
@@ -2737,15 +2737,15 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the drain to reach a terminal state"},
 				{Name: "timeout", Short: "maximum time to wait with --wait", Value: "DURATION"},
 			}},
-			{Name: "drain-status", Short: "Show or wait for a durable realtime drain", Flags: []cliFlag{
+			{Name: "drain-status", Short: "Show or wait for a durable realtime drain", Positionals: []string{"<app>", "<endpoint-id>", "<operation-id>"}, Flags: []cliFlag{
 				{Name: "wait", Short: "wait for the drain to reach a terminal state"},
 				{Name: "timeout", Short: "maximum time to wait with --wait", Value: "DURATION"},
 			}},
-			{Name: "send", Short: "Send a message to one live connection"},
-			{Name: "close", Short: "Close one live connection"},
-			{Name: "subscribe", Short: "Subscribe one live connection to a channel"},
-			{Name: "unsubscribe", Short: "Remove one live connection from a channel"},
-			{Name: "publish", Short: "Publish a message to a channel"},
+			{Name: "send", Short: "Send a message to one live connection", Positionals: []string{"<app>", "<endpoint-id>", "<connection-id>"}, Flags: []cliFlag{{Name: "data", Short: "message text (or --data-stdin)", Value: "DATA"}, {Name: "data-stdin", Short: "read the message from stdin"}, {Name: "binary", Short: "send as a binary frame"}}},
+			{Name: "close", Short: "Close one live connection", Positionals: []string{"<app>", "<endpoint-id>", "<connection-id>"}, Flags: []cliFlag{{Name: "reason", Short: "close reason", Value: "TEXT"}}},
+			{Name: "subscribe", Short: "Subscribe one live connection to a channel", Positionals: []string{"<app>", "<endpoint-id>", "<connection-id>", "<channel>"}},
+			{Name: "unsubscribe", Short: "Remove one live connection from a channel", Positionals: []string{"<app>", "<endpoint-id>", "<connection-id>", "<channel>"}},
+			{Name: "publish", Short: "Publish a message to a channel", Positionals: []string{"<app>", "<endpoint-id>", "<channel>"}, Flags: []cliFlag{{Name: "data", Short: "message text (or --data-stdin)", Value: "DATA"}, {Name: "data-stdin", Short: "read the message from stdin"}, {Name: "binary", Short: "send as a binary frame"}}},
 			{Name: "auth", Short: "Rotate, finalize, or inspect static bearer auth", Subcommands: []cliSub{
 				{Name: "rotate", Short: "Stage a new bearer token; the old one stays valid for the grace period", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{
 					{Name: "token-stdin", Short: "read the new token from stdin"},
@@ -2867,7 +2867,7 @@ var cliCommands = []cliCommand{
 					{Name: "idempotency-key", Short: "stable key for retrying this promotion", Value: "KEY"},
 					{Name: "wait", Short: "wait for the promotion to reach a terminal status"},
 					{Name: "progress", Short: "print promotion transitions while waiting (human output only)"},
-					{Name: "timeout", Short: "maximum seconds to wait for promotion completion", Value: "SECONDS"},
+					{Name: "timeout", Short: "maximum wait for promotion completion (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},
 				}},
 				{Name: "status", Short: "Inspect a promotion"},
 				{Name: "rollback", Short: "Roll back a promotion"},
@@ -2972,7 +2972,7 @@ var cliCommands = []cliCommand{
 		Short:    "Manage legacy installation-scoped webhook secrets (admin)",
 		Audience: cliAudienceCompatibility,
 		Subcommands: []cliSub{
-			{Name: "set", Short: "Rotate the secret for one installation_id"},
+			{Name: "set", Short: "Rotate the secret for one installation_id", Flags: []cliFlag{{Name: "installation-id", Short: "GitHub App installation_id", Req: true, Value: "ID"}, {Name: "secret", Short: "secret hex (32-64 chars; prefer --from-stdin)", Value: "HEX"}, {Name: "from-stdin", Short: "read the secret hex from stdin"}}},
 		},
 	},
 	// operator-side verbs (sign-keys, node-key) moved to gregalectl

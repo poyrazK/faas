@@ -163,6 +163,9 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	defer func() { _ = res.Body.Close() }()
 	x := Exchange{WakeTier: res.Header.Get(wire.WakeHeader), SessionID: res.Header.Get("Mcp-Session-Id"), StreamingStatus: api.StreamingStatus(res.Header.Get(api.StreamingStatusHeader)), HTTPStatus: res.StatusCode, AuthChallenge: res.Header.Get("WWW-Authenticate")}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
+		if rpcErr := jsonRPCErrorCode(res, id); rpcErr != nil {
+			return x, rpcErr
+		}
 		return x, httpResponseError(res)
 	}
 	if notification {
@@ -199,6 +202,35 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 		return x, fmt.Errorf("MCP response has no matching result")
 	}
 	return x, nil
+}
+
+// jsonRPCErrorCode recognises a JSON-RPC error answering this request in a
+// non-2xx response. Revision 2026-07-28 servers answer an unsupported method
+// with HTTP 404 plus {"error":{"code":-32601}}; reporting it as a bare HTTP
+// 404 sent operators looking for a wrong URL (production-us hunt #4). Only
+// the numeric code is kept; server-controlled text stays excluded.
+func jsonRPCErrorCode(res *http.Response, id int) *RPCError {
+	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+		return nil
+	}
+	if mediaType, _, err := mime.ParseMediaType(res.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	if err != nil {
+		return nil
+	}
+	var m struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      *int   `json:"id"`
+		Error   *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &m) != nil || m.JSONRPC != "2.0" || m.Error == nil || m.ID == nil || *m.ID != id {
+		return nil
+	}
+	return &RPCError{Code: m.Error.Code}
 }
 
 func consumeMessage(data []byte, id int, x *Exchange, start time.Time) (bool, error) {

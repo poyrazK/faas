@@ -2299,7 +2299,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// This supports service templates whose secrets must be configured before
 	// their first process starts, while reusing the normal shape/runtime path.
 	createOnly := fs.Bool("create-only", false, "create or reserve the app without uploading a deployment")
-	waitTimeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum seconds to wait for deployment readiness (default %d)", defaultDeployWaitTimeoutSeconds))
+	waitTimeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) for deployment readiness (default %d)", defaultDeployWaitTimeoutSeconds))
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS

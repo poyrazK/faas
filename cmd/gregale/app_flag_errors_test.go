@@ -259,3 +259,100 @@ func TestRouteHealthTargetErrorNamesTheMissingPiece(t *testing.T) {
 		t.Errorf("valid target rejected: %v", err)
 	}
 }
+
+// production-us hunt #4 (H4-38): `github-webhook-secret set ...` handed "set"
+// to the flag parser and always failed; the documented verb must reach the
+// server, and the legacy verb-less form keeps working.
+func TestGithubWebhookSecretSetVerbDispatches(t *testing.T) {
+	resetJSONOut(t)
+	secret := strings.Repeat("a", 32)
+	for _, args := range [][]string{
+		{"set", "--installation-id", "42", "--secret", secret},
+		{"--installation-id", "42", "--secret", secret},
+	} {
+		f := authedFakeAPI(t, `{}`, http.StatusOK)
+		if code := cmdGithubWebhookSecret(args); code != 0 || f.sawMethod == "" {
+			t.Fatalf("github-webhook-secret %q exit=%d request=%s %s, want a request and exit 0", args, code, f.sawMethod, f.sawPath)
+		}
+	}
+	if code := cmdGithubWebhookSecret([]string{"rotate"}); code != 1 {
+		t.Fatalf("unknown verb exit = %d, want 1", code)
+	}
+}
+
+// production-us hunt #4 (H4-42): `deployment summary <uuid>` demanded --app
+// although the deployment names its app.
+func TestDeploymentSummaryResolvesAppFromDeployment(t *testing.T) {
+	resetJSONOut(t)
+	t.Chdir(t.TempDir()) // no linked project
+	const depID = "0123456789abcdef0123456789abcdef"
+	var summaryPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/deployments/"+depID:
+			_, _ = w.Write([]byte(`{"id":"` + depID + `","app_id":"app-uuid-1","status":"live"}`))
+		case r.URL.Path == "/v1/apps":
+			_, _ = w.Write([]byte(`[{"id":"app-uuid-1","slug":"billing-api"}]`))
+		case strings.HasPrefix(r.URL.Path, "/v1/apps/billing-api/deployments/"):
+			summaryPath = r.URL.Path
+			_, _ = w.Write([]byte(`{"deployment":{"id":"` + depID + `","status":"live"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	_, restore := captureStdout(t)
+	code := cmdDeploymentSummary([]string{depID})
+	restore()
+	if code != 0 || summaryPath == "" {
+		t.Fatalf("deployment summary <uuid> exit=%d summary request=%q, want the app resolved from the deployment", code, summaryPath)
+	}
+}
+
+// production-us hunt #4 (H4-44): `crons fire-now <cron-id>` answered only "no
+// such fire-now request". The cron id gets pointed at `crons run`.
+func TestCronsFireNowWithCronIDPointsAtRun(t *testing.T) {
+	resetJSONOut(t)
+	const id = "332bde0bfde44444b492c067949ad22a"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/cron-fire-now-requests/" + id:
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"status":404,"code":"not_found","title":"Not found","detail":"no such fire-now request"}`))
+		case "/v1/crons/" + id:
+			_, _ = w.Write([]byte(`{"id":"` + id + `","schedule":"* * * * *"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	stderr, restore := captureStderr(t)
+	code := cmdCronsFireNowGet([]string{id})
+	restore()
+	if code == 0 || !strings.Contains(stderr.String(), "gregale crons run "+id) {
+		t.Fatalf("exit=%d stderr=%q, want a pointer to `crons run`", code, stderr.String())
+	}
+}
+
+// production-us hunt #4 (H4-46): `cors rm <slug> <rule-id>` (the shape of
+// `cors ls <slug>`) used the slug as the rule id and answered "no such edge
+// rule". The slug is accepted; a non-id is refused before any request.
+func TestCorsRmAcceptsSlugAndValidatesID(t *testing.T) {
+	resetJSONOut(t)
+	const id = "622a2d44-d560-49f3-9281-dd191b5282e7"
+	for _, args := range [][]string{{id}, {"h3-hello-node", id}} {
+		f := authedFakeAPI(t, ``, http.StatusNoContent)
+		if code := cmdCorsRm(args); code != 0 || !strings.HasSuffix(f.sawPath, "/"+id) {
+			t.Fatalf("cors rm %q exit=%d path=%s, want a delete of %s", args, code, f.sawPath, id)
+		}
+	}
+	f := authedFakeAPI(t, ``, http.StatusNoContent)
+	if code := cmdCorsRm([]string{"h3-hello-node"}); code != 1 || f.sawMethod != "" {
+		t.Fatalf("cors rm <slug> exit=%d request=%s, want a local rejection", code, f.sawMethod)
+	}
+}
