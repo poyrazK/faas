@@ -15,14 +15,17 @@ import (
 )
 
 type nativeProcessRecoveryRuntime struct {
-	journal      *nativeLaunchJournal
-	retirer      nativeProcessRetirer
-	support      func() error
-	resources    func(Lease, netns.Config) error
-	startTime    func(int) (uint64, error)
-	mounts       func(string) ([]string, error)
-	unmount      func(context.Context, string) error
-	inventory    func([]Lease) error
+	journal   *nativeLaunchJournal
+	retirer   nativeProcessRetirer
+	support   func() error
+	resources func(Lease, netns.Config) error
+	startTime func(int) (uint64, error)
+	mounts    func(string) ([]string, error)
+	unmount   func(context.Context, string) error
+	inventory func([]Lease) error
+	// Test wiring may model a credential-bound connection; production uses
+	// Linux SO_PEERCRED and the same pinned task as the journal/proc checks.
+	machineDial  nativeMachineDial
 	helperGroups nativeHostHelperGroups
 	loopMounts   nativeLoopMountBackend
 	imageSources nativeImageSourceBackend

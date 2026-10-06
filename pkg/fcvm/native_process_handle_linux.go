@@ -31,6 +31,27 @@ func (p *nativePIDFD) Signal(signal syscall.Signal) error {
 	return unix.PidfdSendSignal(p.fd, unix.Signal(signal), nil, 0)
 }
 
+// adr: 640
+func (p *nativePIDFD) CheckLive() error {
+	if p.fd < 0 {
+		return unix.EBADF
+	}
+	fds := []unix.PollFd{{Fd: int32(p.fd), Events: unix.POLLIN}}
+	for {
+		_, err := unix.Poll(fds, 0)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if fds[0].Revents != 0 {
+			return fmt.Errorf("native machine: original task is exited or unavailable (events %#x)", fds[0].Revents)
+		}
+		return nil
+	}
+}
+
 func (p *nativePIDFD) Wait(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {

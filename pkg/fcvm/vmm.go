@@ -1040,6 +1040,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return fmt.Errorf("vmm: write config: %w", err)
 	}
 	configWrittenAt := time.Now()
+	if err = v.checkNativeBootMachine(ctx, l, cfg.MachineConfig); err != nil {
+		return fmt.Errorf("vmm: verify native boot machine: %w", err)
+	}
 	// Vsock is configured via the config-file (top-level `vsock:` field,
 	// see VMConfig). Firecracker attaches it pre-start; the UDS at
 	// vsockUDSSock is created by the time startJailer returns. No
@@ -1946,12 +1949,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tBindTun := time.Now()
-	body := map[string]any{
-		"snapshot_path": stateName,
-		"mem_backend":   map[string]any{"backend_type": "File", "backend_path": memName},
-		"resume_vm":     !spec.KeepPaused,
-	}
-	if err = v.apiPut(ctx, l.Instance, "/snapshot/load", body); err != nil {
+	if err = v.loadSnapshot(ctx, l, stateName, memName, spec.KeepPaused); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
 	tLoad := time.Now()
@@ -3369,6 +3367,9 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 	}
 	if l.Instance == "" {
 		return fmt.Errorf("vmm: ResumeVM: empty instance")
+	}
+	if v.nativeRecovery != nil {
+		return v.withNativeMachineAPI(ctx, l, func(s *nativeMachineAPI) error { return s.resume(ctx) })
 	}
 	// PATCH /vm {"state":"Resumed"} — the Firecracker API mirror of
 	// /vm {"state":"Paused"} that SnapshotKeepAlive fired moments

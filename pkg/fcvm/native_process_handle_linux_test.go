@@ -1,6 +1,7 @@
 //go:build linux
 
 // adr: 568 — environment intent and runtime ownership contracts.
+// adr: 640
 package fcvm
 
 import (
@@ -23,6 +24,10 @@ func TestNativePIDFDConfirmsTaskExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer handle.Close()
+	live := handle.(nativeLiveProcessHandle)
+	if err := live.CheckLive(); err != nil {
+		t.Fatalf("live task observation: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	if err := handle.Wait(ctx); !errors.Is(err, context.DeadlineExceeded) {
@@ -35,5 +40,8 @@ func TestNativePIDFDConfirmsTaskExit(t *testing.T) {
 	defer cancel()
 	if err := handle.Wait(ctx); err != nil {
 		t.Fatalf("killed process exit wait: %v", err)
+	}
+	if err := live.CheckLive(); err == nil {
+		t.Fatal("exited pinned task passed liveness observation")
 	}
 }
