@@ -164,6 +164,23 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if _, err := provider.Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	// Current CreateDeployment reads this later-added table. Provision only its
+	// table shape so the fixture can seed a deployment in the pre-identity
+	// schema; leave the migration unapplied for the ordered upgrade below.
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE workflow_automation_definitions (
+		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+		name text NOT NULL CHECK (length(name)>0),
+		version bigint NOT NULL CHECK (version>0),
+		draft jsonb NOT NULL CHECK (jsonb_typeof(draft)='object' AND draft->>'name'=name),
+		published jsonb CHECK (published IS NULL OR (jsonb_typeof(published)='object' AND published->>'name'=name)),
+		published_version bigint NOT NULL DEFAULT 0 CHECK (published_version>=0 AND published_version<=version),
+		enabled boolean NOT NULL DEFAULT true,
+		updated_at timestamptz NOT NULL DEFAULT now(),
+		PRIMARY KEY (app_id, name),
+		CHECK ((published IS NULL) = (published_version=0))
+	)`); err != nil {
+		t.Fatal(err)
+	}
 	s := state.NewPgStore(pool)
 	ctx, account, _, def, tenant, _ := operationFixture(t, s)
 	admission := state.OperationAdmission{AccountID: account.ID, DefinitionID: def.ID,
