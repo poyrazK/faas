@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -10,6 +10,10 @@ from attrs import field as _attrs_field
 
 from ..models.issue_state import IssueState, check_issue_state
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.issue_impact_summary import IssueImpactSummary
+
 
 T = TypeVar("T", bound="Issue")
 
@@ -30,6 +34,9 @@ class Issue:
     event_count: int
     regression_count: int
     assignee_account_id: UUID | Unset = UNSET
+    impact_24h: IssueImpactSummary | Unset = UNSET
+    """Observed retained occurrences, verified distinct customers, and unattributed events from the previous 24
+    hours."""
     resolved_at: datetime.datetime | Unset = UNSET
     fixed_deployment_id: UUID | Unset = UNSET
     fixed_deployment_created_at: datetime.datetime | Unset = UNSET
@@ -62,6 +69,10 @@ class Issue:
         assignee_account_id: str | Unset = UNSET
         if not isinstance(self.assignee_account_id, Unset):
             assignee_account_id = str(self.assignee_account_id)
+
+        impact_24h: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.impact_24h, Unset):
+            impact_24h = self.impact_24h.to_dict()
 
         resolved_at: str | Unset = UNSET
         if not isinstance(self.resolved_at, Unset):
@@ -98,6 +109,8 @@ class Issue:
         )
         if assignee_account_id is not UNSET:
             field_dict["assignee_account_id"] = assignee_account_id
+        if impact_24h is not UNSET:
+            field_dict["impact_24h"] = impact_24h
         if resolved_at is not UNSET:
             field_dict["resolved_at"] = resolved_at
         if fixed_deployment_id is not UNSET:
@@ -111,6 +124,8 @@ class Issue:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.issue_impact_summary import IssueImpactSummary
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -140,6 +155,13 @@ class Issue:
             assignee_account_id = UNSET
         else:
             assignee_account_id = UUID(_assignee_account_id)
+
+        _impact_24h = d.pop("impact_24h", UNSET)
+        impact_24h: IssueImpactSummary | Unset
+        if isinstance(_impact_24h, Unset):
+            impact_24h = UNSET
+        else:
+            impact_24h = IssueImpactSummary.from_dict(_impact_24h)
 
         _resolved_at = d.pop("resolved_at", UNSET)
         resolved_at: datetime.datetime | Unset
@@ -182,6 +204,7 @@ class Issue:
             event_count=event_count,
             regression_count=regression_count,
             assignee_account_id=assignee_account_id,
+            impact_24h=impact_24h,
             resolved_at=resolved_at,
             fixed_deployment_id=fixed_deployment_id,
             fixed_deployment_created_at=fixed_deployment_created_at,

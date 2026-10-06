@@ -23,6 +23,7 @@ func tcpListenerResponse(listener state.TCPListener) api.TCPListenerResponse {
 		ID: listener.ID, Name: listener.ListenerName, GuestPort: listener.GuestPort,
 		PublicPort: listener.PublicPort, Protocol: listener.Protocol,
 		Enabled: listener.Enabled, CreatedAt: listener.CreatedAt, UpdatedAt: listener.UpdatedAt,
+		TLS: api.TCPListenerTLSConfig{Mode: listener.TLSMode, Hostname: listener.TLSHostname},
 	}
 }
 
@@ -33,7 +34,8 @@ func tcpListenerResponse(listener state.TCPListener) api.TCPListenerResponse {
 func appDeclaresTCPListener(app state.App, name string, guestPort int) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	for _, port := range app.Manifest.Ports {
-		if port.EffectiveProtocol() != api.WorkloadPortTCP || port.Port != guestPort {
+		// ADR-576: an internal listener never gets a public raw TCP endpoint.
+		if port.Internal || port.EffectiveProtocol() != api.WorkloadPortTCP || port.Port != guestPort {
 			continue
 		}
 		declaredName := strings.ToLower(strings.TrimSpace(port.Name))
@@ -123,9 +125,28 @@ func (s *server) createAppTCPListener(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 
+	policy, err := req.TLS.Normalize()
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid TCP listener TLS", err.Error()))
+		return
+	}
+	if !s.validateTCPListenerTLS(w, r, app.ID, policy) {
+		return
+	}
+	if _, err := store.TCPListenerByAppAndName(r.Context(), app.ID, name); err == nil {
+		writeTCPListenerStoreError(w, "create", state.ErrConflict)
+		return
+	} else if !errors.Is(err, state.ErrNotFound) {
+		writeTCPListenerStoreError(w, "read", err)
+		return
+	}
 	base := state.TCPListener{
 		AppID: app.ID, AccountID: acct.ID, ListenerName: name,
 		GuestPort: req.GuestPort, Protocol: "tcp", Enabled: true,
+		TLSMode: policy.Mode, TLSHostname: policy.Hostname,
+	}
+	if policy.Mode == api.TCPListenerTLSTerminate {
+		base.Enabled = false
 	}
 	if req.PublicPort != 0 {
 		base.PublicPort = req.PublicPort
@@ -157,6 +178,15 @@ func (s *server) createAppTCPListener(w http.ResponseWriter, r *http.Request, ac
 			writeTCPListenerStoreError(w, "create", err)
 			return
 		}
+		// A concurrent creator can claim the name rather than this port.
+		// Retrying every reserved port cannot resolve a name conflict.
+		if _, lookupErr := store.TCPListenerByAppAndName(r.Context(), app.ID, name); lookupErr == nil {
+			writeTCPListenerStoreError(w, "create", state.ErrConflict)
+			return
+		} else if !errors.Is(lookupErr, state.ErrNotFound) {
+			writeTCPListenerStoreError(w, "read", lookupErr)
+			return
+		}
 	}
 	api.WriteProblem(w, api.ErrCapacity("TCP listener public port range is exhausted"))
 }
@@ -172,14 +202,35 @@ func (s *server) updateAppTCPListener(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	var req api.UpdateTCPListenerRequest
-	if err := decodeJSON(r, &req); err != nil || req.Enabled == nil {
+	if err := decodeJSON(r, &req); err != nil || (req.Enabled == nil && req.TLS == nil) || (req.Enabled != nil && req.TLS != nil) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid TCP listener", "enabled is required"))
+			"Invalid TCP listener", "supply exactly one of enabled or tls; TLS changes disable the listener"))
 		return
 	}
 	listener, err := store.TCPListenerByAppAndName(r.Context(), app.ID, r.PathValue("name"))
 	if err != nil {
 		writeTCPListenerStoreError(w, "read", err)
+		return
+	}
+	if req.TLS != nil {
+		if !s.validateTCPListenerTLS(w, r, app.ID, *req.TLS) {
+			return
+		}
+		tlsStore, ok := s.store.(state.TCPListenerTLSStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("TCP TLS configuration is unavailable"))
+			return
+		}
+		updated, err := tlsStore.SetTCPListenerTLS(r.Context(), listener.ID, *req.TLS)
+		if err != nil {
+			writeTCPListenerStoreError(w, "update TLS", err)
+			return
+		}
+		_ = s.notif.Notify(r.Context(), db.NotifyAppChanged, fmt.Sprintf(`{"kind":"tcp_listener_updated","app_id":"%s","listener_id":"%s"}`, app.ID, updated.ID))
+		writeJSON(w, http.StatusOK, tcpListenerResponse(updated))
+		return
+	}
+	if *req.Enabled && !s.validateTCPListenerTLS(w, r, app.ID, api.TCPListenerTLSConfig{Mode: listener.TLSMode, Hostname: listener.TLSHostname}) {
 		return
 	}
 	updated, err := store.SetTCPListenerEnabled(r.Context(), listener.ID, *req.Enabled)
@@ -190,6 +241,23 @@ func (s *server) updateAppTCPListener(w http.ResponseWriter, r *http.Request, ac
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"tcp_listener_updated","app_id":"%s","listener_id":"%s"}`, app.ID, updated.ID))
 	writeJSON(w, http.StatusOK, tcpListenerResponse(updated))
+}
+
+func (s *server) validateTCPListenerTLS(w http.ResponseWriter, r *http.Request, appID string, policy api.TCPListenerTLSConfig) bool {
+	policy, err := policy.Normalize()
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid TCP listener TLS", err.Error()))
+		return false
+	}
+	if policy.Mode == api.TCPListenerTLSPassthrough {
+		return true
+	}
+	domain, err := s.store.DomainByName(r.Context(), policy.Hostname)
+	if err != nil || state.ValidateTCPListenerTLSDomain(appID, policy.Hostname, domain) != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid TCP listener TLS", "hostname must be a verified app-wide domain owned by this app"))
+		return false
+	}
+	return true
 }
 
 func (s *server) deleteAppTCPListener(w http.ResponseWriter, r *http.Request, acct state.Account) {

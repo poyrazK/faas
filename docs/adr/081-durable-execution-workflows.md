@@ -1,6 +1,9 @@
 # ADR-081 · Durable-execution wrapper over crons (issue #669)
 
 - **Status:** proposed
+- **Extended by [ADR-487](487-scheduled-workflow-starts.md):**
+  `trigger.type: schedule` admits recurring workflow runs directly, with durable
+  duplicate suppression, overlap protection, and latest-outcome inspection.
 - **Extended by [ADR-262](262-durable-workflow-timers.md):**
   `wait_for_duration` adds durable timers; its cap is now plan-specific:
   30 days on Hobby, 90 days on Pro, and 365 days on Scale. Historical
@@ -546,6 +549,18 @@ Documented as a non-goal (no migration of in-flight runs to the
 new definition). Customers who need versioning migrate manually
 via a cancel + re-start.
 
+### Completion output (2026-10-01 clarification)
+
+On success, the run output is the nonempty output of the successful step with
+latest `finished_at`. Empty timer outputs and skipped branches do not overwrite
+handler output. For equal timestamps, downstream steps take precedence over
+their ancestors, including implicit timeout/failure handler dependencies; among
+remaining independent steps, the lexicographically greatest name wins. Legacy
+steps without completion timestamps sort before dated steps and use the same
+DAG/name fallback. Selection is independent of declaration, insertion, and
+query order. This preserves the single-output response shape; workflows that
+need an aggregate should declare an explicit final handler.
+
 ### Operational signals
 
 - `workflow_awaiting_events{app,plan}` gauge — operator-facing,
@@ -679,3 +694,5 @@ first, both consumers follow.
 - Per-app wake rate-limit primitive — Risk #3; either lands as a
   pre-PR (per ADR-080 Risk #1 resolution (a)) or as part of the
   migration PR.
+
+ADR-432 adds [event-triggered workflow starts](432-event-workflow-starts.md).

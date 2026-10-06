@@ -9,6 +9,19 @@ Never flatten into one rootfs per app (breaks the 130 MB fleet target).
 `base-debian-parent`; imaged stages its complete shared base once and still
 uses the same two-drive layout for every Python 3.13 app.
 
+`execution-python-data-v1` is a separate platform-owned base for disposable
+Python data Runs. Its closed, hash-pinned wheel set comes from
+`pkg/executionprofiles/python-data-v1.json`; the standard-library installer
+adds no pip or wheel scripts. Package changes require a new profile ID.
+The image includes the `python-data-v1` execution marker and is shared read-only
+across fresh VMs. The 91.38 MiB extracted package payload is counted once in
+base residency, while every run retains disposable scratch. Build output
+records wheel/installed bytes in `/usr/share/faas/execution-profile-build.json`.
+CI verifies versions and imports as uid 1000 without network or rootfs writes,
+and applies the all-CRITICAL scan gate used by `runner-python313`. Total ext4
+residency, native KVM startup/memory measurements, and leak acceptance remain
+production rollout gates; wheel extraction alone does not measure these.
+
 The runtime/base images are published under `ghcr.io/poyrazk/<image>` by the
 `runtime-bases` matrix in `.github/workflows/images.yml`. `builder-base` keeps
 its separate multi-arch publication job. Runtime Dockerfiles are pinned to

@@ -10,18 +10,32 @@ import (
 )
 
 var _ ObjectMultipartUploadStore = (*MemStore)(nil)
+var _ ObjectFixedMultipartAdmissionStore = (*MemStore)(nil)
 
 func objectMultipartLive(state string) bool {
-	return state == ObjectMultipartInitiating || state == ObjectMultipartActive || state == ObjectMultipartCompleting || state == ObjectMultipartAborting
+	return state == ObjectMultipartInitiating || state == ObjectMultipartActive || ObjectMultipartIsCompleting(state) || state == ObjectMultipartAborting
 }
 
 func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload ObjectMultipartUpload, limit int) (ObjectMultipartUpload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.reserveObjectMultipartLocked(upload, limit, nil)
+}
+
+func (m *MemStore) ReserveAdmittedObjectMultipartUpload(_ context.Context, upload ObjectMultipartUpload, limit int, policy api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reserveObjectMultipartLocked(upload, limit, &policy)
+}
+
+func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, limit int, policy *api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
+	if m.objectCapacityFencedLocked(upload.BucketID) {
+		return ObjectMultipartUpload{}, ErrConflict
+	}
 	bucket, ok := m.objectBuckets[upload.BucketID]
 	unknownSize := upload.SizeBytes == 0 && upload.PartSizeBytes == 0 && upload.PartCount == 0
 	knownSize := upload.SizeBytes > 0 && upload.PartSizeBytes > 0 && upload.PartCount > 0
-	if !ok || bucket.AccountID != upload.AccountID || bucket.AppID != upload.AppID || bucket.State != "ready" || upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 {
+	if !upload.Protection.ValidInput() || upload.EncryptionDefaultRevision != 0 || upload.FixedAdmission || policy != nil && !validFixedMultipartLayout(upload) || !ok || bucket.AccountID != upload.AccountID || bucket.AppID != upload.AppID || bucket.State != "ready" || !m.cloneBucketAccessibleLocked(bucket) || upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 || !emptyInitialMultipartResult(upload) || !upload.Encryption.ValidFor(upload.AccountID) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	count := 0
@@ -30,27 +44,47 @@ func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload Object
 			continue
 		}
 		if old.Key == upload.Key {
-			if old.SizeBytes != upload.SizeBytes || old.ContentType != upload.ContentType || !equalObjectMultipartMetadata(old.Metadata, upload.Metadata) {
+			if old.SizeBytes != upload.SizeBytes || old.ContentType != upload.ContentType || !equalObjectMultipartMetadata(old.Metadata, upload.Metadata) || !sameMultipartProtectionRequest(old, upload.Protection) || !sameMultipartEncryptionRequest(old, upload.Encryption) {
 				return ObjectMultipartUpload{}, ErrConflict
 			}
 			old.Parts = cloneMultipartParts(old.Parts)
 			old.Metadata = cloneObjectMultipartMetadata(old.Metadata)
-			return old, nil
+			return cloneObjectMultipartUpload(old), nil
 		}
 		count++
 	}
-	if count >= limit {
+	if _, exists := m.objectMultipartUploads[upload.ID]; exists || count >= limit {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
-	now := time.Now().UTC()
+	var captureErr error
+	upload.Encryption, upload.EncryptionDefaultRevision, captureErr = m.captureObjectBucketDefaultLocked(upload.BucketID, upload.Encryption)
+	if captureErr != nil {
+		return ObjectMultipartUpload{}, captureErr
+	}
+	upload.Protection, captureErr = m.captureObjectWriteProtectionLocked(upload.BucketID, upload.Protection)
+	if captureErr != nil {
+		return ObjectMultipartUpload{}, captureErr
+	}
+	if policy != nil {
+		if err := m.admitObjectURLLocked(upload.AccountID, upload.BucketID, upload.Key, upload.SizeBytes, true, *policy, upload.ID); err != nil {
+			return ObjectMultipartUpload{}, err
+		}
+		if m.objectWriteAdmissions == nil {
+			m.objectWriteAdmissions = map[string]objectWriteAdmission{}
+		}
+		all := m.objectUsage[upload.BucketID].InventoryScope == ObjectInventoryAllVersions
+		m.objectWriteAdmissions[upload.ID] = objectWriteAdmission{BucketID: upload.BucketID, KeyHash: objectKeyHash(upload.Key), MultipartID: upload.ID, NativeVersion: all, NativeBytes: nativeGrantBytes(all, upload.SizeBytes)}
+		upload.FixedAdmission = true
+	}
+	now := m.clock().UTC()
 	upload.State, upload.CreatedAt, upload.UpdatedAt, upload.RetryAt = ObjectMultipartInitiating, now, now, now
 	upload.Parts = []api.ObjectMultipartCompletedPart{}
 	upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
 	if m.objectMultipartUploads == nil {
 		m.objectMultipartUploads = map[string]ObjectMultipartUpload{}
 	}
-	m.objectMultipartUploads[upload.ID] = upload
-	return upload, nil
+	m.objectMultipartUploads[upload.ID] = cloneObjectMultipartUpload(upload)
+	return cloneObjectMultipartUpload(upload), nil
 }
 
 func (m *MemStore) ListObjectMultipartUploads(_ context.Context, account, app, bucket string, limit int32, cursor string) ([]ObjectMultipartUpload, string, error) {
@@ -66,7 +100,7 @@ func (m *MemStore) ListObjectMultipartUploads(_ context.Context, account, app, b
 		}
 		upload.Parts = cloneMultipartParts(upload.Parts)
 		upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
-		rows = append(rows, upload)
+		rows = append(rows, cloneObjectMultipartUpload(upload))
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
 	next := ""
@@ -86,18 +120,22 @@ func (m *MemStore) GetObjectMultipartUpload(_ context.Context, account, app, buc
 	}
 	upload.Parts = cloneMultipartParts(upload.Parts)
 	upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
-	return upload, nil
+	return cloneObjectMultipartUpload(upload), nil
 }
 
 func (m *MemStore) ClaimObjectMultipartUpload(_ context.Context, account, app, bucket, id, token, operation string, parts []api.ObjectMultipartCompletedPart, recovery bool) (ObjectMultipartUpload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.claimObjectMultipartLocked(account, app, bucket, id, token, operation, parts, recovery, api.ObjectWriteConditions{})
+}
+
+func (m *MemStore) claimObjectMultipartLocked(account, app, bucket, id, token, operation string, parts []api.ObjectMultipartCompletedPart, recovery bool, conditions api.ObjectWriteConditions) (ObjectMultipartUpload, error) {
 	upload, ok := m.objectMultipartUploads[id]
-	now := time.Now()
+	now := m.clock()
 	if !ok || upload.AccountID != account || upload.AppID != app || upload.BucketID != bucket {
 		return ObjectMultipartUpload{}, ErrNotFound
 	}
-	if token == "" || !validObjectMultipartOperation(operation) || upload.LeaseUntil.After(now) || upload.State == operation && upload.RetryAt.After(now) {
+	if token == "" || (!upload.Encryption.Empty() || !upload.Protection.Empty()) && len(token) > api.MaxObjectEncryptionLeaseTokenBytes || !validObjectMultipartOperation(operation) || upload.LeaseUntil.After(now) || upload.State == operation && upload.RetryAt.After(now) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	if recovery && upload.State != operation && (upload.State != ObjectMultipartActive || operation != ObjectMultipartAborting) {
@@ -109,11 +147,18 @@ func (m *MemStore) ClaimObjectMultipartUpload(_ context.Context, account, app, b
 		if oldState != ObjectMultipartInitiating || upload.ProviderUploadID != "" {
 			return ObjectMultipartUpload{}, ErrConflict
 		}
-	case ObjectMultipartCompleting:
-		if oldState != ObjectMultipartActive && oldState != ObjectMultipartCompleting || oldState == ObjectMultipartActive && !upload.ExpiresAt.After(now) {
+	case ObjectMultipartCompleting, ObjectMultipartCompletingConditional:
+		if m.multipartTransfersPendingLocked(id) {
+			return ObjectMultipartUpload{}, ErrConflict
+		}
+		if oldState != ObjectMultipartActive && oldState != operation || oldState == ObjectMultipartActive && !upload.ExpiresAt.After(now) {
 			return ObjectMultipartUpload{}, ErrConflict
 		}
 		if oldState == ObjectMultipartActive {
+			if !conditions.Valid() || operation != multipartCompletionOperation(conditions) || !conditions.Empty() && upload.PartCount != 0 {
+				return ObjectMultipartUpload{}, ErrConflict
+			}
+			upload.CompletionConditions = conditions
 			if len(parts) == 0 {
 				return ObjectMultipartUpload{}, ErrConflict
 			}
@@ -138,7 +183,7 @@ func (m *MemStore) ClaimObjectMultipartUpload(_ context.Context, account, app, b
 	m.objectMultipartUploads[id] = upload
 	upload.Parts = cloneMultipartParts(upload.Parts)
 	upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
-	return upload, nil
+	return cloneObjectMultipartUpload(upload), nil
 }
 
 func (m *MemStore) ActivateObjectMultipartUpload(_ context.Context, id, token, providerID string) error {
@@ -151,7 +196,7 @@ func (m *MemStore) ActivateObjectMultipartUpload(_ context.Context, id, token, p
 	upload.State, upload.ProviderUploadID = ObjectMultipartActive, providerID
 	upload.LeaseToken, upload.LeaseUntil = "", time.Time{}
 	upload.AttemptCount, upload.LastErrorCode = 0, ""
-	upload.UpdatedAt, upload.RetryAt = time.Now().UTC(), time.Now().UTC()
+	upload.UpdatedAt, upload.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = upload
 	return nil
 }
@@ -160,11 +205,11 @@ func (m *MemStore) SetObjectMultipartUploadSize(_ context.Context, id, token str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	upload, ok := m.objectMultipartUploads[id]
-	if !ok || upload.State != ObjectMultipartCompleting || upload.LeaseToken != token || size < 1 || size > api.MaxObjectUploadBytes {
+	if !ok || !ObjectMultipartIsCompleting(upload.State) || upload.LeaseToken != token || size < 1 || size > api.MaxObjectUploadBytes || upload.FixedAdmission && size != upload.SizeBytes {
 		return ErrConflict
 	}
 	upload.SizeBytes = size
-	upload.UpdatedAt = time.Now().UTC()
+	upload.UpdatedAt = m.clock().UTC()
 	m.objectMultipartUploads[id] = upload
 	return nil
 }
@@ -173,13 +218,13 @@ func (m *MemStore) FinishObjectMultipartUpload(_ context.Context, id, token, nex
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	upload, ok := m.objectMultipartUploads[id]
-	valid := upload.State == ObjectMultipartCompleting && next == ObjectMultipartCompleted || upload.State == ObjectMultipartAborting && next == ObjectMultipartAborted
-	if !ok || token == "" || upload.LeaseToken != token || !valid {
+	valid := ObjectMultipartIsCompleting(upload.State) && next == ObjectMultipartCompleted
+	if !ok || token == "" || upload.LeaseToken != token || !valid || next == ObjectMultipartCompleted && (upload.CompletionDispatched || !upload.Encryption.Empty() || !upload.Protection.Empty()) {
 		return ErrConflict
 	}
 	upload.State, upload.LeaseToken, upload.LeaseUntil = next, "", time.Time{}
 	upload.AttemptCount, upload.LastErrorCode = 0, ""
-	upload.UpdatedAt, upload.RetryAt = time.Now().UTC(), time.Now().UTC()
+	upload.UpdatedAt, upload.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = upload
 	return nil
 }
@@ -191,7 +236,7 @@ func (m *MemStore) RetryObjectMultipartUpload(_ context.Context, id, token, code
 	if !ok || token == "" || upload.LeaseToken != token || !validObjectMultipartOperation(upload.State) || !validObjectMultipartRetry(code, delay) {
 		return ErrConflict
 	}
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	upload.LeaseToken, upload.LeaseUntil = "", time.Time{}
 	upload.LastErrorCode, upload.UpdatedAt, upload.RetryAt = code, now, now.Add(delay)
 	m.objectMultipartUploads[id] = upload
@@ -204,14 +249,14 @@ func (m *MemStore) DueObjectMultipartUploads(_ context.Context, limit int32) ([]
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	now := time.Now()
+	now := m.clock()
 	rows := make([]ObjectMultipartUpload, 0)
 	for _, upload := range m.objectMultipartUploads {
-		dueOperation := upload.State == ObjectMultipartInitiating || upload.State == ObjectMultipartCompleting || upload.State == ObjectMultipartAborting
+		dueOperation := upload.State == ObjectMultipartInitiating || ObjectMultipartIsCompleting(upload.State) || upload.State == ObjectMultipartAborting
 		if (dueOperation && !upload.RetryAt.After(now) || upload.State == ObjectMultipartActive && !upload.ExpiresAt.After(now)) && !upload.LeaseUntil.After(now) {
 			upload.Parts = cloneMultipartParts(upload.Parts)
 			upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
-			rows = append(rows, upload)
+			rows = append(rows, cloneObjectMultipartUpload(upload))
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {

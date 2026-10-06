@@ -1,3 +1,4 @@
+// adr: 590
 package state_test
 
 import (
@@ -74,6 +75,7 @@ func TestMemStoreAppSecretRuntimeReloadTargetsIncludesUnknownAndUnreported(t *te
 
 	if _, err := store.RecordAppSecretRuntimeReload(ctx, state.AppSecretRuntimeReloadResult{
 		AccountID: account.ID, AppID: app.ID, InstanceID: prodRuntime.ID, Revision: strings.Repeat("a", 64),
+		Fence:      runtimeSecretFenceForTest(t, store, runtimeAppEnvFixture{account: account, app: app}, prod),
 		Projection: state.SecretReloadProjectionUpdated, Signal: state.SecretReloadSignalSent,
 		AttemptedAt: time.Now().UTC(), Candidates: []state.AppSecretDeliveryCandidate{{Scope: "prod", Key: "DATABASE_URL", Version: 1}},
 	}); err != nil {
@@ -143,9 +145,11 @@ func TestMemStoreSecretReloadObservationsArePerWorkload(t *testing.T) {
 		t.Fatalf("list seeded secret = %+v, err=%v", secrets, err)
 	}
 	candidate := state.AppSecretDeliveryCandidate{Scope: "prod", Key: "DATABASE_URL", Version: secrets[0].DeliveryVersion}
+	fence := runtimeSecretFenceForTest(t, store, runtimeAppEnvFixture{account: account, app: app}, deployment)
 	for _, workloadName := range []string{"", "proxy"} {
 		if _, err := store.RecordAppSecretRuntimeReload(ctx, state.AppSecretRuntimeReloadResult{
 			AccountID: account.ID, AppID: app.ID, InstanceID: instance.ID, WorkloadName: workloadName,
+			Fence:    fence,
 			Revision: strings.Repeat("a", 64), Projection: state.SecretReloadProjectionUpdated,
 			Signal: state.SecretReloadSignalSent, AttemptedAt: time.Now().UTC(),
 			Candidates: []state.AppSecretDeliveryCandidate{candidate},
@@ -154,6 +158,7 @@ func TestMemStoreSecretReloadObservationsArePerWorkload(t *testing.T) {
 		}
 		if _, err := store.RecordAppSecretRuntimeReloadAck(ctx, state.AppSecretRuntimeReloadAckResult{
 			AccountID: account.ID, AppID: app.ID, InstanceID: instance.ID, WorkloadName: workloadName,
+			Fence:    fence,
 			Revision: strings.Repeat("a", 64), Status: state.SecretApplicationReloadAckApplied,
 			AttemptedAt: time.Now().UTC(), Candidates: []state.AppSecretDeliveryCandidate{candidate},
 		}); err != nil {
@@ -213,11 +218,13 @@ func TestMemStoreSecretRevocationAckTracksRemovalAndReintroduction(t *testing.T)
 	candidate := state.AppSecretDeliveryCandidate{Scope: "prod", Key: "DATABASE_URL", Version: secrets[0].DeliveryVersion}
 	ack := state.AppSecretRuntimeReloadAckResult{
 		AccountID: account.ID, AppID: app.ID, InstanceID: instance.ID, Revision: strings.Repeat("a", 64),
+		Fence:  runtimeSecretFenceForTest(t, store, runtimeAppEnvFixture{account: account, app: app}, deployment),
 		Status: state.SecretApplicationReloadAckApplied, AttemptedAt: time.Now().UTC(),
 		Candidates: []state.AppSecretDeliveryCandidate{candidate},
 	}
 	if _, err := store.RecordAppSecretRuntimeReload(ctx, state.AppSecretRuntimeReloadResult{
 		AccountID: account.ID, AppID: app.ID, InstanceID: instance.ID, Revision: ack.Revision,
+		Fence:      ack.Fence,
 		Projection: state.SecretReloadProjectionUpdated, Signal: state.SecretReloadSignalSent,
 		AttemptedAt: ack.AttemptedAt, Candidates: ack.Candidates,
 	}); err != nil {
@@ -236,6 +243,7 @@ func TestMemStoreSecretRevocationAckTracksRemovalAndReintroduction(t *testing.T)
 		t.Fatal(err)
 	}
 	ack.Candidates = nil // The current, version-fenced projection has no secrets.
+	ack.Fence = runtimeSecretFenceForTest(t, store, runtimeAppEnvFixture{account: account, app: app}, deployment)
 	ack.AttemptedAt = time.Now().UTC()
 	if _, err := store.RecordAppSecretRuntimeReloadAck(ctx, ack); err != nil {
 		t.Fatalf("acknowledge empty projection: %v", err)
@@ -248,5 +256,23 @@ func TestMemStoreSecretRevocationAckTracksRemovalAndReintroduction(t *testing.T)
 			// cannot be represented as ordinary secret-row candidates.
 			t.Fatalf("revocation after empty-projection acknowledgement = %+v, err=%v", got, err)
 		}
+	}
+}
+
+func TestMemStoreMigrationBindingsHaveNoServingReloadTargets(t *testing.T) {
+	store, ctx, account, app := memValueHashFixture(t)
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:migration-targets", Status: state.DeployLive, Scope: "prod"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, "node-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{AccountID: account.ID, AppID: app.ID, Scope: "prod", Key: "SCHEMA_DSN", Ciphertext: []byte("sealed"), ManagedPostgresBindingID: "migration", ManagedPostgresAccess: "migration", ManagedCredentialRef: "credential", ManagedCredentialGeneration: 1}); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := store.ListAppSecretRuntimeReloadTargets(ctx, account.ID, app.ID, "")
+	if err != nil || len(targets) != 0 {
+		t.Fatalf("migration serving targets = %+v, %v", targets, err)
 	}
 }

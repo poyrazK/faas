@@ -1,0 +1,147 @@
+==> pre-pr: capabilities-check (product registry ↔ generated matrix)
+capabilities-check: OK
+==> pre-pr: pricing-check (plan limits ↔ customer pricing)
+pricing-check: OK
+==> pre-pr: docs-links-check (docs URLs ↔ customer pages)
+docs-links-check: OK
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.702s
+
+OK
+==> pre-pr: api-hosting-contract-check (metal-free fixture matrix)
+ok django           framework=django     port=8000
+ok docker-oci       framework=oci        port=9000
+ok express          framework=express    port=3000
+ok fastapi          framework=fastapi    port=8000
+ok fastapi-src-layout framework=fastapi    port=8000
+ok fastapi-uv-src-layout framework=fastapi    port=8000
+ok fastify          framework=fastify    port=3000
+ok flask            framework=flask      port=8000
+ok go-gin           framework=gin        port=8080
+ok go-net-http      framework=go-net-http port=8080
+ok go-workspace     framework=go-net-http port=8080
+ok hono             framework=hono       port=3000
+ok hosting-override framework=express    port=8787
+ok nestjs           framework=nestjs     port=3000
+ok pnpm-workspace   framework=express    port=3000
+ok sse              framework=express    port=3000
+==> pre-pr: api-hosting-scorecard-check (release evidence contract)
+api-hosting-scorecard: OK — 20 gates, 21 targets, 55 evidence references
+==> pre-pr: spec-check (api/openapi.yaml ↔ pkg/apid/openapi.yaml)
+# CI installs vacuum in its own workflow step (ci.yml) and appends its
+# bin dir to ITHUB_PATH, so `vacuum` resolves on PATH in the next
+# step. Locally, `make spec-check` first-run will fall through to
+# `go install` if vacuum isn't on PATH yet. Each line is its own shell
+# statement so this guard stays bash -e safe.
+vacuum v0.29.10 installed
+
+ ██╗   ██╗ █████╗  ██████╗██╗   ██╗██╗   ██╗███╗   ███╗ 《《《─═─═── ·* · ˙*
+ ██║   ██║██╔══██╗██╔════╝██║   ██║██║   ██║████╗ ████║《《《──═─═──· ··* ˙˙
+ ██║   ██║███████║██║     ██║   ██║██║   ██║██╔████╔██║《《《───═─═─··· ˙˙ ˙
+ ╚██╗ ██╔╝██╔══██║██║     ██║   ██║██║   ██║██║╚██╔╝██║《《──═─═──·* ·· ˙˙
+  ╚████╔╝ ██║  ██║╚██████╗╚██████╔╝╚██████╔╝██║ ╚═╝ ██║ 《《─═─═──* · · ˙
+   ╚═══╝  ╚═╝  ╚═╝ ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝     ╚═╝ 《───═─═─· ··* ˙˙ ˙
+
+ version: v0.29.10 | compiled: Sat, 03 Oct 2026 15:28:24 +03
+ https://quobix.com/vacuum/ | https://github.com/daveshanley/vacuum
+
+ using ruleset 'api/vacuum.yaml' (containing 53 rules)
+ vacuuming file 'api/openapi.yaml' against 53 rules: https://quobix.com/vacuum/rulesets/recommended
+
+ category              ✗ errors      ▲ warnings    ● info
+ ────────────────────  ────────────  ────────────  ────────────────────────────────────────────────────────
+ Operations            0             20            0
+ Tags                  0             1             0
+ Schemas               0             59            115
+ Descriptions          0             256           0
+ Examples              0             1,445         0
+ ────────────────────  ────────────  ────────────  ────────────────────────────────────────────────────────
+ total                 0             1,781         115
+
+ rule                                      violations    quality impact
+ ────────────────────────────────────────  ────────────  ──────────────────────────────────────────────────
+ oas3-missing-example                      1,424         ██████████████████████████████████████████████████
+ operation-description                     256           ████████
+ oas-missing-type                          115           ████
+ oas3-unused-component                     32            █
+ oas3-valid-schema-example                 21
+ no-unnecessary-combinator                 20
+ paths-kebab-case                          17
+ nullable-enum-contains-null               6
+ no-request-body                           3
+ operation-tags                            1
+ ────────────────────────────────────────  ────────────  ──────────────────────────────────────────────────
+ total                                     1,896
+ ... and 1 more rules
+
+ --> use the <dashboard> command to be able to navigate results interactively <--
+
+ | Quality Score: 25/100 [🥵]
+
+ | ▲ Passed, but with 1,781 warnings and 115 informs.
+
+ use --debug if you want to enable developer logging
+
+spec-sync: pkg/apid/openapi.yaml matches api/openapi.yaml
+# Pure-Go generator — no template strings, no timestamps. Deterministic
+# order (v4 by prefix asc, v6 by prefix asc, SMTP by port asc) so the
+# git diff stays reviewable.
+denylist-md: docs/denylist.md regenerated
+# Pure-Go generator — same shape as denylist-md. Enforces the DPA §7
+# 30-day notice window: any sub-processor entry with an effective_date
+# younger than notice_published_at + 30d fails the run. Order: by id
+# ascending so the diff stays reviewable.
+subprocessor-md: docs/compliance/subprocessors.md regenerated
+pricing-md: docs/plans.md regenerated
+docs-links-check: OK
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.702s
+
+OK
+# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
+# would double the wall time without adding signal.
+ok  	github.com/onebox-faas/faas/cmd/apid	1.706s
+spec-check: OK
+==> pre-pr: proto-check (checked-in *.pb.go matches protoc)
+proto-versions-check: OK
+proto-check: OK
+==> pre-pr: sqlc-check (checked-in sqlc output matches regenerated)
+sqlc v1.31.1 installed
+cp: /Users/poyrazk/.local/sqlc/bin/sqlc: Permission denied
+sqlc v1.31.1 installed at /Users/poyrazk/.local/sqlc/bin/sqlc
+sqlc-check: OK
+==> pre-pr: egress-check (nftables render + Go cross-check)
+egress-render: OK default-local
+egress-render: OK cloudflare-origin
+# Post-ADR-055: there is no committed static artifact any more —
+# the Jinja2 template `policy_nftables.conf.j2` is the
+# ansible-side verifier, the Go renderer is the source of truth,
+# and the byte-equality of the two surfaces for the default
+# values is what this gate enforces (delegated to
+# egress-render-cross-check via the prerequisite above).
+egress-check: nft not on PATH; live kernel check skipped (macOS dev OK)
+egress-check: bridge-name guard OK
+==> pre-pr: environment-preflight-action-check (OIDC scopes + promotion gate contract)
+environment preflight Action contract: OK
+==> pre-pr: sdk-gen (node + python SDK regenerated, no diff)
+# Aggregator for issue #266 PR 7. Composes the per-SDK `-check`
+# recipes (sdk-gen-{node,python}-check), each of which already
+# asserts `git diff --exit-code` against its own sub-tree. We do
+# NOT add a top-level `git diff --exit-code -- sdk/` here — it
+# would be redundant with the two per-SDK diffs and would mask
+# per-SDK attribution on failure. The Go SDK at sdk/go/ is
+# hand-written (extracted from pkg/api/ in PR 2); its spec-sync
+# invariant is covered by `make sdk-check`, a separate concern.
+
+> @gregale/sdk-node@0.1.0 gen:check
+> node scripts/gen.mjs && git diff --exit-code -- src/generated
+
+sdk/node: generated clients from /Users/poyrazk/dev/Cloud/gregale/managed-postgres-reliability-20261001/api/openapi.yaml -> /Users/poyrazk/dev/Cloud/gregale/managed-postgres-reliability-20261001/sdk/node/src/generated
+sdk/node: post-processed 475 files with extensionless imports
+sdk/node: wrote models barrel (1117 entries)
+gen: reconciled 2 cosmetic-drift file(s) against HEAD (0 structural drift left intact)
+gen: regenerated /Users/poyrazk/dev/Cloud/gregale/managed-postgres-reliability-20261001/sdk/python from openapi.yaml
+sdk-gen: OK
+pre-pr: OK (every drift gate clean)

@@ -490,6 +490,45 @@ func TestMemStore_WorkflowListPagination(t *testing.T) {
 	}
 }
 
+func TestMemStore_WorkflowRunListFilters(t *testing.T) {
+	ctx := context.Background()
+	ms := state.NewMemStore()
+
+	first := &state.WorkflowRun{AppID: "app-run-filters", WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
+	if err := ms.CreateWorkflowRun(ctx, first); err != nil {
+		t.Fatalf("CreateWorkflowRun(first): %v", err)
+	}
+	time.Sleep(time.Millisecond)
+	other := &state.WorkflowRun{AppID: first.AppID, WorkflowName: "refund", DefinitionSnapshot: json.RawMessage(`{"name":"refund"}`)}
+	if err := ms.CreateWorkflowRun(ctx, other); err != nil {
+		t.Fatalf("CreateWorkflowRun(other): %v", err)
+	}
+	time.Sleep(time.Millisecond)
+	last := &state.WorkflowRun{AppID: first.AppID, WorkflowName: first.WorkflowName, DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
+	if err := ms.CreateWorkflowRun(ctx, last); err != nil {
+		t.Fatalf("CreateWorkflowRun(last): %v", err)
+	}
+
+	after, before := first.CreatedAt, last.CreatedAt
+	runs, total, err := ms.ListWorkflowRuns(ctx, first.AppID, state.ListWorkflowRunsOpts{
+		WorkflowName:  first.WorkflowName,
+		CreatedAfter:  &after,
+		CreatedBefore: &before,
+		Limit:         1,
+		Offset:        1,
+	})
+	if err != nil || total != 2 || len(runs) != 1 || runs[0].WorkflowName != first.WorkflowName {
+		t.Fatalf("filtered list = %#v, total=%d, err=%v; want one paged charge run from two matches", runs, total, err)
+	}
+
+	if _, _, err := ms.ListWorkflowRuns(ctx, first.AppID, state.ListWorkflowRunsOpts{
+		CreatedAfter:  &before,
+		CreatedBefore: &after,
+	}); !errors.Is(err, state.ErrWorkflowInvalidCreatedRange) {
+		t.Fatalf("reversed created range error = %v, want ErrWorkflowInvalidCreatedRange", err)
+	}
+}
+
 func TestMemStore_WorkflowAdmissionRecoveryAndCancel(t *testing.T) {
 	ctx := context.Background()
 	ms := state.NewMemStore()

@@ -73,11 +73,6 @@ type exactDeploymentRolloutRecoverer interface {
 //  7. s.audit.Emit — best-effort events stream side-channel.
 //  8. 200 RolloutTransitionResponse.
 func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	// (1) Plan-tier gate (Pro+). Mirrors handlers_ext.go:1504.
-	if !acct.Plan.TrafficSplitAllowed() {
-		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))
-		return
-	}
 	// (2) Decode body.
 	var req api.RecoverRolloutRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -105,10 +100,26 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 	// text and jsonb writes downstream both reject (SQLSTATE 22021 / 22P02),
 	// rolling back the recovery this endpoint exists to perform.
 	req.Reason = safetext.Truncate(req.Reason, api.AuditReasonMaxBytes)
+	if req.DeploymentID != "" || req.ExpectedPredecessorDeploymentID != "" {
+		s.recoverPinnedCanaryRollout(w, r, acct, app, req)
+		return
+	}
+	if !acct.Plan.TrafficSplitAllowed() {
+		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))
+		return
+	}
 	// (6) Atomic-tx recovery.
 	updated, auditID, err := s.store.RecoverRollout(r.Context(), app.ID, req.Action, req.Reason)
 	if err != nil {
+		var routeBlocked *state.RouteGateBlockedError
+		var healthBlocked *state.RouteHealthBlockedError
 		switch {
+		case state.IsBindingReleaseRequired(err):
+			api.WriteProblem(w, bindingReleaseRequiredProblem())
+		case errors.As(err, &healthBlocked):
+			s.routeHealthError(w, err)
+		case errors.As(err, &routeBlocked):
+			s.canaryRouteGateError(w, err)
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no active rollout for this app")
 		case errors.Is(err, state.ErrInvalidRecoverAction):
@@ -191,46 +202,9 @@ func (s *server) recoverDeploymentRollout(w http.ResponseWriter, r *http.Request
 		s.notFound(w, "no such deployment")
 		return
 	}
-	recoverer, ok := s.store.(exactDeploymentRolloutRecoverer)
-	if !ok {
-		writeCustomerInternalProblem(w, r, s.log, "recover exact deployment rollout",
-			"Gregale could not recover this rollout.",
-			"Retry in a moment; if it continues, contact support.", errors.New("configured store does not support exact rollout recovery"))
-		return
-	}
-	req.Reason = safetext.Truncate(req.Reason, api.AuditReasonMaxBytes)
-	updated, auditID, err := recoverer.RecoverRolloutForDeployment(
-		r.Context(), app.ID, d.ID, req.ExpectedPredecessorDeploymentID, req.Action, req.Reason)
-	if err != nil {
-		switch {
-		case errors.Is(err, state.ErrNotFound):
-			s.notFound(w, "no such active rollout or predecessor")
-		case errors.Is(err, state.ErrInvalidRecoverAction):
-			api.WriteProblem(w, api.ErrInvalidRecoverAction(req.Action))
-		case errors.Is(err, state.ErrRolloutStateInvalid):
-			api.WriteProblem(w, api.ErrRolloutStateInvalid(updated.RolloutState))
-		default:
-			writeCustomerInternalProblem(w, r, s.log, "recover exact deployment rollout",
-				"Gregale could not recover this rollout.",
-				"Retry the request in a moment; if it continues, contact support.", err)
-		}
-		return
-	}
-	if s.audit != nil {
-		s.audit.Emit(r.Context(), "deployment.rollout_recovered", &acct.ID, map[string]any{
-			"app":                  app.ID,
-			"deployment":           updated.ID,
-			"expected_predecessor": req.ExpectedPredecessorDeploymentID,
-			"action":               req.Action,
-			"reason":               req.Reason,
-			"deployment_audit":     auditID,
-			"actor":                acct.ID,
-		})
-	}
-	s.notifyCanaryTraffic(r, app, updated)
-	writeJSON(w, http.StatusOK, api.RolloutTransitionResponse{
-		Deployment: s.deploymentResponse(updated, app),
-		AuditID:    int64ToAuditIDString(auditID),
+	s.recoverPinnedCanaryRollout(w, r, acct, app, api.RecoverRolloutRequest{
+		Action: req.Action, Reason: req.Reason, DeploymentID: d.ID,
+		ExpectedPredecessorDeploymentID: req.ExpectedPredecessorDeploymentID,
 	})
 }
 

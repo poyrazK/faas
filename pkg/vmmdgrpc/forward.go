@@ -977,7 +977,9 @@ func rawBridgeReadHead(r *bufio.Reader, stderr string) (*parsedBridgeResponse, e
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "raw bridge head read: %v (stderr=%q)", err, stderr)
 	}
-	parsed, err := parseBridgeOutput(head)
+	// The splitter consumes the blank line and returns the preceding LF.
+	// Restore that separator for the parser; body bytes stay on r unchanged.
+	parsed, err := parseBridgeOutput(append(head, '\n'))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "raw bridge head parse: %v", err)
 	}

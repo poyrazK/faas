@@ -854,15 +854,15 @@ func (s *Server) ForceRestartInstance(ctx context.Context, req *scheddpb.ForceRe
 // Idempotent (mirrors ParkInstance): if the instance is no
 // longer RUNNING (already parked by the idle reaper, mid-restore
 // after the previous restart) the engine returns nil and the
-// RPC replies with Ok=true. The vmmd loop has already exited
-// on its end so re-reports are benign.
+// RPC preserves Ok=true for acceptance; Applied=true requires a cold
+// outcome (ADR-471). Resident transitions leave the durable report pending.
 //
 // Wire error mapping:
 //
-//   - codes.OK + Ok=true on success or no-op
+//   - codes.OK + Ok=true on acceptance; Applied=false while still resident
 //   - codes.NotFound when the instance_id doesn't resolve
 //     (state.ErrNotFound from the engine)
-//   - codes.OK + Ok=true when the instance runs on this node but a
+//   - codes.OK + Ok=true, Applied=false when the instance runs on this node but a
 //     peer schedd owns its app: vmmd always dials the schedd on its
 //     own node, and placement can run an instance off its owner's
 //     node, so the report is relayed to the owner (issue #3359)
@@ -875,12 +875,14 @@ func (s *Server) ForceRestartInstance(ctx context.Context, req *scheddpb.ForceRe
 // the end of the proto file.
 func (s *Server) ReportLivenessFailed(ctx context.Context, req *scheddpb.LivenessFailedReport) (*scheddpb.LivenessFailedAck, error) {
 	const op = "ReportLivenessFailed"
+	ctx = sched.WithFailureReportSourceNode(ctx, req.GetSourceNodeId())
 	if _, err := authorizeInstance(ctx, s.owner, s.resolver, req.GetInstanceId()); err != nil {
 		relayed, relayErr := s.relayForeignFailure(ctx, err, sched.InstanceFailureReport{
-			InstanceID: req.GetInstanceId(), Kind: sched.InstanceFailureLiveness, Reason: req.GetReason(),
+			InstanceID: req.GetInstanceId(), Kind: sched.InstanceFailureLiveness, SourceNodeID: req.GetSourceNodeId(), Reason: req.GetReason(),
 		})
 		if relayed {
-			return &scheddpb.LivenessFailedAck{Ok: true}, nil
+			ok, err := s.failureReportApplied(ctx, req.GetInstanceId())
+			return &scheddpb.LivenessFailedAck{Ok: true, Applied: ok}, err
 		}
 		return nil, relayErr
 	}
@@ -888,12 +890,16 @@ func (s *Server) ReportLivenessFailed(ctx context.Context, req *scheddpb.Livenes
 	err := s.engine.DestroyForLivenessFailure(ctx, req.GetInstanceId(), req.GetReason())
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
+		if errors.Is(err, sched.ErrFailureReportSourceChanged) {
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, err.Error())
 		}
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &scheddpb.LivenessFailedAck{Ok: true}, nil
+	ok, err := s.failureReportApplied(ctx, req.GetInstanceId())
+	return &scheddpb.LivenessFailedAck{Ok: true, Applied: ok}, err
 }
 
 // ReportWorkloadOOM (Cluster C / ADR-121) is the vmmd-side
@@ -912,13 +918,12 @@ func (s *Server) ReportLivenessFailed(ctx context.Context, req *scheddpb.Livenes
 // "workload_oom_failed".
 //
 // Idempotent (mirrors ReportLivenessFailed): if the instance is
-// no longer RUNNING, the engine returns nil and the RPC replies
-// with Ok=true. Re-reports are benign because the vmmd loop has
-// already exited on its end.
+// no longer RUNNING, the engine returns nil. The RPC preserves the acceptance
+// acknowledgement, but Applied requires a cold outcome (ADR-471).
 //
 // Wire error mapping:
 //
-//   - codes.OK + Ok=true on success or no-op
+//   - codes.OK + Ok=true on acceptance; Applied=false while still resident
 //   - codes.NotFound when the instance_id doesn't resolve
 //   - codes.Unauthenticated / codes.PermissionDenied if the
 //     ownership guard rejects (defence-in-depth)
@@ -928,13 +933,15 @@ func (s *Server) ReportLivenessFailed(ctx context.Context, req *scheddpb.Livenes
 // end of the proto file.
 func (s *Server) ReportWorkloadOOM(ctx context.Context, req *scheddpb.ReportWorkloadOOMRequest) (*scheddpb.ReportWorkloadOOMAck, error) {
 	const op = "ReportWorkloadOOM"
+	ctx = sched.WithFailureReportSourceNode(ctx, req.GetSourceNodeId())
 	if _, err := authorizeInstance(ctx, s.owner, s.resolver, req.GetInstanceId()); err != nil {
 		relayed, relayErr := s.relayForeignFailure(ctx, err, sched.InstanceFailureReport{
-			InstanceID: req.GetInstanceId(), Kind: sched.InstanceFailureWorkloadOOM,
+			InstanceID: req.GetInstanceId(), Kind: sched.InstanceFailureWorkloadOOM, SourceNodeID: req.GetSourceNodeId(),
 			PeakMB: int(req.GetPeakMb()), PlanMB: int(req.GetPlanMb()),
 		})
 		if relayed {
-			return &scheddpb.ReportWorkloadOOMAck{Ok: true}, nil
+			ok, err := s.failureReportApplied(ctx, req.GetInstanceId())
+			return &scheddpb.ReportWorkloadOOMAck{Ok: true, Applied: ok}, err
 		}
 		return nil, relayErr
 	}
@@ -948,12 +955,16 @@ func (s *Server) ReportWorkloadOOM(ctx context.Context, req *scheddpb.ReportWork
 	err := s.engine.DestroyForWorkloadOOMFailure(ctx, req.GetInstanceId(), peakMB, planMB)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
+		if errors.Is(err, sched.ErrFailureReportSourceChanged) {
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, err.Error())
 		}
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &scheddpb.ReportWorkloadOOMAck{Ok: true}, nil
+	ok, err := s.failureReportApplied(ctx, req.GetInstanceId())
+	return &scheddpb.ReportWorkloadOOMAck{Ok: true, Applied: ok}, err
 }
 
 // StreamAppLogs (issue #254 / Move 4, issue #517 / PR-B
@@ -1391,14 +1402,23 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 				}
 			}
 		}
-		// Complete vmmd presence reports also drive the stale-instance
-		// reconciler. This is an optional additive seam so older/fake
-		// engines keep the existing capacity-stream contract.
+		// Only separately signed process inventories can drive destructive
+		// reconciliation. Legacy capacity signatures do not cover metrics IDs.
 		if observer, ok := s.engine.(interface {
-			ObserveNodeInstances(context.Context, string, int32, []sched.NodeTelemetry)
+			ObserveNodeInventory(context.Context, sched.NodeInstanceInventory)
 		}); ok {
-			observer.ObserveNodeInstances(
-				stream.Context(), report.NodeID, report.LiveCount, telemetryRows)
+			inventory := sched.NodeInstanceInventory{NodeID: report.NodeID,
+				NodeKeyID: report.NodeKeyID, SampledAt: report.SampledAt}
+			if in := msg.GetInstanceInventory(); in != nil {
+				inventory.Complete = in.GetComplete()
+				inventory.InstanceIDs = in.GetInstanceIds()
+				inventory.Signature = in.GetNodeSignature()
+				if err := sched.VerifyNodeInventory(inventory, keys); err != nil {
+					inventory.Complete = false
+					s.log.Warn("schedd: ignoring unauthenticated VM inventory", "node_id", report.NodeID, "err", err)
+				}
+			}
+			observer.ObserveNodeInventory(stream.Context(), inventory)
 		}
 	}
 }

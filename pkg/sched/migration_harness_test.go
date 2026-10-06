@@ -317,8 +317,8 @@ func TestMigrateOne_Phase4PeerOwnerDestroysPausedSource(t *testing.T) {
 	if vmm.cancels != 0 {
 		t.Errorf("cancels = %d, want 0 (source must not resume after peer ownership commit)", vmm.cancels)
 	}
-	if vmm.destroys != 2 {
-		t.Errorf("destroys = %d, want 2 (destination and obsolete source cleanup)", vmm.destroys)
+	if vmm.destroys != 1 || vmm.acks != 1 {
+		t.Errorf("destroys=%d acks=%d, want destination cleanup and lease-bound source acknowledgement", vmm.destroys, vmm.acks)
 	}
 	ins, err := store.InstanceByID(context.Background(), insID)
 	if err != nil {
@@ -661,7 +661,7 @@ func TestBuildAppSpecForMigration_NonEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InstanceByID: %v", err)
 	}
-	depID := "dep-" + uuid.NewString()
+	depID := uuid.NewString()
 	if _, err := store.CreateDeployment(context.Background(),
 		state.Deployment{ID: depID, AppID: ins.AppID, Kind: state.DeploymentKindImage,
 			ImageDigest: "sha256:seed", Status: state.DeployLive, CreatedAt: time.Now()}); err != nil {

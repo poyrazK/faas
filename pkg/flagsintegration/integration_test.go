@@ -111,6 +111,31 @@ func exerciseFeatureFlags(t *testing.T, s state.Store) {
 	if emptyRules.Flags[0].Seed != "" || emptyRules.Groups["empty"] != nil {
 		t.Fatal("publication mutated caller configuration")
 	}
+	if lister, ok := s.(state.FeatureFlagAutoRolloutLister); ok {
+		rollout := 100
+		automatic := flags.Config{Flags: []flags.Flag{{
+			Key: "export", Enabled: true,
+			Rules: []flags.Rule{{ID: "release", Rollout: &rollout, Value: true, Progression: &flags.ProgressiveRollout{
+				Stages: []int{100, 10000}, CurrentStage: 0, AutoAdvance: true,
+				MinimumUsedRequests: 1, MaximumHTTP5xxRateBasisPoints: 100,
+				MaximumP95LatencyMS: 1000, WindowSeconds: 60,
+			}}},
+		}}}
+		if _, err := fs.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: 5, Config: automatic, Actor: acct.ID}); err != nil {
+			t.Fatal(err)
+		}
+		candidates, err := lister.ListFeatureFlagAutoRolloutCandidates(ctx, "", 100)
+		if err != nil || len(candidates) != 1 {
+			t.Fatalf("automatic rollout candidates: %+v %v", candidates, err)
+		}
+		candidate := candidates[0]
+		if candidate.Scope != scope || candidate.ProjectSlug != "flags" || candidate.EnvironmentSlug != "production" {
+			t.Fatalf("automatic rollout candidate=%+v, want scope=%+v flags/production", candidate, scope)
+		}
+		if rows, err := lister.ListFeatureFlagAutoRolloutCandidates(ctx, candidate.Scope.EnvironmentID, 100); err != nil || len(rows) != 0 {
+			t.Fatalf("automatic rollout cursor page: %+v %v", rows, err)
+		}
+	}
 }
 func TestFeatureFlagsMemStore(t *testing.T) { exerciseFeatureFlags(t, state.NewMemStore()) }
 func TestFeatureFlagsPostgres(t *testing.T) {

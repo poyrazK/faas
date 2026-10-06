@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -18,7 +19,10 @@ import (
 )
 
 var _ ExecutionStore = (*PgStore)(nil)
+var _ ExecutionPrincipalListStore = (*PgStore)(nil)
 var _ ExecutionQueueStore = (*PgStore)(nil)
+var _ ExecutionArtifactGrantStore = (*PgStore)(nil)
+var _ ExecutionWorkflowStore = (*PgStore)(nil)
 
 func executionTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
@@ -83,12 +87,22 @@ func executionNullableTime(value interface{}) (*time.Time, error) {
 }
 
 func executionFromSQL(row sqlc.Execution) Execution {
+	var artifacts []api.ExecutionArtifact
+	if len(row.Artifacts) != 0 {
+		_ = json.Unmarshal(row.Artifacts, &artifacts)
+	}
 	return Execution{
-		ID:          pgUUIDString(row.ID),
-		AccountID:   pgUUIDString(row.AccountID),
-		Runtime:     api.ExecutionRuntime(row.Runtime),
-		Status:      api.ExecutionStatus(row.Status),
-		NetworkMode: api.ExecutionNetworkMode(row.NetworkMode),
+		Profile:            api.ExecutionProfile(row.Profile),
+		RuntimeImageDigest: row.RuntimeImageDigest.String,
+		WorkflowID:         row.WorkflowID.String,
+		StepLabel:          row.StepLabel.String,
+		Artifacts:          artifacts,
+		ID:                 pgUUIDString(row.ID),
+		AccountID:          pgUUIDString(row.AccountID),
+		RunsPrincipalID:    executionUUIDPtr(row.RunsPrincipalID),
+		Runtime:            api.ExecutionRuntime(row.Runtime),
+		Status:             api.ExecutionStatus(row.Status),
+		NetworkMode:        api.ExecutionNetworkMode(row.NetworkMode),
 		Limits: api.ResolvedExecutionLimits{
 			TimeoutMS:       int(row.TimeoutMs),
 			MemoryMB:        int(row.MemoryMb),
@@ -139,6 +153,11 @@ func recordExecutionUsage(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, ex
 }
 
 func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionParams) (Execution, error) {
+	normalizedIntegrationIDs, err := api.NormalizeExecutionIntegrationIDs(params.OutboundIntegrationIDs)
+	if err != nil {
+		return Execution{}, fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
+	}
+	params.OutboundIntegrationIDs = normalizedIntegrationIDs
 	if err := validateCreateExecution(params); err != nil {
 		return Execution{}, err
 	}
@@ -150,9 +169,29 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 
 	q := sqlc.New()
 	accountID := mustPgUUID(params.AccountID)
+	var runsPrincipalID pgtype.UUID
+	if params.RunsPrincipalID != nil {
+		runsPrincipalID, err = parsePgUUID(*params.RunsPrincipalID)
+		if err != nil {
+			return Execution{}, fmt.Errorf("create execution: runs principal: %w", err)
+		}
+	}
 	account, err := q.ExecutionLockAccount(ctx, tx, accountID)
 	if err != nil {
 		return Execution{}, mapErr(err)
+	}
+	if isAgentWorkflowStep(params) {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM executions
+			 WHERE account_id = $1 AND runs_principal_id = $2
+			   AND workflow_id = $3 AND step_label = $4
+		)`, accountID, runsPrincipalID, params.WorkflowID, params.StepLabel).Scan(&exists); err != nil {
+			return Execution{}, fmt.Errorf("create execution: check agent workflow step: %w", err)
+		}
+		if exists {
+			return Execution{}, ErrExecutionWorkflowStepExists
+		}
 	}
 	planLimits, planOK := api.Plan(account.Plan).ExecutionLimits()
 	if !planOK {
@@ -168,10 +207,65 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 	if active >= int64(planLimits.MaxConcurrent) {
 		return Execution{}, &ExecutionQuotaError{Limit: planLimits.MaxConcurrent, Observed: int(active) + 1}
 	}
+	integrationIDs := make([]pgtype.UUID, 0, len(params.OutboundIntegrationIDs))
+	for _, rawID := range params.OutboundIntegrationIDs {
+		id, err := parsePgUUID(rawID)
+		if err != nil {
+			return Execution{}, fmt.Errorf("%w: invalid outbound integration id", ErrExecutionInvalid)
+		}
+		integrationIDs = append(integrationIDs, id)
+	}
+	if len(integrationIDs) > 0 {
+		rows, err := tx.Query(ctx, `
+			SELECT integration.id
+			  FROM outbound_integrations integration
+			 WHERE integration.account_id = $1 AND integration.id = ANY($2::uuid[])
+			   AND integration.owner_kind = 'customer'
+			   AND integration.provider_auth_mode = 'managed'
+			   AND integration.credential_source = 'customer_sealed'
+			   AND integration.enabled AND integration.runs_enabled
+			   AND cardinality(integration.allowed_methods) > 0
+			   AND cardinality(integration.allowed_path_prefixes) > 0
+			 ORDER BY integration.id
+			 FOR SHARE OF integration`, accountID, integrationIDs)
+		if err != nil {
+			return Execution{}, fmt.Errorf("create execution: lock outbound integrations: %w", err)
+		}
+		eligible := 0
+		for rows.Next() {
+			var id pgtype.UUID
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return Execution{}, fmt.Errorf("create execution: scan outbound integrations: %w", err)
+			}
+			eligible++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return Execution{}, fmt.Errorf("create execution: read outbound integrations: %w", err)
+		}
+		rows.Close()
+		if eligible != len(integrationIDs) {
+			return Execution{}, ErrExecutionOutboundIntegrationUnavailable
+		}
+		// Credential mutations serialize on the integration rows above. A
+		// separate READ COMMITTED statement sees whether that mutation committed
+		// before admission acquired the locks.
+		var configured int64
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM outbound_integration_credentials
+			 WHERE account_id = $1 AND integration_id = ANY($2::uuid[])`, accountID, integrationIDs).Scan(&configured); err != nil {
+			return Execution{}, fmt.Errorf("create execution: check outbound credentials: %w", err)
+		}
+		if configured != int64(len(integrationIDs)) {
+			return Execution{}, ErrExecutionOutboundIntegrationUnavailable
+		}
+	}
 
 	row, err := q.ExecutionInsert(ctx, tx, sqlc.ExecutionInsertParams{
 		AccountID:       accountID,
 		Runtime:         string(params.Request.Runtime),
+		Profile:         string(params.Request.Profile.Normalized()),
 		NetworkMode:     string(params.Request.Network.Mode),
 		TimeoutMs:       int32(params.Request.Limits.TimeoutMS),
 		MemoryMb:        int32(params.Request.Limits.MemoryMB),
@@ -183,9 +277,35 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 		InputBytes:      int32(params.InputBytes),
 		DeadlineAt:      executionTime(params.DeadlineAt),
 		AdmittedAt:      executionTime(params.AdmittedAt),
+		RunsPrincipalID: runsPrincipalID,
+		WorkflowID:      pgtype.Text{String: params.WorkflowID, Valid: params.WorkflowID != ""},
+		StepLabel:       pgtype.Text{String: params.StepLabel, Valid: params.StepLabel != ""},
 	})
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if isAgentWorkflowStep(params) && errors.As(err, &pgErr) && pgErr.Code == "23505" &&
+			pgErr.ConstraintName == "executions_account_agent_workflow_step_uniq" {
+			return Execution{}, ErrExecutionWorkflowStepExists
+		}
 		return Execution{}, mapErr(err)
+	}
+	for _, integrationID := range integrationIDs {
+		if _, err := tx.Exec(ctx, `INSERT INTO execution_outbound_integrations (execution_id, integration_id) VALUES ($1, $2)`, row.ID, integrationID); err != nil {
+			return Execution{}, fmt.Errorf("create execution: persist outbound integration intent: %w", err)
+		}
+	}
+	for _, redemption := range params.ArtifactGrantRedemptions {
+		tag, err := tx.Exec(ctx, `UPDATE execution_artifact_grants
+			SET redeemed_at = $1, redeemed_execution_id = $2
+			WHERE id = $3 AND account_id = $4 AND token_hash = $5
+			  AND redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > $1`,
+			executionTime(params.AdmittedAt), row.ID, mustPgUUID(redemption.GrantID), accountID, redemption.TokenHash)
+		if err != nil {
+			return Execution{}, fmt.Errorf("create execution: redeem artifact grant: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return Execution{}, ErrExecutionArtifactGrantUnavailable
+		}
 	}
 	if err := q.ExecutionPayloadInsert(ctx, tx, sqlc.ExecutionPayloadInsertParams{
 		ExecutionID:   row.ID,
@@ -240,6 +360,128 @@ func (s *PgStore) ListExecutionsByStatus(ctx context.Context, accountID string, 
 		return nil, mapErr(err)
 	}
 	return executionRowsFromSQL(rows), nil
+}
+
+func (s *PgStore) ListExecutionsByPrincipal(ctx context.Context, accountID, principalID string, limit, offset int) ([]Execution, error) {
+	limit, offset = normalizeExecutionPage(limit, offset)
+	if limit > math.MaxInt32 || offset > math.MaxInt32 {
+		return nil, fmt.Errorf("%w: pagination values are outside int32 bounds", ErrExecutionInvalid)
+	}
+	rows, err := sqlc.New().ExecutionListForAccountPrincipal(ctx, s.pool, sqlc.ExecutionListForAccountPrincipalParams{
+		AccountID: mustPgUUID(accountID), RunsPrincipalID: mustPgUUID(principalID),
+		PageLimit: int32(limit), PageOffset: int32(offset),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return executionRowsFromSQL(rows), nil
+}
+
+func (s *PgStore) ListExecutionsByPrincipalStatus(ctx context.Context, accountID, principalID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	limit, offset = normalizeExecutionPage(limit, offset)
+	if limit > math.MaxInt32 || offset > math.MaxInt32 {
+		return nil, fmt.Errorf("%w: pagination values are outside int32 bounds", ErrExecutionInvalid)
+	}
+	rows, err := sqlc.New().ExecutionListForAccountPrincipalStatus(ctx, s.pool, sqlc.ExecutionListForAccountPrincipalStatusParams{
+		AccountID: mustPgUUID(accountID), RunsPrincipalID: mustPgUUID(principalID), Status: string(status),
+		PageLimit: int32(limit), PageOffset: int32(offset),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return executionRowsFromSQL(rows), nil
+}
+
+func (s *PgStore) ListExecutionsByWorkflow(ctx context.Context, accountID, workflowID string, principalID *string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	if strings.TrimSpace(accountID) == "" || api.ValidateExecutionWorkflowMetadata(workflowID, "") != nil || workflowID == "" {
+		return nil, ErrExecutionInvalid
+	}
+	limit, offset = normalizeExecutionPage(limit, offset)
+	if limit > math.MaxInt32 || offset > math.MaxInt32 {
+		return nil, fmt.Errorf("%w: pagination values are outside int32 bounds", ErrExecutionInvalid)
+	}
+	var principal pgtype.UUID
+	if principalID != nil {
+		var err error
+		principal, err = parsePgUUID(*principalID)
+		if err != nil {
+			return nil, fmt.Errorf("list execution workflow: principal: %w", err)
+		}
+	}
+	rows, err := sqlc.New().ExecutionListForWorkflow(ctx, s.pool, sqlc.ExecutionListForWorkflowParams{
+		AccountID: mustPgUUID(accountID), WorkflowID: workflowID, RunsPrincipalID: principal,
+		Status: string(status), PageLimit: int32(limit), PageOffset: int32(offset),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return executionRowsFromSQL(rows), nil
+}
+
+func (s *PgStore) ExecutionWorkflowStepByLabel(ctx context.Context, accountID, workflowID string, principalID *string, stepLabel string) (Execution, error) {
+	if strings.TrimSpace(accountID) == "" || principalID == nil || workflowID == "" || stepLabel == "" ||
+		api.ValidateExecutionWorkflowMetadata(workflowID, stepLabel) != nil || !strings.HasPrefix(stepLabel, "gwf:") {
+		return Execution{}, ErrExecutionInvalid
+	}
+	accountUUID, err := parsePgUUID(accountID)
+	if err != nil {
+		return Execution{}, err
+	}
+	var id pgtype.UUID
+	var label, status string
+	var result []byte
+	principalUUID, err := parsePgUUID(*principalID)
+	if err != nil {
+		return Execution{}, err
+	}
+	row := s.pool.QueryRow(ctx, `SELECT id, step_label, status, result FROM executions
+		WHERE account_id = $1 AND runs_principal_id = $2 AND workflow_id = $3
+		  AND step_label = $4 AND step_label LIKE 'gwf:%'
+		ORDER BY created_at DESC LIMIT 1`, accountUUID, principalUUID, workflowID, stepLabel)
+	if err := row.Scan(&id, &label, &status, &result); errors.Is(err, pgx.ErrNoRows) {
+		return Execution{}, ErrNotFound
+	} else if err != nil {
+		return Execution{}, fmt.Errorf("get execution workflow step: %w", err)
+	}
+	return Execution{
+		ID: pgUUIDString(id), StepLabel: label, Status: api.ExecutionStatus(status),
+		Result: append([]byte(nil), result...),
+	}, nil
+}
+
+func (s *PgStore) ExecutionWorkflowSummary(ctx context.Context, accountID, workflowID string, principalID *string) (ExecutionWorkflowResponse, error) {
+	if strings.TrimSpace(accountID) == "" || api.ValidateExecutionWorkflowMetadata(workflowID, "") != nil || workflowID == "" {
+		return ExecutionWorkflowResponse{}, ErrExecutionInvalid
+	}
+	var principal pgtype.UUID
+	if principalID != nil {
+		var err error
+		principal, err = parsePgUUID(*principalID)
+		if err != nil {
+			return ExecutionWorkflowResponse{}, fmt.Errorf("read execution workflow: principal: %w", err)
+		}
+	}
+	row, err := sqlc.New().ExecutionWorkflowSummary(ctx, s.pool, sqlc.ExecutionWorkflowSummaryParams{
+		AccountID: mustPgUUID(accountID), WorkflowID: workflowID, RunsPrincipalID: principal,
+	})
+	if err != nil {
+		return ExecutionWorkflowResponse{}, mapErr(err)
+	}
+	if row.RunCount == 0 {
+		return ExecutionWorkflowResponse{}, ErrNotFound
+	}
+	return ExecutionWorkflowResponse{
+		RunCount: row.RunCount,
+		StatusCounts: api.ExecutionWorkflowStatusCounts{
+			Queued: row.Queued, Restoring: row.Restoring, Running: row.Running,
+			Succeeded: row.Succeeded, Failed: row.Failed, TimedOut: row.TimedOut,
+			OutOfMemory: row.OutOfMemory, Cancelled: row.Cancelled,
+		},
+		Usage: api.ExecutionWorkflowUsage{
+			WallTimeMS: row.WallTimeMs, CPUTimeMS: row.CpuTimeMs,
+			PeakMemoryMB: int(row.PeakMemoryMb), OutputBytes: row.OutputBytes,
+		},
+	}, nil
 }
 
 func (s *PgStore) ExecutionQueueStats(ctx context.Context, at time.Time) (ExecutionQueueStats, error) {
@@ -351,6 +593,28 @@ func (s *PgStore) claimExecution(ctx context.Context, accountID, owner string, c
 	if err != nil {
 		return ExecutionClaim{}, mapErr(err)
 	}
+	outboundIntegrationIDs := make([]string, 0)
+	integrationRows, err := tx.Query(ctx, `
+		SELECT integration_id::text
+		  FROM execution_outbound_integrations
+		 WHERE execution_id = $1
+	 ORDER BY integration_id`, row.ID)
+	if err != nil {
+		return ExecutionClaim{}, fmt.Errorf("claim execution: load outbound integration intent: %w", err)
+	}
+	for integrationRows.Next() {
+		var integrationID string
+		if err := integrationRows.Scan(&integrationID); err != nil {
+			integrationRows.Close()
+			return ExecutionClaim{}, fmt.Errorf("claim execution: scan outbound integration intent: %w", err)
+		}
+		outboundIntegrationIDs = append(outboundIntegrationIDs, integrationID)
+	}
+	if err := integrationRows.Err(); err != nil {
+		integrationRows.Close()
+		return ExecutionClaim{}, fmt.Errorf("claim execution: read outbound integration intent: %w", err)
+	}
+	integrationRows.Close()
 	if err := tx.Commit(ctx); err != nil {
 		return ExecutionClaim{}, fmt.Errorf("claim execution: commit: %w", err)
 	}
@@ -358,9 +622,10 @@ func (s *PgStore) claimExecution(ctx context.Context, accountID, owner string, c
 	// authoritative if a transient event-log write fails.
 	_, _ = appendExecutionEvent(ctx, s.pool, pgUUIDString(row.AccountID), pgUUIDString(row.ID), ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusRestoring), claimedAt)
 	return ExecutionClaim{
-		Execution:     executionFromSQL(row),
-		SealedPayload: append([]byte(nil), payload.SealedPayload...),
-		PayloadKID:    payload.Kid,
+		Execution:              executionFromSQL(row),
+		SealedPayload:          append([]byte(nil), payload.SealedPayload...),
+		PayloadKID:             payload.Kid,
+		OutboundIntegrationIDs: outboundIntegrationIDs,
 	}, nil
 }
 
@@ -445,8 +710,12 @@ func (s *PgStore) CompleteExecution(ctx context.Context, params CompleteExecutio
 	if params.FailureMessage != nil {
 		failureMessage = *params.FailureMessage
 	}
+	artifacts := []byte{}
+	if len(params.Artifacts) != 0 {
+		artifacts, _ = json.Marshal(params.Artifacts)
+	}
 	row, err := q.ExecutionMarkTerminal(ctx, tx, sqlc.ExecutionMarkTerminalParams{
-		TerminalStatus: string(params.Status), ResultJson: string(params.Result), ResultBytes: int32(len(params.Result)),
+		Artifacts: artifacts, TerminalStatus: string(params.Status), ResultJson: string(params.Result), ResultBytes: int32(len(params.Result)),
 		Stdout: params.Stdout, Stderr: params.Stderr, OutputTruncated: params.OutputTruncated,
 		ExitCode: exitCode, FailureCode: failureCode, FailureMessage: failureMessage,
 		WallTimeMs: params.Usage.WallTimeMS, CpuTimeMs: params.Usage.CPUTimeMS,

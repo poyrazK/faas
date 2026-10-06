@@ -1,0 +1,25 @@
+/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/source.tar.gz: OK
+validation source: be2e765510687167a9d01e550276417043fba919
+Linux gregale-internal-test-1.us-east1-b.c.gregale-prod.internal 7.0.0-1011-gcp #11~24.04.1-Ubuntu SMP PREEMPT Tue Aug 11 20:14:48 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+go version go1.25.13 linux/amd64
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-smoke: 28/16384 files (3.6% non-contiguous), 8074/16384 blocks
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-layer: 16/4096 files (0.0% non-contiguous), 272/4096 blocks
+178f50d3a868d8fc08228225cd49fca2d8f117a88c8924385b33166c4f158e3b  /srv/fc/base/vmlinux-6.1.134
+a3dea2df3d050d6dafcad643dacf4284db87142fb92d9b156d68d7398a77c0d9  /var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/fixtures/hello-base.ext4
+4a2fd56047b96e6dd17e264c53a289d3d1511754e4f79cb30d1f6a53c734caf8  /var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/fixtures/hello-layer.ext4
+make: Entering directory '/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/source'
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+make: Leaving directory '/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/source'

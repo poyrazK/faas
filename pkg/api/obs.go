@@ -245,9 +245,10 @@ type ObsInvoiceSummary struct {
 // operator capacity page. It contains resource headroom and placement
 // counters, never workload rows.
 type ObsCapacityResponse struct {
-	GeneratedAt time.Time          `json:"generated_at"`
-	Summary     ObsCapacitySummary `json:"summary"`
-	Nodes       []ObsCapacityNode  `json:"nodes"`
+	GeneratedAt       time.Time                 `json:"generated_at"`
+	ServiceProtection ServiceCapacityProtection `json:"service_protection"`
+	Summary           ObsCapacitySummary        `json:"summary"`
+	Nodes             []ObsCapacityNode         `json:"nodes"`
 }
 
 type ObsCapacitySummary struct {
@@ -946,4 +947,22 @@ type ObsIncidentListResponse struct {
 	Type         string        `json:"type,omitempty"`
 	Severity     string        `json:"severity,omitempty"`
 	NextCursor   string        `json:"next_cursor"`
+}
+
+// ServiceCapacityProtection is the ADR-422 aggregate placement certificate.
+// Slots use the largest declared service replica, including rollout overlap.
+// Disabled is explicit; degraded means current demand fits but another host
+// failure is not covered. This is compute capacity, not a data durability SLA.
+type ServiceCapacityProtection struct {
+	Enabled              bool   `json:"enabled"`
+	State                string `json:"state"`
+	HealthyNodes         int    `json:"healthy_nodes"`
+	DesiredReplicas      int64  `json:"desired_replicas"`
+	ReservedReplicas     int64  `json:"reserved_replicas"`
+	ReplicaRAMMB         int64  `json:"replica_ram_mb"`
+	ReplicaCPUMillicores int64  `json:"replica_cpu_millicores"`
+	ReplicaVCPU          int64  `json:"replica_vcpu"`
+	FleetSlots           int64  `json:"fleet_slots"`
+	FailoverSlots        int64  `json:"failover_slots"`
+	PlacementsFit        bool   `json:"placements_fit"`
 }

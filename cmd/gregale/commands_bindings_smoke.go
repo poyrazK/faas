@@ -6,8 +6,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +22,9 @@ const bindingSmokeTaskTimeoutSeconds = 90
 
 func cmdBindingsSmoke(args []string) int {
 	fs := newFlagSet("bindings-smoke", flag.ContinueOnError)
-	targetDeployment := fs.String("deployment", "", "exact live target deployment to invoke (required)")
+	targetDeployment := fs.String("target-deployment", "", "exact live target deployment UUID to invoke (required)")
+	legacyTarget := fs.String("deployment", "", "alias for --target-deployment")
+	callerDeployment := fs.String("caller-deployment", "", "exact live caller deployment ID or vN, including zero-traffic candidates")
 	path := fs.String("path", "", "absolute path on the target service (required)")
 	expectedStatus := fs.Int("expect-status", 0, "require this exact HTTP status; default accepts any 2xx response")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while the smoke task runs")
@@ -32,14 +36,19 @@ func cmdBindingsSmoke(args []string) int {
 	}
 	slug := strings.TrimSpace(positionals[0])
 	service, err := normalizeOneServiceBindingTarget(positionals[1])
+	if *targetDeployment == "" {
+		*targetDeployment = *legacyTarget
+	} else if *legacyTarget != "" && !sameBindingDeployment(*targetDeployment, *legacyTarget) {
+		return printErr("Conflicting target deployments", fmt.Errorf("--deployment and --target-deployment must identify the same deployment"))
+	}
 	if !api.ValidAppSlug(slug) || err != nil || *pollInterval <= 0 || *waitTimeout <= 0 || *targetDeployment == "" || *path == "" ||
-		*expectedStatus < 0 || *expectedStatus > 599 || *expectedStatus > 0 && *expectedStatus < 200 {
+		*expectedStatus < 0 || *expectedStatus > 599 || *expectedStatus > 0 && *expectedStatus < 200 || !validBindingDeploymentFlag(*callerDeployment) {
 		printBindingsSmokeUsage()
 		return 1
 	}
 	targetID, err := uuid.Parse(strings.TrimSpace(*targetDeployment))
 	if err != nil || targetID == uuid.Nil {
-		return printErr("Invalid target deployment", fmt.Errorf("--deployment must be a deployment UUID"))
+		return printErr("Invalid target deployment", fmt.Errorf("--target-deployment must be a deployment UUID"))
 	}
 	requestURI, err := api.NormalizeServiceBindingSmokePath(*path)
 	if err != nil {
@@ -49,7 +58,11 @@ func cmdBindingsSmoke(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	app, err := client.GetApp(context.Background(), slug)
+	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	waitContext, cancel := context.WithTimeout(interruptContext, *waitTimeout)
+	defer cancel()
+	app, err := client.GetApp(waitContext, slug)
 	if err != nil {
 		return printErr("Could not load app bindings", err)
 	}
@@ -63,7 +76,32 @@ func cmdBindingsSmoke(args []string) int {
 	if !bound {
 		return printErr("Service is not bound to this app", fmt.Errorf("%s has no declared binding for %s", slug, service))
 	}
+	callerID, err := resolveBindingDeployment(waitContext, client, slug, *callerDeployment)
+	if err != nil {
+		return printErr("Could not resolve caller deployment", err)
+	}
+	callerScope := ""
+	if callerID != "" {
+		deployment, err := client.GetDeployment(waitContext, callerID)
+		// MemStore retains historical 32-hex IDs; PostgreSQL accepts either
+		// representation. Retry only a 404 and preserve the exact UUID.
+		var problem *api.APIError
+		if errors.As(err, &problem) && problem.Problem.Status == http.StatusNotFound {
+			deployment, err = client.GetDeployment(waitContext, strings.ReplaceAll(callerID, "-", ""))
+		}
+		if err != nil {
+			return printErr("Could not read caller deployment", err)
+		}
+		if !sameBindingDeployment(deployment.ID, callerID) || deployment.AppID != app.ID || deployment.Status != "live" || deployment.ImageDigest == "" {
+			return printErr("Caller deployment unavailable", fmt.Errorf("server did not confirm a live caller deployment belonging to this app"))
+		}
+		callerScope = deployment.Scope
+		if callerScope == "" {
+			callerScope = "default"
+		}
+	}
 	request := api.CreateAppTaskRequest{
+		SmokeDeploymentID: callerID,
 		Command: []string{
 			api.AppTaskServiceBindingSmokeCommand,
 			service,
@@ -74,39 +112,40 @@ func cmdBindingsSmoke(args []string) int {
 		TimeoutSeconds: bindingSmokeTaskTimeoutSeconds,
 		MaxOutputBytes: 4096,
 	}
-	task, err := client.CreateAppTask(context.Background(), slug, request)
+	task, err := client.CreateAppTask(waitContext, slug, request)
 	if err != nil {
 		return printErr("Could not start service-binding smoke task", err)
 	}
-	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	waitContext, cancel := context.WithTimeout(interruptContext, *waitTimeout)
-	defer cancel()
+	if err := validateSmokeTask(task, "", app.ID, callerID, callerScope, request.Command); err != nil {
+		cancelSmokeTask(waitContext, client, slug, task)
+		return printErr("Server did not confirm the smoke task selection", err)
+	}
+	taskID, admittedCallerID, admittedScope := task.ID, task.DeploymentID, task.DeploymentScope
 	for !task.Status.Terminal() {
 		select {
 		case <-waitContext.Done():
 			if errors.Is(interruptContext.Err(), context.Canceled) {
-				cancelled, cancelErr := client.CancelAppTask(context.Background(), slug, task.ID)
-				if cancelErr != nil {
-					PrintWarn(osStderr, "could not request cancellation for smoke task %s: %v", task.ID, cancelErr)
-				} else if !jsonOutput {
-					PrintWarn(osStderr, "cancellation requested for smoke task %s (status=%s)", task.ID, cancelled.Status)
-				}
+				cancelSmokeTask(waitContext, client, slug, task)
 				return 130
 			}
 			return printErr("Service-binding smoke task is still running", waitContext.Err())
 		case <-time.After(*pollInterval):
 		}
-		task, err = client.GetAppTask(waitContext, slug, task.ID)
+		task, err = client.GetAppTask(waitContext, slug, taskID)
 		if err != nil {
+			if errors.Is(interruptContext.Err(), context.Canceled) {
+				cancelSmokeTask(waitContext, client, slug, api.AppTaskResponse{ID: taskID})
+				return 130
+			}
 			if errors.Is(waitContext.Err(), context.DeadlineExceeded) {
 				return printErr("Service-binding smoke wait timed out; the task may still be running", waitContext.Err())
 			}
 			return printErr("Could not read service-binding smoke task status", err)
 		}
-	}
-	if task.OutputTruncated {
-		PrintWarn(osStderr, "smoke task output was truncated at %d bytes", task.MaxOutputBytes)
+		if err := validateSmokeTask(task, taskID, app.ID, admittedCallerID, admittedScope, request.Command); err != nil {
+			cancelSmokeTask(waitContext, client, slug, api.AppTaskResponse{ID: taskID})
+			return printErr("Smoke task selection changed", err)
+		}
 	}
 	report := api.ServiceBindingSmokeReport{
 		App:                slug,
@@ -118,38 +157,7 @@ func cmdBindingsSmoke(args []string) int {
 		TaskID:             task.ID,
 		CallerDeploymentID: task.DeploymentID,
 	}
-	if task.StdoutTail != "" {
-		if err := json.Unmarshal([]byte(task.StdoutTail), &report); err != nil {
-			report.Error = "task did not return a valid smoke report"
-			if task.Failure != nil {
-				report.Error += fmt.Sprintf(" (%s: %s)", task.Failure.Code, task.Failure.Message)
-			}
-		}
-	} else if task.Failure != nil {
-		report.Error = task.Failure.Message
-	} else {
-		report.Error = "task did not return a smoke report"
-	}
-	// Keep CLI-owned identity fields authoritative and never echo a user query
-	// string back in the report.
-	report.App = slug
-	report.TaskID = task.ID
-	report.CallerDeploymentID = task.DeploymentID
-	report.TargetDeploymentID = targetID.String()
-	report.URL = "https://" + service + ".internal"
-	report.Service = service
-	report.Path = smokeReportPath(requestURI)
-	if report.ExpectedStatus == "" {
-		report.ExpectedStatus = expectedServiceStatus(*expectedStatus)
-	}
-	passed := task.Status == api.AppTaskStatusSucceeded && report.Passed
-	if !passed && report.Error == "" {
-		if task.Failure != nil {
-			report.Error = task.Failure.Code + ": " + task.Failure.Message
-		} else {
-			report.Error = "smoke task did not succeed"
-		}
-	}
+	completeSmokeReport(&report, task, *expectedStatus)
 	if jsonOutput {
 		if err := writeJSON(report); err != nil {
 			return jsonOut(err)
@@ -157,10 +165,57 @@ func cmdBindingsSmoke(args []string) int {
 	} else {
 		renderServiceBindingSmokeReport(report)
 	}
-	if passed {
+	if report.Passed {
 		return 0
 	}
 	return 1
+}
+
+func validateSmokeTask(task api.AppTaskResponse, id, appID, callerID, scope string, command []string) error {
+	deployment, err := uuid.Parse(task.DeploymentID)
+	if task.ID == "" || id != "" && task.ID != id || task.AppID != appID || err != nil || deployment == uuid.Nil ||
+		callerID != "" && !sameBindingDeployment(task.DeploymentID, callerID) || task.DeploymentScope == "" || scope != "" && task.DeploymentScope != scope ||
+		task.Kind != api.AppTaskKindManual || task.CommandShell || !slices.Equal(task.Command, command) {
+		return fmt.Errorf("task receipt does not match the requested app, caller deployment, scope or command")
+	}
+	return nil
+}
+
+func cancelSmokeTask(ctx context.Context, client *api.Client, slug string, task api.AppTaskResponse) {
+	if task.ID == "" || task.Status.Terminal() {
+		return
+	}
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bindingProbeCancelTimeout)
+	defer cancel()
+	if _, err := client.CancelAppTask(cancelCtx, slug, task.ID); err != nil {
+		PrintWarn(osStderr, "could not request cancellation for smoke task %s: %v", task.ID, err)
+	}
+}
+
+func completeSmokeReport(report *api.ServiceBindingSmokeReport, task api.AppTaskResponse, expectedStatus int) {
+	var guest api.ServiceBindingSmokeReport
+	switch {
+	case task.OutputTruncated:
+		report.Error = "smoke task output was truncated"
+	case task.StdoutTail == "" || json.Unmarshal([]byte(task.StdoutTail), &guest) != nil:
+		report.Error = "task did not return a valid smoke report"
+	case guest.Service != report.Service || !sameBindingDeployment(guest.TargetDeploymentID, report.TargetDeploymentID) || guest.URL != report.URL ||
+		guest.Path != report.Path || guest.ExpectedStatus != report.ExpectedStatus ||
+		guest.App != "" && guest.App != report.App || guest.TaskID != "" && guest.TaskID != report.TaskID ||
+		guest.CallerDeploymentID != "" && !sameBindingDeployment(guest.CallerDeploymentID, report.CallerDeploymentID):
+		report.Error = "smoke report does not match the requested service, deployments, path or status policy"
+	default:
+		report.HTTPStatus, report.ElapsedMillis = guest.HTTPStatus, guest.ElapsedMillis
+		statusMatches := guest.HTTPStatus >= 200 && guest.HTTPStatus < 300
+		if expectedStatus != 0 {
+			statusMatches = guest.HTTPStatus == expectedStatus
+		}
+		if task.Status != api.AppTaskStatusSucceeded || task.ExitCode == nil || *task.ExitCode != 0 || task.Failure != nil || !guest.Passed || guest.Error != "" || !statusMatches {
+			report.Error = "smoke task did not succeed with the expected HTTP status"
+			return
+		}
+		report.Passed = true
+	}
 }
 
 func normalizeOneServiceBindingTarget(raw string) (string, error) {
@@ -172,7 +227,7 @@ func normalizeOneServiceBindingTarget(raw string) (string, error) {
 }
 
 func printBindingsSmokeUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings smoke <app> <service> --deployment <id> --path </path> [--expect-status <code>] [flags]", "bindings")
+	PrintUsage(osStderr, "usage: gregale bindings smoke <app> <service> --target-deployment <id> --path </path> [--caller-deployment <id|vN>] [--expect-status <code>] [flags]", "bindings")
 }
 
 func expectedServiceStatus(code int) string {

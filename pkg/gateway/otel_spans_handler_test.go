@@ -1,4 +1,5 @@
 // Unit tests for the gatewayd-public OTelSpansHandler (ADR-127 PR-D).
+// adr: 392
 //
 // Coverage:
 //   - Happy path: valid OTLP body + valid bearer → 200 + accumulator
@@ -6,8 +7,7 @@
 //   - 401 on bearer missing / auth RPC error.
 //   - 402 on plan-disabled (DebugTelemetryEnabled=false).
 //   - 429 on per-account rate cap exhaustion.
-//   - 400 on shape-invalid body (no spans, malformed JSON,
-//     trace_id mismatch).
+//   - 400 on shape-invalid body (malformed JSON, invalid trace IDs).
 //   - 405 on non-POST.
 //   - Top-N truncation correctness: 75 Hobby spans → keep 50
 //     slowest; assert the kept set is the 50 largest DurationNanos.
@@ -120,15 +120,15 @@ func TestOTelSpansHandler_HappyPath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body=%s)", rr.Code, rr.Body.String())
 	}
-	var resp otelSpansResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+	var resp collectortracepb.ExportTraceServiceResponse
+	if err := protojson.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.AcceptedSpans != 3 {
-		t.Errorf("accepted_spans = %d, want 3", resp.AcceptedSpans)
+	if got := rr.Header().Get("X-Gregale-Accepted-Spans"); got != "3" {
+		t.Errorf("accepted spans = %s, want 3", got)
 	}
-	if resp.Truncated {
-		t.Errorf("truncated = true, want false")
+	if resp.PartialSuccess != nil {
+		t.Errorf("partial success = %v, want unset", resp.PartialSuccess)
 	}
 	if acc.Len() != 1 {
 		t.Errorf("accumulator buckets = %d, want 1", acc.Len())
@@ -279,9 +279,8 @@ func TestOTelSpansHandler_400_MalformedJSON(t *testing.T) {
 	}
 }
 
-// TestOTelSpansHandler_400_TraceIDMismatch: two spans with
-// different trace_id → 400 trace_mismatch.
-func TestOTelSpansHandler_400_TraceIDMismatch(t *testing.T) {
+// TestOTelSpansHandler_MultipleTraces accepts a normal exporter batch.
+func TestOTelSpansHandler_MultipleTraces(t *testing.T) {
 	auth := &fakeAuthClient{accountID: uuid.New().String(), plan: "hobby"}
 	ops := wire.NewOpsMetrics("test")
 	h := NewOTelSpansHandler(OTelSpansHandlerConfig{
@@ -309,8 +308,11 @@ func TestOTelSpansHandler_400_TraceIDMismatch(t *testing.T) {
 	httpReq.Header.Set("Authorization", "Bearer faas_live_hobby")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httpReq)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+	}
+	if h.cfg.Acc.Len() != 2 {
+		t.Fatalf("accumulator buckets = %d, want 2", h.cfg.Acc.Len())
 	}
 }
 
@@ -361,15 +363,15 @@ func TestOTelSpansHandler_Truncation_FlushTime(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body=%s)", rr.Code, rr.Body.String())
 	}
-	var resp otelSpansResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+	var resp collectortracepb.ExportTraceServiceResponse
+	if err := protojson.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.AcceptedSpans != 75 {
-		t.Errorf("accepted_spans = %d, want 75 (handler accepts all; truncation moved to flush time)", resp.AcceptedSpans)
+	if got := rr.Header().Get("X-Gregale-Accepted-Spans"); got != "75" {
+		t.Errorf("accepted spans = %s, want 75", got)
 	}
-	if resp.Truncated {
-		t.Errorf("truncated = true, want false (handler no longer truncates per-POST)")
+	if resp.PartialSuccess != nil {
+		t.Errorf("partial success = %v, want unset", resp.PartialSuccess)
 	}
 
 	var trunc int32

@@ -42,6 +42,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // jobSlugPattern mirrors the server's validSlug constraint (same
@@ -62,7 +63,7 @@ var jobRunIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 func cmdJobs(args []string) int {
 	parent, _ := lookupCliCommand("jobs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|cancel|tasks|attempts|retry|replay-failed|artifact-url|logs|registry> [args]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|occurrences|cancel|tasks|attempts|retry|replay-failed|artifact-url|logs|registry> [args]", "jobs")
 		return 1
 	}
 	switch args[0] {
@@ -80,6 +81,8 @@ func cmdJobs(args []string) int {
 		return cmdJobsRun(args[1:])
 	case subRuns:
 		return cmdJobsRuns(args[1:])
+	case "occurrences":
+		return cmdJobsOccurrences(args[1:])
 	case "cancel":
 		return cmdJobsCancel(args[1:])
 	case "tasks":
@@ -97,7 +100,7 @@ func cmdJobs(args []string) int {
 	case "registry":
 		return cmdJobsRegistry(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown jobs subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown jobs subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -154,15 +157,6 @@ func cmdJobsList(args []string) int {
 // defaults + clamps every numeric field; passing 0 lets the plan
 // default win.
 func cmdJobsAdd(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
-		return 1
-	}
-	name := args[0]
-	if !jobSlugPattern.MatchString(name) {
-		PrintUsage(os.Stderr, "usage: gregale jobs add <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
-		return 1
-	}
 	fs := newFlagSet("jobs-add", flag.ContinueOnError)
 	image := fs.String("image", "", "OCI image name[:tag | @digest] (required)")
 	command := fs.String("command", "", "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)")
@@ -172,11 +166,19 @@ func cmdJobsAdd(args []string) int {
 	retries := fs.Int("retries", 0, "per-task max retries (0 = plan default)")
 	schedule := fs.String("schedule", "", "recurring five-field cron schedule")
 	timezone := fs.String("timezone", "", "IANA timezone for --schedule (default UTC)")
+	schedulePolicyJSON := fs.String("schedule-policy", "", "versioned schedule policy as JSON")
+	failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
+		return 1
+	}
+	name := fs.Arg(0)
+	if !jobSlugPattern.MatchString(name) {
+		PrintUsage(os.Stderr, "usage: gregale jobs add <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
 		return 1
 	}
 	if *image == "" {
@@ -197,6 +199,20 @@ func cmdJobsAdd(args []string) int {
 	}
 	if *schedule != "" {
 		req.Kind = "recurring"
+	}
+	if *schedulePolicyJSON != "" {
+		policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+		if err != nil {
+			return printErr("Invalid schedule policy", err)
+		}
+		req.SchedulePolicy = policy
+	}
+	if *failureRulesJSON != "" {
+		rules, err := parseFailureRulesJSON(*failureRulesJSON)
+		if err != nil {
+			return printErr("Invalid failure rules", err)
+		}
+		req.FailureRules = rules
 	}
 	if *command != "" {
 		req.Command = strings.Split(*command, ",")
@@ -248,15 +264,6 @@ func cmdJobsInfo(args []string) int {
 // `--pause` / `--resume` pair is mutually exclusive and maps to
 // status='paused' / status='active'.
 func cmdJobsUpdate(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
-		return 1
-	}
-	name := args[0]
-	if !jobSlugPattern.MatchString(name) {
-		PrintUsage(os.Stderr, "usage: gregale jobs update <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
-		return 1
-	}
 	fs := newFlagSet("jobs-update", flag.ContinueOnError)
 	image := fs.String("image", "", "new OCI image")
 	command := fs.String("command", "", "new comma-separated entrypoint")
@@ -266,14 +273,22 @@ func cmdJobsUpdate(args []string) int {
 	retries := fs.Int("retries", 0, "new per-task max retries")
 	schedule := fs.String("schedule", "", "replace recurring five-field cron schedule")
 	timezone := fs.String("timezone", "", "replace schedule IANA timezone")
+	schedulePolicyJSON := fs.String("schedule-policy", "", "replace versioned schedule policy JSON")
+	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
 	unschedule := fs.Bool("unschedule", false, "remove recurring schedule and convert to batch job")
 	pause := fs.Bool("pause", false, "halt future dispatches (status=paused)")
 	resume := fs.Bool("resume", false, "resume dispatches (status=active)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale jobs update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
+		return 1
+	}
+	name := fs.Arg(0)
+	if !jobSlugPattern.MatchString(name) {
+		PrintUsage(os.Stderr, "usage: gregale jobs update <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
 		return 1
 	}
 	if *pause && *resume {
@@ -329,6 +344,22 @@ func cmdJobsUpdate(args []string) int {
 	if set["timezone"] {
 		t := *timezone
 		req.Timezone = &t
+		touched = true
+	}
+	if set["schedule-policy"] {
+		policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+		if err != nil {
+			return printErr("Invalid schedule policy", err)
+		}
+		req.SchedulePolicy = policy
+		touched = true
+	}
+	if set["failure-rules"] {
+		rules, err := parseFailureRulesJSON(*failureRulesJSON)
+		if err != nil {
+			return printErr("Invalid failure rules", err)
+		}
+		req.FailureRules = rules
 		touched = true
 	}
 	if *unschedule {
@@ -400,11 +431,6 @@ func cmdJobsRm(args []string) int {
 // the plan cap before the store call. Plan caps: Hobby=100,
 // Pro=1000, Scale=5000.
 func cmdJobsRun(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs run <name> (--tasks N | --input ID=REF ...) [--parallelism N] [--retries N] [--timeout S] [--env K=V ...] [--arg VALUE ...]", "jobs")
-		return 1
-	}
-	name := args[0]
 	fs := newFlagSet("jobs-run", flag.ContinueOnError)
 	tasks := fs.Int("tasks", 0, "number of tasks to fan out (or use --input)")
 	parallelism := fs.Int("parallelism", 0, "override job parallelism for this run")
@@ -419,12 +445,15 @@ func cmdJobsRun(args []string) int {
 	failFast := fs.Bool("fail-fast", false, "cancel unstarted tasks after permanent failure")
 	eligibleAtFlag := fs.String("eligible-at", "", "earliest task start (RFC3339; flexible runs)")
 	latestStartAtFlag := fs.String("latest-start-at", "", "latest task start (RFC3339; required for flexible runs)")
-	if err := fs.Parse(args[1:]); err != nil {
+	failureRulesJSON := fs.String("failure-rules", "", "override versioned retry/failure rules as JSON for this run")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale jobs run <name> (--tasks N | --input ID=REF ...) [--parallelism N] [--retries N] [--timeout S] [--env K=V ...] [--arg VALUE ...]", "jobs")
 		return 1
 	}
+	name := fs.Arg(0)
 	retriesProvided := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "retries" {
@@ -474,6 +503,13 @@ func cmdJobsRun(args []string) int {
 			return 1
 		}
 		req.LatestStartAt = &parsed
+	}
+	if *failureRulesJSON != "" {
+		rules, err := parseFailureRulesJSON(*failureRulesJSON)
+		if err != nil {
+			return printErr("Invalid failure rules", err)
+		}
+		req.FailureRules = rules
 	}
 	if len(*arguments) > 0 {
 		args := append([]string(nil), (*arguments)...)
@@ -529,6 +565,40 @@ func cmdJobsRuns(args []string) int {
 		return jsonOut(writeNDJSON(out.Runs))
 	}
 	renderJobRunsTable(osStdout, out.Runs)
+	return 0
+}
+
+func cmdJobsOccurrences(args []string) int {
+	fs := newFlagSet("jobs-occurrences", flag.ContinueOnError)
+	limit := fs.Int("limit", 50, "number of occurrence decisions to return (1..200)")
+	before := fs.String("before", "", "occurrence id cursor from the previous page")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale jobs occurrences <name> [--limit N] [--before ID]", "jobs")
+		return 1
+	}
+	name := fs.Arg(0)
+	if *limit < 1 || *limit > 200 {
+		PrintUsage(os.Stderr, "--limit must be between 1 and 200", "jobs")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	page, err := client.ListJobScheduleOccurrences(context.Background(), name, *limit, *before)
+	if err != nil {
+		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSONSingle(page))
+	}
+	renderScheduleOccurrences(osStdout, page.Occurrences)
+	if page.NextBefore != "" {
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale jobs occurrences %s --before %s\n", name, page.NextBefore)
+	}
 	return 0
 }
 
@@ -612,7 +682,11 @@ func cmdJobsAttempts(args []string) int {
 		return jsonOut(writeJSONSingle(out))
 	}
 	for _, attempt := range out.Attempts {
-		if _, err := fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\n", attempt.Attempt, attempt.Status, attempt.InputID, attempt.ErrorMessage); err != nil {
+		outcomeCode := attempt.OutcomeCode
+		if outcomeCode == "" {
+			outcomeCode = "-"
+		}
+		if _, err := fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\t%s\t%s\n", attempt.Attempt, attempt.Status, attempt.InputID, outcomeCode, workDecisionLabel(attempt.WorkDecision), attempt.ErrorMessage); err != nil {
 			return printErr("Output failed", err)
 		}
 	}
@@ -846,6 +920,44 @@ func renderJobRunsTable(w io.Writer, runs []api.JobRunResponse) {
 	}
 }
 
+func renderScheduleOccurrences(w io.Writer, rows []api.ScheduleOccurrenceResponse) {
+	if len(rows) == 0 {
+		_, _ = fmt.Fprintln(w, "(no scheduled occurrences)")
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%-36s %-20s %-20s %-10s %s\n", "occurrence-id", "scheduled-for", "started-at", "status", "reason")
+	for _, row := range rows {
+		started := "-"
+		if row.StartedAt != nil {
+			started = row.StartedAt.UTC().Format(time.RFC3339)
+		}
+		_, _ = fmt.Fprintf(w, "%-36s %-20s %-20s %-10s %s\n", row.ID,
+			row.ScheduledFor.UTC().Format(time.RFC3339), started, row.Status, row.Reason)
+	}
+}
+
+func parseSchedulePolicyJSON(raw string) (*workpolicy.SchedulePolicy, error) {
+	var policy workpolicy.SchedulePolicy
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		return nil, err
+	}
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func parseFailureRulesJSON(raw string) (*workpolicy.FailureRules, error) {
+	var rules workpolicy.FailureRules
+	if err := json.Unmarshal([]byte(raw), &rules); err != nil {
+		return nil, err
+	}
+	if err := rules.Validate(); err != nil {
+		return nil, err
+	}
+	return &rules, nil
+}
+
 // renderJobTasksTable writes a tabular row per task. task_index
 // runs 0..N-1 (zero-based; matches the server's CTE fan-out).
 func renderJobTasksTable(w io.Writer, tasks []api.JobTaskResponse) {
@@ -853,8 +965,8 @@ func renderJobTasksTable(w io.Writer, tasks []api.JobTaskResponse) {
 		_, _ = fmt.Fprintln(w, "(no tasks)")
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%4s  %-10s %3s %5s  %-14s  %s\n",
-		"idx", "status", "try", "exit", "error_class", "instance")
+	_, _ = fmt.Fprintf(w, "%4s  %-10s %3s %5s  %-14s  %-20s  %-22s  %s\n",
+		"idx", "status", "try", "exit", "error_class", "outcome_code", "decision", "instance")
 	for _, t := range tasks {
 		inst := t.InstanceID
 		if len(inst) > 32 {
@@ -868,9 +980,20 @@ func renderJobTasksTable(w io.Writer, tasks []api.JobTaskResponse) {
 		if t.ExitCode != 0 || t.Status == "failed" || t.Status == "oom" || t.Status == "timeout" {
 			exit = strconv.Itoa(t.ExitCode)
 		}
-		_, _ = fmt.Fprintf(w, "%4d  %-10s %3d %5s  %-14s  %s\n",
-			t.TaskIndex, t.Status, t.Attempt, exit, errClass, inst)
+		outcomeCode := t.OutcomeCode
+		if outcomeCode == "" {
+			outcomeCode = "-"
+		}
+		_, _ = fmt.Fprintf(w, "%4d  %-10s %3d %5s  %-14s  %-20s  %-22s  %s\n",
+			t.TaskIndex, t.Status, t.Attempt, exit, errClass, outcomeCode, workDecisionLabel(t.WorkDecision), inst)
 	}
+}
+
+func workDecisionLabel(decision *workpolicy.Decision) string {
+	if decision == nil {
+		return "-"
+	}
+	return decision.Classification + "/" + decision.Action
 }
 
 // shortRunStatus collapses the 5-status aggregate vocabulary to a

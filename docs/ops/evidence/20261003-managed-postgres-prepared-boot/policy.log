@@ -1,0 +1,8 @@
+::warning:: allowlisted +incompatible direct dep: github.com/stripe/stripe-go v70.15.0+incompatible (tracked: see FAAS_INCOMPATIBLE_DEPS_ALLOWLIST)
+image-validate: SKIP (packer not on PATH — install via scripts/install-packer.sh)
+sealed-env-scope-check: OK (only faas-apid.service loads sealed.env)
+runbook SQL gate: no mutating SQL outside docs/break-glass/
+text-encoding-check: clean
+shell-quoting-check: clean
+bash scripts/ci/check_adr_number_uniqueness.sh
+adr-number-uniqueness: OK — 475 ADRs, 366 distinct numbers, 71 pre-existing duplicates held at the baseline

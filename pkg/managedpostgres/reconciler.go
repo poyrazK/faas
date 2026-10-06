@@ -100,7 +100,10 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		operation := StateProvisioning
+		operation := database.State
+		if operation == StateFailed {
+			operation = StateProvisioning
+		}
 		started := r.now()
 		var result Database
 		if database.State == StateDeleting {

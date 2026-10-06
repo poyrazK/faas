@@ -247,3 +247,80 @@ func TestObjectStorageRecoveryStopsOnCancellation(t *testing.T) {
 		t.Fatal("worker ignored cancellation")
 	}
 }
+
+func TestObjectStorageTrackedMultipartCleanupRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		pending, latePart bool
+		providerErr       error
+	}{
+		{name: "verified"}, {name: "in-flight", pending: true}, {name: "late-part", latePart: true}, {name: "provider-failure", providerErr: objectstorage.ErrUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t, api.PlanHobby)
+			provider := &fakeObjectProvider{}
+			e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+			setS3Flag(t, e, true)
+			bucket := reserveRecoveryBucket(t, e)
+			ctx := t.Context()
+			if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			qualifyObjectAccounting(t, e, bucket.ID)
+			uploads := e.s.store.(state.ObjectMultipartUploadStore)
+			transfers := e.s.store.(state.ObjectMultipartTransferStore)
+			u, err := uploads.ReserveObjectMultipartUpload(ctx, state.ObjectMultipartUpload{ID: uuid.NewString(), AccountID: bucket.AccountID, AppID: bucket.AppID, BucketID: bucket.ID, Key: "tracked", ExpiresAt: time.Now().Add(time.Hour)}, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = uploads.ClaimObjectMultipartUpload(ctx, bucket.AccountID, bucket.AppID, bucket.ID, u.ID, "init", state.ObjectMultipartInitiating, nil, false); err != nil {
+				t.Fatal(err)
+			}
+			if err = uploads.ActivateObjectMultipartUpload(ctx, u.ID, "init", "provider"); err != nil {
+				t.Fatal(err)
+			}
+			if err = transfers.BeginObjectMultipartPart(ctx, bucket.AccountID, bucket.ID, u.ID, "part", 1, 30, 100, e.s.objectStorage.Accounting); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.pending {
+				if err = transfers.SettleObjectMultipartPart(ctx, bucket.AccountID, u.ID, 1, "part"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = uploads.ClaimObjectMultipartUpload(ctx, bucket.AccountID, bucket.AppID, bucket.ID, u.ID, "abort", state.ObjectMultipartAborting, nil, false); err != nil {
+				t.Fatal(err)
+			}
+			if err = uploads.RetryObjectMultipartUpload(ctx, u.ID, "abort", "temporary", time.Second); err != nil {
+				t.Fatal(err)
+			}
+			// Durable retry state becomes due; the sweep must work with new writes disabled.
+			time.Sleep(1100 * time.Millisecond)
+			setS3Flag(t, e, false)
+			provider.multipartErr = tc.providerErr
+			if tc.latePart {
+				provider.multipartParts = objectstorage.MultipartPartsPage{Items: []objectstorage.MultipartPart{{PartNumber: 1, SizeBytes: 30, ETag: "etag"}}}
+			}
+			if err = e.s.reconcileObjectMultipartUploads(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			got, err := uploads.GetObjectMultipartUpload(ctx, bucket.AccountID, bucket.AppID, bucket.ID, u.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := e.store.ObjectUsage(ctx, bucket.AccountID, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantState, wantBytes := state.ObjectMultipartAborted, int64(0)
+			if tc.pending || tc.latePart || tc.providerErr != nil {
+				wantState, wantBytes = state.ObjectMultipartAborting, 30
+				if got.LeaseToken != "" || got.LastErrorCode == "" {
+					t.Fatalf("lost retry intent: %+v", got)
+				}
+			}
+			if got.State != wantState || state.SummarizeObjectUsage(snapshot, e.s.objectStorage.Accounting, time.Now()).CapacityBytes != wantBytes {
+				t.Fatalf("state=%s bytes=%d", got.State, state.SummarizeObjectUsage(snapshot, e.s.objectStorage.Accounting, time.Now()).CapacityBytes)
+			}
+		})
+	}
+}

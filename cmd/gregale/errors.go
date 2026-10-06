@@ -19,6 +19,8 @@ var docsURLPrefix = cliDocsURL
 // Adding a new code in pkg/api/errors.go → add a matching row here.
 // When adding, follow the existing path-style convention (lower-kebab).
 var errorDocsURL = map[string]string{
+	api.CodeBindingReleaseRequired:      cliDocsURL,
+	api.CodeBindingReleasePolicyChanged: cliDocsURL,
 	api.CodePlanLimitApps:               cliDocsURL,
 	api.CodePlanLimitRAM:                cliDocsURL,
 	api.CodePlanLimitConcur:             cliDocsURL,

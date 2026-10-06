@@ -55,7 +55,7 @@ func (s *server) createProjectEnvironmentQualification(w http.ResponseWriter, r 
 		checks = append(checks, state.ProjectEnvironmentQualificationCheck{Name: check.Name, Status: check.Status, Results: results})
 	}
 	qualification, err := store.CreateProjectEnvironmentQualification(r.Context(), acct.ID, project.ID,
-		environment, strings.TrimSpace(request.ReleaseSetID), request.ConfigurationVersion, request.ConfigurationHash, request.SecretRevisionHashes, checks)
+		environment, strings.TrimSpace(request.ReleaseSetID), request.ConfigurationVersion, request.ConfigurationHash, request.SecretRevisionHashes, checks, request.WorkloadConfigHashes)
 	switch {
 	case errors.Is(err, state.ErrInvalidArgument):
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -63,7 +63,7 @@ func (s *server) createProjectEnvironmentQualification(w http.ResponseWriter, r 
 		return
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-			"Qualification snapshot is stale", "the active release set, environment configuration, or secret revisions changed while probes were running; rerun qualification"))
+			"Qualification snapshot is stale", "the active release set, environment configuration, feature flags, or secret revisions changed while probes were running, or workload settings no longer match the tested deployment; rerun qualification"))
 		return
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, projectEnvironmentNotFound(projectSlug, environment))
@@ -91,8 +91,8 @@ func projectEnvironmentQualificationResponse(qualification state.ProjectEnvironm
 		ID: qualification.ID, Environment: qualification.EnvironmentSlug,
 		ReleaseSetID:         qualification.ReleaseSetID,
 		ConfigurationVersion: qualification.ConfigurationVersion, ConfigurationHash: qualification.ConfigurationHash,
-		SecretRevisionHashes: qualification.SecretRevisionHashes,
-		Status:               qualification.Status,
-		Checks:               checks, CreatedAt: qualification.CreatedAt, ExpiresAt: qualification.ExpiresAt,
+		SecretRevisionHashes: qualification.SecretRevisionHashes, WorkloadConfigHashes: qualification.WorkloadConfigHashes,
+		Status: qualification.Status,
+		Checks: checks, CreatedAt: qualification.CreatedAt, ExpiresAt: qualification.ExpiresAt,
 	}
 }

@@ -38,14 +38,17 @@ func TestStandaloneOutboundBindingsCreateAndPatch(t *testing.T) {
 			t.Fatalf("stored bindings = %#v, want %#v", app.Manifest.ServiceBindings, bindings)
 		}
 		for _, binding := range bindings {
-			if got := app.Manifest.Env[binding.Binding]; got != "http://"+binding.Service+".svc.gregale:10080" {
+			if got := app.Manifest.Env[binding.Binding]; got != "http://"+binding.Service+".svc.gregale:10081" {
 				t.Fatalf("%s = %q", binding.Binding, got)
 			}
 			if got := app.Manifest.Env[api.ServiceBindingHTTPSEnvKey(binding.Service)]; got != "https://"+binding.Service+".internal" {
 				t.Fatalf("%s = %q", api.ServiceBindingHTTPSEnvKey(binding.Service), got)
 			}
+			if got := app.Manifest.Env[api.ServiceBindingHostEnvKey(binding.Service)]; got != binding.Service+".svc.gregale" {
+				t.Fatalf("%s = %q", api.ServiceBindingHostEnvKey(binding.Service), got)
+			}
 		}
-		if len(app.Manifest.Env) != 2*len(bindings) {
+		if len(app.Manifest.Env) != 3*len(bindings) {
 			t.Fatalf("stale service env: %#v", app.Manifest.Env)
 		}
 		read := e.do(t, http.MethodGet, "/v1/apps/frontend", nil, nil)
@@ -185,14 +188,14 @@ func TestStandaloneServiceBindingHTTPSFirstTransportCanBeChanged(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("change transport: %d %s", rec.Code, rec.Body)
 	}
-	assertTransport(api.ServiceBindingTransportHTTP, "http://billing.svc.gregale:10080")
+	assertTransport(api.ServiceBindingTransportHTTP, "http://billing.svc.gregale:10081")
 
 	bad := api.ServiceBindingTransport("opportunistic")
 	rec = e.do(t, http.MethodPatch, "/v1/apps/frontend", api.UpdateAppRequest{ServiceBindingTransport: &bad}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid transport: %d %s", rec.Code, rec.Body)
 	}
-	assertTransport(api.ServiceBindingTransportHTTP, "http://billing.svc.gregale:10080")
+	assertTransport(api.ServiceBindingTransportHTTP, "http://billing.svc.gregale:10081")
 }
 
 func TestStandaloneOutboundBindingsAuditOldAndNew(t *testing.T) {

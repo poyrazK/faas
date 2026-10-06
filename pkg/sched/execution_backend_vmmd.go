@@ -62,7 +62,10 @@ func newRoutedVmmdExecutionBackend(router RoutedExecutionVMM, decoder executionP
 		if outcome == nil || outcome.Instance == "" || outcome.Instance != request.ID {
 			return nil, errors.New("sched: vmmd returned an unexpected execution instance")
 		}
-		return &routedVmmdExecutionTransport{router: router, nodeID: request.NodeID, instance: outcome.Instance}, nil
+		return &routedVmmdExecutionTransport{
+			router: router, nodeID: request.NodeID, instance: outcome.Instance,
+			outboundIntegrationIDs: append([]string(nil), request.OutboundIntegrationIDs...),
+		}, nil
 	}, decoder)
 }
 
@@ -70,6 +73,9 @@ type routedVmmdExecutionTransport struct {
 	router   RoutedExecutionVMM
 	nodeID   string
 	instance string
+	// outboundIntegrationIDs is the immutable host-side restore grant. It
+	// selects the full-duplex broker RPC but is never copied into the guest.
+	outboundIntegrationIDs []string
 }
 
 func (t *routedVmmdExecutionTransport) Execute(ctx context.Context, req executionproto.Request) (executionproto.Result, error) {
@@ -77,6 +83,17 @@ func (t *routedVmmdExecutionTransport) Execute(ctx context.Context, req executio
 }
 
 func (t *routedVmmdExecutionTransport) ExecuteWithOutput(ctx context.Context, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	if len(t.outboundIntegrationIDs) != 0 {
+		req.OutboundEnabled = true
+		broker, ok := t.router.(interface {
+			ExecuteExecutionWithBroker(context.Context, string, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+		})
+		if !ok {
+			return executionproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+				"Execution broker unavailable", "vmmd router does not support the Runs outbound broker")
+		}
+		return broker.ExecuteExecutionWithBroker(ctx, t.nodeID, t.instance, req, receive)
+	}
 	streaming, ok := t.router.(interface {
 		ExecuteExecutionWithOutput(context.Context, string, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
 	})
@@ -211,12 +228,17 @@ func (s *vmmdExecutionSession) execute(ctx context.Context, payload ExecutionPay
 		// fixed structural error at this boundary.
 		return ExecutionOutcome{}, errors.New("sched: decode execution payload failed")
 	}
+	if decoded.Profile.Normalized() != s.request.Profile.Normalized() {
+		return ExecutionOutcome{}, errors.New("sched: execution profile differs from sealed request")
+	}
 	resolved := api.ResolvedExecutionRequest{
+		Profile: s.request.Profile.Normalized(),
 		Runtime: s.request.Runtime, Source: decoded.Source,
-		Entrypoint: decoded.Entrypoint,
-		Files:      append([]api.ExecutionFile(nil), decoded.Files...),
-		Input:      append(json.RawMessage(nil), decoded.Input...),
-		Limits:     s.request.Limits, Network: api.ExecutionNetworkPolicy{Mode: s.request.NetworkMode},
+		Entrypoint:  decoded.Entrypoint,
+		Files:       append([]api.ExecutionFile(nil), decoded.Files...),
+		OutputFiles: append([]string(nil), decoded.OutputFiles...),
+		Input:       append(json.RawMessage(nil), decoded.Input...),
+		Limits:      s.request.Limits, Network: api.ExecutionNetworkPolicy{Mode: s.request.NetworkMode},
 	}
 	wireRequest := executionproto.RequestFromResolvedExecution(s.request.ID, resolved)
 	// The durable deadline includes queue and restore time. Never grant a
@@ -250,6 +272,12 @@ func (s *vmmdExecutionSession) execute(ctx context.Context, payload ExecutionPay
 	if err != nil {
 		return ExecutionOutcome{}, fmt.Errorf("sched: guest execution exchange: %w", err)
 	}
+	if err := result.Validate(wireRequest.MaxOutput); err != nil {
+		return ExecutionOutcome{}, errors.New("sched: invalid execution output")
+	}
+	if result.Status == api.ExecutionStatusSucceeded && !api.ExecutionArtifactsMatch(decoded.OutputFiles, result.Artifacts) {
+		return ExecutionOutcome{}, errors.New("sched: missing requested execution artifacts")
+	}
 	return outcomeFromProtocolResult(result), nil
 }
 
@@ -276,6 +304,7 @@ func outcomeFromProtocolResult(result executionproto.Result) ExecutionOutcome {
 	outcome := ExecutionOutcome{
 		Status:          result.Status,
 		Result:          append(json.RawMessage(nil), result.Result...),
+		Artifacts:       api.CloneExecutionArtifacts(result.Artifacts),
 		Stdout:          string(result.Stdout),
 		Stderr:          string(result.Stderr),
 		OutputTruncated: result.OutputTruncated,
@@ -299,6 +328,16 @@ func outcomeFromProtocolResult(result executionproto.Result) ExecutionOutcome {
 		outcome.FailureCode = "cancelled"
 		outcome.FailureMessage = "execution was cancelled"
 	default:
+		if result.FailureCode == "output_limit" {
+			outcome.FailureCode = "output_limit_exceeded"
+			outcome.FailureMessage = "execution output exceeded the admitted byte limit"
+			return outcome
+		}
+		if result.FailureCode == "artifact_invalid" {
+			outcome.FailureCode = "artifact_invalid"
+			outcome.FailureMessage = "a requested output file is missing or invalid"
+			return outcome
+		}
 		outcome.FailureCode = "guest_error"
 		outcome.FailureMessage = "execution failed inside the isolated guest"
 	}

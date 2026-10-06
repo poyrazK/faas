@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -20,7 +21,7 @@ const (
 	OperationRecoveryReconcile                     = "reconcile_on_unknown"
 	OperationRecoverySafeRetry                     = "safe_retry"
 	OperationOwnerPlatformTenant                   = "platform_tenant"
-	OperationIDHeader                              = "X-Gregale-Operation-Id"
+	OperationIDHeader                              = "X-Gregale-Customer-Operation-Id"
 	OperationAttemptHeader                         = "X-Gregale-Operation-Attempt"
 	OperationCapabilityHeader                      = "X-Gregale-Operation-Capability"
 	OperationExecutionKindHeader                   = "X-Gregale-Operation-Execution-Kind"
@@ -56,6 +57,36 @@ type OperationDefinitionResponse struct {
 	ReleaseID    string                  `json:"release_id,omitempty"`
 	Spec         OperationDefinitionSpec `json:"spec"`
 	CreatedAt    time.Time               `json:"created_at"`
+}
+
+type OperationDefinitionsResponse struct {
+	Definitions []OperationDefinitionSummary `json:"definitions"`
+}
+
+// Fetch schemas through the single-definition read to keep maximum-plan
+// collection responses within the existing SDK response bound.
+type OperationDefinitionSummary struct {
+	ID                  string    `json:"id"`
+	AppID               string    `json:"app_id"`
+	Scope               string    `json:"scope"`
+	Revision            string    `json:"revision"`
+	DeploymentID        string    `json:"deployment_id"`
+	ReleaseID           string    `json:"release_id,omitempty"`
+	Name                string    `json:"name"`
+	Method              string    `json:"method"`
+	Path                string    `json:"path"`
+	Owner               string    `json:"owner"`
+	ProgressStages      []string  `json:"progress_stages"`
+	CompletionWebhookID string    `json:"completion_webhook_id,omitempty"`
+	Recovery            string    `json:"recovery"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+// OperationTenantIdentity binds local submission receipts to the authenticated
+// tenant without persisting a credential or relying on a caller-supplied owner.
+type OperationTenantIdentity struct {
+	AccountID        string `json:"account_id"`
+	PlatformTenantID string `json:"platform_tenant_id"`
 }
 
 type OperationProgress struct {
@@ -123,6 +154,62 @@ type OperationAcceptedResponse struct {
 	EventsURL string `json:"events_url"`
 }
 
+// OperationSummary deliberately excludes input, result bytes, artifact locations,
+// delivery errors and execution authority. Fetch detail separately to reopen work.
+type OperationSummary struct {
+	PlatformTenantID      string                   `json:"platform_tenant_id,omitempty"` // Account operator listings only.
+	ID                    string                   `json:"id"`
+	Name                  string                   `json:"name"`
+	Generation            int                      `json:"generation"`
+	State                 OperationState           `json:"state"`
+	Progress              *OperationProgress       `json:"progress,omitempty"`
+	CompletionDelivery    OperationDeliverySummary `json:"completion_delivery"`
+	CancellationRequested bool                     `json:"cancellation_requested"`
+	LatestSequence        int64                    `json:"latest_sequence"`
+	CreatedAt             time.Time                `json:"created_at"`
+	UpdatedAt             time.Time                `json:"updated_at"`
+	ExpiresAt             time.Time                `json:"expires_at"`
+}
+
+type OperationDeliverySummary struct {
+	State         string     `json:"state"`
+	Attempts      int        `json:"attempts"`
+	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+}
+
+type OperationListResponse struct {
+	Operations []OperationSummary `json:"operations"`
+	NextCursor string             `json:"next_cursor,omitempty"`
+}
+
+// AppID and Scope are explicit selectors, never sources of customer authority.
+type OperationListOptions struct {
+	TenantID string // Optional account operator filter; ignored by tenant-self clients.
+	AppID    string
+	Scope    string
+	Name     string
+	State    OperationState
+	Limit    int
+	Cursor   string
+}
+
+// OperationExecution summarizes a retained execution generation without payload,
+// headers, instance credentials or runtime capability. Attempts is the execution
+// ledger's attempt count, not a fabricated per-attempt outcome history.
+type OperationExecution struct {
+	Generation   int        `json:"generation"`
+	InvocationID string     `json:"invocation_id"`
+	State        string     `json:"state"`
+	Attempts     int        `json:"attempts"`
+	CreatedAt    time.Time  `json:"created_at"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+}
+
+type OperationExecutionsResponse struct {
+	Executions     []OperationExecution `json:"executions"`
+	NextGeneration int                  `json:"next_generation,omitempty"`
+}
+
 type OperationEvent struct {
 	OperationID string          `json:"operation_id"`
 	Sequence    int64           `json:"sequence"`
@@ -169,4 +256,11 @@ func OperationLimitProblem(err error) *Problem {
 		problem = problem.WithLimit(maximum, observed)
 	}
 	return problem
+}
+
+// IsReservedOperationHeader covers customer and managed execution context.
+// Public ingress strips the complete namespace, including future adapters.
+func IsReservedOperationHeader(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "x-gregale-operation-") || strings.HasPrefix(lower, "x-gregale-customer-operation-")
 }

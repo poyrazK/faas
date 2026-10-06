@@ -24,10 +24,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // --- column-order contracts ----------------------------------------
@@ -43,7 +45,7 @@ const jobSelectCols = `id, account_id, kind, name, image_ref, ram_mb, task_timeo
        coalesce(image_materialization_error, ''),
        image_materialized_at, image_materialization_attempts,
        image_materialization_next_attempt_at, coalesce(cron_schedule, ''),
-       cron_timezone, last_scheduled_at`
+       cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision`
 
 // jobRunSelectCols is the canonical column order for job_runs.
 // Includes dead_letter_count (00574). ORDER BY id keeps the contract
@@ -57,7 +59,8 @@ const jobRunSelectCols = `id, job_id, account_id, trigger_kind, env_overrides, t
        coalesce(image_ref_snapshot, ''), coalesce(image_resolved_digest_snapshot, ''),
        coalesce(image_storage_key_snapshot, ''), ram_mb_snapshot,
        effective_env_snapshot, source_run_id,
-       coalesce(input_manifest_uri, ''), coalesce(input_manifest_sha256, '')`
+       coalesce(input_manifest_uri, ''), coalesce(input_manifest_sha256, ''), failure_rules, coalesce(occurrence_id::text, ''), start_deadline_at,
+       coalesce(exclusive_operation_id::text, ''), coalesce(exclusive_generation, 0)`
 
 // jobTaskSelectCols is the canonical column order for job_tasks.
 // Includes exit_code + next_attempt_at (00571), lease_token +
@@ -68,7 +71,7 @@ const jobTaskSelectCols = `run_id, task_index, status, attempt, instance_id, err
        error_message, exit_code, started_at, finished_at, created_at,
        next_attempt_at, lease_token, lease_expires_at, last_lease_node,
 	       log_content, log_truncated, coalesce(input_id, ''), coalesce(input_ref, ''),
-	       output_manifest, source_task_index`
+	       output_manifest, source_task_index, work_decision, outcome_code`
 
 // jobTaskSelectColsQualified is the same column order as jobTaskSelectCols,
 // with an explicit table qualifier for joins that also expose a status column.
@@ -80,7 +83,7 @@ const jobTaskSelectColsQualified = `job_tasks.run_id, job_tasks.task_index,
        job_tasks.lease_expires_at, job_tasks.last_lease_node,
        job_tasks.log_content, job_tasks.log_truncated,
 	       coalesce(job_tasks.input_id, ''), coalesce(job_tasks.input_ref, ''),
-	       job_tasks.output_manifest, job_tasks.source_task_index`
+	       job_tasks.output_manifest, job_tasks.source_task_index, job_tasks.work_decision, job_tasks.outcome_code`
 
 // scanJobCols reads the jobSelectCols row into a Job. Nullable columns
 // don't apply (every column on jobs is NOT NULL), but env_overrides
@@ -94,7 +97,7 @@ func scanJobCols(scan func(...any) error) (Job, error) {
 		&j.ImageStorageKey, &j.ImageMaterializationStatus,
 		&j.ImageMaterializationError, &j.ImageMaterializedAt,
 		&j.ImageMaterializationAttempts, &j.ImageMaterializationNextAttemptAt,
-		&j.CronSchedule, &j.CronTimezone, &j.LastScheduledAt); err != nil {
+		&j.CronSchedule, &j.CronTimezone, &j.LastScheduledAt, &j.SchedulePolicy, &j.FailureRules, &j.ScheduleRevision); err != nil {
 		return Job{}, err
 	}
 	if len(envOverrides) > 0 {
@@ -118,7 +121,8 @@ func scanJobRunCols(scan func(...any) error) (JobRun, error) {
 		&r.FailurePolicy, &r.InputManifestVersion, &r.InputDigest,
 		&r.ImageRefSnapshot, &r.ImageResolvedDigestSnapshot,
 		&r.ImageStorageKeySnapshot, &r.RAMMBSnapshot, &effectiveEnv,
-		&r.SourceRunID, &r.InputManifestURI, &r.InputManifestSHA256); err != nil {
+		&r.SourceRunID, &r.InputManifestURI, &r.InputManifestSHA256, &r.FailureRules, &r.OccurrenceID, &r.StartDeadlineAt,
+		&r.ExclusiveOperationID, &r.ExclusiveGeneration); err != nil {
 		return JobRun{}, err
 	}
 	if len(envOverrides) > 0 {
@@ -138,7 +142,7 @@ func scanJobTaskCols(scan func(...any) error) (JobTask, error) {
 		&t.ErrorClass, &t.ErrorMessage, &t.ExitCode, &t.StartedAt, &t.FinishedAt,
 		&t.CreatedAt, &t.NextAttemptAt, &t.LeaseToken, &t.LeaseExpiresAt,
 		&t.LastLeaseNode, &t.LogContent, &t.LogTruncated,
-		&t.InputID, &t.InputRef, &outputManifest, &t.SourceTaskIndex); err != nil {
+		&t.InputID, &t.InputRef, &outputManifest, &t.SourceTaskIndex, &t.WorkDecision, &t.OutcomeCode); err != nil {
 		return JobTask{}, err
 	}
 	t.OutputManifest = json.RawMessage(outputManifest)
@@ -375,7 +379,11 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 // JobUpdateWithSchedule updates a job and its schedule in one row mutation.
 // A non-nil empty schedule removes recurring execution; any schedule or
 // timezone change resets the scheduler cursor to the edit time.
-func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string) (Job, error) {
+func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string, policyOptions ...JobPolicyOptions) (Job, error) {
+	var policies JobPolicyOptions
+	if len(policyOptions) > 0 {
+		policies = policyOptions[0]
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Job{}, err
@@ -420,11 +428,13 @@ func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command 
 		   cron_timezone   = coalesce($11, cron_timezone),
 		   kind            = case when $10::text is null then kind when $10 = '' then 'batch' else 'recurring' end,
 		   last_scheduled_at = case when $10::text is not null or $11::text is not null then now() else last_scheduled_at end,
-		   updated_at      = now()
+		   schedule_policy = coalesce($12::jsonb, schedule_policy),
+ failure_rules = coalesce($13::jsonb, failure_rules),
+ updated_at      = now()
 		 where id = $1::uuid and status <> 'deleted'
 		 returning `+jobSelectCols,
 		id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax,
-		envOverridesArg, status, schedule, timezone)
+		envOverridesArg, status, schedule, timezone, policyJSON(policies.SchedulePolicy), policyJSON(policies.FailureRules))
 	job, err := scanJob(row)
 	if err != nil {
 		return Job{}, err
@@ -825,12 +835,18 @@ func (s *PgStore) JobConcurrentByAccount(ctx context.Context, accountID string) 
 //   - mapErr-wrapped CHECK violations on bad tasks / parallelism.
 //   - mapErr-wrapped FK violations on accountID.
 func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int, options ...JobRunOptions) (JobRun, []JobTask, error) {
+	var opts JobRunOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	if len(envOverrides) == 0 {
 		envOverrides = json.RawMessage("{}")
 	}
 	var commandArgs any
 	var inputs []JobInput
 	inputManifestURI, inputManifestSHA256 := "", ""
+	runID, exclusiveOperationID := "", ""
+	var exclusiveGeneration int64
 	executionClass := "standard"
 	failurePolicy := "continue"
 	var eligibleAt, latestStartAt *time.Time
@@ -839,6 +855,9 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	}
 	if len(options) > 0 {
 		inputs = options[0].Inputs
+		runID = options[0].ID
+		exclusiveOperationID = options[0].ExclusiveOperationID
+		exclusiveGeneration = options[0].ExclusiveGeneration
 		inputManifestURI, inputManifestSHA256 = options[0].InputManifestURI, options[0].InputManifestSHA256
 		if options[0].ExecutionClass != "" {
 			executionClass = options[0].ExecutionClass
@@ -847,6 +866,14 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 			failurePolicy = options[0].FailurePolicy
 		}
 		eligibleAt, latestStartAt = options[0].EligibleAt, options[0].LatestStartAt
+	}
+	if (exclusiveOperationID == "") != (exclusiveGeneration == 0) {
+		return JobRun{}, nil, ErrInvalidArgument
+	}
+	if runID != "" {
+		if _, err := uuid.Parse(runID); err != nil {
+			return JobRun{}, nil, ErrInvalidArgument
+		}
 	}
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
@@ -865,6 +892,17 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	if imageStatus == "failed" {
 		return JobRun{}, nil, ErrConflict
 	}
+	if exclusiveOperationID != "" {
+		var owned string
+		if err := tx.QueryRow(ctx, `SELECT id::text FROM exclusive_work_operations
+			WHERE id=$1::uuid AND account_id=$2::uuid AND job_id=$3::uuid
+			  AND state='running' AND generation=$4
+			  AND lease_expires_at > clock_timestamp()
+			  AND attempt_deadline > clock_timestamp()
+			FOR UPDATE`, exclusiveOperationID, accountID, jobID, exclusiveGeneration).Scan(&owned); err != nil {
+			return JobRun{}, nil, mapErr(err)
+		}
+	}
 
 	// 1. Insert the run row. Parallelism is NOT NULL on job_runs, so a
 	// nil per-run override must be materialized from jobs.max_parallelism.
@@ -874,15 +912,15 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	// account predicate prevents a caller from pairing another tenant's job
 	// with its own account row.
 	row := tx.QueryRow(ctx,
-		`insert into job_runs (job_id, account_id, trigger_kind, env_overrides,
+		`insert into job_runs (id, job_id, account_id, trigger_kind, env_overrides,
 		                       tasks, parallelism, retry_max, task_timeout_s, command,
 		                       execution_class, eligible_at, latest_start_at, failure_policy,
 		                       input_manifest_version, input_digest,
 		                       image_ref_snapshot, image_resolved_digest_snapshot,
 		                       image_storage_key_snapshot, ram_mb_snapshot,
 		                       effective_env_snapshot, input_manifest_uri,
-		                       input_manifest_sha256)
-		 select j.id, $2::uuid, $3, $4::jsonb, $5,
+						input_manifest_sha256, failure_rules, exclusive_operation_id, exclusive_generation)
+		 select coalesce(nullif($19, '')::uuid, gen_random_uuid()), j.id, $2::uuid, $3, $4::jsonb, $5,
 		        coalesce($6, j.max_parallelism), coalesce($7, j.retry_max),
 		        coalesce($8, j.task_timeout_s),
 		        case when $9::text[] is null then j.command
@@ -890,7 +928,7 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		        $10, $11, $12, $13, $14, nullif($15, ''),
 		        j.image_ref, j.image_resolved_digest, j.image_storage_key,
 		        j.ram_mb, j.env_overrides || $4::jsonb,
-		        nullif($16, ''), nullif($17, '')
+		        nullif($16, ''), nullif($17, ''), coalesce($18::jsonb, j.failure_rules), nullif($20, '')::uuid, nullif($21::bigint, 0)
 		   from jobs j
 		  where j.id = $1::uuid
 		    and j.account_id = $2::uuid
@@ -899,7 +937,8 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		jobID, accountID, triggerKind, []byte(envOverrides),
 		tasks, parallelism, retryMaxOverride, taskTimeoutOverride, commandArgs,
 		executionClass, eligibleAt, latestStartAt, failurePolicy,
-		manifestVersion, inputDigest, inputManifestURI, inputManifestSHA256)
+		manifestVersion, inputDigest, inputManifestURI, inputManifestSHA256,
+		policyJSON(opts.FailureRules), runID, exclusiveOperationID, exclusiveGeneration)
 	run, err := scanJobRun(row)
 	if err != nil {
 		// mapErr unwraps FK violations + ErrNoRows to ErrNotFound.
@@ -1040,24 +1079,29 @@ func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID
 		job_id, account_id, trigger_kind, env_overrides, tasks, parallelism,
 		retry_max, task_timeout_s, command, failure_policy, input_manifest_version,
 		input_digest, image_ref_snapshot, image_resolved_digest_snapshot,
-		image_storage_key_snapshot, ram_mb_snapshot, effective_env_snapshot, source_run_id)
+		image_storage_key_snapshot, ram_mb_snapshot, effective_env_snapshot, source_run_id, failure_rules)
 		values ($1::uuid,$2::uuid,'manual',$3::jsonb,$4,$5,$6,$7,$8,$9,$10,
-			nullif($11,''),$12,$13,$14,$15,$16::jsonb,$17::uuid)
+			nullif($11,''),$12,$13,$14,$15,$16::jsonb,$17::uuid,$18::jsonb)
 		returning `+jobRunSelectCols,
 		job.ID, accountID, []byte(source.EnvOverrides), len(failed), source.Parallelism,
 		retryMax, timeout, command, source.FailurePolicy, manifestVersion, digest,
 		job.ImageRef, job.ImageResolvedDigest, job.ImageStorageKey, ramMB,
-		[]byte(effectiveEnv), sourceRunID))
+		[]byte(effectiveEnv), sourceRunID, policyJSON(source.FailureRules)))
 	if err != nil {
 		return JobRun{}, nil, err
 	}
 	fanned := make([]JobTask, 0, len(failed))
 	for i, task := range failed {
+		// A replay of a replay keeps the root run's partition index.
+		origin := task.TaskIndex
+		if task.SourceTaskIndex != nil {
+			origin = *task.SourceTaskIndex
+		}
 		created, err := scanJobTask(tx.QueryRow(ctx, `insert into job_tasks
 			(run_id,task_index,status,input_id,input_ref,source_task_index)
 			values ($1::uuid,$2,'queued',nullif($3,''),nullif($4,''),$5)
 			returning `+jobTaskSelectCols,
-			run.ID, i, task.InputID, task.InputRef, task.TaskIndex))
+			run.ID, i, task.InputID, task.InputRef, origin))
 		if err != nil {
 			return JobRun{}, nil, err
 		}
@@ -1069,38 +1113,107 @@ func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID
 	return run, fanned, nil
 }
 
-// JobRunCreateScheduled atomically claims the current schedule occurrence and
-// persists its one-task run. If another schedd already advanced the cursor,
-// or the job was edited/paused after the candidate read, it returns created=false.
+// JobRunCreateScheduled is retained for callers that do not carry a nominal
+// schedule boundary. New scheduler code uses JobRunCreateScheduledOccurrence.
 func (s *PgStore) JobRunCreateScheduled(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error) {
+	return s.JobRunCreateScheduledOccurrence(ctx, jobID, schedule, timezone, expectedLastScheduledAt, firedAt, JobScheduledOccurrenceOptions{ScheduledFor: firedAt})
+}
+
+// JobRunCreateScheduledOccurrence atomically advances the schedule cursor,
+// persists one decision record, and optionally creates the scheduled run.
+// The job row lock fences duplicate schedulers and policy edits.
+func (s *PgStore) JobRunCreateScheduledOccurrence(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time, options JobScheduledOccurrenceOptions) (JobRun, bool, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return JobRun{}, false, fmt.Errorf("state: begin scheduled job run tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var accountID string
-	var parallelism int
-	var envOverrides []byte
-	err = tx.QueryRow(ctx,
-		`update jobs
-		    set last_scheduled_at = $5
-		  where id = $1::uuid
-		    and status = 'active'
-		    and kind = 'recurring'
-		    and cron_schedule = $2
-		    and cron_timezone = $3
-		    and last_scheduled_at is not distinct from $4::timestamptz
-		    and ($4::timestamptz is null or $5 > $4::timestamptz)
-		  returning account_id, max_parallelism, env_overrides`,
-		jobID, schedule, timezone, expectedLastScheduledAt, firedAt.UTC()).
-		Scan(&accountID, &parallelism, &envOverrides)
+	job, err := scanJob(tx.QueryRow(ctx, `select `+jobSelectCols+` from jobs where id = $1::uuid for update`, jobID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return JobRun{}, false, nil
 	}
 	if err != nil {
-		return JobRun{}, false, fmt.Errorf("state: claim scheduled job %s: %w", jobID, err)
+		if errors.Is(err, ErrNotFound) {
+			return JobRun{}, false, nil
+		}
+		return JobRun{}, false, fmt.Errorf("state: lock scheduled job %s: %w", jobID, err)
 	}
+	var managed bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source='job_schedule' AND trigger_id=$1::uuid AND job_id=$1::uuid)`, jobID).Scan(&managed); err != nil {
+		return JobRun{}, false, fmt.Errorf("state: check managed schedule binding for Job %s: %w", jobID, err)
+	}
+	if managed && options.Disposition == "" {
+		return JobRun{}, false, nil
+	}
+	if job.Status != "active" || job.Kind != "recurring" || job.CronSchedule != schedule || job.CronTimezone != timezone ||
+		!sameTimePointer(job.LastScheduledAt, expectedLastScheduledAt) ||
+		(options.ScheduleRevision > 0 && job.ScheduleRevision != options.ScheduleRevision) {
+		return JobRun{}, false, nil
+	}
+	firedAt = firedAt.UTC()
+	if expectedLastScheduledAt != nil && !firedAt.After(*expectedLastScheduledAt) {
+		return JobRun{}, false, nil
+	}
+	scheduledFor := options.ScheduledFor.UTC()
+	if options.ScheduledFor.IsZero() {
+		scheduledFor = firedAt
+	}
+	if expectedLastScheduledAt != nil && !scheduledFor.After(*expectedLastScheduledAt) {
+		return JobRun{}, false, nil
+	}
+	policy := job.SchedulePolicy
+	if policy == nil {
+		policy = &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "allow", MissedRuns: "skip"}
+	}
+	deadline := policy.Deadline(scheduledFor)
+
+	status, reason, blocker := "queued", "", ""
+	if options.Disposition != "" {
+		if options.Disposition != "coalesced" && options.Disposition != "missed_deadline" {
+			return JobRun{}, false, ErrInvalidArgument
+		}
+		status, reason = options.Disposition, options.Reason
+	} else if workpolicy.DeadlineMissed(deadline, firedAt) {
+		status, reason = "missed_deadline", "start deadline expired before the scheduler could dispatch the occurrence"
+	}
+	if status == "queued" && policy.Overlap != "allow" {
+		var activeOccurrence string
+		err = tx.QueryRow(ctx, `select coalesce(occurrence_id::text, '') from job_runs
+			where job_id = $1::uuid and trigger_kind = 'scheduled' and aggregate_status in ('queued','running')
+			order by created_at asc limit 1`, jobID).Scan(&activeOccurrence)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return JobRun{}, false, err
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			blocker = activeOccurrence
+			if policy.Overlap == "skip" {
+				status, reason = "skipped_overlap", "an earlier scheduled run for this job is still active"
+			} else {
+				status, reason = "waiting_replacement", "replacement is waiting for the earlier scheduled run to stop"
+			}
+		}
+	}
+	if _, err := tx.Exec(ctx, `update jobs set last_scheduled_at = $2 where id = $1::uuid`, jobID, scheduledFor); err != nil {
+		return JobRun{}, false, fmt.Errorf("state: advance scheduled job cursor: %w", err)
+	}
+	var occurrenceID string
+	err = tx.QueryRow(ctx, `insert into schedule_occurrences (
+		account_id, job_id, schedule_revision, scheduled_for, start_deadline_at,
+		schedule_policy, status, reason, blocking_occurrence_id)
+		values ($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,$8,nullif($9,'')::uuid)
+		returning id::text`, job.AccountID, jobID, job.ScheduleRevision, scheduledFor, deadline,
+		policyJSON(policy), status, reason, blocker).Scan(&occurrenceID)
+	if err != nil {
+		return JobRun{}, false, fmt.Errorf("state: record scheduled job occurrence: %w", err)
+	}
+	if status != "queued" {
+		if err := tx.Commit(ctx); err != nil {
+			return JobRun{}, false, err
+		}
+		return JobRun{}, false, nil
+	}
+	envOverrides := job.EnvOverrides
 	if len(envOverrides) == 0 {
 		envOverrides = []byte(`{}`)
 	}
@@ -1109,16 +1222,19 @@ func (s *PgStore) JobRunCreateScheduled(ctx context.Context, jobID, schedule, ti
 		                       tasks, parallelism, retry_max, task_timeout_s, command,
 		                       image_ref_snapshot, image_resolved_digest_snapshot,
 		                       image_storage_key_snapshot, ram_mb_snapshot,
-		                       effective_env_snapshot)
+		                       effective_env_snapshot, failure_rules, occurrence_id, start_deadline_at)
 		 select $1::uuid, $2::uuid, 'scheduled', $3::jsonb, 1, $4,
 		        j.retry_max, j.task_timeout_s, j.command,
 		        j.image_ref, j.image_resolved_digest, j.image_storage_key,
-		        j.ram_mb, j.env_overrides || $3::jsonb
+		        j.ram_mb, j.env_overrides || $3::jsonb, j.failure_rules, $5::uuid, $6
 		   from jobs j where j.id = $1::uuid
 		 returning `+jobRunSelectCols,
-		jobID, accountID, envOverrides, parallelism))
+		jobID, job.AccountID, envOverrides, job.MaxParallelism, occurrenceID, deadline))
 	if err != nil {
 		return JobRun{}, false, fmt.Errorf("state: create scheduled job run: %w", mapErr(err))
+	}
+	if _, err := tx.Exec(ctx, `update schedule_occurrences set job_run_id=$2::uuid where id=$1::uuid`, occurrenceID, run.ID); err != nil {
+		return JobRun{}, false, err
 	}
 	if _, err := tx.Exec(ctx,
 		`insert into job_tasks (run_id, task_index, status) values ($1::uuid, 0, 'queued')`, run.ID); err != nil {
@@ -1130,11 +1246,51 @@ func (s *PgStore) JobRunCreateScheduled(ctx context.Context, jobID, schedule, ti
 	return run, true, nil
 }
 
+// JobScheduleAdvanceOccurrence advances a managed schedule's optimistic
+// cursor without creating an unmanaged JobRun. The caller admits the stable
+// schedule occurrence through exclusive operation storage first.
+func (s *PgStore) JobScheduleAdvanceOccurrence(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("state: begin managed scheduled Job occurrence tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var claimed string
+	err = tx.QueryRow(ctx, `UPDATE jobs
+		SET last_scheduled_at=$5
+		WHERE id=$1::uuid AND status='active' AND kind='recurring'
+		  AND cron_schedule=$2 AND cron_timezone=$3
+		  AND last_scheduled_at IS NOT DISTINCT FROM $4::timestamptz
+		  AND ($4::timestamptz IS NULL OR $5 > $4::timestamptz)
+		RETURNING id::text`, jobID, schedule, timezone, expectedLastScheduledAt, firedAt.UTC()).Scan(&claimed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("state: advance managed schedule for Job %s: %w", jobID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("state: commit managed schedule cursor for Job %s: %w", jobID, err)
+	}
+	return true, nil
+}
+
 // JobRunGetByID returns ErrNotFound when the row is missing.
 func (s *PgStore) JobRunGetByID(ctx context.Context, id string) (JobRun, error) {
 	row := s.pool.QueryRow(ctx,
 		`select `+jobRunSelectCols+` from job_runs where id = $1::uuid`, id)
 	return scanJobRun(row)
+}
+
+func (s *PgStore) JobRunListByExclusiveOperation(ctx context.Context, accountID, operationID string) ([]JobRun, error) {
+	rows, err := s.pool.Query(ctx, `select `+jobRunSelectCols+` from job_runs
+		where account_id=$1::uuid and exclusive_operation_id=$2::uuid
+		order by exclusive_generation`, accountID, operationID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list exclusive operation Job runs: %w", err)
+	}
+	defer rows.Close()
+	return scanJobRuns(rows)
 }
 
 // JobRunListByJob paginates the per-job run list (job_runs_job_idx).
@@ -1226,7 +1382,8 @@ func (s *PgStore) JobRunRecompute(ctx context.Context, runID string) (JobRun, er
 		  and exists (select 1 from job_tasks failed
 		              where failed.run_id = r.id
 		                and failed.status in ('failed', 'timeout', 'oom')
-		                and failed.attempt > coalesce(r.retry_max, j.retry_max))
+		                and (failed.work_decision->>'action' = 'fail_partition' OR
+ ((failed.work_decision is null or failed.work_decision->>'action' = 'retry') and failed.attempt > coalesce(r.retry_max, j.retry_max))))
 	  )`, runID)
 	if err != nil {
 		return JobRun{}, fmt.Errorf("state: cancel unstarted fail-fast tasks: %w", err)
@@ -1419,13 +1576,22 @@ func (s *PgStore) JobTaskClaimBatch(ctx context.Context, limit int) ([]JobTask, 
 		  join job_runs r on r.id = job_tasks.run_id
 		  join jobs j on j.id = r.job_id
 		  where job_tasks.status = 'queued'
+		    and (r.exclusive_operation_id is null or exists (
+		      select 1 from exclusive_work_operations o
+		      where o.id = r.exclusive_operation_id and o.state = 'running'
+		        and o.generation = r.exclusive_generation
+		        and o.lease_expires_at > clock_timestamp()
+		        and o.attempt_deadline > clock_timestamp()))
 		    and (r.failure_policy = 'continue' or not exists (
 		      select 1 from job_tasks failed
 		      where failed.run_id = r.id and failed.status in ('failed','timeout','oom')
-		        and failed.attempt > coalesce(r.retry_max, j.retry_max)))
+		        and (failed.work_decision->>'action' = 'fail_partition' OR
+ ((failed.work_decision is null or failed.work_decision->>'action' = 'retry') and failed.attempt > coalesce(r.retry_max, j.retry_max)))))
 		    and (job_tasks.next_attempt_at is null or job_tasks.next_attempt_at <= now())
-		    and (r.execution_class = 'standard' or
-		         (r.eligible_at <= now() and r.latest_start_at > now()))
+			and (r.execution_class = 'standard' or
+			         (r.eligible_at <= now() and r.latest_start_at > now()))
+		    and (r.start_deadline_at is null or r.start_deadline_at >= now() or exists (
+		      select 1 from job_tasks started where started.run_id = r.id and started.started_at is not null))
 		    and j.image_materialization_status = 'ready'
 		    and j.image_storage_key is not null
 		  order by case when r.execution_class = 'standard' then 0 else 1 end,
@@ -1452,13 +1618,20 @@ func (s *PgStore) JobTaskExpireUnstarted(ctx context.Context, now time.Time) ([]
 	rows, err := s.pool.Query(ctx, `with picked as (
 		select t.run_id, t.task_index from job_tasks t
 		join job_runs r on r.id = t.run_id
-		where t.status = 'queued' and r.execution_class = 'flexible'
-		  and r.latest_start_at <= $1
-		order by r.latest_start_at, t.run_id, t.task_index
+		where t.status = 'queued' and (
+		  (r.execution_class = 'flexible' and r.latest_start_at <= $1)
+		  or (r.start_deadline_at < $1 and not exists (
+		    select 1 from job_tasks started where started.run_id = r.id and started.started_at is not null))
+		)
+		order by coalesce(r.latest_start_at, r.start_deadline_at), t.run_id, t.task_index
 		limit 1000 for update of t skip locked
 	)
 	update job_tasks t set status = 'cancelled', error_class = 'cancelled',
-		error_message = 'flexible start window expired before admission', finished_at = $1
+		error_message = case when exists (
+		  select 1 from job_runs r where r.id = t.run_id and r.start_deadline_at < $1
+		    and not exists (select 1 from job_tasks started where started.run_id = r.id and started.started_at is not null)
+		) then 'scheduled start deadline expired before first task start'
+		else 'flexible start window expired before admission' end, finished_at = $1
 	from picked p where t.run_id = p.run_id and t.task_index = p.task_index
 	returning t.run_id::text`, now.UTC())
 	if err != nil {
@@ -1491,7 +1664,15 @@ func (s *PgStore) JobTaskExpireUnstarted(ctx context.Context, now time.Time) ([]
 // when the task is no longer status='queued' (parallel dispatcher
 // claimed it first; lost the race).
 func (s *PgStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) error {
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin mark job task claimed: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
 		`update job_tasks set
 		   status            = 'claimed',
 		   instance_id       = $2::uuid,
@@ -1506,6 +1687,35 @@ func (s *PgStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskInde
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit mark job task claimed: %w", err)
+	}
+	return nil
+}
+
+// lockJobRunExclusiveOwner serializes a JobRun task transition with operation
+// replacement. Every task row carries an immutable operation generation, but
+// checking it with EXISTS alone leaves a race with a concurrent generation
+// change. Holding the operation row lock through commit makes the task write
+// linearize before or after replacement.
+func lockJobRunExclusiveOwner(ctx context.Context, tx pgx.Tx, runID string) error {
+	var operationID string
+	var generation int64
+	if err := tx.QueryRow(ctx, `select coalesce(exclusive_operation_id::text, ''), coalesce(exclusive_generation, 0)
+		from job_runs where id = $1::uuid`, runID).Scan(&operationID, &generation); err != nil {
+		return mapErr(err)
+	}
+	if operationID == "" {
+		return nil
+	}
+	var owned string
+	if err := tx.QueryRow(ctx, `select id::text from exclusive_work_operations
+		where id = $1::uuid and state = 'running' and generation = $2
+		  and lease_expires_at > clock_timestamp()
+		  and attempt_deadline > clock_timestamp()
+		for update`, operationID, generation).Scan(&owned); err != nil {
+		return mapErr(err)
 	}
 	return nil
 }
@@ -1522,6 +1732,9 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 		return Instance{}, fmt.Errorf("state: begin create-and-claim job instance: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
+		return Instance{}, fmt.Errorf("state: lock exclusive owner for job run %s: %w", runID, err)
+	}
 
 	var accountID, planName string
 	var runParallelism int
@@ -1531,12 +1744,21 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 		   join jobs j on j.id = r.job_id and j.account_id = r.account_id
 		   join accounts a on a.id = r.account_id
 		  where r.id = $1::uuid and j.id = $2::uuid
+		    and (r.exclusive_operation_id is null or exists (
+		      select 1 from exclusive_work_operations o
+		      where o.id = r.exclusive_operation_id and o.state = 'running'
+		        and o.generation = r.exclusive_generation
+		        and o.lease_expires_at > clock_timestamp()
+		        and o.attempt_deadline > clock_timestamp()))
 		    and (r.failure_policy = 'continue' or not exists (
 		      select 1 from job_tasks failed
 		      where failed.run_id = r.id and failed.status in ('failed','timeout','oom')
-		        and failed.attempt > coalesce(r.retry_max, j.retry_max)))
+		        and (failed.work_decision->>'action' = 'fail_partition' OR
+ ((failed.work_decision is null or failed.work_decision->>'action' = 'retry') and failed.attempt > coalesce(r.retry_max, j.retry_max)))))
 		    and (r.execution_class = 'standard' or
 		         (r.eligible_at <= now() and r.latest_start_at > now()))
+		    and (r.start_deadline_at is null or r.start_deadline_at >= now() or exists (
+		      select 1 from job_tasks started where started.run_id = r.id and started.started_at is not null))
 		  for update of a`,
 		runID, jobID,
 	).Scan(&accountID, &planName, &runParallelism); err != nil {
@@ -1629,7 +1851,13 @@ func (s *PgStore) JobTaskCompleteClaimedWithLogs(ctx context.Context, runID stri
 	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, instanceID, leaseToken, true, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt, output)
 }
 
-func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time, outputManifest json.RawMessage) error {
+func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time, outputManifest json.RawMessage, completions ...JobTaskCompletion) error {
+	var decision *workpolicy.Decision
+	var outcomeCode string
+	if len(completions) > 0 {
+		decision = completions[0].Decision
+		outcomeCode = completions[0].OutcomeCode
+	}
 	if len(outputManifest) > 0 {
 		if status != "succeeded" {
 			return fmt.Errorf("state: output manifest requires successful task")
@@ -1659,7 +1887,15 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		expectedInstanceArg = expectedInstanceID
 		expectedLeaseArg = expectedLeaseToken
 	}
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin mark job task terminal: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
 		`update job_tasks set
 		   status        = $2,
 		   exit_code     = $3,
@@ -1669,19 +1905,31 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		   log_content   = case when $8 then $9 else log_content end,
 		   log_truncated = case when $8 then $10 else log_truncated end,
 		   output_manifest = $14::jsonb,
+ work_decision = $15::jsonb,
+ outcome_code = $16,
 		   lease_token   = null,
 		   lease_expires_at = null
 		 where run_id = $1::uuid and task_index = $7
 		   and status in ('queued', 'claimed')
 		   and (not $11::boolean or (status = 'claimed'
-		        and instance_id = $12::uuid and lease_token = $13))`,
+		        and instance_id = $12::uuid and lease_token = $13))
+		   and exists (select 1 from job_runs r where r.id = job_tasks.run_id
+		     and (r.exclusive_operation_id is null or exists (
+		       select 1 from exclusive_work_operations o
+		       where o.id = r.exclusive_operation_id and o.state = 'running'
+		         and o.generation = r.exclusive_generation
+		         and o.lease_expires_at > clock_timestamp()
+		         and o.attempt_deadline > clock_timestamp())))`,
 		runID, status, exitCode, errorClassArg, errorMessageArg, finishedAt.UTC(), taskIndex,
-		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceArg, expectedLeaseArg, outputArg)
+		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceArg, expectedLeaseArg, outputArg, policyJSON(decision), outcomeCode)
 	if err != nil {
 		return fmt.Errorf("state: mark task (%s, %d) terminal: %w", runID, taskIndex, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit mark job task terminal: %w", err)
 	}
 	return nil
 }
@@ -1694,7 +1942,15 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 //
 // Returns ErrNotFound when (run_id, task_index) does not resolve.
 func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin retry job task: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
 		`update job_tasks set
 		   status            = 'queued',
 		   attempt           = attempt + 1,
@@ -1708,13 +1964,23 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 		   log_content      = '',
 		   log_truncated    = false,
 		   output_manifest = null,
+ work_decision = null,
+ outcome_code = '',
 		   lease_token       = null,
 		   lease_expires_at  = null,
 		   last_lease_node   = null
 		 where run_id = $1::uuid and task_index = $2
 		   and status in ('failed', 'timeout', 'oom', 'cancelled')
+ and (work_decision is null or work_decision->>'action' = 'retry')
 		   and exists (select 1 from job_runs r join jobs j on j.id = r.job_id
-		               where r.id = $1::uuid and (r.image_storage_key_snapshot is null
+			               where r.id = $1::uuid
+		               and (r.exclusive_operation_id is null or exists (
+		                 select 1 from exclusive_work_operations o
+		                 where o.id = r.exclusive_operation_id and o.state = 'running'
+		                   and o.generation = r.exclusive_generation
+		                   and o.lease_expires_at > clock_timestamp()
+		                   and o.attempt_deadline > clock_timestamp()))
+		               and (r.image_storage_key_snapshot is null
 		               or (j.image_materialization_status = 'ready'
 		                   and j.image_storage_key = r.image_storage_key_snapshot)))`,
 		runID, taskIndex, nextAttemptAt.UTC())
@@ -1724,6 +1990,9 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit retry job task: %w", err)
+	}
 	return nil
 }
 
@@ -1732,8 +2001,16 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 // while the task remains at attempt 1, and a late boot failure must not touch
 // a replacement attempt or a task already settled by exit/cancellation.
 func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("state: begin fail boot job task: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
+		return false, err
+	}
 	var retryScheduled bool
-	err := s.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`update job_tasks set
 		   status           = case when attempt <= $5 then 'queued' else 'failed' end,
 		   attempt          = case when attempt <= $5 then attempt + 1 else attempt end,
@@ -1749,6 +2026,13 @@ func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex i
 		   last_lease_node  = null
 		 where run_id = $1::uuid and task_index = $2
 		   and status = 'claimed' and instance_id = $3::uuid and lease_token = $4
+		   and exists (select 1 from job_runs r where r.id = job_tasks.run_id
+		     and (r.exclusive_operation_id is null or exists (
+		       select 1 from exclusive_work_operations o
+		       where o.id = r.exclusive_operation_id and o.state = 'running'
+		         and o.generation = r.exclusive_generation
+		         and o.lease_expires_at > clock_timestamp()
+		         and o.attempt_deadline > clock_timestamp())))
 		 returning status = 'queued'`,
 		runID, taskIndex, instanceID, leaseToken, retryMax, nextAttemptAt.UTC(), errorMessage).Scan(&retryScheduled)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1756,6 +2040,9 @@ func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex i
 	}
 	if err != nil {
 		return false, fmt.Errorf("state: fail boot for job task (%s, %d): %w", runID, taskIndex, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("state: commit fail boot job task: %w", err)
 	}
 	return retryScheduled, nil
 }
@@ -1786,7 +2073,15 @@ func (s *PgStore) JobTaskDeferQueued(ctx context.Context, runID string, taskInde
 // (admission denied, run-lookup race, per-account quota at cap).
 // Claimed vmmd boot failures use JobTaskFailBoot instead.
 func (s *PgStore) JobTaskRequeue(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin requeue job task: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
 		`update job_tasks set
 		   status            = 'queued',
 		   instance_id       = null,
@@ -1796,13 +2091,23 @@ func (s *PgStore) JobTaskRequeue(ctx context.Context, runID string, taskIndex in
 		   lease_expires_at  = null,
 		   last_lease_node   = null
 		 where run_id = $1::uuid and task_index = $2
-		   and status in ('queued','claimed')`,
+		   and status in ('queued','claimed')
+		   and exists (select 1 from job_runs r where r.id = job_tasks.run_id
+		     and (r.exclusive_operation_id is null or exists (
+		       select 1 from exclusive_work_operations o
+		       where o.id = r.exclusive_operation_id and o.state = 'running'
+		         and o.generation = r.exclusive_generation
+		         and o.lease_expires_at > clock_timestamp()
+		         and o.attempt_deadline > clock_timestamp())))`,
 		runID, taskIndex, nextAttemptAt.UTC())
 	if err != nil {
 		return fmt.Errorf("state: requeue task (%s, %d): %w", runID, taskIndex, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit requeue job task: %w", err)
 	}
 	return nil
 }
@@ -1858,29 +2163,67 @@ func (s *PgStore) JobTaskReapClaimed(ctx context.Context, runID string, taskInde
 		return false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var rulesJSON []byte
+	if err := tx.QueryRow(ctx, `select failure_rules from job_runs where id = $1::uuid for update`, runID).Scan(&rulesJSON); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, fmt.Errorf("state: load failure rules for reaped job run %s: %w", runID, err)
+	}
+	var rules *workpolicy.FailureRules
+	if len(rulesJSON) > 0 {
+		var decoded workpolicy.FailureRules
+		if err := json.Unmarshal(rulesJSON, &decoded); err != nil {
+			return false, fmt.Errorf("state: decode failure rules for reaped job run %s: %w", runID, err)
+		}
+		rules = &decoded
+	}
+	var decision *workpolicy.Decision
+	if rules != nil {
+		evaluated := workpolicy.Evaluate(rules, workpolicy.Evidence{Uncertain: true})
+		decision = &evaluated
+	}
+	decisionJSON := policyJSON(decision)
+	var errorClassArg, errorMessageArg any
+	if decision != nil {
+		errorClassArg = "uncertain"
+		errorMessageArg = "completion receipt missing; the partition outcome is uncertain"
+	}
+	// On the legacy path, keep the queued task projection clean; the attempt
+	// journal gets its historical infrastructure classification from the trigger.
+	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
+		return false, err
+	}
 	var retryScheduled bool
 	err = tx.QueryRow(ctx, `update job_tasks set
-	      status = case when attempt <= $5 then 'queued' else 'timeout' end,
-	      attempt = case when attempt <= $5 then attempt + 1 else attempt end,
-	      instance_id = case when attempt <= $5 then null else instance_id end,
-	      next_attempt_at = case when attempt <= $5 then $6::timestamptz else null end,
-	      started_at = case when attempt <= $5 then null else started_at end,
-	      finished_at = case when attempt <= $5 then null else now() end,
-	      exit_code = case when attempt <= $5 then null else 124 end,
-	      error_class = case when attempt <= $5 then null else 'infra' end,
-	      error_message = case when attempt <= $5 then null else 'reaper reclaimed stale lease' end,
-	      log_content = case when attempt <= $5 then '' else log_content end,
-	      log_truncated = case when attempt <= $5 then false else log_truncated end,
+	      status = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then 'queued' else 'timeout' end,
+	      attempt = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then attempt + 1 else attempt end,
+	      instance_id = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then null else instance_id end,
+	      next_attempt_at = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then $6::timestamptz else null end,
+	      started_at = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then null else started_at end,
+	      finished_at = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then null else now() end,
+	      exit_code = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then null else 124 end,
+	      error_class = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then $9 else coalesce($9, 'infra') end,
+	      error_message = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then $10 else coalesce($10, 'reaper reclaimed stale lease') end,
+	      work_decision = $7::jsonb,
+	      log_content = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then '' else log_content end,
+	      log_truncated = case when attempt <= $5 and ($7::jsonb is null or $8::boolean) then false else log_truncated end,
 	      lease_token = null, lease_expires_at = null, last_lease_node = null
 	    where run_id = $1::uuid and task_index = $2 and status = 'claimed'
 	      and lease_token = $3 and lease_expires_at < $4::timestamptz
 	    returning status = 'queued'`,
-		runID, taskIndex, leaseToken, cutoff.UTC(), retryMax, nextAttemptAt.UTC()).Scan(&retryScheduled)
+		runID, taskIndex, leaseToken, cutoff.UTC(), retryMax, nextAttemptAt.UTC(), decisionJSON,
+		decision != nil && decision.Action == "retry", errorClassArg, errorMessageArg).Scan(&retryScheduled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrNotFound
 	}
 	if err != nil {
 		return false, fmt.Errorf("state: reap job task (%s, %d): %w", runID, taskIndex, err)
+	}
+	if retryScheduled && decision != nil {
+		if _, err := tx.Exec(ctx, `update job_tasks set error_class = null, error_message = null, work_decision = null, outcome_code = '', exit_code = null where run_id = $1::uuid and task_index = $2 and status = 'queued'`, runID, taskIndex); err != nil {
+			return false, fmt.Errorf("state: clear retry projection for job task (%s, %d): %w", runID, taskIndex, err)
+		}
 	}
 	// Recompute the denormalized counters before incrementing dead letter:
 	// job_runs enforces dead_letter_count <= tasks_failed and total <= tasks.
@@ -1931,7 +2274,7 @@ func (s *PgStore) JobTaskAttemptList(ctx context.Context, runID string, taskInde
 		coalesce(t.input_id, ''), coalesce(t.input_ref, ''), a.status,
 		a.instance_id, a.error_class, a.error_message, a.exit_code,
 		a.started_at, a.finished_at, a.log_content, a.log_truncated,
-		a.output_manifest
+		a.output_manifest, a.work_decision, a.outcome_code
 		from job_task_attempts a join job_tasks t
 		  on t.run_id = a.run_id and t.task_index = a.task_index
 		where a.run_id = $1::uuid and a.task_index = $2
@@ -1947,7 +2290,7 @@ func (s *PgStore) JobTaskAttemptList(ctx context.Context, runID string, taskInde
 		if err := rows.Scan(&a.RunID, &a.TaskIndex, &a.Attempt,
 			&a.InputID, &a.InputRef, &a.Status, &a.InstanceID,
 			&a.ErrorClass, &a.ErrorMessage, &a.ExitCode, &a.StartedAt,
-			&a.FinishedAt, &a.LogContent, &a.LogTruncated, &output); err != nil {
+			&a.FinishedAt, &a.LogContent, &a.LogTruncated, &output, &a.WorkDecision, &a.OutcomeCode); err != nil {
 			return nil, fmt.Errorf("state: scan task attempt: %w", err)
 		}
 		a.OutputManifest = append(json.RawMessage(nil), output...)
@@ -2044,4 +2387,10 @@ func (s *PgStore) ListOrphanedJobInstances(ctx context.Context, limit int) ([]In
 		return nil, fmt.Errorf("state: iterate orphaned job instances: %w", err)
 	}
 	return out, nil
+}
+
+func (s *PgStore) CompleteJobTaskAttempt(ctx context.Context, p JobTaskCompletion) error {
+	return s.jobTaskMarkTerminal(ctx, p.RunID, p.TaskIndex, p.InstanceID, p.LeaseToken, true,
+		p.Status, p.ExitCode, p.ErrorClass, p.ErrorMessage, p.LogContent, p.LogTruncated,
+		true, p.FinishedAt, p.OutputManifest, p)
 }

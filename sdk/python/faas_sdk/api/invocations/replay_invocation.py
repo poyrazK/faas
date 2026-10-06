@@ -77,15 +77,26 @@ def sync_detailed(
 ) -> Response[AsyncInvokeResponse | Problem]:
     """Re-issue a failed or dead_letter invocation.
 
-     Accepts no request body. The replayed row carries the original's
-    payload + headers + method + path verbatim and is enqueued against
-    the same app. The new row's Source is `replay` (issue #315).
+     Accepts no request body. Requires deployment write scope and configured
+    MFA. Only failed or dead-lettered unbound unkeyed work is eligible.
+    The parent and its current app must belong to the caller. The child
+    preserves the original request, deployment scope, customer identity
+    and trusted replay lineage. Trace/version headers and execution/result
+    lifetimes are refreshed; retry policy uses the current app and plan.
 
-    Only invocations whose current state is `failed` or `dead_letter`
-    can be replayed — re-running a successful or in-flight invocation
-    would be a customer bug, not a flow we want to enable by accident.
-    A replay attempt on any other state returns 409
-    `invocation_not_replayable`.
+    Each parent creates at most one durable recovery child. Concurrent and
+    repeated requests return that child regardless of Idempotency-Key,
+    including after completion. A subsequent recovery targets the failed
+    child. If its child has been pruned, the retained parent returns 409
+    `invocation_replay_unavailable` instead of creating another execution.
+    Existing acceptance is returned before checking expired deployment pins.
+    Application delivery and external side effects remain at least once.
+
+    Other parent states return `invocation_not_replayable`. Keyed work
+    returns `keyed_replay_requires_policy`; use `/replay-keyed` for failed
+    keyed work. Queue-bound or named-queue work returns
+    `queue_replay_requires_binding` and requires its app queue dead-letter
+    replay endpoint.
 
     Args:
         id (str):
@@ -116,15 +127,26 @@ def sync(
 ) -> AsyncInvokeResponse | Problem | None:
     """Re-issue a failed or dead_letter invocation.
 
-     Accepts no request body. The replayed row carries the original's
-    payload + headers + method + path verbatim and is enqueued against
-    the same app. The new row's Source is `replay` (issue #315).
+     Accepts no request body. Requires deployment write scope and configured
+    MFA. Only failed or dead-lettered unbound unkeyed work is eligible.
+    The parent and its current app must belong to the caller. The child
+    preserves the original request, deployment scope, customer identity
+    and trusted replay lineage. Trace/version headers and execution/result
+    lifetimes are refreshed; retry policy uses the current app and plan.
 
-    Only invocations whose current state is `failed` or `dead_letter`
-    can be replayed — re-running a successful or in-flight invocation
-    would be a customer bug, not a flow we want to enable by accident.
-    A replay attempt on any other state returns 409
-    `invocation_not_replayable`.
+    Each parent creates at most one durable recovery child. Concurrent and
+    repeated requests return that child regardless of Idempotency-Key,
+    including after completion. A subsequent recovery targets the failed
+    child. If its child has been pruned, the retained parent returns 409
+    `invocation_replay_unavailable` instead of creating another execution.
+    Existing acceptance is returned before checking expired deployment pins.
+    Application delivery and external side effects remain at least once.
+
+    Other parent states return `invocation_not_replayable`. Keyed work
+    returns `keyed_replay_requires_policy`; use `/replay-keyed` for failed
+    keyed work. Queue-bound or named-queue work returns
+    `queue_replay_requires_binding` and requires its app queue dead-letter
+    replay endpoint.
 
     Args:
         id (str):
@@ -150,15 +172,26 @@ async def asyncio_detailed(
 ) -> Response[AsyncInvokeResponse | Problem]:
     """Re-issue a failed or dead_letter invocation.
 
-     Accepts no request body. The replayed row carries the original's
-    payload + headers + method + path verbatim and is enqueued against
-    the same app. The new row's Source is `replay` (issue #315).
+     Accepts no request body. Requires deployment write scope and configured
+    MFA. Only failed or dead-lettered unbound unkeyed work is eligible.
+    The parent and its current app must belong to the caller. The child
+    preserves the original request, deployment scope, customer identity
+    and trusted replay lineage. Trace/version headers and execution/result
+    lifetimes are refreshed; retry policy uses the current app and plan.
 
-    Only invocations whose current state is `failed` or `dead_letter`
-    can be replayed — re-running a successful or in-flight invocation
-    would be a customer bug, not a flow we want to enable by accident.
-    A replay attempt on any other state returns 409
-    `invocation_not_replayable`.
+    Each parent creates at most one durable recovery child. Concurrent and
+    repeated requests return that child regardless of Idempotency-Key,
+    including after completion. A subsequent recovery targets the failed
+    child. If its child has been pruned, the retained parent returns 409
+    `invocation_replay_unavailable` instead of creating another execution.
+    Existing acceptance is returned before checking expired deployment pins.
+    Application delivery and external side effects remain at least once.
+
+    Other parent states return `invocation_not_replayable`. Keyed work
+    returns `keyed_replay_requires_policy`; use `/replay-keyed` for failed
+    keyed work. Queue-bound or named-queue work returns
+    `queue_replay_requires_binding` and requires its app queue dead-letter
+    replay endpoint.
 
     Args:
         id (str):
@@ -187,15 +220,26 @@ async def asyncio(
 ) -> AsyncInvokeResponse | Problem | None:
     """Re-issue a failed or dead_letter invocation.
 
-     Accepts no request body. The replayed row carries the original's
-    payload + headers + method + path verbatim and is enqueued against
-    the same app. The new row's Source is `replay` (issue #315).
+     Accepts no request body. Requires deployment write scope and configured
+    MFA. Only failed or dead-lettered unbound unkeyed work is eligible.
+    The parent and its current app must belong to the caller. The child
+    preserves the original request, deployment scope, customer identity
+    and trusted replay lineage. Trace/version headers and execution/result
+    lifetimes are refreshed; retry policy uses the current app and plan.
 
-    Only invocations whose current state is `failed` or `dead_letter`
-    can be replayed — re-running a successful or in-flight invocation
-    would be a customer bug, not a flow we want to enable by accident.
-    A replay attempt on any other state returns 409
-    `invocation_not_replayable`.
+    Each parent creates at most one durable recovery child. Concurrent and
+    repeated requests return that child regardless of Idempotency-Key,
+    including after completion. A subsequent recovery targets the failed
+    child. If its child has been pruned, the retained parent returns 409
+    `invocation_replay_unavailable` instead of creating another execution.
+    Existing acceptance is returned before checking expired deployment pins.
+    Application delivery and external side effects remain at least once.
+
+    Other parent states return `invocation_not_replayable`. Keyed work
+    returns `keyed_replay_requires_policy`; use `/replay-keyed` for failed
+    keyed work. Queue-bound or named-queue work returns
+    `queue_replay_requires_binding` and requires its app queue dead-letter
+    replay endpoint.
 
     Args:
         id (str):

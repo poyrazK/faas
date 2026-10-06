@@ -127,15 +127,20 @@ ID immediately; query its progress with
 restart/redeployment path, and removing the projected file alone cannot erase
 a credential already held by process memory.
 
-The main image's reload opt-in still supports single-workload deployments only;
-a main image declaring the reload label is rejected when that deployment has
-sidecars. Independently, each long-running sidecar image may declare the same
-OCI label to opt that workload into live refresh. It receives only its own
-explicit `env_secrets` grants; init helpers and sidecars without the image
+The main image and each long-running sidecar image may independently declare
+the reload OCI label in the same deployment. Main receives only its explicit
+`env_secrets` grants when companions are declared; legacy main-only deployments
+without a grant map continue to receive their scoped secrets. A sidecar receives
+only its own explicit `env_secrets` grants; init helpers and sidecars without the image
 opt-in retain restart delivery. Each workload gets its own `FAAS_SECRETS_FILE`,
-revision file, signal target, status observation, and optional acknowledgement.
+revision file, signal target, execution generation, status observation, and optional acknowledgement.
 For sidecars, the platform stamps the workload name into the acknowledgement
 endpoint URL so the self-attestation is recorded against that sidecar. Secret
+projections are prepared before reload workers or workload processes start.
+Process restarts preserve the current revision and use the current granted
+values; revoked keys are removed from older environment layers. Projection
+ownership is resolved against each workload's image, including named sidecar
+users, and stays fixed for subsequent updates. Secret
 reload requests are resolved against the live deployment's scope and the
 requesting workload's allowlist. The main workload uses its `env_secrets`
 allowlist (legacy single-workload deployments without one retain their
@@ -151,22 +156,39 @@ does not claim that the application applied the new credentials unless its
 self-attestation is present.
 
 An opted-in app may make that last step explicit. After rereading
-`FAAS_SECRETS_FILE` and successfully applying the new credentials to its own
-clients, it can POST the non-sensitive revision from
-`FAAS_SECRETS_REVISION_FILE` to `FAAS_SECRETS_RELOAD_ACK_ENDPOINT`:
+`FAAS_SECRETS_SNAPSHOT_FILE` and successfully applying its `secrets` map to its
+own clients, it can POST the non-sensitive `revision` from that same JSON
+envelope and its own `FAAS_SECRETS_RELOAD_GENERATION` to
+`FAAS_SECRETS_RELOAD_ACK_ENDPOINT`:
 
 ```json
-{"revision":"<64 lowercase hex characters>","status":"applied"}
+{"revision":"<64 lowercase hex characters>","status":"applied","generation":"<FAAS_SECRETS_RELOAD_GENERATION>"}
 ```
 
-If it cannot apply the new credentials, use `{"revision":"…","status":"failed"}`.
+If it cannot apply the new credentials, keep the same revision and generation
+and set `status` to `failed`. Older guests without the generation variable may
+send revision-only ACKs; strict binding adoption treats their coverage as unknown.
 The platform accepts only those closed outcomes and does not accept arbitrary
 error text or secret values. The response is `202` when recorded, `409` when
-the revision is stale (reread and apply the latest projection), and `503` when
-the host is temporarily unavailable (retry the same acknowledgement). Read the
-revision before and after reading the secrets file; if it changed, reread so
-the values and revision describe the same rotation. An acknowledgement is an
-application self-attestation, not independent proof of its internal state.
+the revision is stale or the calling process has been replaced, and `503` when
+the host is temporarily unavailable (retry the same acknowledgement). Reread
+and apply the latest projection for a stale revision, keeping your original
+execution generation; never borrow a replacement process's ID. The
+mode-0400 snapshot contains `{revision,secrets}` in one immutable file, so one
+read binds the values to their exact revision. Guest-init publishes a complete
+generation before updating restart state or signalling the workload. A failed
+publication preserves the previous generation. Retry a transient missing-file
+lookup during old-generation cleanup; a missing or malformed advertised
+snapshot must not fall back to separate files. The initial revision is empty
+until the first successful host fetch and cannot be acknowledged.
+
+`FAAS_SECRETS_FILE` and `FAAS_SECRETS_REVISION_FILE` retain their existing paths
+and formats through platform-owned symlinks. When the snapshot environment
+variable is absent on an older guest, the helper retains the separate-file
+reader, including its before/after revision check. That older contract cannot
+guarantee a consistent pair during publication; replace the guest to obtain
+the atomic envelope. An acknowledgement is an application self-attestation,
+not independent proof of its internal state.
 
 The built-in `secret-reload-node` template is an executable Node.js + Postgres
 reference for this contract. It uses the `SIGHUP` OCI label, reads a consistent
@@ -175,6 +197,18 @@ transient ACK failures, and sends only the opaque revision plus `applied` or
 `failed` status. Start it with `gregale init --template secret-reload-node
 --path secret-reload-node`; its README includes the first deploy and rotation
 steps.
+
+On initial startup the starter waits up to 30 seconds for a valid, nonempty
+revision, polling with a 100-ms-to-two-second backoff. Only a valid secret map
+with the platform's empty initial revision is pending; malformed or unreadable
+projections still fail closed. It does not apply or ACK unversioned values.
+The helper's `startupTimeoutMs` option configures this availability deadline;
+database initialization and ACK transport are separate. The reload-handler
+marker is written before waiting, but HTTP serving starts only after credentials
+are applied and their ACK is accepted. Rotations and signal reloads remain
+serialized behind startup. After seeing the first valid revision, all subsequent
+reads use strict validation. SIGTERM/SIGINT cancel the wait and ACK work. Redeploy
+the updated starter to obtain this behavior; no platform migration is required.
 
 `gregale secrets list` reports delivery for each key:
 
@@ -201,3 +235,48 @@ separately from guest-init's signal result; missing acknowledgements are
 unknown. The API exposes only opaque versions, status, timestamps, and runtime
 correlation IDs; it never places plaintext or ciphertext in delivery metadata
 or audit events.
+
+### Startup-safe reload notifications
+
+Set `com.gregale.secret-reload-readiness="required"` alongside the existing
+reload-signal OCI label to gate reload delivery on application handler readiness.
+On each process start, after installing the selected handler, write exactly
+`ready\n` to the existing file at `FAAS_SECRETS_RELOAD_READY_FILE`. Its path is
+platform-owned, private to that process generation, and removed when it exits.
+A prior process's marker cannot unlock a restart. The Node starter implements
+this handshake before awaited database initialization. An absent marker variable
+indicates an older guest; its prior signal contract still applies.
+
+Guest-init keeps only the latest pending revision, retries failed sends with a
+one-second-to-one-minute backoff, and completes queued observations after actual
+delivery. A replacement process that starts with the current values avoids a
+redundant signal and reports `projection=updated, signal=not_attempted` with no
+error. This proves only startup environment delivery. The marker proves readiness
+to receive a signal. Neither substitutes for the separate application ACK.
+
+Images without the readiness label keep their startup-gate behavior and must
+install their signal handler early; guest-init cannot infer completion of
+arbitrary initialization. Upgrade the outcome validator and apply the new observation migration before
+replacing guests, and redeploy an image with the readiness label to obtain the stronger
+startup guarantee. Required markers that are never written leave delivery queued.
+
+Each opted-in process receives `FAAS_SECRETS_RELOAD_GENERATION`, a platform-owned
+32-character opaque execution ID. Echo it as `generation` in every application
+ACK alongside `revision` and `status`. The Node starter does this automatically.
+Guest-init registers the ID before exec and retires it after exit; an in-VM
+restart registers a new ID even when secret values and versions have not changed.
+Registration clears the previous live application ACK. A late ACK or retirement
+from the old process cannot overwrite the replacement's evidence. The metadata
+proxy forwards the caller's ID unchanged. An ACK is still a trusted application's
+self-attestation, and host knowledge of process exit can lag during a transport
+outage.
+
+Strict binding promotion requires the active process ID to match the ACK's ID.
+The adoption target exposes optional `process_generation` and
+`application_ack_generation` fields; missing coverage is `unknown`. Legacy guests
+can still report version-only ACKs while no process generation has been registered,
+but those receipts cannot satisfy strict adoption. Apply the ADR-508 migration and
+upgrade vmmd first, then redeploy applications with the updated helper and guest
+together. Old helpers running in new guests receive `409` until they echo their own
+execution ID. Historical completed revocation operations retain their completion
+history; live receipts are invalidated on restart.

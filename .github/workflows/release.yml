@@ -419,7 +419,10 @@ jobs:
     name: Publish the npm channel
     needs: [build]
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 30
+    concurrency:
+      group: gregale-npm-publish
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -454,71 +457,23 @@ jobs:
         run: bash scripts/verify-npm-package-payloads.sh "$RUNNER_TEMP/npm/publish-order.txt"
 
       - name: Resolve publish preconditions
-        id: guard
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # A prerelease tag must never move `latest`, or `npm i -g gregale`
-          # starts handing out release candidates to everyone.
-          case "$TAG" in
-            *-*) echo "dist_tag=rc" >> "$GITHUB_OUTPUT" ;;
-            *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
-          esac
           # A documented install channel must never silently miss a release.
           if [ -z "${NPM_TOKEN:-}" ]; then
             echo "::error title=npm channel unavailable::Set NPM_TOKEN before tagging a release; staged packages were not published."
             exit 1
           fi
 
-      - name: Publish to npm
+      - name: Publish platforms, verify public availability, then publish the launcher
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          DIST_TAG: ${{ steps.guard.outputs.dist_tag }}
-        run: |
-          set -euo pipefail
-          # publish-order.txt lists the four platform packages before the
-          # root launcher that pins them, so no consumer can resolve a root
-          # package whose binaries are not on the registry yet.
-          while IFS= read -r dir; do
-            name="$(node -p "require('$dir/package.json').name")"
-            version="$(node -p "require('$dir/package.json').version")"
-            # Re-running a release workflow must not hard-fail on
-            # "cannot publish over the previously published version".
-            if npm view "$name@$version" version >/dev/null 2>&1; then
-              echo "$name@$version is already on the registry; skipping"
-              continue
-            fi
-            # </dev/null: npm reads stdin, and without this it swallows the
-            # rest of publish-order.txt — silently publishing one package
-            # and skipping the others.
-            npm publish "$dir" \
-              --access public \
-              --tag "$DIST_TAG" \
-              --provenance </dev/null
-            echo "published $name@$version (dist-tag $DIST_TAG)"
-          done < "$RUNNER_TEMP/npm/publish-order.txt"
+        run: node scripts/publish-npm-packages.mjs --packages-dir "$RUNNER_TEMP/npm"
 
       - name: Verify npm installation from the public registry
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          for attempt in 1 2 3 4 5 6; do
-            if npm view "gregale@${version}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
-              break
-            fi
-            if [ "$attempt" -eq 6 ]; then
-              echo "gregale@${version} is absent from the public npm registry" >&2
-              exit 1
-            fi
-            sleep 10
-          done
-          npm install --prefix "$RUNNER_TEMP/npm-smoke" \
-            --registry=https://registry.npmjs.org/ "gregale@${version}"
-          "$RUNNER_TEMP/npm-smoke/node_modules/.bin/gregale" version | grep -F "${TAG}"
+        run: node scripts/verify-npm-installation.mjs --packages-dir "$RUNNER_TEMP/npm" --prefix "$RUNNER_TEMP/npm-smoke"
 
   daemon-bundle:
     name: Build and sign canonical daemon bundle

@@ -1,6 +1,7 @@
 # hello-python
 
-A minimal Flask hello-world for gregale.
+A minimal Flask hello-world for gregale, served by gunicorn (`Procfile`).
+Run `python handler.py` for a local development server.
 
 ## Deploy
 
@@ -8,7 +9,7 @@ A minimal Flask hello-world for gregale.
 gregale deploy --template hello-python --name <slug>
 ```
 
-The CLI detects `requirements.txt` and selects the `python312` runner.
+The CLI detects `requirements.txt`; the build uses the image's current Python 3.
 
 ## Try it
 

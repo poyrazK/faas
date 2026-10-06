@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,6 +16,12 @@ const objectRecoveryInterval = 15 * time.Second
 // Retry state is persisted, so requests, restarts and additional replicas
 // cannot reset the cooldown. Configuration failures get a slow probe cadence.
 func objectRetryPolicy(err error, attempt int32) (string, time.Duration) {
+	if errors.Is(err, objectstorage.ErrCleanupPending) {
+		return "cleanup_pending", 15 * time.Second
+	}
+	if errors.Is(err, objectstorage.ErrObjectProtected) {
+		return "protected", time.Hour
+	}
 	if errors.Is(err, objectstorage.ErrConfiguration) {
 		return "configuration", time.Hour
 	}
@@ -39,6 +44,7 @@ func objectRetryPolicy(err error, attempt int32) (string, time.Duration) {
 func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket) error {
 	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
+	owned := false
 	backend, err := s.objectStorage.Resolve(b.BackendID, b.BackendFingerprint)
 	if err != nil {
 		err = objectstorage.ErrConfiguration
@@ -49,15 +55,19 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 			err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
 		}
 	} else {
-		if b.EnvironmentCloneSourceBucketID != "" {
+		owned, err = s.ownedBucketCleanupRequired(callCtx, b)
+		if err == nil && owned {
 			err = emptyOwnedObjectBucket(callCtx, backend.Provider, b.PhysicalName)
+			if errors.Is(err, objectstorage.ErrNotFound) {
+				err = nil
+			}
 		}
 		if err == nil {
 			err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
 		}
 	}
 	notEmpty := b.State == "deleting" && errors.Is(err, objectstorage.ErrNotEmpty)
-	if err != nil && !notEmpty {
+	if err != nil && (!notEmpty || owned) {
 		return s.retryBucketOperation(ctx, st, b, err)
 	}
 	next, event := "ready", "object_bucket.created"
@@ -76,30 +86,31 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 	return err
 }
 
-// emptyOwnedObjectBucket removes objects only after the caller has identified
-// an app-owned physical bucket from its durable placement record.
-func emptyOwnedObjectBucket(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
-	for range api.ObjectStorageInventoryMaxPages {
-		page, err := provider.ListObjects(ctx, physicalName, "", "", 1000)
-		if err != nil {
-			return err
-		}
-		if len(page.Items) > 1000 || (len(page.Items) == 0 && page.NextCursor != "") {
-			return objectstorage.ErrInvalid
-		}
-		if len(page.Items) == 0 {
-			return nil
-		}
-		for _, item := range page.Items {
-			if !objectstorage.ValidKey(item.Key) {
-				return objectstorage.ErrInvalid
-			}
-			if err := provider.DeleteObject(ctx, physicalName, item.Key); err != nil {
-				return err
-			}
-		}
+func (s *server) ownedBucketCleanupRequired(ctx context.Context, bucket state.ObjectBucket) (bool, error) {
+	account, err := s.store.AccountByID(ctx, bucket.AccountID)
+	if err != nil {
+		return false, err
 	}
-	return objectstorage.ErrUnavailable
+	if account.Status == state.AccountDeletedPending && account.DeletionRequestedAt != nil &&
+		!account.DeletionRequestedAt.Add(state.DeletionGraceDuration()).After(time.Now()) {
+		return true, nil
+	}
+	if bucket.EnvironmentCloneSourceBucketID != "" {
+		return true, nil
+	}
+	app, err := s.store.AppByID(ctx, bucket.AppID)
+	if err != nil {
+		return false, err
+	}
+	if app.AccountID != bucket.AccountID {
+		return false, state.ErrConflict
+	}
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0, nil
+}
+
+// The claimed bucket stays sealed through retries and final provider deletion.
+func emptyOwnedObjectBucket(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
+	return objectstorage.CleanupOwnedBucketObjects(ctx, provider, physicalName)
 }
 
 func (s *server) retryBucketOperation(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket, cause error) error {
@@ -110,7 +121,7 @@ func (s *server) retryBucketOperation(ctx context.Context, st state.ObjectBucket
 		return err
 	}
 	// Only bounded codes, never upstream messages, keys or signed URLs.
-	s.log.Warn("object storage operation deferred", "bucket_id", b.ID, "backend_id", b.BackendID, "operation", b.State, "error_code", code, "attempt", b.AttemptCount, "retry_in", delay, "needs_attention", b.AttemptCount >= 5 || code == "configuration" || code == "invalid")
+	s.log.Warn("object storage operation deferred", "bucket_id", b.ID, "backend_id", b.BackendID, "operation", b.State, "error_code", code, "attempt", b.AttemptCount, "retry_in", delay, "needs_attention", code != "cleanup_pending" && b.AttemptCount >= 5 || code == "configuration" || code == "invalid" || code == "protected")
 	return cause
 }
 
@@ -215,6 +226,33 @@ func (s *server) runObjectStorageRecovery(ctx context.Context) {
 		}
 		if err := s.reconcileObjectMultipartUploads(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object storage multipart recovery sweep failed")
+		}
+		if err := s.pruneObjectUploadGrants(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("object upload grant pruning failed")
+		}
+		if err := s.reconcileObjectUploads(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object upload recovery sweep failed")
+		}
+		if err := s.reconcileObjectDeletions(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object deletion recovery sweep failed")
+		}
+		if err := s.reconcileObjectBucketVersioning(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object bucket versioning recovery sweep failed")
+		}
+		if err := s.reconcileObjectBucketObjectLock(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object bucket Object Lock recovery sweep failed")
+		}
+		if err := s.reconcileObjectVersionProtection(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object version protection recovery sweep failed")
+		}
+		if err := s.reconcileObjectBucketEncryption(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object bucket encryption recovery sweep failed")
+		}
+		if err := s.reconcileObjectCapacity(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object storage capacity reconciliation sweep failed")
+		}
+		if err := s.reconcileObjectLifecycle(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object lifecycle recovery sweep failed")
 		}
 		ticker.Reset(objectRecoveryInterval)
 		select {

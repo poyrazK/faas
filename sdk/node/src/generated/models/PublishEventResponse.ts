@@ -9,5 +9,9 @@ export type PublishEventResponse = {
   id: string;
   accepted_at: string;
   account_id: string;
+  /**
+   * Account-authenticated relative URL for this event receipt.
+   */
+  receipt_url: string;
 };
 

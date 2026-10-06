@@ -75,13 +75,20 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 // The delivery ledger intentionally retains its wider historical enum so old
 // rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
+	"operation.effect",
 	"app.parked", "app.woken",
 	"deployment.live", "deployment.failed",
 	"rollout.completed", "rollout.aborted",
 	"job.finished",
+	"operation.finished",
 	"usage_statement.finalized",
 	"debug.regression.detected", "debug.regression.resolved",
-	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed",
+	"routes.requirements.changed", "routes.requirements.violated",
+	"routes.requirements.recovered",
+	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
+	"routes.monitor.violated", "routes.monitor.recovered",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
+	"workflow.finished",
 }
 
 // Account receivers intentionally cannot use the app-level all-events
@@ -151,6 +158,18 @@ type JobFinishedWebhookPayload struct {
 	FinishedAt string `json:"finished_at,omitempty"`
 	AccountID  string `json:"account_id,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
+}
+
+// WorkflowFinishedWebhookPayload is the safe run metadata stored for a
+// workflow.finished delivery. Run input, output, and error text stay out of
+// the notification; consumers can use run_id to fetch authorized details.
+type WorkflowFinishedWebhookPayload struct {
+	AppID        string    `json:"app_id"`
+	RunID        string    `json:"run_id"`
+	WorkflowName string    `json:"workflow_name"`
+	Status       string    `json:"status"`
+	FinishedAt   time.Time `json:"finished_at"`
+	ResumeCount  int       `json:"resume_count"`
 }
 
 // PreviewCreatedWebhookPayload is the payload stored for a preview.created
@@ -331,7 +350,8 @@ const AppWebhookEventFilterLenMax = 32
 // alert rule routes.
 //
 // EventFilter is the optional allowlist: empty/nil subscribes to
-// every event in AllowedAppWebhookEvents. When non-empty, every
+// lifecycle event in AllowedAppWebhookEvents. Operation effects require an
+// explicit operation.effect entry. When non-empty, every
 // entry must be a member of the closed set — the handler rejects
 // drift with 400 ErrAppWebhookInvalid.
 type CreateAppWebhookRequest struct {

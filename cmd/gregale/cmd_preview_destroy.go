@@ -31,12 +31,16 @@ func cmdPreview(args []string) int {
 		return cmdPreviewList(args[1:])
 	case "show":
 		return cmdPreviewShow(args[1:])
+	case "report":
+		return cmdPreviewReport(args[1:])
+	case "review":
+		return cmdPreviewReview(args[1:])
 	case "wait":
 		return cmdPreviewWait(args[1:])
 	case "destroy":
 		return cmdPreviewDestroy(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown preview subcommand %q (try: create, list, show, wait, destroy)\n", args[0])
+		printCommandValidation(os.Stderr, "unknown preview subcommand %q (try: create, list, show, report, review, wait, destroy)\n", args[0])
 		return 1
 	}
 }
@@ -46,7 +50,7 @@ func cmdPreview(args []string) int {
 // 1 on any error.
 func cmdPreviewDestroy(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: gregale preview destroy <preview-slug>\n")
+		printCommandValidation(os.Stderr, "usage: gregale preview destroy <preview-slug>\n")
 		return 1
 	}
 	slug := args[0]

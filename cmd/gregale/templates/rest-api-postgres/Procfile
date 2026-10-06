@@ -1,0 +1,2 @@
+web: node handler.js
+release: node migrate.js

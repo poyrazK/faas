@@ -26,6 +26,14 @@ const (
 	MaxOutboundCircuitBreakerOpenSeconds      = 300
 )
 
+// OutboundBindingProbePolicy selects an endpoint the owner declares safe to probe.
+// Only successful HTTP statuses can satisfy verification.
+type OutboundBindingProbePolicy struct {
+	Method         string `json:"method"`
+	Path           string `json:"path"`
+	ExpectedStatus int    `json:"expected_status"`
+}
+
 // OutboundIntegrationOffer is an account-visible managed integration. It
 // intentionally contains no provider credential or gateway admission token;
 // its request limits are effective for customer integrations after applying
@@ -37,6 +45,7 @@ type OutboundIntegrationOffer struct {
 	AllowedMethods       []string              `json:"allowed_methods"`
 	AllowedPathPrefixes  []string              `json:"allowed_path_prefixes"`
 	Enabled              bool                  `json:"enabled"`
+	RunsEnabled          bool                  `json:"runs_enabled"`
 	CredentialSource     string                `json:"credential_source"`
 	CredentialConfigured bool                  `json:"credential_configured"`
 	OwnerKind            string                `json:"owner_kind"`
@@ -170,6 +179,12 @@ type PutOutboundCredentialRequest struct {
 // null removes the customer-selected limit.
 type PutOutboundDailyRequestBudgetRequest struct {
 	DailyRequestLimit *int64 `json:"daily_request_limit"`
+}
+
+// PutOutboundRunsBindingRequest explicitly grants or revokes a managed
+// integration for stateless Runs. The grant is distinct from app bindings.
+type PutOutboundRunsBindingRequest struct {
+	Enabled *bool `json:"enabled"`
 }
 
 // OutboundIntegrationUsageResponse reports UTC-day gateway admissions. Calls

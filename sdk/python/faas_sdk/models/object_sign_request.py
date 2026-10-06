@@ -9,8 +9,10 @@ from ..models.object_sign_request_method import ObjectSignRequestMethod, check_o
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.object_encryption import ObjectEncryption
     from ..models.object_sign_request_metadata import ObjectSignRequestMetadata
     from ..models.object_sign_request_tags import ObjectSignRequestTags
+    from ..models.object_write_protection import ObjectWriteProtection
 
 
 T = TypeVar("T", bound="ObjectSignRequest")
@@ -18,7 +20,10 @@ T = TypeVar("T", bound="ObjectSignRequest")
 
 @_attrs_define
 class ObjectSignRequest:
-    """Exact object operation to authorize for a short time."""
+    """Exact object operation to authorize at the branded S3 gateway. PUT binds one durable receipt and supports an
+    explicit owned encryption selection.
+
+    """
 
     method: ObjectSignRequestMethod
     key: str
@@ -39,6 +44,15 @@ class ObjectSignRequest:
     """PUT-only x-amz-meta-* values."""
     tags: ObjectSignRequestTags | Unset = UNSET
     """PUT-only S3 object tags."""
+    protection: ObjectWriteProtection | Unset = UNSET
+    """Fixed or enrolled event retention and an independent legal hold for a new object version. Omitted retention
+    inherits the immutable admitted bucket default. Event hold ON requires one days or years duration and permits an
+    optional minimum date. Event hold OFF on creation requires an explicit fixed date and no duration. Governance
+    bypass is unsupported."""
+    encryption: ObjectEncryption | Unset = UNSET
+    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
+    reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
+    string entries."""
 
     def to_dict(self) -> dict[str, Any]:
         method: str = self.method
@@ -67,6 +81,14 @@ class ObjectSignRequest:
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
+        protection: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.protection, Unset):
+            protection = self.protection.to_dict()
+
+        encryption: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.encryption, Unset):
+            encryption = self.encryption.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -93,13 +115,19 @@ class ObjectSignRequest:
             field_dict["metadata"] = metadata
         if tags is not UNSET:
             field_dict["tags"] = tags
+        if protection is not UNSET:
+            field_dict["protection"] = protection
+        if encryption is not UNSET:
+            field_dict["encryption"] = encryption
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.object_encryption import ObjectEncryption
         from ..models.object_sign_request_metadata import ObjectSignRequestMetadata
         from ..models.object_sign_request_tags import ObjectSignRequestTags
+        from ..models.object_write_protection import ObjectWriteProtection
 
         d = dict(src_dict)
         method = check_object_sign_request_method(d.pop("method"))
@@ -134,6 +162,20 @@ class ObjectSignRequest:
         else:
             tags = ObjectSignRequestTags.from_dict(_tags)
 
+        _protection = d.pop("protection", UNSET)
+        protection: ObjectWriteProtection | Unset
+        if isinstance(_protection, Unset):
+            protection = UNSET
+        else:
+            protection = ObjectWriteProtection.from_dict(_protection)
+
+        _encryption = d.pop("encryption", UNSET)
+        encryption: ObjectEncryption | Unset
+        if isinstance(_encryption, Unset):
+            encryption = UNSET
+        else:
+            encryption = ObjectEncryption.from_dict(_encryption)
+
         object_sign_request = cls(
             method=method,
             key=key,
@@ -146,6 +188,8 @@ class ObjectSignRequest:
             content_language=content_language,
             metadata=metadata,
             tags=tags,
+            protection=protection,
+            encryption=encryption,
         )
 
         return object_sign_request

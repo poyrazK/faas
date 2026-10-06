@@ -133,16 +133,22 @@ export class InvocationsService {
   }
   /**
    * List named work policies for an app.
+   * Stage reads return the complete desired policy collection from immutable workload settings. An uninitialized stage collection returns 409 and never inherits production policies. Stage policy execution remains unavailable until work lanes and producers are isolated.
    * @returns WorkPolicyListResponse App work policies.
    * @throws ApiError
    */
   public static listAppWorkPolicies({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Registered project environment. Omit for legacy production policies. An explicit production selection uses the legacy collection.
+     */
+    environment?: string,
   }): CancelablePromise<WorkPolicyListResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -150,15 +156,20 @@ export class InvocationsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'environment': environment,
+      },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
   /**
    * Create or update a named app work policy.
-   * Policy changes affect new work only. Existing invocations retain their admission settings and policy revision.
+   * Legacy production changes affect new work only. Stage edits create immutable desired workload configuration and subsequent deployments pin it; existing deployments keep their policies. Stage policy execution and qualification remain unavailable until work lanes and producers are isolated.
    * @returns WorkPolicyResponse Saved policy.
    * @throws ApiError
    */
@@ -166,6 +177,8 @@ export class InvocationsService {
     slug,
     name,
     requestBody,
+    environment,
+    ifWorkloadRevision,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -176,6 +189,14 @@ export class InvocationsService {
      */
     name: string,
     requestBody: UpsertWorkPolicyRequest,
+    /**
+     * Edit the complete desired collection in a registered stage. Omit for legacy production policies. Protected environments reject direct edits.
+     */
+    environment?: string,
+    /**
+     * Expected complete desired workload revision for a stage edit. Zero means no revision exists; concurrent edits return 409.
+     */
+    ifWorkloadRevision?: number,
   }): CancelablePromise<WorkPolicyResponse> {
     return __request(OpenAPI, {
       method: 'PUT',
@@ -184,22 +205,33 @@ export class InvocationsService {
         'slug': slug,
         'name': name,
       },
+      headers: {
+        'If-Workload-Revision': ifWorkloadRevision,
+      },
+      query: {
+        'environment': environment,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
   /**
    * Delete a policy after removing event subscription bindings.
+   * A stage deletion preserves an explicit empty collection and its collection revision clock after the last policy is removed. Production producer bindings retain their existing deletion checks.
    * @returns void
    * @throws ApiError
    */
   public static deleteAppWorkPolicy({
     slug,
     name,
+    environment,
+    ifWorkloadRevision,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -209,6 +241,14 @@ export class InvocationsService {
      * Named app work policy.
      */
     name: string,
+    /**
+     * Edit the complete desired collection in a registered stage. Omit for legacy production policies. Protected environments reject direct edits.
+     */
+    environment?: string,
+    /**
+     * Expected complete desired workload revision for a stage edit.
+     */
+    ifWorkloadRevision?: number,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
@@ -217,15 +257,23 @@ export class InvocationsService {
         'slug': slug,
         'name': name,
       },
+      headers: {
+        'If-Workload-Revision': ifWorkloadRevision,
+      },
+      query: {
+        'environment': environment,
+      },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
   /**
    * Cancel pending work for one policy and application key.
-   * Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work.
+   * Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work. A stage selection cancels only its isolated environment lane, including work admitted under a policy that has since been deleted from desired settings. Cancellation receipts are independent per environment. Omitting environment preserves the production API.
    * @returns CancelPendingWorkResponse Durable cancellation receipt.
    * @throws ApiError
    */
@@ -234,6 +282,7 @@ export class InvocationsService {
     name,
     requestBody,
     idempotencyKey,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -250,6 +299,10 @@ export class InvocationsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Registered project environment whose pending work should be cancelled. Stage lanes and receipts are isolated by the environment's immutable identity.
+     */
+    environment?: string,
   }): CancelablePromise<CancelPendingWorkResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -261,11 +314,16 @@ export class InvocationsService {
       headers: {
         'Idempotency-Key': idempotencyKey,
       },
+      query: {
+        'environment': environment,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
@@ -337,17 +395,28 @@ export class InvocationsService {
   }
   /**
    * Re-issue a failed or dead_letter invocation.
-   * Accepts no request body. The replayed row carries the original's
-   * payload + headers + method + path verbatim and is enqueued against
-   * the same app. The new row's Source is `replay` (issue #315).
+   * Accepts no request body. Requires deployment write scope and configured
+   * MFA. Only failed or dead-lettered unbound unkeyed work is eligible.
+   * The parent and its current app must belong to the caller. The child
+   * preserves the original request, deployment scope, customer identity
+   * and trusted replay lineage. Trace/version headers and execution/result
+   * lifetimes are refreshed; retry policy uses the current app and plan.
    *
-   * Only invocations whose current state is `failed` or `dead_letter`
-   * can be replayed — re-running a successful or in-flight invocation
-   * would be a customer bug, not a flow we want to enable by accident.
-   * A replay attempt on any other state returns 409
-   * `invocation_not_replayable`.
+   * Each parent creates at most one durable recovery child. Concurrent and
+   * repeated requests return that child regardless of Idempotency-Key,
+   * including after completion. A subsequent recovery targets the failed
+   * child. If its child has been pruned, the retained parent returns 409
+   * `invocation_replay_unavailable` instead of creating another execution.
+   * Existing acceptance is returned before checking expired deployment pins.
+   * Application delivery and external side effects remain at least once.
    *
-   * @returns AsyncInvokeResponse The new invocation row was enqueued.
+   * Other parent states return `invocation_not_replayable`. Keyed work
+   * returns `keyed_replay_requires_policy`; use `/replay-keyed` for failed
+   * keyed work. Queue-bound or named-queue work returns
+   * `queue_replay_requires_binding` and requires its app queue dead-letter
+   * replay endpoint.
+   *
+   * @returns AsyncInvokeResponse The recovery child was enqueued or already exists.
    * @throws ApiError
    */
   public static replayInvocation({
@@ -367,11 +436,57 @@ export class InvocationsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        409: `The invocation is not in a replayable state. Returns the
-        \`invocation_not_replayable\` problem code with the current
-        state in the detail field; only \`failed\` and \`dead_letter\`
-        invocations can be replayed.
+        409: `The parent is not replayable, requires its policy/binding recovery
+        path, or its durable child is no longer retained
+        (\`invocation_replay_unavailable\`).
         `,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Recover failed keyed work in its captured policy lane
+   * Accepts no request body. Requires deploy write scope and configured MFA.
+   * Only failed keyed work without a queue binding is eligible. The child
+   * retains the captured policy revision, key, fairness limits, deployment
+   * scope, customer identity, payload, retry policy and trusted replay root.
+   * It receives the next sequence in the same lane, after previously admitted
+   * work. Replay does not supersede pending rows or restart debounce.
+   *
+   * The original pending expiry and start deadline remain effective. A new
+   * replay after either elapsed deadline returns `keyed_replay_expired`.
+   * Each parent creates at most one child. Repeating a request returns that
+   * child, including after completion; a subsequent recovery must target
+   * the failed child. If the child has been pruned while its parent remains,
+   * the parent returns `keyed_replay_unavailable` instead of executing again.
+   * The original failure remains visible in event receipts and retained
+   * replay history. Delivery and application side effects remain at least once.
+   *
+   * @returns AsyncInvokeResponse The lane-preserving recovery child was admitted or is already retained.
+   * @throws ApiError
+   */
+  public static replayKeyedInvocation({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AsyncInvokeResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/invocations/{id}/replay-keyed',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Recovery is ineligible, its pending deadline expired, or its child is no longer retained.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

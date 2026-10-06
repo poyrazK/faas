@@ -1,0 +1,5 @@
+Oct 03 12:49:01 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: Started gregale-managed-pg-mega-pr-2cd325e9-metal-v2.service - /usr/bin/bash -c "exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-mega-pr-2cd325e9/pinned-metal-runner.sh > /var/tmp/faas-metal-smoke-managed-pg-mega-pr-2cd325e9/pinned-metal-run.log 2>&1".
+Oct 03 12:49:01 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal runuser[1226735]: pam_unix(runuser:session): session opened for user kucukarslanhuseyinpoyraz_gmail_c(uid=1271305697) by (uid=0)
+Oct 03 13:11:31 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal runuser[1226735]: pam_unix(runuser:session): session closed for user kucukarslanhuseyinpoyraz_gmail_c
+Oct 03 13:32:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-mega-pr-2cd325e9-metal-v2.service: Deactivated successfully.
+Oct 03 13:32:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-mega-pr-2cd325e9-metal-v2.service: Consumed 32min 51.211s CPU time, 4.4G memory peak, 0B memory swap peak.

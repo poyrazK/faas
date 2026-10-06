@@ -1,0 +1,10 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+{"artifact_id": "c3554996fb1e1bad53bc484f50a59ef6020a26a732b85e626731aff22362a461", "created_at": 1790973537.1308079, "host": "gregale-internal-test-1.us-east1-b.c.gregale-prod.internal", "kind": "native-metal", "path": "/var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac", "run_id": "managed-pg-resource-placement-ca1230ac", "state": "active", "updated_at": 1790973537.1308079}
+6.2G	/var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root        48G   40G  7.6G  85% /

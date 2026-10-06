@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // cronsRunsID is the 32-hex id used by every test below. Matches
@@ -130,7 +131,9 @@ func TestCmdCronsRuns_DetailShowsTaskOutput(t *testing.T) {
 	task := api.AppTaskResponse{
 		ID: runID, DeploymentID: "deployment-1", Kind: api.AppTaskKindCron,
 		Status: api.AppTaskStatusSucceeded, AttemptCount: 2, RetryMax: 2,
-		ExitCode: &zero, StdoutTail: "daily job complete\n", StderrTail: "notice: cache cold\n",
+		ExitCode: &zero, OutcomeCode: "processed", WorkDecision: &workpolicy.Decision{
+			Classification: "success", Action: "complete", Reason: "execution_succeeded", PolicyVersion: workpolicy.Version,
+		}, StdoutTail: "daily job complete\n", StderrTail: "notice: cache cold\n",
 		OutputTruncated: true, MaxOutputBytes: 4096,
 	}
 	var gotMethod, gotPath string
@@ -155,7 +158,7 @@ func TestCmdCronsRuns_DetailShowsTaskOutput(t *testing.T) {
 	if gotMethod != http.MethodGet || gotPath != "/v1/crons/"+cronsRunsID+"/runs/"+runID {
 		t.Fatalf("request = %s %s", gotMethod, gotPath)
 	}
-	for _, want := range []string{"status: succeeded", "attempts: 2/3", "exit_code: 0", "stdout:\ndaily job complete", "stderr:\nnotice: cache cold"} {
+	for _, want := range []string{"status: succeeded", "attempts: 2/3", "exit_code: 0", "outcome_code: processed", "work_decision: success/complete", "stdout:\ndaily job complete", "stderr:\nnotice: cache cold"} {
 		if !strings.Contains(stdout.String(), want) && !strings.Contains(stderr.String(), want) {
 			t.Errorf("detail output missing %q; stdout=%q stderr=%q", want, stdout.String(), stderr.String())
 		}

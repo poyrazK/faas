@@ -89,14 +89,17 @@ func SetHostIPBase(addr netip.Addr) {
 // returned by Allocator.Acquire and must be handed back via Allocator.Release
 // (by instance id) on teardown or the slot leaks.
 type Lease struct {
-	Instance string     // caller's instance id (e.g. a UUID); names the netns
-	Slot     int        // unique while live; the root of every other field
-	UID      int        // jailer --uid
-	GID      int        // jailer --gid (== UID)
-	HostIP   netip.Addr // routable veth host-side address, 10.100.x.y
-	Netns    string     // network namespace name, fc-<instance>
-	VethHost string     // host-side veth (≤15 chars, derived from slot)
-	VethPeer string     // netns-side veth (≤15 chars, derived from slot)
+	// processGeneration distinguishes a failed restore from the replacement
+	// cold boot using the same instance ID and allocator slot.
+	processGeneration uint64
+	Instance          string     // caller's instance id (e.g. a UUID); names the netns
+	Slot              int        // unique while live; the root of every other field
+	UID               int        // jailer --uid
+	GID               int        // jailer --gid (== UID)
+	HostIP            netip.Addr // routable veth host-side address, 10.100.x.y
+	Netns             string     // network namespace name, fc-<instance>
+	VethHost          string     // host-side veth (≤15 chars, derived from slot)
+	VethPeer          string     // netns-side veth (≤15 chars, derived from slot)
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Stamped at alloc time so every downstream consumer (Boot,
 	// Restore, Destroy, Kill) reads the same plan without a separate
@@ -134,6 +137,10 @@ type Allocator struct {
 	free       []int          // stack of free slot numbers
 	byInstance map[string]int // instance id -> slot, for Release + double-acquire guard
 	reserved   map[string]int // fresh networks only; excluded from VM admission counts
+	// recovered quarantines native slots discovered after vmmd lost its live
+	// map. An ID can own several slots if the previous process had duplicates.
+	// These holdings confer no CID/readiness authority and survive scan errors.
+	recovered map[int]string
 }
 
 // reserveNetwork takes a slot without claiming a running VM. The cache must
@@ -149,6 +156,9 @@ func (a *Allocator) reserveNetwork(id string) (Lease, error) {
 	}
 	if _, ok := a.reserved[id]; ok {
 		return Lease{}, fmt.Errorf("fcvm: reserve network: id already reserved")
+	}
+	if a.hasRecoveredInstance(id) {
+		return Lease{}, fmt.Errorf("fcvm: reserve network: id is held for native recovery")
 	}
 	if a.reserved == nil {
 		a.reserved = make(map[string]int)
@@ -180,6 +190,9 @@ func (a *Allocator) adoptNetwork(reservation, instance string) (Lease, error) {
 	if _, ok := a.reserved[instance]; ok {
 		return Lease{}, fmt.Errorf("fcvm: adopt network: instance id reserved")
 	}
+	if a.hasRecoveredInstance(instance) {
+		return Lease{}, fmt.Errorf("fcvm: adopt network: instance is held for native recovery")
+	}
 	slot, ok := a.reserved[reservation]
 	if !ok {
 		return Lease{}, fmt.Errorf("fcvm: adopt network: reservation missing")
@@ -200,11 +213,31 @@ func NewAllocator() *Allocator {
 	return &Allocator{free: free, byInstance: make(map[string]int)}
 }
 
+// pristine and quarantine are startup-only: quarantine removes observed slots
+// from the free pool without inventing a Lease or making Release legal.
+func (a *Allocator) pristine() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.free) == MaxSlots && len(a.byInstance) == 0 && len(a.reserved) == 0
+}
+
+func (a *Allocator) quarantine(slots map[int]struct{}) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	free := a.free[:0]
+	for _, slot := range a.free {
+		if _, held := slots[slot]; !held {
+			free = append(free, slot)
+		}
+	}
+	a.free = free
+}
+
 // InUse reports how many slots are currently leased.
 func (a *Allocator) InUse() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return len(a.byInstance)
+	return len(a.byInstance) + len(a.recovered)
 }
 
 // Acquire leases a unique slot for instance. It errors if the instance already
@@ -221,6 +254,9 @@ func (a *Allocator) Acquire(instance string) (Lease, error) {
 	}
 	if _, dup := a.reserved[instance]; dup {
 		return Lease{}, fmt.Errorf("fcvm: acquire: instance %q is reserved", instance)
+	}
+	if a.hasRecoveredInstance(instance) {
+		return Lease{}, fmt.Errorf("fcvm: acquire: instance %q is held for native recovery", instance)
 	}
 	if len(a.free) == 0 {
 		return Lease{}, fmt.Errorf("fcvm: acquire: no free slots (all %d in use)", MaxSlots)

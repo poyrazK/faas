@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FailureRules } from './FailureRules.js';
+import type { SchedulePolicy } from './SchedulePolicy.js';
 /**
  * An app schedule: either an HTTP-path cron or a deployment-attached command cron.
  */
@@ -56,5 +58,7 @@ export type CronResponse = {
   skip_if_running: boolean;
   created_at: string;
   last_fired_at?: string | null;
+  schedule_policy?: SchedulePolicy;
+  failure_rules?: FailureRules;
 };
 

@@ -93,7 +93,7 @@ func TestBeforeCheckpointMetal(t *testing.T) {
 	if err := store.MarkSnapshotStale(ctx, snapID); err != nil {
 		t.Fatal(err)
 	}
-	if body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusAccepted {
+	if body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
 		t.Fatalf("park: status=%d body=%s", status, body)
 	}
 	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateStopped, 30*time.Second); err != nil {

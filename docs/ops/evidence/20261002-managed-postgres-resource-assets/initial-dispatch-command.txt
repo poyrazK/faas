@@ -1,0 +1,7 @@
+set -eu
+printf %s '63d8e44a3033f8c334cd68426bfef848d95be09715ea9684f6540d4260d3a083  /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/source.tar.gz
+9956f28003271e43ee36625fd760d438904657b39098304989c9e15100cc5438  /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/runner.sh
+60841bf7704d4bcae016b08466745d35d599b5dad15ee24f2f12e472176bd705  /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/change.patch
+' | sha256sum -c -
+sudo systemd-run --unit=gregale-managed-pg-resource-assets-ebb5a2a4 '--property=TemporaryFileSystem=/run/mpa-ebb5a2a4:rw,size=4G,mode=1777 /srv/fc/jail:rw,size=1G,mode=0755' --property=MemoryMax=10G /usr/bin/bash -c 'exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/run.log 2>&1'
+sudo systemctl show gregale-managed-pg-resource-assets-ebb5a2a4 -p InvocationID -p ActiveState -p SubState -p MemoryMax

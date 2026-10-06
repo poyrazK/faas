@@ -75,7 +75,8 @@ func (s *server) planProjectEnvironmentManagedResourceCleanup(
 				return plan, fmt.Errorf("load managed PostgreSQL database for workload %q: %w", app.Slug, err)
 			}
 			isEnvironmentClone := database.RestoreSourceDatabaseID != "" &&
-				database.Name == projectEnvironmentDatabaseCloneName(project, scope, app, database.RestoreSourceDatabaseID)
+				(database.Name == projectEnvironmentDatabaseCloneName(project, scope, database.RestoreSourceDatabaseID) ||
+					database.Name == legacyProjectEnvironmentDatabaseCloneName(project, scope, app, database.RestoreSourceDatabaseID))
 			plan.postgres = append(plan.postgres, projectEnvironmentPostgresCleanup{
 				app: app, binding: binding, database: database, deleteDatabase: isEnvironmentClone,
 			})

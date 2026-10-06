@@ -40,10 +40,7 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 		log = slog.Default()
 	}
 
-	appsDomain := strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN"))
-	if appsDomain == "" {
-		appsDomain = "gregale.dev"
-	}
+	appsDomain := platformAppsDomain()
 	p := &controlPlaneProxy{
 		target: target, next: next, log: log, appsDomain: appsDomain,
 		trustedIngressCIDRs: append([]netip.Prefix(nil), trustedIngressCIDRs...),
@@ -168,19 +165,15 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if apid.IsApidPath(r.URL.Path) && !isComputeOwnedGatewayPath(r.URL.Path) {
-		// The reserved paths are served on every Host (spec §4.1.1),
-		// including app subdomains and customers' custom domains. Those
-		// origins run tenant code, so platform sessions must never be
-		// issued or honoured there: a visitor who signed in on
-		// attacker.<apps domain>/login handed the attacker's same-origin
-		// JavaScript a session apid treated as same-origin (it could mint
-		// an admin key and read the plaintext), and the app received the
-		// cookie on every other path. Browser pages move to the platform
-		// host; API calls keep working with bearer credentials only
-		// (Cookie and Set-Cookie are stripped in the proxy above).
-		if !isPlatformSessionHost(r.Host, p.appsDomain) && isPlatformBrowserPage(r.URL.Path) &&
-			(r.Method == http.MethodGet || r.Method == http.MethodHead) {
-			http.Redirect(w, r, "https://"+p.appsDomain+r.URL.RequestURI(), http.StatusFound)
+		// ADR-480 (amends spec §4.1.1): platform paths are reserved on
+		// platform hosts only. App subdomains, previews and customer
+		// domains run tenant code, so /v1, /status, /docs, /login,
+		// /oauth/* and the rest belong to the app there. This also keeps
+		// platform sessions off tenant origins entirely: a session issued
+		// on attacker.<apps domain>/login was readable by the attacker's
+		// same-origin JavaScript.
+		if !isPlatformSessionHost(r.Host, p.appsDomain) {
+			p.next.ServeHTTP(w, r)
 			return
 		}
 		p.proxy.ServeHTTP(w, r)
@@ -189,32 +182,21 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.next.ServeHTTP(w, r)
 }
 
+// platformAppsDomain is the apps domain whose apex, api. and operations.
+// hosts are platform-owned (FAAS_APPS_DOMAIN, default gregale.dev).
+func platformAppsDomain() string {
+	if domain := strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")); domain != "" {
+		return domain
+	}
+	return "gregale.dev"
+}
+
 // isPlatformSessionHost reports whether Host is a platform-owned origin that
 // may carry the dashboard session: the apex, the API host, the operator
 // console, or a direct loopback/IP probe. Every other Host is an app
 // subdomain or a customer domain and runs tenant code.
 func isPlatformSessionHost(rawHost, appsDomain string) bool {
-	if isPlatformHealthHost(rawHost, appsDomain) {
-		return true
-	}
-	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(appsDomain)), ".")
-	return domain != "" && hostWithoutPort(rawHost) == "operations."+domain
-}
-
-// isPlatformBrowserPage reports whether path is a session-bearing HTML
-// surface (dashboard, sign-in/up/out, email and reset links, CLI pairing,
-// OAuth callbacks) rather than the JSON API, status page or docs.
-func isPlatformBrowserPage(path string) bool {
-	for _, root := range []string{
-		apid.ApidRootDashboard, apid.ApidRootLogin, apid.ApidRootSignup,
-		apid.ApidRootAuthVerify, apid.ApidRootAuthReset, apid.ApidRootLogout,
-		apid.ApidRootCliAuth,
-	} {
-		if path == root || strings.HasPrefix(path, root+"/") {
-			return true
-		}
-	}
-	return strings.HasPrefix(path, apid.ApidRootOAuthPrefix)
+	return apid.IsPlatformHost(rawHost, appsDomain)
 }
 
 // isPlatformHealthHost scopes the public platform probe to the apex/API host
@@ -230,11 +212,7 @@ func isPlatformHealthHost(rawHost, appsDomain string) bool {
 }
 
 func hostWithoutPort(rawHost string) string {
-	rawHost = strings.TrimSpace(rawHost)
-	if host, _, err := net.SplitHostPort(rawHost); err == nil {
-		return strings.TrimSuffix(strings.ToLower(host), ".")
-	}
-	return strings.TrimSuffix(strings.ToLower(strings.Trim(rawHost, "[]")), ".")
+	return apid.HostWithoutPort(rawHost)
 }
 
 // isComputeOwnedGatewayPath lists the internal gateway endpoints that need

@@ -15,6 +15,59 @@ customer test requests at the edge. The primary app can instead require
 Gregale consumer keys with `consumer_auth_mode: required`; application-owned
 authentication remains the application's responsibility.
 
+## Scenario-scoped chaos
+
+Real-VM scenarios can inject bounded faults into Gregale-managed HTTP service
+calls between workloads registered in the same test run. Rules are armed after
+the selected warm, cold, or restored profile is prepared and before the
+scenario trigger. They expire automatically, are removed with the run
+namespace, and cannot select a production workload.
+
+Declare repeatable rules in the scenario manifest:
+
+```yaml
+    chaos:
+      duration: 5m
+      rules:
+        - from: worker
+          to: inventory
+          kind: http_status
+          status_code: 503
+          percent: 10
+          seed: 17
+        - from: worker
+          to: payment
+          kind: latency
+          latency: 1500ms
+          percent: 20
+          seed: 23
+```
+
+Or run a single fault experiment without editing the manifest:
+
+```sh
+gregale chaos inject --scenario customer-export --target inventory \
+  --error 503 --percent 10 --duration 5m --from worker
+gregale chaos inject --scenario customer-export --target payment \
+  --latency 1500ms --percent 20 --profile restored
+```
+
+`--target` and optional `--from` name workloads in the scenario. `--error`
+returns a synthetic 5xx response; `--latency` delays selected calls and then
+forwards them. Selection is deterministic for a supplied trace ID and seed.
+Reports include the installed rules and lease expiry, while service-call
+metrics and traces identify injected requests. Fault plans last from one second
+to five minutes; each delay is limited to 30 seconds, and each scenario may
+declare at most 16 rules.
+
+This first version acts at Gregale's internal HTTP service proxy after normal
+identity, tenant, binding, and target authorization. It does not alter public
+HTTP, external service calls, or raw TCP/UDP traffic. Chaos plans require the
+`real-vm` engine; local and simulated runs reject them so their results cannot
+be mistaken for platform fault injection. Application assertions still decide
+whether retries, circuit breakers, rollbacks, and customer notifications match
+the expected policy.
+
 Create `gregale-test.yaml` at the repository root:
 
 ```yaml
@@ -1010,7 +1063,7 @@ This lets the CLI record the first request's `X-Faas-Wake` and
 `X-Faas-Wake-ID` without changing the application's request or response.
 The setup and cleanup commands receive the same variables. Commands are
 argument arrays, not shell strings. Additional services receive logical names
-such as `http://worker.svc.gregale:10080` inside the platform. Local commands receive
+such as `http://worker.svc.gregale:10081` inside the platform. Local commands receive
 `GREGALE_TEST_SERVICE_WORKER_URL` and
 `GREGALE_TEST_SERVICE_WORKER_APP_SLUG`. Each service has its own source directory
 and developer session. The base project plus service name must fit in 40
