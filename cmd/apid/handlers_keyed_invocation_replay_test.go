@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-// adr: 598
+// adr: 609
 func TestKeyedInvocationReplayIndependentEventRecovery(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	work := seedAPIReceipt(t, e)

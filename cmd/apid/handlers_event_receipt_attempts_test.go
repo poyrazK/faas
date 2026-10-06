@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 600
+// adr: 611
 func TestEventReceiptAttemptReadHistoryAndScope(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	work := seedAPIReceipt(t, e)

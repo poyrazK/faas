@@ -4135,7 +4135,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4147,6 +4147,10 @@ const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] 
 // superseded deployment. --json (top-level) emits the
 // DeploymentResponse on stdout for SDK / e2e consumers.
 func cmdRollback(args []string) int {
+	if len(args) > 0 && args[0] == "status" {
+		return cmdRollbackStatus(args[1:])
+	}
+
 	if hasHelpFlag(args) {
 		PrintUsage(osStdout, rollbackUsage, "rollback")
 		return 0
@@ -4156,7 +4160,11 @@ func cmdRollback(args []string) int {
 		return 1
 	}
 	slug := args[0]
-	var to string
+	var to, current, reason string
+	checked := false
+	var err error
+	wait := false
+	timeout, interval := 10*time.Minute, 2*time.Second
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
@@ -4169,6 +4177,42 @@ func cmdRollback(args []string) int {
 			to = rest[i] //nolint:gosec // G602: bounds checked immediately above
 		case strings.HasPrefix(a, "--to="):
 			to = a[len("--to="):]
+		case a == "--wait":
+			wait = true
+		case a == "--expected-current" || a == "--reason" || a == "--timeout" || a == "--poll-interval":
+			i++
+			if i >= len(rest) {
+				return printErr("Missing value", fmt.Errorf("%s requires a value", a))
+			}
+			switch a {
+			case "--expected-current":
+				checked = true
+				current = rest[i]
+			case "--reason":
+				reason = rest[i]
+			case "--timeout":
+				timeout, err = time.ParseDuration(rest[i])
+			case "--poll-interval":
+				interval, err = time.ParseDuration(rest[i])
+			}
+			if err != nil {
+				return printErr("Invalid duration", err)
+			}
+		case strings.HasPrefix(a, "--expected-current="):
+			checked = true
+			current = strings.TrimPrefix(a, "--expected-current=")
+		case strings.HasPrefix(a, "--reason="):
+			reason = strings.TrimPrefix(a, "--reason=")
+		case strings.HasPrefix(a, "--timeout=") || strings.HasPrefix(a, "--poll-interval="):
+			key, value, _ := strings.Cut(a, "=")
+			if key == "--timeout" {
+				timeout, err = time.ParseDuration(value)
+			} else {
+				interval, err = time.ParseDuration(value)
+			}
+			if err != nil {
+				return printErr("Invalid duration", err)
+			}
 		case a == "--yes" || a == "-y":
 			// Rollback never prompts. Accept the flag deploy uses so shared
 			// scripts do not fail here (issue #3362).
@@ -4177,6 +4221,12 @@ func cmdRollback(args []string) int {
 		default:
 			return printErr("Unexpected argument", fmt.Errorf("%q (rollback takes one <slug>; pass the target with --to)", a))
 		}
+	}
+	if checked && current == "" || timeout <= 0 || interval <= 0 || current == "" && (wait || reason != "") || current != "" && to == "" {
+		return printErr("Invalid rollback", fmt.Errorf("checked rollback requires --to and --expected-current; wait durations must be positive"))
+	}
+	if current != "" {
+		return cmdCheckedRollback(slug, to, current, reason, wait, timeout, interval)
 	}
 	client, err := authedClient()
 	if err != nil {

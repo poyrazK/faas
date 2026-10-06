@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-601: atomic parent-based deduplication for unkeyed handler replay.
+-- ADR-612: atomic parent-based deduplication for unkeyed handler replay.
 -- No child foreign key: child retention cannot authorize another execution.
 CREATE TABLE IF NOT EXISTS invocation_plain_replays (
   parent_invocation_id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS invocation_plain_replays (
   CHECK (parent_invocation_id <> replay_invocation_id)
 );
 
--- Adopt the latest retained direct child from the trusted ADR-597 ledger.
+-- Adopt the latest retained direct child from the trusted ADR-608 ledger.
 -- Historical forks remain visible; guest headers and unlinked legacy tenant
 -- replays cannot establish a durable recovery identity.
 INSERT INTO invocation_plain_replays (parent_invocation_id, replay_invocation_id, replay_created_at)

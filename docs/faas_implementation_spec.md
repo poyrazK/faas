@@ -645,7 +645,7 @@ surface.
 The unified Trigger primitive replaces six unrelated invocation surfaces with one resource + one batch envelope + one FSM.
 
 Internal application-event fanout additionally follows
-[ADR-595](adr/595-independent-event-recipient-routing.md): snapshot-backed
+[ADR-606](adr/606-independent-event-recipient-routing.md): snapshot-backed
 receipts can adopt independent recipient routing leases, retry schedules, and
 replay generations through an opt-in schedd flag. Acceptance and deterministic
 invocation deduplication stay unchanged. Recipient routing settlement is

@@ -3180,6 +3180,7 @@ type DeploymentResponse struct {
 	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
 	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
 	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
 
@@ -3188,20 +3189,21 @@ type DeploymentResponse struct {
 // node names only; request or customer identifiers are never used as metric
 // labels or placed in this status payload.
 type ServiceRolloutHandoffResponse struct {
-	Action                  string     `json:"action"`
-	Phase                   string     `json:"phase"`
-	PredecessorDeploymentID string     `json:"predecessor_deployment_id,omitempty"`
-	Generation              int64      `json:"generation,omitempty"`
-	ExpectedGateways        []string   `json:"expected_gateways,omitempty"`
-	AcknowledgedGateways    []string   `json:"acknowledged_gateways,omitempty"`
-	MissingGateways         []string   `json:"missing_gateways,omitempty"`
-	RetryCount              int        `json:"retry_count"`
-	LastError               string     `json:"last_error,omitempty"`
-	Reason                  string     `json:"reason,omitempty"`
-	StartedAt               *time.Time `json:"started_at,omitempty"`
-	UpdatedAt               *time.Time `json:"updated_at,omitempty"`
-	AcknowledgedAt          *time.Time `json:"acknowledged_at,omitempty"`
-	CompletedAt             *time.Time `json:"completed_at,omitempty"`
+	BindingsCheck           *ServiceRolloutBindingGate `json:"bindings_check,omitempty"`
+	Action                  string                     `json:"action"`
+	Phase                   string                     `json:"phase"`
+	PredecessorDeploymentID string                     `json:"predecessor_deployment_id,omitempty"`
+	Generation              int64                      `json:"generation,omitempty"`
+	ExpectedGateways        []string                   `json:"expected_gateways,omitempty"`
+	AcknowledgedGateways    []string                   `json:"acknowledged_gateways,omitempty"`
+	MissingGateways         []string                   `json:"missing_gateways,omitempty"`
+	RetryCount              int                        `json:"retry_count"`
+	LastError               string                     `json:"last_error,omitempty"`
+	Reason                  string                     `json:"reason,omitempty"`
+	StartedAt               *time.Time                 `json:"started_at,omitempty"`
+	UpdatedAt               *time.Time                 `json:"updated_at,omitempty"`
+	AcknowledgedAt          *time.Time                 `json:"acknowledged_at,omitempty"`
+	CompletedAt             *time.Time                 `json:"completed_at,omitempty"`
 }
 
 // BuildPlan describes what the build pipeline did with the source
@@ -3567,6 +3569,8 @@ var MirrorAlwaysStrippedHeaders = []string{
 // (per-deployment URL): the response carries the same deployment_id so
 // -C can build a hostname off it without a wire-shape change.
 type RollbackRequest struct {
+	ExpectedCurrentDeploymentID *string `json:"expected_current_deployment_id,omitempty"`
+	Reason                      string  `json:"reason,omitempty"`
 	// TargetDeploymentID is the UUID of the deployment to promote back
 	// to 'live'. Must belong to the same app as the URL slug, and must
 	// have status='superseded' (rolling back to the already-current
@@ -11212,24 +11216,24 @@ func AllowedRecoverRolloutAction(v string) bool {
 //
 //   - "abort" — flip rollout_state to 'aborted', stamp
 //     rollout_aborted_at = now + the operator's reason text into
-//     rollout_aborted_reason. The deployment row stays 'live'
-//     with whatever traffic_percent it currently has (the
-//     operator is responsible for `gregale deploys rollback`
-//     if they want to fully revert). Requires rollout_state ∈
-//     {pending, rolling_out}.
+//     rollout_aborted_reason. A canary stays live with zero traffic and
+//     serving siblings regain the residual weight. Exact recovery restores
+//     the selected predecessor to 100%. Requires an active rollout.
 type RecoverRolloutRequest struct {
 	// Action is the closed-set verb ∈ {advance, promote, abort}.
 	Action string `json:"action"`
 	// Reason is a free-form operator note captured into the
 	// deployment_audit row's Data payload. The plan gate does
-	// NOT require a reason — but the cmd/gregale CLI marks
-	// --reason as required (operators writing a recovery note
-	// is the entire point of the audit trail).
+	// NOT require a reason; the CLI recommends --reason for an audit note.
 	Reason string `json:"reason,omitempty"`
+	// Exact canary abort requires both selectors. They are compared again in
+	// the recovery transaction; other recovery actions retain legacy behavior.
+	DeploymentID                    string `json:"deployment_id,omitempty"`
+	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id,omitempty"`
 }
 
-// RecoverDeploymentRolloutRequest is the internal, exact-target variant used
-// by meterd's deployment circuit breaker. The predecessor is part of the
+// RecoverDeploymentRolloutRequest is the loopback deployment-addressed variant
+// used by meterd's circuit breaker. The predecessor is part of the
 // compare-and-abort contract so a delayed signal cannot restore a different
 // revision after traffic has moved.
 type RecoverDeploymentRolloutRequest struct {
@@ -11246,8 +11250,10 @@ type RecoverDeploymentRolloutRequest struct {
 // a chip on the terminal — the operator's "what happened"
 // timeline starts at this row.
 type RolloutTransitionResponse struct {
-	Deployment DeploymentResponse `json:"deployment"`
-	AuditID    string             `json:"audit_id"`
+	ServiceRecovery *ServiceRolloutRecoveryReceipt `json:"service_recovery,omitempty"`
+	Deployment      DeploymentResponse             `json:"deployment"`
+	AuditID         string                         `json:"audit_id"`
+	Recovery        *RolloutRecoveryReceipt        `json:"recovery,omitempty"`
 }
 
 // --- Jobs (issue #1184 Workstream A / ADR-099) ----------------------

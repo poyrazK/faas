@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ServiceRolloutBindingGate } from './ServiceRolloutBindingGate.js';
 /**
  * Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff.
  */
 export type ServiceRolloutHandoffResponse = {
+  bindings_check?: ServiceRolloutBindingGate;
   action: 'promote' | 'abort';
   phase: 'pending' | 'routing' | 'draining' | 'complete';
   predecessor_deployment_id?: string;

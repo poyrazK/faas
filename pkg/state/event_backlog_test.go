@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 606
+// adr: 617
 func TestEventBacklogLifecyclePaginationAndReplay(t *testing.T) {
 	forRoutingAdmissionStores(t, func(t *testing.T, store routingAdmissionTestStore, pool *pgxpool.Pool, adopted bool) {
 		ctx, account, app, work := seedRecipientClaims(t, store)
@@ -108,7 +108,7 @@ func TestEventBacklogLifecyclePaginationAndReplay(t *testing.T) {
 	})
 }
 
-// adr: 606
+// adr: 617
 func TestPgEventBacklogBackfillUnattributedAndForeignTarget(t *testing.T) {
 	store, pool, _ := pgStoreWithPool(t)
 	ctx, account, app, work := seedRecipientClaims(t, store)
@@ -174,7 +174,7 @@ func TestPgEventBacklogBackfillUnattributedAndForeignTarget(t *testing.T) {
 	}
 }
 
-// adr: 606
+// adr: 617
 func TestPgEventBacklogProjectionRollbackAndClaimLockOrder(t *testing.T) {
 	store, pool, _ := pgStoreWithPool(t)
 	ctx, account, _, work := seedRecipientClaims(t, store)

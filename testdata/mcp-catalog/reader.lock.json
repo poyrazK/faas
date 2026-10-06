@@ -1,4 +1,7 @@
 {
+  "capabilities": [
+    "tools"
+  ],
   "protocol_version": "2026-07-28",
   "tools": [
     {
@@ -26,5 +29,5 @@
       "name": "greet"
     }
   ],
-  "version": 1
+  "version": 2
 }

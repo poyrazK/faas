@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 601
+// adr: 612
 func TestMigrationPlainReplayAdoptsTrustedLatestChild(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Open(t)

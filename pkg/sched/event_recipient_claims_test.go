@@ -1,4 +1,4 @@
-// adr: 595
+// adr: 606
 package sched
 
 import (
@@ -59,7 +59,7 @@ func (s *recipientRouteFaultStore) FinishPublishedEventRecipient(ctx context.Con
 	return s.MemStore.FinishPublishedEventRecipient(ctx, work, progress, next)
 }
 
-// ADR-595: A successful consumer, a backoff-delayed consumer, and a failed consumer
+// ADR-606: A successful consumer, a backoff-delayed consumer, and a failed consumer
 // share one event. Selective replay must not inherit the sibling's backoff.
 func TestEventRecipientRoutingSelectiveRecovery(t *testing.T) {
 	ctx := context.Background()
@@ -149,7 +149,7 @@ func TestEventRecipientRoutingSelectiveRecovery(t *testing.T) {
 	}
 }
 
-// ADR-595: replay receives a fresh bounded retry budget, while history keeps
+// ADR-606: replay receives a fresh bounded retry budget, while history keeps
 // counting attempts across generations and successful siblings stay settled.
 func TestEventRecipientRoutingReplayRenewsExhaustedBudget(t *testing.T) {
 	ctx := context.Background()

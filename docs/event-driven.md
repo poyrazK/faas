@@ -816,10 +816,10 @@ admit another delivery or cancel work created later while the receipt is retaine
 This applies to both whole-event and independent-recipient routing once every
 scheduler is upgraded. Older receipts without snapshots and specialized object
 notification destinations keep their existing routing paths. See
-[ADR-602](adr/602-atomic-event-routing-handoff.md) for the transaction and upgrade
+[ADR-613](adr/613-atomic-event-routing-handoff.md) for the transaction and upgrade
 boundary. Handler side effects still require application deduplication.
 
-When operators enable independent recipient routing (ADR-595), each captured
+When operators enable independent recipient routing (ADR-606), each captured
 candidate has its own five-minute lease and backoff from five seconds to five
 minutes. A terminal recipient can be replayed while its siblings are routing
 or waiting to retry. Each replay gets a fresh twelve-attempt routing budget;
@@ -827,7 +827,7 @@ the visible attempt count and history remain cumulative. Successful siblings
 are not rerun. The flag `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED=1` enables adoption
 on schedd after all API and scheduler binaries are compatible. It defaults off;
 disabling it stops adoption but continues draining already adopted receipts.
-See [ADR-595](adr/595-independent-event-recipient-routing.md) for rollout and
+See [ADR-606](adr/606-independent-event-recipient-routing.md) for rollout and
 rollback requirements.
 
 Publish acceptance means the event is durably stored. A recipient marked
@@ -873,7 +873,7 @@ unresolved older receipts without snapshots as `unattributed_receipts`. That
 count is account-wide and uses only the acceptance/age window, even with other
 filters. The API requires a read key, returns metadata with no-store caching,
 and bounds reads to five seconds. Narrow filters and retry on
-`event_backlog_read_timeout`. Apply the [backlog migration](adr/606-event-consumer-backlog-inspection.md)
+`event_backlog_read_timeout`. Apply the [backlog migration](adr/617-event-consumer-backlog-inspection.md)
 before upgrading the API; routing behavior and recipient adoption are unchanged.
 
 Published and inbox envelopes use CloudEvents `datacontenttype` and the
@@ -990,7 +990,7 @@ been pruned, its retained parent returns `invocation_replay_unavailable` and
 receipts suppress its handler replay action. Existing accepted replay IDs
 remain readable when an old deployment pin expires. Delivery remains at least
 once; applications still deduplicate external side effects. See
-[ADR-601](adr/601-durable-plain-invocation-replay.md).
+[ADR-612](adr/612-durable-plain-invocation-replay.md).
 
 Failed keyed handlers use `keyed_handler_replay`, which calls
 `POST /v1/invocations/{id}/replay-keyed`. It preserves the captured policy
@@ -1009,7 +1009,7 @@ Repeated keyed recovery requests return the same child, even after it completes.
 To recover again, target that child after it fails. If the child has been pruned
 while the parent remains, the parent cannot create another execution; receipts
 suppress that action. Queue-bound dead letters retain their existing in-place
-replay path. See [ADR-598](adr/598-safe-keyed-invocation-replay.md) for ordering,
+replay path. See [ADR-609](adr/609-safe-keyed-invocation-replay.md) for ordering,
 expiry and retention behavior.
 
 Keyed dead-letter replay keeps the original receipt and sequence. It waits
@@ -1017,7 +1017,7 @@ for any same-key invocation or broker delivery already running, including a
 later sequence. An expired lease must be recovered before the replay can
 proceed. Once that ownership is resolved, pending work follows sequence order;
 other keys remain eligible. Replay preserves the original pending expiry.
-See [ADR-599](adr/599-keyed-dead-letter-replay-claim-exclusion.md).
+See [ADR-610](adr/610-keyed-dead-letter-replay-claim-exclusion.md).
 
 Inspect the original handler's delivery attempts and its trusted replay children:
 
@@ -1037,7 +1037,7 @@ Only recorded, retained attempts are shown. History starts with claims made
 after the attempt-ledger upgrade and is not backfilled. Closed attempts expire
 after at most 30 days, earlier for shorter result retention or invocation
 deletion; running attempts are not pruned. An empty history does not establish
-that no delivery occurred. See [ADR-600](adr/600-invocation-backed-event-attempt-history.md).
+that no delivery occurred. See [ADR-611](adr/611-invocation-backed-event-attempt-history.md).
 
 List a consumer's retained replay executions, newest first:
 
@@ -1109,7 +1109,7 @@ JSON output to page through older rows. Cursors remain valid when their detail
 row is removed, although an older page may become empty. Summaries reflect current
 observations independently of the page cursor. Recovery uses the durable recipient
 checkpoint and does not depend on retaining every history row. See
-[ADR-605](adr/605-bounded-event-routing-history.md).
+[ADR-616](adr/616-bounded-event-routing-history.md).
 
 To retry one terminal pre-invocation failure, pass its event ID, source, and
 subscription ID from the failure row:

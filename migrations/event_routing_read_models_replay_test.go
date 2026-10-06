@@ -10,8 +10,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// adr: 605
-// adr: 606
+// adr: 616
+// adr: 617
 // A schema ahead of its migration ledger must preserve compacted delivery
 // evidence and an already populated routing projection when the tail replays.
 func TestMigrationsEventRoutingReadModelsReplayPreservesEvidence(t *testing.T) {

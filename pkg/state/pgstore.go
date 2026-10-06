@@ -7749,6 +7749,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, ErrTrafficChangeDuringCanary
 	}
 
+	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+		return Deployment{}, err
+	}
 	if guard != nil {
 		current, err := s.checkBindingTrafficGuard(ctx, tx, guard)
 		if err != nil {
@@ -8011,6 +8014,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		persistedStep = dep.CanaryTotalSteps
 	} else if len(siblings) == 0 {
 		return Deployment{}, 0, ErrTrafficPercentSumInvalid
+	}
+	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+		return Deployment{}, 0, err
 	}
 	newWeights := RedistributeTraffic(siblings, 100-params.TrafficPercent)
 	if terminal {
@@ -8687,7 +8693,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 // predecessor observed by the caller is still live and serving in the same
 // scope. The exact pair is checked under row locks before traffic is changed.
 func (s *PgStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
-	if deploymentID == "" || expectedPredecessorID == "" || deploymentID == expectedPredecessorID || action != "abort" {
+	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
 	return s.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
@@ -8848,15 +8854,15 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 	}
 	if expectedPredecessorID != "" {
-		if IsServiceRollout(dep) {
+		if IsServiceRollout(dep) || expectedPredecessorID == dep.ID {
 			return dep, 0, ErrRolloutStateInvalid
 		}
 		var predecessorID string
 		if err := tx.QueryRow(ctx,
 			`select id from deployments
 			  where app_id = $1 and scope = $2 and id = $3::uuid
-			    and status = 'live' and traffic_percent > 0
-			  for update`, dep.AppID, dep.Scope, expectedPredecessorID).Scan(&predecessorID); err != nil {
+			    and status = 'live' and traffic_percent > 0 and created_at < $4
+			  for update`, dep.AppID, dep.Scope, expectedPredecessorID, dep.CreatedAt).Scan(&predecessorID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return dep, 0, ErrNotFound
 			}
@@ -9058,6 +9064,11 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		auditData = rolloutAuditData("promote", reason)
 
 	case "abort":
+		if expectedPredecessorID != "" {
+			if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+				return dep, 0, err
+			}
+		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set
 				rollout_state = 'aborted',
@@ -9127,6 +9138,9 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 		auditKind = DeployRolledBack
 		auditData = rolloutAuditData("abort", reason)
+		if expectedPredecessorID != "" {
+			auditData = rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx))
+		}
 	}
 
 	// Audit emit rides the same tx as the deployment stamp. The actor
@@ -9135,24 +9149,23 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 	if emergencyGrace != nil {
 		actor = "apid:safe_release_lease_expired"
 	}
-	var auditAccountID *uuid.UUID
+	var auditAccountID, auditRuleID *uuid.UUID
 	if auditOverride != nil {
 		auditKind, auditData, actor, now = auditOverride.Kind, auditOverride.Data, auditOverride.Actor, auditOverride.At
-		auditAccountID = auditOverride.AccountID
+		auditAccountID, auditRuleID = auditOverride.AccountID, auditOverride.AlertRuleID
+		if expectedPredecessorID != "" && len(bindingReleaseFences(ctx)) > 0 {
+			var err error
+			auditData, err = addRolloutRecoveryAuditFences(auditData, expectedPredecessorID, bindingReleaseFences(ctx))
+			if err != nil {
+				return dep, 0, err
+			}
+		}
 	}
-	var auditID int64
-	if err := tx.QueryRow(ctx,
-		`insert into deployment_audit
-		    (deployment_id, account_id, kind, actor, at, data)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
-		 returning id`,
-		dep.ID,
-		auditAccountID, // nullable for existing operator and emergency recoveries
-		string(auditKind),
-		actor,
-		now,
-		auditData,
-	).Scan(&auditID); err != nil {
+	auditID, err := sqlc.New().AppendRolloutRecoveryAudit(ctx, tx, sqlc.AppendRolloutRecoveryAuditParams{
+		DeploymentID: mustPgUUID(dep.ID), AccountID: optionalPgUUID(auditAccountID), AlertRuleID: optionalPgUUID(auditRuleID),
+		Kind: string(auditKind), Actor: actor, At: pgtype.Timestamptz{Time: now, Valid: true}, Data: auditData,
+	})
+	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout append audit: %w", err)
 	}
 
@@ -9284,6 +9297,24 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
 		return err
 	}
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
+		return err
+	}
+	if r, readErr := s.CheckedRollbackForTarget(ctx, id); readErr == nil && r.Status == "preparing" {
+		if err := s.markCheckedRollbackReadyTx(ctx, tx, dep, r); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	} else if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+		return readErr
+	}
+
+	if failed, err := sqlc.New().FailedCheckedRollbackTarget(ctx, tx, mustPgUUID(id)); err != nil {
+		return err
+	} else if failed && dep.Status != DeployLive {
+		return ErrCheckedRollbackRequired
+	}
+
 	if dep.Status == DeployCancelled {
 		return ErrInvalidStateTransition
 	}
@@ -13323,115 +13354,8 @@ func (s *PgStore) ReactivateCronsForApp(ctx context.Context, appID string) (int,
 //   - webhook_secret_sealed is []byte (NOT NULL); the handler seals
 //     via pkg/secretbox.SealOne before calling.
 
-const alertRuleSelectCols = `id, account_id, app_id, name, enabled, metric, comparison,
-       threshold, window_spec, failure_source, action, webhook_url,
-       webhook_secret_sealed, cooldown_minutes, state,
-       last_fired_at, last_evaluated_at, created_at, updated_at`
-
-func scanAlertRule(row pgx.Row) (AlertRule, error) {
-	r, err := scanAlertRuleCols(row.Scan)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return AlertRule{}, ErrNotFound
-		}
-		return AlertRule{}, err
-	}
-	return r, nil
-}
-
-func scanAlertRules(rows pgx.Rows) ([]AlertRule, error) {
-	var out []AlertRule
-	for rows.Next() {
-		r, err := scanAlertRuleCols(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// scanAlertRuleCols is the single source of column order for
-// alert_rules. The select clause above is the contract — every
-// SELECT against alert_rules lists these columns in this order, and
-// the SELECT statement binds Scan's positional arguments against
-// this list. A future column add lands here first, in the same
-// commit, so a SELECT-write drift cannot silently swallow a column.
-func scanAlertRuleCols(scan func(...any) error) (AlertRule, error) {
-	r := AlertRule{}
-	var metric, comparison, windowSpec, action, state string
-	var appID, failureSource *string
-	var secret []byte
-	var lastFired, lastEvaluated *time.Time
-	if err := scan(
-		&r.ID, &r.AccountID, &appID, &r.Name, &r.Enabled,
-		&metric, &comparison, &r.Threshold, &windowSpec, &failureSource,
-		&action, &r.WebhookURL, &secret, &r.CooldownMinutes, &state,
-		&lastFired, &lastEvaluated, &r.CreatedAt, &r.UpdatedAt,
-	); err != nil {
-		return AlertRule{}, err
-	}
-	r.Metric = AlertMetric(metric)
-	r.Comparison = AlertComparison(comparison)
-	r.WindowSpec = AlertWindowSpec(windowSpec)
-	r.Action = AlertAction(action)
-	r.State = AlertState(state)
-	if failureSource != nil && *failureSource != "" {
-		r.FailureSource = AlertFailureSource(*failureSource)
-	}
-	if appID != nil {
-		r.AppID = *appID
-	}
-	if len(secret) > 0 {
-		r.WebhookSecretSealed = secret
-	}
-	if lastFired != nil {
-		r.LastFiredAt = *lastFired
-	}
-	if lastEvaluated != nil {
-		r.LastEvaluatedAt = *lastEvaluated
-	}
-	return r, nil
-}
-
 func (s *PgStore) CreateAlertRule(ctx context.Context, in AlertRule) (AlertRule, error) {
-	var appIDArg any
-	if in.AppID != "" {
-		appIDArg = in.AppID
-	}
-	var sourceArg any
-	if in.FailureSource != "" {
-		sourceArg = string(in.FailureSource)
-	}
-	stateArg := string(in.State)
-	if stateArg == "" {
-		stateArg = string(AlertStateOk)
-	}
-	actionArg := string(in.Action)
-	if actionArg == "" {
-		actionArg = string(AlertActionWebhook)
-	}
-	row := s.pool.QueryRow(ctx, `
-		insert into alert_rules (
-			account_id, app_id, name, enabled, metric, comparison,
-			threshold, window_spec, failure_source, action, webhook_url,
-			webhook_secret_sealed, cooldown_minutes, state
-		) values (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11,
-			$12, $13, $14
-		)
-		returning `+alertRuleSelectCols,
-		in.AccountID, appIDArg, in.Name, in.Enabled,
-		string(in.Metric), string(in.Comparison), in.Threshold,
-		string(in.WindowSpec), sourceArg, actionArg, in.WebhookURL,
-		in.WebhookSecretSealed, in.CooldownMinutes, stateArg,
-	)
-	r, err := scanAlertRule(row)
-	if err != nil {
-		return AlertRule{}, mapErr(err)
-	}
-	return r, nil
+	return insertCustomerAlertRule(ctx, s.pool, in)
 }
 
 // CreateAlertRuleIfUnderQuota — see Store interface. Account-wide
@@ -13497,37 +13421,10 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 		}
 	}
 
-	var appIDArg any
-	if in.AppID != "" {
-		appIDArg = in.AppID
-	}
-	var sourceArg any
-	if in.FailureSource != "" {
-		sourceArg = string(in.FailureSource)
-	}
-	actionArg := string(in.Action)
-	if actionArg == "" {
-		actionArg = string(AlertActionWebhook)
-	}
-	row := tx.QueryRow(ctx, `
-		insert into alert_rules (
-			account_id, app_id, name, enabled, metric, comparison,
-			threshold, window_spec, failure_source, action, webhook_url,
-			webhook_secret_sealed, cooldown_minutes, state
-		) values (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11,
-			$12, $13, 'ok'
-		)
-		returning `+alertRuleSelectCols,
-		in.AccountID, appIDArg, in.Name, in.Enabled,
-		string(in.Metric), string(in.Comparison), in.Threshold,
-		string(in.WindowSpec), sourceArg, actionArg, in.WebhookURL,
-		in.WebhookSecretSealed, in.CooldownMinutes,
-	)
-	r, err := scanAlertRule(row)
+	in.State = AlertStateOk
+	r, err := insertCustomerAlertRule(ctx, tx, in)
 	if err != nil {
-		return AlertRule{}, mapErr(err)
+		return AlertRule{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AlertRule{}, fmt.Errorf("state: commit create alert rule: %w", err)
@@ -13536,9 +13433,11 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 }
 
 func (s *PgStore) AlertRuleByID(ctx context.Context, id string) (AlertRule, error) {
-	row := s.pool.QueryRow(ctx,
-		`select `+alertRuleSelectCols+` from alert_rules where id = $1`, id)
-	return scanAlertRule(row)
+	key, err := alertPgUUID(id)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	return customerAlertRuleResult(sqlc.New().ReadCustomerAlertRule(ctx, s.pool, key))
 }
 
 // AlertRuleByAccountAppAndPresetName resolves the alert_rules row
@@ -13559,21 +13458,15 @@ func (s *PgStore) AlertRuleByID(ctx context.Context, id string) (AlertRule, erro
 //
 // Refs: ADR-123 PR-C, issue #1233, plan §Commit 2.
 func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accountID, appID, presetName string) (AlertRule, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+alertRuleSelectCols+`
-		FROM alert_rules r
-		WHERE r.account_id = $1
-		  AND r.app_id = $2
-		  AND r.name LIKE (
-		    SELECT (display_name || ' (%') FROM alert_presets WHERE name = $3
-		  )
-		ORDER BY r.created_at DESC
-		LIMIT 2`, accountID, appID, presetName)
+	acct, err := alertPgUUID(accountID)
 	if err != nil {
 		return AlertRule{}, err
 	}
-	defer rows.Close()
-	matched, err := scanAlertRules(rows)
+	app, err := alertPgUUID(appID)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	matched, err := customerAlertRules(sqlc.New().ListCustomerAlertRulesByPreset(ctx, s.pool, sqlc.ListCustomerAlertRulesByPresetParams{AccountID: acct, AppID: app, PresetName: presetName}))
 	if err != nil {
 		return AlertRule{}, err
 	}
@@ -13583,11 +13476,6 @@ func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accoun
 	case 1:
 		return matched[0], nil
 	default:
-		// Defensive: catalog display_name uniqueness + the
-		// (account_id, app_id, name) UNIQUE constraint should make
-		// this unreachable. Returning ErrConflict keeps the handler
-		// clean — 409 with a sane message beats a panic or a silent
-		// "send test alert to a stale rule" outcome.
 		return AlertRule{}, ErrConflict
 	}
 }
@@ -13598,53 +13486,6 @@ func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accoun
 // path) and a non-nil replaces the column. FailureSource is not on
 // UpdateAlertRuleParams — see the struct godoc for why metric and
 // source rotate together or not at all.
-func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertRuleParams) (AlertRule, error) {
-	var nameArg, urlArg any
-	if p.Name != nil {
-		nameArg = *p.Name
-	}
-	if p.WebhookURL != nil {
-		urlArg = *p.WebhookURL
-	}
-	var secretArg any
-	if p.WebhookSecretSealed != nil {
-		secretArg = *p.WebhookSecretSealed
-	}
-	var metricArg, comparisonArg, windowArg any
-	if p.Metric != nil {
-		metricArg = string(*p.Metric)
-	}
-	if p.Comparison != nil {
-		comparisonArg = string(*p.Comparison)
-	}
-	if p.WindowSpec != nil {
-		windowArg = string(*p.WindowSpec)
-	}
-
-	row := s.pool.QueryRow(ctx, `
-		update alert_rules set
-			name    = coalesce($2, name),
-			enabled = coalesce($3, enabled),
-			metric  = coalesce($4, metric),
-			comparison = coalesce($5, comparison),
-			threshold  = coalesce($6, threshold),
-			window_spec = coalesce($7, window_spec),
-			webhook_url = coalesce($8, webhook_url),
-			webhook_secret_sealed = coalesce($9, webhook_secret_sealed),
-			cooldown_minutes = coalesce($10, cooldown_minutes),
-			action  = coalesce($11, action),
-			updated_at = now()
-		where id = $1
-		returning `+alertRuleSelectCols,
-		id, nameArg, p.Enabled, metricArg, comparisonArg, p.Threshold,
-		windowArg, urlArg, secretArg, p.CooldownMinutes, p.Action,
-	)
-	r, err := scanAlertRule(row)
-	if err != nil {
-		return AlertRule{}, mapErr(err)
-	}
-	return r, nil
-}
 
 func (s *PgStore) DeleteAlertRule(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `delete from alert_rules where id = $1`, id)
@@ -13658,24 +13499,15 @@ func (s *PgStore) DeleteAlertRule(ctx context.Context, id string) error {
 }
 
 func (s *PgStore) ListAlertRulesForAccount(ctx context.Context, accountID string) ([]AlertRule, error) {
-	rows, err := s.pool.Query(ctx,
-		`select `+alertRuleSelectCols+` from alert_rules
-		 where account_id = $1 order by created_at desc`, accountID)
+	id, err := alertPgUUID(accountID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanAlertRules(rows)
+	return customerAlertRules(sqlc.New().ListCustomerAlertRulesForAccount(ctx, s.pool, id))
 }
 
 func (s *PgStore) ListEnabledAlertRules(ctx context.Context) ([]AlertRule, error) {
-	rows, err := s.pool.Query(ctx,
-		`select `+alertRuleSelectCols+` from alert_rules where enabled = true order by account_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanAlertRules(rows)
+	return customerAlertRules(sqlc.New().ListEnabledCustomerAlertRules(ctx, s.pool))
 }
 
 // ----------------------------------------------------------------------------
@@ -14968,6 +14800,10 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	if _, err := sqlc.New().LockAlertRollbackFireApp(ctx, tx, mustPgUUID(ruleID)); err != nil {
+		return "", false, fmt.Errorf("state: lock alert rollback app: %w", err)
+	}
+
 	var exists bool
 	if err := tx.QueryRow(ctx,
 		`select true from alert_rules where id = $1`, ruleID,
@@ -15002,6 +14838,10 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("state: claim alert fire insert %s: %w", ruleID, err)
+	}
+
+	if err := s.captureAlertRollbackTx(ctx, tx, ruleID, deliveryID, observed, at); err != nil {
+		return "", false, fmt.Errorf("state: capture alert rollback: %w", err)
 	}
 
 	// Stamp last_fired_at alongside the INSERT. The stamp is a
@@ -17753,21 +17593,7 @@ func (s *PgStore) AppRuntimeConfigChangedAt(ctx context.Context, appID string) (
 // row. Stale rows are intentionally included because their artifacts remain
 // restorable until the stale-retention window expires.
 func (s *PgStore) ListSnapshotDeploymentIDs(ctx context.Context) ([]string, error) {
-	rows, err := s.pool.Query(ctx,
-		`select distinct deployment_id::text from snapshots order by deployment_id::text`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var deploymentID string
-		if err := rows.Scan(&deploymentID); err != nil {
-			return nil, err
-		}
-		out = append(out, deploymentID)
-	}
-	return out, rows.Err()
+	return sqlc.New().ListSnapshotDeploymentIDs(ctx, s.pool)
 }
 
 // DeleteSnapshotsByID bulk-removes the named rows. No cascade; schedd's
@@ -25241,10 +25067,20 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
-			if pgErr.ConstraintName == "event_delivery_capacity" {
+			switch pgErr.ConstraintName {
+			case "event_delivery_capacity":
 				return &EventDeliveryCapacityError{Scope: pgErr.Detail}
-			}
-			if pgErr.ConstraintName == "object_version_protection_fenced" {
+			case "checked_rollback_required":
+				return ErrCheckedRollbackRequired
+			case "binding_release_required":
+				return ErrBindingReleaseRequired
+			case "binding_release_changed":
+				return ErrBindingPromotionChanged
+			case "binding_release_expired":
+				return ErrBindingPromotionExpired
+			case "binding_release_policy_revision":
+				return ErrBindingReleasePolicyRevision
+			case "object_version_protection_fenced":
 				return ErrConflict
 			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {

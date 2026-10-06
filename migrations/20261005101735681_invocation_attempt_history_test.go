@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 600
+// adr: 611
 func TestMigrationInvocationAttemptHistoryUpgradeAndReplay(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Open(t)

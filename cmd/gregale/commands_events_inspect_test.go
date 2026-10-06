@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// ADR-596: text inspection reports routing and execution independently.
+// ADR-607: text inspection reports routing and execution independently.
 func TestCmdEventsInspectMixedOutcomes(t *testing.T) {
 	resetJSONOut(t)
 	fake := authedFakeAPI(t, `{"event_id":"evt-1","event_source":"orders","event_type":"created","accepted_at":"2026-10-04T12:00:00Z","snapshot_captured":true,"recipient_count":3,"routing_summary":{"enqueued":2,"failed":1},"recipients":[{"app_slug":"complete","subscription_id":"sub-1","routing":{"state":"enqueued","attempts":1},"execution":{"state":"completed","attempts":2},"recovery_actions":[]},{"app_slug":"outage","subscription_id":"sub-2","routing":{"state":"failed","attempts":12,"last_error":"route outage"},"recovery_actions":[{"kind":"routing_replay"}]},{"app_slug":"cancel","subscription_id":"sub-3","routing":{"state":"enqueued","attempts":1},"cancellation":{"cancelled_count":2},"execution_unavailable":"cancel_pending","recovery_actions":[]}],"next_after":"erc1.next"}`, http.StatusOK)

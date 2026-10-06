@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-// adr: 598
+// adr: 609
 func TestMemKeyedReplayLifecycle(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()

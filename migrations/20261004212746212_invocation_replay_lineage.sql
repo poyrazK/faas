@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-597: retain the root without a foreign key so intermediate/root
+-- ADR-608: retain the root without a foreign key so intermediate/root
 -- execution retention cannot sever the lineage of surviving replays.
 ALTER TABLE invocations ADD COLUMN IF NOT EXISTS replay_root_invocation_id uuid;
 ALTER TABLE invocations ADD COLUMN IF NOT EXISTS replay_root_created_at timestamptz;

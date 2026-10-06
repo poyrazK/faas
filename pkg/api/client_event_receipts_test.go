@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// ADR-596: identity and page cursors survive URL encoding and response decoding.
+// ADR-607: identity and page cursors survive URL encoding and response decoding.
 func TestGetEventReceiptSerializesIdentityAndPage(t *testing.T) {
 	var query url.Values
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -17,7 +17,7 @@ func attemptClaim(inv state.Invocation) state.InvocationClaim {
 	return state.InvocationClaim{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration}
 }
 
-// adr: 600
+// adr: 611
 func TestInvocationAttemptHistoryRecovery(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, pool *pgxpool.Pool) {
 		ctx, account, app, work := seedRecipientClaims(t, store)
@@ -229,7 +229,7 @@ func TestPgInvocationAttemptHistoryTargetOwnership(t *testing.T) {
 	}
 }
 
-// adr: 600
+// adr: 611
 func TestInvocationAttemptHistoryKeyedAndRetention(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
 		ctx, account, app, work := seedRecipientClaims(t, store)
@@ -257,7 +257,7 @@ func TestInvocationAttemptHistoryKeyedAndRetention(t *testing.T) {
 	})
 }
 
-// adr: 600
+// adr: 611
 func TestPgInvocationAttemptHistoryAtomicTransition(t *testing.T) {
 	store, pool, ctx := pgStoreWithPool(t)
 	_, account, app, _ := seedRecipientClaims(t, store)

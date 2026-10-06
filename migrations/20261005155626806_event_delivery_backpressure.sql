@@ -1,5 +1,5 @@
 -- filename: 20261005155626806_event_delivery_backpressure.sql
--- ADR-603: mutex and live-delivery identity are separate from retained receipts.
+-- ADR-614: mutex and live-delivery identity are separate from retained receipts.
 -- +goose Up
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS event_delivery_capacity (
