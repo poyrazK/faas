@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 type pgServiceRolloutLiveRow struct {
@@ -21,10 +23,13 @@ func previousServiceRolloutRow(target Deployment, rows []pgServiceRolloutLiveRow
 	var previous pgServiceRolloutLiveRow
 	found := false
 	for _, row := range rows {
+		if pinned := target.ServiceRolloutHandoff.PredecessorDeploymentID; pinned != "" && row.id != pinned {
+			continue
+		}
 		if row.id == target.ID || row.service {
 			continue
 		}
-		if !row.createdAt.Before(target.CreatedAt) && !target.CreatedAt.IsZero() {
+		if target.ServiceRolloutHandoff.PredecessorDeploymentID == "" && !row.createdAt.Before(target.CreatedAt) && !target.CreatedAt.IsZero() {
 			continue
 		}
 		if !found || row.createdAt.After(previous.createdAt) ||
@@ -114,12 +119,17 @@ func (s *PgStore) FinalizeServiceRollout(ctx context.Context, id string) (Deploy
 		return Deployment{}, fmt.Errorf("state: finalize service rollout begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	target, _, err := s.loadAndLockServiceRollout(ctx, tx, id)
+	target, rows, err := s.loadAndLockServiceRollout(ctx, tx, id)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if target.ServiceRolloutHandoff.ActiveAbort() {
 		return target, ErrServiceRolloutInvalid
+	}
+	previous, _ := previousServiceRolloutRow(target, rows)
+	target, err = s.prepareServiceBinding(ctx, tx, target, ServiceRolloutActionPromote, target.ID, previous.id, target.ServiceRolloutHandoff.Reason)
+	if err != nil {
+		return target, err
 	}
 	var manifestJSON []byte
 	if err := tx.QueryRow(ctx, `select coalesce(manifest, '{}'::jsonb) from apps where id = $1`, target.AppID).Scan(&manifestJSON); err != nil {
@@ -136,25 +146,9 @@ func (s *PgStore) FinalizeServiceRollout(ctx context.Context, id string) (Deploy
 			on conflict (deployment_id) do nothing`, target.AppID, target.Scope, target.ID, manifest.RevisionPinTTLSeconds); err != nil {
 			return Deployment{}, fmt.Errorf("state: finalize service rollout retain siblings: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `update deployments
-			set status = case when exists (
-				select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now()
-			) or exists (
-				select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
-				where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
-			) then 'live' else 'superseded' end, traffic_percent = 0
-			where app_id = $1 and scope = $2 and status = 'live' and id <> $3`, target.AppID, target.Scope, target.ID); err != nil {
-			return Deployment{}, fmt.Errorf("state: finalize service rollout retain live siblings: %w", err)
-		}
-	} else if _, err := tx.Exec(ctx,
-		`update deployments
-		    set status = case when exists (
-				select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
-				where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
-			) then 'live' else 'superseded' end, traffic_percent = 0
-		  where app_id = $1 and scope = $2 and status = 'live' and id <> $3`,
-		target.AppID, target.Scope, target.ID); err != nil {
-		return Deployment{}, fmt.Errorf("state: finalize service rollout supersede siblings: %w", err)
+	}
+	if err := retireLiveDeploymentSiblingsTx(ctx, tx, target.AppID, target.Scope, target.ID); err != nil {
+		return Deployment{}, fmt.Errorf("state: finalize service rollout retire siblings: %w", err)
 	}
 	now := time.Now().UTC()
 	handoff := target.ServiceRolloutHandoff
@@ -196,12 +190,27 @@ func (s *PgStore) BeginServiceRolloutCutover(ctx context.Context, id string) (De
 		return Deployment{}, fmt.Errorf("state: begin service rollout cutover: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	updated, err := s.beginServiceRolloutCutoverTx(ctx, tx, id)
+	if err != nil {
+		return updated, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return updated, err
+	}
+	return updated, nil
+}
+func (s *PgStore) beginServiceRolloutCutoverTx(ctx context.Context, tx pgx.Tx, id string) (Deployment, error) {
 	target, rows, err := s.loadAndLockServiceRollout(ctx, tx, id)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if target.ServiceRolloutHandoff.ActiveAbort() {
 		return target, ErrServiceRolloutInvalid
+	}
+	previous, _ := previousServiceRolloutRow(target, rows)
+	target, err = s.prepareServiceBinding(ctx, tx, target, ServiceRolloutActionPromote, target.ID, previous.id, target.ServiceRolloutHandoff.Reason)
+	if err != nil {
+		return target, err
 	}
 	var manifestJSON []byte
 	if err := tx.QueryRow(ctx, `select coalesce(manifest, '{}'::jsonb) from apps where id = $1`, target.AppID).Scan(&manifestJSON); err != nil {
@@ -226,7 +235,6 @@ func (s *PgStore) BeginServiceRolloutCutover(ctx context.Context, id string) (De
 		target.AppID, target.Scope, target.ID); err != nil {
 		return Deployment{}, fmt.Errorf("state: begin service rollout cutover weights: %w", err)
 	}
-	previous, _ := previousServiceRolloutRow(target, rows)
 	now := time.Now().UTC()
 	handoff := target.ServiceRolloutHandoff
 	if handoff.StartedAt == nil || handoff.Action != ServiceRolloutActionPromote {
@@ -239,6 +247,12 @@ func (s *PgStore) BeginServiceRolloutCutover(ctx context.Context, id string) (De
 	handoff.LastError = ""
 	handoff.UpdatedAt = &now
 	handoff.CompletedAt = nil
+	target.ServiceRolloutHandoff = handoff
+	target, err = completeServiceBinding(ctx, tx, target)
+	if err != nil {
+		return target, err
+	}
+	handoff = target.ServiceRolloutHandoff
 	handoffJSON, err := json.Marshal(handoff)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: begin service rollout cutover encode handoff: %w", err)
@@ -249,16 +263,9 @@ func (s *PgStore) BeginServiceRolloutCutover(ctx context.Context, id string) (De
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: begin service rollout cutover reload: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Deployment{}, fmt.Errorf("state: begin service rollout cutover commit: %w", err)
-	}
 	return updated, nil
 }
 
-// BeginServiceRolloutAbort is the reverse of BeginServiceRolloutCutover. It
-// restores the recorded predecessor to 100% while both generations remain
-// live, making the traffic change recoverable until the gateway and request
-// drain barriers complete.
 func (s *PgStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Deployment, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -276,6 +283,10 @@ func (s *PgStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Depl
 	if !found || (target.ServiceRolloutHandoff.PredecessorDeploymentID != "" && target.ServiceRolloutHandoff.PredecessorDeploymentID != previous.id) {
 		return target, ErrServiceRolloutInvalid
 	}
+	target, err = s.prepareServiceBinding(ctx, tx, target, ServiceRolloutActionAbort, previous.id, previous.id, target.ServiceRolloutHandoff.Reason)
+	if err != nil {
+		return target, err
+	}
 	if _, err := tx.Exec(ctx,
 		`update deployments
 		    set traffic_percent = case when id = $3 then 100 else 0 end
@@ -291,6 +302,12 @@ func (s *PgStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Depl
 	handoff.LastError = ""
 	handoff.UpdatedAt = &now
 	handoff.CompletedAt = nil
+	target.ServiceRolloutHandoff = handoff
+	target, err = completeServiceBinding(ctx, tx, target)
+	if err != nil {
+		return target, err
+	}
+	handoff = target.ServiceRolloutHandoff
 	handoffJSON, err := json.Marshal(handoff)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: begin service rollout abort encode handoff: %w", err)
@@ -317,7 +334,7 @@ func (s *PgStore) UpdateServiceRolloutHandoff(ctx context.Context, id string, ha
 	}
 	updated, err := scanDeploymentWithRootfs(s.pool.QueryRow(ctx,
 		`update deployments
-		    set service_rollout_handoff = $2::jsonb
+		    set service_rollout_handoff = ($2::jsonb - 'bindings_check') || jsonb_strip_nulls(jsonb_build_object('bindings_check', service_rollout_handoff->'bindings_check'))
 		  where id = $1 and status = 'live' and canary_total_steps = 0 and rollout_state = 'rolling_out'
 		    and (coalesce(service_rollout_handoff->>'action', '') <> 'abort'
 		         or coalesce(service_rollout_handoff->>'phase', '') = 'complete'
@@ -348,9 +365,18 @@ func (s *PgStore) AbortServiceRollout(ctx context.Context, id, reason string) (D
 		return Deployment{}, err
 	}
 	previous, _ := previousServiceRolloutRow(target, rows)
+	target, err = s.prepareServiceBinding(ctx, tx, target, ServiceRolloutActionAbort, previous.id, previous.id, reason)
+	if err != nil {
+		return target, err
+	}
 	previousID := previous.id
+	q := sqlc.New()
 	if previousID != "" {
-		if _, err := tx.Exec(ctx, `delete from deployment_revision_pins where deployment_id = $1`, previousID); err != nil {
+		previousUUID, parseErr := operationUUID(previousID)
+		if parseErr != nil {
+			return Deployment{}, parseErr
+		}
+		if err := q.ClearServiceRolloutPredecessorPin(ctx, tx, previousUUID); err != nil {
 			return Deployment{}, fmt.Errorf("state: abort service rollout clear predecessor pin: %w", err)
 		}
 	}
@@ -358,16 +384,16 @@ func (s *PgStore) AbortServiceRollout(ctx context.Context, id, reason string) (D
 		if row.id == id {
 			continue
 		}
-		traffic := 0
+		traffic := int32(0)
 		if row.id == previousID {
 			traffic = 100
 		}
-		if _, err := tx.Exec(ctx,
-			`update deployments set status = case when $2::integer > 0 or exists (
-				select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
-				where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
-			) then 'live' else 'superseded' end, traffic_percent = $2 where id = $1`,
-			row.id, traffic); err != nil {
+		deploymentID, parseErr := operationUUID(row.id)
+		if parseErr != nil {
+			return Deployment{}, parseErr
+		}
+		if _, err := q.SetRetainedServiceRolloutSiblingTraffic(ctx, tx, sqlc.SetRetainedServiceRolloutSiblingTrafficParams{
+			DeploymentID: deploymentID, TrafficPercent: traffic}); err != nil {
 			return Deployment{}, fmt.Errorf("state: abort service rollout sibling %s: %w", row.id, err)
 		}
 	}
@@ -383,22 +409,24 @@ func (s *PgStore) AbortServiceRollout(ctx context.Context, id, reason string) (D
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: abort service rollout encode handoff: %w", err)
 	}
-	updated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
-		`update deployments set
-		    status = 'superseded',
-		    traffic_percent = 0,
-		    rollout_state = 'aborted',
-		    rollout_completed_at = null,
-		    rollout_aborted_at = $2,
-		    rollout_aborted_reason = $3,
-		    service_rollout_handoff = $4::jsonb
-		  where id = $1
-		  returning `+deploymentSelectColumnsWithRootfs, target.ID, now, reason, handoffJSON))
+	targetID, err := operationUUID(target.ID)
+	if err != nil {
+		return Deployment{}, err
+	}
+	status, err := q.FinalizeRetainedServiceRolloutAbortTarget(ctx, tx, sqlc.FinalizeRetainedServiceRolloutAbortTargetParams{
+		DeploymentID: targetID, AbortedAt: pgtype.Timestamptz{Time: now, Valid: true}, Reason: reason, Handoff: handoffJSON})
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: abort service rollout update: %w", err)
 	}
+	target.Status = DeploymentStatus(status)
+	target.TrafficPercent = 0
+	target.RolloutState = "aborted"
+	target.RolloutCompletedAt = nil
+	target.RolloutAbortedAt = &now
+	target.RolloutAbortedReason = reason
+	target.ServiceRolloutHandoff = handoff
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: abort service rollout commit: %w", err)
 	}
-	return updated, nil
+	return target, nil
 }

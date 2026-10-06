@@ -15,9 +15,12 @@ import (
 const SchemaVersion = 1
 
 const (
-	SmokeVerified = "verified"
-	SmokeFailed   = "failed"
-	SmokeSkipped  = "skipped"
+	SmokeVerified                   = "verified"
+	SmokeFailed                     = "failed"
+	SmokeSkipped                    = "skipped"
+	VerificationHTTPHealth          = "http_health"
+	VerificationRouteConnectivity   = "route_connectivity"
+	AuthenticationPlatformChallenge = "platform_challenge"
 )
 
 // Source contains non-sensitive provenance. It intentionally excludes source
@@ -35,15 +38,20 @@ type Artifact struct {
 }
 
 type SmokeResult struct {
-	Status       string    `json:"status"`
-	Path         string    `json:"path,omitempty"`
-	DeploymentID string    `json:"deployment_id,omitempty"`
-	StatusCode   int       `json:"status_code,omitempty"`
-	LatencyMS    int64     `json:"latency_ms,omitempty"`
-	VerifiedAt   time.Time `json:"verified_at,omitempty"`
-	RequestID    string    `json:"request_id,omitempty"`
-	ErrorCode    string    `json:"error_code,omitempty"`
-	Error        string    `json:"error,omitempty"`
+	// Verification names the promise checked. Empty retains the legacy HTTP
+	// health contract. Connectivity does not establish endpoint health.
+	Verification string `json:"verification,omitempty"`
+	// Authentication describes probe access, not customer/anonymous access.
+	Authentication string    `json:"authentication,omitempty"`
+	Status         string    `json:"status"`
+	Path           string    `json:"path,omitempty"`
+	DeploymentID   string    `json:"deployment_id,omitempty"`
+	StatusCode     int       `json:"status_code,omitempty"`
+	LatencyMS      int64     `json:"latency_ms,omitempty"`
+	VerifiedAt     time.Time `json:"verified_at,omitempty"`
+	RequestID      string    `json:"request_id,omitempty"`
+	ErrorCode      string    `json:"error_code,omitempty"`
+	Error          string    `json:"error,omitempty"`
 }
 
 type Receipt struct {
@@ -81,6 +89,14 @@ func (r Receipt) Validate() error {
 	case SmokeVerified, SmokeFailed, SmokeSkipped:
 	default:
 		return fmt.Errorf("invalid smoke status %q", r.Smoke.Status)
+	}
+	switch r.Smoke.Verification {
+	case "", VerificationHTTPHealth, VerificationRouteConnectivity:
+	default:
+		return fmt.Errorf("invalid smoke verification %q", r.Smoke.Verification)
+	}
+	if r.Smoke.Authentication != "" && r.Smoke.Authentication != AuthenticationPlatformChallenge {
+		return fmt.Errorf("invalid smoke authentication %q", r.Smoke.Authentication)
 	}
 	return nil
 }

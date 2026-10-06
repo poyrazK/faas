@@ -43,6 +43,8 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_VSOCK
 ProtectHostname=yes
 ProtectClock=yes
 ReadWritePaths=/etc/faas/secrets /run/faas /run/netns /srv/fc /var/log/faas /var/lib/faas/cache /sys/fs/cgroup/faas.slice
+StateDirectory=faas/vmmd-failures faas/vmmd-resources
+StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

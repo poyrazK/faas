@@ -69,7 +69,10 @@ type Params struct {
 	Notif     Notifier
 	Audit     Auditor // optional; PR-5.5 emits account.deleted after DeleteAccount fires
 	Artifacts storage.StorageBackend
-	Registry  prometheus.Registerer
+	// BeforeAccountDelete must finish external resource cleanup before metadata
+	// cascades. A failure retains the account and its ownership for the next tick.
+	BeforeAccountDelete func(context.Context, state.Account) error
+	Registry            prometheus.Registerer
 }
 
 // Grace is the 30-day deletion-grace timer. Owns the ticker + the
@@ -164,6 +167,12 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		}
 		if acct.DeletionRequestedAt.After(cutoff) {
 			continue
+		}
+		if g.p.BeforeAccountDelete != nil {
+			if err := g.p.BeforeAccountDelete(ctx, acct); err != nil {
+				g.p.Log.Warn("grace: external cleanup deferred", "account", acct.ID, "err", err)
+				continue
+			}
 		}
 		// Past grace — hard delete. The next tick will skip this row
 		// because DeleteAccount removed it; we still guard on the

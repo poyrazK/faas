@@ -7,13 +7,25 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     name: str,
+    *,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(if_workload_revision, Unset):
+        headers["If-Workload-Revision"] = str(if_workload_revision)
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "delete",
@@ -21,8 +33,10 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             name=quote(str(name), safe=""),
         ),
+        "params": params,
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -30,6 +44,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
     if response.status_code == 204:
         response_204 = cast(Any, None)
         return response_204
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -40,6 +59,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -61,12 +85,19 @@ def sync_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Delete a policy after removing event subscription bindings.
+
+     A stage deletion preserves an explicit empty collection and its collection revision clock after the
+    last policy is removed. Production producer bindings retain their existing deletion checks.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -79,6 +110,8 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         name=name,
+        environment=environment,
+        if_workload_revision=if_workload_revision,
     )
 
     response = client.get_httpx_client().request(
@@ -93,12 +126,19 @@ def sync(
     name: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Any | Problem | None:
     """Delete a policy after removing event subscription bindings.
+
+     A stage deletion preserves an explicit empty collection and its collection revision clock after the
+    last policy is removed. Production producer bindings retain their existing deletion checks.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,6 +152,8 @@ def sync(
         slug=slug,
         name=name,
         client=client,
+        environment=environment,
+        if_workload_revision=if_workload_revision,
     ).parsed
 
 
@@ -120,12 +162,19 @@ async def asyncio_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Delete a policy after removing event subscription bindings.
+
+     A stage deletion preserves an explicit empty collection and its collection revision clock after the
+    last policy is removed. Production producer bindings retain their existing deletion checks.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,6 +187,8 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         name=name,
+        environment=environment,
+        if_workload_revision=if_workload_revision,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -150,12 +201,19 @@ async def asyncio(
     name: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Any | Problem | None:
     """Delete a policy after removing event subscription bindings.
+
+     A stage deletion preserves an explicit empty collection and its collection revision clock after the
+    last policy is removed. Production producer bindings retain their existing deletion checks.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,5 +228,7 @@ async def asyncio(
             slug=slug,
             name=name,
             client=client,
+            environment=environment,
+            if_workload_revision=if_workload_revision,
         )
     ).parsed

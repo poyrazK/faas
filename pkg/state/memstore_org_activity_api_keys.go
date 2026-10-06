@@ -26,7 +26,8 @@ func (m *MemStore) CreateOrgAPIKeyWithActivity(_ context.Context, orgID, account
 	}
 	key := APIKey{
 		ID: newID(), AccountID: accountID, OrgID: orgID,
-		Hash: append([]byte(nil), hash...), Label: label, Scopes: append([]string(nil), scopes...),
+		RunsPrincipalID: newID(),
+		Hash:            append([]byte(nil), hash...), Label: label, Scopes: append([]string(nil), scopes...),
 		CreatedAt: time.Now(), Status: string(APIKeyStatusActive), ExpiresAt: expiresAt,
 		CreatedIP: createdIP, CreatedUA: createdUA, ParentKeyID: parent,
 	}
@@ -95,7 +96,8 @@ func (m *MemStore) RotateOrgAPIKeyWithActivity(_ context.Context, orgID, oldKeyI
 	rotatedFrom := old.ID
 	newKey := APIKey{
 		ID: newID(), AccountID: old.AccountID, OrgID: old.OrgID,
-		Hash: append([]byte(nil), newHash...), Label: newLabel, Scopes: append([]string(nil), old.Scopes...),
+		RunsPrincipalID: old.RunsPrincipalID,
+		Hash:            append([]byte(nil), newHash...), Label: newLabel, Scopes: append([]string(nil), old.Scopes...),
 		CreatedAt: time.Now(), Status: string(APIKeyStatusActive), RotatedFromID: &rotatedFrom,
 		CreatedIP: createdIP, CreatedUA: createdUA, ParentKeyID: parent,
 	}

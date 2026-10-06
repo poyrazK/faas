@@ -191,6 +191,9 @@ func ClassifyWakeError(err error, ctx WakeContext) string {
 		return WakeReasonAfterRestoreFailed
 	case errors.Is(err, ErrVSockFail):
 		return WakeReasonVSockFail
+	case errors.Is(err, ErrSnapshotBackingChanged), errors.Is(err, ErrSnapshotBackingUnverified):
+		// ADR-510: the capture no longer matches this host's kernel/base.
+		return WakeReasonSnapshotStale
 	}
 	// Substring fallback — the stage functions at pkg/fcvm/vmm.go
 	// wrap lower-level I/O without sentinel-bearing errors today

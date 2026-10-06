@@ -87,3 +87,23 @@ func containsSequence(haystack, needle []string) bool {
 	}
 	return false
 }
+
+// adr: 384 Both ports are specific bridge exceptions, never a private-range
+// allowlist. Existing callers remain reachable while new Fetch callers work.
+func TestServiceProxyCanonicalAndLegacyFirewallScope(t *testing.T) {
+	bridge := netip.MustParseAddr("172.19.0.1")
+	config := NewConfigWithBridge("instance-ports", "fc-instance-ports", "veth-host", "veth-peer", netip.MustParseAddr("172.19.0.7"), bridge)
+	commands := config.NftCommands()
+	for _, port := range []int{ServiceProxyPort, LegacyServiceProxyPort} {
+		want := []string{"iifname", "tap0", "ip", "daddr", bridge.String(), "tcp", "dport", strconv.Itoa(port), "accept"}
+		if !containsSequenceInCommands(commands, want) {
+			t.Fatalf("reserved port %d is absent for bridge %s", port, bridge)
+		}
+		for _, command := range commands {
+			line := strings.Join(command, " ")
+			if strings.Contains(line, "tcp dport "+strconv.Itoa(port)+" accept") && !strings.Contains(line, "ip daddr "+bridge.String()) {
+				t.Fatalf("reserved port %d admitted away from local bridge: %s", port, line)
+			}
+		}
+	}
+}

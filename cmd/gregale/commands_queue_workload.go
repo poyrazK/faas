@@ -98,7 +98,7 @@ func cmdQueueSetup(args []string) int {
 	retryMaxSeconds := fs.Float64("retry-max-seconds", 0, "maximum retry delay in seconds")
 	retryJitterSeconds := fs.Float64("retry-jitter-seconds", 0, "retry jitter in seconds (0..1)")
 	force := fs.Bool("force", false, "replace an existing default binding that points at another queue")
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "force")
 	if err := fs.Parse(flags); err != nil || len(pos) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale queue setup <slug> [--queue-name QUEUE] [--target-depth N] [--max-concurrency N] [--max-attempts N] [--retry-base-seconds N] [--retry-max-seconds N] [--retry-jitter-seconds N] [--force]", "queue")
 		return 1

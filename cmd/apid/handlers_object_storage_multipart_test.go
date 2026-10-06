@@ -37,6 +37,8 @@ func TestObjectMultipartLayout(t *testing.T) {
 }
 
 func TestObjectMultipartUploadLifecycle(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
 	e := setup(t, api.PlanHobby)
 	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
@@ -57,7 +59,7 @@ func TestObjectMultipartUploadLifecycle(t *testing.T) {
 	if err := json.Unmarshal(createdResponse.Body.Bytes(), &upload); err != nil {
 		t.Fatal(err)
 	}
-	if upload.State != state.ObjectMultipartActive || upload.PartCount != 1 || upload.PartSizeBytes != api.DefaultMultipartPartBytes {
+	if upload.State != state.ObjectMultipartActive || upload.PartCount != 1 || upload.PartSizeBytes != e.s.objectStorage.MaxPartBytes {
 		t.Fatal(upload)
 	}
 	retryResponse := e.do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: upload.Key, SizeBytes: upload.SizeBytes, ContentType: upload.ContentType}, nil)
@@ -98,6 +100,7 @@ func TestObjectMultipartUploadLifecycle(t *testing.T) {
 	}
 
 	abortResponse := e.do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "cancel.bin", SizeBytes: 10}, nil)
+	provider.multipartParts = objectstorage.MultipartPartsPage{}
 	var abortUpload api.ObjectMultipartUpload
 	if abortResponse.Code != 201 || json.Unmarshal(abortResponse.Body.Bytes(), &abortUpload) != nil {
 		t.Fatal(abortResponse.Code, abortResponse.Body.String())
@@ -174,5 +177,18 @@ func TestObjectMultipartCompletionIntentSurvivesProviderFailure(t *testing.T) {
 	}
 	if retried := e.do(t, "POST", base+"/"+upload.ID+"/complete", api.CompleteObjectMultipartUploadRequest{Parts: parts}, nil); retried.Code != 409 {
 		t.Fatal("retry bypassed durable cooldown", retried.Code, retried.Body.String())
+	}
+}
+
+func TestMultipartLayoutHonorsPartLimit(t *testing.T) {
+	size, count, err := multipartLayoutWithLimit(65<<20, 64<<20)
+	if err != nil || size != 64<<20 || count != 2 {
+		t.Fatalf("size=%d count=%d err=%v", size, count, err)
+	}
+	if _, _, err = multipartLayoutWithLimit(65<<20, 1<<20); err == nil {
+		t.Fatal("allowed multipart parts smaller than S3 minimum")
+	}
+	if _, _, err = multipartLayoutWithLimit(api.MaxObjectUploadBytes, 64<<20); err == nil {
+		t.Fatal("exceeded part count with a constrained part ceiling")
 	}
 }

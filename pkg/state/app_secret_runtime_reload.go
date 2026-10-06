@@ -6,13 +6,13 @@ import (
 )
 
 func validAppSecretRuntimeReloadResult(result AppSecretRuntimeReloadResult) bool {
-	if result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
+	if !validRuntimeAppSecretFence(result.Fence) || result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
 		!ValidSecretRuntimeWorkloadName(result.WorkloadName) ||
 		!ValidSecretReloadOutcome(result.Revision, result.Projection, result.Signal, result.ErrorCode) {
 		return false
 	}
 	for _, candidate := range result.Candidates {
-		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
+		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 || (!result.Fence.empty() && candidate.Scope != result.Fence.Scope) {
 			return false
 		}
 	}
@@ -20,15 +20,16 @@ func validAppSecretRuntimeReloadResult(result AppSecretRuntimeReloadResult) bool
 }
 
 func validAppSecretRuntimeReloadAckResult(result AppSecretRuntimeReloadAckResult) bool {
-	if result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
-		!ValidSecretRuntimeWorkloadName(result.WorkloadName) || !validSecretRevision(result.Revision) {
+	if !validRuntimeAppSecretFence(result.Fence) || result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
+		!ValidSecretRuntimeWorkloadName(result.WorkloadName) || !validSecretRevision(result.Revision) ||
+		(result.Generation != "" && !ValidSecretProcessGeneration(result.Generation)) {
 		return false
 	}
 	if !ValidSecretApplicationReloadAck(result.Revision, result.Status, result.ErrorCode) {
 		return false
 	}
 	for _, candidate := range result.Candidates {
-		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
+		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 || (!result.Fence.empty() && candidate.Scope != result.Fence.Scope) {
 			return false
 		}
 	}
@@ -80,6 +81,7 @@ func ValidSecretReloadOutcome(revision string, projection SecretReloadProjection
 	case projection == SecretReloadProjectionFailed && signal == SecretReloadSignalNotAttempted && errorCode == "projection_failed":
 	case projection == SecretReloadProjectionUpdated && signal == SecretReloadSignalSent && errorCode == "":
 	case projection == SecretReloadProjectionUpdated && signal == SecretReloadSignalQueued && errorCode == "":
+	case projection == SecretReloadProjectionUpdated && signal == SecretReloadSignalNotAttempted && errorCode == "":
 	case projection == SecretReloadProjectionUpdated && signal == SecretReloadSignalFailed && errorCode == "signal_failed":
 	case projection == SecretReloadProjectionUnchanged && signal == SecretReloadSignalNotAttempted && errorCode == "":
 	default:

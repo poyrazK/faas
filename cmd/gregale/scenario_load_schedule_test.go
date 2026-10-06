@@ -210,7 +210,27 @@ func TestLoadPacingAndCanceledIdleWorkers(t *testing.T) {
 
 func TestLoadStagesCLIProgressBudgetsAndJUnit(t *testing.T) {
 	dir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(5 * time.Millisecond) }))
+	// PeakVUs counts overlapping journeys. Fast requests can fall between
+	// another user's pacing intervals, so hold the first request until the
+	// ramp starts a second journey rather than relying on timer alignment.
+	var arrivals atomic.Int32
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if arrivals.Add(1) == 2 {
+			close(started)
+		}
+		timer := time.NewTimer(3 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-started:
+		case <-r.Context().Done():
+			return
+		case <-timer.C:
+			http.Error(w, "load ramp did not start a second journey", http.StatusServiceUnavailable)
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}))
 	defer server.Close()
 	manifest := filepath.Join(dir, "gregale-test.yaml")
 	contents := `version: 1

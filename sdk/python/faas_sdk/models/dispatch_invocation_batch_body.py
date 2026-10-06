@@ -7,7 +7,6 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.trigger_kind import TriggerKind, check_trigger_kind
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -19,41 +18,41 @@ T = TypeVar("T", bound="DispatchInvocationBatchBody")
 
 @_attrs_define
 class DispatchInvocationBatchBody:
+    invocation_id: str
+    """Synthetic batch identity, typically trigger- followed by the trigger UUID."""
     trigger_id: UUID
+    app_id: UUID
     records: list[DispatchInvocationBatchBodyRecordsItem]
-    app_id: UUID | Unset = UNSET
-    kind: TriggerKind | Unset = UNSET
-    """Discriminator for the underlying event source."""
+    source: str | Unset = UNSET
+    """Internal dispatch source; esm for trigger and durable queue batches."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        invocation_id = self.invocation_id
+
         trigger_id = str(self.trigger_id)
+
+        app_id = str(self.app_id)
 
         records = []
         for records_item_data in self.records:
             records_item = records_item_data.to_dict()
             records.append(records_item)
 
-        app_id: str | Unset = UNSET
-        if not isinstance(self.app_id, Unset):
-            app_id = str(self.app_id)
-
-        kind: str | Unset = UNSET
-        if not isinstance(self.kind, Unset):
-            kind = self.kind
+        source = self.source
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "invocation_id": invocation_id,
                 "trigger_id": trigger_id,
+                "app_id": app_id,
                 "records": records,
             }
         )
-        if app_id is not UNSET:
-            field_dict["app_id"] = app_id
-        if kind is not UNSET:
-            field_dict["kind"] = kind
+        if source is not UNSET:
+            field_dict["source"] = source
 
         return field_dict
 
@@ -62,7 +61,11 @@ class DispatchInvocationBatchBody:
         from ..models.dispatch_invocation_batch_body_records_item import DispatchInvocationBatchBodyRecordsItem
 
         d = dict(src_dict)
+        invocation_id = d.pop("invocation_id")
+
         trigger_id = UUID(d.pop("trigger_id"))
+
+        app_id = UUID(d.pop("app_id"))
 
         records = []
         _records = d.pop("records")
@@ -71,25 +74,14 @@ class DispatchInvocationBatchBody:
 
             records.append(records_item)
 
-        _app_id = d.pop("app_id", UNSET)
-        app_id: UUID | Unset
-        if isinstance(_app_id, Unset):
-            app_id = UNSET
-        else:
-            app_id = UUID(_app_id)
-
-        _kind = d.pop("kind", UNSET)
-        kind: TriggerKind | Unset
-        if isinstance(_kind, Unset):
-            kind = UNSET
-        else:
-            kind = check_trigger_kind(_kind)
+        source = d.pop("source", UNSET)
 
         dispatch_invocation_batch_body = cls(
+            invocation_id=invocation_id,
             trigger_id=trigger_id,
-            records=records,
             app_id=app_id,
-            kind=kind,
+            records=records,
+            source=source,
         )
 
         dispatch_invocation_batch_body.additional_properties = d

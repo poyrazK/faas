@@ -182,7 +182,7 @@ type ColdBootSpec struct {
 	BaseKey    string // StorageBackend key for drive0 shared ro base rootfs
 	LayerKey   string // StorageBackend key for drive1 per-app app layer (legacy single-workload path)
 	VcpuCount  int    // 2, or 4 for Scale
-	MemSizeMiB int    // plan RAM
+	MemSizeMiB int    // guest RAM: main plus explicitly allocated companions
 	Tap        string // netns-side tap device (always "tap0")
 	// HealthcheckPath is the HTTP readiness path. Empty preserves the
 	// legacy TCP probe unless HealthcheckGRPC selects the standard gRPC

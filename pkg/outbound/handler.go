@@ -41,18 +41,22 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
-	Resolver               Resolver
-	Backend                Backend
-	Client                 *http.Client
-	Metrics                *Metrics
-	MaxBodyBytes           int64
-	MaxResponseBytes       int64
-	MaxResponseHeaderBytes int64
-	MaxResponseHeaders     int
-	IdentityVerifier       IdentityVerifier
-	CredentialResolver     ManagedCredentialResolver
-	managedAuthorization   map[string]string
-	responseCache          *outboundResponseCache
+	Resolver                  Resolver
+	Backend                   Backend
+	Client                    *http.Client
+	Metrics                   *Metrics
+	MaxBodyBytes              int64
+	MaxResponseBytes          int64
+	MaxResponseHeaderBytes    int64
+	MaxResponseHeaders        int
+	IdentityVerifier          IdentityVerifier
+	ExecutionIdentityVerifier ExecutionIdentityVerifier
+	ExecutionAuthorizer       ExecutionAuthorizer
+	WorkflowAuthorizer        WorkflowAuthorizer
+	workflowClient            *http.Client
+	CredentialResolver        ManagedCredentialResolver
+	managedAuthorization      map[string]string
+	responseCache             *outboundResponseCache
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -124,6 +128,7 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 	if client.Transport == nil {
 		client.Transport = http.DefaultTransport
 	}
+	workflowClient := newWorkflowHTTPClient(client)
 	client.Transport = newDependencyTransport(client.Transport)
 	responseCache, err := newOutboundResponseCache()
 	if err != nil {
@@ -133,6 +138,7 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		Resolver:               resolver,
 		Backend:                backend,
 		Client:                 client,
+		workflowClient:         workflowClient,
 		responseCache:          responseCache,
 		MaxBodyBytes:           defaultMaxBodyBytes,
 		MaxResponseBytes:       defaultMaxResponseBytes,
@@ -180,15 +186,52 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metricIntegrationID := integration.MetricLabel()
-	appID, ok := h.callerAppID(w, r, integration)
+	workflowIdentity, ok := h.callerWorkflowIdentity(w, r, integration, path)
 	if !ok {
 		return
 	}
-	if !integration.AllowsApp(appID) {
-		writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
+	executionIdentity, isExecution, ok := h.callerExecutionIdentity(w, r, integration)
+	if !ok {
 		return
 	}
-	if !integration.AllowsAppRequest(appID, r.Method, path) || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
+	appID := ""
+	principalID := ""
+	if isExecution {
+		if h.ExecutionAuthorizer == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
+			return
+		}
+		allowed, authorizeErr := h.ExecutionAuthorizer.AuthorizeExecution(r.Context(), executionIdentity, integration.ID)
+		if authorizeErr != nil {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
+			return
+		}
+		if !allowed {
+			writeProblem(w, http.StatusForbidden, "outbound_execution_not_authorized", "This Run is not authorized for the outbound integration", "")
+			return
+		}
+		principalID = "execution:" + executionIdentity.ExecutionID
+	} else if workflowIdentity != nil {
+		appID = workflowIdentity.AppID
+		principalID = "workflow:" + workflowIdentity.RunID
+	} else {
+		appID, ok = h.callerAppID(w, r, integration)
+		if !ok {
+			return
+		}
+		if !integration.AllowsApp(appID) {
+			writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
+			return
+		}
+		principalID = appID
+	}
+	var allowedRoute bool
+	if isExecution {
+		allowedRoute = integration.AllowsRequest(r.Method, path)
+	} else {
+		allowedRoute = integration.AllowsAppRequest(appID, r.Method, path)
+	}
+	if !allowedRoute || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
 		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
 		return
 	}
@@ -212,7 +255,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	bindingAppID := ""
 	var bindingDailyRequestLimit *int64
 	_, explicitlyBound := integration.BindingAppIDs[appID]
-	if integration.OwnerKind == IntegrationOwnerCustomer || explicitlyBound {
+	if appID != "" && (integration.OwnerKind == IntegrationOwnerCustomer || explicitlyBound) {
 		bindingAppID = appID
 		bindingDailyRequestLimit = integration.BindingDailyRequestLimits[appID]
 	}
@@ -273,6 +316,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if workflowIdentity != nil && workflowIdentity.Attempt > 1 && !h.consumeRetryBudget(ctx, integration.ID, metricIntegrationID, decision.RetryBudgetPerMinute) {
+		writeProblem(w, http.StatusTooManyRequests, "outbound_retry_budget_exhausted", "Outbound retry budget is exhausted", "60")
+		return
+	}
 	upstreamStarted := time.Now()
 	upstreamURL, err := targetURL(integration.Origin, path, r.URL.RawQuery)
 	if err != nil {
@@ -303,13 +350,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength == 0 {
 		upstreamReq.Body = http.NoBody
 	}
-	cacheEligible := outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds)
+	cacheEligible := workflowIdentity == nil && outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds)
 	cacheKey := ""
 	var resp *http.Response
 	attempts := 0
 	cacheHit := false
 	if cacheEligible {
-		cacheKey = h.responseCache.key(integration.ID, appID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq)
+		cacheKey = h.responseCache.key(integration.ID, principalID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq)
 		if cached, ok := h.responseCache.get(cacheKey, time.Now()); ok {
 			resp = cached
 			cacheHit = true
@@ -374,8 +421,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.Metrics.ObserveCircuit(metricIntegrationID, "closed")
 			}
 		}
-		resp, attempts, err = h.doWithRetries(dependencyCtx, upstreamReq, integration.ID, metricIntegrationID,
-			integration.PolicyRevision, integration.MaxRetries, decision.RetryBudgetPerMinute)
+		maxRetries := integration.MaxRetries
+		client := h.Client
+		if workflowIdentity != nil {
+			maxRetries = 0
+			client = h.workflowClient
+		}
+		resp, attempts, err = h.doWithRetries(dependencyCtx, client, upstreamReq, integration.ID, metricIntegrationID,
+			integration.PolicyRevision, maxRetries, decision.RetryBudgetPerMinute)
 		if breaker != nil {
 			outcome := outboundCircuitOutcome(resp, err)
 			if outcome != CircuitOutcomeNeutral {
@@ -417,6 +470,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead && resp.StatusCode != http.StatusNotModified && h.MaxResponseBytes > 0 && resp.ContentLength > h.MaxResponseBytes {
 		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
+		return
+	}
+	if workflowIdentity != nil {
+		writeWorkflowOutboundResponse(w, r, resp, managedAuthorization)
 		return
 	}
 	for k, values := range resp.Header {
@@ -462,6 +519,31 @@ func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integratio
 		return "", false
 	}
 	return r.Header.Get(AppHeader), true
+}
+
+func (h *Handler) callerExecutionIdentity(w http.ResponseWriter, r *http.Request, integration Integration) (ExecutionIdentity, bool, bool) {
+	rawToken := r.Header.Get(ExecutionIdentityHeader)
+	if rawToken == "" {
+		return ExecutionIdentity{}, false, true
+	}
+	if integration.OwnerKind != IntegrationOwnerCustomer || integration.ProviderAuthMode != ProviderAuthManaged || integration.CredentialSource != CredentialSourceCustomerSealed {
+		writeProblem(w, http.StatusForbidden, "outbound_execution_not_authorized", "Runs access is unavailable for this outbound integration", "")
+		return ExecutionIdentity{}, true, false
+	}
+	if r.Header.Get(WorkloadIdentityHeader) != "" {
+		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound identity is ambiguous", "")
+		return ExecutionIdentity{}, true, false
+	}
+	if h.ExecutionIdentityVerifier == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "outbound_identity_unavailable", "Runs workload identity is unavailable", "1")
+		return ExecutionIdentity{}, true, false
+	}
+	identity, err := h.ExecutionIdentityVerifier.VerifyExecution(rawToken, integration.ID)
+	if err != nil {
+		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Runs workload identity is invalid", "")
+		return ExecutionIdentity{}, true, false
+	}
+	return identity, true, true
 }
 
 func responseHeadersWithinBounds(headers http.Header, maxBytes int64, maxCount int) bool {

@@ -335,7 +335,7 @@ companions:
 	}
 	body, err := json.Marshal(startUploadRequest{
 		AppSlug: "manifest-deps", TotalSize: int64(len(raw)),
-		DeployOptions: &api.UploadDeployOptions{Companions: api.Companions{companion}},
+		DeployOptions: &api.UploadDeployOptions{Companions: api.Companions{companion}, Healthcheck: &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "audit.Echo"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -369,6 +369,10 @@ companions:
 	deployment, err := e.store.LatestDeployment(t.Context(), response.AppID)
 	if err != nil {
 		t.Fatalf("LatestDeployment: %v", err)
+	}
+	var probe api.DeploymentHealthcheck
+	if err := json.Unmarshal(deployment.OverrideHealthcheck, &probe); err != nil || probe.GRPC == nil || probe.GRPC.Service != "audit.Echo" {
+		t.Fatalf("manifest dependencies dropped explicit probe: %s (%v)", deployment.OverrideHealthcheck, err)
 	}
 	var dependencies []api.WorkloadDependency
 	if err := json.Unmarshal(deployment.OverrideMainDependsOn, &dependencies); err != nil {

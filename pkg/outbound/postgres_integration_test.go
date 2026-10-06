@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -397,11 +398,12 @@ func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
 		t.Fatalf("create app: %v", err)
 	}
 	policy := api.DefaultOutboundRequestPolicy()
-	// Customer admissions use the persisted request timeout as their lease TTL.
-	// Keep this short so the crash-expiry half-open probe scenario can reclaim it.
-	policy.RequestTimeoutMS = 250
+	// Keep real leases alive throughout the ownership assertions on loaded
+	// runners. Expiry below is driven explicitly through persisted timestamps.
+	policy.RequestTimeoutMS = 30_000
+	const openSeconds = 60
 	policy.CircuitBreakerFailureThreshold = 1
-	policy.CircuitBreakerOpenSeconds = 1
+	policy.CircuitBreakerOpenSeconds = openSeconds
 	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
 		ID: uuid.NewString(), AccountID: account.ID, Name: "circuit-breaker",
 		Origin: "https://api.example.com", AllowedMethods: []string{http.MethodGet},
@@ -425,19 +427,19 @@ func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
 	}
 	spec := outbound.AdmissionSpec{
 		IntegrationID: offer.ID, RatePerSecond: 100, Burst: 20, MaxInFlight: 20,
-		BindingAppID: app.ID, CircuitBreakerFailureThreshold: 1, CircuitBreakerOpenSeconds: 1,
-		LeaseTTL: time.Second,
+		BindingAppID: app.ID, CircuitBreakerFailureThreshold: 1, CircuitBreakerOpenSeconds: openSeconds,
+		LeaseTTL: time.Minute,
 	}
 
 	first, err := backendA.Admit(ctx, spec)
-	if err != nil || !first.Granted || first.CircuitBreakerFailureThreshold != 1 || first.CircuitBreakerOpenSeconds != 1 {
+	if err != nil || !first.Granted || first.CircuitBreakerFailureThreshold != 1 || first.CircuitBreakerOpenSeconds != openSeconds {
 		t.Fatalf("initial circuit admission = %+v, %v", first, err)
 	}
-	gate, err := backendA.AllowCircuit(ctx, offer.ID, first.LeaseID, 1, 1)
+	gate, err := backendA.AllowCircuit(ctx, offer.ID, first.LeaseID, 1, openSeconds)
 	if err != nil || !gate.Allowed || gate.Probe {
 		t.Fatalf("initial circuit gate = %+v, %v", gate, err)
 	}
-	if err := backendA.RecordCircuitOutcome(ctx, offer.ID, first.LeaseID, 1, 1, outbound.CircuitOutcomeFailure); err != nil {
+	if err := backendA.RecordCircuitOutcome(ctx, offer.ID, first.LeaseID, 1, openSeconds, outbound.CircuitOutcomeFailure); err != nil {
 		t.Fatalf("trip circuit: %v", err)
 	}
 	if err := backendA.Release(ctx, offer.ID, first.LeaseID); err != nil {
@@ -448,7 +450,7 @@ func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
 	if err != nil || !openLease.Granted {
 		t.Fatalf("open-state admission = %+v, %v", openLease, err)
 	}
-	openGate, err := backendB.AllowCircuit(ctx, offer.ID, openLease.LeaseID, 1, 1)
+	openGate, err := backendB.AllowCircuit(ctx, offer.ID, openLease.LeaseID, 1, openSeconds)
 	if err != nil || openGate.Allowed || openGate.RetryAfter <= 0 {
 		t.Fatalf("open-state gate = %+v, %v", openGate, err)
 	}
@@ -456,12 +458,14 @@ func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	time.Sleep(1100 * time.Millisecond)
+	if _, err := pool.Exec(ctx, `UPDATE outbound_admission_state SET circuit_open_until = now() - interval '1 second' WHERE integration_id = $1::uuid`, offer.ID); err != nil {
+		t.Fatalf("expire circuit cool-down: %v", err)
+	}
 	probeLease, err := backendA.Admit(ctx, spec)
 	if err != nil || !probeLease.Granted {
 		t.Fatalf("half-open admission = %+v, %v", probeLease, err)
 	}
-	probeGate, err := backendA.AllowCircuit(ctx, offer.ID, probeLease.LeaseID, 1, 1)
+	probeGate, err := backendA.AllowCircuit(ctx, offer.ID, probeLease.LeaseID, 1, openSeconds)
 	if err != nil || !probeGate.Allowed || !probeGate.Probe {
 		t.Fatalf("half-open gate = %+v, %v", probeGate, err)
 	}
@@ -470,7 +474,7 @@ func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
 	if err != nil || !competitor.Granted {
 		t.Fatalf("competing admission = %+v, %v", competitor, err)
 	}
-	competitorGate, err := backendB.AllowCircuit(ctx, offer.ID, competitor.LeaseID, 1, 1)
+	competitorGate, err := backendB.AllowCircuit(ctx, offer.ID, competitor.LeaseID, 1, openSeconds)
 	if err != nil || competitorGate.Allowed || competitorGate.Probe || competitorGate.RetryAfter <= 0 {
 		t.Fatalf("competing half-open gate = %+v, %v", competitorGate, err)
 	}
@@ -481,16 +485,18 @@ func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
 	// The first probe's admission lease expires without a recorded outcome,
 	// simulating a crashed gateway replica. A later admission must reclaim the
 	// probe without writing the stale lease foreign key back to the state row.
-	time.Sleep(1100 * time.Millisecond)
+	if _, err := pool.Exec(ctx, `UPDATE outbound_admission_leases SET expires_at = now() - interval '1 second' WHERE integration_id = $1::uuid AND lease_id = $2::uuid`, offer.ID, probeLease.LeaseID); err != nil {
+		t.Fatalf("expire crashed probe lease: %v", err)
+	}
 	replacementProbe, err := backendB.Admit(ctx, spec)
 	if err != nil || !replacementProbe.Granted {
 		t.Fatalf("replacement probe admission after expiry = %+v, %v", replacementProbe, err)
 	}
-	replacementGate, err := backendB.AllowCircuit(ctx, offer.ID, replacementProbe.LeaseID, 1, 1)
+	replacementGate, err := backendB.AllowCircuit(ctx, offer.ID, replacementProbe.LeaseID, 1, openSeconds)
 	if err != nil || !replacementGate.Allowed || !replacementGate.Probe {
 		t.Fatalf("replacement half-open gate = %+v, %v", replacementGate, err)
 	}
-	if err := backendB.RecordCircuitOutcome(ctx, offer.ID, replacementProbe.LeaseID, 1, 1, outbound.CircuitOutcomeSuccess); err != nil {
+	if err := backendB.RecordCircuitOutcome(ctx, offer.ID, replacementProbe.LeaseID, 1, openSeconds, outbound.CircuitOutcomeSuccess); err != nil {
 		t.Fatalf("close circuit after successful probe: %v", err)
 	}
 	if err := backendB.Release(ctx, offer.ID, replacementProbe.LeaseID); err != nil {
@@ -501,7 +507,7 @@ func TestPostgresCircuitBreakerCoordinatesOneHalfOpenProbe(t *testing.T) {
 	if err != nil || !closedLease.Granted {
 		t.Fatalf("post-probe admission = %+v, %v", closedLease, err)
 	}
-	closedGate, err := backendB.AllowCircuit(ctx, offer.ID, closedLease.LeaseID, 1, 1)
+	closedGate, err := backendB.AllowCircuit(ctx, offer.ID, closedLease.LeaseID, 1, openSeconds)
 	if err != nil || !closedGate.Allowed || closedGate.Probe {
 		t.Fatalf("successful probe did not close shared circuit: %+v, %v", closedGate, err)
 	}
@@ -887,6 +893,96 @@ func TestPostgresGatewayKeepsManagedCredentialBehindIdentityAndRouteChecks(t *te
 		bytes.Contains([]byte(allowed.Header().Get("X-Provider-Result")), []byte(providerAuthorization)) ||
 		allowed.Header().Get("Authorization") != "" {
 		t.Fatal("provider credential leaked in the gateway response")
+	}
+}
+
+func TestPostgresExecutionAuthorizerRechecksLeaseAndRunsGrant(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "outbound-run-auth-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integrationID := uuid.NewString()
+	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
+		ID: integrationID, AccountID: account.ID, Name: "run-auth",
+		Origin: "https://api.example.com", AllowedMethods: []string{http.MethodGet},
+		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+		CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: outbound.IntegrationOwnerCustomer,
+		RequestPolicy: api.DefaultOutboundRequestPolicy(),
+	})
+	if err != nil {
+		t.Fatalf("CreateOutboundIntegration: %v", err)
+	}
+	if err := store.SetOutboundCredential(ctx, account.ID, offer.ID, []byte("sealed-provider-credential")); err != nil {
+		t.Fatalf("SetOutboundCredential: %v", err)
+	}
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, offer.ID, true); err != nil {
+		t.Fatalf("SetOutboundIntegrationRunsEnabled: %v", err)
+	}
+	request := api.CreateExecutionRequest{
+		Runtime: api.ExecutionRuntimePython313,
+		Source:  "def main(input, context):\n    return input",
+		Input:   []byte(`{"value":1}`),
+		Limits:  &api.ExecutionLimitRequest{TimeoutMS: 30_000},
+	}
+	resolved, problem := request.Resolve(api.PlanPro)
+	if problem != nil {
+		t.Fatalf("resolve execution: %v", problem)
+	}
+	admittedAt := time.Now().UTC().Add(-time.Second)
+	created, err := store.CreateExecution(ctx, state.CreateExecutionParams{
+		AccountID: account.ID, Request: resolved, SourceBytes: len(request.Source), InputBytes: len(request.Input),
+		AdmittedAt: admittedAt, DeadlineAt: admittedAt.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
+		SealedPayload: []byte("sealed-run-request"), PayloadKID: "run-auth-test",
+		OutboundIntegrationIDs: []string{offer.ID},
+	})
+	if err != nil {
+		t.Fatalf("CreateExecution: %v", err)
+	}
+	claimedAt := time.Now().UTC()
+	claim, err := store.ClaimExecution(ctx, "outbound-run-auth-test", claimedAt, time.Minute)
+	if err != nil || claim.ID != created.ID || claim.LeaseToken == nil {
+		t.Fatalf("ClaimExecution = %+v, %v", claim, err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := store.PinExecutionRuntime(ctx, claim.ID, *claim.LeaseToken, digest, claimedAt.Add(time.Millisecond)); err != nil {
+		t.Fatalf("PinExecutionRuntime: %v", err)
+	}
+	if _, err := store.MarkExecutionRunning(ctx, claim.ID, *claim.LeaseToken, claimedAt.Add(2*time.Millisecond)); err != nil {
+		t.Fatalf("MarkExecutionRunning: %v", err)
+	}
+	authorizer, err := outbound.NewPostgresExecutionAuthorizer(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := outbound.ExecutionIdentity{AccountID: account.ID, ExecutionID: claim.ID, LeaseToken: *claim.LeaseToken}
+	if allowed, err := authorizer.AuthorizeExecution(ctx, identity, offer.ID); err != nil || !allowed {
+		t.Fatalf("active Run authorization = %v, %v; want allowed", allowed, err)
+	}
+	stale := identity
+	stale.LeaseToken = uuid.NewString()
+	if allowed, err := authorizer.AuthorizeExecution(ctx, stale, offer.ID); err != nil || allowed {
+		t.Fatalf("stale lease authorization = %v, %v; want denied", allowed, err)
+	}
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, offer.ID, false); err != nil {
+		t.Fatalf("revoke Runs grant: %v", err)
+	}
+	if allowed, err := authorizer.AuthorizeExecution(ctx, identity, offer.ID); err != nil || allowed {
+		t.Fatalf("revoked Runs authorization = %v, %v; want denied", allowed, err)
+	}
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, offer.ID, true); err != nil {
+		t.Fatalf("restore Runs grant for expiry check: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE executions SET updated_at = started_at + interval '1 microsecond', lease_expires_at = started_at + interval '2 microseconds' WHERE id = $1::uuid`, claim.ID); err != nil {
+		t.Fatalf("expire execution lease: %v", err)
+	}
+	if allowed, err := authorizer.AuthorizeExecution(ctx, identity, offer.ID); err != nil || allowed {
+		t.Fatalf("expired lease authorization = %v, %v; want denied", allowed, err)
 	}
 }
 

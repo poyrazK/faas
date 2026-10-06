@@ -19,10 +19,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -184,11 +187,21 @@ func managedPostgresE2EEnv(t *testing.T) ([]string, managedpostgres.Backend) {
 	if err := os.WriteFile(configPath, encoded, 0o600); err != nil {
 		t.Fatalf("write managed postgres config: %v", err)
 	}
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientPath := filepath.Join(t.TempDir(), "fleet.age.pub")
+	if err := secretbox.WriteRecipientFile(recipientPath, identity); err != nil {
+		t.Fatal(err)
+	}
 	return []string{
+		"FAAS_FLEET_AGE_RECIPIENT_PATH=" + recipientPath,
 		"FAAS_MANAGED_POSTGRES_CONFIG=" + configPath,
 		"FAAS_E2E_NEON_API_KEY=e2e-provider-key",
 		"FAAS_ENVIRONMENT=staging",
 		"FAAS_MANAGED_POSTGRES_QUALIFIED=true",
+		managedpostgres.QualificationVersionEnv + "=" + strconv.Itoa(managedpostgres.QualificationArtifactVersion),
 		"FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND=" + backend.ID,
 		"FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT=" + backend.Fingerprint,
 		"FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL=" + time.Now().UTC().Add(2*time.Hour).Format(time.RFC3339),
@@ -390,7 +403,7 @@ func seedManagedPostgresBinding(t *testing.T, pool *pgxpool.Pool, accountID, dat
 	if err := state.NewPgStore(pool).PutManagedPostgresSecret(context.Background(), state.AppSecret{
 		AccountID: accountID, AppID: appID, Scope: "production", Key: "DATABASE_URL",
 		Ciphertext: []byte("sealed-e2e-credential"), Kid: "age1e2e",
-		ManagedPostgresBindingID: binding.ID, ManagedCredentialRef: credentialRef, ManagedCredentialGeneration: 1,
+		ManagedPostgresBindingID: binding.ID, ManagedPostgresAccess: string(binding.Access), ManagedCredentialRef: credentialRef, ManagedCredentialGeneration: 1,
 	}); err != nil {
 		t.Fatalf("seed managed postgres secret: %v", err)
 	}

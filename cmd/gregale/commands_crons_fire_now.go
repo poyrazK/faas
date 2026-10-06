@@ -72,12 +72,12 @@ func cmdCronsRun(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons run <id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
 		return 1
 	}
 	id := fs.Arg(0)
 	if !cronIDPattern.MatchString(id) {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons run <id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -109,12 +109,12 @@ func cmdCronsFireNowGet(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons fire-now <request-id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
 		return 1
 	}
 	requestID := fs.Arg(0)
 	if !fireNowRequestIDPattern.MatchString(requestID) {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons fire-now <request-id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
 		return 1
 	}
 	client, err := authedClient()

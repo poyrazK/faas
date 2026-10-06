@@ -111,12 +111,19 @@ func TestProjectsEnvironmentReleasesUsesEnvironmentRoute(t *testing.T) {
 
 func TestProjectsEnvironmentCreateSendsCloneSource(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"env-1","project_id":"project-1","slug":"staging","protected":false,"created_at":"2026-09-22T00:00:00Z","updated_at":"2026-09-22T00:00:00Z","cloned_from":"production","clone":{"configuration_copied":true,"variables_copied":2,"secrets_copied":1,"workloads_copied":1,"shared_resources":["domains","policies","routes"]}}`, http.StatusCreated)
+	f := authedFakeAPI(t, `{"id":"env-1","project_id":"project-1","slug":"staging","protected":false,"created_at":"2026-09-22T00:00:00Z","updated_at":"2026-09-22T00:00:00Z","cloned_from":"production","clone":{"configuration_copied":true,"variables_copied":2,"secrets_copied":1,"secret_references_copied":3,"workloads_copied":1,"shared_resources":["domains","policies","routes"]}}`, http.StatusCreated)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
 	if code := cmdProjectsEnvironmentCreate([]string{"shop", "staging", "--from", "production"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/projects/shop/environments" || !strings.Contains(string(f.sawBody), `"from_environment":"production"`) {
 		t.Fatalf("request = %s %s body=%s", f.sawMethod, f.sawPath, f.sawBody)
+	}
+	if !strings.Contains(out.String(), "secrets=1 secret references=3") {
+		t.Fatalf("clone output omitted reference count: %q", out.String())
 	}
 }
 

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ProjectEnvironmentCloneOperationResponse } from './ProjectEnvironmentCloneOperationResponse.js';
 import type { ProjectEnvironmentCloneResponse } from './ProjectEnvironmentCloneResponse.js';
 /**
  * Durable named environment target for a project.
@@ -18,5 +19,6 @@ export type ProjectEnvironmentResponse = {
   updated_at: string;
   cloned_from?: string;
   clone?: ProjectEnvironmentCloneResponse;
+  clone_operation?: ProjectEnvironmentCloneOperationResponse;
 };
 

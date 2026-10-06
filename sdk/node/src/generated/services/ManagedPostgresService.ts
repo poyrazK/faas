@@ -2,19 +2,49 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
+import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
+import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgresComputePolicyChange.js';
+import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
+import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
 import type { Problem } from '../models/Problem.js';
+import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ManagedPostgresService {
+  /**
+   * Show plan and region PostgreSQL feature support
+   * Returns configured provider-neutral support after plan limits without provider calls. provisioning_enabled includes qualification and canary gates. Current usage, budget, and quota admission are checked separately at reservation. Existing databases remain pinned to their original backend.
+   * @returns ManagedPostgresCapabilities Effective regional capability contract
+   * @returns Problem Authentication or capability lookup error
+   * @throws ApiError
+   */
+  public static getManagedPostgresCapabilities({
+    region,
+  }: {
+    /**
+     * Portable region name; defaults to the configured region.
+     */
+    region?: string,
+  }): CancelablePromise<ManagedPostgresCapabilities | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/capabilities',
+      query: {
+        'region': region,
+      },
+    });
+  }
   /**
    * List managed PostgreSQL databases
    * @returns ManagedPostgresDatabaseList Account databases
@@ -110,6 +140,128 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Stage a managed PostgreSQL restore cutover
+   * Requires managed PostgreSQL manage scope and a verified email. Stages all
+   * source bindings for one app and scope on a ready restore target. Pins both
+   * databases and the source bindings. Credentials remain unpublished;
+   * workloads continue using the source. No activation is performed.
+   *
+   * @returns Problem Authentication, invalid restore target, conflict, or provider unavailable
+   * @returns ManagedPostgresCutover Durable preparation status; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static prepareManagedPostgresCutover({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: PrepareManagedPostgresCutoverRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresCutover> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/cutovers',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read managed PostgreSQL cutover status
+   * Requires managed PostgreSQL read scope. Verification freshness expires after five minutes and does not authorize activation.
+   * @returns ManagedPostgresCutover Safe cutover metadata; Cache-Control no-store
+   * @returns Problem Authentication or cutover status error
+   * @throws ApiError
+   */
+  public static getManagedPostgresCutover({
+    id,
+  }: {
+    /**
+     * Gregale managed PostgreSQL cutover UUID.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresCutover | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/cutovers/{id}',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Verify a managed PostgreSQL cutover
+   * Requires managed PostgreSQL manage scope. Queue read-only SQL authentication and ACL checks from the control plane against each staged target credential. Repeating after verification starts a fresh batch. This does not test application VM reachability or change bindings.
+   * @returns Problem Authentication, state conflict, or cutover error
+   * @returns ManagedPostgresCutover Durable verify status; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static verifyManagedPostgresCutover({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Gregale managed PostgreSQL cutover UUID.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresCutover> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/cutovers/{id}/verify',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+    });
+  }
+  /**
+   * Cancel a managed PostgreSQL cutover
+   * Requires managed PostgreSQL manage scope. Queue revocation of all staged target credentials. Cleanup remains available with provisioning disabled. Source bindings and app secrets remain unchanged.
+   * @returns Problem Authentication, unknown cutover, or cancellation conflict
+   * @returns ManagedPostgresCutover Durable cancel status; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static cancelManagedPostgresCutover({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Gregale managed PostgreSQL cutover UUID.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresCutover> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/cutovers/{id}/cancel',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+    });
+  }
+  /**
    * Read managed PostgreSQL usage and guardrail state
    * Requires usage read scope. Returns normalized current-month meters,
    * plan headroom, and freshness state. Provider IDs, rates, credentials,
@@ -123,6 +275,118 @@ export class ManagedPostgresService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/account/managed-postgres-usage',
+    });
+  }
+  /**
+   * Change managed PostgreSQL scale-to-zero policy
+   * Durably reserves a scale-to-zero policy change on the pinned dataset. Clients may disconnect during the policy change. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute idle policy changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+   * @returns Problem Compute policy validation, concurrency, entitlement or provider admission failure
+   * @returns ManagedPostgresComputePolicyChange Accepted policy change or current progress for an existing request
+   * @throws ApiError
+   */
+  public static changeManagedPostgresComputePolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ChangeManagedPostgresComputePolicyRequest,
+  }): CancelablePromise<Problem | ManagedPostgresComputePolicyChange> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/compute-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get managed PostgreSQL compute policy progress
+   * Reads a durable compute policy request for the authenticated account and database. Responses are not cached and omit private provider identity.
+   * @returns ManagedPostgresComputePolicyChange Account and database scoped compute policy progress
+   * @returns Problem Authentication or policy lookup error
+   * @throws ApiError
+   */
+  public static getManagedPostgresComputePolicyChange({
+    id,
+    changeId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Canonical UUID supplied as request_id when reserving this policy change.
+     */
+    changeId: string,
+  }): CancelablePromise<ManagedPostgresComputePolicyChange | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/compute-policy-changes/{change_id}',
+      path: {
+        'id': id,
+        'change_id': changeId,
+      },
+    });
+  }
+  /**
+   * Resize managed PostgreSQL compute
+   * Durably reserves a service-class change on the pinned dataset. Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute class changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+   * @returns Problem Invalid request, conflict, plan limit or backend unavailable
+   * @returns ManagedPostgresResize Accepted resize or current progress for an existing request
+   * @throws ApiError
+   */
+  public static resizeManagedPostgresDatabase({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ResizeManagedPostgresDatabaseRequest,
+  }): CancelablePromise<Problem | ManagedPostgresResize> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/resize',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get managed PostgreSQL resize progress
+   * Reads a durable resize request for the authenticated account and database. Responses are not cached and omit private provider identity.
+   * @returns ManagedPostgresResize Account and database scoped resize progress
+   * @returns Problem Authentication or resize lookup error
+   * @throws ApiError
+   */
+  public static getManagedPostgresResize({
+    id,
+    resizeId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Canonical UUID supplied as request_id when reserving this resize.
+     */
+    resizeId: string,
+  }): CancelablePromise<ManagedPostgresResize | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/resizes/{resize_id}',
+      path: {
+        'id': id,
+        'resize_id': resizeId,
+      },
     });
   }
   /**

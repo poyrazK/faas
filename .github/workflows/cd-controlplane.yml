@@ -7,6 +7,11 @@
 #                                by deploy/controlplane/bootstrap.sh; PR-X
 #                                `gregale secrets init` supersedes that path)
 #   CP_HOST    (or DO_HOST)    — Control Plane host public IPv4
+#   CP_ANSIBLE_VARS_B64        — base64 of the control-plane Ansible variables
+#                                (the prod-vars.yml an operator used to pass to
+#                                `make bootstrap-control-plane`); ADR-580
+#   COMPUTE_SSH_KEY, COMPUTE_KNOWN_HOSTS — shared with cd-compute; the verified
+#                                fleet path control-plane convergence uses
 #
 # The workflow never builds daemon binaries. Select a tag produced by
 # release.yml; the runner downloads and verifies that release's canonical
@@ -25,6 +30,10 @@ name: cd-controlplane
 
 on:
   workflow_call:
+    outputs:
+      activated:
+        description: "The selected release completed deployctl activation in this run"
+        value: ${{ jobs.deploy.outputs.activated }}
     inputs:
       deploy_environment:
         description: >-
@@ -92,6 +101,8 @@ permissions:
 jobs:
   deploy:
     name: Deploy to Control Plane Host
+    outputs:
+      activated: ${{ steps.activate.outputs.activated }}
     environment: ${{ inputs.deploy_environment }}
     # The dedicated fleet runner does not queue behind repository CI the way
     # GitHub-hosted runners do (a busy CI day added 8-14 min per hosted job).
@@ -113,7 +124,10 @@ jobs:
     # If ci.yml doesn't exist yet or the test job name differs, remove this.
     # needs: test
     if: github.repository == 'poyrazK/faas'
-    timeout-minutes: 15
+    # Raised from 15 for ADR-580: a changed control-plane contract runs the
+    # control-plane roles before activation. An unchanged one costs under a
+    # minute.
+    timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v7
@@ -224,11 +238,33 @@ jobs:
           echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_ENV"
 
       - name: Set up SSH
+        env:
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
           echo "${{ env.CP_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -t ed25519,ecdsa,rsa -H ${{ env.CP_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          # Trust CP_HOST only when it presents a host key the operator
+          # verified in COMPUTE_KNOWN_HOSTS, the fleet file cd-compute already
+          # requires. A bare ssh-keyscan trusted whatever answered, every run.
+          [[ -n "${COMPUTE_KNOWN_HOSTS:-}" ]] || {
+            echo "::error::COMPUTE_KNOWN_HOSTS is required to verify the control-plane host key" >&2
+            exit 1
+          }
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          pinned=0
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> ~/.ssh/known_hosts
+              pinned=1
+            fi
+          done <<<"$scanned"
+          [[ $pinned == 1 ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
           chmod 600 ~/.ssh/known_hosts
 
       - name: Converge APID lifecycle storage credential
@@ -622,7 +658,77 @@ jobs:
           chmod 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf
           REMOTE
 
+      # ADR-580: converge the control-plane bootstrap roles before release
+      # activation, but only when their inputs changed (plays, roles, shared
+      # task libraries, ansible.cfg, collection pins, rendered inventory, or
+      # CP_ANSIBLE_VARS_B64). Before this, role fixes (packages, drop-ins,
+      # Alertmanager, Caddy, nftables, PostgreSQL settings) reached the
+      # control plane only through a manual workstation bootstrap. FaaS daemon
+      # restarts are deferred to the activation below; infrastructure services
+      # restart through their own handlers when their configuration changed.
+      - name: Converge control-plane roles
+        if: ${{ !inputs.hosted_runner }}
+        env:
+          CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f deploy/ansible/control_plane_converge.yml ]]; then
+            echo "::notice::${RELEASE_TAG} predates control-plane convergence (ADR-580); skipping"
+            exit 0
+          fi
+          for name in CP_ANSIBLE_VARS_B64 COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::${name} is not set in the ${DEPLOY_ENVIRONMENT} environment; control-plane convergence needs it (docs/adr/580-control-plane-convergence-in-cd.md)" >&2
+              exit 1
+            fi
+          done
+          work="$RUNNER_TEMP/cp-converge"
+          rm -rf -- "$work"
+          install -d -m 0700 "$work"
+          trap 'rm -rf -- "$work"' EXIT
+          printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
+          printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
+          printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
+          chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"
+
+          # The roles need the collections deploy/ansible/requirements.yml
+          # pins; the config-renderer venv above only has ansible-core.
+          collections="$work/collections"
+          installed=0
+          for attempt in 1 2 3; do
+            if ansible-galaxy collection install --no-cache --timeout 30 \
+              --collections-path "$collections" -r deploy/ansible/requirements.yml; then
+              installed=1
+              break
+            fi
+            if [[ $attempt != 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ $installed != 1 ]]; then
+            echo "::error::could not install the pinned Ansible collections from deploy/ansible/requirements.yml" >&2
+            exit 1
+          fi
+          export ANSIBLE_COLLECTIONS_PATH="$collections"
+
+          # The signed release's own gregalectl, matching the checked-out roles.
+          "$CANONICAL_ROOT/unpacked/gregalectl" deploy converge-control-plane \
+            --manifest-file "$CANONICAL_ROOT/production-manifest.yaml" \
+            --ssh-known-hosts-file "$work/known_hosts" \
+            --ssh-key "$work/ssh-key" \
+            --ansible-vars-file "$work/vars.yml" \
+            --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Report skipped control-plane convergence
+        if: ${{ inputs.hosted_runner }}
+        run: |
+          echo "::warning::GitHub-hosted runners cannot resolve the fleet's private names; control-plane roles were not converged this run (ADR-580)"
+
       - name: Upload and activate immutable release
+        id: activate
         run: |
           set -euo pipefail
           release_dir="/opt/faas/releases/${RELEASE_ID}"
@@ -777,76 +883,44 @@ jobs:
           REMOTE
           # Observe API readiness and a real canary app independently during
           # activation. The telemetry-heavy status route is diagnostic only.
-          # GitHub-hosted runner egress is blocked
-          # by the production edge policy, so use the control-plane VM only as
-          # a SOCKS egress point while still traversing public DNS + Cloudflare.
-          probe_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-          ssh -N -D "127.0.0.1:${probe_port}" \
-            -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            -o ExitOnForwardFailure=yes root@${{ env.CP_HOST }} &
-          probe_proxy_pid=$!
-          cleanup_probe_proxy() {
-            kill "$probe_proxy_pid" 2>/dev/null || true
-            wait "$probe_proxy_pid" 2>/dev/null || true
-          }
-          trap cleanup_probe_proxy EXIT
-          probe_proxy="socks5h://127.0.0.1:${probe_port}"
+          # Host hardening disables TCP forwarding. Run the observer on the
+          # control plane so probes still traverse public DNS and Cloudflare.
           baseline_samples=3
           if [[ "$MAINTENANCE_MODE" == "true" ]]; then
-            # Legacy writers are intentionally stopped before migration; the
-            # public endpoint cannot provide a healthy pre-rollout baseline.
             baseline_samples=0
             echo "::notice::planned maintenance: customer-path availability gate is inconclusive"
-          else
-            proxy_ready=0
-            for _ in $(seq 1 20); do
-              if curl --fail --silent --show-error --proxy "$probe_proxy" \
-                --connect-timeout 1 --max-time 3 \
-                'https://api.gregale.dev/readyz?rollout_probe=proxy-preflight' \
-                >/dev/null; then
-                proxy_ready=1
-                break
-              fi
-              kill -0 "$probe_proxy_pid" 2>/dev/null || break
-              sleep 0.25
-            done
-            (( proxy_ready == 1 )) || {
-              echo "::error::control-plane rollout probe proxy did not become ready" >&2
-              exit 1
-            }
           fi
+          activation_script="$RUNNER_TEMP/controlplane-activate.sh"
+          cat > "$activation_script" <<ACTIVATE
+          set -euo pipefail
+          ${release_dir}/bin/deployctl bundle-check-installed ${release_dir}
+          if test ! -s /opt/faas/releases/sbom-baseline.json; then
+            current_release=\$(readlink -f /opt/faas/current 2>/dev/null || true)
+            if test -n "\$current_release" && test -s "\$current_release/release.sbom.json"; then
+              baseline_sha=\$(basename "\$current_release")
+            else
+              baseline_sha=${RELEASE_ID}
+            fi
+            ${release_dir}/bin/gregalectl release kgv rotate --git-sha "\$baseline_sha"
+          fi
+          ${release_dir}/bin/gregalectl release kgv verify --git-sha ${RELEASE_ID}
+          ${release_dir}/bin/gregalectl fleet-seal migrate --fleet-key /etc/faas/secrets/fleet.age --legacy-host-dir /etc/faas/secrets --db-env /etc/faas/sealed.env --json
+          verify_json=\$(${release_dir}/bin/gregalectl fleet-seal verify --fleet-key /etc/faas/secrets/fleet.age --host-key /etc/faas/secrets/host.age --db-env /etc/faas/sealed.env --metrics-file /var/lib/node_exporter/textfile_collector/faas_fleet_seal.prom --json)
+          test "\$(printf '%s' "\$verify_json" | jq -r .fleet_recipient)" = "\$(tr -d '\r\n' </etc/faas/secrets/fleet.age.pub)"
+          printf '%s\n' "\$verify_json"
+          ${release_dir}/bin/deployctl deploy ${RELEASE_ID}
+          touch "\$ROLLOUT_ACTIVATION_MARKER"
+          install -d -o faas-apid -g faas -m 0770 /etc/faas/statuspage
+          install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html /etc/faas/statuspage/.index.html-${RELEASE_ID}
+          mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html
+          install -o root -g faas -m 0644 ${release_dir}/host-config/dpa.md /etc/faas/.dpa.md-${RELEASE_ID}
+          mv -Tf /etc/faas/.dpa.md-${RELEASE_ID} /etc/faas/dpa.md
+          ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID}
+          mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl
+          ACTIVATE
           ROLLOUT_BASELINE_SAMPLE_COUNT="$baseline_samples" \
-            ROLLOUT_APP_PROBE_URL="https://gregale-api-demo.gregale.dev/" \
-            ROLLOUT_STATUS_PROBE_URL="https://api.gregale.dev/v1/status" \
-            ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh \
-            "https://api.gregale.dev/readyz" -- \
-            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            root@${{ env.CP_HOST }} \
-            "${release_dir}/bin/deployctl bundle-check-installed ${release_dir} &&
-             if test ! -s /opt/faas/releases/sbom-baseline.json; then
-               current_release=\$(readlink -f /opt/faas/current 2>/dev/null || true);
-               if test -n \"\$current_release\" && test -s \"\$current_release/release.sbom.json\"; then
-                 baseline_sha=\$(basename \"\$current_release\");
-               else
-                 baseline_sha=${RELEASE_ID};
-               fi;
-               ${release_dir}/bin/gregalectl release kgv rotate --git-sha \"\$baseline_sha\";
-             fi &&
-             ${release_dir}/bin/gregalectl release kgv verify --git-sha ${RELEASE_ID} &&
-             ${release_dir}/bin/gregalectl fleet-seal migrate --fleet-key /etc/faas/secrets/fleet.age --legacy-host-dir /etc/faas/secrets --db-env /etc/faas/sealed.env --json &&
-             verify_json=\$(${release_dir}/bin/gregalectl fleet-seal verify --fleet-key /etc/faas/secrets/fleet.age --host-key /etc/faas/secrets/host.age --db-env /etc/faas/sealed.env --metrics-file /var/lib/node_exporter/textfile_collector/faas_fleet_seal.prom --json) &&
-             test \"\$(printf '%s' \"\$verify_json\" | jq -r .fleet_recipient)\" = \"\$(tr -d '\\r\\n' </etc/faas/secrets/fleet.age.pub)\" &&
-             printf '%s\\n' \"\$verify_json\" &&
-             ${release_dir}/bin/deployctl deploy ${RELEASE_ID} &&
-             install -d -o faas-apid -g faas -m 0770 /etc/faas/statuspage &&
-             install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html /etc/faas/statuspage/.index.html-${RELEASE_ID} &&
-             mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html &&
-             install -o root -g faas -m 0644 ${release_dir}/host-config/dpa.md /etc/faas/.dpa.md-${RELEASE_ID} &&
-             mv -Tf /etc/faas/.dpa.md-${RELEASE_ID} /etc/faas/dpa.md &&
-             ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
-             mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
-          cleanup_probe_proxy
-          trap - EXIT
+            scripts/ci/observe_remote_rollout.sh \
+            "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script"
 
       - name: Upload control-plane rollout probe evidence
         if: always()

@@ -62,7 +62,7 @@ const webhookTestTimeout = 30 * time.Second
 // positional is the provider discriminator.
 func cmdBillingWebhookTest(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: gregale billing webhook-test <paddle|stripe> [flags]\n")
+		printCommandValidation(os.Stderr, "usage: gregale billing webhook-test <paddle|stripe> [flags]\n")
 		return 1
 	}
 	switch args[0] {

@@ -74,6 +74,7 @@ type CallbackOutboxStats struct {
 	DeadLetterCapacityBytes    int64   `json:"dead_letter_capacity_bytes"`
 	DeadLetterEvictions        uint64  `json:"dead_letter_evictions"`
 	DeadLetterLastEvictionUnix int64   `json:"dead_letter_last_eviction_unix"`
+	DeadLetterDiscards         uint64  `json:"dead_letter_discards"`
 }
 
 // CallbackDeadLetter contains operator-safe metadata for a retained callback.
@@ -269,6 +270,7 @@ type CallbackOutbox struct {
 	replayDeliveries     uint64
 	deadBytes            int64
 	deadEvictions        uint64
+	deadDiscards         uint64
 	deadLastEvictionUnix int64
 	dead                 callbackDeadLetterHeap
 	pendingAge           callbackPendingAgeHeap
@@ -1056,6 +1058,39 @@ func (q *CallbackOutbox) ReplayDeadLetter(id string) error {
 	return nil
 }
 
+// DiscardDeadLetter deletes a retained event an operator has reviewed and
+// decided not to replay. Dead letters never expire on their own; only byte
+// retention evicts them. Without this, a dead letter for a receiver that no
+// longer exists kept FaasRealtimeCallbackDeadLettersPresent firing until the
+// 64 MiB limit filled. Repeating a request for a discarded ID returns
+// ErrCallbackDeadLetterNotFound.
+func (q *CallbackOutbox) DiscardDeadLetter(id string) error {
+	if q == nil {
+		return ErrCallbackOutboxUnavailable
+	}
+	if !validCallbackOutboxID(id) {
+		return ErrCallbackOutboxItem
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if _, dead := q.deadIDs[id]; !dead {
+		return ErrCallbackDeadLetterNotFound
+	}
+	if err := os.Remove(filepath.Join(q.deadRoot, id+".json")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			q.removeDeadLetter(id)
+			return ErrCallbackDeadLetterNotFound
+		}
+		return fmt.Errorf("realtime: discard callback dead letter %q: %w", id, err)
+	}
+	q.removeDeadLetter(id)
+	q.deadDiscards++
+	if err := syncCallbackOutboxDir(q.deadRoot); err != nil {
+		return fmt.Errorf("realtime: sync callback dead letters after discard: %w", err)
+	}
+	return nil
+}
+
 // removeDeadLetter updates retained-dead-letter indexes after a successful
 // move. It is called with q.mu held.
 func (q *CallbackOutbox) removeDeadLetter(id string) {
@@ -1130,6 +1165,7 @@ func (q *CallbackOutbox) Stats() CallbackOutboxStats {
 		DeadLetterBytes:            q.deadBytes,
 		DeadLetterCapacityBytes:    q.deadMaxBytes,
 		DeadLetterEvictions:        q.deadEvictions,
+		DeadLetterDiscards:         q.deadDiscards,
 		DeadLetterLastEvictionUnix: q.deadLastEvictionUnix,
 	}
 }

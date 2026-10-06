@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -40,7 +41,7 @@ func (s *server) registerEventSchema(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	if err != nil {
-		s.log.Error("register event schema failed", "err", err)
+		s.log.Error("register event schema failed", "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("failed to register event schema"))
 		return
 	}

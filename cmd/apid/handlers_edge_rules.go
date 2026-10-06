@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -466,7 +467,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		"app", app.Slug,
 		"account", acct.ID,
 		"kind", logsanitize.Field(string(row.Kind)),
-		"priority", row.Priority,
+		slog.Int64("priority", int64(row.Priority)),
 	)
 	s.audit.Emit(r.Context(), "edge_rule.created", &acct.ID, map[string]any{
 		auditKeyRuleID:       row.ID,

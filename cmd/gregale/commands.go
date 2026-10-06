@@ -576,6 +576,13 @@ func isTransportError(err error) bool {
 	if errors.As(err, &urlErr) {
 		return true
 	}
+	// Filesystem errors implement net.Error's Timeout method too. Keep local
+	// export failures out of the API transport classification.
+	var pathErr *os.PathError
+	var linkErr *os.LinkError
+	if errors.As(err, &pathErr) || errors.As(err, &linkErr) {
+		return false
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		return true
@@ -670,6 +677,15 @@ func renderAPIError(w io.Writer, e *APIError) {
 	// rest of cmd/gregale — see output.go::writeStatus).
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
+	}
+	if p.BindingsCheck != nil {
+		for _, blocker := range p.BindingsCheck.Blockers {
+			_, _ = fmt.Fprintf(w, "  %s: %s", blocker.Code, blocker.Message)
+			if blocker.Binding != "" {
+				_, _ = fmt.Fprintf(w, " (binding=%s scope=%s)", blocker.Binding, blocker.Scope)
+			}
+			_, _ = fmt.Fprintln(w)
+		}
 	}
 	if p.RetryAfterSeconds != nil {
 		retryAfter := time.Duration(*p.RetryAfterSeconds) * time.Second

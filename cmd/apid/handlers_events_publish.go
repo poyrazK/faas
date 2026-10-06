@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -30,20 +31,7 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 
-	var occurredAt time.Time
-	if req.Time != nil {
-		occurredAt = *req.Time
-	}
-	envelope, err := (events.Envelope{
-		ID:              req.ID,
-		Source:          req.Source,
-		Type:            req.Type,
-		Time:            occurredAt,
-		DataContentType: req.DataContentType,
-		Data:            req.Data,
-		AccountID:       req.AccountID,
-		SchemaVersion:   req.SchemaVersion,
-	}).Normalize(acct.ID, time.Now().UTC())
+	envelope, err := normalizePublishRequest(req, acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
@@ -60,13 +48,30 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 	envelope.Tracestate = traceHeaders["tracestate"]
 	envelope.Baggage = traceHeaders["baggage"]
 
+	s.persistPublishedEvent(w, r, acct, envelope)
+}
+
+func normalizePublishRequest(req api.PublishEventRequest, accountID string) (events.Envelope, error) {
+	var occurredAt time.Time
+	if req.Time != nil {
+		occurredAt = *req.Time
+	}
+	return (events.Envelope{ID: req.ID, Source: req.Source, Type: req.Type, Time: occurredAt,
+		DataContentType: req.DataContentType, Data: req.Data, AccountID: req.AccountID,
+		SchemaVersion: req.SchemaVersion}).Normalize(accountID, time.Now().UTC())
+}
+
+func (s *server) persistPublishedEvent(w http.ResponseWriter, r *http.Request, acct state.Account, envelope events.Envelope) {
 	payload, err := json.Marshal(envelope)
 	if err != nil {
-		s.log.Error("marshal published event failed", "event_id", envelope.ID, "err", err)
+		s.log.Error("marshal published event failed", "event_id", logsanitize.Field(envelope.ID), "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
 	if err := s.store.AppendEvent(r.Context(), "apid", "event.published", &acct.ID, payload); err != nil {
+		if writeEventStorageCapacity(w, err) {
+			return
+		}
 		var pgErr *pgconn.PgError
 		if errors.Is(err, state.ErrConflict) ||
 			(errors.As(err, &pgErr) && pgErr.ConstraintName == "event_fanout_identity_uniq") {
@@ -74,7 +79,7 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 				"Event identity conflict", "source and id already identify an event with different type, schema version, or data"))
 			return
 		}
-		s.log.Error("record published event failed", "event_id", envelope.ID, "err", err)
+		s.log.Error("record published event failed", "event_id", logsanitize.Field(envelope.ID), "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
@@ -82,9 +87,26 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 	// outbox row even when this notification is missed or the payload is large.
 	_ = s.notif.Notify(r.Context(), db.NotifyEventPublished, "1")
 
+	s.writePublishedEventReceipt(w, r, acct, envelope)
+}
+
+func (s *server) writePublishedEventReceipt(w http.ResponseWriter, r *http.Request, acct state.Account, envelope events.Envelope) {
+	store, ok := s.store.(state.EventReceiptAcceptanceStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event receipt acceptance store"))
+		return
+	}
+	acceptedAt, err := store.EventReceiptAcceptedAt(r.Context(), acct.ID, envelope.Source, envelope.ID)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "read published event acceptance", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("failed to read event acceptance; retry the same source and id"))
+		return
+	}
+	w.Header().Set("Location", eventReceiptURL(envelope.Source, envelope.ID))
 	writeJSON(w, http.StatusAccepted, api.PublishEventResponse{
+		ReceiptURL: eventReceiptURL(envelope.Source, envelope.ID),
 		ID:         envelope.ID,
-		AcceptedAt: time.Now().UTC(),
+		AcceptedAt: acceptedAt,
 		AccountID:  acct.ID,
 	})
 }
@@ -103,7 +125,7 @@ func (s *server) validateEventSchemaForIngress(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Event schema validation failed", err.Error()))
 		return false
 	}
-	s.log.Error("event schema lookup failed", "source", envelope.Source, "type", envelope.Type, "err", err)
+	s.log.Error("event schema lookup failed", "source", logsanitize.Field(envelope.Source), "type", logsanitize.Field(envelope.Type), "err", logsanitize.FieldAny(err))
 	api.WriteProblem(w, api.ErrCapacity("failed to validate event schema"))
 	return false
 }

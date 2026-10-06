@@ -22,6 +22,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// adr: 385 — failed receipts may carry a structured outcome but cannot publish artifacts.
+func TestValidateJobExitPayloadAllowsOutcomeOnFailureButNoArtifacts(t *testing.T) {
+	base := JobExitPayload{
+		ExitCode: 75, ErrorClass: "failed", FinishedAtUnixNano: time.Now().UnixNano(), LeaseToken: "lease-1",
+		OutputManifest: json.RawMessage(`{"version":1,"artifacts":[],"outcome_code":"transient_upstream"}`),
+	}
+	if err := validateJobExitPayload(base); err != nil {
+		t.Fatalf("valid classified failure receipt: %v", err)
+	}
+	base.OutputManifest = json.RawMessage(`{"version":1,"artifacts":[{"name":"x","uri":"s3://b/x","size_bytes":0,"sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"outcome_code":"transient_upstream"}`)
+	if err := validateJobExitPayload(base); err == nil {
+		t.Fatal("accepted artifact declaration for failed task")
+	}
+}
+
 func TestBuildJobColdBootConfigUsesPrivateWritableDrive(t *testing.T) {
 	cfg := BuildJobColdBootConfig(JobColdBootSpec{
 		KernelKey: "kernel", BaseKey: "base", ImageRef: "job-image",

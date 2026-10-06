@@ -27,6 +27,7 @@ type rollbackFeatureFlagsRequest struct {
 }
 type inspectFeatureFlagRequest struct {
 	CustomerID      string `json:"customer_id"`
+	SubjectID       string `json:"subject_id,omitempty"`
 	Version         int64  `json:"version,omitempty"`
 	Fallback        bool   `json:"fallback"`
 	FallbackVariant string `json:"fallback_variant,omitempty"`
@@ -162,7 +163,7 @@ func (s *server) inspectFeatureFlag(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	var req inspectFeatureFlagRequest
-	if err := decodeJSON(r, &req); err != nil || req.Version < 0 || !flags.ValidKey(r.PathValue("key")) || req.FallbackVariant != "" && !flags.ValidKey(req.FallbackVariant) {
+	if err := decodeJSON(r, &req); err != nil || req.Version < 0 || !flags.ValidKey(r.PathValue("key")) || req.FallbackVariant != "" && !flags.ValidKey(req.FallbackVariant) || req.SubjectID != "" && (!flags.ValidSubjectID(req.SubjectID) || req.CustomerID == "") {
 		api.WriteProblem(w, api.ErrValidation("invalid decision context"))
 		return
 	}
@@ -191,15 +192,15 @@ func (s *server) inspectFeatureFlag(w http.ResponseWriter, r *http.Request, acct
 	key := r.PathValue("key")
 	for _, definition := range v.Flags {
 		if definition.Key == key && definition.Type == "variant" {
-			writeJSON(w, http.StatusOK, flags.EvaluateVariant(v.Bundle, key, req.CustomerID, req.FallbackVariant))
+			writeJSON(w, http.StatusOK, flags.EvaluateVariantForSubject(v.Bundle, key, req.CustomerID, req.SubjectID, req.FallbackVariant))
 			return
 		}
 	}
 	if req.FallbackVariant != "" {
-		writeJSON(w, http.StatusOK, flags.EvaluateVariant(v.Bundle, key, req.CustomerID, req.FallbackVariant))
+		writeJSON(w, http.StatusOK, flags.EvaluateVariantForSubject(v.Bundle, key, req.CustomerID, req.SubjectID, req.FallbackVariant))
 		return
 	}
-	writeJSON(w, http.StatusOK, flags.Evaluate(v.Bundle, key, req.CustomerID, req.Fallback))
+	writeJSON(w, http.StatusOK, flags.EvaluateForSubject(v.Bundle, key, req.CustomerID, req.SubjectID, req.Fallback))
 }
 func (s *server) runtimeFeatureFlagScope(r *http.Request) (state.FeatureFlagScope, error) {
 	raw := r.Header.Get("Authorization")
@@ -256,8 +257,35 @@ func (s *server) runtimeFeatureFlags(w http.ResponseWriter, r *http.Request) {
 		writeFeatureFlagError(w, err)
 		return
 	}
+	if featureFlagConfigRequiresSubjectTargeting(v.Config) && !supportsFlagCapability(r.Header.Get(api.FlagSDKCapabilitiesHeader), api.FlagSDKSubjectTargetingCapability) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUpgradeRequired, "flags_sdk_capability_required", "Runtime SDK update required", "this configuration uses subject targeting; update the runtime SDK to a version that supports subject-targeting-v1"))
+		return
+	}
 	// Refresh responses never become shared caches of customer targeting lists.
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("ETag", fmt.Sprintf(`"flags-%s-%d"`, scope.EnvironmentID, v.Version))
 	writeJSON(w, http.StatusOK, v.Bundle)
+}
+
+func featureFlagConfigRequiresSubjectTargeting(config flags.Config) bool {
+	for _, definition := range config.Flags {
+		if !definition.Enabled {
+			continue
+		}
+		for _, rule := range definition.Rules {
+			if len(rule.Subjects) > 0 || rule.RolloutUnit == "subject" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func supportsFlagCapability(header, capability string) bool {
+	for _, candidate := range strings.Split(header, ",") {
+		if strings.TrimSpace(candidate) == capability {
+			return true
+		}
+	}
+	return false
 }

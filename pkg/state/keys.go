@@ -122,6 +122,17 @@ func SnapshotDriveKey(s Snapshot) string {
 	return ""
 }
 
+// SnapshotBackingKey is where a capture's ADR-510 backing identity (the
+// kernel and read-only base it was taken with) is stored: the sibling of its
+// memory object, so capture cleanup removes it with the rest. Empty for
+// noncanonical keys, whose captures therefore cannot be restored.
+func SnapshotBackingKey(s Snapshot) string {
+	if strings.HasPrefix(s.StorageKey, "snap/") && strings.HasSuffix(s.StorageKey, "/mem") {
+		return strings.TrimSuffix(s.StorageKey, "/mem") + "/backing"
+	}
+	return ""
+}
+
 // IsSnapshotCaptureKey distinguishes immutable capture objects from legacy
 // mutable deployment keys. Cleanup must never remove a legacy shared pair.
 func IsSnapshotCaptureKey(key string) bool {

@@ -16,6 +16,33 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestWakeCoord_ScopeIsolationAndAppDeletion(t *testing.T) {
+	coord := newWakeCoord()
+	production, leader, err := coord.EnterScoped("app", "production", WakeFanout{})
+	if err != nil || !leader {
+		t.Fatalf("production leader: %v, %v", leader, err)
+	}
+	staging, leader, err := coord.EnterScoped("app", "staging", WakeFanout{})
+	if err != nil || !leader || staging == production {
+		t.Fatalf("staging reused production wake: %v, %v", leader, err)
+	}
+	follower, leader, err := coord.EnterScoped("app", "staging", WakeFanout{})
+	if err != nil || leader || follower != staging {
+		t.Fatalf("same scope did not coalesce: %v, %v", leader, err)
+	}
+	production.Complete(CoordOutcome{Instance: &CoordInstance{InstanceID: "production-instance"}})
+	coord.Release("app", production)
+	if len(coord.inflight["app"]) != 1 || coord.inflight["app"][0] != staging {
+		t.Fatal("completing production removed the staging wake")
+	}
+	coord.Forget("app")
+	if got := staging.Await(context.Background()); !errors.Is(got.Err, ErrAppDeleted) {
+		t.Fatalf("app deletion did not fence scoped wake: %+v", got)
+	}
+	coord.Release("app", staging)
+	coord.Release("app", follower)
+}
+
 func TestWakeCoord_SingleFlightLeaderCallsEnsureOnce(t *testing.T) {
 	coord := newWakeCoord()
 	app := "app-A"
@@ -439,8 +466,8 @@ func TestWakeCoord_RunningInstancesAbsorbWaiters(t *testing.T) {
 }
 
 // TestEngineWakeFanoutForRefreshesExistingFromLedger pins the Engine wiring
-// on both cache paths. Static app limits may be cached for 15 seconds, but
-// live capacity changes on every admission and must be read fresh.
+// across repeated policy resolutions. Live capacity changes on every
+// admission and must be read fresh.
 func TestEngineWakeFanoutForRefreshesExistingFromLedger(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanScale, 1024, 20)
@@ -461,9 +488,9 @@ func TestEngineWakeFanoutForRefreshesExistingFromLedger(t *testing.T) {
 		t.Fatalf("admit existing instance: %v", err)
 	}
 
-	cached := e.wakeFanoutFor(context.Background(), app.ID)
-	if cached.Existing != 1 {
-		t.Fatalf("cached Existing = %d, want 1; live capacity must not be cached", cached.Existing)
+	refreshed := e.wakeFanoutFor(context.Background(), app.ID)
+	if refreshed.Existing != 1 {
+		t.Fatalf("refreshed Existing = %d, want 1; live capacity must not be cached", refreshed.Existing)
 	}
 }
 

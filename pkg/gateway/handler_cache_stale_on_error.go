@@ -93,6 +93,9 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 	if h == nil || h.responseCache == nil {
 		return false, ""
 	}
+	if h.authorizedDeploymentSmoke(r, app) {
+		return false, ""
+	}
 	snap := cacheRuleFromContext(r.Context())
 	if snap == nil || snap.Rule == nil || snap.Rule.StaleIfErrorSeconds <= 0 {
 		return false, ""
@@ -164,6 +167,9 @@ func (h *Handler) startStaleWhileWakingRefresh(r *http.Request, app App, rule *E
 // stale-while-revalidate hits against a warm app.
 func (h *Handler) startCacheRefresh(r *http.Request, app App, rule *EdgeRuleCacheResolved, key CacheKey) {
 	if h == nil || h.backend == nil || h.responseCache == nil || rule == nil || r == nil {
+		return
+	}
+	if h.authorizedDeploymentSmoke(r, app) {
 		return
 	}
 	detached := context.WithoutCancel(r.Context())
@@ -272,6 +278,9 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 // this helper only writes the response bytes.
 func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) (bool, string) {
 	if h == nil || h.responseCache == nil {
+		return false, ""
+	}
+	if h.authorizedDeploymentSmoke(r, app) {
 		return false, ""
 	}
 	snap := cacheRuleFromContext(r.Context())

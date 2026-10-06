@@ -24,7 +24,13 @@ class QueueSendRequest:
 
     """
 
+    environment: str | Unset = UNSET
+    """Target registered environment with an enabled scoped queue binding. Omission sends through the default
+    environment and legacy shared queues."""
     payload: QueueSendRequestPayload | Unset = UNSET
+    flag_context: str | Unset = UNSET
+    """Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform
+    validates the envelope, binds it to its active customer, and restores it on the queued request."""
     queue_name: str | Unset = UNSET
     """Optional logical queue name. Required when an app has multiple enabled queue consumers."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
@@ -41,9 +47,13 @@ class QueueSendRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        environment = self.environment
+
         payload: dict[str, Any] | Unset = UNSET
         if not isinstance(self.payload, Unset):
             payload = self.payload.to_dict()
+
+        flag_context = self.flag_context
 
         queue_name = self.queue_name
 
@@ -58,8 +68,12 @@ class QueueSendRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if payload is not UNSET:
             field_dict["payload"] = payload
+        if flag_context is not UNSET:
+            field_dict["flag_context"] = flag_context
         if queue_name is not UNSET:
             field_dict["queue_name"] = queue_name
         if retry_policy is not UNSET:
@@ -76,12 +90,16 @@ class QueueSendRequest:
         from ..models.retry_policy_dto import RetryPolicyDTO
 
         d = dict(src_dict)
+        environment = d.pop("environment", UNSET)
+
         _payload = d.pop("payload", UNSET)
         payload: QueueSendRequestPayload | Unset
         if isinstance(_payload, Unset):
             payload = UNSET
         else:
             payload = QueueSendRequestPayload.from_dict(_payload)
+
+        flag_context = d.pop("flag_context", UNSET)
 
         queue_name = d.pop("queue_name", UNSET)
 
@@ -100,7 +118,9 @@ class QueueSendRequest:
             work = InvokeWork.from_dict(_work)
 
         queue_send_request = cls(
+            environment=environment,
             payload=payload,
+            flag_context=flag_context,
             queue_name=queue_name,
             retry_policy=retry_policy,
             work=work,

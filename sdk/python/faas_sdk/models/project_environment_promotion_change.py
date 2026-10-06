@@ -30,6 +30,9 @@ class ProjectEnvironmentPromotionChange:
     workload_slug: str
     workload_name: str
     kind: ProjectEnvironmentPromotionChangeKind
+    source_workload_config_hash: str | Unset = UNSET
+    target_workload_config_hash: str | Unset = UNSET
+    promoted_workload_config_hash: str | Unset = UNSET
     source_deployment_id: str | Unset = UNSET
     target_deployment_id: str | Unset = UNSET
     source_build_id: str | Unset = UNSET
@@ -46,6 +49,12 @@ class ProjectEnvironmentPromotionChange:
         workload_name = self.workload_name
 
         kind: str = self.kind
+
+        source_workload_config_hash = self.source_workload_config_hash
+
+        target_workload_config_hash = self.target_workload_config_hash
+
+        promoted_workload_config_hash = self.promoted_workload_config_hash
 
         source_deployment_id = self.source_deployment_id
 
@@ -76,6 +85,12 @@ class ProjectEnvironmentPromotionChange:
                 "kind": kind,
             }
         )
+        if source_workload_config_hash is not UNSET:
+            field_dict["source_workload_config_hash"] = source_workload_config_hash
+        if target_workload_config_hash is not UNSET:
+            field_dict["target_workload_config_hash"] = target_workload_config_hash
+        if promoted_workload_config_hash is not UNSET:
+            field_dict["promoted_workload_config_hash"] = promoted_workload_config_hash
         if source_deployment_id is not UNSET:
             field_dict["source_deployment_id"] = source_deployment_id
         if target_deployment_id is not UNSET:
@@ -103,6 +118,12 @@ class ProjectEnvironmentPromotionChange:
         workload_name = d.pop("workload_name")
 
         kind = check_project_environment_promotion_change_kind(d.pop("kind"))
+
+        source_workload_config_hash = d.pop("source_workload_config_hash", UNSET)
+
+        target_workload_config_hash = d.pop("target_workload_config_hash", UNSET)
+
+        promoted_workload_config_hash = d.pop("promoted_workload_config_hash", UNSET)
 
         source_deployment_id = d.pop("source_deployment_id", UNSET)
 
@@ -138,6 +159,9 @@ class ProjectEnvironmentPromotionChange:
             workload_slug=workload_slug,
             workload_name=workload_name,
             kind=kind,
+            source_workload_config_hash=source_workload_config_hash,
+            target_workload_config_hash=target_workload_config_hash,
+            promoted_workload_config_hash=promoted_workload_config_hash,
             source_deployment_id=source_deployment_id,
             target_deployment_id=target_deployment_id,
             source_build_id=source_build_id,

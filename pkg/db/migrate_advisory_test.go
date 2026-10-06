@@ -21,18 +21,11 @@ import (
 // releases, the second acquires. We assert wall-clock timing relative
 // to the held window so the test fails loudly if the lock stops blocking.
 func TestAcquireMigrationLock_BlocksSecondHolder(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenDatabase(t)
 
-	// MigrationLockKey is intentionally global across schemas and package
-	// shards. Other Postgres-backed tests may briefly own it while running
-	// MigrateUp, so allow the same contention budget as the release test below.
-	//
-	// This budget applies to BOTH acquires. The first one used to get 10s
-	// while the second got 30s, which made the test flake from the front:
-	// on a loaded runner (cmd/apid alone takes ~7 min in this shard) the
-	// first acquire timed out waiting for an unrelated holder and reported
-	// "first acquire: pg_advisory_lock: context deadline exceeded" — a
-	// contention symptom dressed up as a lock-correctness failure.
+	// Advisory locks are database-scoped. Use a private database so the
+	// contenders below exercise the production key without waiting behind
+	// unrelated packages migrating their isolated schemas in the shared DB.
 	const acquireDeadline = 30 * time.Second
 
 	ctx, cancel := context.WithTimeout(context.Background(), acquireDeadline)
@@ -88,14 +81,7 @@ func TestAcquireMigrationLock_BlocksSecondHolder(t *testing.T) {
 // guard, a deferred release() shadowing an explicit release() could
 // silently leave the lock acquired for the connection's lifetime.
 func TestAcquireMigrationLock_DoubleReleaseReturnsErr(t *testing.T) {
-	pool := pgtest.Open(t)
-
-	// MigrationLockKey is intentionally process- and schema-global. CI runs
-	// several Postgres-backed package shards against the same service, so a
-	// concurrent MigrateUp in another shard may briefly own this lock before
-	// this focused release test starts. Give that legitimate contention room
-	// to drain; the test is about release idempotency, not lock acquisition
-	// latency.
+	pool := pgtest.OpenDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -128,7 +114,7 @@ func TestAcquireMigrationLock_NilPoolErrors(t *testing.T) {
 // timeout context (see pgxLockUnlockTimeout) precisely so that a daemon
 // in shutdown can still give the lock back.
 func TestAcquireMigrationLock_ReleasesOnContextCancel(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenDatabase(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
@@ -147,7 +133,7 @@ func TestAcquireMigrationLock_ReleasesOnContextCancel(t *testing.T) {
 
 // TestMigrateUp_SerialisesAcrossConcurrentGoroutines is the integration
 // proof that the lock wraps MigrateUp correctly: three goroutines call
-// MigrateUp against the same fresh schema; all must succeed (no panic,
+// MigrateUp against the same fresh database; all must succeed (no panic,
 // no version-INSERT conflict); the final goose_db_version must have no
 // duplicate version rows.
 //
@@ -156,11 +142,15 @@ func TestAcquireMigrationLock_ReleasesOnContextCancel(t *testing.T) {
 // "goose_db_version_pkey"`. With it, all serialise on the advisory lock
 // and finish cleanly.
 //
-// Uses a freshly-isolated schema so the test is repeatable against any
-// cluster with $DATABASE_URL set. The pgtest.Open helper tears down
-// the schema in its Cleanup, so even mid-test crashes don't leak.
+// Uses a private unmigrated database so the production lock is shared by
+// these callers but isolated from unrelated packages. OpenDatabase drops it
+// in Cleanup; the full migration chain still runs rather than using a clone.
 func TestMigrateUp_SerialisesAcrossConcurrentGoroutines(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenDatabase(t)
+	// The first holder applies the entire historical chain while the others
+	// wait. Budget for a cold migration on a busy CI host, not just lock handoff.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
 
 	const N = 3
 	var wg sync.WaitGroup
@@ -170,8 +160,6 @@ func TestMigrateUp_SerialisesAcrossConcurrentGoroutines(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
 			errs[idx] = MigrateUp(ctx, pool)
 		}(i)
 	}

@@ -164,6 +164,8 @@ if command -v node >/dev/null 2>&1; then
 		[ "$status" -ne 0 ] || fail "launcher must fail when no platform package is installed"
 		grep -Fq "include=optional" <<<"$err" ||
 			fail "missing-platform-package error should tell the user how to fix it: $err"
+		grep -Fq "npm install -g --include=optional gregale@$SEMVER" <<<"$err" ||
+			fail "missing-platform-package reinstall must preserve the installed version: $err"
 	else
 		printf 'skip: launcher exec test (unmapped host %s/%s)\n' "$(uname -s)" "$(uname -m)"
 	fi

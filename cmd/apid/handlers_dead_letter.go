@@ -98,7 +98,7 @@ func (s *server) replayDeadLetterEvent(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 		s.ops.ObserveDLQReplay(app.Slug, "error")
-		api.WriteProblem(w, api.ErrInternal("dead-letter replay"))
+		api.WriteProblem(w, eventDeliveryReplayProblem(err, "dead-letter replay"))
 		return
 	}
 	s.ops.ObserveDLQReplay(app.Slug, "success")
@@ -126,7 +126,7 @@ func (s *server) replayAllDeadLetterEvents(w http.ResponseWriter, r *http.Reques
 	replayed, err := s.store.ReplayDeadLetterEvents(r.Context(), acct.ID, app.ID, limit)
 	if err != nil {
 		s.ops.ObserveDLQReplay(app.Slug, "error")
-		api.WriteProblem(w, api.ErrInternal("dead-letter replay"))
+		api.WriteProblem(w, eventDeliveryReplayProblem(err, "dead-letter replay"))
 		return
 	}
 	for i := 0; i < replayed; i++ {

@@ -238,7 +238,7 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		_, _ = fmt.Fprintln(errorOutput, "configured backend cannot produce a qualification spec")
 		return 2
 	}
-	timeout := 10 * time.Minute
+	timeout := 20 * time.Minute
 	if value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")); value != "" {
 		timeout, err = time.ParseDuration(value)
 		if err != nil || timeout <= 0 {
@@ -373,6 +373,7 @@ func parseQualificationApprovalTTL(getenv func(string) string) (time.Duration, e
 func approvalEnvironment(approval managedpostgres.QualificationApproval) map[string]string {
 	values := map[string]string{
 		managedpostgres.QualificationEnv:            "true",
+		managedpostgres.QualificationVersionEnv:     strconv.Itoa(approval.Version),
 		managedpostgres.QualificationBackendEnv:     approval.BackendID,
 		managedpostgres.QualificationFingerprintEnv: approval.BackendFingerprint,
 		managedpostgres.QualificationUntilEnv:       approval.ExpiresAt.UTC().Format(time.RFC3339),

@@ -18,7 +18,7 @@ func fakeLoopMounts(t *testing.T) (*int, *string) {
 	sessions := 0
 	root := t.TempDir()
 	prev := loopMountSession
-	loopMountSession = func(drive, prefix string, fn func(mountRoot string) error) error {
+	loopMountSession = func(drive, prefix string, fn func(mountRoot string) error, _ ...*loopMountTimings) error {
 		if _, err := os.Stat(drive); err != nil {
 			return err
 		}
@@ -147,7 +147,7 @@ func TestStagePreBootFiles_ValidationBeforeMount(t *testing.T) {
 func TestStagePreBootFiles_WriteErrorNamesOperation(t *testing.T) {
 	v := newStagingVMM(t, "inst-fail")
 	prev := loopMountSession
-	loopMountSession = func(drive, prefix string, fn func(string) error) error {
+	loopMountSession = func(drive, prefix string, fn func(string) error, _ ...*loopMountTimings) error {
 		root := t.TempDir()
 		// Make etc/faas a file so the secrets mkdir fails.
 		if err := os.MkdirAll(filepath.Join(root, "upper/etc"), 0o755); err != nil {

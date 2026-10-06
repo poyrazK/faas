@@ -25,10 +25,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // fakeImage is the in-memory state of one image served by a FakeRegistry. The
@@ -63,10 +66,9 @@ type blobEntry struct {
 // answers /healthz — so the image is a real, if minimal, app: what a
 // scratch-based customer image looks like, with no shell and no libc.
 //
-// The image has exactly one layer whose diff_id is the hardcoded constant
-// `helloLayerDiffID` (sha256:bbbb…). Tests that need the two-drive scheme to
-// work pair this with `BaseLayerImage` as the deploy-time base — base's
-// diff_ids prefix the app's, above-base is exactly the app layer.
+// The image has one self-contained layer with its real uncompressed digest.
+// It deliberately does not share BaseLayerImage's optimized prefix; tests
+// needing the two-drive scheme use HelloImageAboveBase instead.
 func HelloImage(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPort(repo, helloBody, false, 8080)
 }
@@ -84,6 +86,52 @@ func HelloImageOnPort(repo, helloBody string, port int) (fakeImage, string) {
 // as small Node/Go services whose startup contract is simply accepting TCP.
 func HelloImageWithoutHealthz(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, helloBody, false, 8080, []string{"/hello-server", "-no-healthz"})
+}
+
+// HelloImageWithProcessContract exercises OCI entrypoint/command composition,
+// numeric user/group, working directory, and image environment in a shell-free
+// full-rootfs image. Its /contract endpoint exposes only fixed fixture fields.
+func HelloImageWithProcessContract(repo, body, user string) (fakeImage, string) {
+	return helloImageWithProcessContract(repo, body, user, false)
+}
+
+// HelloImageWithProcessHealthcheck adds a shell-free OCI exec probe that
+// reports its process context to the fixture's /contract endpoint.
+func HelloImageWithProcessHealthcheck(repo, body, user string) (fakeImage, string) {
+	return helloImageWithProcessContract(repo, body, user, true)
+}
+
+func helloImageWithProcessContract(repo, body, user string, healthcheck bool) (fakeImage, string) {
+	img, _ := HelloImage(repo, body)
+	var cfg map[string]any
+	if err := json.Unmarshal(img.configBytes, &cfg); err != nil {
+		panic(err)
+	}
+	process := cfg["config"].(map[string]any)
+	process["Entrypoint"] = []string{"/hello-server"}
+	process["Cmd"] = []string{"-contract"}
+	process["User"] = user
+	process["WorkingDir"] = "/app"
+	process["Env"] = []string{"FIXTURE_MARKER=container-contract"}
+	if healthcheck {
+		process["Healthcheck"] = map[string]any{
+			"Test":     []string{"CMD", "/hello-server", "-probe-contract"},
+			"Interval": int64(1_000_000_000), "Timeout": int64(3_000_000_000), "Retries": 3,
+		}
+	}
+	img.configBytes, _ = json.Marshal(cfg)
+	sum := sha256.Sum256(img.configBytes)
+	img.configDigest = "sha256:" + hex.EncodeToString(sum[:])
+	var manifest map[string]any
+	if err := json.Unmarshal(img.manifestBytes, &manifest); err != nil {
+		panic(err)
+	}
+	descriptor := manifest["config"].(map[string]any)
+	descriptor["digest"], descriptor["size"] = img.configDigest, len(img.configBytes)
+	img.manifestBytes, _ = json.Marshal(manifest)
+	sum = sha256.Sum256(img.manifestBytes)
+	img.manifestDigest = "sha256:" + hex.EncodeToString(sum[:])
+	return img, fmt.Sprintf("%s@%s", repo, img.manifestDigest)
 }
 
 // HelloImageAboveBase returns an image identical to HelloImage except it has
@@ -210,14 +258,17 @@ func layeredHelloImageOnPort(repo, helloBody string, aboveBase bool, port int) (
 }
 
 func layeredHelloImageOnPortWithCmd(repo, helloBody string, aboveBase bool, port int, cmd []string) (fakeImage, string) {
-	// Build the layer blob list. The "base" layer (always present) advertises
-	// the hardcoded helloLayerDiffID — a fake that the deploy-time base image
-	// (BaseLayerImage) repeats so oci.LayersAboveBase sees a matching prefix.
-	// The "above-base" layer (only when aboveBase=true) is the actual
+	// Optimized two-layer fixtures advertise helloLayerDiffID to match
+	// BaseLayerImage. Portable single-layer fixtures use a foreign digest
+	// and retain their body in that sole layer. The above-base layer is the
 	// hello.txt content; its diff_id is whatever sha256(uncompressed tar)
 	// yields, which doesn't need to match anything because LayersAboveBase
 	// only compares prefixes, not tails.
-	baseBlob := buildHelloLayer("")
+	baseBody := ""
+	if !aboveBase {
+		baseBody = helloBody
+	}
+	baseBlob := buildHelloLayer(baseBody)
 	baseSum := sha256.Sum256(baseBlob)
 	baseDigest := "sha256:" + hex.EncodeToString(baseSum[:])
 
@@ -226,7 +277,28 @@ func layeredHelloImageOnPortWithCmd(repo, helloBody string, aboveBase bool, port
 		digest string
 		diffID string
 	}
-	layers := []layerRec{{blob: baseBlob, digest: baseDigest, diffID: helloLayerDiffID}}
+	baseDiffID := helloLayerDiffID
+	if !aboveBase {
+		// Portable images must not advertise the fake optimized-base prefix:
+		// doing so bypasses full-rootfs dispatch and drops their only layer.
+		zr, err := gzip.NewReader(bytes.NewReader(baseBlob))
+		if err != nil {
+			panic(err)
+		}
+		hash := sha256.New()
+		size, err := io.Copy(hash, io.LimitReader(zr, api.MaxExportedLayerBytes+1))
+		if err != nil {
+			panic(err)
+		}
+		if size > api.MaxExportedLayerBytes {
+			panic("portable fixture exceeds exported layer byte cap")
+		}
+		if err := zr.Close(); err != nil {
+			panic(err)
+		}
+		baseDiffID = "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	}
+	layers := []layerRec{{blob: baseBlob, digest: baseDigest, diffID: baseDiffID}}
 
 	if aboveBase {
 		appBlob := buildHelloLayer(helloBody)

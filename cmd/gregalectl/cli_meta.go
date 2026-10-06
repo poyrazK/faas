@@ -403,6 +403,19 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  "converge-control-plane",
+				Short: "Converge the control-plane bootstrap roles when their inputs changed (ADR-580)",
+				Flags: []cliFlag{
+					{Name: "manifest-file", Short: "signed split-box manifest (required)"},
+					{Name: "ssh-known-hosts-file", Short: "verified known_hosts covering the control-plane host (required)"},
+					{Name: "ansible-vars-file", Short: "control-plane Ansible variables (required)"},
+					{Name: "ssh-user", Short: "SSH user (default root)"},
+					{Name: "ssh-key", Short: "SSH private key"},
+					{Name: "repo-root", Short: "repository root containing deploy/ansible"},
+					{Name: "json", Short: "emit structured JSON"},
+				},
+			},
+			{
 				Name:  "rollback-node",
 				Short: "Drain a join row and record a resumable rollback",
 				Flags: []cliFlag{

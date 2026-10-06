@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"gopkg.in/yaml.v3"
 )
@@ -55,6 +56,7 @@ type testScenario struct {
 	Timeout          string                 `yaml:"timeout"`
 	Load             *testLoadSpec          `yaml:"load"`
 	Local            *testLocalAppSpec      `yaml:"local"`
+	Chaos            *testChaosSpec         `yaml:"chaos,omitempty"`
 }
 
 type testService struct {
@@ -179,6 +181,7 @@ type testRunReceipt struct {
 	RunID        string                             `json:"run_id,omitempty"`
 	AppSlug      string                             `json:"app_slug,omitempty"`
 	DeploymentID string                             `json:"deployment_id,omitempty"`
+	SourceSHA256 string                             `json:"source_sha256,omitempty"`
 	Services     map[string]string                  `json:"services,omitempty"`
 	AsyncRoutes  map[string][]string                `json:"async_routes,omitempty"`
 	ServiceWake  map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
@@ -197,20 +200,43 @@ type testRunReceipt struct {
 	Requests     []testHTTPRequestEvidence          `json:"requests,omitempty"`
 	Load         *testLoadEvidence                  `json:"load,omitempty"`
 	LocalApp     *testLocalAppEvidence              `json:"local_app,omitempty"`
+	Chaos        *testChaosEvidence                 `json:"chaos,omitempty"`
 	Baseline     *testBaselineEvidence              `json:"baseline,omitempty"`
 }
 
+type testChaosEvidence struct {
+	ExpiresAt      time.Time    `json:"expires_at"`
+	RulesInstalled int          `json:"rules_installed"`
+	Rules          []chaos.Rule `json:"rules"`
+}
+
 func cmdTest(args []string) int {
+	return cmdTestWithChaos(args, nil)
+}
+
+func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	if len(args) > 0 && args[0] == "init" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
 		return cmdTestInit(args[1:])
 	}
 	if len(args) > 0 && args[0] == "import" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
 		return cmdTestImport(args[1:])
 	}
 	if len(args) > 0 && args[0] == "compare" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
 		return cmdTestCompare(args[1:])
 	}
 	if len(args) > 0 && args[0] == "ci" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
 		return cmdTestCI(args[1:])
 	}
 	fs := newFlagSet("test", flag.ContinueOnError)
@@ -287,6 +313,9 @@ func cmdTest(args []string) int {
 		return printErr("Invalid test options", errors.New("--fail-fast applies only to test execution"))
 	}
 	if *suiteName != "" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos selection", errors.New("chaos injection requires --scenario, not --suite"))
+		}
 		if *dataPath != "" {
 			return printErr("Invalid suite data", errors.New("declare data on suite members instead of using --data with --suite"))
 		}
@@ -381,6 +410,18 @@ func cmdTest(args []string) int {
 	if !ok {
 		return printErr("Unknown scenario", fmt.Errorf("%q is not declared in %s", *scenarioName, *manifestPath))
 	}
+	if chaosOverride != nil {
+		if scenario.Chaos != nil {
+			return printErr("Invalid chaos plan", errors.New("scenario already declares chaos rules; remove the manifest plan before using gregale chaos inject"))
+		}
+		scenario.Chaos = chaosOverride
+	}
+	if err := validateScenarioChaos(scenario); err != nil {
+		return printErr("Invalid chaos plan", err)
+	}
+	if scenario.Chaos != nil && *engine != "real-vm" {
+		return printErr("Invalid chaos engine", errors.New("scenario chaos requires --engine real-vm; local and simulated runs do not apply proxy faults"))
+	}
 	if *engine == "real-vm" && *maxWorkloadMinutes > 0 {
 		estimate := estimateTestWorkloadMinutes(scenario, len(profiles)*(*repeat))
 		if estimate > *maxWorkloadMinutes {
@@ -469,6 +510,9 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 	for name, scenario := range manifest.Scenarios {
 		if len(name) < 3 || len(name) > 80 || !api.ValidAppSlug(scenario.Project) {
 			return testManifest{}, "", fmt.Errorf("scenario %q needs a valid project slug", name)
+		}
+		if err := validateScenarioChaos(scenario); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q chaos: %w", name, err)
 		}
 		if len(scenario.Command) == 0 && len(scenario.Requests) == 0 && len(scenario.Checks) == 0 {
 			return testManifest{}, "", fmt.Errorf("scenario %q needs a command, requests, or checks", name)
@@ -793,8 +837,20 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 		phases.advance(name, status)
 	}
+	beginCleanup := func() {
+		if phases.name != "cleanup" {
+			advancePhase("cleanup")
+		}
+	}
 	defer func() {
-		receipt.Phases = phases.finish(receipt.Status)
+		status := receipt.Status
+		if phases.name == "cleanup" {
+			status = "passed"
+			if receipt.CleanupError != "" {
+				status = "failed"
+			}
+		}
+		receipt.Phases = phases.finish(status)
 		receipt.FinishedAt = time.Now().UTC()
 		receipt.DurationMS = receipt.FinishedAt.Sub(receipt.StartedAt).Milliseconds()
 	}()
@@ -844,6 +900,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	workloads := []deployedTestService{{name: scenario.Project, project: scenario.Project, sourceDir: sourceDir, config: config, session: session}}
 	registered := false
 	defer func() {
+		beginCleanup()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cleanupCancel()
 		allDestroyed := true
@@ -935,6 +992,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	consumerIDs := make([]string, 0, len(scenario.Consumers))
 	defer func() {
+		beginCleanup()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 		defer cleanupCancel()
 		for _, id := range consumerIDs {
@@ -1040,8 +1098,9 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	for _, workload := range workloads {
 		var deploymentID string
+		var sourceSHA256 string
 		deployResult := cmdDeployTarballToExisting(ctx, workload.config.deployArgs(workload.session.App.Slug, workload.sourceDir), true, deployExecution{
-			onQueued: func(dep api.DeploymentResponse) { deploymentID = dep.ID },
+			onQueued: func(dep api.DeploymentResponse) { deploymentID, sourceSHA256 = dep.ID, dep.SourceSHA256 },
 		})
 		if deployResult != 0 || deploymentID == "" {
 			osStdout = previousStdout
@@ -1050,6 +1109,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 		if workload.name == scenario.Project {
 			receipt.DeploymentID = deploymentID
+			receipt.SourceSHA256 = sourceSHA256
 		} else {
 			if receipt.Services == nil {
 				receipt.Services = make(map[string]string)
@@ -1099,6 +1159,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 	}
 	defer func() {
+		beginCleanup()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 		defer cleanupCancel()
 		for _, command := range scenario.Cleanup {
@@ -1155,6 +1216,26 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				}
 			}
 			serviceRequestBaseline[workload.name] = seenRequests
+		}
+	}
+	if scenario.Chaos != nil {
+		plan, err := scenario.Chaos.plan()
+		if err != nil {
+			receipt.Error = fmt.Sprintf("prepare chaos plan: %v", err)
+			return
+		}
+		advancePhase("inject_chaos")
+		installed, err := client.InjectScenarioTestChaos(ctx, receipt.RunID, api.InjectScenarioTestChaosRequest{
+			DurationMS: plan.DurationMS,
+			Rules:      scenarioChaosAPIRules(plan.Rules),
+		})
+		if err != nil {
+			receipt.Error = fmt.Sprintf("install scenario chaos plan: %v", err)
+			return
+		}
+		receipt.Chaos = &testChaosEvidence{
+			ExpiresAt: installed.ExpiresAt, RulesInstalled: installed.RulesInstalled,
+			Rules: append([]chaos.Rule(nil), plan.Rules...),
 		}
 	}
 	recorder.reset()
