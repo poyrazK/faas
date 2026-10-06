@@ -6834,3 +6834,68 @@ Native adapter fixtures allow one minute for aggregate cleanup of their three
 owned databases and roles. Each database drop forces a PostgreSQL checkpoint;
 the former ten-second aggregate budget left occupied fixture names under disk
 contention. This test cleanup budget does not change production IO deadlines.
+
+### Private native object-grant retirement and recovery (2026-10-06)
+
+A private provider protocol and durable control-plane intent now prepare native
+object-write grant retirement. Reservation requires an owned source bucket hold
+and freezes the exact sorted tracked-grant roster, source placement, source
+configuration root and request identity before provider IO. Dispatch is retained
+before each authenticated idempotent resume; retries and replacement workers
+reuse the original request and roster. Provider calls receive independent copies
+of that roster. A disappeared receipt, additional grant or placement substitution
+rejects recovery rather than silently replacing the selection.
+
+Revocation replies cannot settle native grants. The worker requires a separate
+authenticated read of the provider's immutable retirement journal, bound to the
+original source, request and plan hash. The provider retirement identity becomes
+write-once on its first observation. Only permanent revocation of every selected
+native capability together with zero already-admitted native writes consumes
+the exact original native receipts. Synchronous request receipts remain
+independent. Missing journals, unknown replies, negative counts, changed
+identities, elapsed time and signing/URL expiry do not establish drainage.
+
+Source-row locks serialize roster checks and consumption, with fresh SQL-clock
+lease authorization after waits and before commit. The private APID driver checks
+worker admission and authority around provider IO and validates the original
+frozen source configuration before and after retirement while capturing.
+Uncertainty returns no usable observation. Compensation may resume an already
+dispatched original retirement even after source configuration edits, but cannot
+start an undispatched one. Dispatched unknown or busy retirements block local
+source-hold abandonment; an undispatched intent may abandon admission without
+clearing any grants. The provider contract creates no temporary remote admission
+hold and must never invalidate unrelated buckets or newer capabilities.
+
+The native provider adapter remains a qualification gap. The protocol requires
+an authenticated mapping to the original issued capabilities and a recoverable
+provider journal with independent admitted-write observations. Historical
+control-plane receipt UUIDs alone do not provide that mapping. Built-in S3 and
+GCS adapters do not implement this capability and fail closed; credential
+rotation, ordinary IAM success or object listings are not substitutes. Provider
+replies in local contracts are synthetic, not live-provider revocation evidence.
+
+The retirement worker is private and is not installed in the active capture
+coordinator or composed barrier driver. It selects no capture time, retains no
+object manifest or PostgreSQL recovery point, creates no target and releases no
+successful-capture source hold. Complete provider/external/background writer
+coverage, a common frozen configuration/database/object point, immutable source
+retention and authenticated successful source release remain required before
+data-bearing capture and public full-clone admission can open. Independent
+restoration, credential remapping, publication/readiness and qualified promotion
+preserving production data also remain unfinished.
+
+Qualification uses task-owned migrated PostgreSQL 16.15 with UTF-8 encoding,
+`max_prepared_transactions=32` and the official template-database harness.
+Twenty-two focused state/schema top-level contracts passed under the race
+detector (71 including subtests), and seventeen normal APID top-level contracts
+passed (72 including subtests). There were no failed or skipped cases in those
+final runs. Coverage includes original selection and caller mutation, changed
+provider identity or roster, lost reservation/dispatch/provider/observation
+acknowledgements, worker handoff, lease expiry after source-lock waits,
+configuration/admission/placement drift during IO, unknown native outcomes,
+compensation after configuration edits, schema registration and existing
+coordinated-capture/broker regressions. Normal production and test packages
+compiled without source overlays. Pinned golangci-lint v2.4.0 built with Go
+1.25.13 reports zero affected-package issues; SQLC v1.31.1 parity, formatting
+and whitespace checks pass. These contracts do not qualify a live native
+provider or native x86_64 KVM full clone.

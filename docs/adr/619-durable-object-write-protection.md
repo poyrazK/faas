@@ -1,4 +1,4 @@
-# ADR-618: Durable Object Lock policy for new object versions
+# ADR-619: Durable Object Lock policy for new object versions
 
 Status: Accepted
 Date: 2026-10-05

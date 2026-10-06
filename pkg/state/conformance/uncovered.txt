@@ -52,7 +52,6 @@ CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
 CheckWebhookReplay
-ClaimNextDueWorkflowRun
 ClaimNextPendingRun
 ClearDeployment
 ClearInstanceFrameworkReadyAt
@@ -425,7 +424,6 @@ MarkTriggerRecordDeadLetter
 MarkTriggerRecordRetry
 MarkTriggerRecordSucceeded
 MarkUploadSessionCommitted
-MarkWorkflowRunStatus
 MatchEdgeRulesForHost
 MatchRecoveryCode
 MinCertExpiryForApp

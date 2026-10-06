@@ -49,7 +49,7 @@ Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
 canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand. Version 4
+passes; rerun qualification instead of extending it by hand. Version 5
 artifacts require runtime DML and RLS enforcement, denied DDL/administration,
 stable migration ownership, and preserved data after migration login retirement.
 When read-only access is advertised, approval also requires actual existing and
@@ -58,7 +58,7 @@ stable recovered passwords, rotation preserving data, and revoked old sessions
 and fresh logins. A capability declaration alone is insufficient.
 They also require a restore timestamp inside the disposable source's lifetime,
 target readiness, earlier committed data, rejection of source credentials on
-the target, and completed deletion. Versions 1–3 cannot authorize this release.
+the target, and completed deletion. Versions 1–4 cannot authorize this release.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against
@@ -172,10 +172,10 @@ settle missing windows, final corrections, budget headroom, or provider invoices
 
 Apply `20261001105914375_managed_postgres_migration_credentials.sql` before
 using `migration` bindings. Keep the staging provisioning gate closed until a
-fresh version 4 live Neon qualification passes. Local PostgreSQL tests establish
+fresh version 5 live Neon qualification passes. Local PostgreSQL tests establish
 SQL behavior; they do not establish Neon password recovery or branch isolation.
 
-Version 4 replaces prior approvals, including version 3; keep provisioning
+Version 5 replaces prior approvals, including version 4; keep provisioning
 closed until the new disposable live run and lifecycle smoke pass. Inspect
 `gregale postgres capabilities --json` before adoption: `read_only` is configured
 support, while `provisioning_enabled` reflects the current rollout gate.
@@ -232,5 +232,22 @@ to that parent. With a disposable local `DATABASE_URL`, run
 `go test ./pkg/managedpostgres/neon -run TestPostgresStartersUseMigrationRolesAndSerializeReleases`.
 This exercises the actual migration scripts against restricted SQL roles,
 concurrent release locking, runtime data access, and retained schema after
-migration-login retirement. Keep the existing live version-4 Neon qualification
+migration-login retirement. Keep the existing live version-5 Neon qualification
 and rollout gates; local PostgreSQL evidence does not replace them.
+
+## Compute resize recovery (ADR-623)
+
+Use a fresh version 5 qualification approval before allowing new Neon intents.
+The qualification changes the disposable primary's class and restores it,
+checking data, existing logins and read-only permissions after both changes.
+Existing pending resizes remain reconciled when provisioning is disabled.
+
+Inspect the request using `gregale postgres resize-status DATABASE REQUEST_UUID`.
+A provider timeout leaves the database `updating`; preserve the operation and
+its pinned IDs. Recovery reads provider configuration before considering a
+mutation. A changed dataset, default branch, unexpected configuration, missing
+backend or expired worker lease prevents completion. Repair the provider/config
+cause and allow reconciliation; do not delete the intent or edit generations to
+force readiness. There is no customer cancellation or rollback endpoint yet.
+Monitor the `updating` database reconciliation metrics and pending request's
+`last_error_code`. Provider changes can interrupt connections.

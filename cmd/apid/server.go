@@ -1294,6 +1294,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
 	mux.HandleFunc("GET /v1/postgres/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCapabilities))))
 	mux.HandleFunc("POST /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresDatabase))))))
+	// Resize UUIDs are persisted by the lifecycle store; progress must not be
+	// frozen by the generic HTTP idempotency response cache.
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.resizeManagedPostgresDatabase)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresResize))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresDatabase))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))

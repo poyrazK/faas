@@ -214,7 +214,7 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 		"production":        func(values map[string]string) { values[EnvironmentEnv] = "production" },
 		"approval":          func(values map[string]string) { values[QualificationEnv] = "false" },
 		"unversioned":       func(values map[string]string) { delete(values, QualificationVersionEnv) },
-		"previous contract": func(values map[string]string) { values[QualificationVersionEnv] = "2" },
+		"previous contract": func(values map[string]string) { values[QualificationVersionEnv] = "4" },
 		"expired": func(values map[string]string) {
 			values[QualificationUntilEnv] = now.Add(-time.Minute).Format(time.RFC3339)
 		},

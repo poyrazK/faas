@@ -4065,6 +4065,25 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_resizes",
+    "columns": [
+      "account_id",
+      "backend_fingerprint",
+      "backend_id",
+      "completed_at",
+      "created_at",
+      "data_resource_id",
+      "database_id",
+      "generation",
+      "id",
+      "provider_resource_id",
+      "source_spec",
+      "state",
+      "target_class"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_restore_proofs",
     "columns": [
       "account_id",
@@ -5749,6 +5768,23 @@
       "source_version",
       "target_etag",
       "verified_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_object_grant_revocations",
+    "columns": [
+      "drained_at",
+      "observed_at",
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "request_id",
+      "request_started_at",
+      "retained_at",
+      "revocation_id",
+      "source_bucket_id",
+      "state"
     ],
     "kind": "operational"
   },

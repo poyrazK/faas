@@ -59,7 +59,7 @@ func TestManagedPostgresCapabilitiesRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, _ := api.ManagedPostgresLimitsFor(api.PlanHobby)
-	if out.ContractVersion != 1 || out.Region != "us-east-1" || !out.ProvisioningEnabled || out.DatabaseLimit != min(2, limits.DatabasesMax) ||
+	if out.ContractVersion != managedpostgres.CapabilityContractVersion || out.Region != "us-east-1" || !out.ProvisioningEnabled || out.DatabaseLimit != min(2, limits.DatabasesMax) ||
 		!slices.Equal(out.ServiceClasses, []string{"development"}) || !slices.Equal(out.PostgresMajors, []int{16, 17}) ||
 		!slices.Contains(out.CredentialAccess, "read_only") || out.StorageLimitBytes != 1<<30 || out.RestoreWindowSeconds != 3600 || out.AlwaysOn {
 		t.Fatalf("effective capabilities=%+v", out)

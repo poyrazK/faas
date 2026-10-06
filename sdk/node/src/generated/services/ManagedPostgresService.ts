@@ -10,9 +10,11 @@ import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapab
 import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
 import type { Problem } from '../models/Problem.js';
+import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -271,6 +273,62 @@ export class ManagedPostgresService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/account/managed-postgres-usage',
+    });
+  }
+  /**
+   * Resize managed PostgreSQL compute
+   * Durably reserves a service-class change on the pinned dataset. Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute class changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+   * @returns Problem Invalid request, conflict, plan limit or backend unavailable
+   * @returns ManagedPostgresResize Accepted resize or current progress for an existing request
+   * @throws ApiError
+   */
+  public static resizeManagedPostgresDatabase({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ResizeManagedPostgresDatabaseRequest,
+  }): CancelablePromise<Problem | ManagedPostgresResize> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/resize',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get managed PostgreSQL resize progress
+   * Reads a durable resize request for the authenticated account and database. Responses are not cached and omit private provider identity.
+   * @returns ManagedPostgresResize Account and database scoped resize progress
+   * @returns Problem Authentication or resize lookup error
+   * @throws ApiError
+   */
+  public static getManagedPostgresResize({
+    id,
+    resizeId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Canonical UUID supplied as request_id when reserving this resize.
+     */
+    resizeId: string,
+  }): CancelablePromise<ManagedPostgresResize | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/resizes/{resize_id}',
+      path: {
+        'id': id,
+        'resize_id': resizeId,
+      },
     });
   }
   /**

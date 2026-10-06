@@ -56,10 +56,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 621 | [Event protection for new object versions](621-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
-| 620 | [Durable object event holds](620-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
-| 619 | [Protection-aware object lifecycle deletion](619-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |
-| 618 | [Durable object write protection](618-durable-object-write-protection.md) | accepted | Immutable bounded write policies and exact native version verification for PUT, copy and multipart |
+| 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
+| 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
+| 620 | [Protection-aware object lifecycle deletion](620-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |
+| 619 | [Durable object write protection](619-durable-object-write-protection.md) | accepted | Immutable bounded write policies and exact native version verification for PUT, copy and multipart |
 | 596 | [Service binding dependency evidence](596-service-binding-dependency-evidence.md) | accepted | Versioned evidence for service binding dependencies. |
 | 597 | [Exact caller deployment for service smoke tests](597-caller-pinned-service-smoke.md) | accepted | Probe the exact selected caller deployment. |
 | 598 | [Stored binding release policy per deployment scope](598-stored-binding-release-policy.md) | accepted | Persist and enforce binding checks at release transitions. |
@@ -300,6 +300,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 155 | [Provider-neutral managed PostgreSQL](155-provider-neutral-managed-postgres.md): account-owned databases, app-scoped bindings, durable placement, lifecycle reconciliation, and canonical usage meters | foundation accepted; preview pending | Managed PostgreSQL foundation; provider qualification, billing, and recovery remain launch gates |
 | 492 | [Validate the Neon consumption contract](492-managed-postgres-consumption-contract.md) | accepted | Correct byte-month normalization, require complete usage coverage, and reconcile prior ledgers |
 | 500 | [Managed PostgreSQL provider rate-limit cooldowns](500-managed-postgres-provider-rate-limit-cooldowns.md) | accepted | Honor retry guidance, isolate consumption throttling, and preserve canceled response reads |
+| 623 | [Durable managed PostgreSQL compute resizing](623-managed-postgres-durable-compute-resizing.md) | accepted for operator preview | Persist class-only resize intent, preserve data and credentials, and recover uncertain provider updates |
 | 154 | [Disposable developer source deltas](154-developer-source-delta.md): changed-entry transfer with full-archive reconstruction and automatic full fallback | accepted | `gregale dev` DX follow-up to ADR-153 |
 | 153 | [Developer BuildKit dependency cache](153-developer-buildkit-cache.md): tenant/workspace-scoped Railpack cache across ephemeral developer builder VMs | accepted | `gregale dev` rebuild latency |
 | 152 | [Configurable sustained CPU per app](152-configurable-app-cpu.md): 250m, 500m, and 1000m cgroup quotas with configured/effective API visibility | accepted | Cloud Run gap analysis |

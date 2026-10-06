@@ -3570,6 +3570,22 @@ type ManagedPostgresHealth struct {
 	AttemptCount       int32
 }
 
+type ManagedPostgresResize struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DataResourceID     string
+	SourceSpec         []byte
+	TargetClass        string
+	Generation         int64
+	State              string
+	CreatedAt          pgtype.Timestamptz
+	CompletedAt        pgtype.Timestamptz
+}
+
 type ManagedPostgresRestoreProof struct {
 	DatabaseID         pgtype.UUID
 	AccountID          pgtype.UUID
@@ -5035,6 +5051,20 @@ type ProjectEnvironmentCloneObjectEntry struct {
 	CopiedAt       pgtype.Timestamptz
 	TargetEtag     string
 	VerifiedSha256 string
+}
+
+type ProjectEnvironmentCloneObjectGrantRevocation struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	RequestID        pgtype.UUID
+	Plan             []byte
+	PlanSha256       string
+	State            string
+	RevocationID     string
+	RetainedAt       pgtype.Timestamptz
+	RequestStartedAt pgtype.Timestamptz
+	ObservedAt       pgtype.Timestamptz
+	DrainedAt        pgtype.Timestamptz
 }
 
 type ProjectEnvironmentCloneObjectManifest struct {
