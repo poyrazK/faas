@@ -4135,7 +4135,7 @@ Add an edge rule
 | `--cache-stale-while-revalidate-seconds <N>` | kind=cache: serve stale during a background refresh (max 300) |  |
 | `--budget-ms <MS>` | kind=budget: per-request wall-clock budget in ms (max 30000) |  |
 | `--retry-max-attempts <N>` | kind=retry: total attempts including the original (default 2; max 3) |  |
-| `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the breaker (default 0.5) |  |
+| `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the app&#39;s instance-health breaker (default 0.5); the highest-priority rule tunes every instance, selectors do not partition it |  |
 | `--circuit-open-seconds <N>` | kind=circuit_breaker: first open interval (default 5) |  |
 | `--respond-status <CODE>` | kind=respond: response status (default 200) |  |
 | `--respond-body <JSON>` | kind=respond: JSON response body (max 64 KiB) |  |
