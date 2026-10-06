@@ -56,6 +56,9 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 	if _, exists := m.objectMultipartUploads[upload.ID]; exists || count >= limit {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
+	if _, held := m.objectWriteFences[upload.BucketID]; held {
+		return ObjectMultipartUpload{}, ErrObjectBucketWriteFenced
+	}
 	var captureErr error
 	upload.Encryption, upload.EncryptionDefaultRevision, captureErr = m.captureObjectBucketDefaultLocked(upload.BucketID, upload.Encryption)
 	if captureErr != nil {

@@ -35,6 +35,9 @@ func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCom
 }
 
 func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.ObjectStoragePolicy, capture bool) (ObjectUploadCompletion, bool, error) {
+	if _, held := m.objectWriteFences[c.BucketID]; held {
+		return c, false, ErrObjectBucketWriteFenced
+	}
 	if capture {
 		var err error
 		c.Encryption, c.EncryptionDefaultRevision, err = m.captureObjectBucketDefaultLocked(c.BucketID, c.Encryption)

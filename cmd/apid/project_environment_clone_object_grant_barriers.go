@@ -58,7 +58,7 @@ func (s *server) resumeCloneObjectGrantRetirementsForAbandonment(ctx context.Con
 	seen := make(map[string]bool, len(fences))
 	for _, fence := range fences {
 		b, op := fence.Bucket, l.Operation
-		if seen[fence.BucketID] || fence.BucketID != b.ID || b.AccountID != op.AccountID || fence.CloneOperationID != op.ID || fence.Token != op.ID || fence.Requests < 0 || fence.NativeGrants < 0 || fence.Deletions < 0 || fence.Protections < 0 {
+		if seen[fence.BucketID] || fence.BucketID != b.ID || b.AccountID != op.AccountID || fence.CloneOperationID != op.ID || fence.Token != op.ID || fence.Requests < 0 || fence.NativeGrants < 0 || fence.Deletions < 0 || fence.Protections < 0 || fence.Uploads < 0 || fence.Multipart < 0 {
 			return l, state.ErrConflict
 		}
 		seen[fence.BucketID] = true

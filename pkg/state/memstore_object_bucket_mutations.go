@@ -61,7 +61,7 @@ func (m *MemStore) ownedObjectWriteFenceLocked(b ObjectBucket, token, operationI
 	if !exists || fence.Token != token || fence.CloneOperationID != operationID || !sameObjectMutationBucket(b, fence.Bucket) {
 		return ObjectBucketWriteFence{}, ErrConflict
 	}
-	fence.Requests, fence.NativeGrants, fence.Deletions, fence.Protections = 0, 0, 0, 0
+	fence.Requests, fence.NativeGrants, fence.Deletions, fence.Protections, fence.Uploads, fence.Multipart = 0, 0, 0, 0, 0, 0
 	for _, receipt := range m.objectMutations {
 		if receipt.Bucket.ID != b.ID {
 			continue
@@ -80,6 +80,16 @@ func (m *MemStore) ownedObjectWriteFenceLocked(b ObjectBucket, token, operationI
 	for _, protection := range m.objectVersionProtection {
 		if protection.BucketID == b.ID && protectionActive(protection) {
 			fence.Protections++
+		}
+	}
+	for _, upload := range m.objectUploadCompletions {
+		if upload.BucketID == b.ID && (upload.Status == "pending" || (upload.WritePhase == "" || upload.WritePhase == "untracked") && upload.Status == "failed") {
+			fence.Uploads++
+		}
+	}
+	for _, upload := range m.objectMultipartUploads {
+		if upload.BucketID == b.ID && objectMultipartLive(upload.State) {
+			fence.Multipart++
 		}
 	}
 	return fence, nil

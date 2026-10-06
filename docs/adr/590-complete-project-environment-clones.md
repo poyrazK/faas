@@ -7216,3 +7216,37 @@ across state, object storage, S3 gateway and APID. SQLC v1.31.1 parity,
 migration-ID checks, repository policy, formatting and whitespace checks pass.
 The existing optional Packer and live nft skips remain; these local checks do
 not qualify a live provider, a complete common point or native KVM restoration.
+
+### 2026-10-06: Observe upload and multipart journals during capture
+
+The private bucket barrier now counts pending upload receipts and every live
+multipart session, including expired sessions and uncertain acknowledgements.
+Legacy untracked failed uploads also remain busy: a failure status does not
+prove that a provider write never happened. New tracked, legacy and multipart
+journal admission checks the held source bucket. An append-only PostgreSQL
+trigger protects older replicas, locks account before bucket, requires READ
+COMMITTED and refuses removal while bucket holds exist. Exact original retries
+and operational journal progress remain available under the hold.
+
+Memory and PostgreSQL contracts exercise original upload dispatch, uncertain
+recovery, restart and authenticated settlement; multipart activation, expiry,
+verified abort and drainage; continued admission closure; and independent
+request receipts. Migration coverage checks upgrade replay, round-trip guard
+shape and downgrade refusal. Negative counts reject the source roster before
+provider capture.
+
+This is journal observation and admission enforcement, not complete provider
+recovery composition. Generic provider receipts still pin their original
+placement independently, and settlement cannot erase them. Binding upload and
+multipart recovery to those retained receipts is the next bounded increment.
+Recursive cleanup, other writer coverage, live provider qualification and a
+qualified common point remain outstanding. Full public capture stays gated.
+
+Qualification passed on task-owned PostgreSQL 16.15: the selected upload and
+multipart state contracts, migration round-trip/older-replica/isolation and
+source-lock-wait checks, object-storage HTTP and S3 gateway regressions ran
+under the race detector. The normal APID capture and coordinator suite passed.
+Pinned golangci-lint v2.4.0 reports zero issues across the four affected package
+groups. SQLC v1.31.1 parity, migration-ID and repository policy checks pass;
+optional Packer and live nft checks remain skipped. These local checks do not
+qualify a live provider or a complete common point.

@@ -41873,3 +41873,34 @@ END $$;
 --
 
 CREATE TRIGGER object_protection_capture_admission BEFORE INSERT ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.fence_object_protection_capture_admission();
+
+
+--
+-- Name: fence_object_upload_capture_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_upload_capture_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE bucket_state text;
+BEGIN
+ -- Fence queries need a fresh snapshot after waiting for the source lock.
+ -- Reject old transaction snapshots rather than hiding a committed hold.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_admission_isolation',MESSAGE='Upload admission requires READ COMMITTED';
+ END IF;
+ -- Match the application admission order: account before source bucket.
+ -- An older replica's INSERT must not invert the account FK/row locks.
+ PERFORM id FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ SELECT state INTO bucket_state FROM object_buckets
+ WHERE id=NEW.bucket_id AND account_id=NEW.account_id AND app_id=NEW.app_id FOR UPDATE;
+ IF bucket_state IS DISTINCT FROM 'ready' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_bucket_not_ready',MESSAGE='Bucket cleanup fences upload admission';
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=NEW.bucket_id) THEN
+  RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_upload_capture_fenced',MESSAGE='Checkpoint capture fences new upload admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+CREATE TRIGGER object_upload_capture_admission BEFORE INSERT ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.fence_object_upload_capture_admission();
+CREATE TRIGGER object_multipart_capture_admission BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_upload_capture_admission();
+CREATE INDEX object_upload_capture_pending_idx ON public.object_upload_completions USING btree (bucket_id) WHERE status='pending' OR (write_phase='untracked' AND status='failed');

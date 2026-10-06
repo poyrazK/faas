@@ -36,6 +36,8 @@ type ObjectBucketWriteFence struct {
 	// Waiting/applying retention and legal-hold journals remain busy even
 	// after worker expiry; only original terminal settlement drains them.
 	Protections int64
+	// Pending upload receipts and live multipart sessions never drain by expiry.
+	Uploads, Multipart int64
 }
 
 // This is a private data-plane seam. A zero count covers only instrumented

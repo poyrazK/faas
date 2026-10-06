@@ -34730,7 +34730,9 @@ SELECT f.bucket_id, f.token, f.backend_id, f.backend_fingerprint, f.physical_nam
  (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='request') AS requests,
  (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='native_grant') AS native_grants,
  (SELECT count(*) FROM object_deletions d WHERE d.bucket_id=f.bucket_id AND d.state IN ('prepared','dispatched')) AS deletions,
- (SELECT count(*) FROM object_version_protection p WHERE p.bucket_id=f.bucket_id AND p.state IN ('waiting','applying')) AS protections
+ (SELECT count(*) FROM object_version_protection p WHERE p.bucket_id=f.bucket_id AND p.state IN ('waiting','applying')) AS protections,
+ (SELECT count(*) FROM object_upload_completions u WHERE u.bucket_id=f.bucket_id AND (u.status='pending' OR (u.write_phase='untracked' AND u.status='failed'))) AS uploads,
+ (SELECT count(*) FROM object_storage_multipart_uploads u WHERE u.bucket_id=f.bucket_id AND u.state IN ('initiating','active','completing','completing_conditional','aborting')) AS multipart
 FROM object_bucket_write_fences f WHERE f.bucket_id=$1
 `
 
@@ -34746,6 +34748,8 @@ type ObjectBucketWriteFenceReadRow struct {
 	NativeGrants       int64
 	Deletions          int64
 	Protections        int64
+	Uploads            int64
+	Multipart          int64
 }
 
 func (q *Queries) ObjectBucketWriteFenceRead(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketWriteFenceReadRow, error) {
@@ -34763,6 +34767,8 @@ func (q *Queries) ObjectBucketWriteFenceRead(ctx context.Context, db DBTX, bucke
 		&i.NativeGrants,
 		&i.Deletions,
 		&i.Protections,
+		&i.Uploads,
+		&i.Multipart,
 	)
 	return i, err
 }

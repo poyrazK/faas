@@ -25068,7 +25068,7 @@ func mapErr(err error) error {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "55000":
-			if pgErr.ConstraintName == "object_deletion_capture_fenced" || pgErr.ConstraintName == "object_protection_capture_fenced" {
+			if pgErr.ConstraintName == "object_deletion_capture_fenced" || pgErr.ConstraintName == "object_protection_capture_fenced" || pgErr.ConstraintName == "object_upload_capture_fenced" {
 				return ErrObjectBucketWriteFenced
 			}
 			if pgErr.ConstraintName == "clone_configuration_write_fenced" || pgErr.ConstraintName == "clone_configuration_guard_missing" {
