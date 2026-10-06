@@ -79,11 +79,12 @@ func TestMaintenanceConnectionPinsExactProviderPlacement(t *testing.T) {
 					}
 					writeResponse(t, w, http.StatusOK, endpointsResponse{Endpoints: values})
 				case "/api/v2/projects/project-source/operations":
-					value := operationsResponse{}
+					value := operationsResponse{Operations: []operation{}}
 					if fault == "pending_operation" {
 						value.Operations = []operation{{ID: "operation-pending", Status: "running"}}
 					}
 					if fault == "operation_pagination" {
+						value.Operations = []operation{{ID: "operation-loop", Status: "finished"}}
 						value.Pagination.Cursor = "more-operations"
 					}
 					writeResponse(t, w, http.StatusOK, value)

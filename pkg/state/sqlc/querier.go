@@ -175,6 +175,7 @@ type Querier interface {
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error)
 	ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg ClaimCustomerOperationBlobCleanupParams) (CustomerOperationResultBlob, error)
+	ClaimDueLegacyWorkflowRun(ctx context.Context, db DBTX, arg ClaimDueLegacyWorkflowRunParams) (WorkflowRun, error)
 	ClaimEnvironmentGitOpsJob(ctx context.Context, db DBTX, arg ClaimEnvironmentGitOpsJobParams) (EnvironmentGitopsJob, error)
 	ClaimEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg ClaimEnvironmentGitSourcePollParams) (EnvironmentGitSourcePoll, error)
 	ClaimEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg ClaimEnvironmentQueueDeliveryInvocationParams) (Invocation, error)
@@ -182,6 +183,7 @@ type Querier interface {
 	ClaimHistoricalAlertRollback(ctx context.Context, db DBTX, arg ClaimHistoricalAlertRollbackParams) (int64, error)
 	ClaimImmediateNotificationForNode(ctx context.Context, db DBTX, arg ClaimImmediateNotificationForNodeParams) (ClaimImmediateNotificationForNodeRow, error)
 	ClaimLayerArtifactDeletion(ctx context.Context, db DBTX, arg ClaimLayerArtifactDeletionParams) (int64, error)
+	ClaimLegacyPendingWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error)
 	ClaimManagedPostgresBindingRetirement(ctx context.Context, db DBTX, arg ClaimManagedPostgresBindingRetirementParams) (ClaimManagedPostgresBindingRetirementRow, error)
 	ClaimManagedPostgresCutover(ctx context.Context, db DBTX, arg ClaimManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	ClaimManagedPostgresHealthCheck(ctx context.Context, db DBTX, arg ClaimManagedPostgresHealthCheckParams) (ClaimManagedPostgresHealthCheckRow, error)
@@ -230,6 +232,7 @@ type Querier interface {
 	CloneObjectWriteFenceInsert(ctx context.Context, db DBTX, arg CloneObjectWriteFenceInsertParams) (int64, error)
 	// Exact current session, with nonwaiting fencing against refresh and startup.
 	CloseApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg CloseApplicationStandardLogConsumerParams) ([]byte, error)
+	CloseLegacyWorkflowOutboundUnknownAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	CloseWorkflowOutboundUnknownAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	CommitManagedReceipt(ctx context.Context, db DBTX, arg CommitManagedReceiptParams) (CommitManagedReceiptRow, error)
 	CommitManagedReceiptReplay(ctx context.Context, db DBTX, arg CommitManagedReceiptReplayParams) (CommitManagedReceiptReplayRow, error)
@@ -261,6 +264,7 @@ type Querier interface {
 	CopyProjectEnvironmentSecretReferences(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretReferencesParams) (int64, error)
 	CopyProjectEnvironmentSecretSuppressions(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretSuppressionsParams) error
 	CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
+	CountActiveNativeWorkflowRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveWorkflowRunsForAdmission(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForAdmissionParams) (int64, error)
 	CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, appID string) (int64, error)
 	// References and plaintext variables share the app's environment-key quota.
@@ -813,6 +817,7 @@ type Querier interface {
 	GetManagedPostgresResize(ctx context.Context, db DBTX, arg GetManagedPostgresResizeParams) (ManagedPostgresResize, error)
 	GetManagedPostgresUsageImport(ctx context.Context, db DBTX, arg GetManagedPostgresUsageImportParams) (GetManagedPostgresUsageImportRow, error)
 	GetManagedPostgresUsageProgress(ctx context.Context, db DBTX, arg GetManagedPostgresUsageProgressParams) (GetManagedPostgresUsageProgressRow, error)
+	GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) (WorkflowRun, error)
 	// Bearer hot-path lookup. Filters past-TTL rows out at the SQL
 	// layer so the pg contract is "WHERE expires_at > NOW()". The
 	// MemStore mirror in pkg/state/memstore.go lazy-deletes instead.
@@ -956,6 +961,8 @@ type Querier interface {
 	InsertCustomerOperationReport(ctx context.Context, db DBTX, arg InsertCustomerOperationReportParams) error
 	InsertCustomerOperationStream(ctx context.Context, db DBTX, arg InsertCustomerOperationStreamParams) error
 	InsertCustomerOperationWorkflowExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowExecutionParams) (int64, error)
+	InsertCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowRunParams) error
+	InsertCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowStepParams) error
 	// ---------------------------------------------------------------------------
 	// ADR-098 connection-aware execution (§9.A). Tables live in
 	// migrations/00226_data_upstreams.sql. apid is the only writer to
@@ -1741,6 +1748,9 @@ type Querier interface {
 	LockManagedPostgresUsageResource(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error)
 	// Serializes reservation attempts for one rule across every gateway replica.
 	LockMirrorRuleForSlotLease(ctx context.Context, db DBTX, ruleID pgtype.UUID) (string, error)
+	// The same advisory key as CreateWorkflowRunAdmitted, taken before app locks.
+	LockNativeWorkflowAdmission(ctx context.Context, db DBTX, appID string) error
+	LockNativeWorkflowOwnership(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	// All clone mutations acquire the project row before the operation row.
 	// Skip projects held by another transaction instead of reversing that order.
 	LockNextProjectEnvironmentCloneWorkerProject(ctx context.Context, db DBTX) (LockNextProjectEnvironmentCloneWorkerProjectRow, error)
@@ -1827,6 +1837,9 @@ type Querier interface {
 	MarkDeploymentSuperseded(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error
 	MarkEnvironmentQualificationDispatched(ctx context.Context, db DBTX, instanceID pgtype.UUID) (int64, error)
+	// Recovery callers must lock an unmarked run and execute unknown-effect marking,
+	// attempt closure and running-step reset in that order in one transaction.
+	MarkLegacyWorkflowOutboundUnknown(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	MarkProjectEnvironmentCloneObjectManifestEntryCopied(ctx context.Context, db DBTX, arg MarkProjectEnvironmentCloneObjectManifestEntryCopiedParams) (int64, error)
 	MarkTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkTriggerRecordDeadLetterParams) error
 	MarkTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkTriggerRecordRetryParams) error
@@ -1849,6 +1862,7 @@ type Querier interface {
 	MarkWorkflowRunStatusFenced(ctx context.Context, db DBTX, arg MarkWorkflowRunStatusFencedParams) (int64, error)
 	MigrateInstanceRuntimeConfig(ctx context.Context, db DBTX, arg MigrateInstanceRuntimeConfigParams) (Instance, error)
 	NextAutomationVersion(ctx context.Context, db DBTX) (int64, error)
+	NextDueLegacyWorkflowRun(ctx context.Context, db DBTX, staleMs int64) (NextDueLegacyWorkflowRunRow, error)
 	NextEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg NextEnvironmentQueueDeliveryInvocationParams) (Invocation, error)
 	// ----------------------------------------------------------------------
 	// NodeLifecycleStore (Workstream B, issue #1184)
@@ -2567,6 +2581,8 @@ type Querier interface {
 	// Only the retirement guard's current approved lease may release this hold.
 	RecoverEnvironmentGitOpsQueue(ctx context.Context, db DBTX, arg RecoverEnvironmentGitOpsQueueParams) (QueueBinding, error)
 	RecoverExpiredCustomerOperationExecution(ctx context.Context, db DBTX, arg RecoverExpiredCustomerOperationExecutionParams) error
+	RecoverLegacyWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) error
+	RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	RegisterApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg RegisterApplicationStandardLogConsumerParams) ([]byte, error)
 	RegisterComputeNodeRuntimeIdentity(ctx context.Context, db DBTX, arg RegisterComputeNodeRuntimeIdentityParams) (int64, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
@@ -2859,6 +2875,7 @@ type Querier interface {
 	SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) (int64, error)
 	SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg SupersedeEnvironmentGitOpsRunsParams) error
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
+	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)
 	SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
