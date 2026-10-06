@@ -99,19 +99,38 @@ func reapLayerClones(ctx context.Context, log *slog.Logger, root string, flatDir
 	}
 }
 
+// reapTenantCgroups removes empty per-instance cgroup scopes nothing owns:
+// the ones a vmmd restart leaves behind for the VMs it recovered (H4-61).
+func reapTenantCgroups(ctx context.Context, log *slog.Logger, isLive fcvm.LiveInstanceFunc) {
+	rep, err := fcvm.ReapOrphanedTenantCgroups(ctx, fcvm.TenantCgroupReapOptions{IsLive: isLive, Log: log})
+	if err != nil {
+		log.Warn("vmmd: orphan tenant cgroup reap failed", "err", err)
+		return
+	}
+	if rep.Reaped > 0 || rep.Failed > 0 {
+		log.Info("vmmd: orphan tenant cgroup reap complete",
+			"scanned", rep.Scanned, "reaped", rep.Reaped,
+			"skipped_live", rep.SkippedLive, "skipped_busy", rep.SkippedBusy,
+			"skipped_young", rep.SkippedYoung, "skipped_unknown", rep.SkippedUnknown,
+			"failed", rep.Failed)
+	}
+}
+
 type pendingCleanupRetrier interface {
 	RetryPendingCleanups(ctx context.Context) (completed, pending int)
 }
 
-// runLayerCloneMaintenance reclaims unowned clones on startup and every
-// layerCloneReapInterval, and retries retained teardowns every
+// runLayerCloneMaintenance reclaims unowned clones and empty tenant cgroup
+// scopes on startup and every layerCloneReapInterval, and retries retained teardowns every
 // pendingCleanupRetryInterval, until ctx ends. An empty root disables the
-// clone sweep (no node-local cache); the retry runs regardless.
+// clone sweep (no node-local cache); the cgroup sweep and retry run
+// regardless.
 func runLayerCloneMaintenance(ctx context.Context, log *slog.Logger, root string, flatDirs []string, isLive fcvm.LiveInstanceFunc, retrier pendingCleanupRetrier) {
 	sweep := func() {
 		if root != "" || len(flatDirs) > 0 {
 			reapLayerClones(ctx, log, root, flatDirs, isLive)
 		}
+		reapTenantCgroups(ctx, log, isLive)
 	}
 	sweep()
 	reap := time.NewTicker(layerCloneReapInterval)

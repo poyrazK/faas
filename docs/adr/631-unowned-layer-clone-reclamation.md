@@ -1,4 +1,4 @@
-# ADR-631 · Reclaim unowned layer clones and retry failed teardowns
+# ADR-631 · Reclaim unowned layer clones and tenant cgroups, and retry failed teardowns
 
 - **Status:** accepted
 - **Date:** 2026-10-07
@@ -49,6 +49,22 @@ vmmd also calls `Manager.RetryPendingCleanups` every 2 minutes. `cleanup` is
 idempotent and serialised per instance, so a retry racing a `Destroy` is safe. A
 retry that still fails keeps the instance retained, as before.
 
+The same sweep removes **empty tenant cgroup scopes** (H4-61).
+
+- **Scope:** it looks at every plan slice, current and legacy. A scope is
+  removed only when all of these hold:
+  - its name is an instance id;
+  - it is older than `DefaultReapMinAge`;
+  - the ownership gate above says nothing owns it;
+  - `cgroup.events` reports `populated 0`.
+- **Removal:** it calls `rmdir`, deepest child first. The kernel refuses
+  `rmdir` on a populated cgroup, so a process that joins after the check
+  makes the removal fail; it is never stranded.
+- **Why:** on production-us, 19 such scopes were left across two nodes in a
+  week (memory.max reset to `max`, no processes, no memory). Every one
+  belonged to a VM that was running when vmmd restarted for a rollout.
+  Destroy removes the scope, but the next daemon's recovery path did not.
+
 Restart quarantine is unchanged. Quarantined slots, processes, namespaces and
 jails keep the ADR-472 boundary: none of them is released by this sweep.
 
@@ -59,6 +75,8 @@ jails keep the ADR-472 boundary: none of them is released by this sweep.
 - A teardown blocked by a transient condition, such as a shared bind source,
   finishes on its own once the condition clears. Its lease, slot and clone are
   returned without a vmmd restart.
+- Each vmmd restart no longer leaves one cgroup scope per running VM behind
+  for good.
 - A deliberately retained teardown (an unconfirmed exit) is retried every
   2 minutes and logged each time it is still pending.
 
@@ -71,5 +89,13 @@ jails keep the ADR-472 boundary: none of them is released by this sweep.
   ownership.
 - `TestLayerCloneOwnershipGate` covers the cases where an instance counts as
   owned: the Manager owns it, durable state is live, or durable state is unknown.
+- `TestReapOrphanedTenantCgroups` checks the cgroup sweep's gates. It removes
+  an unowned, aged, empty scope and its empty child. It leaves alone a scope
+  that is live, populated, young, or whose state is unknown, and any name
+  that is not an instance id.
+- `TestMetalReapOrphanedTenantCgroups` passed on real cgroup v2
+  (gregale-internal-test-1, kernel 7.0). It created an empty scope with an
+  empty child and a scope holding a `sleep` process. The first was removed by
+  `rmdir`; the populated one survived.
 - Native acceptance (`make test-metal`, `make leakcheck`) remains the release
   requirement for this lifecycle change.
