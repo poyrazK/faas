@@ -9475,9 +9475,9 @@ JOIN regional_runtime_quota_receipts r ON r.app_id = h.app_id AND r.allocation_i
 WHERE h.app_id = sqlc.arg(app_id)::uuid;
 
 -- name: InsertRegionalRuntimeQuotaReceipt :one
-INSERT INTO regional_runtime_quota_receipts(app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope)
+INSERT INTO regional_runtime_quota_receipts(app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, consent_id)
 VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(allocation_id)::uuid, sqlc.arg(generation)::bigint, sqlc.arg(grant_claims)::jsonb,
-        sqlc.narg(grant_envelope)::jsonb, sqlc.narg(retirement)::jsonb, sqlc.narg(retirement_envelope)::jsonb)
+        sqlc.narg(grant_envelope)::jsonb, sqlc.narg(retirement)::jsonb, sqlc.narg(retirement_envelope)::jsonb, sqlc.narg(consent_id)::uuid)
 RETURNING *;
 
 -- name: RetireRegionalRuntimeQuotaReceipt :one
@@ -11221,3 +11221,21 @@ INSERT INTO global_runtime_quota_issuer(issuer_id) VALUES ($1::uuid) ON CONFLICT
 
 -- name: ReadGlobalRuntimeQuotaIssuer :one
 SELECT issuer_id::text FROM global_runtime_quota_issuer WHERE singleton;
+
+-- ADR-645: original runtime delivery consent and atomic revocation.
+-- name: InsertRegionalRuntimeConsent :one
+INSERT INTO regional_runtime_consents(id,app_id,account_id,cell_id,issuer_id,global_app_id,owner_id,binding,expires_at)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(cell_id)::uuid,
+ sqlc.arg(issuer_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(owner_id)::uuid,sqlc.arg(binding)::jsonb,sqlc.arg(expires_at)::timestamptz)
+RETURNING *;
+
+-- name: RegionalRuntimeConsent :one
+SELECT * FROM regional_runtime_consents WHERE id=sqlc.arg(id)::uuid;
+
+-- name: RevokeRegionalRuntimeConsent :one
+UPDATE regional_runtime_consents SET status='revoked',revoked_at=COALESCE(revoked_at,GREATEST(clock_timestamp(),created_at))
+WHERE id=sqlc.arg(id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND cell_id=sqlc.arg(cell_id)::uuid
+ AND account_id=sqlc.arg(account_id)::uuid RETURNING *;
+
+-- name: LockRegionalRuntimeConsentOwner :exec
+SELECT lock_regional_runtime_consent_owner(sqlc.arg(binding)::jsonb);

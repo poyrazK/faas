@@ -13,6 +13,7 @@ import (
 type Delivery struct {
 	Binding   Binding  `json:"binding"`
 	Authority Envelope `json:"authority"`
+	ConsentID string   `json:"consent_id,omitempty"` // ADR-645; omission preserves ADR-644 wire spelling.
 }
 
 // DeliveryReceipt carries retained directory evidence. It asserts receipt
@@ -24,7 +25,7 @@ type DeliveryReceipt struct {
 
 func DecodeDelivery(raw []byte) (Delivery, error) {
 	var d Delivery
-	if err := decodeCanonicalObject(raw, &d, api.RegionalRuntimeQuotaDeliveryMaxBytes); err != nil || d.Binding.Validate() != nil {
+	if err := decodeCanonicalObject(raw, &d, api.RegionalRuntimeQuotaDeliveryMaxBytes); err != nil || d.Binding.Validate() != nil || d.ConsentID != "" && !validID(d.ConsentID) {
 		return Delivery{}, ErrInvalid
 	}
 	e, err := json.Marshal(d.Authority)

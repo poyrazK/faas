@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"github.com/google/uuid"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/runtimequota"
 )
@@ -41,6 +42,9 @@ func (s *MemStore) applyRegionalRuntimeQuota(_ context.Context, m regionalRuntim
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if m.consentID != "" && (!runtimeConsentAllows(s.regionalRuntimeConsents[m.consentID], m.grant, time.Now()) || !s.currentRuntimeConsentApp(m.grant.Binding)) {
+		return RegionalRuntimeQuotaReceipt{}, ErrRegionalRuntimeConsent
+	}
 	key := m.grant.Binding.RegionalAppID + "/" + m.grant.AllocationID
 	for _, stored := range s.regionalRuntimeQuotas {
 		if stored.Grant.Binding.RegionalAppID == m.grant.Binding.RegionalAppID && stored.Grant.Generation == m.grant.Generation && stored.Grant.AllocationID != m.grant.AllocationID {

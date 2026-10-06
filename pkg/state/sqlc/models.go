@@ -4864,6 +4864,21 @@ type RegionalRuntimeCapacityReceipt struct {
 	StopEnvelope []byte
 }
 
+type RegionalRuntimeConsent struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	CellID      pgtype.UUID
+	IssuerID    pgtype.UUID
+	GlobalAppID pgtype.UUID
+	OwnerID     pgtype.UUID
+	Binding     []byte
+	ExpiresAt   pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	Status      string
+	RevokedAt   pgtype.Timestamptz
+}
+
 type RegionalRuntimeLaunchSource struct {
 	AppID          pgtype.UUID
 	PermitID       pgtype.UUID
@@ -4890,6 +4905,7 @@ type RegionalRuntimeQuotaReceipt struct {
 	Retirement         []byte
 	RetirementEnvelope []byte
 	CreatedAt          pgtype.Timestamptz
+	ConsentID          pgtype.UUID
 }
 
 type RegionalRuntimeServingResume struct {

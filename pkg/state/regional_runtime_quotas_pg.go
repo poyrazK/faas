@@ -33,7 +33,7 @@ func regionalQuotaError(err error) error {
 }
 
 func regionalQuotaRow(row sqlc.RegionalRuntimeQuotaReceipt) (RegionalRuntimeQuotaReceipt, error) {
-	r := RegionalRuntimeQuotaReceipt{CreatedAt: row.CreatedAt.Time}
+	r := RegionalRuntimeQuotaReceipt{CreatedAt: row.CreatedAt.Time, ConsentID: pgUUIDString(row.ConsentID)}
 	fields := []struct {
 		raw   []byte
 		value any
@@ -84,7 +84,7 @@ func (s *PgStore) RegionalRuntimeQuotaHead(ctx context.Context, appID string) (R
 }
 
 func regionalQuotaParams(r RegionalRuntimeQuotaReceipt) (sqlc.InsertRegionalRuntimeQuotaReceiptParams, error) {
-	p := sqlc.InsertRegionalRuntimeQuotaReceiptParams{AppID: uuidToPgtype(r.Grant.Binding.RegionalAppID), AllocationID: uuidToPgtype(r.Grant.AllocationID), Generation: r.Grant.Generation}
+	p := sqlc.InsertRegionalRuntimeQuotaReceiptParams{AppID: uuidToPgtype(r.Grant.Binding.RegionalAppID), AllocationID: uuidToPgtype(r.Grant.AllocationID), Generation: r.Grant.Generation, ConsentID: uuidToPgtype(r.ConsentID)}
 	fields := []struct {
 		value   any
 		target  *[]byte
@@ -119,6 +119,11 @@ func (s *PgStore) applyRegionalRuntimeQuota(ctx context.Context, m regionalRunti
 	if err = q.LockRegionalRuntimeQuotaJournal(ctx, tx, uuidToPgtype(b.RegionalAppID)); err != nil {
 		return RegionalRuntimeQuotaReceipt{}, regionalQuotaError(err)
 	}
+	if m.consentID != "" {
+		if err = checkDelegatedRuntimeConsent(ctx, tx, q, m.consentID, m.grant); err != nil {
+			return RegionalRuntimeQuotaReceipt{}, err
+		}
+	}
 	old, err := readRegionalQuota(ctx, tx, b.RegionalAppID, m.grant.AllocationID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return RegionalRuntimeQuotaReceipt{}, err
@@ -149,6 +154,9 @@ func (s *PgStore) applyRegionalRuntimeQuota(ctx context.Context, m regionalRunti
 			row, err = q.RetireRegionalRuntimeQuotaReceipt(ctx, tx, sqlc.RetireRegionalRuntimeQuotaReceiptParams{AppID: params.AppID, AllocationID: params.AllocationID, Retirement: params.Retirement, RetirementEnvelope: params.RetirementEnvelope})
 		}
 		if err != nil {
+			if m.consentID != "" {
+				return RegionalRuntimeQuotaReceipt{}, runtimeConsentError(err)
+			}
 			return RegionalRuntimeQuotaReceipt{}, regionalQuotaError(err)
 		}
 		receipt, err = regionalQuotaRow(row)

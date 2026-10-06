@@ -766,6 +766,8 @@ type Querier interface {
 	InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg InsertRegionalReleaseGrantParams) (RegionalReleaseGrant, error)
 	// ADR-618: issuance is retained bookkeeping; no quota activation is implied.
 	InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg InsertRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
+	// ADR-645: original runtime delivery consent and atomic revocation.
+	InsertRegionalRuntimeConsent(ctx context.Context, db DBTX, arg InsertRegionalRuntimeConsentParams) (RegionalRuntimeConsent, error)
 	InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg InsertRegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error)
 	InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
 	InsertRegionalRuntimeServingResume(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
@@ -1339,6 +1341,7 @@ type Querier interface {
 	// ADR-633: immutable original launch identity, independent of current rows.
 	// ADR-634: a terminal row does not release physical capacity or host ports.
 	LockRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg LockRegionalRuntimeAttemptParams) (bool, error)
+	LockRegionalRuntimeConsentOwner(ctx context.Context, db DBTX, binding []byte) error
 	// ADR-644: blank wire org scope means the creator's personal tenant, including
 	// legacy null-org apps. Return the actual tenant so it is locked and rechecked.
 	LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (LockRegionalRuntimeQuotaAppRow, error)
@@ -1928,6 +1931,7 @@ type Querier interface {
 	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
 	RegionalRuntimeCapacity(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
 	RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityUsageParams) (RegionalRuntimeCapacityUsageRow, error)
+	RegionalRuntimeConsent(ctx context.Context, db DBTX, id pgtype.UUID) (RegionalRuntimeConsent, error)
 	RegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error)
 	RegionalRuntimeLaunchWasResumed(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchWasResumedParams) (bool, error)
 	RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalRuntimeQuotaHeadRow, error)
@@ -2065,6 +2069,7 @@ type Querier interface {
 	RevokeDevBridge(ctx context.Context, db DBTX, arg RevokeDevBridgeParams) (int64, error)
 	RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error)
 	RevokeRegionalReleaseGrant(ctx context.Context, db DBTX, arg RevokeRegionalReleaseGrantParams) (RegionalReleaseGrant, error)
+	RevokeRegionalRuntimeConsent(ctx context.Context, db DBTX, arg RevokeRegionalRuntimeConsentParams) (RegionalRuntimeConsent, error)
 	// Account-scoped atomic stamp. WHERE includes account_id so a
 	// cross-account DELETE returns 0 rows (handler maps false → 404) —
 	// IDOR is a persistence invariant, not a handler check.

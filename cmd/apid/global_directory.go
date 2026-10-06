@@ -30,6 +30,7 @@ func (s *server) configureGlobalDirectory(ctx context.Context, enabled bool, poo
 }
 
 func (s *server) registerGlobalDirectoryRoutes(mux *http.ServeMux) {
+	s.registerRuntimeConsentRoutes(mux)
 	read := func(h accountHandler) http.HandlerFunc {
 		return s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireGlobalDirectoryOwner(false, h))))
 	}

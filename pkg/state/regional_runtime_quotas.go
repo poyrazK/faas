@@ -16,6 +16,7 @@ var ErrRegionalRuntimeQuotaOrder = errors.New("regional runtime quota generation
 // Receipt storage does not establish an operational scheduler fence or drain.
 type RegionalRuntimeQuotaReceipt struct {
 	Grant              runtimequota.Grant
+	ConsentID          string // ADR-645: immutable original delegated receipt source, if any.
 	GrantEnvelope      *runtimequota.Envelope
 	Retirement         *runtimequota.Retirement
 	RetirementEnvelope *runtimequota.Envelope
@@ -54,6 +55,20 @@ func (a RegionalRuntimeQuotaAuthority) AcceptGrant(ctx context.Context, envelope
 	return a.Store.applyRegionalRuntimeQuota(ctx, regionalRuntimeQuotaMutation{grant: grant, grantEnvelope: &envelope})
 }
 
+// AcceptDelegatedGrant verifies directory authority first. The store checks the
+// retained consent and current personal tenant under the same journal lock as
+// receipt mutation; a concurrent revoke cannot slip between those operations.
+func (a RegionalRuntimeQuotaAuthority) AcceptDelegatedGrant(ctx context.Context, envelope runtimequota.Envelope, consentID string) (RegionalRuntimeQuotaReceipt, error) {
+	if a.Store == nil || !validRegionalReleaseIDs(consentID, consentID, consentID) {
+		return RegionalRuntimeQuotaReceipt{}, runtimequota.ErrInvalid
+	}
+	grant, err := a.Directories.VerifyGrant(envelope, a.Binding)
+	if err != nil {
+		return RegionalRuntimeQuotaReceipt{}, err
+	}
+	return a.Store.applyRegionalRuntimeQuota(ctx, regionalRuntimeQuotaMutation{grant: grant, grantEnvelope: &envelope, consentID: consentID})
+}
+
 func (a RegionalRuntimeQuotaAuthority) AcceptRetirement(ctx context.Context, envelope runtimequota.Envelope) (RegionalRuntimeQuotaReceipt, error) {
 	if a.Store == nil {
 		return RegionalRuntimeQuotaReceipt{}, runtimequota.ErrTrust
@@ -70,9 +85,13 @@ type regionalRuntimeQuotaMutation struct {
 	grantEnvelope      *runtimequota.Envelope
 	retirement         *runtimequota.Retirement
 	retirementEnvelope *runtimequota.Envelope
+	consentID          string
 }
 
 func (m regionalRuntimeQuotaMutation) valid() bool {
+	if m.consentID != "" && (!validRegionalReleaseIDs(m.consentID, m.consentID, m.consentID) || m.retirement != nil) {
+		return false
+	}
 	if m.retirement == nil {
 		return m.grantEnvelope != nil && m.retirementEnvelope == nil && m.grant.Validate() == nil
 	}
@@ -123,5 +142,5 @@ func (m regionalRuntimeQuotaMutation) apply(old RegionalRuntimeQuotaReceipt, exi
 	if hasHead && (!sameRegionalQuotaStream(head.Grant, m.grant) || (m.grant.Generation <= head.Grant.Generation && m.retirement == nil) || (m.grant.Generation == head.Grant.Generation && m.grant.AllocationID != head.Grant.AllocationID)) {
 		return RegionalRuntimeQuotaReceipt{}, false, ErrRegionalRuntimeQuotaOrder
 	}
-	return cloneRegionalRuntimeQuota(RegionalRuntimeQuotaReceipt{Grant: m.grant, GrantEnvelope: m.grantEnvelope, Retirement: m.retirement, RetirementEnvelope: m.retirementEnvelope, CreatedAt: time.Now().UTC().Truncate(time.Microsecond)}), true, nil
+	return cloneRegionalRuntimeQuota(RegionalRuntimeQuotaReceipt{Grant: m.grant, ConsentID: m.consentID, GrantEnvelope: m.grantEnvelope, Retirement: m.retirement, RetirementEnvelope: m.retirementEnvelope, CreatedAt: time.Now().UTC().Truncate(time.Microsecond)}), true, nil
 }

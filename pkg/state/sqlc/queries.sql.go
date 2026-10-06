@@ -13737,6 +13737,56 @@ func (q *Queries) InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, ar
 	return i, err
 }
 
+const insertRegionalRuntimeConsent = `-- name: InsertRegionalRuntimeConsent :one
+INSERT INTO regional_runtime_consents(id,app_id,account_id,cell_id,issuer_id,global_app_id,owner_id,binding,expires_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::uuid,$6::uuid,$7::uuid,$8::jsonb,$9::timestamptz)
+RETURNING id, app_id, account_id, cell_id, issuer_id, global_app_id, owner_id, binding, expires_at, created_at, status, revoked_at
+`
+
+type InsertRegionalRuntimeConsentParams struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	CellID      pgtype.UUID
+	IssuerID    pgtype.UUID
+	GlobalAppID pgtype.UUID
+	OwnerID     pgtype.UUID
+	Binding     []byte
+	ExpiresAt   pgtype.Timestamptz
+}
+
+// ADR-645: original runtime delivery consent and atomic revocation.
+func (q *Queries) InsertRegionalRuntimeConsent(ctx context.Context, db DBTX, arg InsertRegionalRuntimeConsentParams) (RegionalRuntimeConsent, error) {
+	row := db.QueryRow(ctx, insertRegionalRuntimeConsent,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.CellID,
+		arg.IssuerID,
+		arg.GlobalAppID,
+		arg.OwnerID,
+		arg.Binding,
+		arg.ExpiresAt,
+	)
+	var i RegionalRuntimeConsent
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.CellID,
+		&i.IssuerID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.Binding,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const insertRegionalRuntimeLaunchSource = `-- name: InsertRegionalRuntimeLaunchSource :one
 INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims,resource_claims)
 VALUES ($1,$2,$3,$4,$5) RETURNING app_id, permit_id, instance_key, permit_claims, created_at, resource_claims
@@ -13771,10 +13821,10 @@ func (q *Queries) InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX
 }
 
 const insertRegionalRuntimeQuotaReceipt = `-- name: InsertRegionalRuntimeQuotaReceipt :one
-INSERT INTO regional_runtime_quota_receipts(app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope)
+INSERT INTO regional_runtime_quota_receipts(app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, consent_id)
 VALUES ($1::uuid, $2::uuid, $3::bigint, $4::jsonb,
-        $5::jsonb, $6::jsonb, $7::jsonb)
-RETURNING app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, created_at
+        $5::jsonb, $6::jsonb, $7::jsonb, $8::uuid)
+RETURNING app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, created_at, consent_id
 `
 
 type InsertRegionalRuntimeQuotaReceiptParams struct {
@@ -13785,6 +13835,7 @@ type InsertRegionalRuntimeQuotaReceiptParams struct {
 	GrantEnvelope      []byte
 	Retirement         []byte
 	RetirementEnvelope []byte
+	ConsentID          pgtype.UUID
 }
 
 func (q *Queries) InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error) {
@@ -13796,6 +13847,7 @@ func (q *Queries) InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX
 		arg.GrantEnvelope,
 		arg.Retirement,
 		arg.RetirementEnvelope,
+		arg.ConsentID,
 	)
 	var i RegionalRuntimeQuotaReceipt
 	err := row.Scan(
@@ -13807,6 +13859,7 @@ func (q *Queries) InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX
 		&i.Retirement,
 		&i.RetirementEnvelope,
 		&i.CreatedAt,
+		&i.ConsentID,
 	)
 	return i, err
 }
@@ -24262,6 +24315,15 @@ func (q *Queries) LockRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg L
 	var matches bool
 	err := row.Scan(&matches)
 	return matches, err
+}
+
+const lockRegionalRuntimeConsentOwner = `-- name: LockRegionalRuntimeConsentOwner :exec
+SELECT lock_regional_runtime_consent_owner($1::jsonb)
+`
+
+func (q *Queries) LockRegionalRuntimeConsentOwner(ctx context.Context, db DBTX, binding []byte) error {
+	_, err := db.Exec(ctx, lockRegionalRuntimeConsentOwner, binding)
+	return err
 }
 
 const lockRegionalRuntimeQuotaApp = `-- name: LockRegionalRuntimeQuotaApp :one
@@ -37418,6 +37480,30 @@ func (q *Queries) RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const regionalRuntimeConsent = `-- name: RegionalRuntimeConsent :one
+SELECT id, app_id, account_id, cell_id, issuer_id, global_app_id, owner_id, binding, expires_at, created_at, status, revoked_at FROM regional_runtime_consents WHERE id=$1::uuid
+`
+
+func (q *Queries) RegionalRuntimeConsent(ctx context.Context, db DBTX, id pgtype.UUID) (RegionalRuntimeConsent, error) {
+	row := db.QueryRow(ctx, regionalRuntimeConsent, id)
+	var i RegionalRuntimeConsent
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.CellID,
+		&i.IssuerID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.Binding,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const regionalRuntimeLaunchSource = `-- name: RegionalRuntimeLaunchSource :one
 SELECT app_id, permit_id, instance_key, permit_claims, created_at, resource_claims FROM regional_runtime_launch_sources WHERE app_id=$1 AND permit_id=$2
 `
@@ -37477,7 +37563,7 @@ func (q *Queries) RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID p
 }
 
 const regionalRuntimeQuotaReceipt = `-- name: RegionalRuntimeQuotaReceipt :one
-SELECT app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, created_at FROM regional_runtime_quota_receipts
+SELECT app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, created_at, consent_id FROM regional_runtime_quota_receipts
 WHERE app_id = $1::uuid AND allocation_id = $2::uuid
 `
 
@@ -37498,6 +37584,7 @@ func (q *Queries) RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg 
 		&i.Retirement,
 		&i.RetirementEnvelope,
 		&i.CreatedAt,
+		&i.ConsentID,
 	)
 	return i, err
 }
@@ -40009,7 +40096,7 @@ func (q *Queries) RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg
 const retireRegionalRuntimeQuotaReceipt = `-- name: RetireRegionalRuntimeQuotaReceipt :one
 UPDATE regional_runtime_quota_receipts SET retirement = $1::jsonb, retirement_envelope = $2::jsonb
 WHERE app_id = $3::uuid AND allocation_id = $4::uuid
-RETURNING app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, created_at
+RETURNING app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, created_at, consent_id
 `
 
 type RetireRegionalRuntimeQuotaReceiptParams struct {
@@ -40036,6 +40123,7 @@ func (q *Queries) RetireRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX
 		&i.Retirement,
 		&i.RetirementEnvelope,
 		&i.CreatedAt,
+		&i.ConsentID,
 	)
 	return i, err
 }
@@ -40343,6 +40431,44 @@ func (q *Queries) RevokeRegionalReleaseGrant(ctx context.Context, db DBTX, arg R
 		&i.Status,
 		&i.RevokedAt,
 		&i.IssuerAccountID,
+	)
+	return i, err
+}
+
+const revokeRegionalRuntimeConsent = `-- name: RevokeRegionalRuntimeConsent :one
+UPDATE regional_runtime_consents SET status='revoked',revoked_at=COALESCE(revoked_at,GREATEST(clock_timestamp(),created_at))
+WHERE id=$1::uuid AND app_id=$2::uuid AND cell_id=$3::uuid
+ AND account_id=$4::uuid RETURNING id, app_id, account_id, cell_id, issuer_id, global_app_id, owner_id, binding, expires_at, created_at, status, revoked_at
+`
+
+type RevokeRegionalRuntimeConsentParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	CellID    pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) RevokeRegionalRuntimeConsent(ctx context.Context, db DBTX, arg RevokeRegionalRuntimeConsentParams) (RegionalRuntimeConsent, error) {
+	row := db.QueryRow(ctx, revokeRegionalRuntimeConsent,
+		arg.ID,
+		arg.AppID,
+		arg.CellID,
+		arg.AccountID,
+	)
+	var i RegionalRuntimeConsent
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.CellID,
+		&i.IssuerID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.Binding,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RevokedAt,
 	)
 	return i, err
 }

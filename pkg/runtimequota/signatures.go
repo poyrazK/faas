@@ -120,6 +120,16 @@ type Anchor struct {
 }
 type Trust struct{ keys map[string]Anchor }
 
+// HasIssuer checks operator configuration, never customer-supplied trust.
+func (t Trust) HasIssuer(issuer, role string) bool {
+	for _, a := range t.keys {
+		if a.IssuerID == issuer && a.Role == role {
+			return true
+		}
+	}
+	return false
+}
+
 // CheckSigner checks configuration without creating an operational assertion.
 func (t Trust) CheckSigner(s Signer, role string) error {
 	a, ok := t.keys[s.KeyID()]

@@ -84,6 +84,7 @@ func (s *server) deliverGlobalRuntimeQuota(w http.ResponseWriter, r *http.Reques
 	}
 	var req struct {
 		RegionalAPIKey string `json:"regional_api_key"`
+		ConsentID      string `json:"runtime_consent_id,omitempty"`
 	}
 	if !decodeGlobalDirectoryRequest(w, r, &req) {
 		return
@@ -92,12 +93,23 @@ func (s *server) deliverGlobalRuntimeQuota(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("use a canonical selected region"))
 		return
 	}
-	receipt, err := s.globalQuotaAuthority.Deliver(r.Context(), s.globalVerifier, globalOwnerID(r, acct), r.PathValue("slug"), r.PathValue("allocation_id"), r.PathValue("region"), req.RegionalAPIKey)
+	if req.ConsentID != "" && (!globaldirectory.ValidID(req.ConsentID) || req.RegionalAPIKey != "") {
+		api.WriteProblem(w, api.ErrValidation("supply either original runtime consent or a request-only regional key"))
+		return
+	}
+	receipt, err := s.deliverRuntimeQuotaRequest(r, acct, req.RegionalAPIKey, req.ConsentID)
 	if err != nil {
 		s.runtimeQuotaTransportError(w, r, acct, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, receipt)
+}
+
+func (s *server) deliverRuntimeQuotaRequest(r *http.Request, acct state.Account, key, consentID string) (runtimequota.DeliveryReceipt, error) {
+	if consentID != "" {
+		return s.globalQuotaAuthority.DeliverWithConsent(r.Context(), s.globalVerifier, globalOwnerID(r, acct), r.PathValue("slug"), r.PathValue("allocation_id"), r.PathValue("region"), consentID)
+	}
+	return s.globalQuotaAuthority.Deliver(r.Context(), s.globalVerifier, globalOwnerID(r, acct), r.PathValue("slug"), r.PathValue("allocation_id"), r.PathValue("region"), key)
 }
 
 func (s *server) acceptCellRuntimeQuota(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -107,6 +119,10 @@ func (s *server) acceptCellRuntimeQuota(w http.ResponseWriter, r *http.Request, 
 	}
 	app, _ := r.Context().Value(cellDeploymentAppContextKey{}).(state.App)
 	b := delivery.Binding
+	if delivery.ConsentID != "" {
+		api.WriteProblem(w, api.ErrValidation("use the delegated quota delivery route for runtime consent"))
+		return
+	}
 	// Personal binding proofs omit the organization UUID. The middleware
 	// resolves personal ownership; the journal rechecks it under local locks.
 	if b.RegionalAccountID != quotaLocalUUID(acct.ID) || b.RegionalAccountID != quotaLocalUUID(app.AccountID) || b.RegionalOrgID != "" || b.RegionalAppID != quotaLocalUUID(app.ID) || b.RegionalAppSlug != app.Slug || app.ComputeRegion != b.Region {
@@ -141,6 +157,10 @@ func quotaLocalUUID(raw string) string {
 func (s *server) retireCellRuntimeQuota(w http.ResponseWriter, r *http.Request) {
 	delivery, ok := s.readQuotaDelivery(w, r)
 	if !ok {
+		return
+	}
+	if delivery.ConsentID != "" {
+		api.WriteProblem(w, api.ErrValidation("retirement requires only original signed directory authority"))
 		return
 	}
 	authority, ok := s.cellQuotaAuthority(w, delivery.Binding)
@@ -201,6 +221,8 @@ func (s *server) writeQuotaDeliveryReceipt(w http.ResponseWriter, r *http.Reques
 
 func (s *server) runtimeQuotaTransportError(w http.ResponseWriter, r *http.Request, acct state.Account, err error) {
 	switch {
+	case errors.Is(err, state.ErrRegionalRuntimeConsent):
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Runtime consent unavailable", "The original regional runtime delivery consent is missing, expired, revoked or differs from the signed allocation."))
 	case errors.Is(err, runtimequota.ErrInvalid), errors.Is(err, runtimequota.ErrBinding), errors.Is(err, runtimequota.ErrTrust):
 		api.WriteProblem(w, api.ErrValidation("quota authority or binding could not be verified"))
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrRegionalRuntimeQuotaOrder), errors.Is(err, globaldirectory.ErrRuntimeQuotaRetired):

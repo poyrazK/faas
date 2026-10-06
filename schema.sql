@@ -6031,6 +6031,41 @@ $$;
 
 
 --
+-- Name: guard_regional_runtime_consent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_regional_runtime_consent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP IN ('DELETE','TRUNCATE') THEN
+      RAISE EXCEPTION 'retained runtime consent cannot be removed' USING ERRCODE='23514',CONSTRAINT='regional_runtime_consent_identity';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||NEW.app_id::text,0));
+    IF TG_OP='INSERT' THEN
+      NEW.created_at:=clock_timestamp();
+      IF NEW.status<>'active' OR NEW.revoked_at IS NOT NULL OR NEW.expires_at<=NEW.created_at THEN
+        RAISE EXCEPTION 'invalid new runtime consent' USING ERRCODE='23514',CONSTRAINT='regional_runtime_consent_identity';
+      END IF;
+      PERFORM lock_regional_runtime_consent_owner(NEW.binding);
+      IF (SELECT count(*) FROM regional_runtime_consents WHERE app_id=NEW.app_id AND status='active' AND expires_at>clock_timestamp())>=32 THEN
+        RAISE EXCEPTION 'active runtime consent bound reached' USING ERRCODE='23514',CONSTRAINT='regional_runtime_consent_limit';
+      END IF;
+    ELSE
+      IF ROW(NEW.id,NEW.app_id,NEW.account_id,NEW.cell_id,NEW.issuer_id,NEW.global_app_id,NEW.owner_id,NEW.binding,NEW.expires_at,NEW.created_at)
+        IS DISTINCT FROM ROW(OLD.id,OLD.app_id,OLD.account_id,OLD.cell_id,OLD.issuer_id,OLD.global_app_id,OLD.owner_id,OLD.binding,OLD.expires_at,OLD.created_at)
+        OR OLD.status='revoked' AND ROW(NEW.status,NEW.revoked_at) IS DISTINCT FROM ROW(OLD.status,OLD.revoked_at) THEN
+        RAISE EXCEPTION 'runtime consent identity is immutable' USING ERRCODE='23514',CONSTRAINT='regional_runtime_consent_identity';
+      END IF;
+      IF NEW.status='revoked' THEN
+        UPDATE regional_runtime_quota_heads SET admission_enabled=false WHERE app_id=NEW.app_id AND admission_enabled;
+      END IF;
+    END IF;
+    RETURN NEW;
+END; $$;
+
+
+--
 -- Name: guard_regional_runtime_launch_source(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6054,6 +6089,37 @@ BEGIN
         OR p.issued_at IS NOT NULL OR p.fence_id IS NOT NULL OR p.released_at IS NOT NULL THEN
         RAISE EXCEPTION 'regional launch source must bind the original unissued unfenced permit'
             USING ERRCODE='23514',CONSTRAINT='regional_capacity_identity';
+    END IF;
+    RETURN NEW;
+END; $$;
+
+
+--
+-- Name: guard_regional_runtime_quota_consent_source(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_regional_runtime_quota_consent_source() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE consent_expiry timestamptz;
+BEGIN
+    IF TG_OP='UPDATE' THEN
+      IF NEW.consent_id IS DISTINCT FROM OLD.consent_id THEN
+        RAISE EXCEPTION 'original quota consent source is immutable' USING ERRCODE='23514',CONSTRAINT='regional_runtime_consent_identity';
+      END IF;
+    ELSIF NEW.consent_id IS NOT NULL THEN
+      PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||NEW.app_id::text,0));
+      SELECT c.expires_at INTO consent_expiry FROM regional_runtime_consents c WHERE c.id=NEW.consent_id AND c.app_id=NEW.app_id
+        AND c.status='active' AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp()
+        AND c.issuer_id=(NEW.grant_claims->>'IssuerID')::uuid AND c.global_app_id=(NEW.grant_claims->>'GlobalAppID')::uuid
+        AND c.owner_id=(NEW.grant_claims->>'OwnerID')::uuid AND c.binding=NEW.grant_claims->'Binding';
+      IF NOT FOUND OR NEW.grant_envelope IS NULL OR NEW.retirement IS NOT NULL THEN
+        RAISE EXCEPTION 'quota delivery consent is unavailable' USING ERRCODE='23514',CONSTRAINT='regional_runtime_consent_unavailable';
+      END IF;
+      PERFORM lock_regional_runtime_consent_owner(NEW.grant_claims->'Binding');
+      IF consent_expiry<=clock_timestamp() THEN
+        RAISE EXCEPTION 'quota delivery consent expired while waiting for owner' USING ERRCODE='23514',CONSTRAINT='regional_runtime_consent_unavailable';
+      END IF;
     END IF;
     RETURN NEW;
 END; $$;
@@ -6632,6 +6698,25 @@ BEGIN
     RETURN org;
 END;
 $$;
+
+
+--
+-- Name: lock_regional_runtime_consent_owner(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_regional_runtime_consent_owner(binding_arg jsonb) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM lock_regional_runtime_quota_app_binding(binding_arg);
+    PERFORM 1 FROM apps a JOIN control_plane_cells c ON c.id=(binding_arg->>'CellID')::uuid
+      WHERE a.id=(binding_arg->>'RegionalAppID')::uuid AND a.compute_region=binding_arg->>'Region'
+        AND c.compute_region=a.compute_region;
+    IF NOT FOUND THEN RAISE EXCEPTION 'runtime consent cell or region is unavailable' USING ERRCODE='P0002'; END IF;
+    PERFORM 1 FROM accounts WHERE id=(binding_arg->>'RegionalAccountID')::uuid AND status='active'
+      AND abuse_hold_at IS NULL AND email_verified_at IS NOT NULL FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'runtime consent owner is unavailable' USING ERRCODE='P0002'; END IF;
+END; $$;
 
 
 --
@@ -18984,6 +19069,36 @@ CREATE TABLE public.regional_runtime_capacity_receipts (
 
 
 --
+-- Name: regional_runtime_consents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_runtime_consents (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    cell_id uuid NOT NULL,
+    issuer_id uuid NOT NULL,
+    global_app_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    binding jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT regional_runtime_consents_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_consents_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_consents_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL) AND (revoked_at >= created_at)))),
+    CONSTRAINT regional_runtime_consents_check1 CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '6 days'::interval)))),
+    CONSTRAINT regional_runtime_consents_check2 CHECK ((((jsonb_typeof(binding) = 'object'::text) AND (binding ?& ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) AND ((binding - ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) = '{}'::jsonb) AND (jsonb_typeof((binding -> 'CellID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'Region'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAccountID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalOrgID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppSlug'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'APIBase'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'CellGeneration'::text)) = 'number'::text) AND ((binding ->> 'CellID'::text) = (cell_id)::text) AND ((binding ->> 'RegionalAppID'::text) = (app_id)::text) AND ((binding ->> 'RegionalAccountID'::text) = (account_id)::text) AND ((binding ->> 'RegionalOrgID'::text) = ''::text) AND ((binding ->> 'CellGeneration'::text) ~ '^[1-9][0-9]*$'::text) AND (((binding ->> 'CellGeneration'::text))::numeric <= ('9007199254740991'::bigint)::numeric) AND ((binding ->> 'APIBase'::text) ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text)) IS TRUE)),
+    CONSTRAINT regional_runtime_consents_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_consents_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_consents_issuer_id_check CHECK ((issuer_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_consents_owner_id_check CHECK ((owner_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_consents_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text])))
+);
+
+
+--
 -- Name: regional_runtime_launch_sources; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19041,6 +19156,7 @@ CREATE TABLE public.regional_runtime_quota_receipts (
     retirement jsonb,
     retirement_envelope jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    consent_id uuid,
     CONSTRAINT regional_runtime_quota_envelope_shape CHECK ((((grant_envelope IS NOT NULL) OR (retirement IS NOT NULL)) AND ((grant_envelope IS NULL) OR ((jsonb_typeof(grant_envelope) = 'object'::text) AND (octet_length((grant_envelope)::text) <= 8192))) AND ((retirement_envelope IS NULL) OR ((jsonb_typeof(retirement_envelope) = 'object'::text) AND (octet_length((retirement_envelope)::text) <= 8192))))),
     CONSTRAINT regional_runtime_quota_grant_shape CHECK (((jsonb_typeof(grant_claims) = 'object'::text) AND (octet_length((grant_claims)::text) <= 4096) AND (NOT (((grant_claims -> 'Binding'::text) ->> 'RegionalAppID'::text) IS DISTINCT FROM (app_id)::text)) AND (NOT ((grant_claims ->> 'AllocationID'::text) IS DISTINCT FROM (allocation_id)::text)) AND (NOT ((grant_claims ->> 'Generation'::text) IS DISTINCT FROM (generation)::text)))),
     CONSTRAINT regional_runtime_quota_receipts_allocation_id_check CHECK ((allocation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
@@ -24759,6 +24875,14 @@ ALTER TABLE ONLY public.regional_runtime_capacity_receipts
 
 
 --
+-- Name: regional_runtime_consents regional_runtime_consents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_consents
+    ADD CONSTRAINT regional_runtime_consents_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: regional_runtime_launch_sources regional_runtime_launch_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29883,6 +30007,13 @@ CREATE INDEX regional_runtime_capacity_retirement_scan ON public.regional_runtim
 
 
 --
+-- Name: regional_runtime_consents_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX regional_runtime_consents_app ON public.regional_runtime_consents USING btree (app_id, status, expires_at);
+
+
+--
 -- Name: regional_runtime_inventory_seat_scan; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33642,10 +33773,31 @@ CREATE TRIGGER regional_release_grants_truncate_guard BEFORE TRUNCATE ON public.
 
 
 --
+-- Name: regional_runtime_consents regional_runtime_consent_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_consent_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_runtime_consents FOR EACH ROW EXECUTE FUNCTION public.guard_regional_runtime_consent();
+
+
+--
+-- Name: regional_runtime_consents regional_runtime_consent_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_consent_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_consents FOR EACH STATEMENT EXECUTE FUNCTION public.guard_regional_runtime_consent();
+
+
+--
 -- Name: regional_runtime_quota_receipts regional_runtime_quota_advance_head; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER regional_runtime_quota_advance_head AFTER INSERT ON public.regional_runtime_quota_receipts FOR EACH ROW EXECUTE FUNCTION public.advance_regional_runtime_quota_head();
+
+
+--
+-- Name: regional_runtime_quota_receipts regional_runtime_quota_consent_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_quota_consent_guard BEFORE INSERT OR UPDATE ON public.regional_runtime_quota_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_regional_runtime_quota_consent_source();
 
 
 --
@@ -38653,6 +38805,14 @@ ALTER TABLE ONLY public.regional_runtime_capacity_receipts
 
 
 --
+-- Name: regional_runtime_consents regional_runtime_consents_cell_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_consents
+    ADD CONSTRAINT regional_runtime_consents_cell_id_fkey FOREIGN KEY (cell_id) REFERENCES public.control_plane_cells(id);
+
+
+--
 -- Name: regional_runtime_launch_sources regional_runtime_launch_sources_app_id_permit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38666,6 +38826,14 @@ ALTER TABLE ONLY public.regional_runtime_launch_sources
 
 ALTER TABLE ONLY public.regional_runtime_quota_heads
     ADD CONSTRAINT regional_runtime_quota_heads_app_id_allocation_id_fkey FOREIGN KEY (app_id, allocation_id) REFERENCES public.regional_runtime_quota_receipts(app_id, allocation_id);
+
+
+--
+-- Name: regional_runtime_quota_receipts regional_runtime_quota_receipts_consent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_quota_receipts
+    ADD CONSTRAINT regional_runtime_quota_receipts_consent_id_fkey FOREIGN KEY (consent_id) REFERENCES public.regional_runtime_consents(id);
 
 
 --

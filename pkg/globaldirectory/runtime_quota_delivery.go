@@ -15,6 +15,20 @@ import (
 // Deliver retries the original allocation against its retained HTTPS origin.
 // An uncertain response keeps the issued charge; receipt storage never drains it.
 func (q RuntimeQuotaAuthority) Deliver(ctx context.Context, verifier Verifier, owner, slug, id, region, key string) (runtimequota.DeliveryReceipt, error) {
+	return q.deliver(ctx, verifier, owner, slug, id, region, key, "")
+}
+
+// DeliverWithConsent carries public, purpose-specific regional consent instead
+// of a customer credential. The regional store checks consent under its journal
+// lock, including on retries. Retirement remains independent of consent.
+func (q RuntimeQuotaAuthority) DeliverWithConsent(ctx context.Context, verifier Verifier, owner, slug, id, region, consentID string) (runtimequota.DeliveryReceipt, error) {
+	if !ValidID(consentID) {
+		return runtimequota.DeliveryReceipt{}, runtimequota.ErrInvalid
+	}
+	return q.deliver(ctx, verifier, owner, slug, id, region, "", consentID)
+}
+
+func (q RuntimeQuotaAuthority) deliver(ctx context.Context, verifier Verifier, owner, slug, id, region, key, consentID string) (runtimequota.DeliveryReceipt, error) {
 	if q.Store == nil || !q.Signer.Available() || q.Directories.CheckSigner(q.Signer, runtimequota.Directory) != nil {
 		return runtimequota.DeliveryReceipt{}, runtimequota.ErrTrust
 	}
@@ -35,16 +49,23 @@ func (q RuntimeQuotaAuthority) Deliver(ctx context.Context, verifier Verifier, o
 		envelope, err = q.Retirement(ctx, owner, slug, id, region)
 		suffix = "/retirement"
 	} else {
-		if !api.ValidAPIKeyFormat(key) {
+		if consentID == "" && !api.ValidAPIKeyFormat(key) {
 			return runtimequota.DeliveryReceipt{}, ErrVerification
 		}
 		envelope, err = q.Issue(ctx, owner, slug, id, region)
+		if consentID != "" {
+			suffix = "/delegated"
+		}
 	}
 	if err != nil {
 		return runtimequota.DeliveryReceipt{}, err
 	}
 	b := runtimequota.Binding{CellID: t.CellID, Region: t.Region, CellGeneration: t.CellGeneration, RegionalAccountID: t.RegionalAccountID, RegionalOrgID: t.RegionalOrgID, RegionalAppID: t.RegionalAppID, RegionalAppSlug: t.RegionalAppSlug, APIBase: t.APIBase}
-	body, err := json.Marshal(runtimequota.Delivery{Binding: b, Authority: envelope})
+	d := runtimequota.Delivery{Binding: b, Authority: envelope}
+	if a.RetiredAt == nil {
+		d.ConsentID = consentID
+	}
+	body, err := json.Marshal(d)
 	if err != nil {
 		return runtimequota.DeliveryReceipt{}, runtimequota.ErrInvalid
 	}
@@ -52,7 +73,7 @@ func (q RuntimeQuotaAuthority) Deliver(ctx context.Context, verifier Verifier, o
 	if err != nil {
 		return runtimequota.DeliveryReceipt{}, err
 	}
-	return q.checkDeliveryReceipt(envelope, b, suffix != "", receipt)
+	return q.checkDeliveryReceipt(envelope, b, a.RetiredAt != nil, receipt)
 }
 
 func deliverQuotaHTTP(ctx context.Context, verifier Verifier, b runtimequota.Binding, id, suffix, key string, body []byte) (runtimequota.DeliveryReceipt, error) {
