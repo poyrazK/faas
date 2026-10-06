@@ -294,7 +294,7 @@ func TestWorkflowForEachItemGuardsAndFailureContinuation(t *testing.T) {
 		finishForEachItem(t, store, run.ID, first.Item, `"sent"`)
 		complete, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch")
 		parent := guardStep(t, store, run.ID, "batch")
-		if err != nil || !complete.Complete || parent.Status != WorkflowStepStatusSucceeded || string(parent.Output) != `[null,"sent",null]` {
+		if err != nil || !complete.Complete || parent.Status != WorkflowStepStatusSucceeded || !equalWorkflowJSON(parent.Output, json.RawMessage(`[null,"sent",null]`)) {
 			t.Fatalf("guarded batch output: outcome=%+v parent=%+v err=%v", complete, parent, err)
 		}
 
@@ -328,7 +328,7 @@ func TestWorkflowForEachItemGuardsAndFailureContinuation(t *testing.T) {
 		failItem(item.Item)
 		complete, err = store.ResolveWorkflowForEach(ctx, continuedRun.ID, "batch")
 		parent = guardStep(t, store, continuedRun.ID, "batch")
-		if err != nil || !complete.Complete || parent.Status != WorkflowStepStatusFailed || string(parent.Output) != `[null,"ok",null]` || parent.Error == nil || *parent.Error != "for_each completed with 2 failed item(s)" {
+		if err != nil || !complete.Complete || parent.Status != WorkflowStepStatusFailed || !equalWorkflowJSON(parent.Output, json.RawMessage(`[null,"ok",null]`)) || parent.Error == nil || *parent.Error != "for_each completed with 2 failed item(s)" {
 			t.Fatalf("continued batch result: outcome=%+v parent=%+v err=%v", complete, parent, err)
 		}
 	})
