@@ -10723,6 +10723,47 @@ WHERE id=sqlc.arg(id) AND bucket_id=sqlc.arg(bucket_id) AND kind='request'
 AND backend_id=sqlc.arg(backend_id) AND backend_fingerprint=sqlc.arg(backend_fingerprint)
 AND physical_name=sqlc.arg(physical_name);
 
+-- name: ObjectBucketNativeGrants :many
+SELECT * FROM object_bucket_mutations
+WHERE bucket_id=sqlc.arg(bucket_id) AND kind='native_grant' ORDER BY id;
+
+-- Only an independently authenticated provider retirement observation may
+-- consume this private statement. Request completion cannot call it.
+-- name: CloneObjectNativeGrantsFinish :execrows
+DELETE FROM object_bucket_mutations
+WHERE bucket_id=sqlc.arg(bucket_id) AND id=ANY(sqlc.arg(grant_ids)::uuid[]) AND kind='native_grant'
+AND backend_id=sqlc.arg(backend_id) AND backend_fingerprint=sqlc.arg(backend_fingerprint)
+AND physical_name=sqlc.arg(physical_name);
+
+-- name: CloneObjectGrantRevocationRead :one
+SELECT * FROM project_environment_clone_object_grant_revocations
+WHERE operation_id=sqlc.arg(operation_id) AND source_bucket_id=sqlc.arg(source_bucket_id);
+
+-- name: CloneObjectGrantRevocationInsert :one
+INSERT INTO project_environment_clone_object_grant_revocations
+(operation_id, source_bucket_id, request_id, plan, plan_sha256)
+VALUES (sqlc.arg(operation_id), sqlc.arg(source_bucket_id), sqlc.arg(request_id), sqlc.arg(plan), sqlc.arg(plan_sha256))
+RETURNING *;
+
+-- name: CloneObjectGrantRevocationDispatch :one
+UPDATE project_environment_clone_object_grant_revocations
+SET state=CASE WHEN state='reserved' THEN 'dispatched' ELSE state END,
+request_started_at=COALESCE(request_started_at,clock_timestamp())
+WHERE operation_id=sqlc.arg(operation_id) AND source_bucket_id=sqlc.arg(source_bucket_id)
+AND request_id=sqlc.arg(request_id) AND plan_sha256=sqlc.arg(plan_sha256)
+RETURNING *;
+
+-- name: CloneObjectGrantRevocationObserve :one
+UPDATE project_environment_clone_object_grant_revocations
+SET revocation_id=sqlc.arg(revocation_id), observed_at=clock_timestamp(),
+state=CASE WHEN sqlc.arg(drained)::boolean THEN 'drained' ELSE state END,
+drained_at=CASE WHEN sqlc.arg(drained)::boolean THEN COALESCE(drained_at,clock_timestamp()) ELSE drained_at END
+WHERE operation_id=sqlc.arg(operation_id) AND source_bucket_id=sqlc.arg(source_bucket_id)
+AND request_id=sqlc.arg(request_id) AND plan_sha256=sqlc.arg(plan_sha256) AND state<>'reserved'
+AND (revocation_id='' OR revocation_id=sqlc.arg(revocation_id))
+AND (state<>'drained' OR sqlc.arg(drained)::boolean)
+RETURNING *;
+
 -- name: ObjectBucketWriteFenceInsert :exec
 INSERT INTO object_bucket_write_fences (bucket_id, token, backend_id, backend_fingerprint, physical_name)
 VALUES (sqlc.arg(bucket_id), sqlc.arg(token), sqlc.arg(backend_id), sqlc.arg(backend_fingerprint), sqlc.arg(physical_name))
@@ -10760,7 +10801,9 @@ AND f.backend_id=sqlc.arg(backend_id) AND f.backend_fingerprint=sqlc.arg(backend
 AND f.physical_name=sqlc.arg(physical_name)
 AND op.id=sqlc.arg(operation_id) AND op.status='compensating'
 AND op.revision=sqlc.arg(expected_revision) AND op.lease_token=sqlc.arg(worker_token)::uuid
-AND op.lease_until > clock_timestamp();
+AND op.lease_until > clock_timestamp()
+AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations r
+ WHERE r.operation_id=op.id AND r.source_bucket_id=f.bucket_id AND r.request_started_at IS NOT NULL AND r.state<>'drained');
 
 -- name: ObjectUploadGrantInsert :one
 WITH receipt_clock AS (SELECT clock_timestamp() AS at)

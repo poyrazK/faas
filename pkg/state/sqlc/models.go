@@ -5021,6 +5021,20 @@ type ProjectEnvironmentCloneObjectEntry struct {
 	VerifiedSha256 string
 }
 
+type ProjectEnvironmentCloneObjectGrantRevocation struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	RequestID        pgtype.UUID
+	Plan             []byte
+	PlanSha256       string
+	State            string
+	RevocationID     string
+	RetainedAt       pgtype.Timestamptz
+	RequestStartedAt pgtype.Timestamptz
+	ObservedAt       pgtype.Timestamptz
+	DrainedAt        pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneObjectManifest struct {
 	OperationID     pgtype.UUID
 	SourceBucketID  pgtype.UUID

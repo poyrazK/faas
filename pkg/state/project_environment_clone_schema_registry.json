@@ -5731,6 +5731,23 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_object_grant_revocations",
+    "columns": [
+      "drained_at",
+      "observed_at",
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "request_id",
+      "request_started_at",
+      "retained_at",
+      "revocation_id",
+      "source_bucket_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_object_manifests",
     "columns": [
       "captured_at",
