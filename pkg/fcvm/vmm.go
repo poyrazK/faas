@@ -104,6 +104,9 @@ type JailerVMM struct {
 	// listeners here closes the race where a fast guest sends its characterization
 	// or job-exit frame before the corresponding wait RPC starts.
 	guestVsockListeners map[guestVsockListenerKey]*net.UnixListener
+	// Private restored channels have their own callbacks and live producer
+	// authority. They never borrow daemon serving handlers or the CID index.
+	nativeRestoreChannels map[string]*nativeQualificationRestoreChannels
 	// guestVsockStreamHandlers receive Firecracker guest-initiated streams on
 	// the per-instance <uds_path>_<port> endpoints. The outer compute VM cannot
 	// bind VMADDR_CID_HOST, so daemon-wide AF_VSOCK listeners are not a valid
@@ -2108,6 +2111,14 @@ func (v *JailerVMM) notifyGuestVsockTransport(port uint32, failureKind string, e
 // unhealthy; serving a VM without its platform channels would make lifecycle
 // and identity behavior silently incomplete.
 func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
+	if v.nativeRecovery != nil {
+		path, err := v.nativeRecovery.journal.qualifications("").restores().path(l.Instance)
+		if err == nil {
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				return errors.Join(err, errors.New("private native restore requires original scoped channels"))
+			}
+		}
+	}
 	v.mu.Lock()
 	handlers := make(map[uint32]GuestVsockStreamHandler, len(v.guestVsockStreamHandlers))
 	for port, handler := range v.guestVsockStreamHandlers {
@@ -2263,6 +2274,7 @@ func (v *JailerVMM) closeGuestVsockListeners(instance string) {
 	if v == nil || instance == "" {
 		return
 	}
+	v.closeNativeQualificationRestoreChannels(instance)
 	v.mu.Lock()
 	listeners := make(map[uint32]*net.UnixListener)
 	for key, ln := range v.guestVsockListeners {

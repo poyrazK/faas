@@ -125,7 +125,12 @@ func (v *JailerVMM) loadNativeQualificationRestore(ctx context.Context, lease Le
 	if err := r.restoreResume.Resume(ctx, v, owner); err != nil {
 		return record, err
 	}
-	return s.advance(ctx, record, nativeRestoreHookCompleted)
+	record, err = s.advance(ctx, record, nativeRestoreHookCompleted)
+	if err == nil {
+		permit, _ := ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
+		permit.completed.Store(true) // Only the acknowledged live producer can open channels.
+	}
+	return record, err
 }
 
 func (s *nativeQualificationRestoreLoadSession) requireAuthority(ctx context.Context) error {
@@ -207,12 +212,6 @@ func (s *nativeQualificationRestoreLoadSession) require(ctx context.Context, rec
 		s.images.requireRestoreLoadWitnesses(record, s.owner, s.v.chrootRoot(record.InstanceID), false), ctx.Err(), requireNativeRestoreFenceGroup(record.Cgroup, s.fence.Group()))
 }
 
-func requireNativeRestoreFenceGroup(original, current nativeHostHelperGroup) error {
-	if original != current {
-		return errors.New("native restore load: pinned original cgroup identity changed")
-	}
-	return nil
-}
 func (s *nativeQualificationRestoreLoadSession) advance(ctx context.Context, record nativeQualificationRestoreLoadRecord, step int) (nativeQualificationRestoreLoadRecord, error) {
 	if err := s.require(ctx, record); err != nil {
 		return record, err

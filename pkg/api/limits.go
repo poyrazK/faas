@@ -104,6 +104,11 @@ const NativeSnapshotBackingNameMaxBytes = 255
 // Restore effect evidence contains five fixed image witnesses and six phases.
 const NativeQualificationRestoreLoadRecordMaxBytes = 8192
 
+// Private restored platform channels never outlive their original target or
+// let a slow guest retain unbounded host handlers.
+const NativeQualificationRestoreMaxStreams = 64
+const NativeQualificationRestoreStreamTimeout = 5 * time.Second
+
 // Native snapshot retirement can scan the unified hierarchy to distinguish a
 // removed original inode from a retained cgroup. Exceeding these parser bounds
 // retains ownership; these are diagnostic limits, not tenant quotas.

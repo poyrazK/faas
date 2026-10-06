@@ -6,22 +6,27 @@ package fcvm
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"golang.org/x/sys/unix"
@@ -420,8 +425,23 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	if err := v.ownChrootRoot(root, lease); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.prepareRegisteredGuestVsockListeners(lease); err != nil {
-		t.Fatal(err)
+	var ordinaryStreams, privateStreams atomic.Int32
+	blocked := make(chan struct{}, 1)
+	acknowledged := make(chan struct{}, 1)
+	handlers := nativeMetalRestoreMetadataHandlers(frame, &privateStreams, blocked, acknowledged)
+	for _, port := range nativeRestoreChannelPorts() {
+		if err := v.RegisterGuestVsockStreamHandler(port, func(string, net.Conn) (string, error) {
+			ordinaryStreams.Add(1)
+			return "read", errors.New("private restore borrowed serving channel")
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := v.prepareRegisteredGuestVsockListeners(lease); err == nil {
+		t.Fatal("private target obtained ordinary serving receivers")
+	}
+	if _, err := v.prepareNativeQualificationRestoreChannels(ctx, lease, handlers); err == nil {
+		t.Fatal("private channels opened before original acknowledged load/resume/hook")
 	}
 	if err := v.stageMountHelper(root); err != nil {
 		t.Fatal(err)
@@ -458,11 +478,42 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	if loaded.Phases[nativeRestoreHookCompleted].IsZero() {
 		t.Fatal("real target lacks hook acknowledgement")
 	}
+	channels, err := v.prepareNativeQualificationRestoreChannels(ctx, lease, handlers)
+	if err != nil {
+		t.Fatal("real restored scoped platform channels:", err)
+	}
+	defer channels.Close()
+	if _, err := v.prepareNativeQualificationRestoreChannels(ctx, lease, handlers); err == nil {
+		t.Fatal("private channel producer was replayed")
+	}
+	nativeMetalRestoreRejectHostPeer(t, v, lease)
+	if privateStreams.Load() != 0 {
+		t.Fatal("host Unix peer selected original guest metadata handler")
+	}
+	// The snapshot retains the source CID. Deliberately occupy that legacy
+	// lookup with an unrelated identity: only the new UDS/process can select
+	// this original target. It never enters Manager serving/live indexes.
+	m.mu.Lock()
+	m.cidToID[GuestVsockCID(incoming.NativeLease.Slot)] = "unrelated-serving-instance"
+	_, published := m.live[lease.Instance]
+	m.mu.Unlock()
+	if published {
+		t.Fatal("private restore became a serving Manager instance")
+	}
 	if err := v.waitReadyWithProbe(ctx, lease, "", false, "", 0); err != nil {
 		t.Fatal("separate native target did not become ready:", err)
 	}
 	if got := fetchV6UUID(t, lease.HostIP.String()); got == "" || got == originalUUID {
 		t.Fatal("dedicated native restore lacks fresh entropy", got)
+	}
+	nativeMetalRestoreMetadataProbe(t, ctx, lease, frame.InstanceID)
+	select {
+	case <-acknowledged:
+	case <-time.After(2 * time.Second):
+		t.Fatal("metadata response lacks completed original post-write authority check")
+	}
+	if ordinaryStreams.Load() != 0 || privateStreams.Load() != 1 {
+		t.Fatal("restored CID selected a serving receiver", ordinaryStreams.Load(), privateStreams.Load())
 	}
 	if lease.UID == incoming.NativeLease.UID || lease.HostIP == incoming.NativeLease.HostIP || lease.Netns == incoming.NativeLease.Netns || lease.Slot == incoming.NativeLease.Slot {
 		t.Fatal("native restore borrowed source allocation or network")
@@ -472,6 +523,10 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	}
 	if _, err := v.loadNativeQualificationRestore(ctx, lease); err == nil {
 		t.Fatal("completed real restore was replayed")
+	}
+	nativeMetalRestoreMetadataCancellationProbe(t, ctx, lease, channels, blocked)
+	if privateStreams.Load() != 1 {
+		t.Fatal("canceled restored stream delivered another metadata response")
 	}
 	if err := retire(ctx); err != nil {
 		t.Fatal(err)
@@ -483,7 +538,127 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	if err := q.restores().loads().validateInventory(ctx); err != nil {
 		t.Fatal("retired native target lost original load evidence:", err)
 	}
-	t.Log("actual native restore: five anonymous target-owned epochs loaded paused, resumed and reseeded with fresh UUID, UID, IP and netns; independently retired under its normal billable fence")
+	t.Log("actual native restore: five anonymous target-owned epochs loaded paused, resumed and reseeded; original process-bound metadata reached the fresh target despite an occupied captured CID; independently retired under its normal billable fence")
+}
+
+// Fixture metadata delivery tests the scoped transport, not production runtime
+// publication, service binding reinstallation or whole-graph qualification.
+func nativeMetalRestoreMetadataHandlers(frame state.EnvironmentQualificationExecution, calls *atomic.Int32, blocked, acknowledged chan<- struct{}) map[uint32]nativeQualificationRestoreStreamHandler {
+	handlers := make(map[uint32]nativeQualificationRestoreStreamHandler)
+	for _, port := range nativeRestoreChannelPorts() {
+		handlers[port] = func(context.Context, state.EnvironmentQualificationExecution, net.Conn) error {
+			return errors.New("fixture has no private credential or readiness publisher")
+		}
+	}
+	handlers[VsockRuntimeConfigHostPort] = func(_ context.Context, original state.EnvironmentQualificationExecution, conn net.Conn) error {
+		if original != frame {
+			return errors.New("restored metadata lost original target frame")
+		}
+		var header [4]byte
+		if _, err := io.ReadFull(conn, header[:]); err != nil {
+			return err
+		}
+		if binary.BigEndian.Uint32(header[:]) != uint32(len(`{"kind":"env","scope":"default"}`)) {
+			return errors.New("fixture metadata request length changed")
+		}
+		body := make([]byte, binary.BigEndian.Uint32(header[:]))
+		if _, err := io.ReadFull(conn, body); err != nil {
+			return err
+		}
+		if string(body) != `{"kind":"env","scope":"default"}` {
+			return errors.New("fixture metadata request changed")
+		}
+		if calls.Load() != 0 {
+			blocked <- struct{}{}
+			var extra [1]byte
+			_, err := conn.Read(extra[:]) // Retirement must wake and join this read.
+			return err
+		}
+		body, err := json.Marshal(map[string]any{"env": map[string]string{"RESTORE_TARGET": frame.InstanceID}, "revision": frame.PlanHash})
+		if err != nil {
+			return err
+		}
+		binary.BigEndian.PutUint32(header[:], uint32(len(body)))
+		if _, err := conn.Write(append(header[:], body...)); err != nil {
+			return err
+		}
+		calls.Add(1)
+		acknowledged <- struct{}{}
+		return nil
+	}
+	return handlers
+}
+
+func nativeMetalRestoreRejectHostPeer(t *testing.T, v *JailerVMM, lease Lease) {
+	t.Helper()
+	conn, err := net.DialTimeout("unix", v.guestVsockUDSSock(lease.Instance, VsockRuntimeConfigHostPort), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(time.Second))
+	var header [4]byte
+	var timeout net.Error
+	if _, err := conn.Read(header[:]); err == nil {
+		t.Fatal("host peer received private restored metadata")
+	} else if errors.As(err, &timeout) && timeout.Timeout() {
+		t.Fatal("unowned host peer was retained instead of refused", err)
+	}
+}
+
+func nativeMetalRestoreMetadataCancellationProbe(t *testing.T, ctx context.Context, lease Lease, channels *nativeQualificationRestoreChannels, blocked <-chan struct{}) {
+	t.Helper()
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	defer client.CloseIdleConnections()
+	done := make(chan bool, 1)
+	go func() {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+lease.HostIP.String()+":8080/cgi-bin/metadata", nil)
+		if err != nil {
+			done <- false
+			return
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			done <- false
+			return
+		}
+		defer response.Body.Close()
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		done <- strings.Contains(string(body), "RESTORE_TARGET")
+	}()
+	select {
+	case <-blocked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("restored metadata stream did not block under original authority")
+	}
+	channels.Close()
+	select {
+	case delivered := <-done:
+		if delivered {
+			t.Fatal("retired channel delivered private metadata")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("private retirement did not close and join blocked guest traffic")
+	}
+}
+
+func nativeMetalRestoreMetadataProbe(t *testing.T, ctx context.Context, lease Lease, target string) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+lease.HostIP.String()+":8080/cgi-bin/metadata", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	defer client.CloseIdleConnections()
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal("restored guest metadata proxy:", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
+	if err != nil || response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"RESTORE_TARGET":"`+target+`"`) {
+		t.Fatal("restored guest did not receive target-scoped fixture metadata:", response.StatusCode, string(body), err)
+	}
 }
 
 // Invoke the internal original producer without overriding the public support

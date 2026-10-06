@@ -262,6 +262,10 @@ esac
 	if err := os.WriteFile(filepath.Join(work, "cgi-bin", "disk"), []byte(diskProbe), 0o755); err != nil {
 		return err
 	}
+	metadataProbe := "#!/bin/sh\nprintf 'Content-Type: application/json\\r\\n\\r\\n'\nexec /bin/busybox wget -q -O - http://169.254.169.254/v1/metadata/env\n"
+	if err := os.WriteFile(filepath.Join(work, "cgi-bin", "metadata"), []byte(metadataProbe), 0o755); err != nil {
+		return err
+	}
 	appJSON := fmt.Sprintf(`{"entrypoint":["/usr/local/bin/faas-write-uuid"],"port":%d}`, port) + "\n"
 	if err := os.WriteFile(filepath.Join(work, "etc/faas/app.json"), []byte(appJSON), 0o644); err != nil {
 		return err

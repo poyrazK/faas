@@ -29,6 +29,7 @@ type nativeProcessRecoveryRuntime struct {
 	snapshotControl  nativeSnapshotControlBackend // startup/test wiring; never selected by an RPC
 	restoreResume    nativeQualificationRestoreResumeBackend
 	restoreFence     nativeQualificationRestoreFenceBackend
+	restoreChannels  nativeQualificationRestoreChannelBackend
 	restoreLoadWrite func(string, nativeQualificationRestoreLoadRecord) error // test-only effect journal fault injection
 	tunBinds         nativeTunBindBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
@@ -64,6 +65,7 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 		snapshotControl: newNativeSnapshotControlBackend(),
 		restoreResume:   newNativeQualificationRestoreResumeBackend(),
 		restoreFence:    newNativeQualificationRestoreFenceBackend(),
+		restoreChannels: newNativeQualificationRestoreChannelBackend(),
 		snapshotMemory:  newNativeSnapshotMemoryBackend(),
 		tunBinds:        tun,
 		support: func() error {

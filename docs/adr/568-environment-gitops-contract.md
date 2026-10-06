@@ -3402,3 +3402,65 @@ physical generation. Scan evidence remains modeled in this fixture. These
 checks supply scoped nested-node VM evidence; they grant no production dispatch,
 graph qualification, serving convergence, activation or enforcement. No PR was
 opened by this checkpoint.
+
+### Dedicated restored platform channel identity (2026-10-06)
+
+A restored qualification target retains the captured guest CID but has a fresh
+native lease and host namespace. Its platform traffic must never resolve through
+Manager's slot-derived CID index or its ordinary serving receivers. The internal
+restore path therefore uses a separate per-target receiver group for the guest
+event, workload identity and runtime configuration ports. Each callback receives
+the immutable original target execution frame and an authority-bound stream.
+Callbacks are selected explicitly; missing or additional handlers fail before
+endpoint publication. There is no default serving callback or credential fallback.
+Ordinary receiver preparation refuses a retained private restore target.
+
+Only the original live load producer, after observing the durable entropy/clock
+hook acknowledgement, can open this group. The same process-local load permit
+retains an acknowledgement bit and a separate one-shot channel publication bit.
+Lost hook/journal acknowledgements, retained completed records, daemon restart,
+revocation, expiry and partially published endpoints cannot recreate it. The
+receivers open after the hook: early guest traffic cannot reach a readiness or
+credential adapter while the restore sequence is incomplete. Future guest runtime
+delivery must use the explicit private adapters rather than mutate the published
+private drive before load or publish the target into Manager's serving indexes.
+
+Preparation holds original incoming and physical authority and pins the live
+target's read-only process/cgroup fence. It pins the original jail directory and
+each newly bound socket inode before granting endpoint metadata. Permission and
+ownership changes use those descriptors. The `Fchmodat2`/`AT_EMPTY_PATH` capability
+is required; unsupported hosts retain original target ownership and fail closed.
+Existing paths are never removed or adopted. The target directory and endpoint
+inode, private permissions and ownership are checked again for every stream.
+The group leaves closed endpoint names for original physical jail retirement;
+neither a late accept loop nor old cleanup unlinks a replacement socket pathname.
+
+Each accepted connection acquires its own original read-only cgroup and pidfd
+custody. Its kernel Unix credentials must match the original Firecracker PID,
+UID and GID, and the pinned process/start time, cgroup membership/inode and normal
+RAM fence must remain intact. Around every read/write it also checks the original
+target, live daemon generation, immutable load/capture/backing evidence and all
+five target image epochs. Revoked input is cleared before returning to the
+callback. A possibly completed write is reported as uncertain and never retried
+by the transport. Cancellation closes connections; deadlines cannot be extended
+past the original target or the five-second stream budget. Admission is bounded
+to 64 concurrent streams per port. Original retirement closes and joins the
+receiver group and its descriptors before releasing the jail.
+
+This is a transport identity contract, not fresh runtime publication, scoped
+binding installation, application acknowledgement, graph smoke or readiness.
+Private adapters must independently join their current reviewed graph/runtime
+contract before state or binding effects. Production Manager/RPC dispatch,
+Firecracker binary/version provenance and activation remain gated. The combined
+PR stays deferred until the agreed implementation pieces are ready.
+
+The approved nested x86_64 KVM test node ran the restored-guest metadata path
+with the captured CID deliberately occupied, refused a host Unix peer, and
+joined a blocked stream on target retirement. The focused native VM test,
+leakcheck and metal lint passed. A full inventory of 8,337 Go files matched the
+local source hashes exactly. Earlier Linux race, portable race, normal lint and
+restore/custody regression selections also passed. These results validate this
+transport checkpoint only; runtime publication, scoped binding delivery,
+original Firecracker provenance, complete graph smoke and serving convergence
+still need their own evidence. The test node was user-approved for this work;
+this scoped result does not claim production acceptance.

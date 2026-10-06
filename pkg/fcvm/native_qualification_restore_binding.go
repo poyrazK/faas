@@ -16,6 +16,8 @@ type nativeQualificationRestoreLoadContextKey struct{}
 type nativeQualificationRestoreLoadPermit struct {
 	instance, generation string
 	used                 atomic.Bool
+	completed            atomic.Bool
+	channelsUsed         atomic.Bool
 }
 
 // This internal capability belongs to the first incoming restore delivery.

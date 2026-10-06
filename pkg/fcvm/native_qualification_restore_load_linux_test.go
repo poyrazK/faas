@@ -304,6 +304,10 @@ func TestNativeQualificationRestoreLoadSequenceRetainsOriginalIntentAndCannotRep
 			if (err == nil) != (outcome == "success") {
 				t.Fatal(outcome, err)
 			}
+			permit := f.ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
+			if permit.completed.Load() != (outcome == "success") {
+				t.Fatal("uncertain effect recreated live channel acknowledgement")
+			}
 			stored, readErr := f.loads.read(f.owner.Lease.Instance)
 			if readErr != nil {
 				t.Fatal(readErr)
@@ -361,6 +365,10 @@ func TestNativeQualificationRestoreLoadLostJournalAcknowledgementsStopBeforeNext
 			}
 			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease); !errors.Is(err, lost) {
 				t.Fatal(err)
+			}
+			permit := f.ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
+			if permit.completed.Load() {
+				t.Fatal("lost journal acknowledgement opened scoped channels")
 			}
 			calls, hooks := f.calls, f.hooks
 			f.v.nativeRecovery.restoreLoadWrite = nil

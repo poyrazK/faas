@@ -11,7 +11,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
 | Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Production capture, isolated smoke and native qualification restore |
-| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, verified anonymous restore inputs and a private load/resume/entropy-hook sequence | Manager/RPC dispatch, original Firecracker provenance, restored channel identity, artifact retirement and bare-metal acceptance |
+| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, verified anonymous restore inputs, private load/resume/entropy-hook and process-bound restored platform channels | Manager/RPC dispatch, original Firecracker provenance, restored runtime/binding delivery, artifact retirement, complete graph smoke and serving convergence |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -146,8 +146,8 @@ original-VM resume/retirement, and a private dedicated target's paused load,
 resume, entropy hook and independent retirement under its normal RAM fence.
 The separate ordinary restore regression, ownership/recovery fixtures and
 leakcheck also pass. This is scoped nested-node evidence. Manager/RPC restore
-dispatch, original Firecracker provenance, restored channel identity, artifact
-retirement, complete graph smoke/readiness and serving convergence remain
+dispatch, original Firecracker provenance, restored runtime/binding delivery,
+artifact retirement, complete graph smoke/readiness and serving convergence remain
 outstanding. Production gates stay closed.
 
 Private writable drives and capture outputs default to requiring their data and
@@ -254,9 +254,21 @@ anchor retires and cannot recreate missing native authority from it.
 The loader retains read-only descriptors for the original target cgroup and
 normal RAM limit, and checks exact process membership and credentials before
 each effect. A replacement cgroup or raised limit stops the sequence. The load
-journal supplies no qualification, serving or graph readiness. Original Firecracker
-provenance, restored channel identity, scoped bindings and isolated graph smoke
-remain outstanding.
+journal supplies no qualification, serving or graph readiness. The live producer
+can open a separate private group of platform receivers after its acknowledged
+resume hook. Every stream carries the original target frame and checks the
+original Unix peer, process, cgroup, normal RAM limit, jail/socket inodes, image
+epochs and load evidence around I/O. It never uses captured CID lookup or
+ordinary serving callbacks. A lost hook acknowledgement, revoked/expired target
+or daemon restart cannot recreate the channel producer. Streams are bounded to
+64 per port and five seconds, capped by the original target deadline. Endpoint
+metadata changes use pinned descriptors; hosts without the required Linux
+`Fchmodat2` support refuse preparation. Closed sockets retain their names for
+original jail retirement, so a late close cannot unlink a replacement endpoint.
+These receivers grant transport identity only. Fresh reviewed runtime inputs,
+scoped service binding reinstallation, original Firecracker provenance and
+isolated graph smoke remain outstanding; no production Manager/RPC path opens
+these receivers yet.
 
 The internal capture producer begins
 intent before output preparation and publishes memory, device state, the frozen
