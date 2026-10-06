@@ -347,7 +347,10 @@ func verifyHistory(history []api.InvocationAttemptResponse, id string, failures 
 	if len(history) != failures+1 {
 		return fmt.Errorf("attempt history has %d rows, want %d", len(history), failures+1)
 	}
-	for i, attempt := range history {
+	// The public API paginates newest-first. Walk the returned sequence
+	// backwards to check the original retry budget before the replay.
+	for i := range history {
+		attempt := history[len(history)-1-i]
 		generation, number, outcome := int64(0), i+1, "retry"
 		switch i {
 		case failures:
