@@ -113,8 +113,13 @@ func validateNativeDiskImageClaimRoot(root string, claim nativeDiskImageClaim) e
 		return errors.New("native disk staging: persistent claim identity or initial intent changed")
 	}
 	ref := r.References[0]
-	if ref.ReadOnly || ref.Link || ref.Ready || ref.Removed || ref.TargetRemoved || ref.Target != (nativeLoopIdentity{}) || ref.MountID != 0 || filepath.Dir(filepath.Dir(filepath.Dir(ref.Root))) != claim.JailBase || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(ref.Root))), "firecracker") {
+	if ref.Link || ref.Ready || ref.Removed || ref.TargetRemoved || ref.Target != (nativeLoopIdentity{}) || ref.MountID != 0 || filepath.Dir(filepath.Dir(filepath.Dir(ref.Root))) != claim.JailBase || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(ref.Root))), "firecracker") {
 		return errors.New("native disk staging: claim does not own one original anonymous private source")
+	}
+	// Read-only anonymous staging is restricted to receipt input clones. It
+	// must remain exclusive: no sharing, hardlink grant or arbitrary name.
+	if ref.ReadOnly && (ref.Name != memSnapshotName && ref.Name != vmstateSnapshotName || ref.AddPerms != 0o044 || r.Original.Mode != 0o600 || r.Original.UID != uint32(os.Geteuid())) {
+		return errors.New("native disk staging: read-only claim is not one private snapshot input clone")
 	}
 	return nil
 }

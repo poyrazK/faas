@@ -3022,3 +3022,94 @@ This is scoped nested-node lifecycle and verified-byte evidence, not Grype,
 bare-metal/reboot/power-loss, native qualification restore, complete graph smoke,
 binding delivery, serving convergence or artifact-retirement acceptance.
 Production gates stay closed and the combined PR stays deferred.
+
+### Descriptor-backed native restore staging (2026-10-06)
+
+The next internal boundary joins the complete original capture/receipt cohort
+to a separately prepared native target's existing image ownership journal.
+It requires the target's original local generation and live daemon/disk locks,
+exact physical lease and kernel boot, canonical jail root, unrevoked prepared
+state, all four private read-only anonymous receipt-sized descriptors and the
+original backing identity and digest. The target cannot reuse the capture's
+instance or physical generation. These checks precede any staging effect;
+original receipts and target authority are rechecked between the three images
+and at the end. This boundary grants staging only, never a qualification restore
+execution frame, Firecracker load, cold fallback, smoke, readiness or activation.
+
+The Linux adapter copies from the still-open input FD into a new anonymous
+ext4/XFS/Btrfs inode on the configured persistent staging disk outside the jail.
+An independently reopened original FD gives the copy its own offset; no ordinary
+Get, LocalPath, cache resolver or caller-selected source pathname is used.
+Source metadata, read-only access, close-on-exec, link count and original length
+are checked before copying; the staging root and clone identities are checked
+again afterwards. Reflink or bounded buffered copy produces a distinct inode;
+the clone's full logical SHA-256 must match its original object receipt before
+image epoch publication, a source name, a mount or a permission grant.
+
+All three clones remain exclusive to one target reference. The pre-existing
+image journal and separate persistent disk claim precede the temporary source
+link and original anchor bind. Memory and device-state clones receive read-only
+jail binds with nodev/nosuid/noexec attributes; the private drive receives the
+target UID/GID and its own writable bind. The verified inputs retain their
+original mode and inode and cannot receive guest writes. Disk claim validation
+allows read-only anonymous clones only for the canonical memory/device-state
+input names, initial mode 0600, original vmmd UID and the exact read permission
+grant; sharing, hardlink references and arbitrary read-only names still refuse.
+
+Producer descriptors and temporary names join before staging returns; original
+image anchors and references retain the clone through input descriptor closure.
+An interrupted effect or uncertain producer Close returns failure and preserves
+the owning epoch. Retrying cannot produce another clone for that occupied
+target. Existing same-boot quarantine, original-epoch retirement, full inventory
+and different-boot exclusion rules apply to these new read-only claims as well.
+No canonical object or publication receipt is removed. Persistent disk claims
+are staging cleanup evidence and confer no artifact-retirement authority.
+
+Production qualification capture and restore, restore execution ownership,
+isolated smoke, complete graph readiness, binding delivery and serving
+convergence remain gated. The combined PR stays deferred until the requested
+scope has its required implementation and acceptance evidence.
+
+### Native restore staging validation (2026-10-06)
+
+The final native/qualification/snapshot race selection passed on the approved
+nested GCP KVM node with Go 1.25.13 (45.993 s). Normal storage/fcvm lint and
+changed-code metal lint reported zero issues. The known unrelated full-metal
+lint findings were not modified or reclassified by this checkpoint.
+
+`make test-metal` passed its native ownership/recovery, publication, verified
+restore-input and disk-staging selection (54.612 s). The persistent-disk fixture
+joined fifteen actual producer exits across drive, output, memory-input,
+device-state-input and restore-drive preparation, each interrupted at source,
+anchor and binding acknowledgement. Its isolated child passed in 6.96 s
+(8.05 s including the parent). These use modeled guest data and original
+prepared journal owners, with real disk inodes, persistent claims, mounts,
+read-only attributes and cleanup. The successful staging case joins actual
+four-object local writer/read receipts to the original daemon's prepared target,
+preserves the verified inputs during drive writes, keeps data off jail tmpfs,
+removes temporary names and retains original anchors after input closure.
+
+The final real VM regression also passed (14.07 s in the isolated child, 15.16 s
+including the parent). Its original native VM paused, captured, resumed and
+retired; receipt-verified copies restored through the separate ordinary
+lifecycle fixture with fresh readiness/entropy and no cold fallback. Original
+writer receipts observed 134,217,728 logical / 64,901,120 allocated memory bytes,
+13,696 logical / 16,384 allocated device-state bytes and 67,108,864 logical /
+86,016 allocated drive bytes. The required 177-byte backing sidecar was excluded
+from the 65,003,520-byte stored total. `make leakcheck` reported no leaked
+namespaces, TAPs, jails, cgroups, processes, mounts or native loops.
+
+Modeled fault tests refuse changed target generation/boot/lease, recovered or
+missing daemon authority, incomplete receipts or descriptors, writable/named/
+changed-size/changed-mode inputs, missing close-on-exec, changed backing identity
+or original backing bytes, and cancellation before staging. Real descriptor
+copy tests check original digest, independent source offset and clone inode,
+private write isolation and no name on failed verification. Lost anchor
+acknowledgement or producer Close blocks recopy until original-owner retirement.
+Read-only different-boot cleanup is modeled, not a real reboot acceptance test.
+
+These results supply staging and ordinary VM regression evidence. They do not
+establish native qualification restore execution, format/backing validation at
+load, isolated graph smoke, binding delivery, serving convergence, live GCS
+retirement, local conditional retirement or bare-metal/reboot/power-loss
+acceptance. Production gates remain closed and no PR is opened.

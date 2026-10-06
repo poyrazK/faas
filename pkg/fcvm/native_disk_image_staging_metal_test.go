@@ -5,6 +5,8 @@ package fcvm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"golang.org/x/sys/unix"
 )
 
@@ -99,16 +102,17 @@ func TestMetalNativeDiskImageStagingRecovery(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	lock, err := backend.LockDiskStaging(ctx)
-	if err != nil {
+	r := &nativeProcessRecoveryRuntime{journal: j, imageSources: backend, owned: make(map[string]string)}
+	if err := r.acquireDaemonOwnership(ctx); err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Close()
+	defer r.daemonLock.Close()
+	defer r.diskLock.Close()
 	source := filepath.Join(disk, "immutable.img")
 	if err := os.WriteFile(source, []byte("original-native-disk-layer"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"drive", "output"} {
+	for _, kind := range []string{"drive", "output", "restore-mem", "restore-state", "restore-drive"} {
 		for _, phase := range []string{"source", "anchor", "binding"} {
 			instance := fmt.Sprintf("disk-%s-%s", kind, phase)
 			lease := leaseForSlot(instance, len(owners))
@@ -137,7 +141,7 @@ func TestMetalNativeDiskImageStagingRecovery(t *testing.T) {
 		}
 	}
 	records, err := images.records()
-	if err != nil || len(records) != 6 {
+	if err != nil || len(records) != 15 {
 		t.Fatal("disk producer death lost original image epochs", len(records), err)
 	}
 	if err := images.inventory(ctx, owners); err != nil {
@@ -158,6 +162,75 @@ func TestMetalNativeDiskImageStagingRecovery(t *testing.T) {
 		if record.References[0].Owner.Lease.Instance == "disk-drive-source" {
 			nativeMetalDiskStagingRejectEarlyPermissions(t, ctx, &images, owners, claims, record)
 		}
+	}
+	// Join the complete receipt barrier with the original daemon's prepared
+	// target using real disk copies and binds. These are modeled snapshot bytes;
+	// no Firecracker load, qualification execution or graph evidence is minted.
+	lease := leaseForSlot("disk-restore-complete", len(owners))
+	lease.Plan, lease.Networkless = api.PlanHobby, true
+	if err := j.prepare(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := j.read(lease.Instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners = append(owners, owner)
+	r.remember(owner)
+	root := filepath.Join(base, "firecracker", lease.Instance, "root")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	v := &JailerVMM{chrootBase: base, fcName: "firecracker", nativeRecovery: r}
+	f := nativeRestoreInputsFixture(t, nil)
+	var received nativeSnapshotRestoreInputs
+	if err := withNativeSnapshotRestoreInputs(ctx, f.journal, f.backend, f.completed, f.root, func(inputs nativeSnapshotRestoreInputs) error {
+		received = inputs
+		if err := v.stageNativeSnapshotRestoreInputs(ctx, owner, root, inputs, f.completed, f.journal); err != nil {
+			return err
+		}
+		for i, name := range [...]string{memSnapshotName, vmstateSnapshotName, layerImageName} {
+			path := filepath.Join(root, name)
+			body, err := os.ReadFile(path)
+			if err != nil || string(body) != string(f.bodies[i]) {
+				t.Fatal("native staging redirected verified bytes", name, err)
+			}
+			var stat unix.Stat_t
+			if err := unix.Stat(path, &stat); err != nil || uint64(stat.Dev) == uint64(jail.Dev) || stat.Nlink != 0 {
+				t.Fatal("staged bytes were copied to tmpfs or kept a disk name", name, err)
+			}
+			if name != layerImageName {
+				file, err := os.OpenFile(path, os.O_WRONLY, 0)
+				if err == nil {
+					_ = file.Close()
+					t.Fatal("memory/device-state binding permits writes", name)
+				}
+			} else {
+				file, err := os.OpenFile(path, os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, writeErr := file.WriteAt([]byte("guest"), 0)
+				if err := errors.Join(writeErr, file.Close()); err != nil {
+					t.Fatal(err)
+				}
+				original := make([]byte, len(f.bodies[i]))
+				if _, err := inputs.Files[i].ReadAt(original, 0); err != nil || string(original) != string(f.bodies[i]) {
+					t.Fatal("guest write reached the sealed receipt input", err)
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range received.Files {
+		if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
+			t.Fatal("verified source descriptor escaped its consumer", err)
+		}
+	}
+	if err := images.require(ctx, owner, false); err != nil {
+		t.Fatal("original epoch lost staging when verified inputs closed", err)
 	}
 	for _, expected := range owners {
 		owner := retireNativeImageFixtureOwner(t, &images, expected)
@@ -220,9 +293,10 @@ func nativeMetalDiskStagingCrashChild(t *testing.T, ctx context.Context, base st
 		return writeNativeJournalValue(path, record)
 	}
 	root := filepath.Join(base, "firecracker", owner.Lease.Instance, "root")
-	if os.Getenv("GREGALE_NATIVE_DISK_STAGING_KIND") == "drive" {
+	kind := os.Getenv("GREGALE_NATIVE_DISK_STAGING_KIND")
+	if kind == "drive" {
 		_, err = images.stageWritable(ctx, owner, root, os.Getenv("GREGALE_NATIVE_DISK_STAGING_SOURCE"), layerImageName)
-	} else {
+	} else if kind == "output" {
 		name, nameErr := nativeSnapshotOutputName(owner.Generation, "mem")
 		if nameErr != nil {
 			t.Fatal(nameErr)
@@ -232,9 +306,48 @@ func nativeMetalDiskStagingCrashChild(t *testing.T, ctx context.Context, base st
 		_, err = images.stagePrepared(ctx, owner, root, name, false, 0, func(original nativeLaunchRecord) (nativeImagePreparation, error) {
 			return backend.PrepareSnapshotOutput(ctx, original, root, backend.diskStagingRoot, name)
 		})
+	} else {
+		name := map[string]string{"restore-mem": memSnapshotName, "restore-state": vmstateSnapshotName, "restore-drive": layerImageName}[kind]
+		if name == "" {
+			t.Fatal("unknown descriptor staging fixture kind")
+		}
+		input, receipt := nativeMetalSealedRestoreStagingInput(t, backend.diskStagingRoot)
+		defer input.Close()
+		_, err = images.stageRestoreInput(ctx, owner, root, input, name, receipt)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Fatal(errors.New("disk staging did not interrupt its original acknowledgement"))
+}
+
+// A small modeled receipt isolates native clone/mount crash behavior from
+// publication. The complete-input case above uses real local object receipts.
+func nativeMetalSealedRestoreStagingInput(t *testing.T, directory string) (*os.File, storage.ExclusiveArtifactReceipt) {
+	t.Helper()
+	body := []byte("modeled-original-snapshot-input")
+	fd, err := unix.Open(directory, unix.O_TMPFILE|unix.O_RDWR|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := os.NewFile(uintptr(fd), "modeled-unsealed-snapshot-input")
+	if _, err := output.Write(body); err != nil {
+		_ = output.Close()
+		t.Fatal(err)
+	}
+	if err := errors.Join(output.Chmod(0o400), output.Sync()); err != nil {
+		_ = output.Close()
+		t.Fatal(err)
+	}
+	readFD, err := unix.Open(nativeImageFDPath(output), unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err := errors.Join(err, output.Close()); err != nil {
+		if readFD >= 0 {
+			_ = unix.Close(readFD)
+		}
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(body)
+	receipt := storage.ExclusiveArtifactReceipt{Version: 1, Key: "modeled/restore.snap", ObjectKey: "modeled/restore.snap", Backend: "gcs",
+		Location: "modeled-native-staging", LogicalBytes: int64(len(body)), StoredBytes: int64(len(body)), SHA256: hex.EncodeToString(digest[:]), Generation: 1}
+	return os.NewFile(uintptr(readFD), "modeled-sealed-snapshot-input"), receipt
 }

@@ -11,7 +11,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
 | Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Production capture, isolated smoke and native qualification restore |
-| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume, exclusive four-object publication, durable writer receipts and verified anonymous restore inputs | Production adapter wiring, artifact retirement, native qualification restore and bare-metal acceptance |
+| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume, exclusive four-object publication, durable writer receipts, verified anonymous restore inputs and descriptor-backed native staging | Production adapter wiring, artifact retirement, native qualification restore and bare-metal acceptance |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -210,8 +210,17 @@ four-receipt cohort and its matching capture completion. It verifies each source
 to EOF, joins reader Close, checks the bounded backing sidecar against the
 original identity and supplies only private anonymous read-only disk descriptors
 to a synchronous consumer. All descriptors close before return; a partial copy
-creates no named file or cleanup authority. This byte verification does not
-enable native qualification restore or readiness. The internal producer begins
+creates no named file or cleanup authority. An internal native staging adapter
+clones those descriptors onto the configured persistent disk, verifies the
+original receipt digest again, and records the prepared target's exclusive
+image epoch and disk claim before creating any temporary source link. Memory
+and device-state binds are read-only; the drive is a separate writable clone.
+Permission changes and guest writes cannot reach the verified source inputs.
+Only the original daemon and its prepared target can stage this cohort; recovered
+records cannot create a producer. An uncertain first effect blocks a retry until
+original-owner retirement joins its retained epoch. This remains a staging
+primitive: the qualification restore execution frame, format/backing validation
+at load, isolated smoke and readiness must still be connected. The internal producer begins
 intent before output preparation and publishes memory, device state, the frozen
 private drive and backing identity. Actual buffered snapshot writes require the
 existing temporary snapshot headroom policy. The producer pins and journals the
