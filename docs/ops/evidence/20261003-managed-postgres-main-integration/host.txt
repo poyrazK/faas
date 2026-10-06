@@ -1,0 +1,21 @@
+Linux 7.0.0-1011-gcp x86_64
+go version go1.25.13 linux/amd64
+Firecracker v1.7.0
+
+2026-10-03T13:39:47.993176591 [anonymous-instance:main] Firecracker exiting successfully. exit_code=0
+postgres (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)
+# This host is designated for disruptive native CI acceptance runs.
+#
+# Its presence authorizes scripts/ci/run-native-e2e.sh and
+# scripts/ci/run-native-metal-smoke.sh to stop the local Gregale daemons,
+# boot Firecracker microVMs, and run the acceptance suites. Both refuse to
+# touch a host without it, so deleting this file is the immediate kill
+# switch — it takes effect before any service state changes.
+#
+# Managed by deploy/ansible/roles/native_acceptance_host. A reprovision
+# that does not run that role will drop this file and silently disable
+# both gates; that is exactly what happened on 2026-09-12.
+designated_by=ansible
+role=native_acceptance_host
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root        48G   41G  6.6G  87% /

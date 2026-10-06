@@ -179,6 +179,9 @@ export class TriggersService {
   }
   /**
    * Partial-update a trigger.
+   * Queue binding consumers are managed through the queue-binding API.
+   * Direct mutations of those private projections return 409.
+   *
    * @returns Trigger The updated trigger.
    * @throws ApiError
    */
@@ -204,6 +207,7 @@ export class TriggersService {
         400: `code: trigger_invalid_kind | trigger_invalid_config — kind does not exist, or per-kind validation failed (missing brokers, empty topic, malformed URL, etc.).`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         422: `code: trigger_immutable_field — kind and (for cron) trigger_id are immutable after create; changing them requires delete + recreate.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -215,6 +219,9 @@ export class TriggersService {
   }
   /**
    * Delete a trigger.
+   * Delete an independent trigger. A private queue consumer must be removed
+   * through its queue binding; direct deletion of that projection returns 409.
+   *
    * @returns void
    * @throws ApiError
    */
@@ -235,6 +242,7 @@ export class TriggersService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -340,8 +348,10 @@ export class TriggersService {
    * Sets `enabled=false` and pg_notify's `trigger_changed`. Schedd
    * stops the broker poller on the next tick; in-flight records
    * drain normally.
+   * Queue binding consumers are managed through the queue-binding API;
+   * direct pause/resume of those private projections returns 409.
    *
-   * @returns void
+   * @returns Trigger The paused trigger with enabled set to false.
    * @throws ApiError
    */
   public static pauseTrigger({
@@ -351,7 +361,7 @@ export class TriggersService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<Trigger> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/triggers/{id}/pause',
@@ -361,6 +371,7 @@ export class TriggersService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -372,8 +383,10 @@ export class TriggersService {
    * Re-enable a paused trigger.
    * Sets `enabled=true` and pg_notify's `trigger_changed`.
    * Schedd restarts the broker poller on the next tick.
+   * Queue binding consumers are managed through the queue-binding API;
+   * direct pause/resume of those private projections returns 409.
    *
-   * @returns void
+   * @returns Trigger The resumed trigger with enabled set to true.
    * @throws ApiError
    */
   public static resumeTrigger({
@@ -383,7 +396,7 @@ export class TriggersService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<Trigger> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/triggers/{id}/resume',
@@ -393,6 +406,7 @@ export class TriggersService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -544,7 +558,8 @@ export class TriggersService {
     id: string,
     /**
      * Optional DLQ reason filter (poison_record / max_attempts /
-     * broker_error / rate_limited / payload_too_large).
+     * broker_error / rate_limited / payload_too_large /
+     * exclusive_operation_rejected).
      *
      */
     reason?: TriggerDeadLetterReason,
@@ -609,10 +624,11 @@ export class TriggersService {
   /**
    * Internal — schedd posts a batch envelope to the gateway.
    * Internal-only route. Schedd invokes this once per closed
-   * batch (size / window / 6MB cap). The function under the
-   * trigger responds with `{"batchItemFailures":[{"itemIdentifier":"..."}]}`.
-   * Empty / missing response ⇒ full success. Mirrors AWS Lambda's
-   * `ReportBatchItemFailures` contract verbatim.
+   * batch. The gateway delivers records sequentially and returns one
+   * result per item. Each function response may include
+   * `{"batchItemFailures":[{"itemIdentifier":"..."}]}`.
+   * Durable queue records include an invocation ID and current claim
+   * attempt; source must be esm for these records.
    *
    * @returns any Batch accepted; per-record status derived from response.
    * @throws ApiError
@@ -621,20 +637,38 @@ export class TriggersService {
     requestBody,
   }: {
     requestBody: {
+      /**
+       * Synthetic batch identity, typically trigger- followed by the trigger UUID.
+       */
+      invocation_id: string;
       trigger_id: string;
-      app_id?: string;
-      kind?: TriggerKind;
+      app_id: string;
+      /**
+       * Internal dispatch source; esm for trigger and durable queue batches.
+       */
+      source?: string;
       records: Array<{
         item_identifier: string;
+        /**
+         * Internal durable queue invocation ID; must equal item_identifier and have a current claimed lease.
+         */
+        invocation_id?: string;
+        /**
+         * Required with invocation_id; fences delivery to the current durable queue claim attempt.
+         */
+        invocation_attempt?: number;
         payload_b64: string;
         headers?: Record<string, string>;
         metadata?: Record<string, any>;
       }>;
     },
   }): CancelablePromise<{
-    succeeded?: Array<string>;
-    retry?: Array<string>;
-    dead_letter?: Array<string>;
+    results: Array<{
+      item_identifier: string;
+      status: 'succeeded' | 'retry' | 'dead_letter';
+      error?: string;
+      code?: string;
+    }>;
   }> {
     return __request(OpenAPI, {
       method: 'POST',

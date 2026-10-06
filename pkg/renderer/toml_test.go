@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
+
 	"github.com/onebox-faas/faas/pkg/manifest"
 )
 
@@ -198,6 +200,41 @@ func TestRenderTOML_GatewaydInternal(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("gatewayd-internal body missing production default %q\nbody:\n%s", want, body)
 		}
+	}
+}
+
+// Release rollouts re-render gatewayd-internal.toml from HostKeys on every
+// managed compute host. The renderer had no [ratelimit] table, so the
+// Ansible template's mode = "central" never reached production: each node
+// kept its own buckets, and on two nodes a 1 rps throttle rule admitted 26
+// of 30 requests sent over 13 s instead of about 15.
+func TestRenderTOML_GatewaydInternalRateLimitTable(t *testing.T) {
+	for _, tc := range []struct{ name, mode, want string }{
+		{"omitted renders central", "", "central"},
+		{"explicit local", "local", "local"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dc := fixtureTOML("gatewayd-internal")
+			dc.APIDLoopback = "https://schedd.faas:8081"
+			dc.RateLimitMode = tc.mode
+			body, _, err := renderTOML(tomlRenderCtx{Daemon: "gatewayd-internal", DC: dc, AppsDomain: "gregale.dev"})
+			if err != nil {
+				t.Fatalf("renderTOML: %v", err)
+			}
+			var decoded map[string]any
+			if _, err := toml.Decode(string(body), &decoded); err != nil {
+				t.Fatalf("decode rendered TOML: %v\n%s", err, body)
+			}
+			table, ok := decoded["ratelimit"].(map[string]any)
+			if !ok || len(table) != 1 || table["mode"] != tc.want {
+				t.Fatalf("[ratelimit] = %#v, want only mode = %q\n%s", decoded["ratelimit"], tc.want, body)
+			}
+			for _, key := range []string{"listen_addr", "metrics_addr", "apps_domain", "apid_loopback", "streaming_enabled"} {
+				if _, ok := decoded[key]; !ok {
+					t.Errorf("top-level %s missing (scoped into a table?)\n%s", key, body)
+				}
+			}
+		})
 	}
 }
 

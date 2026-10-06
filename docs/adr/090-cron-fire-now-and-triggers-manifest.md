@@ -38,6 +38,19 @@ Add two coupled surfaces, both built on the existing `POST /v1/crons` write path
 - **Audit**: `cron.fired.manually` (new event name) with the same payload struct as `cron.fired` plus the `trigger: "manual"` field. The tick path emits `cron.fired` with `trigger: "schedule"`. One struct, two event names — see §Sub-decisions 2.
 - **MarkCronFired is NOT called from `RunCronNow`** (`pkg/state/pgstore.go:5303-5313`). A manual fire must not shift `last_fired_at` — that stays owned by the tick path. The next scheduled fire still lands at the boundary.
 
+### Compute ownership (2026-10-01 clarification)
+
+Each scheduler claims pending manual requests only for apps assigned to its
+effective local compute node, or apps that have not yet been assigned. The
+claim locks both the request and its app while changing pending to running,
+so placement cannot change midway through that transaction. An older request
+for another node remains pending and does not block eligible local work.
+If ownership moves after claim but before invocation, the old scheduler
+requeues the same durable request for the new owner. Its identity, request
+time, and schedule cursor remain unchanged. Command crons retain their durable
+app-task dispatch path and the same ownership check. The unrestricted store
+claim remains a compatibility helper; production dispatch uses the scoped claim.
+
 ### 2. `triggers:` manifest key
 
 - **Loader location**: `pkg/gregalemanifest/manifest.go` (new package). Why a shared package, not `cmd/gregale/manifest.go`: `cmd/apid/scan_service.go:360-376` will later want to validate the same schema server-side, and a shared package avoids a cmd→cmd import.

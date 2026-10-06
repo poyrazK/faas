@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"sync"
 	"time"
@@ -372,6 +371,24 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	if windowStore, ok := s.store.(state.AppBillingWindowStore); exactResidency && ok {
+		historical, err := windowStore.ListDeletedAppsInBillingWindow(ctx, minute, minute.Add(time.Minute))
+		if err != nil {
+			return nil, fmt.Errorf("meter: load app billing membership: %w", err)
+		}
+		byID := make(map[string]int, len(apps))
+		for i, app := range apps {
+			byID[app.ID] = i
+		}
+		for _, app := range historical {
+			if i, exists := byID[app.ID]; exists {
+				apps[i] = app
+			} else {
+				byID[app.ID] = len(apps)
+				apps = append(apps, app)
+			}
+		}
+	}
 	// M-2 / ADR-137 §Decision 1 — prefetch per-account plans so
 	// RolledRow.Plan is populated in one DB read rather than one
 	// per app. The lookup mirrors Residency's per-tick account
@@ -389,7 +406,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 	}
 	var out []RolledRow
 	for _, app := range apps {
-		if app.Status == state.AppDeleted {
+		if app.Status == state.AppDeleted && !exactResidency {
 			continue
 		}
 		ins, err := s.store.ListInstancesForApp(ctx, app.ID)
@@ -418,13 +435,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			}
 			mbs, err := s.store.DeploymentSidecarRAMs(ctx, inst.DeploymentID)
 			if err != nil {
-				// Fail-closed: under-admit rather than over-admit.
-				// The sampler doesn't own a *slog.Logger today
-				// (matches the existing budget-tier floor's no-log
-				// shape), so the warning rides the slog default.
-				slog.Default().Warn("meter: deployment sidecar RAM lookup failed",
-					"deployment_id", inst.DeploymentID, "err", err)
-				continue
+				return out, fmt.Errorf("meter: billable sidecar RAM %s: %w", inst.DeploymentID, err)
 			}
 			sidecarByDeploy[inst.DeploymentID] = mbs
 		}
@@ -544,6 +555,11 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			liveCount++
 			liveSeconds += seconds
 		}
+		// Deletion retains actual residency but ends the customer's capacity
+		// promise. It must never create new synthetic floor charges.
+		if app.Status == state.AppDeleted {
+			continue
+		}
 		// PR-A (ADR-060, issue #515): per-app GB-h floor for
 		// ScalingPolicy.MinInstances. When the floor is set
 		// and live instance count is below it, append
@@ -588,7 +604,8 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 		// back-dated sample must compute the floor that applied at the
 		// instant it is billing for — otherwise a window that has since
 		// closed would be billed as if it were still open, or vice versa.
-		floor := app.EffectiveMinInstancesAt(s.now())
+		floor := app.EffectiveMinInstancesAt(observedAt)
+		deploymentFloor := 0
 		for _, ins := range ins {
 			if !state.State(ins.State).CountsForRAM() {
 				continue
@@ -608,13 +625,14 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			if err != nil {
 				continue
 			}
-			if dFloor := dep.EffectiveMinInstances(); dFloor > floor {
-				floor = dFloor
-			}
+			deploymentFloor = max(deploymentFloor, dep.EffectiveMinInstances())
 		}
+		floor = max(floor, deploymentFloor)
+		floorSeconds := int64(floor) * 60
 		floorGap := floor > 0 && liveCount < floor
 		if exactResidency {
-			floorGap = floor > 0 && liveSeconds < int64(floor)*60
+			floorSeconds = app.EffectiveMinInstanceSecondsInMinute(minute, deploymentFloor)
+			floorGap = floorSeconds > liveSeconds
 		}
 		if floorGap {
 			// The floor is a promise to provide capacity. Preserve ADR-060's
@@ -634,7 +652,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			gap := floor - liveCount
 			floorTotal := int64(gap) * MBSecondsPerMinute(billable)
 			if exactResidency {
-				gapSeconds := int64(floor)*60 - liveSeconds
+				gapSeconds := floorSeconds - liveSeconds
 				gap = int((gapSeconds + 59) / 60)
 				floorTotal = gapSeconds * int64(billable)
 			}

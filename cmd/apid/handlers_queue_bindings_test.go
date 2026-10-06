@@ -3,12 +3,70 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestQueueBindingHTTPRetirementRetainsEvidenceAndRejectsNewWork(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "queue-http-retire", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := api.CreateQueueBindingRequest{Name: "orders", QueueName: "orders", Mode: "push", WorkloadClass: "worker", MaxConcurrency: 2}
+	base := "/v1/apps/queue-http-retire/queue-bindings"
+	rec := e.do(t, http.MethodPost, base, request, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	var binding api.QueueBindingResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &binding); err != nil {
+		t.Fatal(err)
+	}
+	triggerID, err := queueBindingTriggerID(ctx, e.store, app.ID, binding.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptID, err := e.store.InsertTriggerRecord(ctx, triggerID, "receipt", []byte(`{}`), []byte(`{}`), []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := e.store.EnqueueInvocation(ctx, state.Invocation{AccountID: e.acct.ID, AppID: app.ID, Source: state.InvocationQueue, QueueName: "orders", DueAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, http.MethodGet, base+"/"+binding.ID, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("active binding read: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodDelete, base+"/"+binding.ID, nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("retire: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodGet, base+"/"+binding.ID, nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("retired binding remained active: %d %s", rec.Code, rec.Body.String())
+	}
+	if row, err := e.store.InvocationByID(ctx, inv.ID); err != nil || row.State != state.InvocationPending || row.Attempts != 0 {
+		t.Fatalf("retirement changed backlog: %+v %v", row, err)
+	}
+	if trigger, err := e.store.TriggerByID(ctx, triggerID); err != nil || trigger.Enabled {
+		t.Fatalf("retired consumer lost or enabled: %v %v", trigger.Enabled, err)
+	}
+	if id, err := e.store.TriggerRecordIDByItemIdentifier(ctx, triggerID, "receipt"); err != nil || id != receiptID {
+		t.Fatalf("retirement lost receipt: %q %v", id, err)
+	}
+	rec = e.do(t, http.MethodPost, "/v1/apps/queue-http-retire/queues/send", map[string]any{"queue_name": "orders", "payload": map[string]any{"new": "work"}}, nil)
+	assertProblem(t, rec, http.StatusConflict, "queue_binding_retired")
+	rec = e.do(t, http.MethodPost, base, request, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeValidation)
+}
 
 // adr: 231 — an HTTP function can consume push deliveries, but an HTTP app
 // or pull binding cannot borrow the function-only trigger contract.
@@ -67,17 +125,15 @@ func TestQueueBindingConsumerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := e.store.CreateQueueBinding(ctx, state.QueueBinding{
-		AccountID: e.acct.ID, AppID: app.ID, ID: "binding-lifecycle", Name: "orders",
+	result, err := e.store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{
+		AccountID: e.acct.ID, AppID: app.ID, Name: "orders",
 		QueueName: "orders", Mode: "push", WorkloadClass: state.WorkloadClassWorker,
 		Enabled: true, MaxConcurrency: 4,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.syncQueueBindingConsumer(ctx, app, e.acct, binding); err != nil {
-		t.Fatalf("create projection: %v", err)
-	}
+	binding := result.Binding
 	triggers, err := e.store.ListTriggersForApp(ctx, app.ID)
 	if err != nil || len(triggers) != 1 {
 		t.Fatalf("triggers after create = %d, err=%v", len(triggers), err)
@@ -88,7 +144,7 @@ func TestQueueBindingConsumerLifecycle(t *testing.T) {
 
 	binding.QueueName = "payments"
 	binding.Enabled = false
-	if err := e.s.syncQueueBindingConsumer(ctx, app, e.acct, binding); err != nil {
+	if _, err := e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{QueueName: &binding.QueueName, Enabled: &binding.Enabled}); err != nil {
 		t.Fatalf("update projection: %v", err)
 	}
 	triggers, err = e.store.ListTriggersForApp(ctx, app.ID)
@@ -100,43 +156,124 @@ func TestQueueBindingConsumerLifecycle(t *testing.T) {
 	}
 
 	binding.Mode = "pull"
-	if err := e.s.syncQueueBindingConsumer(ctx, app, e.acct, binding); err != nil {
+	if _, err := e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Mode: &binding.Mode}); err != nil {
 		t.Fatalf("delete projection: %v", err)
 	}
 	triggers, err = e.store.ListTriggersForApp(ctx, app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(triggers) != 0 {
-		t.Fatalf("triggers after pull transition = %d, want 0", len(triggers))
+	if len(triggers) != 1 || triggers[0].Enabled {
+		t.Fatalf("pull transition must retain a disabled consumer: %+v", triggers)
 	}
 }
 
-func TestQueueBindingTriggerConfigCarriesRetryPolicy(t *testing.T) {
-	binding := state.QueueBinding{
-		ID:              "binding-1",
-		RetryPolicyJSON: json.RawMessage(`{"max_attempts":4,"base_seconds":2,"max_seconds":30,"jitter_seconds":0.2}`),
+func TestQueueBindingHTTPConflictPreservesConsumer(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "queue-http-conflict", WorkloadClass: state.WorkloadClassWorker})
+	if err != nil {
+		t.Fatal(err)
 	}
-	var got map[string]any
-	if err := json.Unmarshal(queueBindingTriggerConfig(binding), &got); err != nil {
-		t.Fatalf("queueBindingTriggerConfig: %v", err)
+	rec := e.do(t, http.MethodPost, "/v1/apps/queue-http-conflict/queue-bindings", api.CreateQueueBindingRequest{
+		Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: "worker", MaxConcurrency: 1,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
 	}
-	if got["mode"] != "queue" || got["queue_binding_id"] != "binding-1" {
-		t.Fatalf("config markers = %#v", got)
+	var binding api.QueueBindingResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &binding); err != nil {
+		t.Fatal(err)
 	}
-	policy, ok := got["retry_policy"].(map[string]any)
-	if !ok || policy["max_attempts"] != float64(4) || policy["base_seconds"] != float64(2) {
-		t.Fatalf("retry policy = %#v", got["retry_policy"])
+	triggerID, err := queueBindingTriggerID(ctx, e.store, app.ID, binding.ID)
+	if err != nil || triggerID == "" {
+		t.Fatalf("consumer identity = %q, err=%v", triggerID, err)
+	}
+	receiptID, err := e.store.InsertTriggerRecord(ctx, triggerID, "receipt", []byte(`{}`), []byte(`{}`), []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateTriggerIfUnderQuota(ctx, app.ID, "nats", "reserved", false, []byte(`{}`), "", 1, 1000, 3, 1024, "commit", api.MustLimitsFor(api.PlanPro)); err != nil {
+		t.Fatal(err)
+	}
+	reserved := "reserved"
+	rec = e.do(t, http.MethodPatch, "/v1/apps/queue-http-conflict/queue-bindings/"+binding.ID, api.UpdateQueueBindingRequest{QueueName: &reserved}, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeValidation)
+	stored, err := e.store.QueueBindingByID(ctx, e.acct.ID, app.ID, binding.ID)
+	if err != nil || stored.QueueName != "jobs" {
+		t.Fatalf("failed update changed binding: queue=%q err=%v", stored.QueueName, err)
+	}
+	trigger, err := e.store.TriggerByID(ctx, triggerID)
+	if err != nil || trigger.Slug != "jobs" {
+		t.Fatalf("failed update changed consumer: slug=%q err=%v", trigger.Slug, err)
+	}
+	if id, err := e.store.TriggerRecordIDByItemIdentifier(ctx, triggerID, "receipt"); err != nil || id != receiptID {
+		t.Fatalf("failed update lost receipt: id=%q err=%v", id, err)
 	}
 }
 
-func TestQueueBindingTriggerDeliveryCaps(t *testing.T) {
+func TestQueueBindingHTTPQuotaFailureLeavesNoBinding(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	ctx := context.Background()
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "queue-http-quota", WorkloadClass: state.WorkloadClassWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
 	limits := api.MustLimitsFor(api.PlanHobby)
-	binding := state.QueueBinding{MaxConcurrency: 5000, RetryPolicyJSON: json.RawMessage(`{"max_attempts":25}`)}
-	if got := queueBindingTriggerBatch(binding, limits); got != int32(limits.TriggerBatchSizeMax) {
-		t.Fatalf("batch = %d, want plan cap %d", got, limits.TriggerBatchSizeMax)
+	for i := 0; i < limits.TriggerLimitPerApp; i++ {
+		if _, err := e.store.CreateTriggerIfUnderQuota(ctx, app.ID, "nats", fmt.Sprintf("reserved-%d", i), false, []byte(`{}`), "", 1, 1000, 3, 1024, "commit", limits); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if got := queueBindingTriggerAttempts(binding, limits); got != int32(limits.TriggerMaxAttemptsMax) {
-		t.Fatalf("attempts = %d, want plan cap %d", got, limits.TriggerMaxAttemptsMax)
+	enabled := false
+	rec := e.do(t, http.MethodPost, "/v1/apps/queue-http-quota/queue-bindings", api.CreateQueueBindingRequest{
+		Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: "worker", Enabled: &enabled, MaxConcurrency: 1,
+	}, nil)
+	assertProblem(t, rec, http.StatusForbidden, api.CodePlanTriggerQuota)
+	bindings, err := e.store.ListQueueBindingsForApp(ctx, e.acct.ID, app.ID)
+	if err != nil || len(bindings) != 0 {
+		t.Fatalf("quota failure left bindings=%d err=%v", len(bindings), err)
 	}
+	triggers, err := e.store.ListTriggersForApp(ctx, app.ID)
+	if err != nil || len(triggers) != limits.TriggerLimitPerApp {
+		t.Fatalf("quota failure changed trigger count=%d err=%v", len(triggers), err)
+	}
+}
+
+func TestQueueBindingConsumerRejectsDirectTriggerMutation(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "queue-private-consumer", WorkloadClass: state.WorkloadClassWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := e.store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: e.acct.ID, AppID: app.ID,
+		Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := result.Changes[0].TriggerID
+	enabled := false
+	for _, tc := range []struct {
+		name, method, suffix string
+		body                 any
+	}{
+		{"patch", http.MethodPatch, "", api.UpdateTriggerRequest{Enabled: &enabled}},
+		{"delete", http.MethodDelete, "", nil},
+		{"pause", http.MethodPost, "/pause", nil},
+		{"resume", http.MethodPost, "/resume", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := e.do(t, tc.method, "/v1/triggers/"+id+tc.suffix, tc.body, nil)
+			assertProblem(t, rec, http.StatusConflict, api.CodeValidation)
+		})
+	}
+	trigger, err := e.store.TriggerByID(ctx, id)
+	if err != nil || !trigger.Enabled || !trigger.QueueBindingID.Valid {
+		t.Fatalf("private consumer changed: enabled=%v err=%v", trigger.Enabled, err)
+	}
+	// The ordinary trigger endpoint cannot impersonate an owned projection.
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{AppID: app.ID,
+		Kind: api.TriggerKindQueue, Slug: "forged", Config: json.RawMessage(`{"mode":"queue","queue_binding_id":null}`)}, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, "trigger_invalid_config")
 }

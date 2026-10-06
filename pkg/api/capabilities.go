@@ -14,6 +14,13 @@ const (
 	CapabilityMaturityGA       = productcap.MaturityGA
 )
 
+// Capability unavailability codes distinguish account entitlement from a
+// runtime gate without exposing operator configuration or provider details.
+const (
+	CapabilityUnavailablePlan    = "plan_not_entitled"
+	CapabilityUnavailableRuntime = "runtime_unavailable"
+)
+
 // CapabilitiesForPlan projects the canonical product catalog into the
 // account-scoped API response. Internal capabilities are intentionally omitted
 // from the customer surface. Enabled means the plan appears in the registry's
@@ -32,7 +39,7 @@ func CapabilitiesForPlan(plan Plan) (CapabilitiesResponse, error) {
 		if capability.Maturity == productcap.MaturityInternal {
 			continue
 		}
-		result.Capabilities = append(result.Capabilities, CapabilityStatus{
+		status := CapabilityStatus{
 			Key:         capability.ID,
 			Name:        capability.Name,
 			Category:    capability.Category,
@@ -42,7 +49,12 @@ func CapabilitiesForPlan(plan Plan) (CapabilitiesResponse, error) {
 			DocsURL:     capability.DocsURL,
 			Acceptance:  capability.AcceptanceTest,
 			Enabled:     planEntitled(capability.Plans, plan),
-		})
+		}
+		if !status.Enabled {
+			status.UnavailableReason = CapabilityUnavailablePlan
+			status.UnavailableDetail = "This feature is not included in your current plan. Check the listed plans for availability."
+		}
+		result.Capabilities = append(result.Capabilities, status)
 	}
 	return result, nil
 }

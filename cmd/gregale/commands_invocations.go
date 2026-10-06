@@ -38,7 +38,7 @@ import (
 // `gregale invocations get` errors. Mirrors PrintUsage's docs URL
 // convention (output.go:144) so the line carries the stable docs
 // site pointer.
-const invocationGetCmdUsage = "usage: gregale invocations get [--json|--replay] <id>"
+const invocationGetCmdUsage = "usage: gregale invocations get [--json] [--replay|--replay-keyed] <id>"
 
 const invocationWaitCmdUsage = "usage: gregale invocations wait [--json] [--timeout D] [--interval D] <id>"
 
@@ -64,7 +64,7 @@ func cmdInvocations(args []string) int {
 	case "wait":
 		return cmdInvocationsWait(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown invocations subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown invocations subcommand %q\n", args[0])
 	return 1
 }
 
@@ -76,10 +76,12 @@ func cmdInvocationsWait(args []string) int {
 	fs := newFlagSet("invocations wait", flag.ContinueOnError)
 	timeout := fs.Duration("timeout", 0, "stop waiting after this duration (0 waits indefinitely)")
 	interval := fs.Duration("interval", time.Second, "time between status checks")
-	if err := fs.Parse(args); err != nil {
+	// Accept flags before or after the id (`invocations wait <id> --timeout 1m`).
+	flagArgs, positional := splitArgsForFlags(args)
+	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *timeout < 0 || *interval <= 0 {
+	if len(positional) != 1 || fs.NArg() != 0 || *timeout < 0 || *interval <= 0 {
 		PrintUsage(os.Stderr, invocationWaitCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -97,7 +99,7 @@ func cmdInvocationsWait(args []string) int {
 		defer cancel()
 	}
 
-	id := fs.Arg(0)
+	id := positional[0]
 	if !jsonOutput {
 		PrintProgress(osStderr, "Waiting for invocation %s…", id)
 	}
@@ -188,7 +190,7 @@ func cmdInvocationsList(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: gregale invocations list [--before C] [--limit N]")
+		printCommandValidation(os.Stderr, "usage: gregale invocations list [--before C] [--limit N]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
@@ -233,10 +235,11 @@ func cmdInvocationsList(args []string) int {
 func cmdInvocationsGet(args []string) int {
 	fs := newFlagSet("invocations get", flag.ContinueOnError)
 	replay := fs.Bool("replay", false, "re-issue a failed invocation (returns the new async invocation)")
+	replayKeyed := fs.Bool("replay-keyed", false, "recover failed keyed work in its captured policy lane")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if fs.NArg() != 1 || *replay && *replayKeyed {
 		PrintUsage(os.Stderr, invocationGetCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -255,8 +258,13 @@ func cmdInvocationsGet(args []string) int {
 		}
 		return printErr("Could not fetch invocation", err)
 	}
-	if *replay {
-		resp, err := client.ReplayInvocation(ctx, id)
+	if *replay || *replayKeyed {
+		var resp api.AsyncInvokeResponse
+		if *replayKeyed {
+			resp, err = client.ReplayKeyedInvocation(ctx, id)
+		} else {
+			resp, err = client.ReplayInvocation(ctx, id)
+		}
 		if err != nil {
 			var ae *APIError
 			if errors.As(err, &ae) {

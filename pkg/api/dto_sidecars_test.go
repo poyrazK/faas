@@ -804,3 +804,21 @@ func loadOpenAPIDoc(t *testing.T, path string) map[string]any {
 	}
 	return doc
 }
+
+func TestSidecarProbeRejectsImageTimingOverride(t *testing.T) {
+	probe := &SidecarProbe{Test: []string{"CMD", "/ready"}, ImageTiming: &OCIHealthcheckTiming{IntervalNS: 1_000_000}}
+	if problem := validateSidecarProbe("helper", "startup_probe", probe); problem == nil || !strings.Contains(problem.Detail, "reserved for image metadata") {
+		t.Fatalf("image timing accepted as customer probe override: %+v", problem)
+	}
+}
+
+func TestDeploymentHealthcheckGraceDurationBounds(t *testing.T) {
+	for _, seconds := range []int{-1, 0, 10, int(OCIHealthcheckDurationMaxSeconds), int(OCIHealthcheckDurationMaxSeconds + 1)} {
+		overrides := &CreateDeploymentOverrides{Healthcheck: &DeploymentHealthcheck{Path: "/ready", StartPeriodS: seconds}}
+		problem := overrides.Validate(testSidecarLimits())
+		invalid := seconds < 0 || int64(seconds) > OCIHealthcheckDurationMaxSeconds
+		if (problem != nil) != invalid {
+			t.Errorf("grace seconds=%d validation=%v, invalid=%t", seconds, problem, invalid)
+		}
+	}
+}

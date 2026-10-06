@@ -572,6 +572,9 @@ func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) erro
 	if b == nil || appID == "" || b.liveTargetLoader == nil {
 		return nil
 	}
+	if err := b.ensureDeploymentWeights(ctx, appID); err != nil {
+		return err
+	}
 	if b.CapacityCount(appID) > 0 {
 		return nil
 	}
@@ -890,10 +893,11 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 //
 // The picker algorithm:
 //
-//  1. Pick a deployment via weighted stride: cursor.Add(1) mod 100
-//     gives the slot index; binary-search cum for the smallest i with
-//     cum[i] > slot. cum is the cumulative-weight array (last entry
-//     = 100 once UpdateDeploymentTraffic stamps Σ=100).
+//  1. Pick a deployment: sequence[cursor mod 100] when the weights sum
+//     to 100 (smooth weighted round-robin, see smoothWeightSequence);
+//     otherwise binary-search cum for the smallest i with cum[i] > slot.
+//     cum is the cumulative-weight array (last entry = 100 once
+//     UpdateDeploymentTraffic stamps Σ=100).
 //  2. Look up the chosen targetSet. If empty (cold deployment), fall
 //     through to the largest-weight deployment's targetSet — biases
 //     warm deployments but never deadlocks the request.
@@ -911,6 +915,7 @@ type appPicker struct {
 	affinityWeights      []deploymentWeight
 	affinityCum          []int
 	affinityNamespace    string
+	sequence             []uint8               // weights index per pick slot; nil unless Σ weights = 100
 	cursor               atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
 	sets                 map[string]*targetSet // deploymentID → targetSet
 }
@@ -1033,6 +1038,9 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 				app.PinnedDeploymentScope = target.PinnedDeploymentScope
 				app.RoutedSurfaceID = target.RoutedSurfaceID
 				app.CustomDomainRoute = target.CustomDomain
+				if !b.prepareProductionWeights(ctx, app) {
+					return App{}, false
+				}
 				return app, true
 			}
 			// Route ownership changed. A later lookup error must not revive the
@@ -1050,8 +1058,13 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		b.stale.Delete(host)
 		return App{}, false
 	}
-	if app.DynamicRoute {
+	if app.DynamicRoute || app.PinnedDeploymentID != "" || app.EnvironmentNotReady {
+		// Exact routes carry deployment-specific settings. Caching that App
+		// by app ID would replace production's settings with a stage's.
 		return app, true
+	}
+	if !b.prepareProductionWeights(ctx, app) {
+		return App{}, false
 	}
 	b.routes.PutTarget(host, RouteTarget{
 		AppID:                 app.ID,
@@ -1069,6 +1082,42 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	b.putApp(baseApp)
 	b.stale.Put(host, app)
 	return app, true
+}
+
+// prepareProductionWeights hydrates weights once before an ordinary route can
+// use targets learned from any scope. Exact deployment routes use their own
+// target sets and do not require production to exist.
+func (b *PGBackend) prepareProductionWeights(ctx context.Context, app App) bool {
+	if app.PinnedDeploymentID != "" {
+		return true
+	}
+	if err := b.ensureDeploymentWeights(ctx, app.ID); err != nil {
+		b.log.Warn("gateway: production deployment weights unavailable", "app_id", app.ID, "err", err)
+		return false
+	}
+	return true
+}
+
+func (b *PGBackend) ensureDeploymentWeights(ctx context.Context, appID string) error {
+	if b.store == nil {
+		return nil
+	}
+	known := func() bool {
+		b.tgtMu.RLock()
+		defer b.tgtMu.RUnlock()
+		picker := b.appsPicker[appID]
+		return picker != nil && picker.weightsAuthoritative
+	}
+	if known() {
+		return nil
+	}
+	_, err, _ := b.liveTargetHydration.Do("weights\x00"+appID, func() (any, error) {
+		if known() {
+			return nil, nil
+		}
+		return nil, b.RefreshDeploymentWeights(ctx, appID)
+	})
+	return err
 }
 
 func (b *PGBackend) cachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
@@ -1190,6 +1239,9 @@ func (b *PGBackend) Pick(appID string) PickResult {
 	}
 	// Multi-deployment weighted stride.
 	slot := int(picker.cursor.Add(1)-1) % 100
+	if len(picker.sequence) == 100 {
+		return pickDeploymentLocked(picker, picker.weights[picker.sequence[slot]].DeploymentID, warmHint, "")
+	}
 	chosen := picker.weights[0].DeploymentID // safe fallback if binary search misses
 	// Binary search cum for smallest i with cum[i] > slot.
 	lo, hi := 0, len(picker.cum)
@@ -1504,7 +1556,7 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 		set = &targetSet{subCursors: map[string]*atomic.Uint64{}}
 		picker.sets[bucket] = set
 	}
-	if len(picker.weights) == 0 {
+	if b.store == nil && !picker.weightsAuthoritative && len(picker.weights) == 0 {
 		setPickerWeights(picker, []deploymentWeight{{DeploymentID: bucket, Percent: 100}})
 	}
 	set.add(target)
@@ -1960,8 +2012,9 @@ func (b *PGBackend) EvictTarget(appID string) {
 //
 // Behaviour:
 //
-//   - Reads LiveDeployments(appID). Empty slice → drop the picker
-//     entirely (no live deployments, 503).
+//   - Reads LiveDeployments(appID). An empty result retains an authoritative
+//     empty weight table, so later target hydration cannot create default
+//     traffic for an explicitly routed stage or retained deployment.
 //   - Builds a new weights slice filtered to Percent > 0, sorted
 //     (Percent DESC, DeploymentID ASC) for stable tie-break on the
 //     cumulative-weight binary search.
@@ -1991,10 +2044,6 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 	next := buildDeploymentWeights(rows)
 	b.tgtMu.Lock()
 	defer b.tgtMu.Unlock()
-	if len(next) == 0 {
-		delete(b.appsPicker, appID)
-		return nil
-	}
 	picker, ok := b.appsPicker[appID]
 	if !ok {
 		picker = &appPicker{sets: map[string]*targetSet{}}

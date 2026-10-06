@@ -10,6 +10,13 @@ The `/metrics` listener exposes these low-cardinality families:
 
 | Metric | Meaning |
 | --- | --- |
+| `apid_managed_postgres_health_databases{status}` | Whole ready catalog by healthy/degraded/unknown/stale provider metadata. Use max across apid replicas. |
+| `apid_managed_postgres_health_checks_total{outcome}` | Accepted healthy/degraded metadata observations. |
+| `apid_managed_postgres_health_check_duration_seconds` | Provider observation latency. |
+| `apid_managed_postgres_health_sweeps_total{outcome}` | Successful/failed/disabled catalog sweeps. |
+| `apid_managed_postgres_health_last_sweep_timestamp_seconds` | Last completed sweep, including recorded provider failures. |
+| `apid_managed_postgres_health_enabled` | Independent read-only health policy. |
+| `apid_managed_postgres_health_stale_after_seconds` | Configured observation freshness window. |
 | `apid_managed_postgres_reconcile_total{resource,operation,outcome}` | Database or binding lifecycle attempts. |
 | `apid_managed_postgres_reconcile_duration_seconds{resource,operation}` | Lifecycle attempt latency. |
 | `apid_managed_postgres_usage_collection_sweeps_total{outcome}` | Complete, degraded, failed, or disabled usage sweeps. |
@@ -55,3 +62,34 @@ After the underlying issue is fixed, verify that:
 
 If any check is missing, keep the rollout gate closed and attach the metrics
 snapshot plus the qualification artifact to the incident.
+
+## Provider health alerts
+
+`FaasManagedPostgresHealthDegraded` means a recent attempt found an API failure,
+a missing resource, spec drift, an invalid observation, or unavailable backend.
+Read `gregale postgres get <database>` for the stable health code and timestamps.
+`backend_unavailable` requires comparing the configured backend fingerprint
+with persisted placement; do not repoint a catalog row to another organization.
+`resource_missing` requires checking provider metadata and ownership before any
+operator recovery. Monitoring never automatically recreates missing resources.
+
+`FaasManagedPostgresHealthStale` means checks aged beyond the configured window
+or an old ready database has never been checked. Compare request backoff,
+provider latency, catalog size, and the collector's bounded sweep capacity.
+Freshness tracks attempts, so a fresh degraded result can be an ongoing outage.
+The success timestamp tracks valid metadata responses, including degraded ones.
+
+`FaasManagedPostgresHealthCollectorStalled` means an enabled process has not
+completed a sweep within its freshness window, with an additional five-minute
+alert hold. Check apid logs, migration application, and catalog connectivity.
+Provider failures alone should advance the heartbeat with degraded checks;
+store failures prevent completion. Check every enabled replica, even with an
+empty catalog. An explicitly disabled collector does not alert.
+
+After recovery, verify the sweep timestamp advances, stale counts fall, and
+health reaches healthy for the intended resources. Suspended compute is healthy
+and monitoring must leave it suspended. Use the existing application connection
+probe when SQL reachability is needed; provider metadata does not prove it.
+Keep the provisioning gate closed until the separate staging qualification is
+valid. Disable `health.enabled` and restart apid to pause monitoring during a
+rollback; no provider resources need to be mutated.

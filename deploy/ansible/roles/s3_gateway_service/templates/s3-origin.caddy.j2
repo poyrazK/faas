@@ -1,0 +1,16 @@
+{% set transfer_seconds = (faas_object_storage_registry | default({})).get('transfer', {}).get('timeout_seconds', 1800) | int or 1800 %}
+s3.gregale.dev {
+    reverse_proxy 127.0.0.1:8084 {
+        header_up Host {host}
+{% if faas_object_storage_gateway_edge_mode == 'proxied' %}
+        # Restore the signed identity encoding after the CDN origin hop.
+        header_up Accept-Encoding identity
+{% endif %}
+        lb_try_duration 0
+        transport http {
+            response_header_timeout {{ transfer_seconds + 5 }}s
+            read_timeout {{ transfer_seconds + 5 }}s
+            write_timeout {{ transfer_seconds + 5 }}s
+        }
+    }
+}

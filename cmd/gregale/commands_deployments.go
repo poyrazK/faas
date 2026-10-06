@@ -347,16 +347,15 @@ func cmdAppDeploymentsAll(ctx context.Context, client *api.Client, slug string, 
 	return 0
 }
 
-// cmdDeployment dispatches `gregale deployment <verb> ...` to either
-// the legacy singular GET (`gregale deployment <id> [--show-scan]`) or
-// the Tier D mutator `gregale deployment set-min-instances <id> --min N`.
-// The 3-word verb shape mirrors cmdWebhookRotateSecret (commands_webhooks.go:361).
+// cmdDeployment dispatches deployment inspection and lifecycle commands.
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
+	case "advance":
+		return cmdDeploymentAdvance(args[1:])
 	case "set-min-instances":
 		return cmdDeploymentSetMinInstances(args[1:])
 	case "summary":
@@ -376,7 +375,7 @@ func cmdDeployment(args []string) int {
 // deployment). --timeout is expressed in seconds to keep the GitHub Action
 // input and CLI contract identical.
 func cmdDeploymentWait(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "progress", "rollout")
 	fs := newFlagSet("deployment wait", flag.ContinueOnError)
 	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	rollout := fs.Bool("rollout", false, "wait for a safe rollout to reach 100% traffic")
@@ -407,6 +406,7 @@ func cmdDeploymentWait(args []string) int {
 		waitTarget = "live and rollout-complete"
 	}
 	var progressState *deploymentProgressSnapshot
+	var held rolloutHeldNotice
 
 	for {
 		d, getErr := client.GetDeployment(ctx, pos[0])
@@ -418,6 +418,9 @@ func cmdDeploymentWait(args []string) int {
 		}
 		if *progress && !jsonOutput {
 			progressState = renderDeploymentProgress(osStdout, d, progressState)
+		}
+		if *rollout && !jsonOutput {
+			held.maybeWarn(osStderr, d, time.Now())
 		}
 		if isCompletedDeployment(d) {
 			if d.Status != statusLive {
@@ -662,17 +665,28 @@ func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_status:", receipt.Smoke.Status)
+	if receipt.Smoke.Verification != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_check:", receipt.Smoke.Verification)
+	}
+	if receipt.Smoke.Authentication != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "probe_access:", receipt.Smoke.Authentication)
+	}
+	probeLabel := "health"
+	if receipt.Smoke.Verification == apihostingreceipt.VerificationRouteConnectivity {
+		probeLabel = "route"
+		_, _ = fmt.Fprintln(w, "  Candidate connectivity check; endpoint health and anonymous access are not verified.")
+	}
 	if receipt.AppURL != "" {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_app_url:", receipt.AppURL)
 	}
 	if receipt.Smoke.Path != "" {
-		_, _ = fmt.Fprintf(w, "%-14s %s\n", "health_path:", receipt.Smoke.Path)
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", probeLabel+"_path:", receipt.Smoke.Path)
 	}
 	if receipt.Smoke.StatusCode != 0 {
-		_, _ = fmt.Fprintf(w, "%-14s %d\n", "health_status:", receipt.Smoke.StatusCode)
+		_, _ = fmt.Fprintf(w, "%-14s %d\n", probeLabel+"_status:", receipt.Smoke.StatusCode)
 	}
 	if receipt.Smoke.LatencyMS != 0 {
-		_, _ = fmt.Fprintf(w, "%-14s %dms\n", "health_latency:", receipt.Smoke.LatencyMS)
+		_, _ = fmt.Fprintf(w, "%-14s %dms\n", probeLabel+"_latency:", receipt.Smoke.LatencyMS)
 	}
 	if !receipt.Smoke.VerifiedAt.IsZero() {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "verified_at:", receipt.Smoke.VerifiedAt.UTC().Format(time.RFC3339))

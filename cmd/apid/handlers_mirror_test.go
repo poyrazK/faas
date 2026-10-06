@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -579,6 +580,57 @@ func TestMirrorSummary_ChangedResponsePercentDoesNotDoubleCount(t *testing.T) {
 	}
 	if got.TotalInvocations != 2 || got.ChangedResponseCount != 1 || got.ChangedResponsePct != 50 {
 		t.Fatalf("summary = %+v, want total=2 changed=1 percent=50", got)
+	}
+}
+
+func TestMirrorSummary_AdmissionFailuresDoNotCountAsCrashes(t *testing.T) {
+	fx := newMirrorFixture(t)
+	rule, err := fx.store.CreateMirrorRuleIfUnderQuota(context.Background(), state.CreateMirrorRuleParams{
+		AccountID:          fx.proAcct.ID,
+		AppID:              fx.proApp.ID,
+		SourceDeploymentID: fx.proDep1.ID,
+		MirrorDeploymentID: fx.proDep2.ID,
+		Percent:            100, Enabled: true, IncludeBody: true, RedactHeaders: []string{},
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := []state.MirrorInvocationResult{
+		{AdmissionFailureReason: state.MirrorAdmissionFailureTimeout, ComparisonIncomplete: true},
+		{AdmissionFailureReason: state.MirrorAdmissionFailureRejected, ComparisonIncomplete: true},
+		{AdmissionFailureReason: state.MirrorAdmissionFailureError, ComparisonIncomplete: true},
+		{Crashed: true, ComparisonIncomplete: true},
+	}
+	for i, result := range results {
+		result.MirrorRuleID = rule.ID
+		result.AccountID = fx.proAcct.ID
+		result.AppID = fx.proApp.ID
+		result.SourceDeploymentID = fx.proDep1.ID
+		result.MirrorDeploymentID = fx.proDep2.ID
+		result.RequestID = fmt.Sprintf("admission-%d", i)
+		result.CompletedAt = timeNow()
+		if err := fx.store.InsertMirrorResult(context.Background(), result); err != nil {
+			t.Fatalf("InsertMirrorResult: %v", err)
+		}
+	}
+
+	h := newMirrorServer(fx)
+	pt, hash, _ := api.GenerateAPIKey()
+	_, _ = fx.store.CreateAPIKey(context.Background(), fx.proAcct.ID, hash, "test", api.ScopesReadSurface)
+	req := httptest.NewRequest(http.MethodGet, "/v1/apps/"+fx.proApp.Slug+"/mirrors/"+rule.ID+"/summary?window=1h", nil)
+	req.Header.Set("Authorization", "Bearer "+pt)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got api.MirrorSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.CrashCount != 1 || got.IncompleteComparisonCount != 4 ||
+		got.SchedulerAdmissionTimeoutCount != 1 || got.SchedulerAdmissionRejectedCount != 1 || got.SchedulerAdmissionErrorCount != 1 {
+		t.Fatalf("summary = %+v, want one guest crash, three classified scheduler failures, and four incomplete comparisons", got)
 	}
 }
 

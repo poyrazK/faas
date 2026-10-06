@@ -100,6 +100,48 @@ func TestEnv_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEnvScopedMutationPreservesNeighborSnapshots(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := createApp(t, e, "env-scoped-snapshots")
+	deployments := map[string]state.Deployment{}
+	for _, scope := range []string{"production", "staging"} {
+		deployment, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: scope,
+			Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc", Status: state.DeployLive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployments[scope] = deployment
+		if _, err := e.store.CreateSnapshot(t.Context(), state.Snapshot{DeploymentID: deployment.ID,
+			FCVersion: "1.13.0", StorageKey: state.SnapMemKey(deployment.ID)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/MODE?scope=production", api.PutAppEnvRequest{Value: "production"}, nil)
+	if response.Code != 200 {
+		t.Fatalf("set scoped variable: %d %s", response.Code, response.Body.String())
+	}
+	if _, err := e.store.LatestSnapshot(t.Context(), deployments["production"].ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old production cache remained usable: %v", err)
+	}
+	if _, err := e.store.LatestSnapshot(t.Context(), deployments["staging"].ID); err != nil {
+		t.Fatalf("production mutation invalidated staging: %v", err)
+	}
+	response = e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/MODE?scope=production", nil, nil)
+	if response.Code != 204 {
+		t.Fatalf("delete scoped variable: %d %s", response.Code, response.Body.String())
+	}
+	if _, err := e.store.LatestSnapshot(t.Context(), deployments["staging"].ID); err != nil {
+		t.Fatalf("production removal invalidated staging: %v", err)
+	}
+	response = e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/SHARED", api.PutAppEnvRequest{Value: "default"}, nil)
+	if response.Code != 200 {
+		t.Fatalf("set shared variable: %d %s", response.Code, response.Body.String())
+	}
+	if _, err := e.store.LatestSnapshot(t.Context(), deployments["staging"].ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("default overlay failed to invalidate staging: %v", err)
+	}
+}
+
 func TestInvalidateAppSnapshotsMarksWarmAndInitStale(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	app := createApp(t, e, "env-snapshot-invalidate-app")

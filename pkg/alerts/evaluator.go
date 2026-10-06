@@ -47,11 +47,22 @@ import (
 )
 
 // AlertSecretNamespace is the secretbox namespace stamped onto every
-// alert-rule webhook secret (PR 3). The evaluator asserts this on
-// open so a stale seal from a previous namespace tag (defensive
-// future-proofing — only one namespace ships today) fails closed
-// instead of being silently treated as a live alert secret.
-const AlertSecretNamespace = "alert_rule"
+// alert-rule webhook secret. apid seals with it (cmd/apid
+// alertRuleSecretSealLabel references this constant) and the evaluator
+// asserts it on open, so a seal from another namespace fails closed instead
+// of being treated as a live alert secret.
+//
+// apid sealed with "alert_rule_secret" while this constant said "alert_rule",
+// and every test sealed with this constant directly, never through apid. As a
+// result every customer alert webhook failed "namespace mismatch:
+// alert_rule_secret" on production-us. The value now matches what apid has
+// always written, so existing rules deliver without being re-created.
+const AlertSecretNamespace = "alert_rule_secret"
+
+// legacyAlertSecretNamespace is the namespace the evaluator used to expect.
+// Only tests and fixtures sealed with it; it stays accepted so those seals
+// still open.
+const legacyAlertSecretNamespace = "alert_rule"
 
 // Store is the narrow Store surface Evaluator depends on. Defined
 // here so pkg/alerts does not import pkg/state's full 200+ method
@@ -110,6 +121,12 @@ type Dispatcher interface {
 // future fan-out becomes multi-goroutine.
 type ActionExecutor interface {
 	Execute(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error
+}
+
+// ClaimedActionExecutor can address an action by its committed alert fire ID.
+// APID also sweeps this durable outbox when the callback never runs.
+type ClaimedActionExecutor interface {
+	ExecuteClaimed(context.Context, state.AlertRule, string, float64, time.Time) error
 }
 
 // Ops is the narrow counter surface the evaluator increments.
@@ -538,7 +555,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		e.recordFailure(ctx, rule, deliveryID, 0, "secret open failed: "+err.Error())
 		return
 	}
-	if ns != AlertSecretNamespace {
+	if ns != AlertSecretNamespace && ns != legacyAlertSecretNamespace {
 		e.log.Warn("alerts: webhook secret namespace mismatch; skipping dispatch",
 			"rule", rule.ID, "got_namespace", ns, "want", AlertSecretNamespace)
 		e.recordFailure(ctx, rule, deliveryID, 0, "namespace mismatch: "+ns)
@@ -591,7 +608,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// dispatcher in the future; today the lock is just
 	// precautionary.
 	e.dispatchMu.Lock()
-	e.runAction(ctx, rule, observed, now, stats)
+	e.runAction(ctx, rule, deliveryID, observed, now, stats)
 	e.dispatchMu.Unlock()
 }
 
@@ -604,7 +621,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 // relays the fire to the ActionExecutor which in turn talks to
 // apid via pkg/api.Client (or for the manual-recover path, via
 // the existing handlers_rollouts.go surface landed in commit 6).
-func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observed float64, now time.Time, stats *Stats) {
+func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, fireID string, observed float64, now time.Time, stats *Stats) {
 	action := rule.Action
 	// Empty string and the explicit 'webhook' default are the
 	// legacy path — ActionExecutor is not consulted.
@@ -628,12 +645,10 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 	}
 	actionExec := e.getActionExec()
 	if actionExec == nil {
-		// ActionExec was never wired (older meterd or test
-		// harness that omits the surface — or the meterd is
-		// running without FAAS_SAFEDEPLOY_TOKEN). The webhook
-		// fan-out already succeeded above; this rule's
-		// side-effect simply doesn't happen.
-		e.log.Warn("alerts: action set but ActionExecutor not wired; side-effect skipped",
+		// Rollback fires already own an APID outbox entry. Skipping this
+		// callback cannot lose that action; other actions still need the
+		// in-process executor.
+		e.log.Warn("alerts: ActionExecutor not wired; in-process callback skipped",
 			"rule", rule.ID, "name", rule.Name, "action", action)
 		stats.ActionSkipped++
 		return
@@ -644,12 +659,18 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 		// connection-reset.
 		return
 	}
-	if err := actionExec.Execute(ctx, rule, observed, now); err != nil {
+	var actionErr error
+	if claimed, ok := actionExec.(ClaimedActionExecutor); ok {
+		actionErr = claimed.ExecuteClaimed(ctx, rule, fireID, observed, now)
+	} else {
+		actionErr = actionExec.Execute(ctx, rule, observed, now)
+	}
+	if actionErr != nil {
 		// Fail-soft: log warn + bump ActionFailed. The webhook
 		// path's result is already stamped on the delivery row;
 		// a rollback failure does not block the next tick.
 		e.log.Warn("alerts: action execute failed",
-			"rule", rule.ID, "name", rule.Name, "action", action, "err", err)
+			"rule", rule.ID, "name", rule.Name, "action", action, "err", actionErr)
 		stats.ActionFailed++
 		return
 	}
@@ -663,6 +684,7 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 		// the seed in migration 00477 already includes it.
 		e.audit.Emit(ctx, "alert.action_executed", &rule.AccountID, map[string]any{
 			"rule_id":  rule.ID,
+			"fire_id":  fireID,
 			"rule":     rule.Name,
 			"action":   action,
 			"observed": observed,

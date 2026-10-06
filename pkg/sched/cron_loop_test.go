@@ -128,9 +128,12 @@ func (f *fakeWakeVMM) CancelLiveMigration(_ context.Context, _, _, _ string) err
 // "post a synthetic request through gatewayd-internal so metering applies" path
 // goes through this stub instead of dialing the unix socket.
 type recordingSynth struct {
-	calls atomic.Int64
-	last  atomic.Value // last (appID, path)
-	inv   atomic.Value // last persisted invocation delivered
+	calls          atomic.Int64
+	last           atomic.Value // last (appID, path)
+	inv            atomic.Value // last persisted invocation delivered
+	responseStatus int
+	outcomeCode    string
+	invokeErr      error
 }
 
 type claimLosingStore struct{ state.Store }
@@ -165,8 +168,16 @@ func (r *recordingSynth) Invoke(_ context.Context, appID string, inv state.Invoc
 	r.calls.Add(1)
 	r.last.Store(struct{ AppID, Path string }{AppID: appID, Path: inv.Path})
 	r.inv.Store(inv)
+	if r.invokeErr != nil {
+		return inv, r.invokeErr
+	}
 	inv.State = state.InvocationDispatching
 	inv.InstanceID = "inst-fake-" + inv.ID
+	inv.ResponseStatusCode = r.responseStatus
+	inv.OutcomeCode = r.outcomeCode
+	if r.responseStatus >= 400 && r.responseStatus < 500 {
+		inv.State = state.InvocationFailed
+	}
 	return inv, nil
 }
 

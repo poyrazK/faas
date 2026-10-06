@@ -56,3 +56,28 @@ customer-workload path on app hostnames.
 The systemd unit is rendered as a template. This is required because its
 storage path, retention, and listen address are Jinja variables; copying the
 file verbatim leaves literal `{{ ... }}` arguments and causes a restart loop.
+
+UDP ingress metrics are exported on the existing gatewayd-public operator scrape
+endpoint with the `gatewayd_public_udp_` prefix. They include active peers and
+sockets, peer completion outcomes/duration, inbound queued and outbound sent
+payload/datagram counters, drops by fixed reason, and listener reconciliation
+errors. Empty datagrams count as packets with zero payload bytes. Labels do not
+contain client addresses, app/account IDs or error text.
+
+The `faas_udp_ingress` alert group covers sustained admission/forwarding failures,
+listener reconciliation errors, and drops caused by peer/queue/rate pressure.
+Source-denied packets, expected idle expiry and `resource_exhausted` completions
+do not trigger the peer-failure alert. Resource exhaustion has its own sustained
+pressure alert and warning-level gateway log. Packet counters describe socket queue/send boundaries; they do not prove
+application delivery or UDP reliability. Check current gateway errors and native
+acceptance evidence before enabling a new UDP workload publicly.
+
+Run `make udp-alert-check` to validate rules and the UDP alert scenarios.
+# Raw TCP TLS certificate alerts
+
+The `faas_tcp_tls` group separates certificate readiness from public socket
+readiness. It warns on missing/invalid enabled-listener certificates for five
+minutes and ready certificates within seven days of expiry for ten minutes.
+Metrics are aggregate per edge; hostname labels are not introduced. Expiry
+requires a positive ready-listener count, keeping disabled/passthrough nodes
+quiet. `make tcp-tls-alert-check` validates failure, expiry and normal scenarios.

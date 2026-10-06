@@ -125,7 +125,7 @@ func TestBrokerLag_PreservesBindingBreakdown(t *testing.T) {
 	}
 	bindings := &fakeQueueBindings{
 		byApp: map[string][]state.QueueBinding{
-			"app1": {{QueueName: "orders", Enabled: true}, {QueueName: "events", Enabled: true}},
+			"app1": {{ID: "orders-binding", QueueName: "orders", Enabled: true}, {ID: "events-binding", QueueName: "events", Enabled: true}},
 		},
 		byQueue: map[string]state.QueueStats{
 			"orders": {Depth: 7},

@@ -88,15 +88,17 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: UpdateTCPListenerRequest,
 ) -> Response[Problem | TCPListenerResponse]:
-    """Enable or disable an app TCP listener.
+    """Change serving state or TLS policy of an app TCP listener.
 
-     Disabling a listener fail-closes new connections without releasing its stable public port.
+     Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel
+    existing sessions; provision the selected certificate policy before explicitly re-enabling.
+    Disabling retains the stable public port.
 
     Args:
         slug (str):
         name (str):
-        body (UpdateTCPListenerRequest): Request to change whether an app TCP listener accepts
-            connections.
+        body (UpdateTCPListenerRequest): Supply exactly one serving-state or TLS-policy mutation.
+            TLS changes disable the listener.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -126,15 +128,17 @@ def sync(
     client: AuthenticatedClient | Client,
     body: UpdateTCPListenerRequest,
 ) -> Problem | TCPListenerResponse | None:
-    """Enable or disable an app TCP listener.
+    """Change serving state or TLS policy of an app TCP listener.
 
-     Disabling a listener fail-closes new connections without releasing its stable public port.
+     Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel
+    existing sessions; provision the selected certificate policy before explicitly re-enabling.
+    Disabling retains the stable public port.
 
     Args:
         slug (str):
         name (str):
-        body (UpdateTCPListenerRequest): Request to change whether an app TCP listener accepts
-            connections.
+        body (UpdateTCPListenerRequest): Supply exactly one serving-state or TLS-policy mutation.
+            TLS changes disable the listener.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -159,15 +163,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: UpdateTCPListenerRequest,
 ) -> Response[Problem | TCPListenerResponse]:
-    """Enable or disable an app TCP listener.
+    """Change serving state or TLS policy of an app TCP listener.
 
-     Disabling a listener fail-closes new connections without releasing its stable public port.
+     Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel
+    existing sessions; provision the selected certificate policy before explicitly re-enabling.
+    Disabling retains the stable public port.
 
     Args:
         slug (str):
         name (str):
-        body (UpdateTCPListenerRequest): Request to change whether an app TCP listener accepts
-            connections.
+        body (UpdateTCPListenerRequest): Supply exactly one serving-state or TLS-policy mutation.
+            TLS changes disable the listener.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,15 +201,17 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: UpdateTCPListenerRequest,
 ) -> Problem | TCPListenerResponse | None:
-    """Enable or disable an app TCP listener.
+    """Change serving state or TLS policy of an app TCP listener.
 
-     Disabling a listener fail-closes new connections without releasing its stable public port.
+     Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel
+    existing sessions; provision the selected certificate policy before explicitly re-enabling.
+    Disabling retains the stable public port.
 
     Args:
         slug (str):
         name (str):
-        body (UpdateTCPListenerRequest): Request to change whether an app TCP listener accepts
-            connections.
+        body (UpdateTCPListenerRequest): Supply exactly one serving-state or TLS-policy mutation.
+            TLS changes disable the listener.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

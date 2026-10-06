@@ -99,7 +99,7 @@ func (r *recordingTargetResolver) ListCanaryInFlight(_ context.Context) ([]state
 
 func activeTargetResolver() *recordingTargetResolver {
 	return &recordingTargetResolver{
-		app: state.App{ID: "app-id", Slug: "my-app"},
+		app: state.App{ID: "app-id", Slug: "my-app", AccountID: "acct-1"},
 		deployments: []state.Deployment{{
 			ID:               "deployment-1",
 			AppID:            "app-id",
@@ -125,29 +125,15 @@ func sampleRule() state.AlertRule {
 	}
 }
 
-// TestActionDispatcher_Rollback_RoutesToRollbackTo — action='rollback'
-// resolves the app UUID to its slug and fires the rule-correlated rollback
-// path. PatchDeploymentsIdTraffic is NOT called.
-func TestActionDispatcher_Rollback_RoutesToRollbackTo(t *testing.T) {
-	apid := &recordingAPID{}
-	d := newActionDispatcher(apid)
-	rule := sampleRule()
-	rule.Action = state.AlertActionRollback
-
-	if err := d.Execute(context.Background(), rule, 42.5, time.Now()); err != nil {
-		t.Fatalf("Execute: %v", err)
+// A rollback without a committed fire must never use legacy rollback.
+func TestActionDispatcher_RollbackRequiresDurableFire(t *testing.T) {
+	client := &recordingAPID{}
+	dispatcher := newActionDispatcher(client)
+	if err := dispatcher.Execute(context.Background(), sampleRule(), 42.5, time.Now()); !errors.Is(err, ErrActionTargetUnavailable) {
+		t.Fatalf("missing fire: %v", err)
 	}
-	if apid.rollbackCalls != 1 {
-		t.Errorf("RollbackTo calls = %d; want 1", apid.rollbackCalls)
-	}
-	if apid.lastRollbackSlug != "my-app" {
-		t.Errorf("last RollbackTo slug = %q; want my-app", apid.lastRollbackSlug)
-	}
-	if apid.lastIdempotencyKey != "safedeploy/deployment-1/rollback" {
-		t.Errorf("idempotency key = %q; want safedeploy/deployment-1/rollback", apid.lastIdempotencyKey)
-	}
-	if apid.patchCalls != 0 {
-		t.Errorf("PatchDeploymentsIdTraffic calls = %d; want 0 (rollback doesn't patch)", apid.patchCalls)
+	if client.rollbackCalls != 0 {
+		t.Fatal("used legacy rollback")
 	}
 }
 
@@ -320,7 +306,7 @@ func TestActionDispatcher_RollbackTransportError_Propagates(t *testing.T) {
 	rule := sampleRule()
 	rule.Action = state.AlertActionRollback
 
-	err := d.Execute(context.Background(), rule, 42.5, time.Now())
+	err := d.ExecuteClaimed(context.Background(), rule, "fire-1", 42.5, time.Now())
 	if err == nil {
 		t.Errorf("Execute: err=nil; want non-nil on apid transport failure")
 	}

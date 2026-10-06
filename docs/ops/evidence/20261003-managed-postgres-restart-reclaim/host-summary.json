@@ -1,0 +1,11 @@
+{
+  "name": "gregale-internal-test-1",
+  "id": "415427828508782095",
+  "zone": "https://www.googleapis.com/compute/v1/projects/gregale-prod/zones/us-east1-b",
+  "machineType": "https://www.googleapis.com/compute/v1/projects/gregale-prod/zones/us-east1-b/machineTypes/n2-highmem-2",
+  "cpuPlatform": "Intel Cascade Lake",
+  "status": "RUNNING",
+  "advancedMachineFeatures": {
+    "enableNestedVirtualization": true
+  }
+}

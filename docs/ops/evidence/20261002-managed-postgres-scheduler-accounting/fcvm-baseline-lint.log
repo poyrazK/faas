@@ -1,0 +1,5 @@
+pkg/fcvm/manager.go:5102:29: Non-inherited new context, use function like `context.WithXXX` instead (contextcheck)
+	resumeErr := m.vmm.ResumeVM(resumeCtx, inst.Lease)
+	                           ^
+1 issues:
+* contextcheck: 1

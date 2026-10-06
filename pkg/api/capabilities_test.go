@@ -60,6 +60,49 @@ func TestCapabilitiesForPlanResolvesPlanEntitlements(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesForPlanExplainsRestrictionsAndOmitsEnabledReasons(t *testing.T) {
+	for _, plan := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale, Plan("unknown")} {
+		t.Run(string(plan), func(t *testing.T) {
+			response, err := CapabilitiesForPlan(plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, capability := range response.Capabilities {
+				if capability.Maturity == CapabilityMaturityInternal {
+					t.Fatalf("internal capability leaked: %s", capability.Key)
+				}
+				encoded, err := json.Marshal(capability)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(encoded, &fields); err != nil {
+					t.Fatal(err)
+				}
+				if capability.Enabled {
+					if _, ok := fields["unavailable_reason"]; ok {
+						t.Errorf("enabled %s carries a reason", capability.Key)
+					}
+					if _, ok := fields["unavailable_detail"]; ok {
+						t.Errorf("enabled %s carries a detail", capability.Key)
+					}
+					continue
+				}
+				if capability.UnavailableReason != CapabilityUnavailablePlan || capability.UnavailableDetail == "" {
+					t.Errorf("%s lacks a plan explanation: %+v", capability.Key, capability)
+				}
+			}
+			if plan == Plan("unknown") {
+				for _, capability := range response.Capabilities {
+					if capability.Enabled {
+						t.Errorf("unknown plan enabled %s", capability.Key)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestCapabilitiesResponseJSONShape(t *testing.T) {
 	response, err := CapabilitiesForPlan(PlanHobby)
 	if err != nil {

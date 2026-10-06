@@ -62,12 +62,22 @@ func validatePersistedSidecarSecretRefs(sidecar api.Sidecar) error {
 // their SQL reader sorts by name, so they must never be used as the ordering
 // source.
 func (e *Engine) sidecarsForDeployment(ctx context.Context, dep state.Deployment, accountID string) ([]fcvm.WorkloadSpec, []state.AppSecretDeliveryCandidate, error) {
+	return e.sidecarsForDeploymentWithValues(ctx, dep, accountID, nil)
+}
+
+func (e *Engine) sidecarsForDeploymentWithValues(ctx context.Context, dep state.Deployment, accountID string, values *state.RuntimeAppValuesSnapshot) ([]fcvm.WorkloadSpec, []state.AppSecretDeliveryCandidate, error) {
 	if len(dep.Sidecars) == 0 || string(dep.Sidecars) == "null" || string(dep.Sidecars) == "[]" {
 		return nil, nil, nil
 	}
-	layers, err := e.store.ListDeploymentSidecarLayers(ctx, dep.ID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("list sidecar layers: %w", err)
+	var layers []state.DeploymentSidecarLayer
+	var err error
+	if values != nil {
+		layers = values.SidecarLayers
+	} else {
+		layers, err = e.store.ListDeploymentSidecarLayers(ctx, dep.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list sidecar layers: %w", err)
+		}
 	}
 	specs, err := sidecarSpecsFromDeployment(dep.Sidecars, layers)
 	if err != nil {
@@ -82,7 +92,12 @@ func (e *Engine) sidecarsForDeployment(ctx context.Context, dep state.Deployment
 		if len(declaration.EnvSecrets) == 0 {
 			continue
 		}
-		loaded, err := e.loadSealedEnvDeliveryFor(ctx, accountID, dep.AppID, dep.Scope, declaration.EnvSecrets)
+		var loaded sealedEnvDelivery
+		if values != nil {
+			loaded, err = sealedEnvDeliveryFromRows(values.Secrets, accountID, dep.AppID, values.Scope, declaration.EnvSecrets)
+		} else {
+			loaded, err = e.resolveSealedEnvDeliveryFor(ctx, accountID, dep.AppID, dep.Scope, declaration.EnvSecrets, false)
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("sidecar %q secrets: %w", declaration.Name, err)
 		}

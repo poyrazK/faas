@@ -24,8 +24,8 @@
 //
 //   2. Before each configured workload's exec.Command.Start, mkdir
 //      the per-workload leaf at /sys/fs/cgroup/<safe-name>, write
-//      any configured memory.max, cpu.max, and io.weight values, and after
-//      Start write the child PID into cgroup.procs. Workloads
+//      any configured memory.max, cpu.max, and io.weight values, and use
+//      clone3 CLONE_INTO_CGROUP to create the child directly in the leaf. Workloads
 //      without either override remain under the parent scope.
 //
 //   3. Sidecar OOM stays scoped to that leaf (cgroup v2
@@ -45,6 +45,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -86,7 +87,12 @@ func updateMainWorkloadCPULimit(cpuMillicores int) error {
 	}
 	const periodUS = 100_000
 	quotaUS := cpuMillicores * periodUS / 1000
-	if err := os.WriteFile(filepath.Join(leaf, "cpu.max"), []byte(fmt.Sprintf("%d %d\n", quotaUS, periodUS)), 0o644); err != nil {
+	root, err := os.OpenRoot(cgroupRoot)
+	if err != nil {
+		return fmt.Errorf("open workload cgroup root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.WriteFile(filepath.Join("main-app", "cpu.max"), []byte(fmt.Sprintf("%d %d\n", quotaUS, periodUS)), 0o644); err != nil {
 		return fmt.Errorf("write main workload cpu.max: %w", err)
 	}
 	return nil
@@ -146,7 +152,7 @@ func cgroupSafeName(typ, name string) string {
 	if typ == "" || name == "" {
 		return ""
 	}
-	for _, ch := range name {
+	for _, ch := range typ + name {
 		if ch == '/' || ch == '\\' || ch == 0 {
 			return ""
 		}
@@ -156,7 +162,7 @@ func cgroupSafeName(typ, name string) string {
 	// practice, but checking here keeps the failure
 	// observable at workload boot, not at the first
 	// write to memory.max).
-	if strings.Contains(name, "..") {
+	if strings.Contains(typ, "..") || strings.Contains(name, "..") {
 		return ""
 	}
 	return typ + "-" + name
@@ -202,9 +208,6 @@ func partitionIntoWithIO(leaf string, ramMB, cpuMillicores int, diskIOProfile st
 	if leaf == "" {
 		return errors.New("cgroup partition: empty leaf")
 	}
-	if err := os.MkdirAll(leaf, 0o755); err != nil {
-		return fmt.Errorf("cgroup partition: mkdir %s: %w", leaf, err)
-	}
 	if ramMB < 0 || cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
 		return fmt.Errorf("cgroup partition: invalid limits ram_mb=%d cpu_millicores=%d", ramMB, cpuMillicores)
 	}
@@ -212,10 +215,22 @@ func partitionIntoWithIO(leaf string, ramMB, cpuMillicores int, diskIOProfile st
 	if diskIOProfile != "" && !ioConfigured {
 		return fmt.Errorf("cgroup partition: invalid disk_io_profile=%q", diskIOProfile)
 	}
+	relativeLeaf, err := filepath.Rel(cgroupRoot, leaf)
+	if err != nil || relativeLeaf == "." || relativeLeaf == ".." || strings.HasPrefix(relativeLeaf, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("cgroup partition: leaf %q escapes workload root", leaf)
+	}
+	root, err := os.OpenRoot(cgroupRoot)
+	if err != nil {
+		return fmt.Errorf("cgroup partition: open workload root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(relativeLeaf, 0o755); err != nil {
+		return fmt.Errorf("cgroup partition: mkdir %s: %w", leaf, err)
+	}
 	if ramMB > 0 {
 		bytes := int64(ramMB) << 20
-		if err := os.WriteFile(
-			filepath.Join(leaf, "memory.max"),
+		if err := root.WriteFile(
+			filepath.Join(relativeLeaf, "memory.max"),
 			[]byte(strconv.FormatInt(bytes, 10)+"\n"),
 			0o644,
 		); err != nil {
@@ -225,8 +240,8 @@ func partitionIntoWithIO(leaf string, ramMB, cpuMillicores int, diskIOProfile st
 	if cpuMillicores > 0 {
 		const periodUS = 100_000
 		quotaUS := cpuMillicores * periodUS / 1000
-		if err := os.WriteFile(
-			filepath.Join(leaf, "cpu.max"),
+		if err := root.WriteFile(
+			filepath.Join(relativeLeaf, "cpu.max"),
 			[]byte(fmt.Sprintf("%d %d\n", quotaUS, periodUS)),
 			0o644,
 		); err != nil {
@@ -234,40 +249,42 @@ func partitionIntoWithIO(leaf string, ramMB, cpuMillicores int, diskIOProfile st
 		}
 	}
 	if ioConfigured {
-		if err := os.WriteFile(filepath.Join(leaf, "io.weight"), []byte(strconv.Itoa(ioWeight)+"\n"), 0o644); err != nil {
+		if err := root.WriteFile(filepath.Join(relativeLeaf, "io.weight"), []byte(strconv.Itoa(ioWeight)+"\n"), 0o644); err != nil {
 			return fmt.Errorf("cgroup partition: write io.weight for %s: %w", leaf, err)
 		}
 	}
 	return nil
 }
 
-// placeIntoLeaf writes the child PID into the leaf's
-// cgroup.procs. Called AFTER exec.Command.Start so the PID
-// is the forked child's PID (the kernel's exec semantics
-// preserve the PID across execve). Empty pid means the
-// caller did not capture the PID — skip without error so a
-// workload that fails to fork does not produce a spurious
-// "cgroup.procs write failed" log line.
+// attachWorkloadCgroup binds the next Start to the prepared cgroup v2 leaf.
+// Placement happens in clone3, before the child executes or forks, and a
+// placement failure aborts Start. Never fall back to post-start migration:
+// it cannot contain children forked before the parent is moved.
 //
-// Race window: between Start and placeIntoLeaf, the
-// forked child can fork+mmap before the cgroup.procs
-// write lands. The window is benign because the leaf's
-// parent scope (the cgroup root, which has no cap)
-// doesn't enforce a limit either; worst case is a brief
-// moment where the cap is unenforced, then enforced once
-// the write completes. Same posture as Docker / runc.
-func placeIntoLeaf(leaf string, pid int, log *slog.Logger) {
-	if leaf == "" || pid <= 0 {
-		return
+// The caller holds the returned descriptor until all commands and probes
+// using cmd.SysProcAttr have finished. It is close-on-exec, so the workload
+// itself cannot use it to move other processes into the leaf.
+func attachWorkloadCgroup(cmd *exec.Cmd, leaf string) (*os.File, error) {
+	if leaf == "" {
+		return nil, nil
 	}
-	if err := os.WriteFile(
-		filepath.Join(leaf, "cgroup.procs"),
-		[]byte(strconv.Itoa(pid)+"\n"),
-		0o644,
-	); err != nil && log != nil {
-		log.Warn("cgroup.procs write failed",
-			"leaf", leaf, "pid", pid, "err", err)
+	if cmd == nil {
+		return nil, errors.New("cgroup launch: nil command")
 	}
+	fd, err := unix.Open(leaf, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, fmt.Errorf("cgroup launch: open %s: %w", leaf, err)
+	}
+	file := os.NewFile(uintptr(fd), leaf)
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	} else {
+		attr := *cmd.SysProcAttr
+		cmd.SysProcAttr = &attr
+	}
+	cmd.SysProcAttr.UseCgroupFD = true
+	cmd.SysProcAttr.CgroupFD = fd
+	return file, nil
 }
 
 // mountCgroup2 (issue #463 / ADR-069 / PR-B AC #4) mounts

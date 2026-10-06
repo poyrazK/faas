@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.canary_preset_spec import CanaryPresetSpec
+    from ..models.deployment_healthcheck import DeploymentHealthcheck
 
 
 T = TypeVar("T", bound="SourceTarballDeployRequest")
@@ -28,6 +29,23 @@ class SourceTarballDeployRequest:
 
     """
 
+    healthcheck: DeploymentHealthcheck | Unset = UNSET
+    """Startup healthcheck shape on the deploy-time override object (issue #460 /
+    ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
+    Check) selects the startup admission action. The gRPC probe uses the
+    app's published port; an empty service checks overall server health.
+
+    Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
+    - Exactly one of `path` and `grpc` must be set.
+    - `path`, when set, must start with `/`.
+    - `grpc.service` is optional and limited to 256 characters.
+    - `interval_s`, `timeout_s`, `retries` must be `>= 0`.
+    - Missing tuning fields default to 0; the host readiness deadline is
+      resolved separately from the app's plan and startup policy.
+
+    OCI `test` argv and `start_period_s` remain deploy metadata; the host
+    readiness gate uses only the selected HTTP path or gRPC health RPC.
+    """
     repo: None | str | Unset = UNSET
     """`owner/repo` from the customer's git remote, parsed by `cmd/gregale/git_local.go::parseGitRemoteURL`. nil
     when the sidecar is omitted entirely."""
@@ -65,6 +83,10 @@ class SourceTarballDeployRequest:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.canary_preset_spec import CanaryPresetSpec
+
+        healthcheck: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.healthcheck, Unset):
+            healthcheck = self.healthcheck.to_dict()
 
         repo: None | str | Unset
         if isinstance(self.repo, Unset):
@@ -121,6 +143,8 @@ class SourceTarballDeployRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if healthcheck is not UNSET:
+            field_dict["healthcheck"] = healthcheck
         if repo is not UNSET:
             field_dict["repo"] = repo
         if ref is not UNSET:
@@ -151,8 +175,15 @@ class SourceTarballDeployRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.canary_preset_spec import CanaryPresetSpec
+        from ..models.deployment_healthcheck import DeploymentHealthcheck
 
         d = dict(src_dict)
+        _healthcheck = d.pop("healthcheck", UNSET)
+        healthcheck: DeploymentHealthcheck | Unset
+        if isinstance(_healthcheck, Unset):
+            healthcheck = UNSET
+        else:
+            healthcheck = DeploymentHealthcheck.from_dict(_healthcheck)
 
         def _parse_repo(data: object) -> None | str | Unset:
             if data is None:
@@ -234,6 +265,7 @@ class SourceTarballDeployRequest:
         disable_startup_cpu_boost = _parse_disable_startup_cpu_boost(d.pop("disable_startup_cpu_boost", UNSET))
 
         source_tarball_deploy_request = cls(
+            healthcheck=healthcheck,
             repo=repo,
             ref=ref,
             no_triggers=no_triggers,

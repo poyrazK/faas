@@ -1,0 +1,17 @@
+/var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/source.tar.gz: OK
+/var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/runner.sh: OK
+/var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/change.patch: OK
+/var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/source-hashes.sha256: OK
+MemoryMax=10737418240
+ActiveState=active
+SubState=running
+InvocationID=ee903a648c564e7cb8724bf053996fa6
+WARNING: Could not setup log file in /Users/poyrazk/.config/gcloud/logs, (OSError: [Errno 28] No space left on device: '/Users/poyrazk/.config/gcloud/logs/2026.10.03/12.59.16.584992.log'.
+The configuration directory may not be writable. To learn more, see https://cloud.google.com/sdk/docs/configurations#creating_a_configuration
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Running as unit: gregale-managed-pg-prepared-boot-d4841725-retry.service; invocation ID: ee903a648c564e7cb8724bf053996fa6

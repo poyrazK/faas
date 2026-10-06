@@ -21,6 +21,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -164,7 +165,7 @@ func TestLiveness_InfrastructureRecoveryDoesNotParkApp(t *testing.T) {
 // TestLiveness_DestroyTimeoutDoesNotAdvanceBudget pins the scheduler-side
 // half of issue #1267. A failed destroy is a control-plane/node observation,
 // not a confirmed restart, so it cannot consume the permanent-eviction
-// budget even though the state transition remains best-effort and idempotent.
+// budget; the resident state and reservation remain available for retry.
 func TestLiveness_DestroyTimeoutDoesNotAdvanceBudget(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
@@ -173,8 +174,8 @@ func TestLiveness_DestroyTimeoutDoesNotAdvanceBudget(t *testing.T) {
 	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithLivenessWindow(window)
 	inst := runningInstance(t, store, app, dep, vmm, engine)
 
-	if err := engine.DestroyForLivenessFailure(context.Background(), inst.ID, "liveness_timeout"); err != nil {
-		t.Fatalf("DestroyForLivenessFailure: %v", err)
+	if err := engine.DestroyForLivenessFailure(context.Background(), inst.ID, "liveness_timeout"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("DestroyForLivenessFailure: %v, want deadline error", err)
 	}
 	if got := window.recent(dep.ID, time.Now()); got != 0 {
 		t.Fatalf("restart window count=%d after failed destroy, want 0", got)

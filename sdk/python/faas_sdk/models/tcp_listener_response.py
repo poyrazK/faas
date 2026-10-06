@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
 from ..models.tcp_listener_response_protocol import TCPListenerResponseProtocol, check_tcp_listener_response_protocol
+
+if TYPE_CHECKING:
+    from ..models.tcp_listener_tls_config import TCPListenerTLSConfig
+
 
 T = TypeVar("T", bound="TCPListenerResponse")
 
@@ -27,6 +31,9 @@ class TCPListenerResponse:
     """Whether the edge accepts new TCP connections."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    tls: TCPListenerTLSConfig
+    """Listener TLS intent. Termination requires a verified app-owned ASCII DNS hostname; passthrough forbids a
+    hostname."""
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
@@ -45,6 +52,8 @@ class TCPListenerResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        tls = self.tls.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -57,6 +66,7 @@ class TCPListenerResponse:
                 "enabled": enabled,
                 "created_at": created_at,
                 "updated_at": updated_at,
+                "tls": tls,
             }
         )
 
@@ -64,6 +74,8 @@ class TCPListenerResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.tcp_listener_tls_config import TCPListenerTLSConfig
+
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -81,6 +93,8 @@ class TCPListenerResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        tls = TCPListenerTLSConfig.from_dict(d.pop("tls"))
+
         tcp_listener_response = cls(
             id=id,
             name=name,
@@ -90,6 +104,7 @@ class TCPListenerResponse:
             enabled=enabled,
             created_at=created_at,
             updated_at=updated_at,
+            tls=tls,
         )
 
         return tcp_listener_response

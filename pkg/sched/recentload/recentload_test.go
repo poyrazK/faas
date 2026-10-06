@@ -196,6 +196,83 @@ func TestRecentLoad_RequestStartsProtectSaturatedScaleIn(t *testing.T) {
 	}
 }
 
+// fakeLoadScraper also reports in-flight requests, like HTTPPromScraper.
+type fakeLoadScraper struct {
+	counts   map[string]int64
+	inflight map[string]int64
+	err      error
+}
+
+func (f *fakeLoadScraper) Scrape(context.Context) (map[string]int64, error) {
+	return f.counts, f.err
+}
+
+func (f *fakeLoadScraper) ScrapeLoad(context.Context) (map[string]int64, map[string]int64, error) {
+	return f.counts, f.inflight, f.err
+}
+
+// TestRecentLoad_InflightSurvivesStalledCompletions reproduces the
+// production-us surge: completions stopped while 200 clients waited, so
+// the rate read zero. The in-flight gauge keeps reporting the demand, at its
+// peak over the window.
+func TestRecentLoad_InflightSurvivesStalledCompletions(t *testing.T) {
+	scraper := &fakeLoadScraper{
+		counts:   map[string]int64{"app1": 500},
+		inflight: map[string]int64{"app1": 100},
+	}
+	r := New(scraper, 5, time.Second)
+	base := time.Unix(1_000_000, 0)
+	if _, observed := r.RecentInflight("app1", base); observed {
+		t.Fatal("in-flight observed before any scrape")
+	}
+	r.Touch(context.Background(), base)
+	scraper.inflight = map[string]int64{"app1": 40}
+	for i := 1; i < 5; i++ {
+		r.Touch(context.Background(), base.Add(time.Duration(i)*time.Second))
+	}
+	now := base.Add(4 * time.Second)
+	if got, observed := r.RecentDesiredReplicasWithSignal("app1", now, 10); got != 0 || !observed {
+		t.Fatalf("desired = (%d, %v), want the stalled rate signal (0, true)", got, observed)
+	}
+	if got, observed := r.RecentInflight("app1", now); got != 100 || !observed {
+		t.Fatalf("in-flight = (%d, %v), want the window peak (100, true)", got, observed)
+	}
+	if got, observed := r.RecentInflight("app1", base.Add(5*time.Second)); got != 40 || !observed {
+		t.Fatalf("in-flight after the peak ages out = (%d, %v), want (40, true)", got, observed)
+	}
+}
+
+// TestRecentLoad_InflightAbsentVsZero separates "the gateway reported no
+// requests in flight for this app" from "no fresh in-flight scrape".
+func TestRecentLoad_InflightAbsentVsZero(t *testing.T) {
+	scraper := &fakeLoadScraper{
+		counts:   map[string]int64{},
+		inflight: map[string]int64{"other": 3},
+	}
+	r := New(scraper, 5, time.Second)
+	base := time.Unix(1_000_000, 0)
+	r.Touch(context.Background(), base)
+	if got, observed := r.RecentInflight("app1", base); got != 0 || !observed {
+		t.Fatalf("app missing from a fresh scrape = (%d, %v), want (0, true)", got, observed)
+	}
+	scraper.err = errFake{}
+	r.Touch(context.Background(), base.Add(time.Second))
+	if got, observed := r.RecentInflight("other", base.Add(time.Second)); got != 3 || !observed {
+		t.Fatalf("after one failed scrape = (%d, %v), want the last fresh sample (3, true)", got, observed)
+	}
+	if _, observed := r.RecentInflight("other", base.Add(5*time.Second)); observed {
+		t.Fatal("in-flight still observed after the last successful scrape left the window")
+	}
+
+	plain := New(&fakeScraper{fn: func(context.Context) (map[string]int64, error) {
+		return map[string]int64{"app1": 1}, nil
+	}}, 5, time.Second)
+	plain.Touch(context.Background(), base)
+	if _, observed := plain.RecentInflight("app1", base); observed {
+		t.Fatal("a counts-only scraper must leave the in-flight signal absent")
+	}
+}
+
 // TestRecentLoad_NilReceiver — every method on a nil receiver
 // must not panic. Schedd's loop wires the mirror conditionally;
 // the safe-default is no signal.

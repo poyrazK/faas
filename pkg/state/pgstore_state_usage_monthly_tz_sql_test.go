@@ -37,6 +37,12 @@ import (
 //go:embed pgstore.go
 var pgStoreUsageMonthlySource string
 
+//go:embed queries.sql
+var invoiceQueriesSource string
+
+//go:embed pgstore_invoice_details.go
+var invoiceStoreSource string
+
 // TestUsageByMonth_DoesNotUseSessionTZDateTrunc pins that the
 // buggy form `date_trunc('month', $N::timestamptz)` (which is
 // session-TZ-dependent) does NOT appear in the UsageByMonth SQL.
@@ -108,17 +114,25 @@ func TestCurrentMonthOverageCents_DoesNotUseSessionTZDateTrunc(t *testing.T) {
 // TestListInvoicesForAccount_DoesNotUseSessionTZDateTrunc pins
 // the same property for ListInvoicesForAccount (both branches).
 func TestListInvoicesForAccount_DoesNotUseSessionTZDateTrunc(t *testing.T) {
-	body := extractFn(pgStoreUsageMonthlySource, "func (s *PgStore) ListInvoicesForAccount(")
+	body := extractFn(invoiceStoreSource, "func (s *PgStore) ListInvoicesForAccount(")
 	if body == "" {
-		t.Fatal("could not locate ListInvoicesForAccount in pgstore.go")
+		t.Fatal("could not locate ListInvoicesForAccount in pgstore_invoice_details.go")
 	}
-	sqlOnly := stripSQLStaticGuardComments(body)
+	if !strings.Contains(body, "ListInvoiceSnapshots") || !strings.Contains(body, "time.UTC") {
+		t.Fatal("invoice adapter must bind UTC boundaries to the generated snapshot query")
+	}
+	start := strings.Index(invoiceQueriesSource, "-- name: ListInvoiceSnapshots")
+	end := strings.Index(invoiceQueriesSource, "-- name: GetInvoiceSnapshot")
+	if start < 0 || end < start {
+		t.Fatal("invoice snapshot SQL not found")
+	}
+	sqlOnly := invoiceQueriesSource[start:end]
 	if strings.Contains(sqlOnly, "date_trunc('month', $2::timestamptz)") {
 		t.Errorf("ListInvoicesForAccount SQL still uses session-TZ-dependent `date_trunc('month', $2::timestamptz)` — re-introduces the bug fixed by this PR. SQL-only body:\n%s", sqlOnly)
 	}
 	// The fix uses direct comparison against $2/$3 pre-computed
 	// in UTC.
-	if !strings.Contains(sqlOnly, "period_end >= $2") || !strings.Contains(sqlOnly, "period_end <  $3") {
+	if !strings.Contains(sqlOnly, "period_end >= sqlc.narg(month_start)") || !strings.Contains(sqlOnly, "period_end < sqlc.narg(month_end)") {
 		t.Errorf("ListInvoicesForAccount SQL must use direct UTC comparison `period_end >= $2 and period_end < $3`; SQL-only body:\n%s", sqlOnly)
 	}
 }

@@ -28,10 +28,10 @@ class PutDataUpstreamRequest:
     """RFC 952/1123 hostname (no IPv4). Hashed server-side; the hashed form is what's persisted."""
     port: int
     scope: str | Unset = UNSET
-    """ADR-090 deployment-scope filter (3..40 chars, lowercase alnum + dash). Omitted = default scope."""
+    """ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Omitted = default scope."""
     deployment_scope: str | Unset = UNSET
     """ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod
-    upstreams don't collide on the same app. Same shape as `scope` (3..40 chars, lowercase alnum + dash). Omitted =
+    upstreams don't collide on the same app. Same shape as `scope` (1..40 chars, lowercase alnum + dash). Omitted =
     default scope, the migration's SQL DEFAULT stamp."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

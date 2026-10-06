@@ -49,14 +49,25 @@ Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
 canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand.
+passes; rerun qualification instead of extending it by hand. Version 5
+artifacts require runtime DML and RLS enforcement, denied DDL/administration,
+stable migration ownership, and preserved data after migration login retirement.
+When read-only access is advertised, approval also requires actual existing and
+future table/sequence reads, denied mutations/DDL/administration and RLS bypass,
+stable recovered passwords, rotation preserving data, and revoked old sessions
+and fresh logins. A capability declaration alone is insufficient.
+They also require a restore timestamp inside the disposable source's lifetime,
+target readiness, earlier committed data, rejection of source credentials on
+the target, and completed deletion. Versions 1–4 cannot authorize this release.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against
 the configured backend and current canary list. The artifact is authoritative:
 missing, malformed, stale, tampered, or mismatched approval keeps provisioning
 disabled even if the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED*` variables look
-valid. Those variables are a fallback only when no approval path is set.
+valid. Those variables are a fallback only when no approval path is set and
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=4` matches the current contract.
+Unversioned environment approvals remain blocked.
 Restart `apid` after replacing the artifact so the new document is loaded.
 
 ## Staging canary rollout
@@ -124,3 +135,119 @@ Prometheus `managed_postgres` rule group. Use the
 runbook for reconciliation failures, deferred work, stale usage, and recovery
 validation. The provisioning gate metric is informational: it is expected to
 be zero outside an approved staging canary.
+
+## Metering recovery after rollout
+
+Apply the usage-coverage migration before starting the collector. Existing
+ledger rows do not establish contiguous coverage: databases replay from their
+creation window in batches of at most 24 windows per sweep. Preserve the
+configured collection-window duration. Do not reset checkpoints or change
+`usage.window_seconds` to bypass a stale guardrail.
+
+Check `apid_managed_postgres_usage_collection_databases_total` outcomes and the account usage
+API until each account returns `guardrail_state=healthy` (or `reached` when a
+ceiling is exhausted). A provider error or missing meter defers the failing
+window and keeps admission stale; later windows cannot conceal that gap.
+Shared Neon restore targets use their root source's coverage and consumption,
+so a stale source keeps its descendants stale without multiplying usage.
+Recorded usage remains in account monthly totals after database deletion.
+If provider history is outside its retention period, investigate and reconcile
+that gap before enabling further reservations.
+
+For `legacy_identity_unknown` diagnostics on deleted rows, retain and verify
+resource ownership, the exact backend fingerprint, branch lineage, and actual
+provider shutdown evidence. Preview with `gregale postgres reconcile ACCOUNT_ID
+--file retained-shutdown.json --json`, review the boundary, then apply with its
+`expected_revision` and a recently stepped-up operator session file. See the
+[input format and evidence requirements](managed-postgres.md). Missing lookup
+results and old logical deletion timestamps are insufficient.
+
+The repair preserves the old catalog and coverage in an immutable receipt,
+retains all monetary ledger rows, and resets derived coverage atomically. Run
+normal collection or the retained-usage import against the accounting root,
+then inspect account diagnostics again. Attaching an identity alone does not
+settle missing windows, final corrections, budget headroom, or provider invoices.
+
+## Credential privilege adoption
+
+Apply `20261001105914375_managed_postgres_migration_credentials.sql` before
+using `migration` bindings. Keep the staging provisioning gate closed until a
+fresh version 5 live Neon qualification passes. Local PostgreSQL tests establish
+SQL behavior; they do not establish Neon password recovery or branch isolation.
+
+Version 5 replaces prior approvals, including version 4; keep provisioning
+closed until the new disposable live run and lifecycle smoke pass. Inspect
+`gregale postgres capabilities --json` before adoption: `read_only` is configured
+support, while `provisioning_enabled` reflects the current rollout gate.
+After qualification, attach a distinct `READ_DATABASE_URL` binding with
+`--access read_only`. Reader permissions are enforced on primary pooled/direct
+connections; no replica endpoint is required. Review PUBLIC, column, function
+and future-object grants; later privileged migrations remain responsible for
+preserving the reader boundary. Native SQL regressions cover inherited reader
+login retirement during restore, but do not replace live branch qualification.
+
+Rotate existing preview administrator bindings deliberately. The new runtime
+login receives public-schema data access, while migrations use a separate direct
+connection and the stable schema-owner role. Review existing object ownership
+before adopting migration credentials; transfer only application objects, never
+provider objects, and review SECURITY DEFINER execution grants. Existing object
+ownership is not automatically reassigned.
+
+A revocation conflict on owned objects disables the login and terminates its
+sessions while preserving those objects. Repair ownership and retry cleanup;
+never drop application data to unblock credential deletion. New migration
+objects normally belong to the stable owner and survive rotation.
+
+## Release-only migration credential rollout
+
+Apply `20261001123539479_managed_postgres_release_delivery.sql` and deploy the
+matching apid, schedd, and vmmd binaries across the complete fleet while new
+managed provisioning remains gated. The migration invalidates snapshots for
+apps with active migration bindings, stamps runtime configuration changes, and
+resumes migration rotations staged by older binaries. The schema itself has no
+new column. Rollback does not restore old snapshots or completed rotations.
+
+Restart affected serving workloads after every participating binary is updated.
+Enable `FAAS_RELEASE_PHASE_ENABLED=1` on imaged together with
+`FAAS_APP_TASK_DISPATCH=1` on schedd for release-task acceptance. Disabled release
+execution must fail the candidate with `release_phase_unavailable`.
+Old resident instances may still have a credential staged by an older binary;
+snapshot invalidation alone cannot erase their memory. Verify a fresh cold boot,
+a subsequent snapshot restore, sidecar delivery, and secret reload before
+opening the canary gate. Explicit serving references to migration bindings must
+fail with a release-only message. Ordinary manual and cron tasks must omit the
+migration connection; the candidate release task must receive it.
+
+Rotate a migration binding while a release is restoring/running. The new secret
+must be published without a serving restart notification. Retirement must stay
+pending until active tasks in that app and scope are terminal, then reconcile
+without requiring a serving wake. Check that the schema still exists after old
+login removal. A queued release must load the latest generation on dispatch.
+The retirement fence conservatively includes manual/cron tasks during adoption
+because older versions delivered migration credentials to those tasks too.
+
+For starter acceptance, copy both PostgreSQL templates into a private directory,
+install their Node dependencies there, and set `GREGALE_POSTGRES_STARTERS_DIR`
+to that parent. With a disposable local `DATABASE_URL`, run
+`go test ./pkg/managedpostgres/neon -run TestPostgresStartersUseMigrationRolesAndSerializeReleases`.
+This exercises the actual migration scripts against restricted SQL roles,
+concurrent release locking, runtime data access, and retained schema after
+migration-login retirement. Keep the existing live version-5 Neon qualification
+and rollout gates; local PostgreSQL evidence does not replace them.
+
+## Compute resize recovery (ADR-623)
+
+Use a fresh version 5 qualification approval before allowing new Neon intents.
+The qualification changes the disposable primary's class and restores it,
+checking data, existing logins and read-only permissions after both changes.
+Existing pending resizes remain reconciled when provisioning is disabled.
+
+Inspect the request using `gregale postgres resize-status DATABASE REQUEST_UUID`.
+A provider timeout leaves the database `updating`; preserve the operation and
+its pinned IDs. Recovery reads provider configuration before considering a
+mutation. A changed dataset, default branch, unexpected configuration, missing
+backend or expired worker lease prevents completion. Repair the provider/config
+cause and allow reconciliation; do not delete the intent or edit generations to
+force readiness. There is no customer cancellation or rollback endpoint yet.
+Monitor the `updating` database reconciliation metrics and pending request's
+`last_error_code`. Provider changes can interrupt connections.

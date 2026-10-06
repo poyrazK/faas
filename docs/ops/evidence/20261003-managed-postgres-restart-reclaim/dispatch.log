@@ -1,0 +1,15 @@
+/var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/source.tar.gz: OK
+/var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/runner.sh: OK
+/var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/change.patch: OK
+/var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/source-hashes.sha256: OK
+MemoryMax=10737418240
+ActiveState=active
+SubState=running
+InvocationID=feda371adf0f44d3ab0c0ef4d189e107
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Running as unit: gregale-managed-pg-restart-reclaim-adc1b1d8.service; invocation ID: feda371adf0f44d3ab0c0ef4d189e107

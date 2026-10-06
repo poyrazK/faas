@@ -1,7 +1,10 @@
 package e2etest
 
 import (
+	"bytes"
 	"context"
+	"debug/elf"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -90,7 +93,7 @@ func TestHelloServer_NoListenNeverBinds(t *testing.T) {
 	}
 }
 
-// The image build is a static linux binary for this arch: nothing in the
+// The image build is a static Linux/amd64 binary matching OCI metadata: nothing in the
 // scratch image can satisfy a dynamic loader.
 func TestHelloServerBinary_IsStaticLinux(t *testing.T) {
 	b, err := helloServerBinary()
@@ -100,7 +103,81 @@ func TestHelloServerBinary_IsStaticLinux(t *testing.T) {
 	if len(b) < 4 || string(b[1:4]) != "ELF" {
 		t.Fatal("fixture binary is not an ELF executable")
 	}
+	image, err := elf.NewFile(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer image.Close()
+	if image.Machine != elf.EM_X86_64 {
+		t.Fatalf("fixture architecture %s, want x86_64", image.Machine)
+	}
 	if strings.Contains(string(b), "ld-linux") || strings.Contains(string(b), "/lib64/ld") {
 		t.Fatal("fixture binary references a dynamic loader; the image has no libc")
+	}
+}
+
+func TestHelloServer_ProcessContract(t *testing.T) {
+	t.Setenv("FIXTURE_MARKER", "container-contract")
+	t.Setenv("UNRELATED_SECRET", "must-not-be-reported")
+	_, addr := startHelloServer(t, "-contract")
+	status, body := get(t, "http://"+addr+"/contract")
+	if status != http.StatusOK {
+		t.Fatalf("status %d: %s", status, body)
+	}
+	var got struct {
+		UID, GID   int
+		WorkingDir string `json:"working_dir"`
+		Marker     string
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UID != os.Getuid() || got.GID != os.Getgid() || got.WorkingDir != cwd || got.Marker != "container-contract" {
+		t.Fatalf("unexpected process evidence: %+v", got)
+	}
+	if strings.Contains(body, "must-not-be-reported") {
+		t.Fatal("unrelated environment leaked")
+	}
+}
+
+func TestHelloServer_ExecProbeContract(t *testing.T) {
+	t.Setenv("FIXTURE_MARKER", "container-contract")
+	t.Setenv("DEPLOYMENT_MARKER", "runtime-deployment")
+	t.Setenv("UNRELATED_SECRET", "must-not-be-reported")
+	server, addr := startHelloServer(t, "-contract")
+	_, _ = get(t, "http://"+addr+"/contract")
+	probeDir := t.TempDir()
+	for count := 1; count <= 2; count++ {
+		cmd := exec.Command(server.Path, "-addr", addr, "-probe-contract")
+		cmd.Dir = probeDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fixture exec probe: %v: %s", err, out)
+		}
+		status, body := get(t, "http://"+addr+"/contract")
+		if status != http.StatusOK {
+			t.Fatalf("contract status=%d body=%s", status, body)
+		}
+		var got struct {
+			Probe struct {
+				UID, GID, Count  int
+				WorkingDir       string `json:"working_dir"`
+				Marker           string
+				DeploymentMarker string `json:"deployment_marker"`
+			}
+		}
+		if err := json.Unmarshal([]byte(body), &got); err != nil {
+			t.Fatal(err)
+		}
+		probe := got.Probe
+		if probe.UID != os.Getuid() || probe.GID != os.Getgid() || probe.Count != count || probe.WorkingDir != probeDir || probe.Marker != "container-contract" || probe.DeploymentMarker != "runtime-deployment" {
+			t.Fatalf("incorrect exec-probe evidence: %+v", probe)
+		}
+		if strings.Contains(body, "must-not-be-reported") {
+			t.Fatal("unrelated environment leaked into probe evidence")
+		}
 	}
 }

@@ -7,10 +7,12 @@ package gateway
 import (
 	"container/list"
 	"context"
+	"errors"
 	"hash/fnv"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +30,18 @@ const LimiterEvictScan = 32
 // before falling back to the local bucket during a Postgres outage. Central
 // mode performs this operation for every request so replicas share one burst.
 const centralConsultTimeout = 250 * time.Millisecond
+
+// centralBreakerWindow is how long a limiter decides locally after a central
+// consult failed, before it consults Postgres again. Without it every request
+// paid the full centralConsultTimeout while the shared counter was
+// unavailable: on production-us gatewayd's 8-connection pool was saturated
+// by per-request writes, every consult timed out, and app and account
+// limiters together added up to 500 ms to each request.
+const centralBreakerWindow = time.Second
+
+// errCentralBreakerOpen marks a request decided locally because a recent
+// central consult failed.
+var errCentralBreakerOpen = errors.New("ratelimit central: recent consult failed; deciding locally")
 
 // Limiter is a per-app token-bucket rate limiter (spec §4.1). Each app refills at
 // its plan's rps with a plan burst; an over-limit request is rejected (the caller
@@ -98,6 +112,13 @@ type Limiter struct {
 	// visible without coupling this token-bucket primitive to Prometheus,
 	// logging, or the gateway audit sink.
 	centralErrorObserver func(context.Context, string, error)
+	// centralOpenUntil (unix nanoseconds, from now) is set when a central
+	// consult fails; until then requests use the local decision without
+	// waiting on Postgres.
+	centralOpenUntil atomic.Int64
+	// coalescer batches concurrent consults for one central counter when the
+	// backend implements CentralBatchBackend.
+	coalescer centralCoalescer
 }
 
 type bucket struct {
@@ -211,9 +232,7 @@ func (l *Limiter) AllowWithCentralConsumerKey(
 		return false
 	}
 	centralSubjectID := dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID, cap)
-	ctx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
-	defer cancel()
-	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, centralSubjectID, plan, rps, burst)
+	remaining, admitted, err := l.consumeCentral(ctx, scope, centralSubjectID, plan, rps, burst)
 	if err != nil {
 		l.observeCentralError(ctx, scope, err)
 		return localAllowed
@@ -670,9 +689,7 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	if !ok {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
-	defer cancel()
-	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, subjectID, plan, rps, burst)
+	remaining, admitted, err := l.consumeCentral(ctx, scope, subjectID, plan, rps, burst)
 	if err != nil {
 		l.observeCentralError(ctx, scope, err)
 		return localAllowed
@@ -686,6 +703,38 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	}
 	l.mu.Unlock()
 	return admitted
+}
+
+// consumeCentral performs one authoritative consume, bounded by
+// centralConsultTimeout and skipped while the breaker is open. A failure opens
+// the breaker for centralBreakerWindow; a success closes it. A caller that
+// gave up (client disconnect) does not open it. Concurrent consults for one
+// counter are batched when the backend supports it (centralCoalescer).
+func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
+	now := l.now()
+	if until := l.centralOpenUntil.Load(); until != 0 && now.UnixNano() < until {
+		return 0, false, errCentralBreakerOpen
+	}
+	var (
+		remaining int
+		admitted  bool
+		err       error
+	)
+	if batch, ok := l.central.(CentralBatchBackend); ok {
+		remaining, admitted, err = l.coalescer.consume(ctx, l.central, batch, scope, subjectID, plan, rps, burst)
+	} else {
+		consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+		remaining, admitted, err = l.central.ConsumeToken(consultCtx, scope, subjectID, plan, rps, burst)
+		cancel()
+	}
+	if err != nil {
+		if ctx.Err() == nil {
+			l.centralOpenUntil.Store(now.Add(centralBreakerWindow).UnixNano())
+		}
+		return remaining, admitted, err
+	}
+	l.centralOpenUntil.Store(0)
+	return remaining, admitted, nil
 }
 
 func (l *Limiter) observeCentralError(ctx context.Context, scope string, err error) {

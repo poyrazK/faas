@@ -3,13 +3,20 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { WorkflowConditionSpec } from './WorkflowConditionSpec.js';
+import type { WorkflowForEachSpec } from './WorkflowForEachSpec.js';
+import type { WorkflowGuardSpec } from './WorkflowGuardSpec.js';
+import type { WorkflowJoinSpec } from './WorkflowJoinSpec.js';
+import type { WorkflowOutboundSpec } from './WorkflowOutboundSpec.js';
 import type { WorkflowRetrySpec } from './WorkflowRetrySpec.js';
 /**
  * One workflow step. The canonical ADR-081 target is `run`; `path`
  * and `method` remain accepted for the existing HTTP wake executor
  * during the runtime migration. Exactly one of `run`, `path`,
- * `wait_for_event`, `wait_for_callback`, `wait_for_duration`, or
- * `wait_for_condition` must be supplied.
+ * `wait_for_event`, `wait_for_callback`, `wait_for_duration`,
+ * `wait_for_condition`, `outbound`, `join`, or `for_each` must be supplied.
+ * Set `managed_operation` on an executable HTTP step to persist its business
+ * result transactionally and replay it safely when the workflow retries
+ * after an uncertain response.
  *
  */
 export type WorkflowStepSpec = {
@@ -19,6 +26,13 @@ export type WorkflowStepSpec = {
    */
   run?: string;
   /**
+   * Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must use the transactional operation SDK.
+   */
+  managed_operation?: boolean;
+  for_each?: WorkflowForEachSpec;
+  join?: WorkflowJoinSpec;
+  outbound?: WorkflowOutboundSpec;
+  /**
    * JSON input passed to the named operation.
    */
   input?: (Record<string, any> | string | number | boolean | null);
@@ -27,6 +41,7 @@ export type WorkflowStepSpec = {
    */
   path?: string;
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  when?: WorkflowGuardSpec;
   depends_on?: Array<string>;
   wait_for_event?: string;
   /**

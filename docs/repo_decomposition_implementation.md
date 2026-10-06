@@ -45,7 +45,7 @@ For Compose workloads, `depends_on` is carried into the plan, validated as a
 cycle-free graph, and used to order app creation/build enqueueing. Each
 workload also receives platform-owned `GREGALE_SERVICE_<NAME>_URL` variables
 for its deployable dependencies (for example,
-`GREGALE_SERVICE_API_URL=http://api.svc.gregale:10080`) and additive HTTPS
+`GREGALE_SERVICE_API_URL=http://api.svc.gregale:10081`) and additive HTTPS
 canary companions (for example,
 `GREGALE_SERVICE_API_HTTPS_URL=https://api.internal`). The private DNS and
 proxy path provides the endpoint even when the target app is cold; image-only

@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // ---------- RunCronNow ----------
@@ -102,6 +103,64 @@ func TestRunCronNow_FiresImmediateSkipBoundary(t *testing.T) {
 	if cronAfter.AppID != app.ID {
 		t.Errorf("AppID = %q, want %q", cronAfter.AppID, app.ID)
 	}
+}
+
+func TestRunCronNow_AppliesHTTPOutcomePolicy(t *testing.T) {
+	t.Run("permanent outcome", func(t *testing.T) {
+		store := state.NewMemStore()
+		ctx := context.Background()
+		acct, _ := store.CreateAccount(ctx, "cron-outcome@example.com", api.PlanPro)
+		_, cron := newAppAndCron(t, store, acct.ID, true)
+		rules := &workpolicy.FailureRules{
+			Version:          workpolicy.Version,
+			Rules:            []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
+			UnmatchedFailure: "retry", UncertainOutcome: "hold",
+		}
+		updated, err := store.UpdateCronWithOptions(ctx, cron.ID, nil, nil, nil, nil, nil, nil, state.CronOptions{FailureRules: rules})
+		if err != nil {
+			t.Fatalf("UpdateCronWithOptions: %v", err)
+		}
+		synth := &recordingSynth{responseStatus: 200, outcomeCode: "invalid_record"}
+		eng, _ := makeEngine(t, store, &fakeWakeVMM{})
+		loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
+		run, err := loop.RunCronNow(ctx, updated.ID, acct.ID)
+		if err != nil || run.Success {
+			t.Fatalf("RunCronNow = %+v, err=%v; want classified permanent result", run, err)
+		}
+		inv, err := store.InvocationByID(ctx, run.InvocationID)
+		if err != nil || inv.State != state.InvocationFailed || inv.OutcomeCode != "invalid_record" || inv.WorkDecision == nil || inv.WorkDecision.Action != "fail_partition" {
+			t.Fatalf("classified manual invocation = %+v, err=%v", inv, err)
+		}
+		if synth.calls.Load() != 1 {
+			t.Fatalf("synth calls = %d, want one delivery", synth.calls.Load())
+		}
+	})
+
+	t.Run("missing receipt held", func(t *testing.T) {
+		store := state.NewMemStore()
+		ctx := context.Background()
+		acct, _ := store.CreateAccount(ctx, "cron-uncertain@example.com", api.PlanPro)
+		_, cron := newAppAndCron(t, store, acct.ID, true)
+		rules := &workpolicy.FailureRules{Version: workpolicy.Version, UnmatchedFailure: "retry", UncertainOutcome: "hold"}
+		updated, err := store.UpdateCronWithOptions(ctx, cron.ID, nil, nil, nil, nil, nil, nil, state.CronOptions{FailureRules: rules})
+		if err != nil {
+			t.Fatalf("UpdateCronWithOptions: %v", err)
+		}
+		synth := &recordingSynth{invokeErr: errors.New("connection lost after delivery")}
+		eng, _ := makeEngine(t, store, &fakeWakeVMM{})
+		loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
+		run, err := loop.RunCronNow(ctx, updated.ID, acct.ID)
+		if err != nil || run.Success {
+			t.Fatalf("RunCronNow = %+v, err=%v; want uncertain result", run, err)
+		}
+		inv, err := store.InvocationByID(ctx, run.InvocationID)
+		if err != nil || inv.State != state.InvocationFailed || inv.Outcome == nil || *inv.Outcome != state.OutcomeUncertain || inv.WorkDecision == nil || inv.WorkDecision.Classification != "uncertain" {
+			t.Fatalf("uncertain manual invocation = %+v, err=%v", inv, err)
+		}
+		if synth.calls.Load() != 1 {
+			t.Fatalf("synth calls = %d, want no fallback duplicate delivery", synth.calls.Load())
+		}
+	})
 }
 
 func TestRunCronNow_DisabledCronReturnsErrCronDisabled(t *testing.T) {

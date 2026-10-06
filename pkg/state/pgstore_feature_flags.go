@@ -94,6 +94,41 @@ func (s *PgStore) ListFeatureFlagVersions(ctx context.Context, scope FeatureFlag
 	}
 	return out, nil
 }
+
+func (s *PgStore) ListFeatureFlagAutoRolloutCandidates(ctx context.Context, afterEnvironmentID string, limit int) ([]FeatureFlagAutoRolloutCandidate, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, ErrInvalidArgument
+	}
+	var after pgtype.UUID
+	if afterEnvironmentID != "" {
+		id, err := uuid.Parse(afterEnvironmentID)
+		if err != nil {
+			return nil, ErrInvalidArgument
+		}
+		after = pgtype.UUID{Bytes: id, Valid: true}
+	}
+	rows, err := sqlc.New().ListFeatureFlagAutoRolloutCandidates(ctx, s.pool, sqlc.ListFeatureFlagAutoRolloutCandidatesParams{
+		AfterEnvironmentID: after,
+		LimitRows:          int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list automatic feature flag rollouts: %w", err)
+	}
+	candidates := make([]FeatureFlagAutoRolloutCandidate, 0, len(rows))
+	for _, row := range rows {
+		candidates = append(candidates, FeatureFlagAutoRolloutCandidate{
+			Scope: FeatureFlagScope{
+				AccountID:     uuidString(row.AccountID),
+				ProjectID:     uuidString(row.ProjectID),
+				EnvironmentID: uuidString(row.EnvironmentID),
+			},
+			ProjectSlug:     row.ProjectSlug,
+			EnvironmentSlug: row.EnvironmentSlug,
+		})
+	}
+	return candidates, nil
+}
+
 func (s *PgStore) UpdateFeatureFlags(ctx context.Context, u FeatureFlagUpdate) (FeatureFlagVersion, error) {
 	p, err := flagPGScope(u.Scope)
 	if err != nil {
@@ -105,6 +140,13 @@ func (s *PgStore) UpdateFeatureFlags(ctx context.Context, u FeatureFlagUpdate) (
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	// The version insert takes a project FK lock. Take it before the
+	// environment lock to match clone capture and project deletion order.
+	if _, err = q.LockFeatureFlagProject(ctx, tx, sqlc.LockFeatureFlagProjectParams{AccountID: p.AccountID, ProjectID: p.ProjectID}); errors.Is(err, pgx.ErrNoRows) {
+		return FeatureFlagVersion{}, ErrNotFound
+	} else if err != nil {
+		return FeatureFlagVersion{}, err
+	}
 	if _, err = q.LockFeatureFlagEnvironment(ctx, tx, p); errors.Is(err, pgx.ErrNoRows) {
 		return FeatureFlagVersion{}, ErrNotFound
 	} else if err != nil {

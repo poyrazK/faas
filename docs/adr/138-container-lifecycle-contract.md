@@ -243,3 +243,24 @@ per-app override (≤30 s cap); for >120 s the Scale plan is the path.
   - `pkg/api/limits_test.go` (commit 10) — per-plan cap table
   - `pkg/fcvm/vmm_lifecycle_metal_test.go` (commit 11) — table-driven
     lifecycle failure taxonomy
+## Amendment (2026-10-05): deploy primes honour the startup deadline
+
+The per-plan `StartupDeadlineS` above (15/30/60/120 s by default, up to
+300 s) was enforced only inside vmmd. Before readiness could expire,
+schedd's fixed spec §6.1 budgets ended every first boot: the prime RPC at
+35 s (`ColdBootTimeout`) and the cold-boot watchdog at 30 s
+(`ColdBootSweepBudget`). On production-us, a Scale app that listened after
+40 s was killed 30.6 s into its deploy prime. The deployment failed with
+`cold_boot_timeout: instance=…` and none of vmmd's startup detail.
+
+A deploy prime (instance `COLD_BOOTING` while its deployment is
+`snapshotting`) now gets `primeStartupExtension`. That is zero for deadlines
+within the 30 s spec window. Above it, the extension is `deadline + 15 s boot
+allowance − 30 s`, added to both the RPC deadline and the watchdog budget.
+vmmd's own readiness failure, which says why the app was not ready, then
+lands before the scheduler gives up.
+
+Ordinary wakes keep the spec budgets. `handleAppWake` runs inline on the
+scheduler's main loop (ADR-191, 60 s liveness budget), so extending cold-boot
+wakes needs that wait moved off the loop first. That is tracked as a
+follow-up. Tests: `pkg/sched/prime_startup_budget_test.go`.

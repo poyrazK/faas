@@ -16,6 +16,7 @@ import httpx
 
 from ._sse import SseEvent, aiter_sse, iter_sse
 from .api.runs import create_execution, get_execution
+from .models.execution_artifact import ExecutionArtifact
 from .models.execution_response import ExecutionResponse
 from .types import UNSET, Unset
 
@@ -320,4 +321,16 @@ __all__ = [
     "watch_execution",
     "awatch_execution",
     "run_execution",
+    "decode_execution_artifact",
 ]
+
+
+def decode_execution_artifact(artifact: ExecutionArtifact) -> bytes:
+    """Decode an inline artifact and verify its size/checksum without writing files."""
+    import base64
+    import hashlib
+
+    content = base64.b64decode(artifact.content, validate=True)
+    if len(content) != artifact.size_bytes or "sha256:" + hashlib.sha256(content).hexdigest() != artifact.sha256:
+        raise ValueError("execution artifact content failed integrity verification")
+    return content

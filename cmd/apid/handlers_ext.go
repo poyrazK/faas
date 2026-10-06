@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -42,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // dialFailureDetailMaxBytes bounds the error text folded into a dial-failure
@@ -55,6 +55,28 @@ const dialFailureDetailMaxBytes = 96
 func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	app, environment, problem := s.appEnvironmentSettings(w, r, acct, app, false)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if environment.Slug != "" {
+		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
+		resp.URL = projectEnvironmentWorkloadURL(environment.ID, app.ID)
+		resp.CanonicalURL = resp.URL
+		_, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, environment.Slug)
+		switch {
+		case err == nil:
+			resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
+		case errors.Is(err, state.ErrNotFound):
+			resp.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not resolve environment deployment availability"))
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
@@ -937,6 +959,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	app, environment, environmentProblem := s.appEnvironmentSettings(w, r, acct, app, true)
+	if environmentProblem != nil {
+		api.WriteProblem(w, environmentProblem)
+		return
+	}
 	var req api.UpdateAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -1446,6 +1473,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Sealed:   publicAuthSealed,
 		}
 	}
+	if environment.Slug != "" {
+		s.updateEnvironmentAppSettings(w, r, acct, app, environment, params)
+		return
+	}
 	configActivityAtomic := false
 	var configActivityOutboxID int64
 	var updated state.App
@@ -1473,7 +1504,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		if problem := state.ServiceCapacityProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		}
 		return
 	}
 	if req.BeforeCheckpoint != nil {
@@ -1846,16 +1881,22 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 	}
-	// Move 2: GC pending invocations for this app BEFORE the row goes
-	// away. Without this, a delayed_task can fire after deleteApp and
-	// the drain is forced to log a permanent-wake error on a row the
-	// customer has already given up on. CancelInvocation is a no-op on
-	// terminal rows (returns state.ErrNotFound) so dispatching /
-	// completed rows are untouched.
+	// Read pending work before scheduling deletion, but cancel it only after
+	// the intent transaction accepts the delete. A Git ownership rejection
+	// must preserve the live app and its queued work.
 	pending, err := s.store.ListInvocationsForApp(r.Context(), app.ID,
 		state.InvocationPending, state.InvocationDispatching)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list-inv"))
+		return
+	}
+	graceUntil := time.Now().UTC().Add(state.AppDeleteGraceDuration())
+	parked, err := s.scheduleAppDeletionWithActivity(r.Context(), r, acct, app, graceUntil)
+	if err != nil {
+		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
 		return
 	}
 	for _, inv := range pending {
@@ -1867,12 +1908,6 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			s.log.Warn("deleteApp: cancel invocation",
 				"inv", inv.ID, "app", app.ID, "err", err)
 		}
-	}
-	graceUntil := time.Now().UTC().Add(state.AppDeleteGraceDuration())
-	parked, err := s.scheduleAppDeletionWithActivity(r.Context(), r, acct, app, graceUntil)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
-		return
 	}
 	// NotifyAppDelete is the lifecycle cleanup signal consumed by schedd.
 	// AppChanged is for app metadata/routing changes and is not subscribed
@@ -2150,10 +2185,19 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	}
 	prev := d.TrafficPercent
 	var updated state.Deployment
-	if req.ExpectedServingDeploymentID != nil {
-		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
-	} else {
-		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent)
+	var gateProblem *api.Problem
+	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
+		var writeErr error
+		if req.ExpectedServingDeploymentID != nil {
+			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
+		} else {
+			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent)
+		}
+		return writeErr
+	})
+	if gateProblem != nil {
+		api.WriteProblem(w, gateProblem)
+		return
 	}
 	if err != nil {
 		switch {
@@ -2252,12 +2296,49 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
+	if req.ExpectedCurrentDeploymentID != nil {
+		s.startCheckedRollback(w, r, acct, app, req)
+		return
+	}
+	if req.Reason != "" {
+		api.WriteProblem(w, bindingPromotionValidation("reason requires an exact checked rollback"))
+		return
+	}
+
 	target, problem := s.rollbackAppCore(r, acct, app, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target, app))
+}
+
+// zeroTrafficRollbackCandidates lists, newest first, the app's live
+// deployments receiving 0% traffic: explicit rollback targets that the default
+// rollback cannot choose between. A traffic split followed by `traffic
+// promote` leaves the former production deployment in this state rather than
+// superseded. The list is advisory; a read error just omits it.
+func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string) []string {
+	const scan = 50
+	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, scan, 0)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, d := range deployments {
+		if d.Status != state.DeployLive || d.TrafficPercent != 0 {
+			continue
+		}
+		ref := d.ID
+		if d.Revision > 0 {
+			ref = fmt.Sprintf("v%d", d.Revision)
+		}
+		out = append(out, ref)
+		if len(out) == 5 {
+			break
+		}
+	}
+	return out
 }
 
 // rollbackAppCore performs the shared rollback state transition for the REST
@@ -2313,9 +2394,19 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	} else {
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
-			return state.Deployment{}, api.ErrNoRollbackTarget()
+			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
+	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
+		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
+		if err != nil {
+			return state.Deployment{}, api.ErrCapacity("could not read rollback release policy")
+		}
+		if policy.Mode == "enforce" {
+			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
+		}
+	}
+
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return state.Deployment{}, problem
 	}
@@ -2530,6 +2621,19 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	if problem := s.validateExplicitAppWake(r.Context(), app); problem != nil {
 		api.WriteProblem(w, problem)
+		return
+	}
+	// schedd makes a wake idempotent when a routable instance is running,
+	// so a queued wake for a warm app was never stamped on any instance and
+	// `gregale wake --wait` waited out its whole timeout. Report the
+	// running instance instead of queueing a wake that cannot complete.
+	if running, err := s.store.RunningInstanceForApp(r.Context(), app.ID); err == nil {
+		writeJSON(w, http.StatusOK, api.AppWakeResponse{
+			WakeID: running.WakeID, AlreadyRunning: true, InstanceID: running.ID,
+		})
+		return
+	} else if !errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not read the app's running instances"))
 		return
 	}
 	wakeID, err := s.enqueueExplicitAppWake(r.Context(), acct, app)
@@ -3259,6 +3363,13 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 	}
 	cert, err := dialCert(ctx, dialDomain)
 	if err != nil {
+		if !errors.Is(err, errCDNCert) && withinOnDemandIssuanceGrace(d, time.Now()) {
+			// ADR-520: this handshake may be the one that makes the edge
+			// obtain the certificate; report it as pending, not failed.
+			resp.CertStatus = certStatusPending
+			resp.CertLastError = ""
+			return resp, nil
+		}
 		resp.CertStatus = classifyCertError(err)
 		if resp.CertLastError == "" {
 			resp.CertLastError = err.Error()
@@ -3445,10 +3556,19 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		Checks:     []api.DomainDoctorCheck{},
 		Healthy:    true,
 	}
-	// 1. DNS record found.
-	dnsStatus, dnsDetail, dnsRem := probeOK, "A or AAAA records present", ""
+	// 1. DNS record found. The failing case used to keep the success
+	// detail ("A or AAAA records present") and ask for an A/AAAA record,
+	// while `domains add` and points_to_gregale both ask for the Gregale
+	// CNAME. The address lookups follow CNAMEs, so that record satisfies
+	// this check too (production-us, 2026-10-04).
+	dnsStatus, dnsDetail, dnsRem := probeOK, "the domain resolves", ""
 	if !obs.DNSRecordFound {
-		dnsStatus, dnsRem = probeFail, "Publish an A or AAAA record at "+d.Domain
+		dnsStatus, dnsDetail = probeFail, "no DNS record resolves at "+d.Domain
+		if expected := customDomainTarget(); expected != "" && !strings.EqualFold(expected, d.Domain) {
+			dnsRem = routingRemediation(d.Domain, expected)
+		} else {
+			dnsRem = "Publish the record shown by `gregale domains add` at " + d.Domain
+		}
 		report.Healthy = false
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
@@ -3460,7 +3580,7 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	if !obs.PointsToGregale {
 		ptsStatus = probeFail
 		report.Healthy = false
-		expected := strings.TrimSuffix(strings.TrimSpace(appsDomainFunc()), ".")
+		expected := customDomainTarget()
 		if ptsObs != "" {
 			ptsDetail = "CNAME does not point at Gregale (observed: " + ptsObs + ")"
 		} else {
@@ -3470,7 +3590,7 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		// remediation target. Using it here previously produced self-CNAME
 		// instructions when the customer's record pointed back to itself.
 		if expected != "" && !strings.EqualFold(expected, d.Domain) {
-			ptsRem = "Set CNAME " + d.Domain + " → " + expected
+			ptsRem = routingRemediation(d.Domain, expected)
 		} else {
 			ptsRem = "Ask Gregale support for the configured application CNAME target"
 		}
@@ -3530,6 +3650,9 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		} else {
 			tlsDetail = "cert pending issuance; wait for cert engine (next poll cycle)"
 		}
+	}
+	if detail, rem, ok := onDemandTLSAdvice(d, obs); ok {
+		tlsDetail, tlsRem = detail, rem
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
 		Name: "tls_certificate", Status: string(tlsStatus), Detail: tlsDetail,
@@ -3609,6 +3732,10 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	var req api.CreateCronRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if !validCron(req.Schedule) {
@@ -3697,6 +3824,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		skipIfRunning = *req.SkipIfRunning
 	}
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
+		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
 		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
@@ -3741,17 +3869,31 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 }
 
 func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	// List every cron owned by any of this account's apps.
-	apps, err := s.store.ListApps(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list crons"))
-		return
+	// ?slug= (an app slug or id, sent by `gregale crons list --app`) scopes
+	// the list to one app; without it, every cron on the account's apps.
+	// The filter used to be ignored, so `--app X` listed other apps' crons.
+	var apps []state.App
+	if ref := r.URL.Query().Get("slug"); ref != "" {
+		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
+		if !ok {
+			s.notFound(w, "no such app")
+			return
+		}
+		apps = []state.App{app}
+	} else {
+		all, err := s.store.ListApps(r.Context(), acct.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
+			return
+		}
+		apps = all
 	}
 	out := make([]api.CronResponse, 0)
 	for _, app := range apps {
 		cs, err := s.store.ListCronsForApp(r.Context(), app.ID)
 		if err != nil {
-			continue
+			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
+			return
 		}
 		for _, c := range cs {
 			out = append(out, cronResponse(c))
@@ -3760,11 +3902,26 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 	writeJSON(w, http.StatusOK, out)
 }
 
+// ownedAppByRef resolves an app id or slug owned by accountID.
+func (s *server) ownedAppByRef(ctx context.Context, accountID, ref string) (state.App, bool) {
+	if app, err := s.store.AppByID(ctx, ref); err == nil && app.AccountID == accountID {
+		return app, true
+	}
+	if app, err := s.store.AppBySlug(ctx, ref); err == nil && app.AccountID == accountID {
+		return app, true
+	}
+	return state.App{}, false
+}
+
 func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
 	var req api.UpdateCronRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if req.Schedule != nil && !validCron(*req.Schedule) {
@@ -3811,7 +3968,17 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, api.ErrValidation("retry_max must be 0..5 and retry_backoff_seconds must be 1..3600"))
 			return
 		}
-		retryOptions = append(retryOptions, state.CronOptions{RetryMax: retryMax, RetryBackoffSeconds: backoffSeconds})
+	}
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
+		opts := state.CronOptions{RetryMax: c.RetryMax, RetryBackoffSeconds: c.RetryBackoffSeconds,
+			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules}
+		if req.RetryMax != nil {
+			opts.RetryMax = *req.RetryMax
+		}
+		if req.RetryBackoffSeconds != nil {
+			opts.RetryBackoffSeconds = *req.RetryBackoffSeconds
+		}
+		retryOptions = append(retryOptions, opts)
 	}
 	var timezonePatch *string
 	if req.Timezone != nil {
@@ -4167,6 +4334,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
 		return
 	}
+	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"created","account":"`+acct.ID+`"}`)
 	s.log.Info("key created", "key", k.ID, "account", acct.ID)
 	// IAM-4 (ADR-035): record the key mint. subject = account_id (the
@@ -4224,10 +4392,11 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 		return
 	}
 	out := make([]api.APIKeyResponse, 0, len(keys))
+	prefixes := s.listedKeyPrefixes(r.Context(), keys)
 	for _, k := range keys {
 		resp := api.APIKeyResponse{
 			ID:        k.ID,
-			Prefix:    keyPrefixFromHash(k.Hash),
+			Prefix:    prefixes[k.ID],
 			Label:     k.Label,
 			Scopes:    k.Scopes,
 			CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
@@ -4410,6 +4579,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 
+	s.recordKeyDisplayPrefix(r.Context(), newKey.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"rotated","account":"`+acct.ID+`"}`)
 	auditPayload := map[string]any{
 		"old_key_id":         oldKey.ID,
@@ -4649,7 +4819,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 				"account", acct.ID,
 				"from", logsanitize.Field(string(acct.Plan)),
 				"to", logsanitize.Field(string(plan)),
-				"err", err)
+				"err", logsanitize.FieldAny(err))
 			if errors.Is(err, billing.ErrAlreadyCancelled) {
 				api.WriteProblem(w, api.NewProblem(http.StatusConflict,
 					api.CodeConflict, "billing subscription unavailable",
@@ -4978,6 +5148,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			}
 		}
 		normalized.Invoice = &billing.InvoiceData{
+			Details:           stripe.InvoiceDetailsFromWebhook(raw),
 			ProviderInvoiceID: obj.ID,
 			ProviderChargeID:  stripeExpandableID(obj.Charge),
 			Number:            obj.Number,
@@ -4985,7 +5156,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			PeriodStart:       stripeUnixTime(obj.PeriodStart),
 			PeriodEnd:         stripeUnixTime(obj.PeriodEnd),
 			SubtotalCents:     obj.Subtotal,
-			TaxCents:          obj.Tax,
+			TaxCents:          stripe.InvoiceTaxCentsFromWebhook(raw, obj.Tax),
 			TotalCents:        obj.Total,
 			AmountPaidCents:   amountPaid,
 			Currency:          strings.ToLower(obj.Currency),
@@ -5174,6 +5345,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 		plan = acct.Plan
 	}
 	return s.store.UpsertInvoice(ctx, state.Invoice{
+		Details:           data.Details,
 		AccountID:         acct.ID,
 		Provider:          provider,
 		ProviderInvoiceID: data.ProviderInvoiceID,
@@ -5596,6 +5768,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	if d.ServiceRolloutHandoff.Action != "" {
 		h := d.ServiceRolloutHandoff
 		resp.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{
+			BindingsCheck:           h.BindingsCheck,
 			Action:                  h.Action,
 			Phase:                   h.Phase,
 			PredecessorDeploymentID: h.PredecessorDeploymentID,
@@ -5919,6 +6092,7 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 	if d.ChallengeToken != "" {
 		r.TXTRecord = state.CustomDomainChallengeName(d.Domain) + `  TXT  "` + d.ChallengeToken + `"`
 	}
+	r.DNSRecords = customDomainDNSRecords(d)
 	if !d.CertExpiresAt.IsZero() {
 		r.CertExpiresAt = d.CertExpiresAt.UTC().Format(time.RFC3339)
 		// CertNotAfter is the pre-F1 name retained for existing clients.
@@ -5935,6 +6109,8 @@ func cronResponse(c state.Cron) api.CronResponse {
 		c.Timezone = defaultCronTimezone
 	}
 	resp := api.CronResponse{
+		SchedulePolicy:  workpolicy.Clone(c.SchedulePolicy),
+		FailureRules:    workpolicy.Clone(c.FailureRules),
 		ID:              c.ID,
 		AppID:           c.AppID,
 		Kind:            "http",
@@ -6706,6 +6882,44 @@ func keyPrefix(plaintext string) string {
 	return plaintext[:16]
 }
 
+// recordKeyDisplayPrefix stores the prefix shown at mint so key listings show
+// the same value. Best-effort: on failure the listing falls back to the
+// hash-derived identifier, which is what every key showed before.
+func (s *server) recordKeyDisplayPrefix(ctx context.Context, keyID, plaintext string) {
+	store, ok := s.store.(state.APIKeyDisplayPrefixStore)
+	if !ok {
+		return
+	}
+	if err := store.SetAPIKeyDisplayPrefix(ctx, keyID, keyPrefix(plaintext)); err != nil {
+		s.log.WarnContext(ctx, "record api key display prefix", slog.String("key", keyID), slog.String("err", err.Error()))
+	}
+}
+
+// listedKeyPrefixes maps each key to the prefix a listing shows: the prefix
+// printed when the key was minted, or the hash-derived identifier for keys
+// minted before display prefixes were recorded.
+func (s *server) listedKeyPrefixes(ctx context.Context, keys []state.APIKey) map[string]string {
+	out := make(map[string]string, len(keys))
+	ids := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out[k.ID] = keyPrefixFromHash(k.Hash)
+		ids = append(ids, k.ID)
+	}
+	store, ok := s.store.(state.APIKeyDisplayPrefixStore)
+	if !ok {
+		return out
+	}
+	recorded, err := store.APIKeyDisplayPrefixes(ctx, ids)
+	if err != nil {
+		s.log.WarnContext(ctx, "read api key display prefixes", slog.String("err", err.Error()))
+		return out
+	}
+	for id, prefix := range recorded {
+		out[id] = prefix
+	}
+	return out
+}
+
 // keyPrefixFromHash derives the display prefix from the stored hash. The hash
 // itself is sha256(plaintext); the prefix is hex(sha256)[:12] so the customer
 // can correlate the hash back to the plaintext key they were shown once.
@@ -6769,13 +6983,13 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	}
 	follow := r.URL.Query().Get("follow") != "0"
 
-	apislogs.StartSSE(w)
+	w, ctx, cancelStream := startSSEStream(w, r)
+	defer cancelStream()
 	flusher, _ := w.(http.Flusher)
 
 	// Walk backwards: the table returns DESC by seq, the SSE stream
 	// wants chronological. MemStore + PgStore both order DESC.
-	//nolint:contextcheck // Long SSE handler; r.Context() == r.Context() but the linter loses the alias across the function's many statements.
-	page, _, err := s.store.ListDeploymentLogs(r.Context(), id, beforeSeq, limit)
+	page, _, err := s.store.ListDeploymentLogs(ctx, id, beforeSeq, limit)
 	if err != nil {
 		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"error\":%q}\n\n", err.Error())
 		if flusher != nil {
@@ -6840,7 +7054,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 		// keeps it simple with a deadline: builds max out at 10
 		// minutes; we cap the tail to that.
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case e, ok := <-sub:
 			if !ok {
@@ -6869,7 +7083,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// poll sees it. The terminal `DeployLive` flip is
 			// covered by imaged's `MarkDeploymentLive` (handler.go:
 			// 2240) which appends `snapshot_prepare → readiness`.
-			if d2, err := s.store.DeploymentByID(r.Context(), id); err == nil {
+			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
 				if d2.Status == state.DeployLive || d2.Status == state.DeployFailed {
 					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
 					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)
