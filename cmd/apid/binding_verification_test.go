@@ -218,6 +218,40 @@ func TestBindingVerificationServiceConfigurationChange(t *testing.T) {
 	}
 }
 
+func TestBindingVerificationServiceTargetPolicyChange(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	app, _ := seedAppTaskDeployment(t, e, "verified-caller")
+	target, _ := seedAppTaskDeployment(t, e, "verified-target")
+	manifest := state.AppManifest{ServiceBindings: api.ServiceBindingsForTargets([]string{target.Slug})}
+	if _, err := e.store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	task := createAppTaskForTest(t, e, app.Slug, api.CreateAppTaskRequest{Command: []string{api.AppTaskServiceBindingProbeCommand, target.Slug}})
+	completeVerificationTask(t, e, beginVerificationTask(t, e, task.ID), `{"service":"verified-target","dns":{"status":"passed"},"tls":{"status":"passed"},"authorization":{"status":"passed"},"routing":{"status":"passed"}}`)
+	read := func() api.AppBindingInventoryItem {
+		inventory := decodeBindingInventory(t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings", nil, nil))
+		for _, item := range inventory.Bindings {
+			if item.Type == api.BindingTypeService {
+				return item
+			}
+		}
+		t.Fatal("service missing")
+		return api.AppBindingInventoryItem{}
+	}
+	if item := read(); item.VerificationStatus != "passed" {
+		t.Fatalf("initial evidence=%+v", item)
+	}
+	denied := []string{}
+	targetManifest := state.AppManifest{AllowedServiceCallers: &denied}
+	if _, err := e.store.UpdateApp(context.Background(), target.ID, state.UpdateAppParams{Manifest: &targetManifest}); err != nil {
+		t.Fatal(err)
+	}
+	if item := read(); item.VerificationStatus != "stale" || item.Verification.Reason != "configuration_changed" {
+		t.Fatalf("target policy retained passed evidence=%+v", item)
+	}
+}
+
 type verificationReadStore struct {
 	*state.MemStore
 	kinds []string
@@ -255,5 +289,35 @@ func TestBindingVerificationReadPermissionAndFailure(t *testing.T) {
 				t.Fatalf("failure projection=%+v", inventory)
 			}
 		})
+	}
+}
+
+type serviceDependencyFailureStore struct{ *state.MemStore }
+
+func (s serviceDependencyFailureStore) ReadServiceBindingRevision(context.Context, string, string) (string, error) {
+	return "", errors.New("PRIVATE_DEPENDENCY postgres://user:password@host/db")
+}
+
+func TestBindingVerificationServiceDependencyReadFailsClosed(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	app, _ := seedAppTaskDeployment(t, e, "dependency-failure")
+	manifest := state.AppManifest{ServiceBindings: api.ServiceBindingsForTargets([]string{"billing"})}
+	if _, err := e.store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.store = serviceDependencyFailureStore{e.store}
+	response := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings", nil, nil)
+	inventory := decodeBindingInventory(t, response)
+	found := false
+	for _, issue := range inventory.Issues {
+		found = found || issue.Type == api.BindingTypeService && issue.Code == "query_failed"
+	}
+	if inventory.Complete || !found || strings.Contains(response.Body.String(), "PRIVATE_DEPENDENCY") || strings.Contains(response.Body.String(), "password") {
+		t.Fatalf("unsafe inventory: %s", response.Body.String())
+	}
+	response = e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/tasks", api.CreateAppTaskRequest{Command: []string{api.AppTaskServiceBindingProbeCommand, "billing"}}, nil)
+	if response.Code < 400 || strings.Contains(response.Body.String(), "PRIVATE_DEPENDENCY") {
+		t.Fatalf("trusted unavailable dependency: %d %s", response.Code, response.Body.String())
 	}
 }

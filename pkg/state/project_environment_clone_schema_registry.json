@@ -129,6 +129,14 @@
     "kind": "operational"
   },
   {
+    "table": "alert_historical_rollback_claims",
+    "columns": [
+      "deployment_id",
+      "fire_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_presets",
     "columns": [
       "category",
@@ -149,6 +157,17 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "alert_rollback_actions",
+    "columns": [
+      "app_id",
+      "fire_id",
+      "receipt",
+      "status",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_rules",
     "columns": [
       "account_id",
@@ -165,6 +184,7 @@
       "metric",
       "name",
       "org_id",
+      "post_deploy_rollback_window_seconds",
       "state",
       "threshold",
       "updated_at",
@@ -343,9 +363,35 @@
     "columns": [
       "app_id",
       "epoch",
-      "revision"
+      "revision",
+      "service_revision"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "app_binding_release_policies",
+    "columns": [
+      "app_id",
+      "max_age_seconds",
+      "mode",
+      "reason",
+      "require_application_ack",
+      "revision",
+      "scope",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "app_binding_release_policy_history",
+    "columns": [
+      "app_id",
+      "changed_at",
+      "policy",
+      "revision",
+      "scope"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "app_cpu_policy_node_status",
@@ -1963,12 +2009,12 @@
   },
   {
     "table": "customer_operation_code_pins",
-    "kind": "operational",
     "columns": [
       "app_id",
       "deployment_id",
       "expires_at"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "customer_operation_definitions",
@@ -2308,6 +2354,14 @@
     "kind": "configuration"
   },
   {
+    "table": "deployment_recovery_lineage",
+    "columns": [
+      "deployment_id",
+      "predecessor_deployment_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_registry_rootfs",
     "columns": [
       "deployment_id",
@@ -2358,8 +2412,21 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_rollback_operations",
+    "columns": [
+      "app_id",
+      "current_deployment_id",
+      "id",
+      "receipt",
+      "scope",
+      "status",
+      "target_deployment_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_route_policy_snapshots",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "captured_at",
@@ -2368,7 +2435,8 @@
       "scope",
       "sha256",
       "snapshot"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "deployment_runtime_environment_owners",
@@ -7668,7 +7736,6 @@
   },
   {
     "table": "workflow_automation_definitions",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "draft",
@@ -7678,7 +7745,8 @@
       "published_version",
       "updated_at",
       "version"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_callback_webhook_bindings",
@@ -7695,13 +7763,13 @@
   },
   {
     "table": "workflow_event_receipts",
-    "kind": "operational",
     "columns": [
       "admitted_at",
       "outbox_id",
       "recipient_id",
       "run_id"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_events",
@@ -7734,7 +7802,6 @@
   },
   {
     "table": "workflow_run_resumes",
-    "kind": "operational",
     "columns": [
       "account_id",
       "created_at",
@@ -7743,7 +7810,8 @@
       "resume_number",
       "resumed_steps",
       "run_id"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_runs",
@@ -7771,7 +7839,6 @@
   },
   {
     "table": "workflow_schedule_cursors",
-    "kind": "operational",
     "columns": [
       "app_id",
       "deployment_id",
@@ -7782,7 +7849,8 @@
       "trigger_snapshot",
       "updated_at",
       "workflow_name"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_step_attempts",
@@ -7827,7 +7895,6 @@
   },
   {
     "table": "workflow_webhook_bindings",
-    "kind": "configuration",
     "columns": [
       "endpoint_id",
       "event_type",
@@ -7835,11 +7902,11 @@
       "updated_at",
       "version",
       "workflow_name"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_webhook_receipts",
-    "kind": "operational",
     "columns": [
       "accepted_at",
       "body_hash",
@@ -7851,6 +7918,7 @@
       "recipient_id",
       "status",
       "workflow_name"
-    ]
+    ],
+    "kind": "operational"
   }
 ]

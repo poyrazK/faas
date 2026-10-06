@@ -14,12 +14,16 @@ type Check struct {
 }
 
 type Report struct {
-	Endpoint  string    `json:"endpoint"`
-	OK        bool      `json:"ok"`
-	Checks    []Check   `json:"checks"`
-	Tools     []Tool    `json:"tools,omitempty"`
-	Discovery Exchange  `json:"discovery"`
-	Stream    *Exchange `json:"stream,omitempty"`
+	Endpoint          string             `json:"endpoint"`
+	OK                bool               `json:"ok"`
+	Checks            []Check            `json:"checks"`
+	Capabilities      []string           `json:"capabilities,omitempty"`
+	Tools             []Tool             `json:"tools,omitempty"`
+	Resources         []Resource         `json:"resources,omitempty"`
+	ResourceTemplates []ResourceTemplate `json:"resource_templates,omitempty"`
+	Prompts           []Prompt           `json:"prompts,omitempty"`
+	Discovery         Exchange           `json:"discovery"`
+	Stream            *Exchange          `json:"stream,omitempty"`
 }
 
 // Doctor does not execute tools unless the caller explicitly supplies a
@@ -41,14 +45,18 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 			return report
 		}
 	}
-	tools, x, err := c.Tools(ctx)
+	catalog, x, err := c.DiscoverCatalog(ctx)
 	x.Result = nil // Tool schemas are represented once, in Report.Tools.
 	report.Discovery = x
-	add("modern_tool_discovery", err)
+	add("modern_catalog_discovery", err)
 	if err != nil {
 		return report
 	}
-	report.Tools = tools
+	report.Tools = catalog.Tools
+	report.Capabilities = catalog.Capabilities
+	report.Resources = catalog.Resources
+	report.ResourceTemplates = catalog.ResourceTemplates
+	report.Prompts = catalog.Prompts
 	if x.StreamingStatus != "" {
 		var streamingErr error
 		if x.StreamingStatus != api.StreamingStatusStreaming && x.StreamingStatus != api.StreamingStatusAcceptJSONDowngrade {
@@ -63,16 +71,16 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 			old.HTTP = c.HTTP
 			err = old.Initialize(ctx)
 			if err == nil {
-				_, _, err = old.Tools(ctx)
+				_, _, err = old.DiscoverCatalog(ctx)
 			}
 		}
 		add("legacy_stateless_compatibility", err)
 	}
 	if streamTool != "" {
 		var selected *Tool
-		for i := range tools {
-			if tools[i].Name == streamTool {
-				selected = &tools[i]
+		for i := range catalog.Tools {
+			if catalog.Tools[i].Name == streamTool {
+				selected = &catalog.Tools[i]
 				break
 			}
 		}

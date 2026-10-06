@@ -16,6 +16,8 @@ const (
 	CodeApplicationStandardVersionStale = api.CodeApplicationStandardVersionStale
 	CodeApplicationStandardsPending     = api.CodeApplicationStandardsPending
 
+	CodeBindingReleaseRequired               = api.CodeBindingReleaseRequired
+	CodeBindingReleasePolicyChanged          = api.CodeBindingReleasePolicyChanged
 	CodePlanLimitApps                        = api.CodePlanLimitApps
 	CodePlanLimitRAM                         = api.CodePlanLimitRAM
 	CodePlanLimitConcur                      = api.CodePlanLimitConcur

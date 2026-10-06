@@ -211,7 +211,7 @@ func TestMCPContractCanonicalSnapshotPreservesNumbers(t *testing.T) {
 
 func TestMCPContractRejectsMalformedSnapshots(t *testing.T) {
 	for _, body := range []string{
-		`null`, `{}`, `{"version":2,"protocol_version":"2026-07-28","tools":[]}`,
+		`null`, `{}`, `{"version":3,"protocol_version":"2026-07-28","tools":[]}`,
 		`{"version":1,"protocol_version":"2026-07-28","tools":null}`,
 		`{"version":1,"protocol_version":"2026-07-28","tools":[],"token":"do-not-store"}`,
 		`{"version":1,"protocol_version":"2026-07-28","tools":[]} {}`,
@@ -224,7 +224,7 @@ func TestMCPContractRejectsMalformedSnapshots(t *testing.T) {
 			t.Fatalf("accepted invalid snapshot: %.120s", body)
 		}
 	}
-	invalid := Contract{Version: 2, ProtocolVersion: ProtocolVersion, Tools: []Tool{}}
+	invalid := Contract{Version: 3, ProtocolVersion: ProtocolVersion, Tools: []Tool{}}
 	if _, err := MarshalContract(invalid); err == nil {
 		t.Fatal("marshal accepted unknown version")
 	}
@@ -250,5 +250,70 @@ func TestMCPContractDeepChangesRequireReview(t *testing.T) {
 	d, err := CompareContracts(b, a)
 	if err != nil || !d.NeedsReview || d.Compatible || len(d.Changes) != 1 || d.Changes[0].Kind != "schema_depth_requires_review" {
 		t.Fatalf("deep diff=%+v err=%v", d, err)
+	}
+}
+
+func TestMCPResourceAndPromptContractChanges(t *testing.T) {
+	baseline, err := NewCatalogContract(ProtocolVersion, Catalog{
+		Resources:         []Resource{{URI: "file:///report", Name: "report", Description: "Current report"}},
+		ResourceTemplates: []ResourceTemplate{{URITemplate: "file:///users/{id}", Name: "user"}},
+		Prompts:           []Prompt{{Name: "summarize", Arguments: []PromptArgument{{Name: "period", Description: "Window"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseline.Version != 2 {
+		t.Fatalf("catalog snapshot format version=%d, want 2", baseline.Version)
+	}
+	changed, err := NewCatalogContract(ProtocolVersion, Catalog{
+		Resources:         []Resource{{URI: "file:///report", Name: "report", Description: "Latest report"}},
+		ResourceTemplates: []ResourceTemplate{{URITemplate: "file:///users/{id}", Name: "user"}},
+		Prompts:           []Prompt{{Name: "summarize", Arguments: []PromptArgument{{Name: "period", Description: "Window", Required: true}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := CompareContracts(baseline, changed)
+	if err != nil || !diff.Breaking || diff.Compatible || len(diff.Changes) != 2 {
+		t.Fatalf("diff=%+v err=%v", diff, err)
+	}
+	if diff.Changes[0].Kind != "resource_metadata_changed" || diff.Changes[1].Kind != "prompt_argument_required" || diff.Changes[1].Severity != "breaking" {
+		t.Fatalf("unexpected catalog findings: %+v", diff.Changes)
+	}
+
+	withoutResource, _ := NewCatalogContract(ProtocolVersion, Catalog{Resources: []Resource{}, ResourceTemplates: baseline.ResourceTemplates, Prompts: baseline.Prompts})
+	diff, err = CompareContracts(baseline, withoutResource)
+	if err != nil || !diff.Breaking || diff.Changes[0].Kind != "resource_removed" {
+		t.Fatalf("resource removal diff=%+v err=%v", diff, err)
+	}
+	strictAdded, _ := NewCatalogContract(ProtocolVersion, Catalog{Resources: []Resource{{URI: "file:///new", Name: "new"}}})
+	strict, err := CompareContractsWithOptions(baseline, strictAdded, ContractDiffOptions{StrictCatalog: true})
+	if err != nil || !strict.NeedsReview || !strict.StrictCatalog {
+		t.Fatalf("strict catalog diff=%+v err=%v", strict, err)
+	}
+
+	body, err := MarshalContract(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ReadContract(bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contractEqual(parsed.Resources, baseline.Resources) || !contractEqual(parsed.ResourceTemplates, baseline.ResourceTemplates) || !contractEqual(parsed.Prompts, baseline.Prompts) {
+		t.Fatalf("catalog metadata changed in round trip: %+v", parsed)
+	}
+	legacy, err := ReadContract(strings.NewReader(`{"version":1,"protocol_version":"2026-07-28","tools":[]}`))
+	if err != nil || legacy.Version != 1 {
+		t.Fatalf("legacy tool-only lock is not readable: %+v %v", legacy, err)
+	}
+	if _, err := ReadContract(strings.NewReader(`{"version":1,"protocol_version":"2026-07-28","tools":[],"resources":[{"uri":"x","name":"x"}]}`)); err == nil {
+		t.Fatal("format 1 accepted an unsupported catalog")
+	}
+	emptyResources, _ := NewCatalogContract(ProtocolVersion, Catalog{Capabilities: []string{"resources"}})
+	noResources, _ := NewCatalogContract(ProtocolVersion, Catalog{Capabilities: []string{"tools"}})
+	diff, err = CompareContracts(emptyResources, noResources)
+	if err != nil || !diff.Breaking || len(diff.Changes) != 2 || diff.Changes[0].Kind != "capability_removed" || diff.Changes[0].Capability != "resources" {
+		t.Fatalf("empty advertised capability removal was lost: %+v err=%v", diff, err)
 	}
 }

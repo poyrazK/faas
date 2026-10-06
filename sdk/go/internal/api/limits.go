@@ -6,6 +6,8 @@
 // the split contract this module enforces.
 package api
 
+import "time"
+
 // File-level note: this file is the SDK copy of pkg/api/limits.go,
 // trimmed to the wire types only (Plan enum, Plans slice, Limits
 // struct). The authoritative planLimits table, ConntrackCapProbe, and
@@ -126,4 +128,10 @@ const (
 const (
 	MaxObjectLockRetentionDays  int32 = 36500
 	MaxObjectLockRetentionYears int32 = 100
+)
+
+const (
+	BindingReleasePolicyMaxRevision    int64 = 1<<53 - 1
+	BindingReleasePolicyMaxAge               = 24 * time.Hour
+	BindingReleasePolicyReasonMaxBytes       = 256
 )

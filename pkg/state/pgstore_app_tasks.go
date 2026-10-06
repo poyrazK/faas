@@ -133,6 +133,9 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 	if resolved.BindingVerification != nil {
 		return s.createBindingVerificationTask(ctx, resolved)
 	}
+	if resolved.RequireLiveDeployment {
+		return s.createServiceBindingSmokeTask(ctx, resolved)
+	}
 	row := s.pool.QueryRow(ctx, `
 		insert into app_tasks (
 			account_id, app_id, deployment_id, kind, command, command_shell,

@@ -474,7 +474,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
-	case CodeApplicationStandardVersionStale, CodeApplicationStandardsPending, CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
+	case CodeApplicationStandardVersionStale, CodeApplicationStandardsPending, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
 	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity

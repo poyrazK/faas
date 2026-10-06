@@ -3554,8 +3554,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
+	checkedRollback := false
+	if rollbacks, ok := h.store.(state.CheckedRollbackStore); ok {
+		operation, err := rollbacks.CheckedRollbackForTarget(ctx, dep.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("imaged: read checked rollback: %w", err)
+		}
+		checkedRollback = err == nil && operation.Status == "preparing"
+	}
+
 	var promoteErr error
-	if dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
+	if !checkedRollback && dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
 		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
 		if stale || verifyErr != nil {
 			code := api.CodeSourceRefStale
@@ -3571,7 +3580,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			return nil
 		}
 	}
-	if dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview {
+	if !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview) {
 		promoteErr = h.store.MarkGitDrivenDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
