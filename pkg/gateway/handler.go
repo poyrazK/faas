@@ -5744,12 +5744,10 @@ haveApp:
 		return
 	}
 	if api.MustLimitsFor(app.Plan).DebugTelemetryEnabled {
-		if err := h.recordRequestIDJournal(r.Context(), app, rid, start); err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
-				api.CodeCapacity, "Request correlation is temporarily unavailable",
-				"the platform could not durably record this request ID; retry shortly"))
-			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
-			return
+		// ADR-634: the request-ID journal is a debugging index; a write it
+		// could not make (or queue) never stops the request.
+		if err := h.recordRequestIDJournal(r.Context(), app, rid, start); err != nil && h.log != nil {
+			h.log.Debug("gateway: request ID journal not recorded", "app_id", app.ID, "err", err)
 		}
 	}
 	if app.SecurityQuarantined {

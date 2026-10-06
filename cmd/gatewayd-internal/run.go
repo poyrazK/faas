@@ -2920,7 +2920,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if journalDialErr != nil {
 		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
 	}
-	handler.WithRequestIDJournalWriter(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
+	// ADR-634: the handler only enqueues; a bounded writer pool talks to apid,
+	// so a slow journal never delays or fails a customer request.
+	journalQueue := gateway.NewRequestIDJournalQueue(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
 		if journalClient == nil {
 			return errors.New("request ID journal apid client unavailable")
 		}
@@ -2938,7 +2940,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return errors.New("apid did not record the request ID journal entry")
 		}
 		return nil
-	})
+	}, deps.metrics, log)
+	go journalQueue.Run(ctx)
+	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {
 		defer func() {
 			if err := journalClient.Close(); err != nil {

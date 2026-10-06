@@ -479,7 +479,9 @@ func TestHandlerObservePersistsGuestEvidence(t *testing.T) {
 	}
 }
 
-func TestHandlerJournalsPublicRequestIDBeforeProxyAndFailsClosed(t *testing.T) {
+// ADR-634 (production-us hunt #4, H4-69): a journal write failure is counted
+// but never stops the request; it used to answer 503 before guest work.
+func TestHandlerJournalsPublicRequestIDAndNeverFailsTheRequest(t *testing.T) {
 	accountID, appID := uuid.NewString(), uuid.NewString()
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 	spanID := "00f067aa0ba902b7"
@@ -520,12 +522,6 @@ func TestHandlerJournalsPublicRequestIDBeforeProxyAndFailsClosed(t *testing.T) {
 
 			if !journaled {
 				t.Fatal("debugger-enabled request did not attempt journal write")
-			}
-			if failJournal {
-				if w.Code != http.StatusServiceUnavailable || proxied || backend.pickCalls.Load() != 0 {
-					t.Fatalf("write failure status=%d proxied=%t picks=%d; must stop before guest work", w.Code, proxied, backend.pickCalls.Load())
-				}
-				return
 			}
 			if w.Code != http.StatusNoContent || !proxied {
 				t.Fatalf("status=%d proxied=%t, want successful proxy", w.Code, proxied)
