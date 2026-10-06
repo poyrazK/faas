@@ -41,7 +41,12 @@ func TestPgWorkflowAutomationHealthAggregatesRunsAndSteps(t *testing.T) {
 		if stepStatus != "" {
 			parent := "batch"
 			index := 0
-			if err := store.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "batch[0]", Status: stepStatus, ForEachParent: &parent, ForEachIndex: &index}}); err != nil {
+			count := 1
+			steps := []*state.WorkflowStep{
+				{StepName: parent, Status: state.WorkflowStepStatusFailed, ForEachCount: &count},
+				{StepName: api.WorkflowForEachItemName(parent, index), Status: stepStatus, ForEachParent: &parent, ForEachIndex: &index},
+			}
+			if err := store.CreateWorkflowSteps(ctx, run.ID, steps); err != nil {
 				t.Fatal(err)
 			}
 		}
