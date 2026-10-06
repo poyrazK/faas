@@ -254,10 +254,32 @@ func runBundleCreate(args []string) error {
 	if err := releasebundle.Write(args[0], manifest); err != nil {
 		return err
 	}
-	if err := releasebundle.Verify(args[0], manifest); err != nil {
+	// Build has just hashed every file. Re-hashing them all with Verify
+	// doubled the hashing work of bundle-create (about half of the ~95 s it
+	// took on the CD runner) and could only catch a concurrent rewrite
+	// between the two passes. Confirm instead that the manifest on
+	// disk is exactly the one built. The control plane verifies the installed
+	// bundle again before anything in it runs, and deployctl deploy verifies
+	// it before activation.
+	written, err := releasebundle.Read(args[0])
+	if err != nil {
 		return err
 	}
-	fmt.Printf("release bundle %s verified (%d files)\n", manifest.ReleaseID, len(manifest.Files))
+	if err := releasebundle.ValidateManifest(written); err != nil {
+		return err
+	}
+	want, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	got, err := json.Marshal(written)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(want, got) {
+		return fmt.Errorf("written release manifest does not match the built manifest")
+	}
+	fmt.Printf("release bundle %s created (%d files)\n", manifest.ReleaseID, len(manifest.Files))
 	return nil
 }
 
