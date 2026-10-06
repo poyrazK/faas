@@ -2,7 +2,6 @@ package builderd
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -70,8 +69,7 @@ func TestReadBuildEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256([]byte(sidecar))
-	wantIdentity := "sha256:" + hex.EncodeToString(sum[:])
+	wantIdentity := builderIdentity("sha256:"+strings.Repeat("a", sha256.Size*2), "faas-base-layout-v3")
 	wantBaseDigest := "sha256:" + strings.Repeat("a", sha256.Size*2)
 	if got.BuilderBaseIdentity != wantIdentity || got.BaseDigest != wantBaseDigest || got.TargetPlatform != "linux/amd64" {
 		t.Fatalf("environment=%+v want identity=%q base=%q platform=linux/amd64", got, wantIdentity, wantBaseDigest)
@@ -127,5 +125,44 @@ func TestReadBuildEnvironmentRejectsUntrustedSidecar(t *testing.T) {
 				t.Fatal("unsafe builder identity was accepted")
 			}
 		})
+	}
+}
+
+// A release that only rebuilds guest-init must keep the build cache warm; a
+// new builder image or base layout must not.
+func TestReadBuildEnvironmentIdentityIgnoresGuestInitBinary(t *testing.T) {
+	config := "sha256:" + strings.Repeat("a", sha256.Size*2)
+	identity := func(t *testing.T, sidecar string) string {
+		t.Helper()
+		base := filepath.Join(t.TempDir(), "runner-builder-amd64.ext4")
+		if err := os.WriteFile(base, []byte("ext4"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(base+".digest", []byte(sidecar), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		env, err := readBuildEnvironment(base, "", "linux/amd64")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return env.BuilderBaseIdentity
+	}
+	release1 := identity(t, config+"\nfaas-base-layout-v3\nguest-init-sha256="+strings.Repeat("b", 64)+"\nsource-ref=ghcr.io/x/builder-base@"+config)
+	for name, sidecar := range map[string]string{
+		"new guest-init": config + "\nfaas-base-layout-v3\nguest-init-sha256=" + strings.Repeat("c", 64) + "\nsource-ref=ghcr.io/x/builder-base@" + config,
+		"legacy sidecar": config + "\nfaas-base-layout-v3",
+		"no source ref":  config + "\nfaas-base-layout-v3\nguest-init-sha256=" + strings.Repeat("d", 64),
+	} {
+		if got := identity(t, sidecar); got != release1 {
+			t.Errorf("%s: identity %s, want %s (cache must survive a guest-init-only release)", name, got, release1)
+		}
+	}
+	for name, sidecar := range map[string]string{
+		"new builder image": "sha256:" + strings.Repeat("e", 64) + "\nfaas-base-layout-v3",
+		"new base layout":   config + "\nfaas-base-layout-v4",
+	} {
+		if got := identity(t, sidecar); got == release1 {
+			t.Errorf("%s: identity unchanged, want a cold cache", name)
+		}
 	}
 }
