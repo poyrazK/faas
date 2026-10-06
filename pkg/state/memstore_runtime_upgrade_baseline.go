@@ -53,6 +53,10 @@ func (m *MemStore) runtimeUpgradeBaselineLocked(candidate Deployment, servingID 
 }
 
 func (m *MemStore) runtimeUpgradeBaselineForTargetLocked(candidate Deployment, servingID string, pin runtimeUpgradeTarget) (RuntimeUpgradeBaseline, error) {
+	return m.runtimeUpgradeBaselineForTargetModeLocked(candidate, servingID, pin, false)
+}
+
+func (m *MemStore) runtimeUpgradeBaselineForTargetModeLocked(candidate Deployment, servingID string, pin runtimeUpgradeTarget, activated bool) (RuntimeUpgradeBaseline, error) {
 	serving, ok := m.deployments[servingID]
 	app := m.apps[candidate.AppID]
 	if !ok || !pin.matches(candidate) {
@@ -61,6 +65,20 @@ func (m *MemStore) runtimeUpgradeBaselineForTargetLocked(candidate Deployment, s
 	deployments := make([]Deployment, 0, len(m.deployments))
 	for _, dep := range m.deployments {
 		deployments = append(deployments, dep)
+	}
+	if activated {
+		if !runtimeUpgradeActivatedDeployments(deployments, candidate, serving) {
+			return RuntimeUpgradeBaseline{}, ErrConflict
+		}
+		candidate.TrafficPercent, serving.TrafficPercent = 0, 100
+		for i := range deployments {
+			if deployments[i].ID == candidate.ID {
+				deployments[i].TrafficPercent = 0
+			}
+			if deployments[i].ID == serving.ID {
+				deployments[i].TrafficPercent = 100
+			}
+		}
 	}
 	if !runtimeUpgradeServingStable(deployments, candidate, serving) {
 		return RuntimeUpgradeBaseline{}, ErrConflict

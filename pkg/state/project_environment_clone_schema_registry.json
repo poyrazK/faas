@@ -6757,6 +6757,17 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "runtime_upgrade_gateway_receipts",
+    "columns": [
+      "app_id",
+      "cutover_at",
+      "deployment_id",
+      "gateway_session_id",
+      "installed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "runtime_upgrade_operations",
     "columns": [
       "account_id",

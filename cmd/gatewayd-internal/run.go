@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"log/slog"
 	"net"
@@ -70,6 +71,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
+	"github.com/onebox-faas/faas/pkg/gatewayconfirmation"
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
@@ -1395,6 +1397,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
+	runtimeGatewaySession := ""
+	if osGetenv("FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION") == "1" {
+		runtimeGatewaySession = uuid.NewString()
+		log.Info("gatewayd: private runtime routing confirmation enabled", "gateway_session_id", runtimeGatewaySession)
+	}
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
 			releaseID, deploymentID, err := pgStore.ResolveProjectRelease(ctx, appID, scope, requestedID)
@@ -1558,7 +1565,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// picker's weight table. The adapter translates
 		// state.Deployment to gateway.DeploymentWeightsRow
 		// (the gateway package does not import pkg/state).
-		WithStore(weightsStoreAdapter{store: pgStore}).
+		WithStore(weightsStoreAdapter{store: pgStore, sessionID: runtimeGatewaySession}).
 		// Issue #72 / ADR-125: mirror dispatch and debugger replay
 		// consume the same enabled-rule cache. The adapter keeps the
 		// gateway package independent of pkg/state while allowing replay
@@ -1610,6 +1617,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go watchInvalidations(ctx, pool, backend, log, invalidationsReady, osGetenv("FAAS_NODE_NAME"))
 	deps.invalidationsReady = invalidationsReady
 
+	if runtimeGatewaySession != "" {
+		go gatewayconfirmation.Run(ctx, pgStore, backend, log)
+	}
 	deps.backend = backend
 	// Flush per-instance last_request_at to schedd so its idle reaper sees
 	// gateway traffic (spec §4.1, ADR-018) — without this a busy app parks once
@@ -4214,7 +4224,8 @@ func installComputeMetricsRoute(mux *http.ServeMux, boxRole role.Role, control h
 // pkg/state import already exists. It translates state.Deployment to
 // gateway.DeploymentWeightsRow (only fields the picker reads).
 type weightsStoreAdapter struct {
-	store liveDeploymentStore
+	store     liveDeploymentStore
+	sessionID string
 }
 
 func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) ([]gateway.DeploymentWeightsRow, error) {
@@ -4230,6 +4241,18 @@ func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) 
 		})
 	}
 	return out, nil
+}
+
+// DeploymentWeightsInstalled is called only after the picker swaps weights.
+func (a weightsStoreAdapter) DeploymentWeightsInstalled(ctx context.Context, appID string, rows []gateway.DeploymentWeightsRow) error {
+	if a.sessionID == "" {
+		return nil
+	}
+	store, ok := a.store.(state.RuntimeUpgradeGatewayStore)
+	if !ok {
+		return state.ErrInvalidArgument
+	}
+	return gatewayconfirmation.RecordInstalled(ctx, store, a.sessionID, appID, rows)
 }
 
 // mirrorRulesStoreAdapter adapts the state-layer mirror rule projection to

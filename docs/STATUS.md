@@ -7,6 +7,19 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Local runtime update work — 2026-10-06
+
+[ADR-607](adr/607-private-runtime-routing-and-health-verification.md) adds private
+gateway cache-installation receipts, bounded lost-notification/restart repair,
+and account-scoped post-cutover verification using fresh candidate-only health
+and request evidence. Activation history stays immutable. Gateway confirmation
+is disabled by default; customer Apply remains unavailable. The reviewed gateway
+session set is explicit, and verification is a current observation rather than
+a durable completion or drain receipt. Authoritative gateway membership,
+durable verification orchestration, predecessor drain/cleanup and dedicated
+native Linux amd64 KVM acceptance remain open. Local fixtures provide no native
+runtime qualification; the dedicated acceptance project is suspended.
+
 ## Current snapshot — 2026-09-16
 
 - **Product surface:** the `gregale` CLI, API, GitHub integration, dashboard,

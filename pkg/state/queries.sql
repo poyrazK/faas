@@ -14185,3 +14185,34 @@ SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(acco
 
 -- name: GetRuntimeUpgradeOperationForDeployment :one
 SELECT * FROM runtime_upgrade_operations WHERE deployment_id=$1;
+
+-- adr: 607
+-- name: ReadRuntimeUpgradeGatewayDeployments :many
+SELECT id::text,app_id::text,scope,status,traffic_percent,traffic_percent_explicit,deleted_at
+FROM deployments WHERE app_id=$1 AND status='live' ORDER BY id;
+
+-- name: PruneRuntimeUpgradeGatewayReceipts :exec
+DELETE FROM runtime_upgrade_gateway_receipts WHERE app_id=$1 AND installed_at < clock_timestamp()-make_interval(secs => sqlc.arg(max_age_seconds)::integer);
+
+-- name: RecordRuntimeUpgradeGatewayReceipt :execrows
+INSERT INTO runtime_upgrade_gateway_receipts(app_id,gateway_session_id,deployment_id,cutover_at)
+SELECT sqlc.arg(app_id)::uuid,sqlc.arg(gateway_session_id)::uuid,deployment_id,cutover_at
+FROM deployment_runtime_upgrade_cutovers WHERE deployment_id=sqlc.arg(deployment_id)::uuid
+AND (EXISTS(SELECT 1 FROM runtime_upgrade_gateway_receipts WHERE app_id=sqlc.arg(app_id)::uuid AND gateway_session_id=sqlc.arg(gateway_session_id)::uuid)
+ OR (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE app_id=sqlc.arg(app_id)::uuid)<sqlc.arg(session_limit)::integer)
+ON CONFLICT(app_id,gateway_session_id) DO UPDATE SET deployment_id=EXCLUDED.deployment_id,cutover_at=EXCLUDED.cutover_at,installed_at=clock_timestamp();
+
+-- name: ReadRuntimeUpgradeGatewayReceipts :many
+SELECT * FROM runtime_upgrade_gateway_receipts WHERE app_id=$1;
+
+-- name: ListRuntimeUpgradeGatewayRepairApps :many
+SELECT DISTINCT d.app_id::text FROM deployment_runtime_upgrade_cutovers c JOIN deployments d ON d.id=c.deployment_id
+WHERE c.cutover_at>=clock_timestamp()-make_interval(secs => sqlc.arg(max_age_seconds)::integer)
+AND d.app_id::text>sqlc.arg(after_app_id)::text AND d.status='live' AND d.traffic_percent=100 AND d.deleted_at IS NULL
+ORDER BY d.app_id::text LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: PruneExpiredRuntimeUpgradeGatewayReceipts :execrows
+DELETE FROM runtime_upgrade_gateway_receipts WHERE (app_id,gateway_session_id) IN (
+ SELECT app_id,gateway_session_id FROM runtime_upgrade_gateway_receipts
+ WHERE installed_at<clock_timestamp()-make_interval(secs => sqlc.arg(max_age_seconds)::integer)
+ ORDER BY installed_at LIMIT sqlc.arg(page_limit)::integer);

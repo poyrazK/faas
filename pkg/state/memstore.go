@@ -137,6 +137,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	runtimeUpgradeGatewayReceipts map[string]runtimeUpgradeGatewayReceipt
+
 	runtimeReleases              map[string]RuntimeRelease
 	runtimeReleaseQualifications map[string]RuntimeReleaseQualification
 	runtimeArtifactBindings      map[string]string

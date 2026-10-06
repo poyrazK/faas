@@ -19170,6 +19170,20 @@ CREATE TABLE public.runtime_snapshots (
 
 
 --
+-- Name: runtime_upgrade_gateway_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_receipts (
+    app_id uuid NOT NULL,
+    gateway_session_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    cutover_at timestamp with time zone NOT NULL,
+    installed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_gateway_receipts_check CHECK ((installed_at >= cutover_at))
+);
+
+
+--
 -- Name: runtime_upgrade_operations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24905,6 +24919,14 @@ ALTER TABLE ONLY public.runtime_snapshots
 
 
 --
+-- Name: runtime_upgrade_gateway_receipts runtime_upgrade_gateway_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
+    ADD CONSTRAINT runtime_upgrade_gateway_receipts_pkey PRIMARY KEY (app_id, gateway_session_id);
+
+
+--
 -- Name: runtime_upgrade_operations runtime_upgrade_operations_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30206,6 +30228,13 @@ CREATE INDEX runtime_releases_catalog_idx ON public.runtime_releases USING btree
 --
 
 CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USING btree (state, created_at DESC, id DESC);
+
+
+--
+-- Name: runtime_upgrade_gateway_receipts_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_gateway_receipts_expiry ON public.runtime_upgrade_gateway_receipts USING btree (installed_at);
 
 
 --
@@ -39518,6 +39547,22 @@ ALTER TABLE ONLY public.runtime_instance_config_proofs
 
 ALTER TABLE ONLY public.runtime_release_qualifications
     ADD CONSTRAINT runtime_release_qualifications_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_gateway_receipts runtime_upgrade_gateway_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
+    ADD CONSTRAINT runtime_upgrade_gateway_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_receipts runtime_upgrade_gateway_receipts_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
+    ADD CONSTRAINT runtime_upgrade_gateway_receipts_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_cutovers(deployment_id) ON DELETE CASCADE;
 
 
 --

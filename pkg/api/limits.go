@@ -8737,6 +8737,15 @@ const (
 	RuntimeQualificationJSONMaxDepth   = 16
 )
 
+// Private runtime gateway confirmation bounds (ADR-607).
+const (
+	RuntimeUpgradeGatewayReceiptMaxAge  = time.Minute
+	RuntimeUpgradeGatewayRepairInterval = 15 * time.Second
+	RuntimeUpgradeGatewayRepairTimeout  = 10 * time.Second
+	RuntimeUpgradeGatewayRepairBatch    = 32
+	RuntimeUpgradeGatewaySessionLimit   = 64
+)
+
 // Private runtime qualification collector budgets (ADR-601).
 const (
 	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)

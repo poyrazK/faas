@@ -91,3 +91,17 @@ func operationStatus(op state.RuntimeUpgradeOperation) Status {
 		Phase: op.Phase, Blocker: op.Blocker, CreatedAt: op.CreatedAt, DeadlineAt: op.DeadlineAt, FinishedAt: op.FinishedAt,
 		CanCancel: op.Phase == state.RuntimeUpgradeReserved || op.Phase == state.RuntimeUpgradePrepared || op.Phase == state.RuntimeUpgradeWaiting}
 }
+
+// Verify leaves activation history intact and evaluates current scoped evidence
+// for an explicitly reviewed gateway process set. It registers no HTTP route.
+func (c Controls) Verify(ctx context.Context, accountID, id string, sessions []string) (state.RuntimeUpgradeVerification, error) {
+	store, ok := c.Store.(state.RuntimeUpgradeVerificationStore)
+	if !ok {
+		return state.RuntimeUpgradeVerification{}, state.ErrInvalidArgument
+	}
+	result, err := store.VerifyRuntimeUpgrade(ctx, accountID, id, sessions)
+	if err != nil {
+		return state.RuntimeUpgradeVerification{}, fmt.Errorf("verify runtime upgrade: %w", err)
+	}
+	return result, nil
+}

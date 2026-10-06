@@ -5995,6 +5995,14 @@ type RuntimeSnapshot struct {
 	Profile             string
 }
 
+type RuntimeUpgradeGatewayReceipt struct {
+	AppID            pgtype.UUID
+	GatewaySessionID pgtype.UUID
+	DeploymentID     pgtype.UUID
+	CutoverAt        pgtype.Timestamptz
+	InstalledAt      pgtype.Timestamptz
+}
+
 type RuntimeUpgradeOperation struct {
 	ID                        pgtype.UUID
 	AccountID                 pgtype.UUID

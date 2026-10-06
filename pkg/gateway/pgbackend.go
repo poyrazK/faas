@@ -302,6 +302,8 @@ type PGBackend struct {
 	// row's traffic_percent change invalidates the in-memory cache
 	// without restarting the edge. Tests inject a fake Store.
 	store deploymentWeightsStore
+	// ADR-607: serialize read/install/receipt; striped locks bound memory.
+	weightsRefresh [64]weightsRefreshLock
 
 	// certIssuer (ADR-100 / issue #879) is the per-surface
 	// cert-remint seam. nil = feature dark; the notify subscriber
@@ -2037,13 +2039,17 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 		// cmd/gatewayd-internal so this branch is a test seam.
 		return nil
 	}
+	unlock, err := b.lockWeightsRefresh(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	rows, err := b.store.LiveDeployments(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("gatewayd-internal: refresh deployment weights app=%s: %w", appID, err)
 	}
 	next := buildDeploymentWeights(rows)
 	b.tgtMu.Lock()
-	defer b.tgtMu.Unlock()
 	picker, ok := b.appsPicker[appID]
 	if !ok {
 		picker = &appPicker{sets: map[string]*targetSet{}}
@@ -2067,6 +2073,12 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 	for id, set := range picker.sets {
 		if len(set.entries) == 0 && !pickerHasDeploymentByID(next, id) {
 			delete(picker.sets, id)
+		}
+	}
+	b.tgtMu.Unlock()
+	if observer, ok := b.store.(InstalledWeightsObserver); ok {
+		if err := observer.DeploymentWeightsInstalled(ctx, appID, rows); err != nil {
+			return fmt.Errorf("confirm installed deployment weights: %w", err)
 		}
 	}
 	return nil

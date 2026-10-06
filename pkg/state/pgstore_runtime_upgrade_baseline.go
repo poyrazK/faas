@@ -84,6 +84,10 @@ func (s *PgStore) ValidateDeploymentRuntimeUpgradeBaseline(ctx context.Context, 
 }
 
 func runtimeUpgradeBaselineDB(ctx context.Context, db sqlc.DBTX, deploymentID, servingID string) (RuntimeUpgradeBaseline, error) {
+	return runtimeUpgradeBaselineDBMode(ctx, db, deploymentID, servingID, false)
+}
+
+func runtimeUpgradeBaselineDBMode(ctx context.Context, db sqlc.DBTX, deploymentID, servingID string, activated bool) (RuntimeUpgradeBaseline, error) {
 	q := sqlc.New()
 	rows, err := q.ReadRuntimeUpgradeBaselineDeployments(ctx, db, sqlc.ReadRuntimeUpgradeBaselineDeploymentsParams{
 		DeploymentID: mustPgUUID(deploymentID), ServingDeploymentID: mustPgUUID(servingID),
@@ -104,6 +108,20 @@ func runtimeUpgradeBaselineDB(ctx context.Context, db sqlc.DBTX, deploymentID, s
 		}
 		if dep.ID == servingID {
 			serving = dep
+		}
+	}
+	if activated {
+		if !runtimeUpgradeActivatedDeployments(deployments, candidate, serving) {
+			return RuntimeUpgradeBaseline{}, ErrConflict
+		}
+		candidate.TrafficPercent, serving.TrafficPercent = 0, 100
+		for i := range deployments {
+			if deployments[i].ID == candidate.ID {
+				deployments[i].TrafficPercent = 0
+			}
+			if deployments[i].ID == serving.ID {
+				deployments[i].TrafficPercent = 100
+			}
 		}
 	}
 	if candidate.ID == "" || serving.ID == "" || !runtimeUpgradeServingStable(deployments, candidate, serving) {

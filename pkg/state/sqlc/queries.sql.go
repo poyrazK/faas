@@ -26894,6 +26894,39 @@ func (q *Queries) ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRunt
 	return items, nil
 }
 
+const listRuntimeUpgradeGatewayRepairApps = `-- name: ListRuntimeUpgradeGatewayRepairApps :many
+SELECT DISTINCT d.app_id::text FROM deployment_runtime_upgrade_cutovers c JOIN deployments d ON d.id=c.deployment_id
+WHERE c.cutover_at>=clock_timestamp()-make_interval(secs => $1::integer)
+AND d.app_id::text>$2::text AND d.status='live' AND d.traffic_percent=100 AND d.deleted_at IS NULL
+ORDER BY d.app_id::text LIMIT $3::integer
+`
+
+type ListRuntimeUpgradeGatewayRepairAppsParams struct {
+	MaxAgeSeconds int32
+	AfterAppID    string
+	PageLimit     int32
+}
+
+func (q *Queries) ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayRepairAppsParams) ([]string, error) {
+	rows, err := db.Query(ctx, listRuntimeUpgradeGatewayRepairApps, arg.MaxAgeSeconds, arg.AfterAppID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var d_app_id string
+		if err := rows.Scan(&d_app_id); err != nil {
+			return nil, err
+		}
+		items = append(items, d_app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServiceRecoveryApps = `-- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN accounts ac ON ac.id = a.account_id
 LEFT JOIN service_recovery r ON r.app_id = a.id
@@ -41057,6 +41090,26 @@ func (q *Queries) PruneExpiredAppHealthHistory(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const pruneExpiredRuntimeUpgradeGatewayReceipts = `-- name: PruneExpiredRuntimeUpgradeGatewayReceipts :execrows
+DELETE FROM runtime_upgrade_gateway_receipts WHERE (app_id,gateway_session_id) IN (
+ SELECT app_id,gateway_session_id FROM runtime_upgrade_gateway_receipts
+ WHERE installed_at<clock_timestamp()-make_interval(secs => $1::integer)
+ ORDER BY installed_at LIMIT $2::integer)
+`
+
+type PruneExpiredRuntimeUpgradeGatewayReceiptsParams struct {
+	MaxAgeSeconds int32
+	PageLimit     int32
+}
+
+func (q *Queries) PruneExpiredRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneExpiredRuntimeUpgradeGatewayReceiptsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneExpiredRuntimeUpgradeGatewayReceipts, arg.MaxAgeSeconds, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneRouteCheckHistory = `-- name: PruneRouteCheckHistory :exec
 DELETE FROM route_check_history WHERE id IN (
     SELECT id FROM (
@@ -41116,6 +41169,20 @@ type PruneRouteMonitorIncidentsParams struct {
 
 func (q *Queries) PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error {
 	_, err := db.Exec(ctx, pruneRouteMonitorIncidents, arg.AppID, arg.MaxEntries, arg.MaxBytes)
+	return err
+}
+
+const pruneRuntimeUpgradeGatewayReceipts = `-- name: PruneRuntimeUpgradeGatewayReceipts :exec
+DELETE FROM runtime_upgrade_gateway_receipts WHERE app_id=$1 AND installed_at < clock_timestamp()-make_interval(secs => $2::integer)
+`
+
+type PruneRuntimeUpgradeGatewayReceiptsParams struct {
+	AppID         pgtype.UUID
+	MaxAgeSeconds int32
+}
+
+func (q *Queries) PruneRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneRuntimeUpgradeGatewayReceiptsParams) error {
+	_, err := db.Exec(ctx, pruneRuntimeUpgradeGatewayReceipts, arg.AppID, arg.MaxAgeSeconds)
 	return err
 }
 
@@ -47326,6 +47393,80 @@ func (q *Queries) ReadRuntimeUpgradeEligibleFailureFallback(ctx context.Context,
 	return id, err
 }
 
+const readRuntimeUpgradeGatewayDeployments = `-- name: ReadRuntimeUpgradeGatewayDeployments :many
+SELECT id::text,app_id::text,scope,status,traffic_percent,traffic_percent_explicit,deleted_at
+FROM deployments WHERE app_id=$1 AND status='live' ORDER BY id
+`
+
+type ReadRuntimeUpgradeGatewayDeploymentsRow struct {
+	ID                     string
+	AppID                  string
+	Scope                  string
+	Status                 string
+	TrafficPercent         int32
+	TrafficPercentExplicit bool
+	DeletedAt              pgtype.Timestamptz
+}
+
+// adr: 607
+func (q *Queries) ReadRuntimeUpgradeGatewayDeployments(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ReadRuntimeUpgradeGatewayDeploymentsRow, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeGatewayDeployments, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeUpgradeGatewayDeploymentsRow{}
+	for rows.Next() {
+		var i ReadRuntimeUpgradeGatewayDeploymentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Scope,
+			&i.Status,
+			&i.TrafficPercent,
+			&i.TrafficPercentExplicit,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradeGatewayReceipts = `-- name: ReadRuntimeUpgradeGatewayReceipts :many
+SELECT app_id, gateway_session_id, deployment_id, cutover_at, installed_at FROM runtime_upgrade_gateway_receipts WHERE app_id=$1
+`
+
+func (q *Queries) ReadRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, appID pgtype.UUID) ([]RuntimeUpgradeGatewayReceipt, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeGatewayReceipts, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradeGatewayReceipt{}
+	for rows.Next() {
+		var i RuntimeUpgradeGatewayReceipt
+		if err := rows.Scan(
+			&i.AppID,
+			&i.GatewaySessionID,
+			&i.DeploymentID,
+			&i.CutoverAt,
+			&i.InstalledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readRuntimeUpgradeOperationCandidate = `-- name: ReadRuntimeUpgradeOperationCandidate :one
 SELECT d.status,COALESCE(d.source_path,'')::text AS source_path,COALESCE(d.source_sha256,'')::text AS source_sha256,
  COALESCE(d.rootfs_key,'')::text AS rootfs_key,COALESCE(d.rootfs_path,'')::text AS rootfs_path,d.image_digest,d.traffic_percent,d.traffic_percent_explicit,d.canary_total_steps,d.rollout_state,d.environment_workload_runtime,
@@ -49474,6 +49615,35 @@ func (q *Queries) RecordRuntimeReleaseQualification(ctx context.Context, db DBTX
 		&i.RevocationSha256,
 	)
 	return i, err
+}
+
+const recordRuntimeUpgradeGatewayReceipt = `-- name: RecordRuntimeUpgradeGatewayReceipt :execrows
+INSERT INTO runtime_upgrade_gateway_receipts(app_id,gateway_session_id,deployment_id,cutover_at)
+SELECT $1::uuid,$2::uuid,deployment_id,cutover_at
+FROM deployment_runtime_upgrade_cutovers WHERE deployment_id=$3::uuid
+AND (EXISTS(SELECT 1 FROM runtime_upgrade_gateway_receipts WHERE app_id=$1::uuid AND gateway_session_id=$2::uuid)
+ OR (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE app_id=$1::uuid)<$4::integer)
+ON CONFLICT(app_id,gateway_session_id) DO UPDATE SET deployment_id=EXCLUDED.deployment_id,cutover_at=EXCLUDED.cutover_at,installed_at=clock_timestamp()
+`
+
+type RecordRuntimeUpgradeGatewayReceiptParams struct {
+	AppID            pgtype.UUID
+	GatewaySessionID pgtype.UUID
+	DeploymentID     pgtype.UUID
+	SessionLimit     int32
+}
+
+func (q *Queries) RecordRuntimeUpgradeGatewayReceipt(ctx context.Context, db DBTX, arg RecordRuntimeUpgradeGatewayReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRuntimeUpgradeGatewayReceipt,
+		arg.AppID,
+		arg.GatewaySessionID,
+		arg.DeploymentID,
+		arg.SessionLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordTriggerConsumerHealth = `-- name: RecordTriggerConsumerHealth :exec

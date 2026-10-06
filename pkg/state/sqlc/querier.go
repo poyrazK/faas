@@ -1363,6 +1363,7 @@ type Querier interface {
 	ListRouteHealthHistory(ctx context.Context, db DBTX, arg ListRouteHealthHistoryParams) ([][]byte, error)
 	ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg ListRouteMonitorIncidentsParams) ([][]byte, error)
 	ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRuntimeReleasesParams) ([]RuntimeRelease, error)
+	ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayRepairAppsParams) ([]string, error)
 	ListServiceRecoveryApps(ctx context.Context, db DBTX, arg ListServiceRecoveryAppsParams) ([]pgtype.UUID, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)
@@ -1928,9 +1929,11 @@ type Querier interface {
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
 	PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error
 	PruneExpiredAppHealthHistory(ctx context.Context, db DBTX, arg PruneExpiredAppHealthHistoryParams) (int64, error)
+	PruneExpiredRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneExpiredRuntimeUpgradeGatewayReceiptsParams) (int64, error)
 	PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error
 	PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error
 	PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error
+	PruneRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneRuntimeUpgradeGatewayReceiptsParams) error
 	PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error)
 	PruneWorkflowScheduleCursors(ctx context.Context, db DBTX, arg PruneWorkflowScheduleCursorsParams) error
 	PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPatchTriggerParams) (Trigger, error)
@@ -2128,6 +2131,9 @@ type Querier interface {
 	// ADR-603: private apid cutover, original environment -> app -> deployment order.
 	ReadRuntimeUpgradeCutoverOwner(ctx context.Context, db DBTX, id pgtype.UUID) (ReadRuntimeUpgradeCutoverOwnerRow, error)
 	ReadRuntimeUpgradeEligibleFailureFallback(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeEligibleFailureFallbackParams) (pgtype.UUID, error)
+	// adr: 607
+	ReadRuntimeUpgradeGatewayDeployments(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ReadRuntimeUpgradeGatewayDeploymentsRow, error)
+	ReadRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, appID pgtype.UUID) ([]RuntimeUpgradeGatewayReceipt, error)
 	ReadRuntimeUpgradeOperationCandidate(ctx context.Context, db DBTX, id pgtype.UUID) (ReadRuntimeUpgradeOperationCandidateRow, error)
 	// Saved route intent is read with the same app ownership filters (ADR-448).
 	ReadSavedRouteRequirements(ctx context.Context, db DBTX, arg ReadSavedRouteRequirementsParams) ([]byte, error)
@@ -2241,6 +2247,7 @@ type Querier interface {
 	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
 	// Operator-owned native runtime qualification (ADR-599), never customer intent.
 	RecordRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RecordRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error)
+	RecordRuntimeUpgradeGatewayReceipt(ctx context.Context, db DBTX, arg RecordRuntimeUpgradeGatewayReceiptParams) (int64, error)
 	RecordTriggerConsumerHealth(ctx context.Context, db DBTX, arg RecordTriggerConsumerHealthParams) error
 	// INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
 	// companion table. The handler calls this AFTER a successful
