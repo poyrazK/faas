@@ -1758,6 +1758,9 @@ type CustomerOperation struct {
 	Record              []byte
 	ExpiresAt           pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+	CurrentExecutionID  pgtype.UUID
+	ExecutionKind       string
+	ExecutionGeneration int32
 }
 
 type CustomerOperationCodePin struct {
@@ -1800,10 +1803,14 @@ type CustomerOperationEvent struct {
 }
 
 type CustomerOperationExecution struct {
-	OperationID  pgtype.UUID
-	Generation   int32
-	InvocationID pgtype.UUID
-	CreatedAt    pgtype.Timestamptz
+	OperationID   pgtype.UUID
+	Generation    int32
+	InvocationID  pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	WorkflowRunID pgtype.UUID
+	JobRunID      pgtype.UUID
+	ExecutionID   pgtype.UUID
+	ExecutionKind string
 }
 
 type CustomerOperationIdempotency struct {
@@ -3605,6 +3612,7 @@ type JobRun struct {
 	FailureRules                []byte
 	OccurrenceID                pgtype.UUID
 	StartDeadlineAt             pgtype.Timestamptz
+	OperationID                 pgtype.UUID
 	ExclusiveOperationID        pgtype.UUID
 	ExclusiveGeneration         pgtype.Int8
 }
@@ -7043,6 +7051,7 @@ type WorkflowRun struct {
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
 	LeaseUntil               pgtype.Timestamptz
+	OperationID              pgtype.UUID
 	ResumeCount              int32
 	CancelledAt              pgtype.Timestamptz
 	PlatformTenantID         pgtype.UUID
