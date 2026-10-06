@@ -192,3 +192,26 @@ func TestDeployInvalidManifestFailsBeforeDetection(t *testing.T) {
 		t.Errorf("deploy printed a heuristic shape before the manifest error:\n%s", stdout.String())
 	}
 }
+
+// production-us hunt #4 (H4-36): the single-request debug leaves accept the
+// app as --app as well as the leading positional.
+func TestDebugRequestRefArgsAcceptAppFlag(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want []string
+		ok   bool
+	}{
+		{args: []string{"api", "req-1"}, want: []string{"api", "req-1"}, ok: true},
+		{args: []string{"req-1", "--app", "api"}, want: []string{"api", "req-1"}, ok: true},
+		{args: []string{"--app=api", "req-1"}, want: []string{"api", "req-1"}, ok: true},
+		{args: []string{"api", "req-1", "--app", "api"}, want: []string{"api", "req-1"}, ok: true},
+		{args: []string{"web", "req-1", "--app", "api"}, ok: false},
+		{args: []string{"req-1"}, ok: false},
+		{args: []string{"req-1", "--app"}, ok: false},
+	} {
+		got, ok := debugRequestRefArgs(tc.args)
+		if ok != tc.ok || (tc.ok && !slices.Equal(got, tc.want)) {
+			t.Errorf("debugRequestRefArgs(%q) = (%q, %v), want (%q, %v)", tc.args, got, ok, tc.want, tc.ok)
+		}
+	}
+}

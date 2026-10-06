@@ -4729,6 +4729,10 @@ func cmdDomains(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
+		var slugs map[string]string
+		if !jsonOutput {
+			slugs = appSlugsByID(client)
+		}
 		out, err := client.ListDomains(context.Background())
 		if err != nil {
 			return printErr("Request failed", err)
@@ -4748,7 +4752,7 @@ func cmdDomains(args []string) int {
 			if d.Environment != "" {
 				marker += " [" + d.Environment + "]"
 			}
-			fmt.Printf("%-40s %-12s %s%s\n", d.Domain, verified, d.AppID, marker)
+			_, _ = fmt.Fprintf(osStdout, "%-40s %-12s %s%s\n", d.Domain, verified, appLabel(slugs, d.AppID), marker)
 		}
 		return 0
 	case subAdd:
@@ -5487,6 +5491,10 @@ func cmdUsageList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
+	}
 	rows, err := client.GetUsage(context.Background(), *month)
 	if err != nil {
 		return printErr("Request failed", err)
@@ -5504,7 +5512,9 @@ func cmdUsageList(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No usage recorded for %s.\n", *month)
 		return 0
 	}
-	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours (included GB-h) · egress\n")
+	// The included allowance is account-wide, so it is printed once rather
+	// than repeated on every app row (production-us hunt #4).
+	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · egress\n")
 	for _, u := range rows {
 		// ADR-046: tx_bytes (HTTP response bytes, gateway-side) and
 		// net_tx_bytes (root-side vethHost interface bytes, includes
@@ -5514,15 +5524,16 @@ func cmdUsageList(args []string) int {
 		// counter is non-zero — most months most apps are 0 and the
 		// trailing column is noise.
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
-			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f (included %d) · egress %.3f GB (tx %.2f / net %.2f)\n",
-				u.AppID, u.Requests, float64(u.MBSeconds)/3.6e6, u.IncludedGBHours,
+			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · egress %.3f GB (tx %.2f / net %.2f)\n",
+				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6,
 				u.TotalEgressGB(),
 				float64(u.TXBytes)/(1024*1024*1024),
 				float64(u.NetTxBytes)/(1024*1024*1024))
 			continue
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f (included %d)\n", u.AppID, u.Requests, float64(u.MBSeconds)/3.6e6, u.IncludedGBHours)
+		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
 	}
+	_, _ = fmt.Fprintf(osStdout, "Plan allowance: included %d GB-h this month, shared by every app\n", rows[0].IncludedGBHours)
 	return 0
 }
 
