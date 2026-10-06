@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 609
+// adr: 621
 func TestS3ProtectedEventWriteReadback(t *testing.T) {
 	for _, policy := range []string{"explicit-days", "explicit-years", "default", "off-fixed"} {
 		for _, bad := range []string{"", "missing-event", "duplicate-event", "wrong-status", "wrong-duration", "both-durations", "missing-date", "short-date", "unknown-header"} {
@@ -101,7 +101,7 @@ func TestS3ProtectedEventWriteReadback(t *testing.T) {
 	}
 }
 
-// adr: 609
+// adr: 621
 func TestS3ProtectedEventWritePresign(t *testing.T) {
 	for _, policy := range []string{"days", "years", "default", "off-fixed"} {
 		t.Run(policy, func(t *testing.T) {

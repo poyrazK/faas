@@ -1924,8 +1924,8 @@ gregale bucket object-lock clear-default <app> <bucket-id>
 ```
 
 [ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
-management described below. [ADR-606](adr/606-durable-object-write-protection.md) adds the write snapshots
-described below. [ADR-607](adr/607-protection-aware-object-lifecycle.md) adds protected
+management described below. [ADR-618](adr/618-durable-object-write-protection.md) adds the write snapshots
+described below. [ADR-619](adr/619-protection-aware-object-lifecycle.md) adds protected
 lifecycle deletion. ADRs 594 and 595 add per-version and creation event holds; governance bypass remains open.
 The gateway accepts separately enrolled event-hold creation headers and rejects governance-bypass headers. Object
 Lock enrollment remains explicit per backend; deployment defaults stay disabled.
@@ -2065,7 +2065,7 @@ stronger retained evidence or operator resolution. Do not recreate a physical
 bucket name while its cleanup journal is active.
 
 
-### Protection on newly created S3 versions (ADR-606)
+### Protection on newly created S3 versions (ADR-618)
 
 Protected multipart parts share the configured aggregate upload spool and
 free-space floor with PUTs. Gregale verifies the incoming part, computes MD5
@@ -2126,7 +2126,7 @@ recovery continues with new ingress or enrollment disabled. Missing historical
 classification, malformed history or unknown effects retain custody and capacity.
 Only verified all-version inventory changes the quota baseline after deletion.
 
-See [ADR-607](adr/607-protection-aware-object-lifecycle.md).
+See [ADR-619](adr/619-protection-aware-object-lifecycle.md).
 
 ### Event holds on new versions
 
@@ -2149,4 +2149,4 @@ Upload routes inherit defaults. Parts and completion keep initiation policy.
 Accepted receipts preserve these snapshots through disabled enrollment, changing
 defaults, restarts and missing acknowledgments. Settlement requires exact-version
 readback with the correct status, duration, private receipt and retention bound;
-recovery does not resend the body. See [ADR-609](adr/609-event-protection-for-new-object-versions.md).
+recovery does not resend the body. See [ADR-621](adr/621-event-protection-for-new-object-versions.md).
