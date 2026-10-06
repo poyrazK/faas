@@ -26,7 +26,9 @@ permissions:
 jobs:
   acceptance:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # This lane compiles state, apid, gateway and sched on a cold runner.
+    # Bound compiler memory and leave time for the complete acceptance suite.
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -41,14 +43,31 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
+      GOMAXPROCS: "2"
+      GOGC: "50"
+      GOMEMLIMIT: 2GiB
       DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
       CUSTOMER_MIGRATION_DATABASE_URL: postgres://customer_migration:customer_migration_test@127.0.0.1:5432/customer_platform?sslmode=disable
       CUSTOMER_DATABASE_URL: postgres://customer_app:customer_test@127.0.0.1:5432/customer_platform?sslmode=disable
     steps:
       - uses: actions/checkout@v7
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore customer-platform Go build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-customer-platform-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-customer-platform-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-customer-platform-${{ runner.os }}-
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -64,3 +83,11 @@ jobs:
             -c "ALTER DEFAULT PRIVILEGES FOR ROLE customer_migration IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO customer_app;"
       - name: Test two-customer lifecycle and PostgreSQL isolation
         run: make test-customer-platform
+      - name: Save customer-platform Go build cache
+        if: always() && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-customer-platform-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
