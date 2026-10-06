@@ -1,3 +1,4 @@
+// adr: 487 — workflow admission respects concurrency caps; this test pins durable action-slot queueing and resume.
 package sched
 
 import (

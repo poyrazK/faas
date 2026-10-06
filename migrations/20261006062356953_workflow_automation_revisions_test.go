@@ -29,7 +29,7 @@ INSERT INTO workflow_automation_definitions VALUES(
 );`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261004211200000_workflow_automation_revisions.sql")
+	raw, err := migrations.FS.ReadFile("20261006062356953_workflow_automation_revisions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -750,7 +750,7 @@ fanout handle retries and filters. Without an automation binding, Gregale
 delivers the verified JSON to the configured app path and includes the verified
 event metadata in `x-gregale-webhook-*` request headers.
 
-Apply migration `20261005090200000_generic_inbound_webhook.sql` before creating
+Apply migration `20261006062359228_generic_inbound_webhook.sql` before creating
 generic endpoints. The down migration is forward-only; remove generic endpoints
 before rolling back application binaries.
 

@@ -3,6 +3,8 @@ ALTER TABLE workflow_runs
     ADD COLUMN IF NOT EXISTS create_idempotency_key text,
     ADD COLUMN IF NOT EXISTS create_request_fingerprint bytea;
 
+-- +goose StatementBegin
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -23,6 +25,8 @@ BEGIN
     END IF;
 END;
 $$;
+-- +goose StatementEnd
+-- +goose StatementEnd
 
 CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_create_idempotency_idx
     ON workflow_runs (app_id, workflow_name, create_idempotency_key)

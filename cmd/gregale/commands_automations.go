@@ -432,12 +432,12 @@ func cmdAutomationsPublish(args []string) int {
 }
 
 func readAutomationDefinition(path string) (api.WorkflowSpec, bool) {
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if err != nil {
 		printErr("Could not read automation definition", err)
 		return api.WorkflowSpec{}, false
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, api.AutomationDefinitionMaxBytes+1))
 	if err != nil {
 		printErr("Could not read automation definition", err)
@@ -455,7 +455,7 @@ func readAutomationDefinition(path string) (api.WorkflowSpec, bool) {
 		return api.WorkflowSpec{}, false
 	}
 	var extra yaml.Node
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
 			err = errors.New("definition must contain exactly one YAML document")
 		}
@@ -535,11 +535,11 @@ func readAutomationMockAttempts(path string) (map[string][]api.AutomationSimulat
 }
 
 func readSimulationJSONFile(path string, maxBytes int64) (json.RawMessage, error) {
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil {
 		return nil, err

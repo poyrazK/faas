@@ -17,7 +17,7 @@ func TestWorkflowRunCreateIdempotencyMigration(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261005120000000_workflow_run_create_idempotency.sql")
+	raw, err := migrations.FS.ReadFile("20261006062401159_workflow_run_create_idempotency.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

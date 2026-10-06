@@ -58,9 +58,7 @@ func (s *PgStore) GetWorkflowAutomationHealth(ctx context.Context, appID, name s
 }
 
 func (s *PgStore) loadAutomationHealthRecentRuns(ctx context.Context, q *sqlc.Queries, params sqlc.GetWorkflowAutomationHealthSummaryParams, health *WorkflowAutomationHealth) error {
-	rows, err := q.ListWorkflowAutomationHealthRecentRuns(ctx, s.pool, sqlc.ListWorkflowAutomationHealthRecentRunsParams{
-		AppID: params.AppID, WorkflowName: params.WorkflowName, CreatedAfter: params.CreatedAfter, CreatedBefore: params.CreatedBefore,
-	})
+	rows, err := q.ListWorkflowAutomationHealthRecentRuns(ctx, s.pool, sqlc.ListWorkflowAutomationHealthRecentRunsParams(params))
 	if err != nil {
 		return fmt.Errorf("pgstore: load automation health recent runs: %w", err)
 	}

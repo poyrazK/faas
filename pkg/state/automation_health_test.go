@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func TestMemStoreWorkflowAutomationHealth(t *testing.T) {
 		t.Fatalf("failed-step ranking = %+v", health.FailedSteps)
 	}
 
-	if _, err := store.GetWorkflowAutomationHealth(ctx, appID, "invoice", after, before.Add(api.WorkflowAutomationHealthMaxRange)); err != ErrWorkflowInvalidCreatedRange {
+	if _, err := store.GetWorkflowAutomationHealth(ctx, appID, "invoice", after, before.Add(api.WorkflowAutomationHealthMaxRange)); !errors.Is(err, ErrWorkflowInvalidCreatedRange) {
 		t.Fatalf("overlong window error = %v", err)
 	}
 }

@@ -16,7 +16,7 @@ func TestWorkflowRunConcurrencyIndexMigration(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261005110000000_workflow_run_concurrency_idx.sql")
+	raw, err := migrations.FS.ReadFile("20261006062359999_workflow_run_concurrency_idx.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
