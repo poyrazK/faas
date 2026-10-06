@@ -70,6 +70,33 @@ func TestComputePolicyRecoveryReplayAndClassIsolation(t *testing.T) {
 	}
 }
 
+func TestComputePolicyReplayIgnoresStalePrivateClassSnapshot(t *testing.T) {
+	service, store, provider, original, now := policyFixture(t)
+	resize := resizeRequest(original)
+	resize.TargetClass = ClassBurstable
+	if _, err := service.Resize(t.Context(), resize); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Reconcile(t.Context(), original.AccountID, original.ID); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := service.ChangeComputePolicy(t.Context(), ChangeComputePolicyRequest{
+		AccountID: original.AccountID, DatabaseID: original.ID, RequestID: uuid.NewString(), ScaleToZero: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A duplicate request may have read the catalogue before the class resize.
+	// Its private class snapshot is not part of the customer's policy request.
+	duplicate := operation
+	duplicate.SourceSpec, duplicate.TargetClass, duplicate.Generation = original.Spec, original.Spec.Class, original.DesiredGeneration+1
+	calls := provider.calls
+	replayed, err := store.ReserveResize(t.Context(), original, duplicate, *now)
+	if err != nil || replayed.Generation != operation.Generation || replayed.SourceSpec != operation.SourceSpec || replayed.TargetSpec() != operation.TargetSpec() || provider.calls != calls {
+		t.Fatal("stale snapshot changed policy request identity", replayed, err)
+	}
+}
+
 func TestComputePolicyBidirectionalAndCapabilityAdmission(t *testing.T) {
 	service, store, provider, database, now := policyFixture(t)
 	for _, target := range []bool{false, true, true} {

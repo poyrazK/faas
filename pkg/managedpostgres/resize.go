@@ -235,6 +235,11 @@ func computeChangeSupported(c Capabilities, operation ResizeOperation) bool {
 }
 
 func sameComputeChangeRequest(a, b ResizeOperation) bool {
-	return a.DatabaseID == b.DatabaseID && a.PolicyChange == b.PolicyChange && a.TargetClass == b.TargetClass &&
-		(!a.PolicyChange || a.TargetScaleToZero == b.TargetScaleToZero)
+	if a.DatabaseID != b.DatabaseID || a.PolicyChange != b.PolicyChange {
+		return false
+	}
+	if a.PolicyChange {
+		return a.TargetScaleToZero == b.TargetScaleToZero
+	}
+	return a.TargetClass == b.TargetClass
 }
