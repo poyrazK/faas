@@ -87,7 +87,8 @@ type InstanceStatRow struct {
 // NewOpsMetrics and pass the result into every handler that wants to record
 // a counter + latency histogram in the ADR-015 shape.
 type OpsMetrics struct {
-	registry *prometheus.Registry
+	eventDelivery *eventDeliveryMetrics
+	registry      *prometheus.Registry
 	// metricPrefix is the exact prefix used by this registry's metric
 	// names. It can differ from the OTel service name for compatibility
 	// aliases such as gatewayd-internal → gatewayd.
@@ -2084,6 +2085,7 @@ func (m *OpsMetrics) HubDropped(channel string) {
 // The returned registry is what serves the /metrics endpoint.
 func NewOpsMetrics(prefix string) *OpsMetrics {
 	reg := prometheus.NewRegistry()
+	eventDelivery := newEventDeliveryMetrics(prefix)
 	queue := newQueueMetrics(prefix)
 	delayedTasks := newDelayedTaskMetrics(prefix)
 	ops := prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -3825,6 +3827,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
+		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
@@ -5225,6 +5228,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// before the first sampler tick.
 	throttleSecondsTotal.WithLabelValues(topAppOtherAccountLabel, topAppOtherLabel)
 	return &OpsMetrics{
+		eventDelivery:                              eventDelivery,
 		registry:                                   reg,
 		metricPrefix:                               prefix,
 		ops:                                        ops,

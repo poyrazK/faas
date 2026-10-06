@@ -1924,11 +1924,12 @@ gregale bucket object-lock clear-default <app> <bucket-id>
 ```
 
 [ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
-management described below. Per-write protection snapshots, event-hold changes,
-governance bypass and protected lifecycle deletion remain separate work. The
-gateway rejects unsupported per-object write protection/bypass headers. New
-Object Lock enrollment remains disabled for release. Local tests qualify the
-implementation; production provider activation remains deployment work.
+management described below. [ADR-618](adr/618-durable-object-write-protection.md) adds the write snapshots
+described below. [ADR-619](adr/619-protection-aware-object-lifecycle.md) adds protected
+lifecycle deletion. ADRs 594 and 595 add per-version and creation event holds; governance bypass remains open.
+The gateway accepts separately enrolled event-hold creation headers and rejects governance-bypass headers. Object
+Lock enrollment remains explicit per backend; deployment defaults stay disabled.
+Local tests qualify the implementation; production activation remains deployment work.
 
 ## Per-version retention and legal holds
 
@@ -1946,7 +1947,8 @@ Control routes use `?key=<url-encoded-key>&version_id=<public-version>`:
 The prefix is `/v1/apps/{slug}/buckets/{bucket}`. GET reads native policy and
 requires the bucket read grant. PUT requires the write grant, storage manage
 scope, existing MFA policy, ingress and explicit backend Object Lock enrollment.
-The capability response advertises `version_retention` and `version_legal_hold`.
+The capability response advertises `version_retention`, `version_legal_hold` and
+separately enrolled `version_event_hold`.
 Inspection and accepted recovery remain available when enrollment is disabled.
 Receipt inspection also works while backend placement is unavailable.
 
@@ -1960,9 +1962,38 @@ Legal hold uses `{"id":"<operation-id>","legal_hold":{"status":"ON"}}`
 or `OFF`. An explicit empty `retention:{}` clears expired/no fixed retention.
 Active retention cannot be shortened or cleared, and active COMPLIANCE cannot
 be downgraded. GOVERNANCE does not imply bypass. Dates round upward to native
-millisecond precision. Event-hold changes, governance bypass and fixed retention
-changes over existing event holds are rejected. Event-hold observations remain
-readable. Nulls, duplicate keys, unknown fields and bodies over 16 KiB fail.
+millisecond precision. Governance bypass and fixed retention changes over
+existing event holds remain rejected. Event-hold observations remain readable. Nulls, duplicate keys, unknown fields and bodies over 16 KiB fail.
+
+Event holds use the same retention endpoint on backends enrolled with
+`object_lock.event_holds:true`. ON requires one duration. OFF omits duration;
+the provider fixes the final retention date from the active hold. For example:
+
+```json
+{"id":"<enable-operation-id>","retention":{"mode":"COMPLIANCE","event_hold":"ON","event_hold_duration":{"days":30}}}
+{"id":"<release-operation-id>","retention":{"mode":"COMPLIANCE","event_hold":"OFF"}}
+```
+
+Supply `retain_until_date` to preserve a requested minimum. Changing a duration
+while ON requires readback that preserves the observed retention date. Releasing
+without an explicit date requires a fresh ON observation. The worker persists
+that policy before dispatch and verifies the provider's final date after release.
+Uncertainty retains the operation and bucket fence; recovery never repeats PUT.
+The private snapshot does not appear in customer receipts. Event-hold protection
+for new writes and bucket default snapshots remains outside the fixed write
+protection contract below.
+
+CLI examples:
+
+```bash
+gregale bucket protection event-hold APP BUCKET KEY VERSION COMPLIANCE ON days 30 OPERATION_ID
+gregale bucket protection event-hold APP BUCKET KEY VERSION COMPLIANCE OFF OPERATION_ID
+```
+
+Use `years N` instead of `days N`, and add `--retain-until RFC3339_DATE`
+before the operation ID for a minimum date. Standard S3 retention XML uses
+`EventHold` and `EventHoldDuration` with the same rules. Legal holds remain
+independent.
 
 PUT returns 202 after durable acceptance. The receipt transitions through
 `waiting`/`applying` to `ready` or `failed`; it contains the public version and
@@ -2024,11 +2055,98 @@ Bucket deletion must return a native 204 acknowledgment or a parsed
 `NoSuchBucket`; an empty listing cannot authorize a cascade. Inactive accounts
 cannot reserve more buckets, and restoration closes at the existing grace
 expiry. Account metadata is removed only after confirmed native cleanup. New
-Object Lock enrollment remains disabled pending per-write protection snapshots
-and qualified protected lifecycle deletion.
+Object Lock writes and protected lifecycle deletion are locally qualified by
+ADRs 592 and 593. Backend enrollment and production activation remain explicit.
 
 Key custody does not revoke native URLs issued before tracking, out-of-band
 writers or provider lifecycle rules. Missing proof stays pending with its
 reservation. These cases, and uncertain ordinary mutable deletions, still need
 stronger retained evidence or operator resolution. Do not recreate a physical
 bucket name while its cleanup journal is active.
+
+
+### Protection on newly created S3 versions (ADR-618)
+
+Protected multipart parts share the configured aggregate upload spool and
+free-space floor with PUTs. Gregale verifies the incoming part, computes MD5
+from its bounded spool and signs the native Content-MD5 header. Insufficient
+staging capacity returns `SlowDown` before a native part write.
+
+Owned Object Lock buckets capture the verified fixed or event retention default and any
+explicit write protection when admitting each upload or copy. Standard signed
+`x-amz-object-lock-mode`, `x-amz-object-lock-retain-until-date` and
+`x-amz-object-lock-legal-hold` headers are supported on PUT, CopyObject and
+CreateMultipartUpload. Fixed retention requires mode and date together; legal holds use `ON` or
+`OFF`. Explicit dates must be in the future. Separately enrolled event holds are
+described below. Governance bypass is unsupported, and parts/completion cannot replace initiation protection.
+
+Signed object-upload and multipart-creation APIs accept an optional selection:
+
+```json
+{
+  "protection": {
+    "retention": {
+      "mode": "COMPLIANCE",
+      "retain_until_date": "2027-01-01T00:00:00Z"
+    },
+    "legal_hold": {"status": "ON"}
+  }
+}
+```
+
+Omitting `retention` inherits the admitted bucket default. Application upload
+routes inherit those defaults as well. Multipart sessions retain their accepted
+policy through completion. Gregale waits for exact native version readback to
+verify protection before settling a protected write. Unknown outcomes keep the
+receipt and capacity reservation; recovery reads the original private proof and
+never repeats a PUT or copy. Accepted recovery continues after enrollment is
+disabled. Private policy snapshots are bounded to 16 KiB and remain internal.
+
+Object Lock enrollment remains explicit per backend. Local S3 protocol tests
+qualify this implementation without requiring a real provider environment.
+
+## Protection-aware lifecycle expiration
+
+Permanent lifecycle deletion in a durably protected bucket checks fresh native
+Object Lock configuration, Enabled versioning and the exact data version's
+retention/legal hold. Active fixed retention, legal holds and event holds defer
+the target with deletion receipt `last_error_code: object_protected`. Scans continue
+past held versions, within their existing action limit, and reconsider them on
+a later hourly scan. Unknown policy fails closed. Lifecycle never removes a hold
+or sends a governance bypass. Current expiration can create a delete marker while
+preserving locked data; marker cleanup does not read per-version data protection.
+
+A native DELETE acknowledgment cannot complete a protected permanent deletion.
+Gregale verifies complete bounded exact-key version history before clearing its
+fence. Recovery settles a missing immutable target without another DELETE, and
+rechecks a still-present target's policy before retrying. Qualified existing null
+versions require permanent Object Lock and fresh Enabled versioning; ordinary
+mutable deletions keep their conservative recovery behavior. Accepted receipt
+recovery continues with new ingress or enrollment disabled. Missing historical
+classification, malformed history or unknown effects retain custody and capacity.
+Only verified all-version inventory changes the quota baseline after deletion.
+
+See [ADR-619](adr/619-protection-aware-object-lifecycle.md).
+
+### Event holds on new versions
+
+Separately enrolled backends advertise `write_event_hold`. Owned signed-upload
+and multipart initiation requests can select an event hold through `protection`:
+
+```json
+{"protection":{"retention":{"mode":"COMPLIANCE","event_hold":"ON","event_hold_duration":{"days":30}}}}
+```
+
+An optional `retain_until_date` is a minimum. ON requires one days or years
+duration. OFF on a new version requires a fixed date and no duration; use the
+existing-version retention API to release an active hold without a fixed date.
+The signed S3 PUT, copy and multipart initiation paths accept the standard
+`x-amz-object-lock-event-hold` and duration-days/duration-years headers.
+
+Omitted retention inherits the admitted bucket default, including default event
+holds and fixed minima. An explicit retention selection overrides that default.
+Upload routes inherit defaults. Parts and completion keep initiation policy.
+Accepted receipts preserve these snapshots through disabled enrollment, changing
+defaults, restarts and missing acknowledgments. Settlement requires exact-version
+readback with the correct status, duration, private receipt and retention bound;
+recovery does not resend the body. See [ADR-621](adr/621-event-protection-for-new-object-versions.md).

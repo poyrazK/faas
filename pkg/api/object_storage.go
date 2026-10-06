@@ -29,18 +29,19 @@ type ObjectBucketList struct {
 }
 
 type ObjectSignRequest struct {
-	Method             string            `json:"method"`
-	Key                string            `json:"key"`
-	ExpiresIn          int64             `json:"expires_in,omitempty"`
-	SizeBytes          *int64            `json:"size_bytes,omitempty"`
-	ContentType        string            `json:"content_type,omitempty"`
-	CacheControl       string            `json:"cache_control,omitempty"`
-	ContentDisposition string            `json:"content_disposition,omitempty"`
-	ContentEncoding    string            `json:"content_encoding,omitempty"`
-	ContentLanguage    string            `json:"content_language,omitempty"`
-	Metadata           map[string]string `json:"metadata,omitempty"`
-	Tags               map[string]string `json:"tags,omitempty"`
-	Encryption         *ObjectEncryption `json:"encryption,omitempty"`
+	Method             string                 `json:"method"`
+	Key                string                 `json:"key"`
+	ExpiresIn          int64                  `json:"expires_in,omitempty"`
+	SizeBytes          *int64                 `json:"size_bytes,omitempty"`
+	ContentType        string                 `json:"content_type,omitempty"`
+	CacheControl       string                 `json:"cache_control,omitempty"`
+	ContentDisposition string                 `json:"content_disposition,omitempty"`
+	ContentEncoding    string                 `json:"content_encoding,omitempty"`
+	ContentLanguage    string                 `json:"content_language,omitempty"`
+	Metadata           map[string]string      `json:"metadata,omitempty"`
+	Tags               map[string]string      `json:"tags,omitempty"`
+	Encryption         *ObjectEncryption      `json:"encryption,omitempty"`
+	Protection         *ObjectWriteProtection `json:"protection,omitempty"`
 }
 
 type ObjectSignedRequest struct {
@@ -75,10 +76,11 @@ type ObjectMultipartUploadList struct {
 }
 
 type CreateObjectMultipartUploadRequest struct {
-	Key         string            `json:"key"`
-	SizeBytes   int64             `json:"size_bytes"`
-	ContentType string            `json:"content_type,omitempty"`
-	Encryption  *ObjectEncryption `json:"encryption,omitempty"`
+	Key         string                 `json:"key"`
+	SizeBytes   int64                  `json:"size_bytes"`
+	ContentType string                 `json:"content_type,omitempty"`
+	Encryption  *ObjectEncryption      `json:"encryption,omitempty"`
+	Protection  *ObjectWriteProtection `json:"protection,omitempty"`
 }
 
 type ObjectMultipartPartSignRequest struct {

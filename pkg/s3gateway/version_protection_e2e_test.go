@@ -1,6 +1,7 @@
 package s3gateway
 
 import (
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -45,7 +46,7 @@ func TestVersionProtectionSDKE2E(t *testing.T) {
 					offset.Add(int64(20 * time.Minute))
 					return
 				}
-				_, err := pool.Exec(t.Context(), `UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END;UPDATE object_bucket_object_lock SET retry_at=clock_timestamp();UPDATE object_version_protection SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_until IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END`)
+				_, err := pool.Exec(t.Context(), `UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END;UPDATE object_bucket_object_lock SET retry_at=clock_timestamp();UPDATE object_version_protection SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_until IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END WHERE state IN ('waiting','applying')`)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -102,7 +103,28 @@ func TestVersionProtectionSDKE2E(t *testing.T) {
 					if q.Has("legal-hold") {
 						hold, err = objectstorage.DecodeObjectVersionLegalHold(body)
 					} else if q.Has("retention") {
-						retention, err = objectstorage.DecodeObjectVersionRetention(body)
+						next, e := objectstorage.DecodeObjectVersionRetention(body)
+						err = e
+						if next.EventHold == "ON" {
+							days := int32(0)
+							if next.EventHoldDuration.Days != nil {
+								days = *next.EventHoldDuration.Days
+							} else {
+								days = *next.EventHoldDuration.Years * 365
+							}
+							date := time.Now().UTC().AddDate(0, 0, int(days)).Truncate(time.Millisecond)
+							if retention.RetainUntilDate != nil && date.Before(*retention.RetainUntilDate) {
+								date = *retention.RetainUntilDate
+							}
+							if next.RetainUntilDate != nil && date.Before(*next.RetainUntilDate) {
+								date = *next.RetainUntilDate
+							}
+							next.RetainUntilDate = &date
+						} else if next.EventHold == "OFF" {
+							next.RetainUntilDate = retention.RetainUntilDate
+							next.EventHoldDuration = retention.EventHoldDuration
+						}
+						retention = next
 					} else {
 						t.Error("unexpected mutation", r.URL)
 					}
@@ -124,7 +146,15 @@ func TestVersionProtectionSDKE2E(t *testing.T) {
 					if retention.Empty() {
 						_, _ = io.WriteString(w, `<Retention/>`)
 					} else {
-						_, _ = fmt.Fprintf(w, "<Retention><Mode>%s</Mode><RetainUntilDate>%s</RetainUntilDate></Retention>", retention.Mode, retention.RetainUntilDate.Format(time.RFC3339Nano))
+						out := versionRetentionXML{Mode: retention.Mode, EventHold: retention.EventHold, RetainUntilDate: retention.RetainUntilDate.Format(time.RFC3339Nano)}
+						if retention.EventHoldDuration != nil {
+							out.Duration = &bucketObjectLockPeriodXML{Days: retention.EventHoldDuration.Days, Years: retention.EventHoldDuration.Years}
+						}
+						body, e := xml.Marshal(out)
+						if e != nil {
+							t.Error(e)
+						}
+						_, _ = w.Write(body)
 					}
 					return
 				}
@@ -132,7 +162,7 @@ func TestVersionProtectionSDKE2E(t *testing.T) {
 			}), objectstorage.Config{}, 0)
 			configure := func(enabled bool) {
 				policy := f.handler.registry.Accounting
-				r, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "local"}, Backends: []objectstorage.BackendConfig{{ID: "local", Driver: "s3", Region: "us-east-1", Namespace: "integration", Endpoint: f.nativeEndpoint, AllowHTTP: true, PathStyle: true, S3Region: "us-east-1", AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET", ObjectLock: objectstorage.ObjectLockConfig{Enabled: enabled}}}}, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
+				r, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "local"}, Backends: []objectstorage.BackendConfig{{ID: "local", Driver: "s3", Region: "us-east-1", Namespace: "integration", Endpoint: f.nativeEndpoint, AllowHTTP: true, PathStyle: true, S3Region: "us-east-1", AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET", ObjectLock: objectstorage.ObjectLockConfig{Enabled: enabled, EventHolds: enabled}}}}, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -255,6 +285,41 @@ func TestVersionProtectionSDKE2E(t *testing.T) {
 			if err != nil || puts.Load() != count+1 {
 				t.Fatal("positive rejection retained fence or repeated PUT", err, puts.Load())
 			}
+			// Event holds use the same signed S3 retention subresource.
+			_, err = client.PutObjectRetention(t.Context(), &awss3.PutObjectRetentionInput{Bucket: aws.String("assets"), Key: aws.String(key), VersionId: aws.String(version), Retention: &types.ObjectLockRetention{Mode: types.ObjectLockRetentionModeCompliance, EventHold: types.ObjectLockEventHoldOn, EventHoldDuration: &types.EventHoldDuration{Days: aws.Int32(30)}, RetainUntilDate: &until}})
+			if err != nil {
+				t.Fatal("enable event hold", err)
+			}
+			eventRead, err := client.GetObjectRetention(t.Context(), &awss3.GetObjectRetentionInput{Bucket: aws.String("assets"), Key: aws.String(key), VersionId: aws.String(version)})
+			if err != nil || eventRead.Retention.EventHold != types.ObjectLockEventHoldOn {
+				t.Fatal("event read", eventRead, err)
+			}
+			mu.Lock()
+			lost = true
+			mu.Unlock()
+			eventPuts := puts.Load()
+			_, err = client.PutObjectRetention(t.Context(), &awss3.PutObjectRetentionInput{Bucket: aws.String("assets"), Key: aws.String(key), VersionId: aws.String(version), Retention: &types.ObjectLockRetention{Mode: types.ObjectLockRetentionModeCompliance, EventHold: types.ObjectLockEventHoldOff}})
+			assertSDKErrorCode(t, err, "ServiceUnavailable")
+			advance()
+			configure(false)
+			if pool != nil {
+				ops = state.NewPgStore(pool)
+				f.handler.store = state.NewPgStore(pool)
+			}
+			rows, err = ops.DueObjectVersionProtection(t.Context(), api.ObjectVersionProtectionBatch)
+			if err != nil || len(rows) != 1 || rows[0].EventHoldBaseline == nil {
+				t.Fatal("event release lost baseline", rows, err)
+			}
+			svc.Store = ops
+			done, err = svc.Reconcile(t.Context(), f.bucket, rows[0].ID)
+			if err != nil || done.State != "ready" || puts.Load() != eventPuts+1 {
+				t.Fatal("event release redispatched", done, err, puts.Load())
+			}
+			eventRead, err = client.GetObjectRetention(t.Context(), &awss3.GetObjectRetentionInput{Bucket: aws.String("assets"), Key: aws.String(key), VersionId: aws.String(version)})
+			if err != nil || eventRead.Retention.EventHold != types.ObjectLockEventHoldOff || eventRead.Retention.RetainUntilDate == nil || eventRead.Retention.RetainUntilDate.Before(until) {
+				t.Fatal("released event hold", eventRead, err)
+			}
+			configure(true)
 			_, err = client.PutObjectLegalHold(t.Context(), &awss3.PutObjectLegalHoldInput{Bucket: aws.String("assets"), Key: aws.String(key), VersionId: aws.String(uuid.NewString()), LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatusOff}})
 			if !errors.Is(err, nil) {
 				assertSDKErrorCode(t, err, "NoSuchVersion")

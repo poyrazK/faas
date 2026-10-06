@@ -40,3 +40,24 @@ func TestVersionProtectionStrictInput(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// adr: 620
+func TestEventHoldProtectionReleaseDecode(t *testing.T) {
+	body := []byte(`<Retention><Mode>COMPLIANCE</Mode><EventHold>OFF</EventHold></Retention>`)
+	request, err := DecodeObjectVersionRetention(body)
+	if err != nil || request.EventHold != "OFF" || request.RetainUntilDate != nil || request.EventHoldDuration != nil {
+		t.Fatal(request, err)
+	}
+	if _, err = parseObjectRetention(body); err == nil {
+		t.Fatal("provider release without final date was trusted")
+	}
+	for _, invalid := range []string{
+		`<Retention><Mode>COMPLIANCE</Mode><EventHold>OFF</EventHold><EventHoldDuration><Days>1</Days></EventHoldDuration></Retention>`,
+		`<Retention><Mode>COMPLIANCE</Mode><EventHold>OFF</EventHold><EventHold>ON</EventHold></Retention>`,
+		`<Retention><Mode>COMPLIANCE</Mode><EventHold>ON</EventHold><EventHoldDuration><Days>1</Days><Years>1</Years></EventHoldDuration></Retention>`,
+	} {
+		if _, err = DecodeObjectVersionRetention([]byte(invalid)); err == nil {
+			t.Fatal("invalid hold accepted", invalid)
+		}
+	}
+}

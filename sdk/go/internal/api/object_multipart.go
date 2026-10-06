@@ -32,10 +32,11 @@ type ObjectMultipartUploadList struct {
 }
 
 type CreateObjectMultipartUploadRequest struct {
-	Key         string            `json:"key"`
-	SizeBytes   int64             `json:"size_bytes"`
-	ContentType string            `json:"content_type,omitempty"`
-	Encryption  *ObjectEncryption `json:"encryption,omitempty"`
+	Key         string                 `json:"key"`
+	SizeBytes   int64                  `json:"size_bytes"`
+	ContentType string                 `json:"content_type,omitempty"`
+	Encryption  *ObjectEncryption      `json:"encryption,omitempty"`
+	Protection  *ObjectWriteProtection `json:"protection,omitempty"`
 }
 
 type ObjectMultipartPartSignRequest struct {

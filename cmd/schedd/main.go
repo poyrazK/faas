@@ -1644,6 +1644,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pinging when the beat is older than sched.MainLoopBudget.
 	liveness := wire.NewLiveness()
 	loop := sched.NewLoop(pool, engine, log).
+		WithEventRecipientClaims(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED") == "1").
 		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
 		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).

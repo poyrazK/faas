@@ -83,6 +83,74 @@ func TestEventFanoutFailureDoesNotLogRequestData(t *testing.T) {
 	})
 }
 
+type dispatchLogEventRecipientStore struct {
+	*state.MemStore
+	claimed bool
+}
+
+func (s *dispatchLogEventRecipientStore) ClaimDuePublishedEventRecipient(context.Context, time.Time) (*state.PublishedEventRecipientWork, error) {
+	s.claimed = true
+	return nil, fmt.Errorf("Authorization: Bearer %s\r\nforged-entry: %w", dispatchLogSecret, state.ErrConflict)
+}
+
+// ADR-606: independent recipient recovery retains secret-safe traffic logs.
+// ADR-570: storage failures cannot disclose request data through dispatch logs.
+func TestEventRecipientClaimFailureDoesNotLogRequestData(t *testing.T) {
+	store := &dispatchLogEventRecipientStore{MemStore: state.NewMemStore()}
+	var output bytes.Buffer
+	loop := &Loop{engine: &Engine{store: store}, log: slog.New(slog.NewJSONHandler(&output, nil))}
+	loop.runEventRecipientSweep(t.Context())
+	if !store.claimed {
+		t.Fatal("recipient recovery did not reach the failing claim")
+	}
+	assertDispatchLogRedacted(t, output.String(), map[string]string{
+		"sched: claim event recipient failed": "conflict",
+	})
+}
+
+type dispatchLogRecipientProgressStore struct {
+	*state.MemStore
+	claimed     bool
+	finishError error
+	progress    state.PublishedEventRecipientProgress
+}
+
+func (s *dispatchLogRecipientProgressStore) ClaimDuePublishedEventRecipient(context.Context, time.Time) (*state.PublishedEventRecipientWork, error) {
+	if s.claimed {
+		return nil, state.ErrNotFound
+	}
+	s.claimed = true
+	payload, _ := json.Marshal(map[string]string{"time": "Authorization: Bearer " + dispatchLogSecret + "\r\nforged-entry"})
+	return &state.PublishedEventRecipientWork{OutboxID: 1, ClaimToken: "claim", Payload: payload}, nil
+}
+
+func (s *dispatchLogRecipientProgressStore) FinishPublishedEventRecipient(_ context.Context, _ *state.PublishedEventRecipientWork, progress state.PublishedEventRecipientProgress, _ time.Time) error {
+	s.progress = progress
+	return s.finishError
+}
+
+// ADR-606: independent recipient recovery preserves permanent failure evidence.
+// ADR-570: request-derived durable errors are excluded from dispatch logs.
+func TestEventRecipientProgressFailureDoesNotLogRequestData(t *testing.T) {
+	for _, finishFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("finish_fails_%v", finishFails), func(t *testing.T) {
+			store := &dispatchLogRecipientProgressStore{MemStore: state.NewMemStore()}
+			expected := map[string]string{"sched: event recipient routing failed": "internal"}
+			if finishFails {
+				store.finishError = fmt.Errorf("Authorization: Bearer %s\r\nforged-entry: %w", dispatchLogSecret, state.ErrConflict)
+				expected = map[string]string{"sched: finish event recipient failed": "conflict"}
+			}
+			var output bytes.Buffer
+			loop := &Loop{engine: &Engine{store: store}, log: slog.New(slog.NewJSONHandler(&output, nil))}
+			loop.runEventRecipientSweep(t.Context())
+			if store.progress.State != state.PublishedEventRecipientFailed || store.progress.Retryable || !strings.Contains(store.progress.LastError, dispatchLogSecret) {
+				t.Fatalf("recipient recovery lost the original permanent failure: %+v", store.progress)
+			}
+			assertDispatchLogRedacted(t, output.String(), expected)
+		})
+	}
+}
+
 func assertDispatchLogRedacted(t *testing.T, output string, expected map[string]string) {
 	t.Helper()
 	if strings.Contains(output, dispatchLogSecret) || strings.Contains(output, "forged-entry") || strings.Contains(output, "Authorization") {

@@ -122,7 +122,7 @@ func (m *MemStore) CreateScheduledCronInvocationOccurrence(_ context.Context, cr
 		old.CompletedAt = cloneTimePtr(&evaluatedAt)
 		old.QuotaReserved = false
 		old.LastError = "replaced by a newer scheduled occurrence"
-		m.invocations[old.ID] = old
+		m.setInvocationLocked(old.ID, old)
 		m.syncInvocationOccurrenceLocked(old, evaluatedAt)
 		if oldOccurrence, exists := m.scheduleOccurrences[old.OccurrenceID]; exists {
 			oldOccurrence.Reason = "cancelled before dispatch by a newer scheduled occurrence"
@@ -133,7 +133,7 @@ func (m *MemStore) CreateScheduledCronInvocationOccurrence(_ context.Context, cr
 	if status != "queued" {
 		return Invocation{}, cloneScheduleOccurrence(occurrence), false, nil
 	}
-	m.invocations[invocation.ID] = invocation
+	m.setInvocationLocked(invocation.ID, invocation)
 	occurrence.InvocationID = invocation.ID
 	m.scheduleOccurrences[occurrence.ID] = occurrence
 	return invocation, cloneScheduleOccurrence(occurrence), true, nil
@@ -170,7 +170,7 @@ func (m *MemStore) ExpireUnstartedScheduledCronInvocations(_ context.Context, no
 		inv.CompletedAt = cloneTimePtr(&now)
 		inv.QuotaReserved = false
 		inv.LastError = "scheduled occurrence missed its start deadline"
-		m.invocations[id] = inv
+		m.setInvocationLocked(id, inv)
 		m.syncInvocationOccurrenceLocked(inv, now)
 	}
 	return len(ids), nil

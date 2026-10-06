@@ -23,7 +23,7 @@ func TestBucketObjectLockClient(t *testing.T) {
 		calls = append(calls, r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "-capabilities") {
-			_, _ = fmt.Fprint(w, `{"bucket_configuration":true,"default_event_hold":true}`)
+			_, _ = fmt.Fprint(w, `{"bucket_configuration":true,"default_event_hold":true,"version_event_hold":true,"write_event_hold":true}`)
 			return
 		}
 		if r.Method == "PUT" {
@@ -41,7 +41,7 @@ func TestBucketObjectLockClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	caps, err := c.GetObjectBucketObjectLockCapabilities(context.Background(), "demo/x", "bucket/x")
-	if err != nil || !caps.DefaultEventHold {
+	if err != nil || !caps.DefaultEventHold || !caps.VersionEventHold {
 		t.Fatal(caps, err)
 	}
 	j, err := c.PutObjectBucketObjectLock(context.Background(), "demo/x", "bucket/x", cfg)

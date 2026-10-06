@@ -15205,7 +15205,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit, environment_id, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation, occurrence_id, start_deadline_at, failure_rules, work_decision, outcome_code`
+       work_fairness_digest, work_fairness_limit, environment_id, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation, occurrence_id, start_deadline_at, failure_rules, work_decision, outcome_code, replayed_from_invocation_id, replay_root_invocation_id, replay_root_created_at`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15465,21 +15465,21 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 }
 
 func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
-	return s.completeInvocation(ctx, id, 0, result)
+	return s.completeInvocation(ctx, id, 0, nil, result)
 }
 
 func (s *PgStore) CompleteInvocationWithWorkClassification(ctx context.Context, id string, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
-	return s.completeInvocation(ctx, id, 0, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+	return s.completeInvocation(ctx, id, 0, nil, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
 }
 
 func (s *PgStore) CompleteKeyedInvocation(ctx context.Context, id string, attempt int, result json.RawMessage) error {
 	if attempt <= 0 {
 		return ErrNotFound
 	}
-	return s.completeInvocation(ctx, id, attempt, result)
+	return s.completeInvocation(ctx, id, attempt, nil, result)
 }
 
-func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int, result json.RawMessage, classification ...InvocationWorkClassification) error {
+func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int, claim *InvocationClaim, result json.RawMessage, classification ...InvocationWorkClassification) error {
 	// outcome (issue #791) is stamped alongside state so the cron
 	// run-history read never has to infer success from state.
 	//
@@ -15491,6 +15491,11 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		return fmt.Errorf("state: invocations complete begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if claim != nil {
+		if err := lockInvocationAttemptClaim(ctx, tx, id, *claim); err != nil {
+			return err
+		}
+	}
 	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, true); err != nil {
 		return err
 	}
@@ -15508,10 +15513,10 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 			select id, account_id, quota_reserved
 			  from invocations
 			 where id = $1 and state = 'dispatching'
-			   and ((work_policy_name is null and $3 = 0
+			   and ($7::boolean or ((work_policy_name is null and $3 = 0
                  and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id))
              or (attempts=$3 and $3>0 and (work_policy_name is not null
-                 or exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id))))
+                 or exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id)))))
 			 for update
 		)
 		update invocations as invocation
@@ -15526,7 +15531,7 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		       quota_reserved = false
 		  from target
 		 where invocation.id = target.id
-			 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification).Scan(&accountID, &quotaReserved); err != nil {
+			 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification, claim != nil).Scan(&accountID, &quotaReserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -15754,6 +15759,12 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 	// leak a slot.
 	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, true); err != nil {
 		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if failOpts.Claim != nil {
+		if err := lockInvocationAttemptClaim(ctx, tx, id, *failOpts.Claim); err != nil {
+			return err
+		}
 	}
 	var accountID string
 	var newState string
@@ -16373,6 +16384,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var workFairnessDigest []byte
 	var workFairnessLimit *int
 	var environmentID, platformTenantID, queueBindingID *string
+	var replayedFrom, replayRoot *string
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
@@ -16382,11 +16394,17 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
 		&workFairnessDigest, &workFairnessLimit, &environmentID, &platformTenantID, &inv.DeploymentScope, &queueBindingID, &inv.ReplayGeneration, &occurrenceID, &startDeadlineAt,
-		&failureRules, &workDecision, &outcomeCode,
+		&failureRules, &workDecision, &outcomeCode, &replayedFrom, &replayRoot, &inv.ReplayRootCreatedAt,
 	); err != nil {
 		return Invocation{}, err
 	}
 	inv.Source = InvocationSource(source)
+	if replayedFrom != nil {
+		inv.ReplayedFromInvocationID = *replayedFrom
+	}
+	if replayRoot != nil {
+		inv.ReplayRootInvocationID = *replayRoot
+	}
 	if platformTenantID != nil {
 		inv.PlatformTenantID = *platformTenantID
 	}
@@ -19547,6 +19565,9 @@ func (s *PgStore) AppendEvent(ctx context.Context, actor, kind string, subject *
 // path; persisting that time keeps cross-daemon timelines accurate even when
 // the best-effort events worker reaches Postgres later.
 func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error {
+	if subject != nil && customerPublishedEvent(kind, data) && !at.IsZero() {
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, nil, &at)
+	}
 	if at.IsZero() {
 		return s.AppendEvent(ctx, actor, kind, subject, data)
 	}
@@ -19570,6 +19591,9 @@ func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject
 // on events.trace_id is enforced by Postgres on INSERT; a non-hex
 // value surfaces as SQLSTATE 23514 to the caller.
 func (s *PgStore) AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error {
+	if subject != nil && customerPublishedEvent(kind, data) {
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, traceID, nil)
+	}
 	var subj *uuid.UUID
 	if subject != nil {
 		u, err := uuid.Parse(*subject)
@@ -25092,6 +25116,8 @@ func mapErr(err error) error {
 			return err
 		case pgerrcode.CheckViolation:
 			switch pgErr.ConstraintName {
+			case "event_delivery_capacity":
+				return &EventDeliveryCapacityError{Scope: pgErr.Detail}
 			case "checked_rollback_required":
 				return ErrCheckedRollbackRequired
 			case "binding_release_required":
@@ -29877,11 +29903,29 @@ func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocatio
 	if err != nil {
 		return Invocation{}, err
 	}
-	row, err := sqlc.New().RetryProductionQueueDeadLetter(ctx, s.pool, sqlc.RetryProductionQueueDeadLetterParams{ID: id, AccountID: account})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("state: retry queue dead-letter begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationReplayLaneTx(ctx, tx, id, account, pgtype.UUID{}); err != nil {
+		return Invocation{}, err
+	}
+	if err := refreshEventReplayCapacity(ctx, tx, invocationID); err != nil {
+		return Invocation{}, err
+	}
+	row, err := sqlc.New().RetryProductionQueueDeadLetter(ctx, tx, sqlc.RetryProductionQueueDeadLetterParams{ID: id, AccountID: account})
 	if err != nil {
 		return Invocation{}, mapErr(err)
 	}
-	return invocationFromSQLC(row)
+	inv, err := invocationFromSQL(row)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invocation{}, fmt.Errorf("state: retry queue dead-letter commit: %w", err)
+	}
+	return inv, nil
 }
 
 // ListDeadLetterEvents returns the unified, app-scoped DLQ projection. The
@@ -29996,6 +30040,12 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		if parseErr != nil {
 			return time.Time{}, parseErr
 		}
+		if err := lockInvocationReplayLaneTx(ctx, tx, mustPgUUID(ev.SourceID), mustPgUUID(accountID), mustPgUUID(appID)); err != nil {
+			return time.Time{}, mapErr(err)
+		}
+		if err := refreshEventReplayCapacity(ctx, tx, ev.SourceID); err != nil {
+			return time.Time{}, mapErr(err)
+		}
 		n, updateErr := sqlc.New().ReplayProductionDeadLetterInvocation(ctx, tx, sqlc.ReplayProductionDeadLetterInvocationParams{
 			InvocationID: args.EventID, AccountID: args.AccountID, AppID: args.AppID,
 		})
@@ -30053,7 +30103,7 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		return time.Time{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
 	}
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return time.Time{}, ErrNotFound

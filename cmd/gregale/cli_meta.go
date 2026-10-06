@@ -600,6 +600,31 @@ var cliCommands = []cliCommand{
 				{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
 				{Name: "time", Short: "event time (RFC3339; defaults to server time)", Value: "RFC3339"},
 			}},
+			{Name: "backlog", Short: "Discover waiting event recipients and consumer counts", Flags: []cliFlag{
+				{Name: "app", Short: "filter by owned app slug", Value: "APP"},
+				{Name: "subscription-id", Short: "filter by captured recipient identifier", Value: "ID"},
+				{Name: "state", Short: "pending or processing", Value: "STATE"},
+				{Name: "capacity-scope", Short: "consumer, app or account", Value: "SCOPE"},
+				{Name: "min-age", Short: "minimum acceptance age in whole seconds (e.g. 10m)", Value: "DURATION"},
+				{Name: "after", Short: "opaque recipient continuation cursor", Value: "CURSOR"},
+				{Name: "consumers-after", Short: "opaque consumer continuation cursor", Value: "CURSOR"},
+				{Name: "limit", Short: "recipients per page (1..200, default 100)", Value: "N"},
+				{Name: "consumer-limit", Short: "consumers per page (1..200, default 100)", Value: "N"},
+			}},
+			{Name: "inspect", Short: "Inspect event routing, execution and replay recovery", Flags: []cliFlag{
+				{Name: "source", Short: "published event source", Req: true, Value: "SOURCE"},
+				{Name: "id", Short: "published event id", Req: true, Value: "ID"},
+				{Name: "subscription", Short: "list retained handler replays for one captured recipient", Value: "SUB"},
+				{Name: "after", Short: "opaque next_after cursor for recipients or replays", Value: "CURSOR"},
+				{Name: "limit", Short: "max recipients or replays (1..200, default 100)", Value: "N"},
+			}},
+			{Name: "attempts", Short: "Inspect retained handler attempts, including retries and replay", Flags: []cliFlag{
+				{Name: "source", Short: "published event source", Req: true, Value: "SOURCE"},
+				{Name: "id", Short: "published event id", Req: true, Value: "ID"},
+				{Name: "subscription", Short: "captured recipient identifier", Req: true, Value: "SUB"},
+				{Name: "after", Short: "opaque next_after attempt cursor", Value: "CURSOR"},
+				{Name: "limit", Short: "max attempts (1..200, default 100)", Value: "N"},
+			}},
 			{Name: "subscriptions", Short: "List subscriptions reconciled from the app manifest", Positionals: []string{"<app>"}},
 			{Name: "deliveries", Short: "Inspect event deliveries, replays, and pre-invocation fanout failures", Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "event-source", Short: "narrow event filter to one published source; requires --event-id", Value: "SOURCE"},
@@ -2147,7 +2172,10 @@ var cliCommands = []cliCommand{
 		Short:   "Per-account invocation ledger (invocations list|get|wait <id>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List invocations"},
-			{Name: "get", Short: "Show one invocation"},
+			{Name: "get", Short: "Show or recover one invocation", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "replay", Short: "re-issue failed unkeyed work"},
+				{Name: "replay-keyed", Short: "recover failed keyed work in its captured policy lane"},
+			}},
 			{Name: "wait", Short: "Wait for one invocation to finish", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "timeout", Value: "D", Short: "stop waiting after this duration (0 waits indefinitely)"},
 				{Name: "interval", Value: "D", Short: "time between status checks (default 1s)"},

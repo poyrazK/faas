@@ -222,6 +222,7 @@ type requestContext struct {
 	streaming        *awsChunkedReader
 	encryptionConfig objectstorage.EncryptionConfig
 	objectLockConfig objectstorage.ObjectLockConfig
+	protection       state.ObjectWriteProtectionSnapshot
 	encryption       objectstorage.ResolvedObjectEncryption
 	copySource       *state.ObjectBucket
 	copyGrantID      string
@@ -353,7 +354,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestConte
 		h.unsupported(w, r, req.requestID)
 		return
 	}
-	if !h.captureEncryption(w, r, &req) {
+	if !h.captureWriteProtection(w, r, &req) || !h.captureEncryption(w, r, &req) {
 		return
 	}
 	if !hasBucket {
@@ -881,7 +882,7 @@ func hasUnsupportedS3Semantics(r *http.Request) bool {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) {
 			return true
 		}
 	}
@@ -954,7 +955,7 @@ func copyObjectHeaders(dst, src http.Header) {
 		default:
 			continue
 		}
-		if key == objectstorage.ReservedObjectTagsMetadataKey || key == objectstorage.ReservedMultipartSessionMetadataKey || key == objectstorage.ReservedUploadReceiptMetadataKey || key == objectstorage.ReservedObjectEncryptionMetadataKey || len(values) == 0 {
+		if key == objectstorage.ReservedObjectTagsMetadataKey || key == objectstorage.ReservedMultipartSessionMetadataKey || key == objectstorage.ReservedUploadReceiptMetadataKey || key == objectstorage.ReservedObjectProtectionMetadataKey || key == objectstorage.ReservedObjectEncryptionMetadataKey || len(values) == 0 {
 			continue
 		}
 		dst.Set("x-amz-meta-"+key, values[0])

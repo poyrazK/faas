@@ -869,21 +869,54 @@ from .environment_workload_source import EnvironmentWorkloadSource
 from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .event_backlog_consumer import EventBacklogConsumer
+from .event_backlog_recipient import EventBacklogRecipient
+from .event_backlog_recipient_capacity_scope import EventBacklogRecipientCapacityScope
+from .event_backlog_recipient_routing_mode import EventBacklogRecipientRoutingMode
+from .event_backlog_recipient_state import EventBacklogRecipientState
+from .event_backlog_recipient_waiting_reason import EventBacklogRecipientWaitingReason
+from .event_backlog_response import EventBacklogResponse
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
 from .event_delivery_response_state import EventDeliveryResponseState
 from .event_fanout_attempt_history_response import EventFanoutAttemptHistoryResponse
+from .event_fanout_attempt_history_response_coverage import EventFanoutAttemptHistoryResponseCoverage
 from .event_fanout_attempt_response import EventFanoutAttemptResponse
 from .event_fanout_attempt_response_action import EventFanoutAttemptResponseAction
+from .event_fanout_attempt_response_capacity_scope import EventFanoutAttemptResponseCapacityScope
 from .event_fanout_attempt_response_failure_code import EventFanoutAttemptResponseFailureCode
 from .event_fanout_attempt_response_state import EventFanoutAttemptResponseState
 from .event_fanout_failure_response import EventFanoutFailureResponse
 from .event_fanout_failure_response_failure_code import EventFanoutFailureResponseFailureCode
 from .event_fanout_failure_response_state import EventFanoutFailureResponseState
+from .event_fanout_history_summary_response import EventFanoutHistorySummaryResponse
+from .event_fanout_history_summary_response_last_capacity_scope import (
+    EventFanoutHistorySummaryResponseLastCapacityScope,
+)
 from .event_preview_subscription import EventPreviewSubscription
 from .event_preview_subscription_filter import EventPreviewSubscriptionFilter
+from .event_receipt_attempt_history_response import EventReceiptAttemptHistoryResponse
+from .event_receipt_attempt_history_response_coverage import EventReceiptAttemptHistoryResponseCoverage
+from .event_receipt_cancellation_response import EventReceiptCancellationResponse
+from .event_receipt_execution_response import EventReceiptExecutionResponse
+from .event_receipt_execution_response_state import EventReceiptExecutionResponseState
+from .event_receipt_recipient_response import EventReceiptRecipientResponse
+from .event_receipt_recipient_response_execution_unavailable import EventReceiptRecipientResponseExecutionUnavailable
+from .event_receipt_recovery_action import EventReceiptRecoveryAction
+from .event_receipt_recovery_action_kind import EventReceiptRecoveryActionKind
+from .event_receipt_recovery_action_method import EventReceiptRecoveryActionMethod
+from .event_receipt_recovery_response import EventReceiptRecoveryResponse
+from .event_receipt_replay_history_response import EventReceiptReplayHistoryResponse
+from .event_receipt_response import EventReceiptResponse
+from .event_receipt_response_routing_mode import EventReceiptResponseRoutingMode
+from .event_receipt_response_routing_summary import EventReceiptResponseRoutingSummary
+from .event_receipt_routing_response import EventReceiptRoutingResponse
+from .event_receipt_routing_response_capacity_scope import EventReceiptRoutingResponseCapacityScope
+from .event_receipt_routing_response_state import EventReceiptRoutingResponseState
 from .event_schema import EventSchema
+from .event_storage_usage_response import EventStorageUsageResponse
+from .event_storage_usage_response_limits import EventStorageUsageResponseLimits
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
@@ -1037,6 +1070,8 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
+from .get_event_backlog_state import GetEventBacklogState
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
@@ -1105,6 +1140,8 @@ from .invitation_with_token_response import InvitationWithTokenResponse
 from .invite_member_request import InviteMemberRequest
 from .invite_member_request_role import InviteMemberRequestRole
 from .invocation import Invocation
+from .invocation_attempt_response import InvocationAttemptResponse
+from .invocation_attempt_response_outcome import InvocationAttemptResponseOutcome
 from .invocation_destinations import InvocationDestinations
 from .invocation_headers import InvocationHeaders
 from .invocation_payload import InvocationPayload
@@ -1451,6 +1488,7 @@ from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
 from .object_version_retention_mode import ObjectVersionRetentionMode
 from .object_version_retention_request import ObjectVersionRetentionRequest
 from .object_version_retention_result import ObjectVersionRetentionResult
+from .object_write_protection import ObjectWriteProtection
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
 from .object_write_receipt_list import ObjectWriteReceiptList
@@ -3488,21 +3526,52 @@ __all__ = (
     "EnvironmentWorkloadSourceKind",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
+    "EventBacklogConsumer",
+    "EventBacklogRecipient",
+    "EventBacklogRecipientCapacityScope",
+    "EventBacklogRecipientRoutingMode",
+    "EventBacklogRecipientState",
+    "EventBacklogRecipientWaitingReason",
+    "EventBacklogResponse",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
     "EventDeliveryResponseState",
     "EventFanoutAttemptHistoryResponse",
+    "EventFanoutAttemptHistoryResponseCoverage",
     "EventFanoutAttemptResponse",
     "EventFanoutAttemptResponseAction",
+    "EventFanoutAttemptResponseCapacityScope",
     "EventFanoutAttemptResponseFailureCode",
     "EventFanoutAttemptResponseState",
     "EventFanoutFailureResponse",
     "EventFanoutFailureResponseFailureCode",
     "EventFanoutFailureResponseState",
+    "EventFanoutHistorySummaryResponse",
+    "EventFanoutHistorySummaryResponseLastCapacityScope",
     "EventPreviewSubscription",
     "EventPreviewSubscriptionFilter",
+    "EventReceiptAttemptHistoryResponse",
+    "EventReceiptAttemptHistoryResponseCoverage",
+    "EventReceiptCancellationResponse",
+    "EventReceiptExecutionResponse",
+    "EventReceiptExecutionResponseState",
+    "EventReceiptRecipientResponse",
+    "EventReceiptRecipientResponseExecutionUnavailable",
+    "EventReceiptRecoveryAction",
+    "EventReceiptRecoveryActionKind",
+    "EventReceiptRecoveryActionMethod",
+    "EventReceiptRecoveryResponse",
+    "EventReceiptReplayHistoryResponse",
+    "EventReceiptResponse",
+    "EventReceiptResponseRoutingMode",
+    "EventReceiptResponseRoutingSummary",
+    "EventReceiptRoutingResponse",
+    "EventReceiptRoutingResponseCapacityScope",
+    "EventReceiptRoutingResponseState",
     "EventSchema",
+    "EventStorageUsageResponse",
+    "EventStorageUsageResponseLimits",
     "EventSubscriptionListResponse",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
@@ -3654,6 +3723,8 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetEventBacklogCapacityScope",
+    "GetEventBacklogState",
     "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
@@ -3722,6 +3793,8 @@ __all__ = (
     "InviteMemberRequest",
     "InviteMemberRequestRole",
     "Invocation",
+    "InvocationAttemptResponse",
+    "InvocationAttemptResponseOutcome",
     "InvocationDestinations",
     "InvocationHeaders",
     "InvocationPayload",
@@ -4066,6 +4139,7 @@ __all__ = (
     "ObjectVersionRetentionMode",
     "ObjectVersionRetentionRequest",
     "ObjectVersionRetentionResult",
+    "ObjectWriteProtection",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",
     "ObjectWriteReceiptList",

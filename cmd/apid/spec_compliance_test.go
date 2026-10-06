@@ -1020,6 +1020,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_object_lock.go"),
 		filepath.Join(root, "pkg", "api", "object_version_protection.go"),
+		filepath.Join(root, "pkg", "api", "object_write_protection.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),

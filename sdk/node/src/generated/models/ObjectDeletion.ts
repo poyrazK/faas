@@ -19,7 +19,10 @@ export type ObjectDeletion = {
    */
   version_id?: string;
   delete_marker: boolean;
-  last_error_code?: 'provider_uncertain' | 'configuration' | 'preparation_failed' | 'preparation_expired' | 'provider_rejected';
+  /**
+   * object_protected defers a lifecycle target under retention or a hold until a later scan.
+   */
+  last_error_code?: 'provider_uncertain' | 'configuration' | 'preparation_failed' | 'preparation_expired' | 'provider_rejected' | 'object_protected';
   created_at: string;
   updated_at: string;
 };

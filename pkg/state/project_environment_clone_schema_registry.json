@@ -2557,18 +2557,66 @@
     "kind": "configuration"
   },
   {
+    "table": "event_delivery_capacity",
+    "columns": [
+      "account_id",
+      "account_limit",
+      "app_limit",
+      "consumer_limit"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_delivery_slots",
+    "columns": [
+      "account_id",
+      "app_id",
+      "invocation_id",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_fanout_attempt_history",
     "columns": [
       "action",
       "app_id",
       "attempts",
+      "capacity_deferrals",
+      "capacity_scope",
+      "details_truncated",
       "failure_code",
+      "history_bytes",
       "id",
       "last_error",
       "occurred_at",
       "outbox_id",
       "retryable",
       "state",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_fanout_history_summaries",
+    "columns": [
+      "app_id",
+      "capacity_deferrals",
+      "coalesced_outcomes",
+      "compacted_outcomes",
+      "compacted_through_at",
+      "compacted_through_id",
+      "first_capacity_wait_at",
+      "last_capacity_scope",
+      "last_capacity_wait_at",
+      "last_outcome_capacity_scope",
+      "last_was_coalesced",
+      "latest_failure_id",
+      "latest_id",
+      "latest_replay_id",
+      "next_prune_at",
+      "observed_outcomes",
+      "outbox_id",
       "subscription_id"
     ],
     "kind": "operational"
@@ -2581,6 +2629,7 @@
       "available_at",
       "claim_token",
       "created_at",
+      "customer_storage_bytes",
       "delivered_at",
       "event_data",
       "event_id",
@@ -2589,11 +2638,58 @@
       "last_error",
       "lease_until",
       "payload",
+      "recipient_claims",
       "recipient_progress",
       "recipient_snapshot",
       "schema_version",
       "source",
       "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_fanout_recipients",
+    "columns": [
+      "app_id",
+      "attempts",
+      "available_at",
+      "capacity_deferrals",
+      "claim_token",
+      "generation",
+      "generation_capacity_deferrals",
+      "lease_until",
+      "outbox_id",
+      "recipient",
+      "state",
+      "subscription_id",
+      "total_attempts"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_routing_backlog",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "app_id",
+      "attempts",
+      "capacity_deferrals",
+      "capacity_scope",
+      "lease_until",
+      "next_attempt_at",
+      "outbox_id",
+      "routing_mode",
+      "routing_state",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_routing_fairness",
+    "columns": [
+      "account_id",
+      "last_claimed_at",
+      "subscription_id"
     ],
     "kind": "operational"
   },
@@ -2608,6 +2704,13 @@
       "version"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "event_storage_admission",
+    "columns": [
+      "account_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "event_subscription_work_bindings",
@@ -3271,6 +3374,26 @@
     "kind": "operational"
   },
   {
+    "table": "invocation_attempt_history",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempt",
+      "error_detail",
+      "finished_at",
+      "id",
+      "invocation_id",
+      "next_attempt_at",
+      "outcome",
+      "replay_generation",
+      "retain_until",
+      "root_created_at",
+      "root_invocation_id",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "invocation_environment_queue_admissions",
     "columns": [
       "account_id",
@@ -3298,6 +3421,23 @@
       "lease_expires_at",
       "owner_hash",
       "token_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "invocation_keyed_replays",
+    "columns": [
+      "parent_invocation_id",
+      "replay_invocation_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "invocation_plain_replays",
+    "columns": [
+      "parent_invocation_id",
+      "replay_created_at",
+      "replay_invocation_id"
     ],
     "kind": "operational"
   },
@@ -3398,6 +3538,8 @@
       "quota_reserved",
       "received_at",
       "replay_generation",
+      "replay_root_created_at",
+      "replay_root_invocation_id",
       "replayed_from_invocation_id",
       "result",
       "result_retention_until",
@@ -4465,6 +4607,7 @@
       "bucket_id",
       "created_at",
       "delete_marker",
+      "deletion_verified",
       "id",
       "last_error_code",
       "lease_token",
@@ -4472,6 +4615,8 @@
       "lifecycle_binding",
       "lifecycle_scan_id",
       "object_key",
+      "protection_required",
+      "protection_verified",
       "provider_status",
       "provider_version_id",
       "recovery_claimed",
@@ -4729,6 +4874,9 @@
       "part_revision",
       "part_size_bytes",
       "part_url_unsafe_until",
+      "protection_lease_token",
+      "protection_snapshot",
+      "protection_verified",
       "provider_upload_id",
       "retry_at",
       "size_bytes",
@@ -4877,6 +5025,9 @@
       "idempotency_key",
       "object_key",
       "origin",
+      "protection_dispatched",
+      "protection_snapshot",
+      "protection_verified",
       "recovery_cursor",
       "recovery_lease_until",
       "recovery_retry_at",
@@ -4922,6 +5073,7 @@
       "bucket_id",
       "created_at",
       "dispatched",
+      "event_hold_baseline",
       "id",
       "intent",
       "last_error_code",
