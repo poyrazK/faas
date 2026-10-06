@@ -221,6 +221,8 @@ func (s *server) writeQuotaDeliveryReceipt(w http.ResponseWriter, r *http.Reques
 
 func (s *server) runtimeQuotaTransportError(w http.ResponseWriter, r *http.Request, acct state.Account, err error) {
 	switch {
+	case errors.Is(err, globaldirectory.ErrRuntimeConsentUnavailable):
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, api.CodeGlobalAppTargetVerificationFailed, "Directory runtime consent unavailable", "The original directory consent must be active and match the allocation; renewal requires a new consent UUID."))
 	case errors.Is(err, state.ErrRegionalRuntimeConsent):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Runtime consent unavailable", "The original regional runtime delivery consent is missing, expired, revoked or differs from the signed allocation."))
 	case errors.Is(err, runtimequota.ErrInvalid), errors.Is(err, runtimequota.ErrBinding), errors.Is(err, runtimequota.ErrTrust):

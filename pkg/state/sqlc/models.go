@@ -2746,6 +2746,20 @@ type GlobalReleaseRecoveryWork struct {
 	CursorID      pgtype.UUID
 }
 
+type GlobalRuntimeConsent struct {
+	ID                pgtype.UUID
+	IssuerID          pgtype.UUID
+	GlobalAppID       pgtype.UUID
+	OwnerID           pgtype.UUID
+	GlobalAppSlug     string
+	Binding           []byte
+	ExpiresAt         pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	Status            string
+	RegionalCreatedAt pgtype.Timestamptz
+	RegionalRevokedAt pgtype.Timestamptz
+}
+
 type GlobalRuntimeQuotaAllocation struct {
 	GlobalAppID        pgtype.UUID
 	OwnerID            pgtype.UUID

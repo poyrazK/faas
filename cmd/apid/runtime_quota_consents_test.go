@@ -91,12 +91,13 @@ func TestRuntimeConsentDeliveryWithoutRegionalCredential(t *testing.T) {
 	c := runtimequota.Consent{ID: uuid.NewString(), IssuerID: d.s.globalQuotaAuthority.Signer.IssuerID(), GlobalAppID: app.ID, OwnerID: quotaLocalUUID(app.OwnerID),
 		Binding: runtimequota.Binding{CellID: b.CellID, Region: b.Region, CellGeneration: b.CellGeneration, RegionalAccountID: b.RegionalAccountID, RegionalAppID: b.RegionalAppID, RegionalAppSlug: b.RegionalAppSlug, APIBase: srv.URL}, ExpiresAtMicros: time.Now().Add(time.Hour).UnixMicro()}
 	consentPath := "/v1/cells/" + cell.ID + "/apps/" + local.ID + "/runtime-consents/" + c.ID
+	d.h = d.s.handler()
+	directoryConsentPath := "/v1/global-apps/" + app.Slug + "/runtime-consents/" + c.ID
 	for range 2 {
-		if r := e.do(t, http.MethodPut, consentPath, c, nil); r.Code != http.StatusOK {
-			t.Fatalf("regional consent: %d %s", r.Code, r.Body)
+		if r := d.do(t, http.MethodPut, directoryConsentPath, api.PutGlobalRuntimeConsentRequest{Region: b.Region, ExpiresAt: time.UnixMicro(c.ExpiresAtMicros), RegionalAPIKey: e.key}, nil); r.Code != http.StatusOK {
+			t.Fatalf("retained consent: %d %s", r.Code, r.Body)
 		}
 	}
-	d.h = d.s.handler()
 	id := uuid.NewString()
 	path := "/v1/global-apps/" + app.Slug + "/runtime-quotas/" + id
 	if r := d.do(t, http.MethodPut, path, api.PutGlobalRuntimeQuotaRequest{Shares: []api.GlobalRuntimeQuotaShare{{Region: "eu-fsn", Concurrency: 2}}}, nil); r.Code != http.StatusOK {

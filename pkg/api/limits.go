@@ -8686,5 +8686,6 @@ const RegionalRuntimeQuotaDeliveryMaxBytes = 2*RegionalRuntimeQuotaEnvelopeMaxBy
 const (
 	RegionalRuntimeConsentMaxBytes    = GlobalDirectoryProofMaxBytes
 	RegionalRuntimeConsentsPerAppMax  = 32
+	GlobalRuntimeConsentsPerAppMax    = 32 // ADR-646: pending/active/revoking unexpired directory records.
 	RegionalRuntimeConsentMaxLifetime = 6 * 24 * time.Hour
 )

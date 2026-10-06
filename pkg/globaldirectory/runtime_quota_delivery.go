@@ -1,6 +1,7 @@
 package globaldirectory
 
 // adr: 644
+// adr: 646
 import (
 	"bytes"
 	"context"
@@ -40,6 +41,12 @@ func (q RuntimeQuotaAuthority) deliver(ctx context.Context, verifier Verifier, o
 	if err != nil {
 		return runtimequota.DeliveryReceipt{}, err
 	}
+	b := runtimeConsentBinding(t.Target)
+	if a.RetiredAt == nil && consentID != "" {
+		if err := q.checkDeliveryConsent(ctx, owner, slug, a, b, consentID); err != nil {
+			return runtimequota.DeliveryReceipt{}, err
+		}
+	}
 	var envelope runtimequota.Envelope
 	suffix := ""
 	if a.RetiredAt != nil {
@@ -60,7 +67,6 @@ func (q RuntimeQuotaAuthority) deliver(ctx context.Context, verifier Verifier, o
 	if err != nil {
 		return runtimequota.DeliveryReceipt{}, err
 	}
-	b := runtimequota.Binding{CellID: t.CellID, Region: t.Region, CellGeneration: t.CellGeneration, RegionalAccountID: t.RegionalAccountID, RegionalOrgID: t.RegionalOrgID, RegionalAppID: t.RegionalAppID, RegionalAppSlug: t.RegionalAppSlug, APIBase: t.APIBase}
 	d := runtimequota.Delivery{Binding: b, Authority: envelope}
 	if a.RetiredAt == nil {
 		d.ConsentID = consentID
@@ -69,11 +75,35 @@ func (q RuntimeQuotaAuthority) deliver(ctx context.Context, verifier Verifier, o
 	if err != nil {
 		return runtimequota.DeliveryReceipt{}, runtimequota.ErrInvalid
 	}
+	if a.RetiredAt == nil && consentID != "" {
+		if err := q.checkDeliveryConsent(ctx, owner, slug, a, b, consentID); err != nil {
+			return runtimequota.DeliveryReceipt{}, err
+		}
+	}
 	receipt, err := deliverQuotaHTTP(ctx, verifier, b, id, suffix, key, body)
 	if err != nil {
 		return runtimequota.DeliveryReceipt{}, err
 	}
 	return q.checkDeliveryReceipt(envelope, b, a.RetiredAt != nil, receipt)
+}
+
+// Consent is checked before issuance and again before I/O. An in-flight grant
+// can still race revocation; the regional receiver serializes its own check
+// with the original consent tombstone. Retirement only narrows authority.
+func (q RuntimeQuotaAuthority) checkDeliveryConsent(ctx context.Context, owner, slug string, a RuntimeQuotaAllocation, b runtimequota.Binding, id string) error {
+	j, ok := q.Store.(RuntimeConsentStore)
+	if !ok {
+		return ErrRuntimeConsentUnavailable
+	}
+	r, err := j.CheckRuntimeConsent(ctx, owner, slug, id)
+	if err != nil {
+		return err
+	}
+	c := r.Consent
+	if c.ID != id || c.IssuerID != q.Signer.IssuerID() || c.GlobalAppID != a.GlobalAppID || c.OwnerID != runtimeConsentOwner(a.OwnerID) || c.Binding != b {
+		return ErrRuntimeConsentUnavailable
+	}
+	return nil
 }
 
 func deliverQuotaHTTP(ctx context.Context, verifier Verifier, b runtimequota.Binding, id, suffix, key string, body []byte) (runtimequota.DeliveryReceipt, error) {

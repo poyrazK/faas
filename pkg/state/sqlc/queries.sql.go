@@ -1356,6 +1356,36 @@ func (q *Queries) BeginManagedPostgresAccounting(ctx context.Context, db DBTX, a
 	return result.RowsAffected(), nil
 }
 
+const beginRevokeGlobalRuntimeConsent = `-- name: BeginRevokeGlobalRuntimeConsent :one
+UPDATE global_runtime_consents SET status=CASE WHEN status='revoked' THEN status ELSE 'revoking' END
+WHERE id=$1::uuid AND owner_id=$2::uuid AND global_app_slug=$3::text RETURNING id, issuer_id, global_app_id, owner_id, global_app_slug, binding, expires_at, created_at, status, regional_created_at, regional_revoked_at
+`
+
+type BeginRevokeGlobalRuntimeConsentParams struct {
+	ConsentID pgtype.UUID
+	OwnerID   pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) BeginRevokeGlobalRuntimeConsent(ctx context.Context, db DBTX, arg BeginRevokeGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error) {
+	row := db.QueryRow(ctx, beginRevokeGlobalRuntimeConsent, arg.ConsentID, arg.OwnerID, arg.Slug)
+	var i GlobalRuntimeConsent
+	err := row.Scan(
+		&i.ID,
+		&i.IssuerID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.GlobalAppSlug,
+		&i.Binding,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RegionalCreatedAt,
+		&i.RegionalRevokedAt,
+	)
+	return i, err
+}
+
 const bindEnvironmentGitOpsQueue = `-- name: BindEnvironmentGitOpsQueue :execrows
 INSERT INTO environment_gitops_queue_bindings(source_id, resource, field_path, binding_id)
 VALUES ($1::uuid, $2::text, $3::text, $4::uuid)
@@ -1767,6 +1797,31 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 	var i_id string
 	err := row.Scan(&i_id)
 	return i_id, err
+}
+
+const checkGlobalRuntimeConsentScope = `-- name: CheckGlobalRuntimeConsentScope :exec
+SELECT check_global_runtime_consent_scope($1::uuid,$2::uuid,$3::text,$4::uuid,$5::jsonb,$6::timestamptz)
+`
+
+type CheckGlobalRuntimeConsentScopeParams struct {
+	OwnerID     pgtype.UUID
+	GlobalAppID pgtype.UUID
+	Slug        string
+	IssuerID    pgtype.UUID
+	Binding     []byte
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) CheckGlobalRuntimeConsentScope(ctx context.Context, db DBTX, arg CheckGlobalRuntimeConsentScopeParams) error {
+	_, err := db.Exec(ctx, checkGlobalRuntimeConsentScope,
+		arg.OwnerID,
+		arg.GlobalAppID,
+		arg.Slug,
+		arg.IssuerID,
+		arg.Binding,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const claimAppTaskWithRegionalQuota = `-- name: ClaimAppTaskWithRegionalQuota :one
@@ -13291,6 +13346,48 @@ func (q *Queries) InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const insertGlobalRuntimeConsent = `-- name: InsertGlobalRuntimeConsent :one
+INSERT INTO global_runtime_consents(id,issuer_id,global_app_id,owner_id,global_app_slug,binding,expires_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::text,$6::jsonb,$7::timestamptz) RETURNING id, issuer_id, global_app_id, owner_id, global_app_slug, binding, expires_at, created_at, status, regional_created_at, regional_revoked_at
+`
+
+type InsertGlobalRuntimeConsentParams struct {
+	ConsentID   pgtype.UUID
+	IssuerID    pgtype.UUID
+	GlobalAppID pgtype.UUID
+	OwnerID     pgtype.UUID
+	Slug        string
+	Binding     []byte
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertGlobalRuntimeConsent(ctx context.Context, db DBTX, arg InsertGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error) {
+	row := db.QueryRow(ctx, insertGlobalRuntimeConsent,
+		arg.ConsentID,
+		arg.IssuerID,
+		arg.GlobalAppID,
+		arg.OwnerID,
+		arg.Slug,
+		arg.Binding,
+		arg.ExpiresAt,
+	)
+	var i GlobalRuntimeConsent
+	err := row.Scan(
+		&i.ID,
+		&i.IssuerID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.GlobalAppSlug,
+		&i.Binding,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RegionalCreatedAt,
+		&i.RegionalRevokedAt,
+	)
+	return i, err
+}
+
 const insertGlobalRuntimeQuotaIssuer = `-- name: InsertGlobalRuntimeQuotaIssuer :exec
 INSERT INTO global_runtime_quota_issuer(issuer_id) VALUES ($1::uuid) ON CONFLICT DO NOTHING
 `
@@ -23622,6 +23719,16 @@ func (q *Queries) LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg Loc
 	return owner_id, err
 }
 
+const lockGlobalRuntimeConsentJournal = `-- name: LockGlobalRuntimeConsentJournal :exec
+SELECT pg_advisory_xact_lock(hashtextextended('gregale-global-runtime-consent:'||$1::uuid::text,0))
+`
+
+// ADR-646: public runtime consent retained independently of image delegation.
+func (q *Queries) LockGlobalRuntimeConsentJournal(ctx context.Context, db DBTX, globalAppID pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockGlobalRuntimeConsentJournal, globalAppID)
+	return err
+}
+
 const lockGlobalRuntimeQuotaOwner = `-- name: LockGlobalRuntimeQuotaOwner :one
 SELECT lock_global_runtime_quota_owner($1::uuid,$2::uuid)::text AS plan
 `
@@ -32759,6 +32866,46 @@ func (q *Queries) ObserveEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const observeGlobalRuntimeConsent = `-- name: ObserveGlobalRuntimeConsent :one
+UPDATE global_runtime_consents SET status=$1::text,regional_created_at=$2::timestamptz,regional_revoked_at=$3::timestamptz
+WHERE id=$4::uuid AND owner_id=$5::uuid AND global_app_slug=$6::text RETURNING id, issuer_id, global_app_id, owner_id, global_app_slug, binding, expires_at, created_at, status, regional_created_at, regional_revoked_at
+`
+
+type ObserveGlobalRuntimeConsentParams struct {
+	Status            string
+	RegionalCreatedAt pgtype.Timestamptz
+	RegionalRevokedAt pgtype.Timestamptz
+	ConsentID         pgtype.UUID
+	OwnerID           pgtype.UUID
+	Slug              string
+}
+
+func (q *Queries) ObserveGlobalRuntimeConsent(ctx context.Context, db DBTX, arg ObserveGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error) {
+	row := db.QueryRow(ctx, observeGlobalRuntimeConsent,
+		arg.Status,
+		arg.RegionalCreatedAt,
+		arg.RegionalRevokedAt,
+		arg.ConsentID,
+		arg.OwnerID,
+		arg.Slug,
+	)
+	var i GlobalRuntimeConsent
+	err := row.Scan(
+		&i.ID,
+		&i.IssuerID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.GlobalAppSlug,
+		&i.Binding,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RegionalCreatedAt,
+		&i.RegionalRevokedAt,
+	)
+	return i, err
+}
+
 const orgByID = `-- name: OrgByID :one
 select
     id, slug, name, personal_org,
@@ -36000,6 +36147,35 @@ func (q *Queries) ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg R
 	row := db.QueryRow(ctx, readGlobalOwnerCellBinding, arg.OwnerID, arg.CellID)
 	var i ReadGlobalOwnerCellBindingRow
 	err := row.Scan(&i.RegionalAccountID, &i.RegionalOrgID)
+	return i, err
+}
+
+const readGlobalRuntimeConsent = `-- name: ReadGlobalRuntimeConsent :one
+SELECT id, issuer_id, global_app_id, owner_id, global_app_slug, binding, expires_at, created_at, status, regional_created_at, regional_revoked_at FROM global_runtime_consents WHERE id=$1::uuid AND owner_id=$2::uuid AND global_app_slug=$3::text
+`
+
+type ReadGlobalRuntimeConsentParams struct {
+	ConsentID pgtype.UUID
+	OwnerID   pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) ReadGlobalRuntimeConsent(ctx context.Context, db DBTX, arg ReadGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error) {
+	row := db.QueryRow(ctx, readGlobalRuntimeConsent, arg.ConsentID, arg.OwnerID, arg.Slug)
+	var i GlobalRuntimeConsent
+	err := row.Scan(
+		&i.ID,
+		&i.IssuerID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.GlobalAppSlug,
+		&i.Binding,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RegionalCreatedAt,
+		&i.RegionalRevokedAt,
+	)
 	return i, err
 }
 

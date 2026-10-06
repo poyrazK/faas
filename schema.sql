@@ -1038,6 +1038,35 @@ END $$;
 
 
 --
+-- Name: check_global_runtime_consent_scope(uuid, uuid, text, uuid, jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.check_global_runtime_consent_scope(wanted_owner uuid, wanted_app uuid, wanted_slug text, wanted_issuer uuid, b jsonb, expiry timestamp with time zone) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM lock_global_runtime_quota_tenant(wanted_owner);
+ PERFORM 1 FROM global_directory_owners WHERE id=wanted_owner AND account_id=wanted_owner AND org_id IS NULL;
+ IF NOT FOUND THEN RAISE EXCEPTION 'personal runtime consent owner required' USING ERRCODE='23514',CONSTRAINT='global_directory_org_targets_unavailable'; END IF;
+ PERFORM 1 FROM global_runtime_quota_issuer WHERE issuer_id=wanted_issuer;
+ IF NOT FOUND THEN RAISE EXCEPTION 'runtime consent issuer differs' USING ERRCODE='23514',CONSTRAINT='global_runtime_consent_identity'; END IF;
+ PERFORM 1 FROM global_apps WHERE id=wanted_app AND owner_id=wanted_owner AND slug=wanted_slug FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'runtime consent app unavailable' USING ERRCODE='23514',CONSTRAINT='global_runtime_consent_unavailable'; END IF;
+ PERFORM 1 FROM global_directory_cells WHERE id=(b->>'CellID')::uuid AND region=b->>'Region'
+  AND api_base=b->>'APIBase' AND generation=(b->>'CellGeneration')::bigint AND enabled FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'runtime consent registry changed' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell'; END IF;
+ PERFORM 1 FROM global_app_targets WHERE global_app_id=wanted_app AND region=b->>'Region'
+  AND cell_id=(b->>'CellID')::uuid AND cell_generation=(b->>'CellGeneration')::bigint
+  AND regional_account_id=(b->>'RegionalAccountID')::uuid AND regional_org_id IS NULL
+  AND regional_app_id=(b->>'RegionalAppID')::uuid AND regional_app_slug=b->>'RegionalAppSlug'
+  AND b->>'RegionalOrgID'='' FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'runtime consent target changed' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell'; END IF;
+ -- All owner/app/cell/target waits precede the authoritative deadline check.
+ IF expiry<=clock_timestamp() THEN RAISE EXCEPTION 'runtime consent expired' USING ERRCODE='23514',CONSTRAINT='global_runtime_consent_unavailable'; END IF;
+END; $$;
+
+
+--
 -- Name: close_serving_seats_for_physical(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5323,6 +5352,36 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: guard_global_runtime_consent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_global_runtime_consent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM assert_global_directory_scope();
+ IF TG_OP IN ('DELETE','TRUNCATE') THEN RAISE EXCEPTION 'runtime consent evidence is retained' USING ERRCODE='23514',CONSTRAINT='global_runtime_consent_identity'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('gregale-global-runtime-consent:'||NEW.global_app_id::text,0));
+ IF TG_OP='INSERT' THEN
+  NEW.created_at:=clock_timestamp();
+  IF NEW.status<>'pending' OR NEW.regional_created_at IS NOT NULL OR NEW.regional_revoked_at IS NOT NULL THEN RAISE EXCEPTION 'new runtime consent must be pending' USING ERRCODE='23514',CONSTRAINT='global_runtime_consent_identity'; END IF;
+  PERFORM check_global_runtime_consent_scope(NEW.owner_id,NEW.global_app_id,NEW.global_app_slug,NEW.issuer_id,NEW.binding,NEW.expires_at);
+  NEW.created_at:=clock_timestamp();
+  IF (SELECT count(*) FROM global_runtime_consents WHERE global_app_id=NEW.global_app_id AND status<>'revoked' AND expires_at>clock_timestamp())>=32 THEN RAISE EXCEPTION 'runtime consent bound reached' USING ERRCODE='23514',CONSTRAINT='global_runtime_consent_limit'; END IF;
+ ELSE
+  IF ROW(NEW.id,NEW.issuer_id,NEW.global_app_id,NEW.owner_id,NEW.global_app_slug,NEW.binding,NEW.expires_at,NEW.created_at)
+   IS DISTINCT FROM ROW(OLD.id,OLD.issuer_id,OLD.global_app_id,OLD.owner_id,OLD.global_app_slug,OLD.binding,OLD.expires_at,OLD.created_at)
+   OR (OLD.regional_created_at IS NOT NULL AND NEW.regional_created_at IS DISTINCT FROM OLD.regional_created_at)
+   OR (OLD.regional_revoked_at IS NOT NULL AND NEW.regional_revoked_at IS DISTINCT FROM OLD.regional_revoked_at)
+   OR (OLD.status='revoked' AND NEW.status<>'revoked') OR (OLD.status='revoking' AND NEW.status NOT IN ('revoking','revoked'))
+   OR (OLD.status='active' AND NEW.status='pending') THEN RAISE EXCEPTION 'runtime consent original identity is immutable' USING ERRCODE='23514',CONSTRAINT='global_runtime_consent_identity'; END IF;
+  IF NEW.status='active' THEN PERFORM check_global_runtime_consent_scope(NEW.owner_id,NEW.global_app_id,NEW.global_app_slug,NEW.issuer_id,NEW.binding,NEW.expires_at); END IF;
+ END IF;
+ RETURN NEW;
+END; $$;
 
 
 --
@@ -15557,6 +15616,41 @@ CREATE TABLE public.global_release_recovery_work (
 
 
 --
+-- Name: global_runtime_consents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_consents (
+    id uuid NOT NULL,
+    issuer_id uuid NOT NULL,
+    global_app_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    global_app_slug text NOT NULL,
+    binding jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    regional_created_at timestamp with time zone,
+    regional_revoked_at timestamp with time zone,
+    CONSTRAINT global_runtime_consents_binding_check CHECK ((((jsonb_typeof(binding) = 'object'::text) AND (binding ?& ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) AND ((binding - ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) = '{}'::jsonb) AND (jsonb_typeof((binding -> 'CellID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'Region'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAccountID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalOrgID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppSlug'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'APIBase'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'CellGeneration'::text)) = 'number'::text) AND ((binding ->> 'RegionalOrgID'::text) = ''::text) AND ((binding ->> 'CellGeneration'::text) ~ '^[1-9][0-9]*$'::text) AND (((binding ->> 'CellGeneration'::text))::numeric <= ('9007199254740991'::bigint)::numeric) AND ((binding ->> 'CellID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'RegionalAccountID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'RegionalAppID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'CellID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((binding ->> 'RegionalAccountID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((binding ->> 'RegionalAppID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((length((binding ->> 'RegionalAppSlug'::text)) >= 3) AND (length((binding ->> 'RegionalAppSlug'::text)) <= 40)) AND ((binding ->> 'RegionalAppSlug'::text) ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$'::text) AND (octet_length((binding ->> 'APIBase'::text)) <= 2048) AND ((binding ->> 'APIBase'::text) ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text)) IS TRUE)),
+    CONSTRAINT global_runtime_consents_check CHECK ((isfinite(regional_created_at) AND (regional_created_at < expires_at) AND (regional_created_at <> '0001-01-01 00:00:00+00'::timestamp with time zone))),
+    CONSTRAINT global_runtime_consents_check1 CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '6 days'::interval)))),
+    CONSTRAINT global_runtime_consents_check2 CHECK (((status = 'revoked'::text) = (regional_revoked_at IS NOT NULL))),
+    CONSTRAINT global_runtime_consents_check3 CHECK (((status <> 'active'::text) OR (regional_created_at IS NOT NULL))),
+    CONSTRAINT global_runtime_consents_check4 CHECK (((status <> 'pending'::text) OR (regional_created_at IS NULL))),
+    CONSTRAINT global_runtime_consents_check5 CHECK (((regional_revoked_at IS NULL) OR ((regional_created_at IS NOT NULL) AND (regional_revoked_at >= regional_created_at)))),
+    CONSTRAINT global_runtime_consents_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT global_runtime_consents_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT global_runtime_consents_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_consents_global_app_slug_check CHECK ((((length(global_app_slug) >= 3) AND (length(global_app_slug) <= 40)) AND (global_app_slug ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$'::text))),
+    CONSTRAINT global_runtime_consents_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_consents_issuer_id_check CHECK ((issuer_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_consents_owner_id_check CHECK ((owner_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_consents_regional_revoked_at_check CHECK (isfinite(regional_revoked_at)),
+    CONSTRAINT global_runtime_consents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'revoking'::text, 'revoked'::text])))
+);
+
+
+--
 -- Name: global_runtime_quota_allocations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23283,6 +23377,14 @@ ALTER TABLE ONLY public.global_release_recovery_work
 
 
 --
+-- Name: global_runtime_consents global_runtime_consents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_consents
+    ADD CONSTRAINT global_runtime_consents_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: global_runtime_quota_allocations global_runtime_quota_allocations_global_app_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28131,6 +28233,13 @@ CREATE INDEX global_recovery_due ON public.global_release_recovery_work USING bt
 
 
 --
+-- Name: global_runtime_consents_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX global_runtime_consents_app ON public.global_runtime_consents USING btree (global_app_id, status, expires_at);
+
+
+--
 -- Name: inbound_webhook_endpoints_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -32566,6 +32675,20 @@ CREATE TRIGGER global_release_shared_runtime BEFORE INSERT ON public.global_imag
 --
 
 CREATE TRIGGER global_release_target_org_anchor BEFORE INSERT OR UPDATE ON public.global_image_release_targets FOR EACH ROW EXECUTE FUNCTION public.protect_global_regional_org_anchor();
+
+
+--
+-- Name: global_runtime_consents global_runtime_consent_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_consent_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_runtime_consents FOR EACH ROW EXECUTE FUNCTION public.guard_global_runtime_consent();
+
+
+--
+-- Name: global_runtime_consents global_runtime_consent_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_consent_truncate_guard BEFORE TRUNCATE ON public.global_runtime_consents FOR EACH STATEMENT EXECUTE FUNCTION public.guard_global_runtime_consent();
 
 
 --

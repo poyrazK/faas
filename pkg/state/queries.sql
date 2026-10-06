@@ -9183,6 +9183,28 @@ SELECT (NOT EXISTS (SELECT 1 FROM control_plane_cells))::boolean AS unbound;
 -- name: AssertGlobalDirectoryScope :exec
 SELECT assert_global_directory_scope();
 
+-- ADR-646: public runtime consent retained independently of image delegation.
+-- name: LockGlobalRuntimeConsentJournal :exec
+SELECT pg_advisory_xact_lock(hashtextextended('gregale-global-runtime-consent:'||sqlc.arg(global_app_id)::uuid::text,0));
+
+-- name: ReadGlobalRuntimeConsent :one
+SELECT * FROM global_runtime_consents WHERE id=sqlc.arg(consent_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text;
+
+-- name: CheckGlobalRuntimeConsentScope :exec
+SELECT check_global_runtime_consent_scope(sqlc.arg(owner_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(issuer_id)::uuid,sqlc.arg(binding)::jsonb,sqlc.arg(expires_at)::timestamptz);
+
+-- name: InsertGlobalRuntimeConsent :one
+INSERT INTO global_runtime_consents(id,issuer_id,global_app_id,owner_id,global_app_slug,binding,expires_at)
+VALUES(sqlc.arg(consent_id)::uuid,sqlc.arg(issuer_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(owner_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(binding)::jsonb,sqlc.arg(expires_at)::timestamptz) RETURNING *;
+
+-- name: ObserveGlobalRuntimeConsent :one
+UPDATE global_runtime_consents SET status=sqlc.arg(status)::text,regional_created_at=sqlc.arg(regional_created_at)::timestamptz,regional_revoked_at=sqlc.narg(regional_revoked_at)::timestamptz
+WHERE id=sqlc.arg(consent_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text RETURNING *;
+
+-- name: BeginRevokeGlobalRuntimeConsent :one
+UPDATE global_runtime_consents SET status=CASE WHEN status='revoked' THEN status ELSE 'revoking' END
+WHERE id=sqlc.arg(consent_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text RETURNING *;
+
 -- name: UpsertGlobalDirectoryCell :one
 INSERT INTO global_directory_cells(id, region, api_base, enabled)
 VALUES (sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text, sqlc.arg(api_base)::text, sqlc.arg(enabled)::boolean)

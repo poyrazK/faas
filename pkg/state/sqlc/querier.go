@@ -99,6 +99,7 @@ type Querier interface {
 	BeginImagePreparation(ctx context.Context, db DBTX, arg BeginImagePreparationParams) (DeploymentImagePreparation, error)
 	// ADR-581: persist an irreversible accounting obligation before provider I/O.
 	BeginManagedPostgresAccounting(ctx context.Context, db DBTX, arg BeginManagedPostgresAccountingParams) (int64, error)
+	BeginRevokeGlobalRuntimeConsent(ctx context.Context, db DBTX, arg BeginRevokeGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error)
 	BindEnvironmentGitOpsQueue(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsQueueParams) (int64, error)
 	BindEnvironmentGitOpsResource(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsResourceParams) (int64, error)
 	BindExclusiveWorkSubmission(ctx context.Context, db DBTX, arg BindExclusiveWorkSubmissionParams) error
@@ -133,6 +134,7 @@ type Querier interface {
 	CancelWorkflowOutboundAttempts(ctx context.Context, db DBTX, arg CancelWorkflowOutboundAttemptsParams) error
 	CaptureRuntimeLogArchiveBinding(ctx context.Context, db DBTX, arg CaptureRuntimeLogArchiveBindingParams) (CaptureRuntimeLogArchiveBindingRow, error)
 	CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg CheckExclusiveWorkRuntimeParams) (string, error)
+	CheckGlobalRuntimeConsentScope(ctx context.Context, db DBTX, arg CheckGlobalRuntimeConsentScopeParams) error
 	ClaimAppTaskWithRegionalQuota(ctx context.Context, db DBTX, arg ClaimAppTaskWithRegionalQuotaParams) (AppTask, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimBuildVMCleanupOnNode(ctx context.Context, db DBTX, arg ClaimBuildVMCleanupOnNodeParams) ([]ClaimBuildVMCleanupOnNodeRow, error)
@@ -752,6 +754,7 @@ type Querier interface {
 	// ADR-608: immutable sealed authority and restart-safe recovery claims.
 	InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error)
 	InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg InsertGlobalOwnerCellBindingParams) error
+	InsertGlobalRuntimeConsent(ctx context.Context, db DBTX, arg InsertGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error)
 	// ADR-644: durable directory issuer, independent of regional cell identity.
 	InsertGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
@@ -1312,6 +1315,8 @@ type Querier interface {
 	LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg LockGlobalDirectoryCellParams) (LockGlobalDirectoryCellRow, error)
 	// ADR-611: current organization consent is held through binding commit.
 	LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg LockGlobalOrgTargetOwnerParams) (pgtype.UUID, error)
+	// ADR-646: public runtime consent retained independently of image delegation.
+	LockGlobalRuntimeConsentJournal(ctx context.Context, db DBTX, globalAppID pgtype.UUID) error
 	LockGlobalRuntimeQuotaOwner(ctx context.Context, db DBTX, arg LockGlobalRuntimeQuotaOwnerParams) (string, error)
 	LockGlobalRuntimeQuotaTenant(ctx context.Context, db DBTX, ownerID pgtype.UUID) (string, error)
 	LockImagePreparationDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockImagePreparationDeploymentRow, error)
@@ -1677,6 +1682,7 @@ type Querier interface {
 	ObjectWriteSettle(ctx context.Context, db DBTX, arg ObjectWriteSettleParams) (int64, error)
 	ObserveEnvironmentGitOpsIntent(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsIntentParams) ([]byte, error)
 	ObserveEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsRuntimeParams) ([]ObserveEnvironmentGitOpsRuntimeRow, error)
+	ObserveGlobalRuntimeConsent(ctx context.Context, db DBTX, arg ObserveGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error)
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
 	OrgBySlug(ctx context.Context, db DBTX, lower string) (OrgBySlugRow, error)
@@ -1803,6 +1809,7 @@ type Querier interface {
 	ReadGlobalDirectoryOwner(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ReadGlobalDirectoryOwnerRow, error)
 	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
 	ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (ReadGlobalOwnerCellBindingRow, error)
+	ReadGlobalRuntimeConsent(ctx context.Context, db DBTX, arg ReadGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error)
 	ReadGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaAllocationParams) (ReadGlobalRuntimeQuotaAllocationRow, error)
 	ReadGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX) (string, error)
 	ReadGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaPolicyParams) (ReadGlobalRuntimeQuotaPolicyRow, error)

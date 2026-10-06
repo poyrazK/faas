@@ -137,6 +137,40 @@ cannot submit a drain acknowledgement. Shared reservation and retirement require
 current owner/admin consent. Regional admission and organization billing remain
 pending, and the shared image release gate remains in place.
 
+## Runtime delivery consent
+
+ADR-646 retains purpose-specific personal consent for quota delivery. Configure
+the directory's runtime quota signing identity and the regional receiver's trusted
+directory keys and canonical HTTPS origin first. Consent does not enable regional
+runtime admission; the heads remain frozen pending the remaining native gates.
+
+Use an explicit new UUID for first setup or renewal. Reuse that UUID and the exact
+expiry for every retry, including after a lost response:
+
+```sh
+gregale global-app setup-runtime-consent shop --consent CONSENT_UUID \
+  --region eu-fsn --expires-at EXPIRY_RFC3339 \
+  --regional-token-env GREGALE_FSN_ACCOUNT_KEY
+gregale global-app show-runtime-consent shop --consent CONSENT_UUID
+gregale global-app revoke-runtime-consent shop --consent CONSENT_UUID \
+  --regional-token-env GREGALE_FSN_ACCOUNT_KEY
+```
+
+Choose a future expiry within six days, with at most microsecond precision. The
+directory stores the public consent scope and pending intent before requesting
+regional approval. It never retains the admin key. The original UUID, scope and
+expiry cannot be replaced. Setup rechecks current owner eligibility and the exact
+selected target. There are at most 32 pending, active or revoking unexpired records
+per global app. Inspection can report `pending`, `active`, `revoking`, `revoked`
+or `expired`; an active record still requires current owner and target checks
+before dispatch.
+
+Revocation blocks directory dispatch before contacting the original regional
+endpoint. Its original admin key is required even after detachment. Lost replies
+remain retryable. Expiry or revocation never releases issued global quota, and
+signed retirement remains independent of consent. The durable quota delivery
+outbox/worker remains pending; there is no automatic quota dispatch yet.
+
 ## Invalidation and recovery
 
 `global_app_target_reverification_required` (503) means a registry entry is

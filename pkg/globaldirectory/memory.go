@@ -27,10 +27,11 @@ type MemoryStore struct {
 	runtimeQuotas      map[string]map[string]RuntimeQuotaAllocation
 	runtimeQuotaHeads  map[string]int64
 	runtimeQuotaIssuer string
+	runtimeConsents    map[string]RuntimeConsentRecord
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{owners: make(map[string]Owner), cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target), releases: make(map[string]map[string]Release), releaseHeads: make(map[string]int64), delegations: make(map[string]Delegation), recovery: make(map[string]memoryRecovery), runtimeQuotas: make(map[string]map[string]RuntimeQuotaAllocation), runtimeQuotaHeads: make(map[string]int64)}
+	return &MemoryStore{owners: make(map[string]Owner), cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target), releases: make(map[string]map[string]Release), releaseHeads: make(map[string]int64), delegations: make(map[string]Delegation), recovery: make(map[string]memoryRecovery), runtimeQuotas: make(map[string]map[string]RuntimeQuotaAllocation), runtimeQuotaHeads: make(map[string]int64), runtimeConsents: make(map[string]RuntimeConsentRecord)}
 }
 
 func (s *MemoryStore) CheckScope(context.Context) error { return nil }
