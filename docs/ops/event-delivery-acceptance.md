@@ -47,6 +47,38 @@ The HTTP fixture counts every delivery, failure and successful response. Its
 in-memory effect deduplicates by source/event identity. These controlled counts
 do not change Gregale's at-least-once execution or non-FIFO contract.
 
+## Native runtime gate
+
+After merging the gate, dispatch the existing hardware workflow from `main`:
+
+```bash
+gh workflow run e2e-native.yml --ref main -f lane=event-delivery-only
+```
+
+This lane runs both `TestEventDeliveryRecoveryWholeReceiptMetal` and
+`TestEventDeliveryRecoveryIndependentRecipientsMetal` on the dedicated
+`faas-acceptance-1` Linux/amd64 KVM host. It uses the same compiled Go consumer
+as staging, packaged as a digest-pinned OCI image. Normal image deployment
+prepares its rootfs and boots two real Firecracker guests. Event requests use
+the actual scheduler, gateways, VMMD and guest transport. The local registry
+provides fixture images; small ingress adapters set app Host headers on the
+gate's control requests. No VM transport or handler response is simulated.
+
+The fixtures pin one running guest per consumer and retain the same instance
+IDs across scheduler and API crashes. The gate uses the process scenarios
+above, including rollback of recipient adoption, retained retry history,
+selective keyed replay, duplicate publication, empty settled backlog and
+foreign-account rejection. Successful test logs include both reports and
+guest instance IDs; the workflow retains the combined native log as evidence.
+Subscriptions are seeded as test intent; this image-based lane does not
+qualify source builds or manifest reconciliation.
+
+Both routing modes must actually pass. Skipped or missing tests fail the lane.
+The existing native runner provides host designation checks, mutual exclusion,
+service restoration, final leakcheck and node shutdown. See the
+[native CI runbook](e2e-native-ci.md) for host prerequisites. A successful
+ordinary CI run or an unavailable native host does not qualify this lane.
+
 ## Staging gate
 
 Use a dedicated staging account and two fresh acceptance fixture apps. Prepare

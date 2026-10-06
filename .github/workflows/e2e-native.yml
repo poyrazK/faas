@@ -43,9 +43,9 @@ on:
           qualify: full plus runtime candidates; containers: OCI qualification;
           jobs-only: blocking Jobs lifecycle; exclusive-operations-only:
           blocking stale-owner KVM test; managed-operation-only: native workflow
-          crash/replay and signed effect delivery.
+          crash/replay and signed effect delivery; event-delivery-only: native consumer fan-out and recovery.
         type: choice
-        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only]
+        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only, event-delivery-only]
         default: smoke
       keep_node_running:
         description: >-
@@ -240,7 +240,7 @@ jobs:
 
       - name: Phase 1 — fixtures (app shape checks, no microVM)
         id: phase_fixtures
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'event-delivery-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -259,7 +259,7 @@ jobs:
 
       - name: Phase 2 — build (source → builderd → builder microVM)
         id: phase_build
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'event-delivery-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -279,7 +279,7 @@ jobs:
 
       - name: Phase 3 — deploy (image, tarball, healthcheck, secrets)
         id: phase_deploy
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'event-delivery-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -298,7 +298,7 @@ jobs:
 
       - name: Phase 4 — wake (restore, native Flags refresh, scheduling)
         id: phase_wake
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'event-delivery-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -317,7 +317,7 @@ jobs:
 
       - name: Phase 5 — streaming (response streaming, h2c inner leg)
         id: phase_streaming
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'event-delivery-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -336,7 +336,7 @@ jobs:
 
       - name: Phase 6 — logs (app log SSE)
         id: phase_logs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'event-delivery-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -355,7 +355,7 @@ jobs:
 
       - name: Phase 7 — security fences (§11, ship-blocking)
         id: phase_security
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'event-delivery-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -374,7 +374,7 @@ jobs:
 
       - name: Phase 8 — two-node (recovery arbiter, drain, drills)
         id: phase_twonode
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'event-delivery-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -393,7 +393,7 @@ jobs:
 
       - name: Phase 9 — jobs (awaiting native verification, #2569)
         id: phase_jobs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'event-delivery-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -454,6 +454,21 @@ jobs:
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
             --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=40m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
 
+      - name: Event delivery recovery acceptance (blocking KVM lane)
+        id: phase_event_delivery_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'event-delivery-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: event-delivery-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=25m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
       - name: Refresh GCP authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
         uses: google-github-actions/auth@v3
@@ -512,6 +527,7 @@ jobs:
             jobs_only=${{ steps.phase_jobs_only.outcome }}
             exclusive_operations_only=${{ steps.phase_exclusive_operations_only.outcome }}
             managed_operation_only=${{ steps.phase_managed_operation_only.outcome }}
+            event_delivery_only=${{ steps.phase_event_delivery_only.outcome }}
         run: |
           set -uo pipefail
           # Jobs still needs a successful dedicated-KVM run before it can be
@@ -603,6 +619,17 @@ jobs:
                   lane_tests+=("$selected_test")
                 done < <(native_e2e_lane_tests managed-operation-only "$GITHUB_WORKSPACE")
                 native_e2e_lane_verdict "$log" "managed operation KVM lane" "${lane_tests[@]}" || rc=1
+                ;;
+              event-delivery-only)
+                # Require both native consumer recovery tests to pass; a
+                # missing routing mode or skipped guest cannot qualify the lane.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests event-delivery-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "event delivery KVM lane" "${lane_tests[@]}" || rc=1
                 ;;
               *)
                 native_e2e_verdict "$log" || rc=1

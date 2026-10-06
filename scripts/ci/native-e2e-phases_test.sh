@@ -113,6 +113,14 @@ managed_operation_tests="$(native_e2e_lane_tests managed-operation-only "${repo_
   '^(TestManagedOperationWorkflowMetal)$' ]] ||
   fail "managed-operation-only does not build an anchored test filter"
 native_e2e_is_lane managed-operation-only || fail "managed-operation-only is not recognised as a lane"
+event_delivery_tests="$(native_e2e_lane_tests event-delivery-only "${repo_root}")"
+for required in TestEventDeliveryRecoveryWholeReceiptMetal TestEventDeliveryRecoveryIndependentRecipientsMetal; do
+  printf '%s\n' "${event_delivery_tests}" | grep -qx "${required}" ||
+    fail "event-delivery-only lost routing mode ${required}"
+  native_e2e_phase_tests wake "${repo_root}" | grep -qx "${required}" ||
+    fail "native event delivery ${required} is absent from the full wake phase"
+done
+native_e2e_is_lane event-delivery-only || fail "event-delivery-only is not recognised as a lane"
 # The assert must actually bite: a bogus name fails it.
 ( NATIVE_E2E_SMOKE_TESTS+=(TestDoesNotExistAnywhere); native_e2e_assert_lanes "${repo_root}" ) 2>/dev/null &&
   fail "native_e2e_assert_lanes accepted a lane naming a nonexistent test"
@@ -146,6 +154,9 @@ mkdir -p "${container_probe}/cmd"
 cp -R "${repo_root}/cmd/e2e" "${container_probe}/cmd/e2e"
 printf '\nfunc TestContainerAddedProbe(t *testing.T) {}\n' >> "${container_probe}/cmd/e2e/direct_oci_fullrootfs_metal_test.go"
 native_e2e_lane_tests containers "${container_probe}" | grep -qx TestContainerAddedProbe || fail "new container test was omitted"
+printf '\nfunc TestEventDeliveryAddedProbe(t *testing.T) {}\n' >> "${container_probe}/cmd/e2e/events_delivery_recovery_metal_test.go"
+native_e2e_lane_tests event-delivery-only "${container_probe}" | grep -qx TestEventDeliveryAddedProbe ||
+  fail "new native event delivery test was omitted from its qualification lane"
 
 # 10. The stale-jail reaper removes app-instance chroots as well as build ones,
 #     and nothing outside firecracker/ or firecracker-v*/. Two app chroots that survived a node

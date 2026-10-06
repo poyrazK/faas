@@ -54,9 +54,15 @@ func JobImage(repo string) (fakeImage, string) {
 	if err != nil {
 		panic(err)
 	}
+	return staticFixtureImage(repo, "job-fixture", binary, runtime.GOARCH, []string{"/job-fixture", "success"}, 0)
+}
+
+// staticFixtureImage packages a compiled fixture with actual OCI blob and
+// uncompressed layer digests. A zero port preserves the jobs image contract.
+func staticFixtureImage(repo, filename string, binary []byte, arch string, cmd []string, port int) (fakeImage, string) {
 	var tarBuf bytes.Buffer
 	tw := tar.NewWriter(&tarBuf)
-	if err := tw.WriteHeader(&tar.Header{Name: "job-fixture", Mode: 0o755, Size: int64(len(binary)), Typeflag: tar.TypeReg}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: filename, Mode: 0o755, Size: int64(len(binary)), Typeflag: tar.TypeReg}); err != nil {
 		panic(err)
 	}
 	if _, err := tw.Write(binary); err != nil {
@@ -76,10 +82,14 @@ func JobImage(repo string) (fakeImage, string) {
 	diffSum := sha256.Sum256(tarBuf.Bytes())
 	layerSum := sha256.Sum256(layerBuf.Bytes())
 	layerDigest := "sha256:" + hex.EncodeToString(layerSum[:])
+	process := map[string]any{"Cmd": cmd, "Env": []string{}, "WorkingDir": "/"}
+	if port != 0 {
+		process["ExposedPorts"] = map[string]any{fmt.Sprintf("%d/tcp", port): struct{}{}}
+	}
 	config := map[string]any{
-		"architecture": runtime.GOARCH,
+		"architecture": arch,
 		"os":           "linux",
-		"config":       map[string]any{"Cmd": []string{"/job-fixture", "success"}, "Env": []string{}, "WorkingDir": "/"},
+		"config":       process,
 		"rootfs":       map[string]any{"type": "layers", "diff_ids": []string{"sha256:" + hex.EncodeToString(diffSum[:])}},
 	}
 	configBytes, _ := json.Marshal(config)

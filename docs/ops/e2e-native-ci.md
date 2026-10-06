@@ -26,6 +26,10 @@ It is manually dispatched from `main`; the scheduled run is currently disabled
 while the hardware gate is being stabilized. Select `exclusive-operations-only`
 to run just `TestExclusiveOperationFencesRestoredKVMOwnerMetal` with a blocking
 test verdict and the runner's normal service restoration and final leakcheck.
+Select `event-delivery-only` for two native consumer guests and both event
+routing modes: handler retry exhaustion, scheduler/API crashes, selective
+dead-letter replay, duplicate safety and retained delivery evidence. Both
+tests must pass; see the [delivery acceptance runbook](event-delivery-acceptance.md).
 Use `full` or `qualify` for the complete platform matrix. Runs share the
 `e2e-native-faas-acceptance-1` concurrency group and the
 `/var/lock/faas-builder-acceptance.lock` host lock, so an overrun waits instead

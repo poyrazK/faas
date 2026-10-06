@@ -56,6 +56,8 @@ NATIVE_E2E_REQUIRED_TESTS=(
   TestDeployHealthcheckMetal
   TestCatalogRuntimeParityMetal
   TestManagedOperationWorkflowMetal
+  TestEventDeliveryRecoveryWholeReceiptMetal
+  TestEventDeliveryRecoveryIndependentRecipientsMetal
   TestFeatureFlagsNativeParkRestoreMetal
   TestSec11_MemoryMaxFenceEnforced_CrossProcess
   TestSec11_SeccompFilterEnforced_CrossProcess

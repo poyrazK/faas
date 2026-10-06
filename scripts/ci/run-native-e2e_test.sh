@@ -190,6 +190,27 @@ native_e2e_lane_verdict "${work}/managed-operation-only.log" \
   >"${work}/managed-operation-only.out" 2>&1 ||
   fail "a passing managed workflow KVM test was rejected: $(cat "${work}/managed-operation-only.out")"
 
+event_delivery_tests=()
+while IFS= read -r selected_test; do
+  event_delivery_tests+=("${selected_test}")
+done < <(native_e2e_lane_tests event-delivery-only "${repo_root}")
+[[ "${#event_delivery_tests[@]}" -ge 2 ]] || fail "native event delivery lane lost a routing mode"
+lane_pass_log "${work}/event-delivery-only.log" "${event_delivery_tests[@]}"
+native_e2e_lane_verdict "${work}/event-delivery-only.log" \
+  "event delivery KVM lane" "${event_delivery_tests[@]}" \
+  >"${work}/event-delivery-only.out" 2>&1 ||
+  fail "passing native event delivery tests were rejected"
+grep -v -- "--- PASS: ${event_delivery_tests[0]} " "${work}/event-delivery-only.log" > "${work}/event-delivery-missing.log"
+if native_e2e_lane_verdict "${work}/event-delivery-missing.log" \
+  "event delivery KVM lane" "${event_delivery_tests[@]}" >/dev/null 2>&1; then
+  fail "native event delivery qualified without both routing modes"
+fi
+printf -- '--- SKIP: %s (0.00s)\n' "${event_delivery_tests[0]}" >> "${work}/event-delivery-missing.log"
+if native_e2e_lane_verdict "${work}/event-delivery-missing.log" \
+  "event delivery KVM lane" "${event_delivery_tests[@]}" >/dev/null 2>&1; then
+  fail "native event delivery qualified with a skipped routing mode"
+fi
+
 lane_pass_log "${work}/lane-skip.log" "${lane_tests[@]}"
 grep -v -- "--- PASS: ${lane_tests[0]} " "${work}/lane-skip.log" > "${work}/lane-skip.tmp"
 printf -- '--- SKIP: %s (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-skip.tmp"
@@ -292,6 +313,17 @@ managed_operation_unit_minutes="$(awk '
   fail "cannot determine managed-operation test and unit budgets"
 [[ "${managed_operation_unit_minutes}" -gt "${managed_operation_test_minutes}" ]] ||
   fail "managed-operation unit ${managed_operation_unit_minutes}m cannot outlast test budget ${managed_operation_test_minutes}m"
+# shellcheck disable=SC2016 # Match workflow expressions literally.
+grep -Fq 'native_e2e_lane_tests event-delivery-only "$GITHUB_WORKSPACE"' "${workflow}" ||
+  fail "native event delivery workflow has no verdict for its derived tests"
+grep -Fq "inputs.lane == 'event-delivery-only'" "${workflow}" ||
+  fail "the native workflow has no event-delivery-only dispatch route"
+# shellcheck disable=SC2016
+grep -Fq 'event_delivery_only=${{ steps.phase_event_delivery_only.outcome }}' "${workflow}" ||
+  fail "native event delivery outcome is absent from the workflow verdict"
+event_delivery_exclusions="$(grep -Fc "inputs.lane != 'event-delivery-only'" "${workflow}" || true)"
+[[ "${event_delivery_exclusions}" -eq 9 ]] ||
+  fail "event-delivery-only must skip all nine platform phases (found ${event_delivery_exclusions} exclusions)"
 grep -Fq 'native_e2e_verdict "$log" || rc=1' "${workflow}" ||
   fail "full native e2e dispatches no longer apply the platform-wide verdict"
 
