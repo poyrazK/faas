@@ -953,7 +953,9 @@ jobs:
   # while its original state/PostgreSQL inventory runs in parallel above.
   unit-tests-pg-2a-gate:
     name: unit tests (pg shard 2a — state/reconcile/reposcan)
-    if: always()
+    # Report failed prerequisites, but let superseded PR runs cancel so the
+    # next head is not held in the workflow concurrency queue.
+    if: always() && !cancelled()
     needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
     runs-on: ubuntu-latest
     timeout-minutes: 5
