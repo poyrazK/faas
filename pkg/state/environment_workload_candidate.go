@@ -117,13 +117,26 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 	if frozen.SourceArchive != nil {
 		if err := validateEnvironmentSourceArtifact(*frozen.SourceArchive); err != nil || frozen.Source == nil ||
 			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile" && frozen.Source.Kind != "function") || d.Kind != DeploymentKindGitHub ||
+			d.ImageDigest != "" ||
 			d.SourcePath != frozen.SourceArchive.Path || d.SourceSHA256 != frozen.SourceArchive.SHA256 || d.SourceBytes != frozen.SourceArchive.Bytes ||
 			d.BuildID != frozen.SourceArchive.BuildID || d.LogPath != frozen.SourceArchive.LogPath || d.SourceRoot != frozen.Source.Directory ||
 			frozen.RevisionID != frozen.SourceArchive.RevisionID || d.CommitSHA != frozen.SourceArchive.CommitSHA || frozen.DefinitionDigest != frozen.SourceArchive.DefinitionDigest {
 			return nil, fmt.Errorf("%w: frozen Git source disagrees with candidate", ErrInvalidArgument)
 		}
-	} else if frozen.Source != nil && frozen.Source.Kind != "image" {
-		return nil, fmt.Errorf("%w: frozen Git source has no archive", ErrInvalidArgument)
+	} else {
+		if frozen.Source == nil || frozen.Source.Kind != "image" || d.Kind != DeploymentKindImage || d.ImageDigest != frozen.Source.Image ||
+			d.SourcePath != "" || d.SourceSHA256 != "" || d.SourceBytes != 0 || d.BuildID != "" || d.LogPath != "" || d.SourceRoot != "" {
+			return nil, fmt.Errorf("%w: frozen image source disagrees with candidate", ErrInvalidArgument)
+		}
+	}
+	// Re-run the source contract when reading a persisted candidate. Creation
+	// compiles the reviewed definition, but every later consumer must also fail
+	// closed if a corrupted or legacy row contains a non-canonical source.
+	source := *frozen.Source
+	compiled, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion,
+		Project: "candidate", Environment: "candidate", Workloads: map[string]api.EnvironmentWorkload{"candidate": {Source: &source}}})
+	if err != nil || compiled.Definition.Workloads["candidate"].Source == nil || *compiled.Definition.Workloads["candidate"].Source != *frozen.Source {
+		return nil, fmt.Errorf("%w: frozen workload source is invalid or non-canonical", ErrInvalidArgument)
 	}
 	return &frozen, nil
 }

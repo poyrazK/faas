@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -45,6 +46,27 @@ func TestEnvironmentGitOpsImageCandidatesFreezeInputsAndHoldExecution(t *testing
 		frozen, err := dep.ScopedWorkloadRuntime()
 		if err != nil || frozen.EnvironmentID != lease.Source.EnvironmentID || frozen.SourceID != lease.Source.ID || frozen.RevisionID != lease.Revision.ID || frozen.Generation != lease.Source.Generation || frozen.Resource != "workload/api" || frozen.PlanHash != plan.Hash || frozen.Baseline.Port != 8079 || string(frozen.Runtime["port"]) != "8080" {
 			t.Fatalf("frozen authority: %+v %v", frozen, err)
+		}
+		// Persisted source and artifact identity must remain the same even if a
+		// row is damaged outside the store APIs. Image candidates have no source
+		// archive, so their digest and deployment kind are the provenance fence.
+		otherImage := "registry.example/other@sha256:" + strings.Repeat("f", 64)
+		changedSource := *frozen
+		changedSource.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: otherImage}
+		changedSourceJSON, _ := json.Marshal(changedSource)
+		for name, mutate := range map[string]func(*state.Deployment){
+			"frozen source digest":    func(candidate *state.Deployment) { candidate.EnvironmentWorkloadRuntime = string(changedSourceJSON) },
+			"deployment image digest": func(candidate *state.Deployment) { candidate.ImageDigest = otherImage },
+			"deployment kind":         func(candidate *state.Deployment) { candidate.Kind = state.DeploymentKindGitHub },
+			"orphan source metadata":  func(candidate *state.Deployment) { candidate.SourcePath = "/tmp/unreviewed.tar.gz" },
+		} {
+			t.Run("source identity "+name, func(t *testing.T) {
+				corrupted := dep
+				mutate(&corrupted)
+				if _, err := corrupted.ScopedWorkloadRuntime(); err == nil {
+					t.Fatal("corrupted held candidate retained valid source authority")
+				}
+			})
 		}
 		for _, promote := range []func() error{
 			func() error { return basic.(state.Store).MarkDeploymentLive(t.Context(), dep.ID) },
