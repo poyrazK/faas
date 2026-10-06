@@ -15,7 +15,10 @@ import (
 // A schema ahead of its migration ledger must preserve compacted delivery
 // evidence and an already populated routing projection when the tail replays.
 func TestMigrationsEventRoutingReadModelsReplayPreservesEvidence(t *testing.T) {
-	ctx, pool := t.Context(), pgtest.OpenMigrated(t)
+	ctx, pool := t.Context(), pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
 	account, app, subscription := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id,email,plan) VALUES ($1,$2,'pro')`, account, account+"@example.com"); err != nil {
 		t.Fatal(err)

@@ -541,6 +541,9 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # Concurrent template migrations and schema teardown share the
+          # cluster lock table; match the other parallel PostgreSQL shard.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-

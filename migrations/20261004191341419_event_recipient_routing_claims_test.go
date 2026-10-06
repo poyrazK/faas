@@ -15,7 +15,10 @@ import (
 // changing existing recipient ownership, generation, lease, or retry counters.
 func TestMigrations_EventRecipientClaimsReplayPreservesOwnership(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.OpenMigrated(t)
+	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
 	accountID, appID, subscriptionID, token := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id,email,plan) VALUES ($1,$2,'pro')`, accountID, accountID+"@example.com"); err != nil {
 		t.Fatal(err)
