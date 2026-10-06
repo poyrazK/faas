@@ -33,6 +33,18 @@ func bindingVerificationRevision(base string, changedAt time.Time) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// Exact service route evidence is separate from ordinary service evidence.
+// Only APID supplies graph selections while evaluating a candidate graph.
+type bindingGraphTargetsKey struct{}
+
+func exactServiceBindingRevision(revision, target string) string {
+	if target == "" {
+		return revision
+	}
+	digest := sha256.Sum256([]byte(revision + "\x00target/" + target))
+	return hex.EncodeToString(digest[:])
+}
+
 func (s *server) serviceBindingRevisions(ctx context.Context, app state.App) (map[string]string, error) {
 	revisions := map[string]string{}
 	items := serviceBindingInventory(app)
@@ -54,7 +66,7 @@ func (s *server) serviceBindingRevisions(ctx context.Context, app state.App) (ma
 }
 
 func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Account, app state.App, dep state.Deployment, request api.ResolvedCreateAppTaskRequest) (*state.BindingVerificationPin, error) {
-	if request.CommandShell || len(request.Command) != 2 {
+	if request.CommandShell || !api.IsBindingVerificationCommand(request.Command, false) {
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), bindingInventoryReadTimeout)
@@ -107,8 +119,12 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 		if matches {
 			// The command selects a service name, while its public inventory key is an env key.
 			base := section.revisions[bindingVerificationKey(item.Type, item.Binding, item.Scope)]
-			return &state.BindingVerificationPin{Type: item.Type, Binding: selection,
-				Revision: bindingVerificationRevision(base, changedAt), CredentialGeneration: item.CredentialGeneration}, nil
+			target := ""
+			if item.Type == api.BindingTypeService && len(request.Command) == 3 {
+				target = request.Command[2]
+			}
+			return &state.BindingVerificationPin{Type: item.Type, Binding: selection, TargetDeploymentID: target,
+				Revision: exactServiceBindingRevision(bindingVerificationRevision(base, changedAt), target), CredentialGeneration: item.CredentialGeneration}, nil
 		}
 	}
 	return nil, nil // A generic task can probe an unmanaged env key; it supplies no binding evidence.
@@ -196,8 +212,19 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 		item.VerificationStatus = item.Verification.Result
 		if task.DeploymentID != dep.ID {
 			item.VerificationStatus, item.Verification.Reason = "stale", "deployment_changed"
-		} else if task.Pin.Revision != bindingVerificationRevision(base, changedAt) {
-			item.VerificationStatus, item.Verification.Reason = "stale", "configuration_changed"
+		} else {
+			target := ""
+			if item.Type == api.BindingTypeService {
+				targets, _ := r.Context().Value(bindingGraphTargetsKey{}).(map[string]string)
+				target = targets[item.Name]
+				if targets != nil && target == "" {
+					item.VerificationStatus, item.Verification.Reason = "stale", "graph_target_missing"
+					continue
+				}
+			}
+			if task.Pin.TargetDeploymentID != target || task.Pin.Revision != exactServiceBindingRevision(bindingVerificationRevision(base, changedAt), target) {
+				item.VerificationStatus, item.Verification.Reason = "stale", "configuration_changed"
+			}
 		}
 	}
 }
@@ -232,7 +259,7 @@ func normalizeBindingVerification(task state.BindingVerificationTask) *api.Bindi
 	switch task.Pin.Type {
 	case api.BindingTypeService:
 		var report api.ServiceBindingProbeReport
-		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.Service != task.Pin.Binding {
+		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.Service != task.Pin.Binding || report.TargetDeploymentID != task.Pin.TargetDeploymentID {
 			result.Reason = "report_invalid"
 			return result
 		}

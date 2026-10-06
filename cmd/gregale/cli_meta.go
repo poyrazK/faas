@@ -447,6 +447,7 @@ var cliCommands = []cliCommand{
 					{Name: "outbound", Short: "verify a configured outbound integration by UUID", Value: "INTEGRATION_ID"},
 					{Name: "object-storage", Short: "verify one object-storage binding by environment prefix (read access only)", Value: "PREFIX"},
 					{Name: "deployment", Value: "ID|vN", Short: "exact live deployment to verify, including zero-traffic candidates"},
+					{Name: "target-deployment", Value: "UUID", Short: "exact service target required by a candidate graph"},
 					{Name: "poll-interval", Short: "status polling interval while the canary runs", Value: "D"},
 					{Name: "wait-timeout", Short: "maximum time to wait for the canary task", Value: "D"},
 				}, Examples: []string{"gregale bindings verify my-api billing", "gregale bindings verify my-api --all", "gregale bindings verify my-api --deployment v12 --all", "gregale bindings verify my-api --postgres DATABASE_URL", "gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS"},
@@ -2761,7 +2762,10 @@ var cliCommands = []cliCommand{
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
-				{Name: "release-sets", Short: "List release graphs and their retention deadlines", Flags: []cliFlag{{Name: "before", Value: "CURSOR", Short: "page cursor"}, {Name: "limit", Value: "N", Short: "page size"}}},
+				{Name: "release-sets", Short: "List release graphs, or check and publish exact membership", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "before", Value: "CURSOR", Short: "page cursor"}, {Name: "limit", Value: "N", Short: "page size"}}, Subcommands: []cliSub{
+					{Name: "check", Short: "Check every exact deployment without activating the graph", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "exact deployment graph JSON"}, {Name: "expected-active", Value: "UUID|none", Req: true, Short: "expected active graph"}}},
+					{Name: "publish", Short: "Recheck and atomically activate every exact deployment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "exact deployment graph JSON"}, {Name: "expected-active", Value: "UUID|none", Req: true, Short: "expected active graph"}}},
+				}},
 				{Name: "releases", Short: "List live workload deployments"},
 				{Name: "qualify", Short: "Run health and smoke GET probes against exact active release-set deployments", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
 					{Name: "profile", Short: "YAML probe profile defining every release-set workload", Value: "FILE", Req: true},

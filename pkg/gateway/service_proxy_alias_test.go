@@ -243,3 +243,43 @@ func TestParseServiceAliasHost(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceProxyExactProbeChecksOnlySelectedReplica(t *testing.T) {
+	const target = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		live     bool
+		target   string
+		status   int
+	}{{"ready", target, true, target, 204}, {"other-revision", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", true, target, 503}, {"retired", target, false, target, 409}, {"malformed", target, true, "invalid", 400}} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "billing", Endpoints: []ServiceEndpoint{{InstanceID: "instance", NodeID: "node", Port: 3000, DeploymentID: tc.endpoint}}}}
+			wakes, forwards := 0, 0
+			proxy := NewServiceProxy(ServiceProxyConfig{Provider: provider, ResolveCaller: func(context.Context, string) (string, error) { return "caller", nil }, AllowAlias: func(context.Context, string, string) (bool, error) { return true, nil }, Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+				return ServiceTarget{AppID: "billing"}, true, nil
+			}, Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+				return ServiceCaller{AppID: "caller"}, nil
+			}, ValidateDeployment: func(_ context.Context, app, id string) (bool, error) {
+				if app != "billing" || id != target {
+					t.Fatalf("validation=%s/%s", app, id)
+				}
+				return tc.live, nil
+			}, Wake: func(context.Context, string) error { wakes++; return nil }, Forward: func(Target) http.Handler {
+				return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { forwards++ })
+			}})
+			request := httptest.NewRequest(http.MethodHead, "https://billing.internal"+api.ServiceBindingProbePath, nil)
+			request.Host = "billing.internal"
+			request.Header.Set(api.ServiceBindingProbeRequestHeader, api.ServiceBindingProbeVersion)
+			request.Header.Set(api.TargetDeploymentHeader, tc.target)
+			rec := httptest.NewRecorder()
+			proxy.ServeHTTP(rec, request)
+			if rec.Code != tc.status || wakes != 0 || forwards != 0 {
+				t.Fatalf("status=%d want=%d wakes=%d forwards=%d body=%s", rec.Code, tc.status, wakes, forwards, rec.Body.String())
+			}
+			if tc.status == 204 && rec.Header().Get(api.TargetDeploymentHeader) != target {
+				t.Fatal("exact target not confirmed")
+			}
+		})
+	}
+}

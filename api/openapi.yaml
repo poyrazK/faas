@@ -19950,7 +19950,7 @@ paths:
       tags: [projects]
       operationId: publishProjectReleaseSet
       summary: Atomically activate an immutable project deployment graph.
-      description: Every project workload must have one live deployment and revision pinning enabled for at least the requested TTL. Previous release sets remain addressable until expiry.
+      description: Every workload requires a live eligible deployment and sufficient revision retention. Presence of expected_active_release_id selects binding-checked activation and compares the current graph under locks. Enforced scopes require this path. Publication reevaluates the exact membership and graph-selected service targets. Previous graphs retain their TTL.
       requestBody:
         required: true
         content:
@@ -19967,6 +19967,42 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/check:
+    parameters:
+      - name: slug
+        description: Project slug owned by the authenticated account.
+        in: path
+        required: true
+        schema: { type: string }
+      - name: environment
+        description: Project environment containing every selected deployment.
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: checkProjectReleaseSet
+      summary: Qualify an exact candidate deployment graph without changing routing.
+      description: Requires expected_active_release_id, including empty for no active graph. Reads binding evidence and returns per-member blockers. Does not create probes, wake services, or invoke handlers. A passed report is an observation; publication rechecks all evidence under locks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishProjectReleaseSetRequest' }
+      responses:
+        '200':
+          description: Candidate qualification, including blockers when passed is false.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseCheckResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/projects/{slug}/environments/{environment}/qualifications:
     parameters:
@@ -45154,6 +45190,9 @@ components:
       additionalProperties: false
       required: [ttl_seconds, deployments]
       properties:
+        expected_active_release_id:
+          type: string
+          description: Current release UUID, or empty for no graph. Presence selects checked activation; mandatory on the check route.
         ttl_seconds: { type: integer, minimum: 1, maximum: 604800 }
         deployments:
           type: object
@@ -45161,11 +45200,34 @@ components:
           maxProperties: 100
           additionalProperties: { type: string, format: uuid }
 
+    ProjectReleaseCheckResponse:
+      description: Observation of the complete exact deployment graph and its binding evidence. Publication evaluates fresh evidence and compares the active predecessor again.
+      type: object
+      required: [project_id, environment, expected_active_release_id, graph_digest, ttl_seconds, members, passed, checked_at, checks]
+      properties:
+        project_id: { type: string, format: uuid }
+        environment: { type: string }
+        expected_active_release_id: { type: string }
+        graph_digest: { type: string, pattern: '^[a-f0-9]{64}$' }
+        ttl_seconds: { type: integer }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectReleaseSetMemberResponse' }
+        passed: { type: boolean }
+        checked_at: { type: string, format: date-time }
+        checks:
+          type: array
+          items: { $ref: '#/components/schemas/BindingCheckReport' }
+        blockers:
+          type: array
+          items: { $ref: '#/components/schemas/BindingCheckFinding' }
+
     ProjectReleaseSetResponse:
       description: Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and expires_at is set.
       type: object
       required: [id, account_id, project_id, environment, active, ttl_seconds, created_at, members]
       properties:
+        bindings_check: { $ref: '#/components/schemas/ProjectReleaseCheckResponse' }
         id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
         project_id: { type: string, format: uuid }
@@ -53387,6 +53449,7 @@ components:
         observed: null
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
+        project_release_check: { $ref: '#/components/schemas/ProjectReleaseCheckResponse' }
         bindings_check: { $ref: '#/components/schemas/BindingCheckReport' }
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}

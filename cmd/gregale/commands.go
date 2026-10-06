@@ -678,6 +678,11 @@ func renderAPIError(w io.Writer, e *APIError) {
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
 	}
+	if p.ProjectReleaseCheck != nil {
+		for _, blocker := range p.ProjectReleaseCheck.Blockers {
+			_, _ = fmt.Fprintf(w, "  %s %s: %s\n", blocker.DeploymentID, blocker.Code, blocker.Message)
+		}
+	}
 	if p.BindingsCheck != nil {
 		for _, blocker := range p.BindingsCheck.Blockers {
 			_, _ = fmt.Fprintf(w, "  %s: %s", blocker.Code, blocker.Message)

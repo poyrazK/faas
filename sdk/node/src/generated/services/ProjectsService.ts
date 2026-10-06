@@ -41,6 +41,7 @@ import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnv
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
+import type { ProjectReleaseCheckResponse } from '../models/ProjectReleaseCheckResponse.js';
 import type { ProjectReleaseSetListResponse } from '../models/ProjectReleaseSetListResponse.js';
 import type { ProjectReleaseSetResponse } from '../models/ProjectReleaseSetResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
@@ -1441,7 +1442,7 @@ export class ProjectsService {
   }
   /**
    * Atomically activate an immutable project deployment graph.
-   * Every project workload must have one live deployment and revision pinning enabled for at least the requested TTL. Previous release sets remain addressable until expiry.
+   * Every workload requires a live eligible deployment and sufficient revision retention. Presence of expected_active_release_id selects binding-checked activation and compares the current graph under locks. Enforced scopes require this path. Publication reevaluates the exact membership and graph-selected service targets. Previous graphs retain their TTL.
    * @returns ProjectReleaseSetResponse Published release set.
    * @throws ApiError
    */
@@ -1477,6 +1478,53 @@ export class ProjectsService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Qualify an exact candidate deployment graph without changing routing.
+   * Requires expected_active_release_id, including empty for no active graph. Reads binding evidence and returns per-member blockers. Does not create probes, wake services, or invoke handlers. A passed report is an observation; publication rechecks all evidence under locks.
+   * @returns ProjectReleaseCheckResponse Candidate qualification, including blockers when passed is false.
+   * @throws ApiError
+   */
+  public static checkProjectReleaseSet({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project slug owned by the authenticated account.
+     */
+    slug: string,
+    /**
+     * Project environment containing every selected deployment.
+     */
+    environment: string,
+    requestBody: PublishProjectReleaseSetRequest,
+  }): CancelablePromise<ProjectReleaseCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/check',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });

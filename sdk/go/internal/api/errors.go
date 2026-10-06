@@ -47,7 +47,8 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
-	BindingsCheck *BindingCheckReport `json:"bindings_check,omitempty"`
+	ProjectReleaseCheck *ProjectReleaseCheckResponse `json:"project_release_check,omitempty"`
+	BindingsCheck       *BindingCheckReport          `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -471,7 +472,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
-	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
+	case CodeProjectReleaseCheckFailed, CodeProjectReleaseCheckChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
 	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity

@@ -5,6 +5,7 @@
 import type { BindingCheckReport } from './BindingCheckReport.js';
 import type { FieldError } from './FieldError.js';
 import type { LogExcerpt } from './LogExcerpt.js';
+import type { ProjectReleaseCheckResponse } from './ProjectReleaseCheckResponse.js';
 import type { SecretFinding } from './SecretFinding.js';
 /**
  * RFC 9457 problem+json envelope. The `code` field is the stable
@@ -28,6 +29,7 @@ import type { SecretFinding } from './SecretFinding.js';
  *
  */
 export type Problem = {
+  project_release_check?: ProjectReleaseCheckResponse;
   bindings_check?: BindingCheckReport;
   type?: string;
   title: string;

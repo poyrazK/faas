@@ -15,6 +15,7 @@ import (
 // a reserved platform canary. Revision hashes binding configuration, private
 // credential revision facts and the runtime configuration change stamp.
 type BindingVerificationPin struct {
+	TargetDeploymentID   string                        `json:"target_deployment_id,omitempty"`
 	Type                 string                        `json:"type"`
 	Binding              string                        `json:"binding"`
 	Revision             string                        `json:"revision"`
@@ -79,6 +80,13 @@ func validateBindingVerificationPin(params CreateAppTaskParams) error {
 		command = api.AppTaskOutboundBindingProbeCommand
 	}
 	commandLen := 2
+	if pin.TargetDeploymentID != "" {
+		id, err := uuid.Parse(pin.TargetDeploymentID)
+		if err != nil || id == uuid.Nil || id.String() != pin.TargetDeploymentID || pin.Type != api.BindingTypeService || len(params.Command) != 3 || params.Command[2] != pin.TargetDeploymentID {
+			return fmt.Errorf("%w: invalid exact service verification target", ErrAppTaskInvalid)
+		}
+		commandLen = 3
+	}
 	if pin.Type == api.BindingTypeOutbound {
 		commandLen = 3
 		var spec api.OutboundBindingProbeSpec

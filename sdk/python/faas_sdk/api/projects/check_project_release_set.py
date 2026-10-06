@@ -7,7 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
-from ...models.project_release_set_response import ProjectReleaseSetResponse
+from ...models.project_release_check_response import ProjectReleaseCheckResponse
 from ...models.publish_project_release_set_request import PublishProjectReleaseSetRequest
 from ...types import Response
 
@@ -22,7 +22,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/projects/{slug}/environments/{environment}/release-sets".format(
+        "url": "/v1/projects/{slug}/environments/{environment}/release-sets/check".format(
             slug=quote(str(slug), safe=""),
             environment=quote(str(environment), safe=""),
         ),
@@ -38,11 +38,11 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Problem | ProjectReleaseSetResponse | None:
-    if response.status_code == 201:
-        response_201 = ProjectReleaseSetResponse.from_dict(response.json())
+) -> Problem | ProjectReleaseCheckResponse | None:
+    if response.status_code == 200:
+        response_200 = ProjectReleaseCheckResponse.from_dict(response.json())
 
-        return response_201
+        return response_200
 
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
@@ -53,6 +53,11 @@ def _parse_response(
         response_401 = Problem.from_dict(response.json())
 
         return response_401
+
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
 
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
@@ -69,6 +74,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -77,7 +87,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Problem | ProjectReleaseSetResponse]:
+) -> Response[Problem | ProjectReleaseCheckResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -92,13 +102,12 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PublishProjectReleaseSetRequest,
-) -> Response[Problem | ProjectReleaseSetResponse]:
-    """Atomically activate an immutable project deployment graph.
+) -> Response[Problem | ProjectReleaseCheckResponse]:
+    """Qualify an exact candidate deployment graph without changing routing.
 
-     Every workload requires a live eligible deployment and sufficient revision retention. Presence of
-    expected_active_release_id selects binding-checked activation and compares the current graph under
-    locks. Enforced scopes require this path. Publication reevaluates the exact membership and graph-
-    selected service targets. Previous graphs retain their TTL.
+     Requires expected_active_release_id, including empty for no active graph. Reads binding evidence and
+    returns per-member blockers. Does not create probes, wake services, or invoke handlers. A passed
+    report is an observation; publication rechecks all evidence under locks.
 
     Args:
         slug (str):
@@ -111,7 +120,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | ProjectReleaseSetResponse]
+        Response[Problem | ProjectReleaseCheckResponse]
     """
 
     kwargs = _get_kwargs(
@@ -133,13 +142,12 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: PublishProjectReleaseSetRequest,
-) -> Problem | ProjectReleaseSetResponse | None:
-    """Atomically activate an immutable project deployment graph.
+) -> Problem | ProjectReleaseCheckResponse | None:
+    """Qualify an exact candidate deployment graph without changing routing.
 
-     Every workload requires a live eligible deployment and sufficient revision retention. Presence of
-    expected_active_release_id selects binding-checked activation and compares the current graph under
-    locks. Enforced scopes require this path. Publication reevaluates the exact membership and graph-
-    selected service targets. Previous graphs retain their TTL.
+     Requires expected_active_release_id, including empty for no active graph. Reads binding evidence and
+    returns per-member blockers. Does not create probes, wake services, or invoke handlers. A passed
+    report is an observation; publication rechecks all evidence under locks.
 
     Args:
         slug (str):
@@ -152,7 +160,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | ProjectReleaseSetResponse
+        Problem | ProjectReleaseCheckResponse
     """
 
     return sync_detailed(
@@ -169,13 +177,12 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PublishProjectReleaseSetRequest,
-) -> Response[Problem | ProjectReleaseSetResponse]:
-    """Atomically activate an immutable project deployment graph.
+) -> Response[Problem | ProjectReleaseCheckResponse]:
+    """Qualify an exact candidate deployment graph without changing routing.
 
-     Every workload requires a live eligible deployment and sufficient revision retention. Presence of
-    expected_active_release_id selects binding-checked activation and compares the current graph under
-    locks. Enforced scopes require this path. Publication reevaluates the exact membership and graph-
-    selected service targets. Previous graphs retain their TTL.
+     Requires expected_active_release_id, including empty for no active graph. Reads binding evidence and
+    returns per-member blockers. Does not create probes, wake services, or invoke handlers. A passed
+    report is an observation; publication rechecks all evidence under locks.
 
     Args:
         slug (str):
@@ -188,7 +195,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | ProjectReleaseSetResponse]
+        Response[Problem | ProjectReleaseCheckResponse]
     """
 
     kwargs = _get_kwargs(
@@ -208,13 +215,12 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: PublishProjectReleaseSetRequest,
-) -> Problem | ProjectReleaseSetResponse | None:
-    """Atomically activate an immutable project deployment graph.
+) -> Problem | ProjectReleaseCheckResponse | None:
+    """Qualify an exact candidate deployment graph without changing routing.
 
-     Every workload requires a live eligible deployment and sufficient revision retention. Presence of
-    expected_active_release_id selects binding-checked activation and compares the current graph under
-    locks. Enforced scopes require this path. Publication reevaluates the exact membership and graph-
-    selected service targets. Previous graphs retain their TTL.
+     Requires expected_active_release_id, including empty for no active graph. Reads binding evidence and
+    returns per-member blockers. Does not create probes, wake services, or invoke handlers. A passed
+    report is an observation; publication rechecks all evidence under locks.
 
     Args:
         slug (str):
@@ -227,7 +233,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | ProjectReleaseSetResponse
+        Problem | ProjectReleaseCheckResponse
     """
 
     return (

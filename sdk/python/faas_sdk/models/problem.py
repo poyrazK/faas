@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.binding_check_report import BindingCheckReport
     from ..models.field_error import FieldError
     from ..models.log_excerpt import LogExcerpt
+    from ..models.project_release_check_response import ProjectReleaseCheckResponse
     from ..models.secret_finding import SecretFinding
 
 
@@ -50,6 +51,9 @@ class Problem:
     status: int
     code: str
     """Stable machine-readable error code. See StatusForCode in pkg/api/errors.go."""
+    project_release_check: ProjectReleaseCheckResponse | Unset = UNSET
+    """Observation of the complete exact deployment graph and its binding evidence. Publication evaluates fresh
+    evidence and compares the active predecessor again."""
     bindings_check: BindingCheckReport | Unset = UNSET
     """Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
     passed report does not independently establish application readiness or credential use. Optional application
@@ -152,6 +156,10 @@ class Problem:
 
         code = self.code
 
+        project_release_check: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.project_release_check, Unset):
+            project_release_check = self.project_release_check.to_dict()
+
         bindings_check: dict[str, Any] | Unset = UNSET
         if not isinstance(self.bindings_check, Unset):
             bindings_check = self.bindings_check.to_dict()
@@ -236,6 +244,8 @@ class Problem:
                 "code": code,
             }
         )
+        if project_release_check is not UNSET:
+            field_dict["project_release_check"] = project_release_check
         if bindings_check is not UNSET:
             field_dict["bindings_check"] = bindings_check
         if type_ is not UNSET:
@@ -286,6 +296,7 @@ class Problem:
         from ..models.binding_check_report import BindingCheckReport
         from ..models.field_error import FieldError
         from ..models.log_excerpt import LogExcerpt
+        from ..models.project_release_check_response import ProjectReleaseCheckResponse
         from ..models.secret_finding import SecretFinding
 
         d = dict(src_dict)
@@ -294,6 +305,13 @@ class Problem:
         status = d.pop("status")
 
         code = d.pop("code")
+
+        _project_release_check = d.pop("project_release_check", UNSET)
+        project_release_check: ProjectReleaseCheckResponse | Unset
+        if isinstance(_project_release_check, Unset):
+            project_release_check = UNSET
+        else:
+            project_release_check = ProjectReleaseCheckResponse.from_dict(_project_release_check)
 
         _bindings_check = d.pop("bindings_check", UNSET)
         bindings_check: BindingCheckReport | Unset
@@ -395,6 +413,7 @@ class Problem:
             title=title,
             status=status,
             code=code,
+            project_release_check=project_release_check,
             bindings_check=bindings_check,
             type_=type_,
             instance=instance,

@@ -10,6 +10,9 @@ import (
 )
 
 func cmdProjectsEnvironmentReleaseSets(args []string) int {
+	if len(args) > 0 && (args[0] == "check" || args[0] == "publish") {
+		return cmdProjectReleaseWrite(args[1:], args[0] == "publish")
+	}
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("projects-environments-release-sets", flag.ContinueOnError)
 	before := fs.String("before", "", "opaque cursor from a previous page")

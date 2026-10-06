@@ -156,7 +156,7 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
 	}
-	if expectedActiveID != nil && *expectedActiveID == "" {
+	if expectedActiveID != nil && *expectedActiveID == "" && !checkedProjectRelease(ctx) {
 		appIDs := make([]string, 0, len(appRows))
 		for _, appRow := range appRows {
 			appIDs = append(appIDs, appRow.id)
@@ -185,6 +185,9 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 		}
 	}
 	// A member may already have reached 0% when this graph is replaced.
+	if projectReleaseEligibilityOnly(ctx) {
+		return ProjectReleaseSet{}, nil
+	}
 	// Its direct revision deadline began at the deployment cutover, which
 	// can precede this graph switch. Keep it alive through the old graph's
 	// compatibility window measured from this transaction.
@@ -199,18 +202,44 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
 	}
-	if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
-		return ProjectReleaseSet{}, err
+	if !checkedProjectRelease(ctx) {
+		if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 	}
 	release := ProjectReleaseSet{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true, TTLSeconds: ttlSeconds, Members: append([]ProjectReleaseMember(nil), members...)}
-	if err := tx.QueryRow(ctx, `insert into project_release_sets (account_id, project_id, environment_slug, active, ttl_seconds)
-		values ($1, $2, $3, true, $4)
-		returning id, created_at`, accountID, projectID, environment, ttlSeconds).Scan(&release.ID, &release.CreatedAt); err != nil {
-		return ProjectReleaseSet{}, err
+	inserted, err := sqlc.New().InsertProjectReleaseSet(ctx, tx, sqlc.InsertProjectReleaseSetParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), Environment: environment, Active: !checkedProjectRelease(ctx), TtlSeconds: int32(ttlSeconds)})
+	if err != nil {
+		return ProjectReleaseSet{}, mapErr(err)
 	}
+	release.ID, release.CreatedAt = uuidString(inserted.ID), inserted.CreatedAt.Time.UTC()
 	for _, member := range members {
 		if _, err := tx.Exec(ctx, `insert into project_release_members (release_id, app_id, deployment_id) values ($1, $2, $3)`, release.ID, member.AppID, member.DeploymentID); err != nil {
 			return ProjectReleaseSet{}, err
+		}
+	}
+	if checkedProjectRelease(ctx) {
+		if err := pgAuthorizeProjectRelease(ctx, tx, release.ID, activeID); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		activated, err := sqlc.New().ActivateCheckedProjectReleaseSet(ctx, tx, mustPgUUID(release.ID))
+		if err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		if activated != 1 {
+			return ProjectReleaseSet{}, ErrConflict
+		}
+	}
+	if checkedProjectRelease(ctx) {
+		data, err := projectReleaseBindingAudit(ctx, release, activeID)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := sqlc.New().AppendCheckedProjectReleaseAudit(ctx, tx, sqlc.AppendCheckedProjectReleaseAuditParams{ID: mustPgUUID(uuid.NewString()), AccountID: mustPgUUID(accountID), Data: data}); err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

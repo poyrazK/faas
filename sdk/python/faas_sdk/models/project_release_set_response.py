@@ -11,6 +11,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.project_release_check_response import ProjectReleaseCheckResponse
     from ..models.project_release_set_member_response import ProjectReleaseSetMemberResponse
 
 
@@ -32,6 +33,9 @@ class ProjectReleaseSetResponse:
     ttl_seconds: int
     created_at: datetime.datetime
     members: list[ProjectReleaseSetMemberResponse]
+    bindings_check: ProjectReleaseCheckResponse | Unset = UNSET
+    """Observation of the complete exact deployment graph and its binding evidence. Publication evaluates fresh
+    evidence and compares the active predecessor again."""
     expires_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -55,6 +59,10 @@ class ProjectReleaseSetResponse:
             members_item = members_item_data.to_dict()
             members.append(members_item)
 
+        bindings_check: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.bindings_check, Unset):
+            bindings_check = self.bindings_check.to_dict()
+
         expires_at: str | Unset = UNSET
         if not isinstance(self.expires_at, Unset):
             expires_at = self.expires_at.isoformat()
@@ -73,6 +81,8 @@ class ProjectReleaseSetResponse:
                 "members": members,
             }
         )
+        if bindings_check is not UNSET:
+            field_dict["bindings_check"] = bindings_check
         if expires_at is not UNSET:
             field_dict["expires_at"] = expires_at
 
@@ -80,6 +90,7 @@ class ProjectReleaseSetResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_release_check_response import ProjectReleaseCheckResponse
         from ..models.project_release_set_member_response import ProjectReleaseSetMemberResponse
 
         d = dict(src_dict)
@@ -104,6 +115,13 @@ class ProjectReleaseSetResponse:
 
             members.append(members_item)
 
+        _bindings_check = d.pop("bindings_check", UNSET)
+        bindings_check: ProjectReleaseCheckResponse | Unset
+        if isinstance(_bindings_check, Unset):
+            bindings_check = UNSET
+        else:
+            bindings_check = ProjectReleaseCheckResponse.from_dict(_bindings_check)
+
         _expires_at = d.pop("expires_at", UNSET)
         expires_at: datetime.datetime | Unset
         if isinstance(_expires_at, Unset):
@@ -120,6 +138,7 @@ class ProjectReleaseSetResponse:
             ttl_seconds=ttl_seconds,
             created_at=created_at,
             members=members,
+            bindings_check=bindings_check,
             expires_at=expires_at,
         )
 

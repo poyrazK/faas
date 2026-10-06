@@ -71,6 +71,7 @@ func cmdBindingsVerify(args []string) int {
 	objectStoragePrefix := fs.String("object-storage", "", "verify an object-storage binding by environment prefix (read access only)")
 	outboundID := fs.String("outbound", "", "verify a configured outbound integration by UUID")
 	deployment := fs.String("deployment", "", "exact live deployment id or vN revision to verify, including zero-traffic candidates")
+	target := fs.String("target-deployment", "", "exact service deployment UUID required by a candidate release graph")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while the canary runs")
 	waitTimeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the CLI to wait for canary task(s)")
 	flagArgs, positionals := splitArgsForFlags(args, "all")
@@ -104,6 +105,14 @@ func cmdBindingsVerify(args []string) int {
 	if invalidSelection {
 		printBindingsVerifyUsage()
 		return 1
+	}
+	if *target != "" {
+		id, err := uuid.Parse(*target)
+		if selections != 0 || *deployment == "" || err != nil || id == uuid.Nil {
+			printBindingsVerifyUsage()
+			return 1
+		}
+		*target = id.String()
 	}
 	slug := strings.TrimSpace(positionals[0])
 	invalidPostgresKey := postgresKeyValue != "" && api.ValidateEnvKey(postgresKeyValue) != nil
@@ -141,11 +150,11 @@ func cmdBindingsVerify(args []string) int {
 	if objectStoragePrefixValue != "" {
 		return runObjectStorageBindingProbe(context.Background(), probeClient, slug, objectStoragePrefixValue, *pollInterval, *waitTimeout)
 	}
-	return runServiceBindingProbe(context.Background(), probeClient, slug, service, *pollInterval, *waitTimeout)
+	return runServiceBindingProbe(context.Background(), probeClient, slug, service, *pollInterval, *waitTimeout, *target)
 }
 
 func printBindingsVerifyUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--deployment ID|vN] [flags] | gregale bindings verify <app> --all [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale bindings verify <app> --object-storage <PREFIX> [flags] | gregale bindings verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
+	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--deployment ID|vN] [--target-deployment UUID] [flags] | gregale bindings verify <app> --all [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale bindings verify <app> --object-storage <PREFIX> [flags] | gregale bindings verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
 }
 
 func runPostgresBindingProbe(ctx context.Context, client bindingInventoryProbeClient, slug, environmentKey string, pollInterval, waitTimeout time.Duration) int {
@@ -312,7 +321,7 @@ func renderPostgresBindingProbeReport(app string, report api.PostgresBindingProb
 	}
 }
 
-func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration) int {
+func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration, targets ...string) int {
 	app, err := client.GetApp(ctx, slug)
 	if err != nil {
 		return printErr("Could not load app bindings", err)
@@ -328,7 +337,7 @@ func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClien
 		return printErr("Service is not bound to this app", fmt.Errorf("%s has no declared binding for %s", slug, service))
 	}
 
-	report, task, errorTitle, exitCode, err := executeServiceBindingProbe(ctx, client, slug, service, pollInterval, waitTimeout)
+	report, task, errorTitle, exitCode, err := executeServiceBindingProbe(ctx, client, slug, service, pollInterval, waitTimeout, targets...)
 	if errorTitle != "" {
 		return printErr(errorTitle, err)
 	}
@@ -345,12 +354,15 @@ func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClien
 	return exitCode
 }
 
-func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration) (api.ServiceBindingProbeReport, api.AppTaskResponse, string, int, error) {
+func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration, targets ...string) (api.ServiceBindingProbeReport, api.AppTaskResponse, string, int, error) {
 	report := newServiceBindingProbeReport(slug, service)
 	request := api.CreateAppTaskRequest{
 		Command:        []string{api.AppTaskServiceBindingProbeCommand, service},
 		TimeoutSeconds: bindingProbeTaskTimeoutSeconds,
 		MaxOutputBytes: 4096,
+	}
+	if len(targets) > 0 && targets[0] != "" {
+		request.Command = append(request.Command, targets[0])
 	}
 	task, err := client.CreateAppTask(ctx, slug, request)
 	if err != nil {
@@ -406,6 +418,9 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 		report.Error = task.Failure.Message
 	} else {
 		report.Error = "task did not return a canary report"
+	}
+	if len(targets) > 0 && report.TargetDeploymentID != targets[0] {
+		report.Error = "canary report does not match the exact target deployment"
 	}
 	if report.Service != service {
 		report.Error = "canary report does not match the selected service"

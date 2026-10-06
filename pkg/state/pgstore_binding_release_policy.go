@@ -75,6 +75,15 @@ func pgAuthorizeBindingRelease(ctx context.Context, tx pgx.Tx) error {
 	if len(fences) == 0 {
 		return nil
 	}
+	body, err := bindingReleaseGrantJSON(fences)
+	if err != nil {
+		return err
+	}
+	_, err = sqlc.New().AuthorizeBindingReleaseTraffic(ctx, tx, body)
+	return mapErr(err)
+}
+
+func bindingReleaseGrantJSON(fences []BindingPromotionFence) ([]byte, error) {
 	type grant struct {
 		AccountID             string     `json:"account_id"`
 		AppID                 string     `json:"app_id"`
@@ -98,8 +107,7 @@ func pgAuthorizeBindingRelease(ctx context.Context, tx pgx.Tx) error {
 	}
 	body, err := json.Marshal(grants)
 	if err != nil {
-		return fmt.Errorf("encode binding release fences: %w", err)
+		return nil, fmt.Errorf("encode binding release fences: %w", err)
 	}
-	_, err = sqlc.New().AuthorizeBindingReleaseTraffic(ctx, tx, body)
-	return mapErr(err)
+	return body, nil
 }

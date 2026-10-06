@@ -347,6 +347,18 @@ func (q *Queries) AcknowledgePendingNotification(ctx context.Context, db DBTX, i
 	return err
 }
 
+const activateCheckedProjectReleaseSet = `-- name: ActivateCheckedProjectReleaseSet :execrows
+UPDATE project_release_sets SET active=true,expires_at=NULL WHERE id=$1::uuid AND NOT active
+`
+
+func (q *Queries) ActivateCheckedProjectReleaseSet(ctx context.Context, db DBTX, releaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, activateCheckedProjectReleaseSet, releaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const activateRetainedRollbackDeployment = `-- name: ActivateRetainedRollbackDeployment :execrows
 UPDATE deployments SET status='live',error='',traffic_percent=100,
     canary_step=canary_total_steps,
@@ -1034,6 +1046,23 @@ func (q *Queries) AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, a
 	return err
 }
 
+const appendCheckedProjectReleaseAudit = `-- name: AppendCheckedProjectReleaseAudit :exec
+INSERT INTO audit_log(id,kind,account_id,account_email,actor,received_at,data)
+SELECT $1::uuid,'project.release_set_checked',a.id,a.email,'apid',clock_timestamp(),$2::jsonb
+FROM accounts a WHERE a.id=$3::uuid
+`
+
+type AppendCheckedProjectReleaseAuditParams struct {
+	ID        pgtype.UUID
+	Data      []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) AppendCheckedProjectReleaseAudit(ctx context.Context, db DBTX, arg AppendCheckedProjectReleaseAuditParams) error {
+	_, err := db.Exec(ctx, appendCheckedProjectReleaseAudit, arg.ID, arg.Data, arg.AccountID)
+	return err
+}
+
 const appendEvent = `-- name: AppendEvent :exec
 insert into events (actor, kind, subject, data)
 values ($1, $2, $3, $4)
@@ -1338,6 +1367,23 @@ func (q *Queries) AttachProjectEnvironmentCloneDeployment(ctx context.Context, d
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const authorizeBindingReleaseGraph = `-- name: AuthorizeBindingReleaseGraph :one
+SELECT authorize_binding_release_graph($1::uuid,$2::uuid,$3::jsonb)::boolean
+`
+
+type AuthorizeBindingReleaseGraphParams struct {
+	Candidate pgtype.UUID
+	Previous  pgtype.UUID
+	Fences    []byte
+}
+
+func (q *Queries) AuthorizeBindingReleaseGraph(ctx context.Context, db DBTX, arg AuthorizeBindingReleaseGraphParams) (bool, error) {
+	row := db.QueryRow(ctx, authorizeBindingReleaseGraph, arg.Candidate, arg.Previous, arg.Fences)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const authorizeBindingReleaseTraffic = `-- name: AuthorizeBindingReleaseTraffic :one
@@ -18361,6 +18407,38 @@ func (q *Queries) InsertProjectEnvironmentQueueRuntimeSet(ctx context.Context, d
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const insertProjectReleaseSet = `-- name: InsertProjectReleaseSet :one
+INSERT INTO project_release_sets(account_id,project_id,environment_slug,active,ttl_seconds,expires_at)
+VALUES($1,$2,$3,$4,$5,
+ CASE WHEN $4::boolean THEN NULL ELSE now() + ($5::integer * interval '1 second') END) RETURNING id,created_at
+`
+
+type InsertProjectReleaseSetParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+	Active      bool
+	TtlSeconds  int32
+}
+
+type InsertProjectReleaseSetRow struct {
+	ID        pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertProjectReleaseSet(ctx context.Context, db DBTX, arg InsertProjectReleaseSetParams) (InsertProjectReleaseSetRow, error) {
+	row := db.QueryRow(ctx, insertProjectReleaseSet,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+		arg.Active,
+		arg.TtlSeconds,
+	)
+	var i InsertProjectReleaseSetRow
+	err := row.Scan(&i.ID, &i.CreatedAt)
+	return i, err
 }
 
 const insertPromotionFeatureFlags = `-- name: InsertPromotionFeatureFlags :exec

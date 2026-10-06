@@ -520,6 +520,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/active":    "GetActiveProjectReleaseSet",
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}": "GetProjectReleaseSet",
 	"POST /v1/projects/{slug}/environments/{environment}/release-sets":          "PublishProjectReleaseSet",
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/check":    "CheckProjectReleaseSet",
 	"GET /v1/projects/{slug}/environments/{environment}/state":                  "GetProjectEnvironmentState",
 	"GET /v1/projects/{slug}/environments/{environment}/diff":                   "GetProjectEnvironmentDiff",
 	"GET /v1/projects/{slug}/environments/{environment}/promotions":             "ListProjectEnvironmentPromotions",

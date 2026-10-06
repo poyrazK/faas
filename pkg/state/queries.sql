@@ -12947,6 +12947,22 @@ SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
 FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
 WHERE r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
 FOR UPDATE OF r;
+
+-- name: AuthorizeBindingReleaseGraph :one
+SELECT authorize_binding_release_graph(sqlc.arg(candidate)::uuid,sqlc.narg(previous)::uuid,sqlc.arg(fences)::jsonb)::boolean;
+
+-- name: ActivateCheckedProjectReleaseSet :execrows
+UPDATE project_release_sets SET active=true,expires_at=NULL WHERE id=sqlc.arg(release_id)::uuid AND NOT active;
+
+-- name: InsertProjectReleaseSet :one
+INSERT INTO project_release_sets(account_id,project_id,environment_slug,active,ttl_seconds,expires_at)
+VALUES(sqlc.arg(account_id),sqlc.arg(project_id),sqlc.arg(environment),sqlc.arg(active),sqlc.arg(ttl_seconds),
+ CASE WHEN sqlc.arg(active)::boolean THEN NULL ELSE now() + (sqlc.arg(ttl_seconds)::integer * interval '1 second') END) RETURNING id,created_at;
+
+-- name: AppendCheckedProjectReleaseAudit :exec
+INSERT INTO audit_log(id,kind,account_id,account_email,actor,received_at,data)
+SELECT sqlc.arg(id)::uuid,'project.release_set_checked',a.id,a.email,'apid',clock_timestamp(),sqlc.arg(data)::jsonb
+FROM accounts a WHERE a.id=sqlc.arg(account_id)::uuid;
 -- name: GetOutboundBindingProbePolicy :one
 SELECT p.method, p.path, p.expected_status FROM outbound_integration_probe_policies p
 JOIN outbound_integrations i ON i.id=p.integration_id AND i.account_id=p.account_id

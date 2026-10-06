@@ -1023,6 +1023,7 @@ export type { ProjectEnvironmentStateWorkloadResponse } from './models/ProjectEn
 export type { ProjectEnvironmentVariableChangeResponse } from './models/ProjectEnvironmentVariableChangeResponse.js';
 export type { ProjectEnvironmentVariableResponse } from './models/ProjectEnvironmentVariableResponse.js';
 export type { ProjectEnvironmentWorkloadDiffResponse } from './models/ProjectEnvironmentWorkloadDiffResponse.js';
+export type { ProjectReleaseCheckResponse } from './models/ProjectReleaseCheckResponse.js';
 export type { ProjectReleaseSetListResponse } from './models/ProjectReleaseSetListResponse.js';
 export type { ProjectReleaseSetMemberResponse } from './models/ProjectReleaseSetMemberResponse.js';
 export type { ProjectReleaseSetResponse } from './models/ProjectReleaseSetResponse.js';

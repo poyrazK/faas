@@ -671,11 +671,36 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 			return
 		}
+		// A candidate graph can select an explicitly dark service revision.
+		// Probes validate that exact target without waking it or calling its handler.
+		exactID, present, valid := serviceDeploymentOverrideFromRequest(r)
+		if _, releasePresent, _ := serviceReleaseFromRequest(r); releasePresent {
+			serviceProxyProblem(dispatchWriter, http.StatusConflict, "binding probes cannot carry a release pin")
+			return
+		}
+		if present {
+			if !valid {
+				serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "invalid exact service probe target")
+				return
+			}
+			if p.validateDeployment == nil {
+				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
+				return
+			}
+			live, err := p.validateDeployment(dependencyCtx, target.AppID, exactID)
+			if err != nil || !live {
+				serviceProxyProblem(dispatchWriter, http.StatusConflict, "exact service probe target is unavailable")
+				return
+			}
+		}
 		endpoints, err := p.endpoints(dependencyCtx, target.AppID)
 		if err != nil {
 			p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 			return
+		}
+		if present {
+			endpoints = serviceEndpointsForDeployment(endpoints, exactID)
 		}
 		if len(endpoints) == 0 {
 			p.metrics.IncServiceCall(ServiceCallNoReplica)
@@ -683,6 +708,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, "complete")
+		if present {
+			dispatchWriter.Header().Set(api.TargetDeploymentHeader, exactID)
+		}
 		dispatchWriter.WriteHeader(http.StatusNoContent)
 		return
 	}

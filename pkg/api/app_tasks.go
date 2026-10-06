@@ -181,6 +181,10 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 // IsBindingVerificationCommand excludes generic commands and service smoke
 // requests; explicit deployment selection is limited to these four probes.
 func IsBindingVerificationCommand(command []string, shell bool) bool {
+	if !shell && len(command) == 3 && command[0] == AppTaskServiceBindingProbeCommand && command[1] != "" {
+		id, err := uuid.Parse(command[2])
+		return err == nil && id != uuid.Nil && id.String() == command[2]
+	}
 	if shell || len(command) != 2 || command[1] == "" {
 		return false
 	}

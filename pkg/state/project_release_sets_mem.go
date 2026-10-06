@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,15 +17,15 @@ func (m *MemStore) validRetainedRevisionLocked(deploymentID string) bool {
 	return m.deploymentRevisionRetainedLocked(deploymentID)
 }
 
-func (m *MemStore) PublishProjectReleaseSet(_ context.Context, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
-	return m.publishProjectReleaseSet(accountID, projectID, environment, nil, nil, ttlSeconds, members)
+func (m *MemStore) PublishProjectReleaseSet(ctx context.Context, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	return m.publishProjectReleaseSet(ctx, accountID, projectID, environment, nil, nil, ttlSeconds, members)
 }
 
-func (m *MemStore) PublishProjectReleaseSetIfActive(_ context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
-	return m.publishProjectReleaseSet(accountID, projectID, environment, &expectedActiveID, expectedFallback, ttlSeconds, members)
+func (m *MemStore) PublishProjectReleaseSetIfActive(ctx context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	return m.publishProjectReleaseSet(ctx, accountID, projectID, environment, &expectedActiveID, expectedFallback, ttlSeconds, members)
 }
 
-func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment string, expectedActiveID *string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) publishProjectReleaseSet(ctx context.Context, accountID, projectID, environment string, expectedActiveID *string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
 		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
@@ -43,6 +44,16 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 	}
 	if !envFound {
 		return ProjectReleaseSet{}, ErrNotFound
+	}
+	members = append([]ProjectReleaseMember(nil), members...)
+	for i, member := range members {
+		if id, err := uuid.Parse(member.DeploymentID); err == nil {
+			if dep, ok := m.deployments[id.String()]; ok {
+				members[i].DeploymentID = dep.ID
+			} else if dep, ok := m.deployments[strings.ReplaceAll(id.String(), "-", "")]; ok {
+				members[i].DeploymentID = dep.ID
+			}
+		}
 	}
 	byApp := make(map[string]string, len(members))
 	for _, member := range members {
@@ -76,18 +87,32 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 	if count != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
 	}
-	if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
-		return ProjectReleaseSet{}, err
+	if projectReleaseEligibilityOnly(ctx) {
+		return ProjectReleaseSet{}, nil
 	}
 	key := releaseKey(projectID, environment)
 	previousID := m.activeProjectReleaseSets[key]
 	if expectedActiveID != nil && previousID != *expectedActiveID {
 		return ProjectReleaseSet{}, ErrConflict
 	}
-	if expectedActiveID != nil && *expectedActiveID == "" {
+	if expectedActiveID != nil && *expectedActiveID == "" && !checkedProjectRelease(ctx) {
 		if err := m.validateProjectReleaseFallbackLocked(projectID, environment, expectedFallback); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+	}
+	now := time.Now().UTC()
+	release := ProjectReleaseSet{ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true,
+		TTLSeconds: ttlSeconds, CreatedAt: now, Members: append([]ProjectReleaseMember(nil), members...)}
+	var auditData []byte
+	if checkedProjectRelease(ctx) {
+		var err error
+		auditData, err = projectReleaseBindingAudit(ctx, release, previousID)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+	if err := m.checkProjectReleaseBindingsLocked(ctx, projectID, environment, members); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	if previousID != "" {
 		previous := m.projectReleaseSets[previousID]
@@ -104,11 +129,13 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 		}
 		m.projectReleaseSets[previousID] = previous
 	}
-	now := time.Now().UTC()
-	release := ProjectReleaseSet{ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true,
-		TTLSeconds: ttlSeconds, CreatedAt: now, Members: append([]ProjectReleaseMember(nil), members...)}
 	m.projectReleaseSets[release.ID] = release
 	m.activeProjectReleaseSets[key] = release.ID
+	if checkedProjectRelease(ctx) {
+		accountUUID := uuid.MustParse(accountID)
+		m.appendAuditLogLocked(AuditLog{ID: uuid.New(), Kind: "project.release_set_checked", AccountID: &accountUUID, AccountEmail: m.accounts[accountID].Email, Actor: "apid", ReceivedAt: time.Now().UTC(), Data: auditData})
+	}
+
 	return release, nil
 }
 

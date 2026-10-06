@@ -93,21 +93,24 @@ type ProjectEnvironmentReleaseListResponse struct {
 // PublishProjectReleaseSetRequest atomically publishes a complete immutable
 // deployment graph. Keys are project workload slugs, values deployment IDs.
 type PublishProjectReleaseSetRequest struct {
-	TTLSeconds  int               `json:"ttl_seconds"`
-	Deployments map[string]string `json:"deployments"`
+	// Present (including an empty string for no graph) selects checked activation.
+	ExpectedActiveReleaseID *string           `json:"expected_active_release_id,omitempty"`
+	TTLSeconds              int               `json:"ttl_seconds"`
+	Deployments             map[string]string `json:"deployments"`
 }
 
 // ProjectReleaseSetResponse is the published immutable deployment graph.
 type ProjectReleaseSetResponse struct {
-	ID          string                            `json:"id"`
-	AccountID   string                            `json:"account_id"`
-	ProjectID   string                            `json:"project_id"`
-	Environment string                            `json:"environment"`
-	Active      bool                              `json:"active"`
-	TTLSeconds  int                               `json:"ttl_seconds"`
-	ExpiresAt   *time.Time                        `json:"expires_at,omitempty"`
-	CreatedAt   time.Time                         `json:"created_at"`
-	Members     []ProjectReleaseSetMemberResponse `json:"members"`
+	BindingsCheck *ProjectReleaseCheckResponse      `json:"bindings_check,omitempty"`
+	ID            string                            `json:"id"`
+	AccountID     string                            `json:"account_id"`
+	ProjectID     string                            `json:"project_id"`
+	Environment   string                            `json:"environment"`
+	Active        bool                              `json:"active"`
+	TTLSeconds    int                               `json:"ttl_seconds"`
+	ExpiresAt     *time.Time                        `json:"expires_at,omitempty"`
+	CreatedAt     time.Time                         `json:"created_at"`
+	Members       []ProjectReleaseSetMemberResponse `json:"members"`
 }
 
 // ProjectReleaseSetListResponse includes retired and expired release graphs.

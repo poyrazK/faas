@@ -1938,6 +1938,7 @@ from .project_environment_variable_change_response import ProjectEnvironmentVari
 from .project_environment_variable_change_response_kind import ProjectEnvironmentVariableChangeResponseKind
 from .project_environment_variable_response import ProjectEnvironmentVariableResponse
 from .project_environment_workload_diff_response import ProjectEnvironmentWorkloadDiffResponse
+from .project_release_check_response import ProjectReleaseCheckResponse
 from .project_release_set_list_response import ProjectReleaseSetListResponse
 from .project_release_set_member_response import ProjectReleaseSetMemberResponse
 from .project_release_set_response import ProjectReleaseSetResponse
@@ -4536,6 +4537,7 @@ __all__ = (
     "ProjectEnvironmentVariableChangeResponseKind",
     "ProjectEnvironmentVariableResponse",
     "ProjectEnvironmentWorkloadDiffResponse",
+    "ProjectReleaseCheckResponse",
     "ProjectReleaseSetListResponse",
     "ProjectReleaseSetMemberResponse",
     "ProjectReleaseSetResponse",

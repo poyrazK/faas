@@ -1017,6 +1017,7 @@ export type { ProjectEnvironmentStateWorkloadResponse } from './ProjectEnvironme
 export type { ProjectEnvironmentVariableChangeResponse } from './ProjectEnvironmentVariableChangeResponse.js';
 export type { ProjectEnvironmentVariableResponse } from './ProjectEnvironmentVariableResponse.js';
 export type { ProjectEnvironmentWorkloadDiffResponse } from './ProjectEnvironmentWorkloadDiffResponse.js';
+export type { ProjectReleaseCheckResponse } from './ProjectReleaseCheckResponse.js';
 export type { ProjectReleaseSetListResponse } from './ProjectReleaseSetListResponse.js';
 export type { ProjectReleaseSetMemberResponse } from './ProjectReleaseSetMemberResponse.js';
 export type { ProjectReleaseSetResponse } from './ProjectReleaseSetResponse.js';

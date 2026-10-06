@@ -14,6 +14,41 @@ type PromotionFence struct {
 	revision string
 	backend  any
 }
+
+type AppPromotionFence struct {
+	AppID string
+	Fence PromotionFence
+}
+
+// Lock the memory catalog once for the complete graph. Nesting per-app guards
+// would deadlock, and releasing them between members would allow config drift.
+func (s *BindingService) GuardPromotions(ctx context.Context, account string, fences []AppPromotionFence, backend any, fn func(context.Context) error) error {
+	switch store := s.bindings.(type) {
+	case *MemoryStore:
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		for _, f := range fences {
+			revision, err := store.promotionRevisionLocked(account, f.AppID)
+			if err != nil {
+				return err
+			}
+			if f.Fence.backend != store || revision != f.Fence.revision {
+				return ErrConflict
+			}
+		}
+		return fn(ctx)
+	case *PostgresStore:
+		for _, f := range fences {
+			if f.Fence.backend != store.pool || backend != store.pool {
+				return ErrUnsupported
+			}
+		}
+		return fn(ctx)
+	default:
+		return ErrUnsupported
+	}
+}
+
 type promotionFenceStore interface {
 	ReadPromotionFence(context.Context, string, string) (PromotionFence, error)
 	GuardPromotion(context.Context, string, string, PromotionFence, any, func(context.Context) error) error

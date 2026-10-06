@@ -2,11 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ProjectReleaseCheckResponse } from './ProjectReleaseCheckResponse.js';
 import type { ProjectReleaseSetMemberResponse } from './ProjectReleaseSetMemberResponse.js';
 /**
  * Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and expires_at is set.
  */
 export type ProjectReleaseSetResponse = {
+  bindings_check?: ProjectReleaseCheckResponse;
   id: string;
   account_id: string;
   project_id: string;
