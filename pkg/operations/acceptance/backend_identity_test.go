@@ -142,8 +142,11 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const identityMigration = "20261001012633179_operation_backend_execution_identity.sql"
 	for _, file := range files {
-		if file.Name() == "20261001012633179_operation_backend_execution_identity.sql" || !strings.HasSuffix(file.Name(), ".sql") {
+		// Start from the true pre-identity schema. Later migrations may depend on
+		// columns and keys introduced here and must be applied afterwards in order.
+		if !strings.HasSuffix(file.Name(), ".sql") || file.Name() >= identityMigration {
 			continue
 		}
 		data, err := migrations.FS.ReadFile(file.Name())
