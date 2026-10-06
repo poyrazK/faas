@@ -22,6 +22,10 @@ func readProtection(ctx context.Context, db sqlc.DBTX, id string) (ObjectVersion
 	}
 	j := ObjectVersionProtection{AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), ProviderVersionID: r.NativeVersionID, Token: r.LeaseToken, LeaseUntil: r.LeaseUntil.Time, RetryAt: r.RetryAt.Time, Dispatched: r.Dispatched}
 	err = json.Unmarshal(r.Intent, &j.ObjectVersionProtection)
+	if err == nil && len(r.EventHoldBaseline) != 0 {
+		j.EventHoldBaseline = new(api.ObjectVersionRetention)
+		err = json.Unmarshal(r.EventHoldBaseline, j.EventHoldBaseline)
+	}
 	j.ID = pgUUIDString(r.ID)
 	j.BucketID = pgUUIDString(r.BucketID)
 	j.State = r.State
@@ -42,7 +46,15 @@ func saveProtection(ctx context.Context, db sqlc.DBTX, j ObjectVersionProtection
 		}
 		return mapErr(sqlc.New().ObjectVersionProtectionInsert(ctx, db, sqlc.ObjectVersionProtectionInsertParams{ID: mustPgUUID(j.ID), BucketID: mustPgUUID(j.BucketID), AccountID: mustPgUUID(j.AccountID), AppID: mustPgUUID(j.AppID), ObjectKey: j.Key, PublicVersionID: j.VersionID, NativeVersionID: j.ProviderVersionID, Intent: intent}))
 	}
-	return mapErr(sqlc.New().ObjectVersionProtectionUpdate(ctx, db, sqlc.ObjectVersionProtectionUpdateParams{ID: mustPgUUID(j.ID), State: j.State, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), Dispatched: j.Dispatched, LastErrorCode: j.LastErrorCode}))
+	var baseline []byte
+	if j.EventHoldBaseline != nil {
+		var err error
+		baseline, err = json.Marshal(j.EventHoldBaseline)
+		if err != nil {
+			return err
+		}
+	}
+	return mapErr(sqlc.New().ObjectVersionProtectionUpdate(ctx, db, sqlc.ObjectVersionProtectionUpdateParams{ID: mustPgUUID(j.ID), State: j.State, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), Dispatched: j.Dispatched, LastErrorCode: j.LastErrorCode, EventHoldBaseline: baseline}))
 }
 func (s *PgStore) BeginObjectVersionProtection(ctx context.Context, j ObjectVersionProtection) (ObjectVersionProtection, error) {
 	if !ValidObjectVersionProtectionIntent(j) {
@@ -215,12 +227,17 @@ func (s *PgStore) ClaimObjectVersionProtection(ctx context.Context, id, token st
 }
 func (s *PgStore) DispatchObjectVersionProtection(ctx context.Context, id, token string) (ObjectVersionProtection, error) {
 	return s.mutateProtection(ctx, id, func(j ObjectVersionProtection, now time.Time) (ObjectVersionProtection, error) {
-		if !validProtectionLease(j, token, now) || j.Dispatched {
+		if !validProtectionLease(j, token, now) || j.Dispatched || eventHoldProtection(j) && j.EventHoldBaseline == nil {
 			return j, ErrConflict
 		}
 		j.Dispatched = true
 		j.UpdatedAt = now
 		return j, nil
+	})
+}
+func (s *PgStore) PrepareObjectEventHoldProtection(ctx context.Context, id, token string, baseline api.ObjectVersionRetention) (ObjectVersionProtection, error) {
+	return s.mutateProtection(ctx, id, func(j ObjectVersionProtection, now time.Time) (ObjectVersionProtection, error) {
+		return prepareEventHoldProtection(j, token, baseline, now)
 	})
 }
 func (s *PgStore) FinishObjectVersionProtection(ctx context.Context, id, token, status, code string) (ObjectVersionProtection, error) {

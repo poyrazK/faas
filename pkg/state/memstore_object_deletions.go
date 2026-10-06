@@ -11,6 +11,7 @@ import (
 
 var _ ObjectDeletionStore = (*MemStore)(nil)
 var _ ObjectDeletionActivityStore = (*MemStore)(nil)
+var _ ObjectProtectedLifecycleDeletionStore = (*MemStore)(nil)
 
 func (m *MemStore) HasActiveObjectDeletion(_ context.Context, account, app, bucket string) (bool, error) {
 	m.mu.Lock()
@@ -69,6 +70,10 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 	if err := m.validateLifecycleDeletionLocked(j); err != nil {
 		return ObjectDeletion{}, false, err
 	}
+	j.ProtectionRequired = lifecycleProtectionRequired(j, m.objectBucketObjectLock[b.ID])
+	if j.ProtectionRequired && j.Lifecycle.ExpectedDeleteMarker == nil {
+		return ObjectDeletion{}, false, ErrConflict
+	}
 	pending, unsafe, multipart, versions := m.capacityReadinessLocked(b.ID)
 	v := m.objectBucketVersioning[b.ID]
 	if b.State != "ready" || m.objectCapacityFencedLocked(b.ID) || pending > 0 || multipart || !immutableDeletion(j) && unsafe && (versions || v.ObservedStatus != "") {
@@ -111,7 +116,13 @@ func (m *MemStore) GetObjectDeletion(_ context.Context, account, bucket, id stri
 	}
 	return cloneDeletion(j), nil
 }
-func (m *MemStore) DispatchObjectDeletion(_ context.Context, id, token, status string, baseline []string) (ObjectDeletion, error) {
+func (m *MemStore) DispatchObjectDeletion(ctx context.Context, id, token, status string, baseline []string) (ObjectDeletion, error) {
+	return m.dispatchObjectDeletion(ctx, id, token, status, baseline, false)
+}
+func (m *MemStore) DispatchObjectProtectedLifecycleDeletion(ctx context.Context, id, token, status string, baseline []string) (ObjectDeletion, error) {
+	return m.dispatchObjectDeletion(ctx, id, token, status, baseline, true)
+}
+func (m *MemStore) dispatchObjectDeletion(_ context.Context, id, token, status string, baseline []string, verified bool) (ObjectDeletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j := m.objectDeletions[id]
@@ -121,7 +132,7 @@ func (m *MemStore) DispatchObjectDeletion(_ context.Context, id, token, status s
 	if j.ProviderStatus != status {
 		return cloneDeletion(j), ErrConflict
 	}
-	j, err := dispatchDeletion(j, token, status, baseline, m.clock())
+	j, err := dispatchVerifiedDeletion(j, token, status, baseline, verified, m.clock())
 	if err == nil {
 		m.objectDeletions[id] = cloneDeletion(j)
 	}

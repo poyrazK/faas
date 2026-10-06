@@ -36,9 +36,11 @@ class ObjectVersionProtection:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     retention: ObjectVersionRetention | Unset = UNSET
-    """Verified native retention, or a fixed-retention intent. An empty object requests a clear; active retention
-    cannot be shortened without bypass, which is unsupported. Event hold fields are observation only for this
-    contract."""
+    """Verified native retention or a retention intent. An empty object requests a clear. Active fixed retention
+    cannot be shortened and active COMPLIANCE cannot be downgraded. Enrolled event hold ON requires one duration;
+    OFF omits duration and lets the provider fix the final date from the existing hold. Observed dates and requested
+    minimum dates are preserved. Governance bypass is unsupported. For new writes, OFF requires a fixed date; an
+    undated OFF is reserved for releasing an existing hold."""
     legal_hold: ObjectVersionLegalHold | Unset = UNSET
     """Independent exact-version legal hold status."""
     last_error_code: ObjectVersionProtectionLastErrorCode | Unset = UNSET

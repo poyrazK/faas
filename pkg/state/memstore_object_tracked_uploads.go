@@ -42,6 +42,13 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 			return c, false, err
 		}
 	}
+	if capture {
+		var protectionErr error
+		c.Protection, protectionErr = m.captureObjectWriteProtectionLocked(c.BucketID, c.Protection)
+		if protectionErr != nil {
+			return c, false, protectionErr
+		}
+	}
 	if !capturedDefaultRouteFits(c) {
 		return c, false, capturedDefaultRouteError(c)
 	}
@@ -210,7 +217,7 @@ func (m *MemStore) RetryTrackedObjectUploadRecovery(_ context.Context, c ObjectU
 	if !ok || old.AccountID != c.AccountID || old.BucketID != c.BucketID {
 		return ErrNotFound
 	}
-	if !sameCopySourceProvenance(old, c) || old.EncryptionDefaultRevision != c.EncryptionDefaultRevision || !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken {
+	if !old.Protection.Equal(c.Protection) || !sameCopySourceProvenance(old, c) || old.EncryptionDefaultRevision != c.EncryptionDefaultRevision || !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken {
 		return ErrConflict
 	}
 	old.RecoveryToken = ""

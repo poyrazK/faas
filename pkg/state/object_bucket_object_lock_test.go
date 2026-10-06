@@ -226,7 +226,16 @@ func objectBucketObjectLockSuite(t *testing.T, st accountingStore, pool *pgxpool
 	if err != nil {
 		t.Fatal("accepted multipart could not complete", u, err)
 	}
-	if err = sessions.FinishObjectMultipartUpload(ctx, u.ID, "complete", state.ObjectMultipartCompleted); err != nil {
+	// ADR-618 requires exact native protection proof before protected work can
+	// release the default-change barrier.
+	if err = sessions.FinishObjectMultipartUpload(ctx, u.ID, "complete", state.ObjectMultipartCompleted); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("unverified protected multipart drained", err)
+	}
+	results := st.(state.ObjectMultipartCompletionStore)
+	if err = results.DispatchObjectMultipartCompletion(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = results.FinishObjectMultipartCompletion(ctx, u, state.ObjectMultipartCompletionResult{ETag: `"multipart"`, ProviderVersionID: "native-protected", VerifiedProtection: u.Protection.Proof()}); err != nil {
 		t.Fatal(err)
 	}
 	advance(b.ID)

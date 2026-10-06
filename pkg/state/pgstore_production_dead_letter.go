@@ -96,6 +96,9 @@ func (s *PgStore) productionDeadLetterReplay(ctx context.Context, accountID, app
 		return DeadLetterEvent{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := prepareDeadLetterReplayTx(ctx, tx, accountID, appID, eventID, 1); err != nil {
+		return DeadLetterEvent{}, err
+	}
 	row, err := sqlc.New().LockProductionDeadLetterEvent(ctx, tx, sqlc.LockProductionDeadLetterEventParams(args))
 	if err != nil {
 		return DeadLetterEvent{}, mapErr(err)
@@ -122,8 +125,12 @@ func (s *PgStore) productionDeadLetterReplayMany(ctx context.Context, accountID,
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	ids, err := prepareDeadLetterReplayTx(ctx, tx, accountID, appID, "", int(productionDeadLetterLimit(limit)))
+	if err != nil {
+		return 0, err
+	}
 	rows, err := sqlc.New().LockProductionDeadLetterEvents(ctx, tx, sqlc.LockProductionDeadLetterEventsParams{
-		AccountID: args.AccountID, AppID: args.AppID, OpenOnly: true, PageLimit: productionDeadLetterLimit(limit)})
+		AccountID: args.AccountID, AppID: args.AppID, OpenOnly: true, PageLimit: productionDeadLetterLimit(limit), EventIds: ids})
 	if err != nil {
 		return 0, err
 	}

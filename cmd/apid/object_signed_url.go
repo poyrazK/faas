@@ -78,6 +78,13 @@ func (s *server) prepareObjectURLCredential(r *http.Request, b state.ObjectBucke
 	if err != nil {
 		return c, receipt, "", objectstorage.ErrUnavailable
 	}
+	protection := state.ObjectWriteProtectionSnapshot{}
+	if req.Method == http.MethodPut {
+		protection, err = s.resolveObjectWriteProtection(r.Context(), b, req.Protection)
+	}
+	if err != nil {
+		return c, receipt, "", err
+	}
 	encryption, err := s.resolveObjectURLEncryption(b, req)
 	if err != nil {
 		return c, receipt, "", err
@@ -96,7 +103,7 @@ func (s *server) prepareObjectURLCredential(r *http.Request, b state.ObjectBucke
 	}
 	if req.Method == http.MethodPut {
 		c.URL.ReceiptID = uuid.NewString()
-		receipt = state.ObjectUploadCompletion{ID: c.URL.ReceiptID, AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: c.ID, Key: req.Key, Bytes: *req.SizeBytes, ContentType: req.ContentType, Status: "pending", Origin: "gateway", Encryption: encryption}
+		receipt = state.ObjectUploadCompletion{ID: c.URL.ReceiptID, AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: c.ID, Key: req.Key, Bytes: *req.SizeBytes, ContentType: req.ContentType, Status: "pending", Origin: "gateway", Protection: protection, Encryption: encryption}
 	}
 	return c, receipt, secret, nil
 }

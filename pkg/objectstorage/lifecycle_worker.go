@@ -177,6 +177,9 @@ func (s LifecycleExpirationService) expireKey(ctx context.Context, deletion Dele
 					break
 				}
 				if old.State == "failed" {
+					if old.LastErrorCode == "object_protected" {
+						break
+					}
 					continue
 				}
 				return state.ErrConflict
@@ -190,6 +193,9 @@ func (s LifecycleExpirationService) expireKey(ctx context.Context, deletion Dele
 			actions++
 			j, err := deletion.StartLifecycle(ctx, b, scan, target, selector, decision, p)
 			if err != nil {
+				if j.State == "failed" && j.LastErrorCode == "object_protected" && errors.Is(err, ErrObjectProtected) {
+					break
+				}
 				if j.State == "failed" && errors.Is(err, ErrLifecycleNotDue) {
 					continue
 				}

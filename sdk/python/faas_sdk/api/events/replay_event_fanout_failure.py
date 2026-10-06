@@ -98,8 +98,9 @@ def sync_detailed(
 
      Requeues only the named failed recipient from the immutable recipient
     snapshot captured when the event was accepted. Other recipients and
-    their outcomes are left untouched. The event must have settled before
-    a failed recipient can be replayed.
+    their outcomes are left untouched. With independent recipient routing,
+    a terminal recipient can be replayed while siblings are active and gets
+    a fresh routing retry budget. Legacy receipts must settle first.
 
     Args:
         slug (str):
@@ -138,8 +139,9 @@ def sync(
 
      Requeues only the named failed recipient from the immutable recipient
     snapshot captured when the event was accepted. Other recipients and
-    their outcomes are left untouched. The event must have settled before
-    a failed recipient can be replayed.
+    their outcomes are left untouched. With independent recipient routing,
+    a terminal recipient can be replayed while siblings are active and gets
+    a fresh routing retry budget. Legacy receipts must settle first.
 
     Args:
         slug (str):
@@ -173,8 +175,9 @@ async def asyncio_detailed(
 
      Requeues only the named failed recipient from the immutable recipient
     snapshot captured when the event was accepted. Other recipients and
-    their outcomes are left untouched. The event must have settled before
-    a failed recipient can be replayed.
+    their outcomes are left untouched. With independent recipient routing,
+    a terminal recipient can be replayed while siblings are active and gets
+    a fresh routing retry budget. Legacy receipts must settle first.
 
     Args:
         slug (str):
@@ -211,8 +214,9 @@ async def asyncio(
 
      Requeues only the named failed recipient from the immutable recipient
     snapshot captured when the event was accepted. Other recipients and
-    their outcomes are left untouched. The event must have settled before
-    a failed recipient can be replayed.
+    their outcomes are left untouched. With independent recipient routing,
+    a terminal recipient can be replayed while siblings are active and gets
+    a fresh routing retry budget. Legacy receipts must settle first.
 
     Args:
         slug (str):

@@ -2950,7 +2950,7 @@ UPDATE invocations i SET state='dispatching',quota_reserved=true,received_at=del
 FROM invocation_environment_queue_admissions p, delivery_clock WHERE p.invocation_id=i.id AND i.id=$2::uuid
     AND p.consumer_id=$3::uuid AND p.runtime_set_id=$4::uuid
     AND i.state='pending' AND NOT i.quota_reserved AND i.due_at<=delivery_clock.at AND (i.deadline_at IS NULL OR i.deadline_at>delivery_clock.at)
-RETURNING i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id
+RETURNING i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at
 `
 
 type ClaimEnvironmentQueueDeliveryInvocationParams struct {
@@ -3019,6 +3019,8 @@ func (q *Queries) ClaimEnvironmentQueueDeliveryInvocation(ctx context.Context, d
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -3797,7 +3799,7 @@ update invocations i set state = 'dispatching',
 		      where tr.trigger_id = $5 and tr.item_identifier = i.id::text
 		        and not ((tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
 		          or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp())))
-		returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id
+		returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at
 `
 
 type ClaimProductionQueueTriggerInvocationParams struct {
@@ -3868,6 +3870,8 @@ func (q *Queries) ClaimProductionQueueTriggerInvocation(ctx context.Context, db 
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -9183,6 +9187,25 @@ func (q *Queries) EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, ar
 }
 
 const enqueueInvocationRow = `-- name: EnqueueInvocationRow :one
+WITH replay_parent AS (
+  SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
+  FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+  WHERE i.id=$35::uuid
+    AND i.account_id=$3::uuid AND i.app_id=$2::uuid
+    AND i.deployment_scope=coalesce(nullif($29::text, ''),
+      CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
+    AND i.platform_tenant_id IS NOT DISTINCT FROM $28::uuid
+    AND i.state IN ('failed', 'dead_letter') AND $4::text='replay'
+    AND (i.work_policy_name IS NULL OR (
+      i.work_policy_name=nullif($21::text, '')
+      AND i.work_key_digest=$22::bytea
+      AND i.work_policy_revision IS NOT DISTINCT FROM $25::bigint
+      AND i.work_fairness_digest IS NOT DISTINCT FROM $26::bytea
+      AND i.work_fairness_limit IS NOT DISTINCT FROM $27::int
+      AND i.work_expires_at IS NOT DISTINCT FROM $23::timestamptz
+    ))
+  FOR SHARE OF i, a
+)
 INSERT INTO invocations (
   id, app_id, account_id, source, queue_name, state, method, path,
   payload, headers, due_at, scheduled_at, cron_id, ack_url, lease_expires_at,
@@ -9191,8 +9214,8 @@ INSERT INTO invocations (
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
   work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
-  occurrence_id, start_deadline_at, failure_rules, environment_id
-) VALUES (
+  occurrence_id, start_deadline_at, failure_rules, environment_id, replayed_from_invocation_id, replay_root_invocation_id, replay_root_created_at
+) SELECT
   coalesce($1::uuid, gen_random_uuid()), $2, $3,
   $4, $5, coalesce(nullif($6::text, ''), 'pending'),
   $7, $8, $9, $10, $11,
@@ -9203,45 +9226,49 @@ INSERT INTO invocations (
   $22, $23, $24,
   $25, $26, $27,
   $28, nullif($29::text, ''), $30,
-  $31::uuid, $32::timestamptz, $33::jsonb, $34::uuid
-) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id
+  $31::uuid, $32::timestamptz, $33::jsonb,
+  $34::uuid, replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at
+FROM (SELECT 1) seed LEFT JOIN replay_parent ON true
+WHERE $35::uuid IS NULL OR replay_parent.id IS NOT NULL
+RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id, replay_root_invocation_id, replay_root_created_at
 `
 
 type EnqueueInvocationRowParams struct {
-	ID                     pgtype.UUID
-	AppID                  pgtype.UUID
-	AccountID              pgtype.UUID
-	Source                 string
-	QueueName              string
-	State                  string
-	Method                 string
-	Path                   string
-	Payload                []byte
-	Headers                []byte
-	DueAt                  pgtype.Timestamptz
-	ScheduledAt            pgtype.Timestamptz
-	CronID                 pgtype.UUID
-	AckUrl                 string
-	LeaseExpiresAt         pgtype.Timestamptz
-	DeadlineAt             pgtype.Timestamptz
-	RetryPolicy            []byte
-	ResultRetentionUntil   pgtype.Timestamptz
-	OnSuccessDestinationID pgtype.UUID
-	OnFailureDestinationID pgtype.UUID
-	WorkPolicyName         string
-	WorkKeyDigest          []byte
-	WorkExpiresAt          pgtype.Timestamptz
-	WorkSequence           pgtype.Int8
-	WorkPolicyRevision     pgtype.Int8
-	WorkFairnessDigest     []byte
-	WorkFairnessLimit      pgtype.Int4
-	PlatformTenantID       pgtype.UUID
-	DeploymentScope        string
-	QueueBindingID         pgtype.UUID
-	OccurrenceID           pgtype.UUID
-	StartDeadlineAt        pgtype.Timestamptz
-	FailureRules           []byte
-	EnvironmentID          pgtype.UUID
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	AccountID                pgtype.UUID
+	Source                   string
+	QueueName                string
+	State                    string
+	Method                   string
+	Path                     string
+	Payload                  []byte
+	Headers                  []byte
+	DueAt                    pgtype.Timestamptz
+	ScheduledAt              pgtype.Timestamptz
+	CronID                   pgtype.UUID
+	AckUrl                   string
+	LeaseExpiresAt           pgtype.Timestamptz
+	DeadlineAt               pgtype.Timestamptz
+	RetryPolicy              []byte
+	ResultRetentionUntil     pgtype.Timestamptz
+	OnSuccessDestinationID   pgtype.UUID
+	OnFailureDestinationID   pgtype.UUID
+	WorkPolicyName           string
+	WorkKeyDigest            []byte
+	WorkExpiresAt            pgtype.Timestamptz
+	WorkSequence             pgtype.Int8
+	WorkPolicyRevision       pgtype.Int8
+	WorkFairnessDigest       []byte
+	WorkFairnessLimit        pgtype.Int4
+	PlatformTenantID         pgtype.UUID
+	DeploymentScope          string
+	QueueBindingID           pgtype.UUID
+	OccurrenceID             pgtype.UUID
+	StartDeadlineAt          pgtype.Timestamptz
+	FailureRules             []byte
+	EnvironmentID            pgtype.UUID
+	ReplayedFromInvocationID pgtype.UUID
 }
 
 func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error) {
@@ -9280,6 +9307,7 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		arg.StartDeadlineAt,
 		arg.FailureRules,
 		arg.EnvironmentID,
+		arg.ReplayedFromInvocationID,
 	)
 	var i Invocation
 	err := row.Scan(
@@ -9333,6 +9361,8 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -26531,7 +26561,7 @@ func (q *Queries) ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit in
 }
 
 const listDueInvocationRows = `-- name: ListDueInvocationRows :many
-select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id
+select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
 		   and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
@@ -26550,8 +26580,7 @@ select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.
 		       where older.app_id = i.app_id
 		         and older.work_policy_name = i.work_policy_name
 		         and older.work_key_digest = i.work_key_digest
-		         and older.work_sequence < i.work_sequence
-		         and older.state in ('pending','dispatching')
+		         and ((older.work_sequence < i.work_sequence and older.state='pending') or older.state='dispatching')
 		   ))
 		   and (i.work_policy_name is null or not exists (
 		       select 1 from trigger_records older
@@ -26559,8 +26588,7 @@ select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.
 		       where source.app_id=i.app_id
 		         and older.work_policy_name=i.work_policy_name
 		         and older.work_key_digest=i.work_key_digest
-		         and older.work_sequence<i.work_sequence
-		         and older.state in ('pending','retry','claimed')
+		         and ((older.work_sequence<i.work_sequence and older.state in ('pending','retry')) or older.state='claimed')
 		   ))
 		   and (i.work_fairness_limit is null or ((
 		       select count(*) from invocations active
@@ -26647,6 +26675,8 @@ func (q *Queries) ListDueInvocationRows(ctx context.Context, db DBTX, arg ListDu
 			&i.ReplayGeneration,
 			&i.OutcomeCode,
 			&i.EnvironmentID,
+			&i.ReplayRootInvocationID,
+			&i.ReplayRootCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -26659,7 +26689,7 @@ func (q *Queries) ListDueInvocationRows(ctx context.Context, db DBTX, arg ListDu
 }
 
 const listDueInvocationRowsAfter = `-- name: ListDueInvocationRowsAfter :many
-select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id
+select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
 		   and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
@@ -26678,8 +26708,7 @@ select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.
 		       where older.app_id = i.app_id
 		         and older.work_policy_name = i.work_policy_name
 		         and older.work_key_digest = i.work_key_digest
-		         and older.work_sequence < i.work_sequence
-		         and older.state in ('pending','dispatching')
+		         and ((older.work_sequence < i.work_sequence and older.state='pending') or older.state='dispatching')
 		   ))
 		   and (i.work_policy_name is null or not exists (
 		       select 1 from trigger_records older
@@ -26687,8 +26716,7 @@ select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.
 		       where source.app_id=i.app_id
 		         and older.work_policy_name=i.work_policy_name
 		         and older.work_key_digest=i.work_key_digest
-		         and older.work_sequence<i.work_sequence
-		         and older.state in ('pending','retry','claimed')
+		         and ((older.work_sequence<i.work_sequence and older.state in ('pending','retry')) or older.state='claimed')
 		   ))
 		   and (i.work_fairness_limit is null or ((
 		       select count(*) from invocations active
@@ -26785,6 +26813,8 @@ func (q *Queries) ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg L
 			&i.ReplayGeneration,
 			&i.OutcomeCode,
 			&i.EnvironmentID,
+			&i.ReplayRootInvocationID,
+			&i.ReplayRootCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -29627,7 +29657,7 @@ func (q *Queries) ListProductionNamedQueueCandidates(ctx context.Context, db DBT
 
 const listProductionQueueDeadLetter = `-- name: ListProductionQueueDeadLetter :many
 WITH anchor AS (SELECT created_at,id FROM production_invocation_work WHERE id=$2::uuid AND app_id=$1::uuid AND source='queue')
-SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id FROM invocations i JOIN production_invocation_work p ON p.id=i.id
+SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at FROM invocations i JOIN production_invocation_work p ON p.id=i.id
 WHERE i.app_id=$1::uuid AND i.source='queue' AND i.state='dead_letter'
     AND ($2::uuid IS NULL OR (i.created_at,i.id)<(SELECT created_at,id FROM anchor))
 ORDER BY i.created_at DESC,i.id DESC LIMIT $3::bigint
@@ -29699,6 +29729,8 @@ func (q *Queries) ListProductionQueueDeadLetter(ctx context.Context, db DBTX, ar
 			&i.ReplayGeneration,
 			&i.OutcomeCode,
 			&i.EnvironmentID,
+			&i.ReplayRootInvocationID,
+			&i.ReplayRootCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -32045,7 +32077,7 @@ func (q *Queries) LockCustomerOperationExecution(ctx context.Context, db DBTX, i
 }
 
 const lockCustomerOperationInvocation = `-- name: LockCustomerOperationInvocation :one
-SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id FROM invocations WHERE id=$1::uuid FOR UPDATE
+SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id, replay_root_invocation_id, replay_root_created_at FROM invocations WHERE id=$1::uuid FOR UPDATE
 `
 
 func (q *Queries) LockCustomerOperationInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
@@ -32102,6 +32134,8 @@ func (q *Queries) LockCustomerOperationInvocation(ctx context.Context, db DBTX, 
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -32734,7 +32768,7 @@ func (q *Queries) LockEnvironmentQualificationRuntimeInstance(ctx context.Contex
 }
 
 const lockEnvironmentQueueDeliveryInvocation = `-- name: LockEnvironmentQueueDeliveryInvocation :one
-SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id FROM invocations i WHERE i.id=$1 FOR UPDATE OF i
+SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at FROM invocations i WHERE i.id=$1 FOR UPDATE OF i
 `
 
 func (q *Queries) LockEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
@@ -32791,6 +32825,8 @@ func (q *Queries) LockEnvironmentQueueDeliveryInvocation(ctx context.Context, db
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -33767,13 +33803,15 @@ SELECT d.id, d.account_id, d.app_id, d.source, d.source_id, d.origin, d.trigger_
 WHERE d.account_id=$1::uuid
     AND ($2::uuid IS NULL OR d.app_id=$2::uuid)
     AND (NOT $3::boolean OR d.replayed_at IS NULL)
-ORDER BY d.last_failed_at DESC,d.id DESC LIMIT $4::bigint FOR UPDATE OF d SKIP LOCKED
+    AND d.id=ANY($4::uuid[])
+ORDER BY d.last_failed_at DESC,d.id DESC LIMIT $5::bigint FOR UPDATE OF d SKIP LOCKED
 `
 
 type LockProductionDeadLetterEventsParams struct {
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
 	OpenOnly  bool
+	EventIds  []pgtype.UUID
 	PageLimit int64
 }
 
@@ -33782,6 +33820,7 @@ func (q *Queries) LockProductionDeadLetterEvents(ctx context.Context, db DBTX, a
 		arg.AccountID,
 		arg.AppID,
 		arg.OpenOnly,
+		arg.EventIds,
 		arg.PageLimit,
 	)
 	if err != nil {
@@ -35937,7 +35976,7 @@ func (q *Queries) NextAutomationVersion(ctx context.Context, db DBTX) (int64, er
 }
 
 const nextEnvironmentQueueDeliveryInvocation = `-- name: NextEnvironmentQueueDeliveryInvocation :one
-SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id FROM invocations i JOIN invocation_environment_queue_admissions p ON p.invocation_id=i.id
+SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at FROM invocations i JOIN invocation_environment_queue_admissions p ON p.invocation_id=i.id
 WHERE p.consumer_id=$1::uuid AND p.runtime_set_id=$2::uuid
     AND i.state='pending' AND i.due_at<=now() AND (i.deadline_at IS NULL OR i.deadline_at>now())
 ORDER BY i.due_at,i.created_at,i.id LIMIT 1
@@ -36002,6 +36041,8 @@ func (q *Queries) NextEnvironmentQueueDeliveryInvocation(ctx context.Context, db
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -38723,7 +38764,7 @@ func (q *Queries) ObjectDeletionDue(ctx context.Context, db DBTX, limit int32) (
 }
 
 const objectDeletionGet = `-- name: ObjectDeletionGet :one
-SELECT d.id, d.bucket_id, d.object_key, d.selector, d.state, d.provider_status, d.baseline, d.provider_version_id, d.version_id, d.delete_marker, d.reserved_bytes, d.lease_token, d.lease_until, d.retry_at, d.last_error_code, d.created_at, d.updated_at, d.lifecycle_scan_id, d.lifecycle_binding, d.target_provider_version_id, d.recovery_claimed,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b ON b.id=d.bucket_id WHERE d.id=$1
+SELECT d.id, d.bucket_id, d.object_key, d.selector, d.state, d.provider_status, d.baseline, d.provider_version_id, d.version_id, d.delete_marker, d.reserved_bytes, d.lease_token, d.lease_until, d.retry_at, d.last_error_code, d.created_at, d.updated_at, d.lifecycle_scan_id, d.lifecycle_binding, d.target_provider_version_id, d.recovery_claimed, d.protection_required, d.protection_verified, d.deletion_verified,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b ON b.id=d.bucket_id WHERE d.id=$1
 `
 
 type ObjectDeletionGetRow struct {
@@ -38748,6 +38789,9 @@ type ObjectDeletionGetRow struct {
 	LifecycleBinding        []byte
 	TargetProviderVersionID string
 	RecoveryClaimed         bool
+	ProtectionRequired      bool
+	ProtectionVerified      bool
+	DeletionVerified        bool
 	AccountID               pgtype.UUID
 	AppID                   pgtype.UUID
 }
@@ -38777,6 +38821,9 @@ func (q *Queries) ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID
 		&i.LifecycleBinding,
 		&i.TargetProviderVersionID,
 		&i.RecoveryClaimed,
+		&i.ProtectionRequired,
+		&i.ProtectionVerified,
+		&i.DeletionVerified,
 		&i.AccountID,
 		&i.AppID,
 	)
@@ -38784,8 +38831,8 @@ func (q *Queries) ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID
 }
 
 const objectDeletionInsert = `-- name: ObjectDeletionInsert :exec
-INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at,target_provider_version_id,lifecycle_scan_id,lifecycle_binding)
-VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9,$10,$11,$12)
+INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at,target_provider_version_id,lifecycle_scan_id,lifecycle_binding,protection_required)
+VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9,$10,$11,$12,$13)
 `
 
 type ObjectDeletionInsertParams struct {
@@ -38801,6 +38848,7 @@ type ObjectDeletionInsertParams struct {
 	TargetProviderVersionID string
 	LifecycleScanID         pgtype.UUID
 	LifecycleBinding        []byte
+	ProtectionRequired      bool
 }
 
 func (q *Queries) ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectDeletionInsertParams) error {
@@ -38817,27 +38865,30 @@ func (q *Queries) ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectD
 		arg.TargetProviderVersionID,
 		arg.LifecycleScanID,
 		arg.LifecycleBinding,
+		arg.ProtectionRequired,
 	)
 	return err
 }
 
 const objectDeletionSave = `-- name: ObjectDeletionSave :exec
-UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11,recovery_claimed=$12 WHERE id=$1
+UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11,recovery_claimed=$12,protection_verified=$13,deletion_verified=$14 WHERE id=$1
 `
 
 type ObjectDeletionSaveParams struct {
-	ID                pgtype.UUID
-	State             string
-	Baseline          []byte
-	ProviderVersionID string
-	VersionID         string
-	DeleteMarker      bool
-	LeaseToken        string
-	LeaseUntil        pgtype.Timestamptz
-	RetryAt           pgtype.Timestamptz
-	LastErrorCode     string
-	UpdatedAt         pgtype.Timestamptz
-	RecoveryClaimed   bool
+	ID                 pgtype.UUID
+	State              string
+	Baseline           []byte
+	ProviderVersionID  string
+	VersionID          string
+	DeleteMarker       bool
+	LeaseToken         string
+	LeaseUntil         pgtype.Timestamptz
+	RetryAt            pgtype.Timestamptz
+	LastErrorCode      string
+	UpdatedAt          pgtype.Timestamptz
+	RecoveryClaimed    bool
+	ProtectionVerified bool
+	DeletionVerified   bool
 }
 
 func (q *Queries) ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error {
@@ -38854,14 +38905,16 @@ func (q *Queries) ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDel
 		arg.LastErrorCode,
 		arg.UpdatedAt,
 		arg.RecoveryClaimed,
+		arg.ProtectionVerified,
+		arg.DeletionVerified,
 	)
 	return err
 }
 
 const objectGatewayUploadInsert = `-- name: ObjectGatewayUploadInsert :one
 INSERT INTO object_upload_completions
- (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,source_bucket_id,source_copy_grant_id,encryption_snapshot,recovery_retry_at,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',$10::text,$11::text,$12::text,$13::uuid,$14::uuid,$15::jsonb,now()+make_interval(secs=>$16::int),$17::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+ (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,source_bucket_id,source_copy_grant_id,encryption_snapshot,protection_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',$10::text,$11::text,$12::text,$13::uuid,$14::uuid,$15::jsonb,$16::jsonb,now()+make_interval(secs=>$17::int),$18::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified
 `
 
 type ObjectGatewayUploadInsertParams struct {
@@ -38880,6 +38933,7 @@ type ObjectGatewayUploadInsertParams struct {
 	SourceBucketID            pgtype.UUID
 	SourceCopyGrantID         pgtype.UUID
 	EncryptionSnapshot        []byte
+	ProtectionSnapshot        []byte
 	RetrySeconds              int32
 	EncryptionDefaultRevision int64
 }
@@ -38901,6 +38955,7 @@ func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg Ob
 		arg.SourceBucketID,
 		arg.SourceCopyGrantID,
 		arg.EncryptionSnapshot,
+		arg.ProtectionSnapshot,
 		arg.RetrySeconds,
 		arg.EncryptionDefaultRevision,
 	)
@@ -38938,6 +38993,9 @@ func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg Ob
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
@@ -39086,7 +39144,7 @@ func (q *Queries) ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, ar
 }
 
 const objectLifecycleMultipartList = `-- name: ObjectLifecycleMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND state='active' AND provider_upload_id<>'' AND created_at<=$4 AND id>$5
 ORDER BY id LIMIT $6::int
 `
@@ -39155,6 +39213,9 @@ func (q *Queries) ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg
 			&i.EncryptionVerified,
 			&i.FixedAdmission,
 			&i.EncryptionDefaultRevision,
+			&i.ProtectionSnapshot,
+			&i.ProtectionLeaseToken,
+			&i.ProtectionVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -39415,7 +39476,7 @@ func (q *Queries) ObjectMultipartActivate(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartByKey = `-- name: ObjectMultipartByKey :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
 AND state IN ('initiating','active','completing','completing_conditional','aborting')
 `
@@ -39474,12 +39535,15 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 		&i.EncryptionVerified,
 		&i.FixedAdmission,
 		&i.EncryptionDefaultRevision,
+		&i.ProtectionSnapshot,
+		&i.ProtectionLeaseToken,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectMultipartCapacityLock = `-- name: ObjectMultipartCapacityLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
@@ -39531,6 +39595,9 @@ func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg 
 		&i.EncryptionVerified,
 		&i.FixedAdmission,
 		&i.EncryptionDefaultRevision,
+		&i.ProtectionSnapshot,
+		&i.ProtectionLeaseToken,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
@@ -39539,6 +39606,7 @@ const objectMultipartClaim = `-- name: ObjectMultipartClaim :one
 UPDATE object_storage_multipart_uploads SET
 state=$1, lease_token=$2,
 encryption_lease_token=CASE WHEN encryption_snapshot='{}' THEN '' ELSE $2::text END,
+protection_lease_token=CASE WHEN protection_snapshot='{}' THEN '' ELSE $2::text END,
 lease_until=now()+($3::int * interval '1 second'),
 completion_if_match=CASE WHEN state='active' THEN $4::text ELSE completion_if_match END,
 completion_if_none_match=CASE WHEN state='active' THEN $5::text ELSE completion_if_none_match END,
@@ -39561,7 +39629,7 @@ AND (
     AND (state<>'active' OR expires_at>now())
     AND (state<>'active' OR jsonb_array_length($6::jsonb)>0)) OR
   ($1::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
-) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision
+) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
 `
 
 type ObjectMultipartClaimParams struct {
@@ -39632,6 +39700,9 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		&i.EncryptionVerified,
 		&i.FixedAdmission,
 		&i.EncryptionDefaultRevision,
+		&i.ProtectionSnapshot,
+		&i.ProtectionLeaseToken,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
@@ -39711,7 +39782,7 @@ func (q *Queries) ObjectMultipartDispatch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartDue = `-- name: ObjectMultipartDue :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
 WHERE (((state IN ('initiating','completing','completing_conditional','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
@@ -39766,6 +39837,9 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 			&i.EncryptionVerified,
 			&i.FixedAdmission,
 			&i.EncryptionDefaultRevision,
+			&i.ProtectionSnapshot,
+			&i.ProtectionLeaseToken,
+			&i.ProtectionVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -39781,7 +39855,7 @@ const objectMultipartFinish = `-- name: ObjectMultipartFinish :execrows
 UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=$1 AND lease_token=$2 AND
-(state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched AND encryption_snapshot='{}')
+(state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched AND encryption_snapshot='{}' AND protection_snapshot='{}')
 `
 
 type ObjectMultipartFinishParams struct {
@@ -39799,14 +39873,15 @@ func (q *Queries) ObjectMultipartFinish(ctx context.Context, db DBTX, arg Object
 }
 
 const objectMultipartFinishResult = `-- name: ObjectMultipartFinishResult :one
-UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=$1::boolean,completion_etag=$2,completion_version_id=$3,
- completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $4::boolean,
+UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=$1::boolean,protection_verified=$2::boolean,completion_etag=$3,completion_version_id=$4,
+ completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $5::boolean,
  lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
-WHERE id=$5 AND lease_token=$6 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision
+WHERE id=$6 AND lease_token=$7 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
 `
 
 type ObjectMultipartFinishResultParams struct {
 	EncryptionVerified bool
+	ProtectionVerified bool
 	Etag               string
 	VersionID          string
 	VersionsObserved   bool
@@ -39817,6 +39892,7 @@ type ObjectMultipartFinishResultParams struct {
 func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg ObjectMultipartFinishResultParams) (ObjectStorageMultipartUpload, error) {
 	row := db.QueryRow(ctx, objectMultipartFinishResult,
 		arg.EncryptionVerified,
+		arg.ProtectionVerified,
 		arg.Etag,
 		arg.VersionID,
 		arg.VersionsObserved,
@@ -39863,6 +39939,9 @@ func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg 
 		&i.EncryptionVerified,
 		&i.FixedAdmission,
 		&i.EncryptionDefaultRevision,
+		&i.ProtectionSnapshot,
+		&i.ProtectionLeaseToken,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
@@ -39888,7 +39967,7 @@ func (q *Queries) ObjectMultipartFinishVerifiedAbort(ctx context.Context, db DBT
 }
 
 const objectMultipartGet = `-- name: ObjectMultipartGet :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4
 `
 
@@ -39946,14 +40025,17 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 		&i.EncryptionVerified,
 		&i.FixedAdmission,
 		&i.EncryptionDefaultRevision,
+		&i.ProtectionSnapshot,
+		&i.ProtectionLeaseToken,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectMultipartInsert = `-- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
-(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,fixed_admission,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::boolean,$14::bigint) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14::boolean,$15::bigint) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
 `
 
 type ObjectMultipartInsertParams struct {
@@ -39969,6 +40051,7 @@ type ObjectMultipartInsertParams struct {
 	ObjectMetadata            []byte
 	ExpiresAt                 pgtype.Timestamptz
 	EncryptionSnapshot        []byte
+	ProtectionSnapshot        []byte
 	FixedAdmission            bool
 	EncryptionDefaultRevision int64
 }
@@ -39987,6 +40070,7 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		arg.ObjectMetadata,
 		arg.ExpiresAt,
 		arg.EncryptionSnapshot,
+		arg.ProtectionSnapshot,
 		arg.FixedAdmission,
 		arg.EncryptionDefaultRevision,
 	)
@@ -40030,12 +40114,15 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		&i.EncryptionVerified,
 		&i.FixedAdmission,
 		&i.EncryptionDefaultRevision,
+		&i.ProtectionSnapshot,
+		&i.ProtectionLeaseToken,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectMultipartList = `-- name: ObjectMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
 ORDER BY id LIMIT $5::int
 `
@@ -40102,6 +40189,9 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 			&i.EncryptionVerified,
 			&i.FixedAdmission,
 			&i.EncryptionDefaultRevision,
+			&i.ProtectionSnapshot,
+			&i.ProtectionLeaseToken,
+			&i.ProtectionVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -40362,7 +40452,7 @@ func (q *Queries) ObjectMultipartReleaseTrackedParts(ctx context.Context, db DBT
 }
 
 const objectMultipartResultLock = `-- name: ObjectMultipartResultLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
 `
 
 type ObjectMultipartResultLockParams struct {
@@ -40419,6 +40509,9 @@ func (q *Queries) ObjectMultipartResultLock(ctx context.Context, db DBTX, arg Ob
 		&i.EncryptionVerified,
 		&i.FixedAdmission,
 		&i.EncryptionDefaultRevision,
+		&i.ProtectionSnapshot,
+		&i.ProtectionLeaseToken,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
@@ -41554,7 +41647,7 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectS3MultipartList = `-- name: ObjectS3MultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3
 AND part_count=0 AND state IN ('active','completing','completing_conditional','aborting')
 AND starts_with(object_key,$4::text)
@@ -41629,6 +41722,9 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 			&i.EncryptionVerified,
 			&i.FixedAdmission,
 			&i.EncryptionDefaultRevision,
+			&i.ProtectionSnapshot,
+			&i.ProtectionLeaseToken,
+			&i.ProtectionVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -41845,7 +41941,7 @@ func (q *Queries) ObjectTrackedGrantUpsert(ctx context.Context, db DBTX, arg Obj
 
 const objectTrackedUploadClaim = `-- name: ObjectTrackedUploadClaim :one
 UPDATE object_upload_completions SET recovery_token=$2,recovery_lease_until=now()+make_interval(secs=>$3::int)
- WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified
 `
 
 type ObjectTrackedUploadClaimParams struct {
@@ -41890,13 +41986,16 @@ func (q *Queries) ObjectTrackedUploadClaim(ctx context.Context, db DBTX, arg Obj
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectTrackedUploadDispatch = `-- name: ObjectTrackedUploadDispatch :one
-UPDATE object_upload_completions SET write_phase='dispatched', encryption_dispatched=(encryption_snapshot<>'{}'), recovery_retry_at=now()+make_interval(secs=>$4::int)
- WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+UPDATE object_upload_completions SET write_phase='dispatched', encryption_dispatched=(encryption_snapshot<>'{}'), protection_dispatched=(protection_snapshot<>'{}'), recovery_retry_at=now()+make_interval(secs=>$4::int)
+ WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified
 `
 
 type ObjectTrackedUploadDispatchParams struct {
@@ -41947,12 +42046,15 @@ func (q *Queries) ObjectTrackedUploadDispatch(ctx context.Context, db DBTX, arg 
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectTrackedUploadDue = `-- name: ObjectTrackedUploadDue :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
  AND (recovery_lease_until IS NULL OR recovery_lease_until<=now()) ORDER BY recovery_retry_at,id LIMIT $1
 `
 
@@ -41998,6 +42100,9 @@ func (q *Queries) ObjectTrackedUploadDue(ctx context.Context, db DBTX, limit int
 			&i.EncryptionDefaultRevision,
 			&i.SourceBucketID,
 			&i.SourceCopyGrantID,
+			&i.ProtectionSnapshot,
+			&i.ProtectionDispatched,
+			&i.ProtectionVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -42010,10 +42115,10 @@ func (q *Queries) ObjectTrackedUploadDue(ctx context.Context, db DBTX, limit int
 }
 
 const objectTrackedUploadFinish = `-- name: ObjectTrackedUploadFinish :one
-UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,encryption_verified=$5::boolean,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
-	version_id=$6::text,
- recovery_versions_observed=recovery_versions_observed OR $7::boolean
- WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,encryption_verified=$5::boolean,protection_verified=$6::boolean,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
+	version_id=$7::text,
+ recovery_versions_observed=recovery_versions_observed OR $8::boolean
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified
 `
 
 type ObjectTrackedUploadFinishParams struct {
@@ -42022,6 +42127,7 @@ type ObjectTrackedUploadFinishParams struct {
 	Etag                     string
 	ErrorCode                string
 	EncryptionVerified       bool
+	ProtectionVerified       bool
 	VersionID                string
 	RecoveryVersionsObserved bool
 }
@@ -42033,6 +42139,7 @@ func (q *Queries) ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg Ob
 		arg.Etag,
 		arg.ErrorCode,
 		arg.EncryptionVerified,
+		arg.ProtectionVerified,
 		arg.VersionID,
 		arg.RecoveryVersionsObserved,
 	)
@@ -42070,12 +42177,15 @@ func (q *Queries) ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg Ob
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectTrackedUploadGet = `-- name: ObjectTrackedUploadGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
 type ObjectTrackedUploadGetParams struct {
@@ -42120,14 +42230,17 @@ func (q *Queries) ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg Objec
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectTrackedUploadInsert = `-- name: ObjectTrackedUploadInsert :one
 INSERT INTO object_upload_completions
- (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,encryption_snapshot,recovery_retry_at,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',$13::jsonb,now()+make_interval(secs=>$14::int),$15::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+ (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,encryption_snapshot,protection_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',$13::jsonb,$14::jsonb,now()+make_interval(secs=>$15::int),$16::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified
 `
 
 type ObjectTrackedUploadInsertParams struct {
@@ -42144,6 +42257,7 @@ type ObjectTrackedUploadInsertParams struct {
 	IdempotencyKey            string
 	RequestFingerprint        string
 	EncryptionSnapshot        []byte
+	ProtectionSnapshot        []byte
 	RetrySeconds              int32
 	EncryptionDefaultRevision int64
 }
@@ -42163,6 +42277,7 @@ func (q *Queries) ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg Ob
 		arg.IdempotencyKey,
 		arg.RequestFingerprint,
 		arg.EncryptionSnapshot,
+		arg.ProtectionSnapshot,
 		arg.RetrySeconds,
 		arg.EncryptionDefaultRevision,
 	)
@@ -42200,12 +42315,15 @@ func (q *Queries) ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg Ob
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectTrackedUploadReplay = `-- name: ObjectTrackedUploadReplay :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
 `
 
 type ObjectTrackedUploadReplayParams struct {
@@ -42258,6 +42376,9 @@ func (q *Queries) ObjectTrackedUploadReplay(ctx context.Context, db DBTX, arg Ob
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
@@ -42600,7 +42721,7 @@ func (q *Queries) ObjectUploadGrantResolve(ctx context.Context, db DBTX, tokenHa
 }
 
 const objectUploadIntentGet = `-- name: ObjectUploadIntentGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3
 `
 
 type ObjectUploadIntentGetParams struct {
@@ -42645,12 +42766,15 @@ func (q *Queries) ObjectUploadIntentGet(ctx context.Context, db DBTX, arg Object
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectUploadReceiptGet = `-- name: ObjectUploadReceiptGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
 `
 
 type ObjectUploadReceiptGetParams struct {
@@ -42703,6 +42827,9 @@ func (q *Queries) ObjectUploadReceiptGet(ctx context.Context, db DBTX, arg Objec
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
@@ -43366,7 +43493,7 @@ func (q *Queries) ObjectVersionProtectionDue(ctx context.Context, db DBTX, limit
 }
 
 const objectVersionProtectionGet = `-- name: ObjectVersionProtectionGet :one
-SELECT id, bucket_id, account_id, app_id, object_key, public_version_id, native_version_id, intent, state, lease_token, lease_until, retry_at, dispatched, last_error_code, created_at, updated_at FROM object_version_protection WHERE id=$1
+SELECT id, bucket_id, account_id, app_id, object_key, public_version_id, native_version_id, intent, state, lease_token, lease_until, retry_at, dispatched, last_error_code, created_at, updated_at, event_hold_baseline FROM object_version_protection WHERE id=$1
 `
 
 func (q *Queries) ObjectVersionProtectionGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectVersionProtection, error) {
@@ -43389,6 +43516,7 @@ func (q *Queries) ObjectVersionProtectionGet(ctx context.Context, db DBTX, id pg
 		&i.LastErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EventHoldBaseline,
 	)
 	return i, err
 }
@@ -43424,17 +43552,18 @@ func (q *Queries) ObjectVersionProtectionInsert(ctx context.Context, db DBTX, ar
 }
 
 const objectVersionProtectionUpdate = `-- name: ObjectVersionProtectionUpdate :exec
-UPDATE object_version_protection SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,dispatched=$6,last_error_code=$7,updated_at=now() WHERE id=$1
+UPDATE object_version_protection SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,dispatched=$6,last_error_code=$7,event_hold_baseline=$8,updated_at=now() WHERE id=$1
 `
 
 type ObjectVersionProtectionUpdateParams struct {
-	ID            pgtype.UUID
-	State         string
-	LeaseToken    string
-	LeaseUntil    pgtype.Timestamptz
-	RetryAt       pgtype.Timestamptz
-	Dispatched    bool
-	LastErrorCode string
+	ID                pgtype.UUID
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	Dispatched        bool
+	LastErrorCode     string
+	EventHoldBaseline []byte
 }
 
 func (q *Queries) ObjectVersionProtectionUpdate(ctx context.Context, db DBTX, arg ObjectVersionProtectionUpdateParams) error {
@@ -43446,6 +43575,7 @@ func (q *Queries) ObjectVersionProtectionUpdate(ctx context.Context, db DBTX, ar
 		arg.RetryAt,
 		arg.Dispatched,
 		arg.LastErrorCode,
+		arg.EventHoldBaseline,
 	)
 	return err
 }
@@ -43698,8 +43828,28 @@ func (q *Queries) ObjectWriteKeyFenced(ctx context.Context, db DBTX, arg ObjectW
 	return fenced, err
 }
 
+const objectWriteProtectionBucketLock = `-- name: ObjectWriteProtectionBucketLock :exec
+SELECT id FROM object_buckets WHERE id=$1 FOR NO KEY UPDATE
+`
+
+func (q *Queries) ObjectWriteProtectionBucketLock(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectWriteProtectionBucketLock, id)
+	return err
+}
+
+const objectWriteProtectionClock = `-- name: ObjectWriteProtectionClock :one
+SELECT clock_timestamp()::timestamptz
+`
+
+func (q *Queries) ObjectWriteProtectionClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, objectWriteProtectionClock)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const objectWriteReceiptGet = `-- name: ObjectWriteReceiptGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked'
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked'
 `
 
 type ObjectWriteReceiptGetParams struct {
@@ -43750,12 +43900,15 @@ func (q *Queries) ObjectWriteReceiptGet(ctx context.Context, db DBTX, arg Object
 		&i.EncryptionDefaultRevision,
 		&i.SourceBucketID,
 		&i.SourceCopyGrantID,
+		&i.ProtectionSnapshot,
+		&i.ProtectionDispatched,
+		&i.ProtectionVerified,
 	)
 	return i, err
 }
 
 const objectWriteReceiptsList = `-- name: ObjectWriteReceiptsList :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
  AND status=$4::text
  AND (created_at,id) < (coalesce($5::timestamptz,'infinity'::timestamptz),coalesce($6::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
  ORDER BY created_at DESC,id DESC LIMIT $7::int
@@ -43821,6 +43974,9 @@ func (q *Queries) ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg Obje
 			&i.EncryptionDefaultRevision,
 			&i.SourceBucketID,
 			&i.SourceCopyGrantID,
+			&i.ProtectionSnapshot,
+			&i.ProtectionDispatched,
+			&i.ProtectionVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -43833,7 +43989,7 @@ func (q *Queries) ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectWriteReceiptsListAll = `-- name: ObjectWriteReceiptsListAll :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id, protection_snapshot, protection_dispatched, protection_verified FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
  AND (created_at,id) < (coalesce($4::timestamptz,'infinity'::timestamptz),coalesce($5::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
  ORDER BY created_at DESC,id DESC LIMIT $6::int
 `
@@ -43896,6 +44052,9 @@ func (q *Queries) ObjectWriteReceiptsListAll(ctx context.Context, db DBTX, arg O
 			&i.EncryptionDefaultRevision,
 			&i.SourceBucketID,
 			&i.SourceCopyGrantID,
+			&i.ProtectionSnapshot,
+			&i.ProtectionDispatched,
+			&i.ProtectionVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -44354,7 +44513,7 @@ func (q *Queries) OwnEnvironmentGitOpsField(ctx context.Context, db DBTX, arg Ow
 
 const peekProductionQueue = `-- name: PeekProductionQueue :many
 WITH anchor AS (SELECT created_at,id FROM production_invocation_work WHERE id=$2::uuid AND app_id=$1::uuid AND source='queue')
-SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id FROM invocations i JOIN production_invocation_work p ON p.id=i.id
+SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at FROM invocations i JOIN production_invocation_work p ON p.id=i.id
 WHERE i.app_id=$1::uuid AND i.source='queue' AND i.state='pending'
     AND ($2::uuid IS NULL OR (i.created_at,i.id)>(SELECT created_at,id FROM anchor))
 ORDER BY i.created_at,i.id LIMIT $3::bigint
@@ -44426,6 +44585,8 @@ func (q *Queries) PeekProductionQueue(ctx context.Context, db DBTX, arg PeekProd
 			&i.ReplayGeneration,
 			&i.OutcomeCode,
 			&i.EnvironmentID,
+			&i.ReplayRootInvocationID,
+			&i.ReplayRootCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -46352,7 +46513,7 @@ where i.id=$2::uuid and i.app_id=$3::uuid and i.source='queue'
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
                     where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))))
  AND i.environment_id IS NULL AND NOT EXISTS (SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
-returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id
+returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at
 `
 
 type QueueClaimPendingInvocationParams struct {
@@ -46427,6 +46588,8 @@ func (q *Queries) QueueClaimPendingInvocation(ctx context.Context, db DBTX, arg 
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -46917,7 +47080,7 @@ func (q *Queries) QueueFinishDeliveryClaims(ctx context.Context, db DBTX, arg Qu
 }
 
 const queueInvocationForTriggerReceipt = `-- name: QueueInvocationForTriggerReceipt :one
-select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id from trigger_records r join triggers t on t.id=r.trigger_id
+select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at from trigger_records r join triggers t on t.id=r.trigger_id
 join invocations i on i.id::text=r.item_identifier and i.app_id=t.app_id and i.account_id=t.account_id
   and i.source=t.source
 where r.id=$1::uuid and t.kind='queue' and t.source in ('queue','delayed_task')
@@ -46979,6 +47142,8 @@ func (q *Queries) QueueInvocationForTriggerReceipt(ctx context.Context, db DBTX,
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -47005,16 +47170,16 @@ select i.id::text from invocations i cross join consumer
 		      where older.app_id = i.app_id
 		        and older.work_policy_name = i.work_policy_name
 		        and older.work_key_digest = i.work_key_digest
-		        and older.work_sequence < i.work_sequence
-		        and older.state in ('pending','dispatching')))
+		        and ((older.work_sequence < i.work_sequence and older.state='pending')
+		          or older.state='dispatching')))
 		  and (i.work_policy_name is null or not exists (
 		      select 1 from trigger_records older
 		      join triggers source on source.id=older.trigger_id
 		      where source.app_id=i.app_id
 		        and older.work_policy_name=i.work_policy_name
 		        and older.work_key_digest=i.work_key_digest
-		        and older.work_sequence<i.work_sequence
-		        and older.state in ('pending','retry','claimed')))
+		        and ((older.work_sequence<i.work_sequence and older.state in ('pending','retry'))
+		          or older.state='claimed')))
 		  and (i.work_fairness_limit is null or (
 		      select count(*) from invocations active
 		      where active.app_id = i.app_id
@@ -47967,7 +48132,7 @@ func (q *Queries) ReadBindingReleasePolicy(ctx context.Context, db DBTX, arg Rea
 }
 
 const readBoundOrProductionQueueTriggerInvocation = `-- name: ReadBoundOrProductionQueueTriggerInvocation :one
-SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue' AND i.environment_id IS NULL
+SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue' AND i.environment_id IS NULL
  AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
  AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
  and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
@@ -48041,6 +48206,8 @@ func (q *Queries) ReadBoundOrProductionQueueTriggerInvocation(ctx context.Contex
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -48353,7 +48520,7 @@ func (q *Queries) ReadEnvironmentQueueDeliveryReceipt(ctx context.Context, db DB
 }
 
 const readEnvironmentQueueInvocation = `-- name: ReadEnvironmentQueueInvocation :one
-SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id FROM invocations WHERE id=$1
+SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id, replay_root_invocation_id, replay_root_created_at FROM invocations WHERE id=$1
 `
 
 func (q *Queries) ReadEnvironmentQueueInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
@@ -48410,6 +48577,8 @@ func (q *Queries) ReadEnvironmentQueueInvocation(ctx context.Context, db DBTX, i
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -49004,7 +49173,7 @@ func (q *Queries) ReadProductionDeadLetterEvent(ctx context.Context, db DBTX, ar
 }
 
 const readProductionQueueInvocation = `-- name: ReadProductionQueueInvocation :one
-SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id FROM invocations i JOIN production_invocation_work p ON p.id=i.id
+SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at FROM invocations i JOIN production_invocation_work p ON p.id=i.id
 WHERE i.id=$1 AND i.source='queue'
 `
 
@@ -49063,6 +49232,8 @@ func (q *Queries) ReadProductionQueueInvocation(ctx context.Context, db DBTX, id
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -49095,7 +49266,7 @@ func (q *Queries) ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg
 }
 
 const readProductionQueueTriggerInvocation = `-- name: ReadProductionQueueTriggerInvocation :one
-SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue'
+SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue'
           and i.environment_id is null
           and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
@@ -49168,6 +49339,8 @@ func (q *Queries) ReadProductionQueueTriggerInvocation(ctx context.Context, db D
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -55105,9 +55278,9 @@ func (q *Queries) ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg R
 
 const replayProductionDeadLetterInvocation = `-- name: ReplayProductionDeadLetterInvocation :execrows
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
-    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''
 FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1::uuid
-    AND i.account_id=$2::uuid AND i.app_id=$3::uuid AND i.state='dead_letter'
+    AND i.account_id=$2::uuid AND i.app_id=$3::uuid AND i.state='dead_letter' AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
 `
 
 type ReplayProductionDeadLetterInvocationParams struct {
@@ -57667,9 +57840,9 @@ func (q *Queries) RetryExternalTriggerRecordByOperator(ctx context.Context, db D
 
 const retryProductionQueueDeadLetter = `-- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
-    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false
-FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1 AND i.account_id=$2 AND i.state='dead_letter'
-RETURNING i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''
+FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1 AND i.account_id=$2 AND i.state='dead_letter' AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
+RETURNING i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at
 `
 
 type RetryProductionQueueDeadLetterParams struct {
@@ -57731,6 +57904,8 @@ func (q *Queries) RetryProductionQueueDeadLetter(ctx context.Context, db DBTX, a
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -57798,7 +57973,7 @@ update invocations set state='pending', attempts=0, last_error=null, outcome=nul
 where id=$1::uuid and account_id=$2::uuid and state='dead_letter'
   and operation_id IS NULL
   and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
-returning id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id
+returning id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id, replay_root_invocation_id, replay_root_created_at
 `
 
 type RetryQueueDeadLetterInvocationParams struct {
@@ -57860,6 +58035,8 @@ func (q *Queries) RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, a
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
 		&i.EnvironmentID,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.object_encryption import ObjectEncryption
     from ..models.object_sign_request_metadata import ObjectSignRequestMetadata
     from ..models.object_sign_request_tags import ObjectSignRequestTags
+    from ..models.object_write_protection import ObjectWriteProtection
 
 
 T = TypeVar("T", bound="ObjectSignRequest")
@@ -43,6 +44,11 @@ class ObjectSignRequest:
     """PUT-only x-amz-meta-* values."""
     tags: ObjectSignRequestTags | Unset = UNSET
     """PUT-only S3 object tags."""
+    protection: ObjectWriteProtection | Unset = UNSET
+    """Fixed or enrolled event retention and an independent legal hold for a new object version. Omitted retention
+    inherits the immutable admitted bucket default. Event hold ON requires one days or years duration and permits an
+    optional minimum date. Event hold OFF on creation requires an explicit fixed date and no duration. Governance
+    bypass is unsupported."""
     encryption: ObjectEncryption | Unset = UNSET
     """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
     reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
@@ -75,6 +81,10 @@ class ObjectSignRequest:
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
+        protection: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.protection, Unset):
+            protection = self.protection.to_dict()
+
         encryption: dict[str, Any] | Unset = UNSET
         if not isinstance(self.encryption, Unset):
             encryption = self.encryption.to_dict()
@@ -105,6 +115,8 @@ class ObjectSignRequest:
             field_dict["metadata"] = metadata
         if tags is not UNSET:
             field_dict["tags"] = tags
+        if protection is not UNSET:
+            field_dict["protection"] = protection
         if encryption is not UNSET:
             field_dict["encryption"] = encryption
 
@@ -115,6 +127,7 @@ class ObjectSignRequest:
         from ..models.object_encryption import ObjectEncryption
         from ..models.object_sign_request_metadata import ObjectSignRequestMetadata
         from ..models.object_sign_request_tags import ObjectSignRequestTags
+        from ..models.object_write_protection import ObjectWriteProtection
 
         d = dict(src_dict)
         method = check_object_sign_request_method(d.pop("method"))
@@ -149,6 +162,13 @@ class ObjectSignRequest:
         else:
             tags = ObjectSignRequestTags.from_dict(_tags)
 
+        _protection = d.pop("protection", UNSET)
+        protection: ObjectWriteProtection | Unset
+        if isinstance(_protection, Unset):
+            protection = UNSET
+        else:
+            protection = ObjectWriteProtection.from_dict(_protection)
+
         _encryption = d.pop("encryption", UNSET)
         encryption: ObjectEncryption | Unset
         if isinstance(_encryption, Unset):
@@ -168,6 +188,7 @@ class ObjectSignRequest:
             content_language=content_language,
             metadata=metadata,
             tags=tags,
+            protection=protection,
             encryption=encryption,
         )
 

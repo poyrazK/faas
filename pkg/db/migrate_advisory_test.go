@@ -147,6 +147,10 @@ func TestAcquireMigrationLock_ReleasesOnContextCancel(t *testing.T) {
 // in Cleanup; the full migration chain still runs rather than using a clone.
 func TestMigrateUp_SerialisesAcrossConcurrentGoroutines(t *testing.T) {
 	pool := pgtest.OpenDatabase(t)
+	// The first holder applies the entire historical chain while the others
+	// wait. Budget for a cold migration on a busy CI host, not just lock handoff.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
 
 	const N = 3
 	var wg sync.WaitGroup
@@ -156,8 +160,6 @@ func TestMigrateUp_SerialisesAcrossConcurrentGoroutines(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
 			errs[idx] = MigrateUp(ctx, pool)
 		}(i)
 	}
