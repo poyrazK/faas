@@ -1,5 +1,6 @@
 package fcvm
 
+// adr: 641
 import (
 	"context"
 	"errors"
@@ -14,6 +15,21 @@ import (
 )
 
 func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord, error) {
+	records, err := j.ownerRecords(ctx, func(instance string) (nativeLaunchRecord, error) {
+		return j.lockedRecord(ctx, instance)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := j.validateRecordResources(ctx, records); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+// Enumeration is shared; ordinary recovery locks each owner. Fresh inventory
+// instead reads live owners through their already retained observation locks.
+func (j *nativeLaunchJournal) ownerRecords(ctx context.Context, readOwner func(string) (nativeLaunchRecord, error)) ([]nativeLaunchRecord, error) {
 	if _, err := j.currentBootID(); err != nil {
 		return nil, err
 	}
@@ -39,45 +55,53 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		if !ok || !validNativeInstanceName(instance) || !entry.Type().IsRegular() {
 			return nil, errors.New("native journal: unexpected entry in private record root")
 		}
-		lock, err := j.lock(ctx, instance)
-		if err != nil {
-			return nil, err
-		}
-		record, err := j.read(instance)
-		err = errors.Join(err, lock.Close())
+		record, err := readOwner(instance)
 		if err != nil {
 			return nil, err
 		}
 		records = append(records, record)
 	}
+	return records, ctx.Err()
+}
+
+func (j *nativeLaunchJournal) lockedRecord(ctx context.Context, instance string) (nativeLaunchRecord, error) {
+	lock, err := j.lock(ctx, instance)
+	if err != nil {
+		return nativeLaunchRecord{}, err
+	}
+	record, err := j.read(instance)
+	return record, errors.Join(err, lock.Close())
+}
+
+func (j *nativeLaunchJournal) validateRecordResources(ctx context.Context, records []nativeLaunchRecord) error {
 	helpers := nativeHostHelperJournal{owner: j}
 	if _, err := helpers.allRecords(ctx, records); err != nil {
-		return nil, err
+		return err
 	}
 	loops := nativeLoopMountJournal{owner: j}
 	if _, err := loops.allRecords(ctx, records); err != nil {
-		return nil, err
+		return err
 	}
 	images := nativeImageSourceJournal{owner: j}
 	imageRecords, err := images.records()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := images.validateOwners(imageRecords, records); err != nil {
-		return nil, err
+		return err
 	}
 	tun := nativeTunBindJournal{owner: j}
 	tunRecords, err := tun.records()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := tun.validateOwners(tunRecords, records); err != nil {
-		return nil, err
+		return err
 	}
 	if _, err := j.qualifications("").recoveryLeases(ctx, records); err != nil {
-		return nil, err
+		return err
 	}
-	return records, ctx.Err()
+	return ctx.Err()
 }
 
 // Complete resource acknowledgement is separate from process exit. The record

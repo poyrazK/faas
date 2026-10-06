@@ -1,6 +1,7 @@
 package fcvm
 
 // adr: 639
+// adr: 641
 import (
 	"context"
 	"errors"
@@ -231,6 +232,21 @@ func (v *JailerVMM) withNativeInventory(ctx context.Context, observe func(contex
 		b.mu.Unlock()
 	}()
 	return observe(ctx)
+}
+
+func (v *JailerVMM) checkNativeInventoryPermit(ctx context.Context, p *nativeEffectPermit) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if p == nil || ctx.Value(nativeEffectContextKey{}) != p || p.barrier != &v.nativeEffects {
+		return errors.New("native inventory: original inventory context is required")
+	}
+	p.barrier.mu.Lock()
+	defer p.barrier.mu.Unlock()
+	if !p.active || !p.inventory || p.family.references <= 0 {
+		return errNativeEffectExpired
+	}
+	return p.barrier.poison
 }
 
 func (v *JailerVMM) beginNativeEffects(ctx context.Context) (context.Context, func(), error) {

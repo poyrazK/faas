@@ -25,11 +25,12 @@ type nativeProcessRecoveryRuntime struct {
 	inventory func([]Lease) error
 	// Test wiring may model a credential-bound connection; production uses
 	// Linux SO_PEERCRED and the same pinned task as the journal/proc checks.
-	machineDial  nativeMachineDial
-	helperGroups nativeHostHelperGroups
-	loopMounts   nativeLoopMountBackend
-	imageSources nativeImageSourceBackend
-	tunBinds     nativeTunBindBackend
+	machineDial   nativeMachineDial
+	runtimeGroups nativeRuntimeCgroups
+	helperGroups  nativeHostHelperGroups
+	loopMounts    nativeLoopMountBackend
+	imageSources  nativeImageSourceBackend
+	tunBinds      nativeTunBindBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
 	helper     string
@@ -48,15 +49,16 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	images := newNativeImageSourceBackend(v.chrootBase)
 	tun := newNativeTunBindBackend(v.chrootBase)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase)},
-		retirer:      nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
-		owned:        make(map[string]string),
-		lockWait:     v.readyTimeout,
-		inventory:    nativeNetworkInventory,
-		helperGroups: newNativeHostHelperGroups(),
-		loopMounts:   loops,
-		imageSources: images,
-		tunBinds:     tun,
+		journal:       &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase)},
+		retirer:       nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
+		owned:         make(map[string]string),
+		lockWait:      v.readyTimeout,
+		inventory:     nativeNetworkInventory,
+		helperGroups:  newNativeHostHelperGroups(),
+		loopMounts:    loops,
+		imageSources:  images,
+		tunBinds:      tun,
+		runtimeGroups: newNativeRuntimeCgroups(),
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())
 			if err != nil {
@@ -178,6 +180,9 @@ func (v *JailerVMM) scanNativeRecoveryLeases(ctx context.Context) ([]Lease, erro
 	leases = append(leases, planned...)
 	processes, err := r.retirer.probe.processes(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.retirer.probe.requireManagedUIDProvenance(ctx); err != nil {
 		return nil, err
 	}
 	for _, process := range processes {
