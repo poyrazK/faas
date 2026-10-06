@@ -29,6 +29,10 @@ func VerifyLogs(report Report, metal, leak []byte) error {
 	if err := verifyMetalEvents(report, metal); err != nil {
 		return err
 	}
+	return verifyLeakcheck(leak)
+}
+
+func verifyLeakcheck(leak []byte) error {
 	s := bufio.NewScanner(bytes.NewReader(leak))
 	s.Buffer(make([]byte, 4096), api.RuntimeQualificationEventMaxBytes)
 	success := 0

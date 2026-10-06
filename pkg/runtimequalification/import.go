@@ -87,6 +87,24 @@ func Import(ctx context.Context, store Store, artifacts Artifacts, inputs Inputs
 }
 
 func verifyPublishedInputs(ctx context.Context, store Store, artifacts Artifacts, n Observation) (state.RuntimeRelease, error) {
+	r, err := verifyPublishedTarget(ctx, store, n)
+	if err != nil {
+		return r, err
+	}
+
+	for _, entry := range []struct{ key, want string }{{r.BaseKey(), r.BaseSHA256}, {n.LayerKey, n.LayerSHA256}} {
+		got, size, err := artifactSHA(ctx, artifacts, entry.key, 0)
+		if err != nil {
+			return r, err
+		}
+		if got != entry.want || size == 0 {
+			return r, fmt.Errorf("native artifact bytes differ: %w", ErrEvidence)
+		}
+	}
+	return r, nil
+}
+
+func verifyPublishedTarget(ctx context.Context, store Store, n Observation) (state.RuntimeRelease, error) {
 	r, err := store.RuntimeReleaseByID(ctx, n.ReleaseID)
 	if err != nil {
 		return r, fmt.Errorf("read qualified runtime target: %w", err)
@@ -111,15 +129,6 @@ func verifyPublishedInputs(ctx context.Context, store Store, artifacts Artifacts
 	}
 	if bound.ID != r.ID {
 		return r, fmt.Errorf("native fixture uses another runtime: %w", ErrEvidence)
-	}
-	for _, entry := range []struct{ key, want string }{{r.BaseKey(), r.BaseSHA256}, {n.LayerKey, n.LayerSHA256}} {
-		got, size, err := artifactSHA(ctx, artifacts, entry.key, 0)
-		if err != nil {
-			return r, err
-		}
-		if got != entry.want || size == 0 {
-			return r, fmt.Errorf("native artifact bytes differ: %w", ErrEvidence)
-		}
 	}
 	return r, nil
 }

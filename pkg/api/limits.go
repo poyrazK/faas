@@ -8731,3 +8731,15 @@ const (
 	RuntimeQualificationEventMaxBytes  = 256 * 1024
 	RuntimeQualificationJSONMaxDepth   = 16
 )
+
+// Private runtime qualification collector budgets (ADR-601).
+const (
+	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)
+	RuntimeQualificationSourceArchiveMaxBytes = int64(512 << 20)
+	RuntimeQualificationLockTimeout           = 15 * time.Minute
+	RuntimeQualificationLockPollInterval      = 100 * time.Millisecond
+	RuntimeQualificationBuildTimeout          = 10 * time.Minute
+	RuntimeQualificationTestTimeout           = 3 * time.Minute
+	RuntimeQualificationCleanupTimeout        = 2 * time.Minute
+	RuntimeQualificationCommandWaitDelay      = 5 * time.Second
+)

@@ -87,6 +87,16 @@ scheduling operation. See [ADR-599](adr/599-native-runtime-release-qualification
 
 Qualification evidence bounds are 64 KiB per report/envelope/fixture JSON,
 64 MiB per captured log, 256 KiB per log event/line and 16 JSON nesting levels.
-The profile currently requires dedicated native Linux amd64 KVM. The automated
-collector/signing runner and actual native acceptance remain outstanding;
-macOS unit fixtures never qualify a release.
+The profile currently requires dedicated native Linux amd64 KVM. The private
+[guarded collector](adr/601-guarded-native-runtime-qualification-collector.md)
+now stages exact committed source and published artifacts, captures native
+test/leakcheck evidence, restores the acceptance host, signs and imports only a
+successful retained bundle. It uses independent operator pins and a protected
+signing seed, never customer API input. Actual designated-host acceptance
+remains outstanding; macOS unit fixtures never qualify a release.
+
+Native collection bounds are 2 GiB per staged asset and 512 MiB per source
+archive, with a 15-minute exclusive lock wait, 100 ms lock polling, 10-minute
+source/build preparation budgets, 3-minute test budget, 2-minute cleanup budget
+and 5-second command pipe wait delay. Failed cleanup or restoration retains
+staging for operator recovery and blocks another collector attempt.
