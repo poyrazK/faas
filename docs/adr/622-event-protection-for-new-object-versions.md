@@ -1,12 +1,8 @@
-# ADR-621: Event protection for new object versions
+# ADR-622: Event protection for new object versions
 
-
-This decision was renumbered from ADR-609 after upstream event recovery
-used the same number. Committed and applied migration citations retain their
-original spelling; their SQL contents are unchanged.
 Status: Accepted
 Date: 2026-10-05
-Amends: ADR-618 and ADR-620
+Amends: ADR-619 and ADR-621
 
 ## Context
 
@@ -20,7 +16,7 @@ recovery could settle a version against a different policy.
 Extend the existing immutable write and multipart snapshots to retain event
 policies. Explicit ON requires exactly one positive days or years duration and
 allows a minimum date. Explicit OFF at creation requires a fixed date and omits
-duration; an undated OFF remains an existing-version release in ADR-620.
+duration; an undated OFF remains an existing-version release in ADR-621.
 Omitted retention inherits the captured bucket default, including its event
 period and any fixed minimum. An explicit retention selection overrides that
 default for the created version. Independent legal holds remain unchanged.

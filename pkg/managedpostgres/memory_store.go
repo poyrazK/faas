@@ -10,6 +10,7 @@ import (
 // MemoryStore is useful for unit tests and local wiring. Production adapters
 // should enforce the same transitions transactionally in PostgreSQL.
 type MemoryStore struct {
+	resizes                   map[string]ResizeOperation
 	cutovers                  map[string]Cutover
 	health                    map[string]memoryHealthEntry
 	mu                        sync.Mutex
@@ -26,6 +27,7 @@ type MemoryStore struct {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
+		resizes:                   map[string]ResizeOperation{},
 		cutovers:                  map[string]Cutover{},
 		health:                    map[string]memoryHealthEntry{},
 		databases:                 map[string]Database{},
@@ -136,7 +138,7 @@ func (s *MemoryStore) Due(_ context.Context, includeProvisioning bool, limit int
 	items := make([]Database, 0)
 	for _, database := range s.databases {
 		provisioning := database.State == StateProvisioning || database.State == StateFailed
-		if database.State != StateDeleting && (!includeProvisioning || !provisioning) {
+		if database.State != StateDeleting && database.State != StateUpdating && (!includeProvisioning || !provisioning) {
 			continue
 		}
 		if database.RetryAt.After(now) || database.LeaseUntil.After(now) {
@@ -169,10 +171,10 @@ func (s *MemoryStore) Claim(ctx context.Context, accountID, databaseID, leaseTok
 	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
-	if operation != StateProvisioning {
+	if operation != StateProvisioning && operation != StateUpdating {
 		return Database{}, ErrInvalid
 	}
-	if database.State != StateProvisioning && database.State != StateFailed {
+	if (operation == StateProvisioning && database.State != StateProvisioning && database.State != StateFailed) || (operation == StateUpdating && database.State != StateUpdating) {
 		return Database{}, ErrConflict
 	}
 	if database.RetryAt.After(now) {
@@ -203,7 +205,7 @@ func (s *MemoryStore) ClaimDelete(_ context.Context, accountID, databaseID, leas
 	if !ok || database.AccountID != accountID {
 		return Database{}, ErrNotFound
 	}
-	if s.databaseCutoverPinned(databaseID) || database.State == StateDeleted || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
+	if s.databaseCutoverPinned(databaseID) || database.State == StateUpdating || database.State == StateDeleted || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
 	for _, candidate := range s.databases {
@@ -306,7 +308,7 @@ func (s *MemoryStore) Release(_ context.Context, databaseID, leaseToken string, 
 	if database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
 		return ErrConflict
 	}
-	if (next != StateProvisioning && next != StateDeleting && next != StateFailed) || !validErrorCode(errorCode) || now.IsZero() || retryAt.Before(now) {
+	if (next != StateProvisioning && next != StateUpdating && next != StateDeleting && next != StateFailed) || !validErrorCode(errorCode) || now.IsZero() || retryAt.Before(now) {
 		return ErrInvalid
 	}
 	database.State = next

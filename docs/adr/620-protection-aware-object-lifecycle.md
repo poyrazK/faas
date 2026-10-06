@@ -1,15 +1,11 @@
-# ADR-619: Protection-aware object lifecycle deletion
+# ADR-620: Protection-aware object lifecycle deletion
 
-
-This decision was renumbered from ADR-607 after upstream event recovery
-used the same number. Committed and applied migration citations retain their
-original spelling; their SQL contents are unchanged.
 Status: Accepted
 Date: 2026-10-05
 
 ## Context
 
-ADR-618 preserves Object Lock policy on new versions. Lifecycle expiration still
+ADR-619 preserves Object Lock policy on new versions. Lifecycle expiration still
 needs to defer protected data without blocking later eligible versions, and a
 native deletion acknowledgment must not erase custody after an uncertain effect.
 

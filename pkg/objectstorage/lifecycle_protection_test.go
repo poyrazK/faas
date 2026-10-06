@@ -155,7 +155,7 @@ func lifecycleProtectionPlan(t *testing.T, f lifecycleServiceFixture, n *lifecyc
 	return scan, selector, LifecycleDecision{RuleID: rule.ID, Kind: kind}
 }
 
-// adr: 619
+// adr: 620
 func TestLifecycleProtectionHTTP(t *testing.T) {
 	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
 	future := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
@@ -224,7 +224,7 @@ func TestLifecycleProtectionHTTP(t *testing.T) {
 	}
 }
 
-// adr: 619
+// adr: 620
 func TestLifecycleProtectionRecoveryHTTP(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		for _, scenario := range []string{"lost ack", "null lost ack", "marker lost ack", "ack still present", "hold after uncertainty", "truncated proof"} {
@@ -270,7 +270,7 @@ func TestLifecycleProtectionRecoveryHTTP(t *testing.T) {
 	}
 }
 
-// adr: 619
+// adr: 620
 func TestLifecycleProtectionJournalFences(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pg=%t", pg), func(t *testing.T) {
@@ -361,7 +361,7 @@ func TestLifecycleProtectionJournalFences(t *testing.T) {
 	}
 }
 
-// adr: 619
+// adr: 620
 func TestLifecycleProtectionLegacyUpgradePG(t *testing.T) {
 	f := newLifecycleServiceFixture(t, true)
 	f.enableObjectLock(t)

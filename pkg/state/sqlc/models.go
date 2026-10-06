@@ -3933,6 +3933,22 @@ type ManagedPostgresHealth struct {
 	AttemptCount       int32
 }
 
+type ManagedPostgresResize struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DataResourceID     string
+	SourceSpec         []byte
+	TargetClass        string
+	Generation         int64
+	State              string
+	CreatedAt          pgtype.Timestamptz
+	CompletedAt        pgtype.Timestamptz
+}
+
 type ManagedPostgresRestoreProof struct {
 	DatabaseID         pgtype.UUID
 	AccountID          pgtype.UUID

@@ -1,9 +1,5 @@
-# ADR-618: Durable Object Lock policy for new object versions
+# ADR-619: Durable Object Lock policy for new object versions
 
-
-This decision was renumbered from ADR-606 after upstream event recovery
-used the same number. Committed and applied migration citations retain their
-original spelling; their SQL contents are unchanged.
 Status: Accepted
 Date: 2026-10-05
 

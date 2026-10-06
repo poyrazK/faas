@@ -50,7 +50,7 @@ func protectedHeadHeaders(w http.ResponseWriter, p state.ObjectWriteProtectionSn
 	}
 }
 
-// adr: 618
+// adr: 619
 func TestS3ProtectedWriteExactReadback(t *testing.T) {
 	for _, bad := range []string{"", "missing hold", "short retention", "duplicate date", "missing proof", "null version", "wrong version"} {
 		t.Run(bad, func(t *testing.T) {
@@ -102,7 +102,7 @@ func TestS3ProtectedWriteExactReadback(t *testing.T) {
 }
 func TestS3ProtectionOnCopyAndMultipart(t *testing.T) { s3ProtectionOnCopyAndMultipart(t, false) }
 
-// adr: 621
+// adr: 622
 func TestS3EventProtectionOnCopyAndMultipart(t *testing.T) { s3ProtectionOnCopyAndMultipart(t, true) }
 func s3ProtectionOnCopyAndMultipart(t *testing.T, event bool) {
 	for _, kind := range []string{"copy", "multipart"} {
@@ -182,7 +182,7 @@ func TestS3ProtectedWriteHistoryRecovery(t *testing.T) {
 	testS3ProtectedWriteHistoryRecovery(t, false)
 }
 
-// adr: 621
+// adr: 622
 func TestS3ProtectedEventWriteHistoryRecovery(t *testing.T) {
 	testS3ProtectedWriteHistoryRecovery(t, true)
 }

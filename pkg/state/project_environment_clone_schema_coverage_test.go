@@ -1,4 +1,5 @@
 // adr: 590
+// adr: 623 — pending resize intents belong only to their original database.
 package state
 
 import (
@@ -45,6 +46,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"object_version_protection":                          CloneSchemaConfiguration,
 		"managed_postgres_usage_imports":                     CloneSchemaIdentity,
 		"managed_postgres_accounting_reconciliations":        CloneSchemaIdentity,
+		"managed_postgres_resizes":                           CloneSchemaOperational,
 		"object_bucket_versioning":                           CloneSchemaConfiguration,
 		"object_s3_copy_source_grants":                       CloneSchemaConfiguration,
 		"object_s3_copy_source_epochs":                       CloneSchemaConfiguration,
