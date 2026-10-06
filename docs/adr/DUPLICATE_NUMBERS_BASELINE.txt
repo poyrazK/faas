@@ -25,8 +25,8 @@
 #
 # Generated 2026-10-06 from main @ 564e1d26c0.
 # ADR-493 independently duplicated on merged main @ c86bdbc7c (2026-10-03).
-# ADR-606 through ADR-609 independently duplicated across merged main PRs
-# #4257 and #4259 (2026-10-06).
+# The Object Lock ADRs from #4257 now use 619–622, resolving the 606–609
+# collisions with #4259 without adding exceptions to this baseline.
 021
 022
 031
