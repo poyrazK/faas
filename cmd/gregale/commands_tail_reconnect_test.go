@@ -48,8 +48,11 @@ func TestGregaleTail_ReconnectsWhenStreamEnds(t *testing.T) {
 	done := make(chan int, 1)
 	finished := make(chan struct{})
 	go func() {
-		defer close(finished)
-		done <- cmdTail(nil)
+		code := cmdTail(nil)
+		// Publish completion before the result: receiving done must guarantee
+		// cleanup cannot send another SIGINT after cmdTail stopped handling it.
+		close(finished)
+		done <- code
 	}()
 	defer func() {
 		select {

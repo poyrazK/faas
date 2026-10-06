@@ -1786,7 +1786,8 @@ jobs:
   flags-acceptance:
     name: flags (customer release + request evidence)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A cold API and CLI build must finish before the full acceptance suite.
+    timeout-minutes: 30
     permissions:
       contents: read
     services:
@@ -1804,14 +1805,31 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
+      GOMAXPROCS: "2"
+      GOGC: "50"
+      GOMEMLIMIT: 2GiB
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     steps:
       - uses: actions/checkout@v7
       - name: size PostgreSQL test lock table
         run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Flags acceptance Go cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-flags-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-flags-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-flags-${{ runner.os }}-
+            go-customer-platform-${{ runner.os }}-${{ hashFiles('go.sum') }}-
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: '22.10.0'
@@ -1819,6 +1837,14 @@ jobs:
           cache-dependency-path: sdk/node/package-lock.json
       - name: customer-aware feature flag acceptance
         run: make test-flags
+      - name: save Flags acceptance Go cache
+        if: always() && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-flags-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:
