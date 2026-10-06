@@ -216,6 +216,24 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
+	// MarkDeploymentLive also reads the later checked-rollback ledger. Its
+	// migration remains pending so the identity upgrade still runs in order.
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS deployment_rollback_operations (
+		id uuid PRIMARY KEY,
+		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+		scope text NOT NULL CHECK(scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'),
+		target_deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+		current_deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+		status text NOT NULL CHECK(status IN ('preparing','ready','blocked','routing','complete','failed')),
+		receipt jsonb NOT NULL CHECK(jsonb_typeof(receipt)='object' AND octet_length(receipt::text)<=16384),
+		updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+		CHECK(target_deployment_id<>current_deployment_id),
+		CHECK(receipt ?& ARRAY['id','app_id','scope','target_deployment_id','current_deployment_id','status'] AND receipt->>'id'=id::text AND receipt->>'app_id'=app_id::text AND receipt->>'scope'=scope
+			AND receipt->>'target_deployment_id'=target_deployment_id::text
+			AND receipt->>'current_deployment_id'=current_deployment_id::text AND receipt->>'status'=status)
+	)`); err != nil {
+		t.Fatal(err)
+	}
 	s := state.NewPgStore(pool)
 	ctx, account, _, def, tenant, _ := operationFixture(t, s)
 	admission := state.OperationAdmission{AccountID: account.ID, DefinitionID: def.ID,
