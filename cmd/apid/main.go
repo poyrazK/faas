@@ -562,7 +562,14 @@ func apidConfigPath(lookup func(string) *flag.Flag) string {
 
 func main() {
 	cloneWorker := flag.Bool("clone-worker", false, "run the bounded project-environment clone worker without API listeners")
+	runtimeUpgradeWorker := flag.Bool("runtime-upgrade-worker", false, "run the private runtime upgrade worker without API listeners; requires native qualification for each operation")
 	wire.Daemon("apid", func(ctx context.Context, log *slog.Logger) error {
+		if *cloneWorker && *runtimeUpgradeWorker {
+			return errors.New("apid: worker modes are mutually exclusive")
+		}
+		if *runtimeUpgradeWorker {
+			return runRuntimeUpgradeWorker(ctx, log)
+		}
 		if *cloneWorker {
 			return runProjectEnvironmentCloneWorker(ctx, log)
 		}

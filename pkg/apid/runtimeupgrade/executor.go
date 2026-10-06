@@ -1,5 +1,6 @@
 // Package runtimeupgrade provides private apid runtime upgrade orchestration.
-// No customer route or daemon startup enables it. It writes only intent/state;
+// No customer route enables it. Private worker startup requires an explicit
+// flag, with no shipped service enabling it. It writes only intent/state;
 // builderd, imaged and schedd perform their existing build/prime pipeline.
 package runtimeupgrade
 
@@ -15,6 +16,9 @@ import (
 
 type Executor struct {
 	Store state.RuntimeUpgradeOperationStore
+	// Observe runs after a bounded iteration, including recoverable errors.
+	// Worker wiring uses this for liveness and sanitized failure telemetry.
+	Observe func(error)
 }
 
 // RunOnce claims at most one operation. A lost response is safe: queue/phase
@@ -38,20 +42,38 @@ func (e Executor) RunOnce(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// Run uses durable polling, so notifications and process-local phase state are
-// never required for recovery. Infrastructure errors stop this invocation;
-// restarting it retries after the abandoned lease expires.
+// Run supervises durable polling with capped backoff. A failed iteration leaves
+// its lease to expire; the next claim never resumes a stale token. No process
+// state or notification is required for recovery. Cancellation stops promptly.
 func (e Executor) Run(ctx context.Context) error {
-	ticker := time.NewTicker(api.RuntimeUpgradeOperationInterval)
-	defer ticker.Stop()
+	if e.Store == nil {
+		return errors.New("runtime upgrade executor: store unavailable")
+	}
+	delay := api.RuntimeUpgradeOperationInterval
 	for {
-		if _, err := e.RunOnce(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
+		_, err := e.RunOnce(ctx)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if e.Observe != nil {
+			e.Observe(err)
+		}
+		wait := api.RuntimeUpgradeOperationInterval
+		if err != nil {
+			wait = delay
+			delay = min(2*delay, api.RuntimeUpgradeWorkerRetryMax)
+		} else {
+			delay = api.RuntimeUpgradeOperationInterval
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }

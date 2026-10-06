@@ -130,7 +130,19 @@ for the existing build/image/fresh-prime pipeline, and commits cutover with its
 completion checkpoint. Expiring fenced leases recover abandoned work; lost
 responses cannot duplicate a build or undo rollback. Input/qualification drift
 blocks the operation with a fixed code. The operation has a 30-minute deadline,
-30-second lease and five-second polling interval. Source reservation/staging,
-customer controls and production worker startup remain outstanding; the
-executor is private and disabled at daemon startup. See
+30-second lease and five-second polling interval. Customer controls and
+production worker deployment remain outstanding; the executor is private and
+disabled during normal daemon startup. See
 [ADR-604](adr/604-durable-private-runtime-upgrade-executor.md).
+
+Private source staging now copies the exact retained serving archive, verifies
+its recorded size and SHA-256, and publishes the candidate spool and configured
+source object before registration. Corruption or storage failures cannot fall
+back to mutable Git. Lost registration responses return the retained operation
+without republishing source. A separate opt-in `apid --runtime-upgrade-worker`
+mode supervises database polling with capped backoff and watchdog progress; no
+service unit or customer admission enables it. Candidate reservation/recovery,
+customer controls, handoff cleanup, gateway convergence/drain and dedicated
+native end-to-end acceptance remain outstanding. Public previews still report
+`execution_available=false`. See
+[ADR-605](adr/605-verified-runtime-upgrade-source-and-private-worker.md).
