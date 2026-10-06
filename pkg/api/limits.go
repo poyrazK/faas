@@ -72,6 +72,13 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
+// Synchronous invoke (POST /v1/apps/{slug}/invoke) long-poll. The wait stays
+// below DefaultClientTimeout so a slow invocation answers with a 504 naming
+// the invocation rather than a client-side "could not reach Gregale".
+// production-us hunt #4: both were 30 s, so the SDK always gave up first.
+const SyncInvokeWaitSeconds = 25
+const SyncInvokeWaitSecondsFree = 5
+
 const ServiceBindingCheckBatchSize = 32
 const ServiceBindingCheckIntervalSeconds = 2
 

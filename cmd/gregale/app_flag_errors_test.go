@@ -215,3 +215,47 @@ func TestDebugRequestRefArgsAcceptAppFlag(t *testing.T) {
 		}
 	}
 }
+
+// production-us hunt #4 (H4-15): `webhooks list` help showed no argument and
+// the command then demanded --app. It now takes the slug positionally or as
+// --app, and two different apps are refused.
+func TestWebhooksListAcceptsSlugEitherWay(t *testing.T) {
+	resetJSONOut(t)
+	for _, args := range [][]string{{"demo"}, {"--app", "demo"}, {"demo", "--app", "demo"}} {
+		f := authedFakeAPI(t, `[]`, http.StatusOK)
+		if code := cmdWebhooksList(args); code != 0 {
+			t.Fatalf("webhooks list %q exit = %d, want 0", args, code)
+		}
+		if f.sawPath != "/v1/apps/demo/webhooks" {
+			t.Fatalf("webhooks list %q hit %s, want /v1/apps/demo/webhooks", args, f.sawPath)
+		}
+	}
+	authedFakeAPI(t, `[]`, http.StatusOK)
+	if code := cmdWebhooksList([]string{"web", "--app", "demo"}); code != 1 {
+		t.Fatalf("conflicting apps exit = %d, want 1", code)
+	}
+}
+
+// production-us hunt #4 (H4-17): `routes health suggest <slug>` without
+// --deployment listed five requirements at once. Each mistake names itself.
+func TestRouteHealthTargetErrorNamesTheMissingPiece(t *testing.T) {
+	const dep = "0123abcd-0123-4abc-8def-0123456789ab"
+	for _, tc := range []struct {
+		positional []string
+		deployment string
+		want       string
+	}{
+		{positional: nil, deployment: dep, want: "pass the app slug"},
+		{positional: []string{"a", "b"}, deployment: dep, want: "exactly one app slug"},
+		{positional: []string{"api"}, want: "--deployment is required"},
+		{positional: []string{"api"}, deployment: "v7", want: "canonical deployment UUID"},
+	} {
+		err := routeHealthTargetError(tc.positional, tc.deployment)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("routeHealthTargetError(%q, %q) = %v, want %q", tc.positional, tc.deployment, err, tc.want)
+		}
+	}
+	if err := routeHealthTargetError([]string{"api"}, dep); err != nil {
+		t.Errorf("valid target rejected: %v", err)
+	}
+}

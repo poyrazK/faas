@@ -7059,7 +7059,7 @@ gregale secrets set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemera
 
 ### secrets unset
 
-Remove a sealed secret
+Remove a sealed secret (alias: rm)
 
 `gregale secrets unset --app <slug> [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] <KEY>`
 
@@ -7517,7 +7517,13 @@ Manage app and account release webhooks (webhooks account &lt;verb&gt;)
 
 ### webhooks list
 
-List webhooks
+List an app&#39;s webhooks (slug defaults to linked context)
+
+`gregale webhooks list [--app <slug>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (alternative to the positional) |  |
 
 ### webhooks add
 
