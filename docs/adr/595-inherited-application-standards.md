@@ -2893,3 +2893,25 @@ State CI executes through the same private PostgreSQL 16 Unix-socket runtime as
 the other recovery suites. These results satisfy the ledger-recovery checklist
 item. The other ten release items, physical native acceptance, public activation
 and production snapshot capability advertisement remain pending.
+
+## Deployed service capacity during standards replacement (2026-10-06)
+
+An application-wide standards handoff derives service capacity from the active
+release's immutable environment workload settings. The ordinary replica
+reconciler uses that same selection and traffic-weighted allocation. A newer
+desired workload head or a dark deployment cannot supply the replacement target.
+Replacement admission retains each deployment's own execution mode and
+concurrency policy, and the final acknowledgement checks the same serving target.
+Capacity metrics sum the deployed allocations across environments.
+
+Portable MemStore and PostgreSQL regression coverage follows reviewed automatic
+enrollment, named production and staging deployments, a controlled revision
+update, replacement replay and subsequent replica reconciliation. It retains two
+production replicas and one staging replica while an idle dark generation remains
+uninstantiated. Native receipts in this test are simulated. This capacity repair
+does not complete environment-aware policy projection or authorize an
+environment-only assignment; the original unsupported-scope refusals and all
+existing runtime input and publication guards remain in force.
+
+No migration source changes. The remaining onboarding, environment policy,
+operational and native acceptance requirements remain release work.

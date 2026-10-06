@@ -66,10 +66,16 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	}
 	live := make([]state.Deployment, 0, len(deployments))
 	liveByID := make(map[string]state.Deployment)
+	deployedApps := make(map[string]state.App)
 	for _, deployment := range deployments {
 		if deployment.Status == state.DeployLive && selected[deployment.ID] && (refreshScope == "" && !standardRefresh || resident[deployment.ID]) {
+			deployedApp, err := state.ResolveAppForDeployment(ctx, e.store, app, deployment)
+			if err != nil {
+				return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: deployed settings for %s: %w", deployment.ID, err)
+			}
 			live = append(live, deployment)
 			liveByID[deployment.ID] = deployment
+			deployedApps[deployment.ID] = deployedApp
 		}
 	}
 	if len(live) == 0 {
@@ -89,7 +95,19 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	if !ok {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: unknown account plan %q", account.Plan)
 	}
-	maxConcurrency := effectiveMaxConcurrency(app, limits)
+	var serviceDeployments []state.Deployment
+	for _, deployment := range live {
+		if deployedApps[deployment.ID].Manifest.ExecutionMode == api.ExecutionModeService {
+			serviceDeployments = append(serviceDeployments, deployment)
+		}
+	}
+	serviceTargets := make(map[string]int)
+	if len(serviceDeployments) > 0 {
+		serviceTargets, err = e.serviceReplicaTargets(ctx, app, serviceDeployments)
+		if err != nil {
+			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: deployed replica targets: %w", err)
+		}
+	}
 
 	readBoundary := func() (time.Time, bool, error) {
 		if standardRefresh {
@@ -136,13 +154,9 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 
 	var firstReady *CoordInstance
 	for _, deployment := range live {
-		target := 1
-		if app.Manifest.ExecutionMode == api.ExecutionModeService {
-			target = desiredServiceReplicas(app.Manifest)
-			if target < 1 {
-				target = 1
-			}
-		}
+		deployedApp := deployedApps[deployment.ID]
+		target := runtimeConfigRefreshTarget(deployedApp, serviceTargets[deployment.ID])
+		maxConcurrency := effectiveMaxConcurrency(deployedApp, limits)
 		for {
 			if err := e.checkApplicationStandardRefresh(ctx); err != nil {
 				return CoordOutcome{}, err
@@ -245,7 +259,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 				return CoordOutcome{}, err
 			}
 			result, wakeErr := e.admitAndDispatchWithOptions(candidateCtx, appID, deployment.ID,
-				instanceModeForApp(app), TriggerRuntimeConfigRestart, false, true)
+				instanceModeForApp(deployedApp), TriggerRuntimeConfigRestart, false, true)
 			if wakeErr != nil {
 				return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: boot replacement for deployment %s: %w", deployment.ID, wakeErr)
 			}
@@ -289,13 +303,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	// have their configured fresh serving capacity.
 	firstReady = nil
 	for _, deployment := range live {
-		target := 1
-		if app.Manifest.ExecutionMode == api.ExecutionModeService {
-			target = desiredServiceReplicas(app.Manifest)
-			if target < 1 {
-				target = 1
-			}
-		}
+		target := runtimeConfigRefreshTarget(deployedApps[deployment.ID], serviceTargets[deployment.ID])
 		ready := 0
 		for _, instance := range instances {
 			stale := staleInputs(instance)
@@ -315,6 +323,13 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		return CoordOutcome{}, errors.New("sched: runtime config restart completed without a ready replacement")
 	}
 	return CoordOutcome{Instance: firstReady}, nil
+}
+
+func runtimeConfigRefreshTarget(app state.App, serviceTarget int) int {
+	if app.Manifest.ExecutionMode == api.ExecutionModeService && serviceTarget > 1 {
+		return serviceTarget
+	}
+	return 1
 }
 
 func runtimeConfigInstanceStale(instance state.Instance, boundary time.Time) bool {

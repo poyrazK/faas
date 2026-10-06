@@ -4,6 +4,7 @@ package runtimeadmission
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func TestSnapshotResumeReceiptPreservesExpiredLoadAndFreshPromotion(t *testing.T
 	if p.CheckReceipt(r, now) != nil || CheckSnapshotParent(r) != nil || r.ArtifactConsumption.ConfigHash != SnapshotLoadCommandHash(true) {
 		t.Fatal("complete resumed receipt lost load lineage")
 	}
-	if p.Parent.Binding.Validate(now) != ErrExpired {
+	if !errors.Is(p.Parent.Binding.Validate(now), ErrExpired) {
 		t.Fatal("fixture did not expire the original load")
 	}
 	for _, edit := range []func(*Receipt){
@@ -52,7 +53,7 @@ func TestSnapshotResumeReceiptPreservesExpiredLoadAndFreshPromotion(t *testing.T
 	if clone.Check(p.Binding, now) != nil || p.CheckReceipt(clone, now) == nil {
 		t.Fatal("a different serving load was accepted as promotion")
 	}
-	if r.Check(r.Binding, time.Unix(0, r.Binding.ExpiresAtUnixNano)) != ErrExpired || CheckSnapshotParent(r) != nil {
+	if !errors.Is(r.Check(r.Binding, time.Unix(0, r.Binding.ExpiresAtUnixNano)), ErrExpired) || CheckSnapshotParent(r) != nil {
 		t.Fatal("historical serving identity renewed fresh authority or expired with it")
 	}
 }
