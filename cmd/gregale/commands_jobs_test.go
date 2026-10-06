@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestRenderJobStateShowsImageFailure(t *testing.T) {
@@ -31,6 +32,22 @@ func TestRenderJobStateShowsImageFailure(t *testing.T) {
 	})
 	if !strings.Contains(out.String(), "image status: failed") || !strings.Contains(out.String(), "image error: registry image not found") {
 		t.Fatalf("image failure missing from human output: %q", out.String())
+	}
+}
+
+func TestRenderJobTasksTableShowsOutcomeAndDecision(t *testing.T) {
+	var out bytes.Buffer
+	renderJobTasksTable(&out, []api.JobTaskResponse{{
+		TaskIndex: 2, Status: "failed", Attempt: 1, ErrorClass: "user_error",
+		OutcomeCode: "invalid_record",
+		WorkDecision: &workpolicy.Decision{
+			Classification: "permanent", Action: "fail_partition",
+		},
+	}})
+	for _, want := range []string{"outcome_code", "decision", "invalid_record", "permanent/fail_partition"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("job task output missing %q: %q", want, out.String())
+		}
 	}
 }
 
@@ -290,6 +307,47 @@ func TestCmdJobsRun_ExternalManifest(t *testing.T) {
 	})
 	if code != 1 {
 		t.Fatal("unpaired manifest flags must fail locally")
+	}
+}
+
+func TestCmdJobsOccurrencesUsesCursorPage(t *testing.T) {
+	const cursor = "01234567-89ab-cdef-0123-456789abcdef"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/jobs/customer-sync/occurrences" {
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		if r.URL.Query().Get("limit") != "2" || r.URL.Query().Get("before") != cursor {
+			t.Errorf("query = %s, want limit=2 and before cursor", r.URL.RawQuery)
+		}
+		_, _ = io.WriteString(w, `{"occurrences":[],"limit":2,"before":"`+cursor+`"}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+
+	stdout, restore := captureStdout(t)
+	code := cmdJobsOccurrences([]string{"customer-sync", "--limit", "2", "--before", cursor})
+	restore()
+	if code != 0 {
+		t.Fatalf("cmdJobsOccurrences = %d", code)
+	}
+	if !strings.Contains(stdout.String(), "(no scheduled occurrences)") {
+		t.Fatalf("stdout = %q, want empty-page output", stdout.String())
+	}
+}
+
+func TestPolicyJSONCLIParsingValidatesVersions(t *testing.T) {
+	if _, err := parseSchedulePolicyJSON(`{"version":1,"overlap":"skip","missed_runs":"skip"}`); err != nil {
+		t.Fatalf("valid schedule policy: %v", err)
+	}
+	if _, err := parseSchedulePolicyJSON(`{"version":2,"overlap":"skip","missed_runs":"skip"}`); err == nil {
+		t.Fatal("unsupported schedule policy version was accepted")
+	}
+	if _, err := parseFailureRulesJSON(`{"version":1,"rules":[{"exit_codes":[2],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}`); err != nil {
+		t.Fatalf("valid failure rules: %v", err)
 	}
 }
 

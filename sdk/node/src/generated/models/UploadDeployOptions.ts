@@ -2,12 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
  * Deployment metadata persisted with the upload session and applied at commit.
  */
 export type UploadDeployOptions = {
+  /**
+   * Startup readiness for this resumable upload. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference.
+   */
+  healthcheck?: DeploymentHealthcheck;
   runtime?: string;
   handler?: string;
   dockerfile?: boolean;

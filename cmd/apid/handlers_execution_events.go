@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,6 +21,11 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	if !s.requireExecutionAPI(w) {
+		return
+	}
+	access, accessProblem := executionAccessForRequest(r)
+	if accessProblem != nil {
+		writeExecutionAccessError(w, accessProblem)
 		return
 	}
 	eventStore, ok := s.store.(state.ExecutionEventStore)
@@ -44,6 +48,9 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrInternal("could not load execution"))
 		return
 	}
+	if !requireExecutionOwnership(w, s, access, row) {
+		return
+	}
 	after, problem := executionEventCursor(r)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -55,7 +62,8 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	apislogs.StartSSE(w)
+	w, ctx, cancelStream := startSSEStream(w, r)
+	defer cancelStream()
 	flusher, _ := w.(http.Flusher)
 	flush := func() {
 		if flusher != nil {
@@ -68,7 +76,7 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 	defer heartbeat.Stop()
 
 	for {
-		events, listErr := eventStore.ListExecutionEvents(r.Context(), acct.ID, id, after, limit)
+		events, listErr := eventStore.ListExecutionEvents(ctx, acct.ID, id, after, limit) //nolint:contextcheck // ctx derives from r.Context() via reqbudget.WithStream
 		if listErr != nil {
 			writeExecutionSSEError(w, flush, "could not read execution events")
 			return
@@ -84,10 +92,10 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			fresh, readErr := s.store.ExecutionByID(r.Context(), acct.ID, id)
+			fresh, readErr := s.store.ExecutionByID(ctx, acct.ID, id) //nolint:contextcheck // ctx derives from r.Context() via reqbudget.WithStream
 			if readErr == nil {
 				row = fresh
 			}

@@ -153,7 +153,9 @@ type EnqueueParams struct {
 	// DeliveryID is the authenticated GitHub webhook delivery ID. When set,
 	// Enqueue derives stable deployment/build UUIDs from (delivery, app) and
 	// recovers existing rows after retries or ambiguous commit responses.
-	DeliveryID string
+	OperationDefinitions      []api.OperationDefinitionSpec
+	OperationAdmissionEnabled bool
+	DeliveryID                string
 	// RetryOf preserves the original deployment and copies its input settings.
 	// RetryFrom records the requested stage; retained source is rebuilt when
 	// intermediate stage checkpoints are unavailable.
@@ -214,6 +216,7 @@ type EnqueueParams struct {
 	// deployment validator. Source builds use the same immutable deployment
 	// shape as image deploys.
 	Sidecars               json.RawMessage
+	OverrideHealthcheck    json.RawMessage
 	OverrideMainDependsOn  json.RawMessage
 	TrafficPercent         int
 	TrafficPercentExplicit bool
@@ -285,6 +288,25 @@ func publishSource(ctx context.Context, be storage.StorageBackend, buildID, path
 	return nil
 }
 
+// PublishReviewedSource stages a checksum-verified source under its reserved
+// build ID before the caller atomically publishes a held GitOps candidate.
+// It uses the same local/split-box transport as ordinary source deployments.
+func PublishReviewedSource(ctx context.Context, buildID, path, expectedSHA256 string) error {
+	id, err := uuid.Parse(buildID)
+	if err != nil || id.Version() != 7 || expectedSHA256 == "" {
+		return fmt.Errorf("invalid reviewed source identity")
+	}
+	actual, err := hashSourceFile(path)
+	if err != nil || actual != expectedSHA256 {
+		return fmt.Errorf("reviewed source checksum verification failed")
+	}
+	backend, err := sourceBackendFromEnv(ctx)
+	if err != nil {
+		return err
+	}
+	return publishSource(ctx, backend, buildID, path)
+}
+
 func hashSourceFile(path string) (string, error) {
 	//nolint:forbidigo // SourcePath is a server-created spool path.
 	f, err := os.Open(path)
@@ -322,6 +344,9 @@ func hashSourceFile(path string) (string, error) {
 // <FAAS_SPOOL_ROOT>/projects/<acct>/<project>/<appID>.tar.gz (see
 // cmd/apid/scan_service.go + apply helper).
 func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) (EnqueueResult, error) {
+	if len(p.OperationDefinitions) > 0 && !p.OperationAdmissionEnabled {
+		return EnqueueResult{}, api.ErrCapacity("new operation admission is disabled")
+	}
 	if p.Log == nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: log is required")
 	}
@@ -488,6 +513,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		PRNumber:               p.PRNumber,
 		Workflows:              append(json.RawMessage(nil), p.Workflows...),
 		Sidecars:               append(json.RawMessage(nil), p.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), p.OverrideHealthcheck...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), p.OverrideMainDependsOn...),
 		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:         p.TrafficPercent,
@@ -535,6 +561,11 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		// The original create already performed any supersede transition.
 		// Do not emit a false supersede notification for the recovered row.
 		prev = state.Deployment{}
+	}
+
+	if err := installSourceOperations(ctx, store, d, p.OperationDefinitions); err != nil {
+		_ = store.FailSourceDeployment(context.WithoutCancel(ctx), d.ID, "operation contract installation failed")
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: operation definitions: %w", err)
 	}
 
 	if p.DeliveryID != "" {

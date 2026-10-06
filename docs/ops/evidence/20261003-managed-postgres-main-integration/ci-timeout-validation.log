@@ -1,0 +1,1 @@
+CI workflow parses; only lint/build job budget changes from 15 to 30 minutes. All steps and gates are preserved.

@@ -141,6 +141,7 @@ func appTaskOutcomeFromProtocol(result apptaskproto.Result) AppTaskOutcome {
 	return AppTaskOutcome{
 		Status: status, StdoutTail: string(result.Stdout), StderrTail: string(result.Stderr),
 		OutputTruncated: result.OutputTruncated, ExitCode: result.ExitCode,
+		OutcomeCode: result.OutcomeCode,
 		FailureCode: result.FailureCode, FailureMessage: result.FailureMessage,
 	}
 }

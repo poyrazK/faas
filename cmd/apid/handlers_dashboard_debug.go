@@ -318,7 +318,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	}
 	if replayID := strings.TrimSpace(r.URL.Query().Get("replay_id")); replayID != "" && data.Selected != nil {
 		data.ReplayPoll = parseDashboardDebugReplayPoll(r.URL.Query().Get("replay_poll"))
-		if err := s.populateDashboardDebugReplay(ctx, app, acct, replayID, data.Selected.Request.ID, &data); err != nil {
+		if err := s.populateDashboardDebugReplay(ctx, app, acct, replayID, data.Selected.Request.ID, data.Selected.Request.TraceID, &data); err != nil {
 			data.ActionMessage = err.Error()
 			data.ActionError = true
 		} else if data.Replay != nil && (data.Replay.State == "queued" || data.Replay.State == "running") {
@@ -373,7 +373,35 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
 		return
 	}
-	result, problem := s.enqueueDebugReplay(r.Context(), app, acct, reqID, "")
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid replay form"))
+		return
+	}
+	var issueReturn *dashboardIssueReplayReturn
+	if strings.TrimSpace(r.FormValue("return_issue_id")) != "" {
+		validated, err := s.validateDashboardIssueReplayReturn(r.Context(), app, acct, reqID, r)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		issueReturn = &validated
+	}
+	targetID := strings.TrimSpace(r.FormValue("mirror_deployment_id"))
+	if issueReturn != nil && targetID == "" {
+		redirectDashboardIssueReplay(w, r, slug, *issueReturn, "", &api.Problem{Code: api.CodeDebugReplayUnsupported})
+		return
+	}
+	var result debugReplayEnqueueResult
+	var problem *api.Problem
+	if issueReturn != nil {
+		result, problem = s.enqueueDebugReplayForDeployment(r.Context(), app, acct, reqID, issueReturn.DeploymentID, targetID)
+	} else {
+		result, problem = s.enqueueDebugReplay(r.Context(), app, acct, reqID, targetID)
+	}
+	if issueReturn != nil {
+		redirectDashboardIssueReplay(w, r, slug, *issueReturn, result.Invocation.ID, problem)
+		return
+	}
 	values := url.Values{
 		"request_id":     []string{reqID},
 		"since":          []string{strings.TrimSpace(r.FormValue("since"))},
@@ -395,13 +423,90 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/debug?"+values.Encode(), http.StatusSeeOther)
 }
 
-func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App, acct state.Account, replayID, requestID string, data *dashboard.DebugPageData) error {
+type dashboardIssueReplayReturn struct {
+	IssueID      string
+	EventID      string
+	Since        string
+	EventCursor  string
+	DeploymentID string
+}
+
+func (s *server) validateDashboardIssueReplayReturn(ctx context.Context, app state.App, acct state.Account, reqID string, r *http.Request) (dashboardIssueReplayReturn, error) {
+	issueID := strings.TrimSpace(r.FormValue("return_issue_id"))
+	eventID := strings.TrimSpace(r.FormValue("return_event_id"))
+	if _, err := uuid.Parse(issueID); err != nil {
+		return dashboardIssueReplayReturn{}, err
+	}
+	if _, err := uuid.Parse(eventID); err != nil {
+		return dashboardIssueReplayReturn{}, err
+	}
+	if len(r.FormValue("return_event_cursor")) > api.IssueCursorMaxBytes {
+		return dashboardIssueReplayReturn{}, state.ErrInvalidArgument
+	}
+	cursors := state.IssueDetailCursors{}
+	var err error
+	if cursors.Events, err = state.DecodeIssueCursor(r.FormValue("return_event_cursor")); err != nil {
+		return dashboardIssueReplayReturn{}, err
+	}
+	now := time.Now().UTC()
+	since := now.Add(-24 * time.Hour)
+	sinceRaw := strings.TrimSpace(r.FormValue("return_since"))
+	if sinceRaw != "" {
+		since, err = time.Parse(time.RFC3339Nano, sinceRaw)
+		if err != nil {
+			return dashboardIssueReplayReturn{}, err
+		}
+	}
+	if earliest := now.AddDate(0, 0, -acct.Plan.IssueLimits().RetentionDays); since.Before(earliest) {
+		since = earliest
+	}
+	if since.After(now) {
+		return dashboardIssueReplayReturn{}, state.ErrInvalidArgument
+	}
+	st, ok := s.store.(state.IssueStore)
+	if !ok || !acct.Plan.IssueLimits().Enabled {
+		return dashboardIssueReplayReturn{}, state.ErrNotFound
+	}
+	detail, err := st.GetIssueDetail(ctx, app.ID, issueID, since, now, cursors)
+	if err != nil {
+		return dashboardIssueReplayReturn{}, err
+	}
+	for _, occurrence := range detail.Events {
+		if occurrence.ID == eventID && occurrence.DebugRequestID == reqID {
+			return dashboardIssueReplayReturn{
+				IssueID: issueID, EventID: eventID, Since: sinceRaw,
+				EventCursor: strings.TrimSpace(r.FormValue("return_event_cursor")), DeploymentID: occurrence.DeploymentID,
+			}, nil
+		}
+	}
+	return dashboardIssueReplayReturn{}, state.ErrNotFound
+}
+
+func redirectDashboardIssueReplay(w http.ResponseWriter, r *http.Request, slug string, target dashboardIssueReplayReturn, replayID string, problem *api.Problem) {
+	values := url.Values{"issue": {target.IssueID}, "replay_event": {target.EventID}}
+	if target.Since != "" {
+		values.Set("since", target.Since)
+	}
+	if target.EventCursor != "" {
+		values.Set("event_cursor", target.EventCursor)
+	}
+	if problem != nil {
+		values.Set("action", "replay_error")
+		values.Set("error", problem.Code)
+	} else {
+		values.Set("action", "replay_queued")
+		values.Set("replay_id", replayID)
+	}
+	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/issues?"+values.Encode(), http.StatusSeeOther)
+}
+
+func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App, acct state.Account, replayID, requestID, traceID string, data *dashboard.DebugPageData) error {
 	inv, err := s.store.InvocationByID(ctx, replayID)
 	if err != nil || inv.AccountID != acct.ID || inv.AppID != app.ID || inv.Source != state.InvocationReplay {
 		return fmt.Errorf("replay invocation was not found")
 	}
 	var metadata map[string]string
-	if err := json.Unmarshal(inv.Headers, &metadata); err != nil || metadata[api.DebugReplayRequestIDHeader] != requestID {
+	if err := json.Unmarshal(inv.Headers, &metadata); err != nil || !dashboardDebugReplayMatchesRequest(metadata[api.DebugReplayRequestIDHeader], requestID, traceID) {
 		return fmt.Errorf("replay invocation was not found")
 	}
 	view := &dashboard.DebugReplayView{
@@ -417,15 +522,19 @@ func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App
 	}
 	if len(inv.Result) > 0 {
 		var result struct {
-			SourceStatusCode int  `json:"source_status_code"`
-			MirrorStatusCode int  `json:"mirror_status_code"`
-			SourceLatencyMS  int  `json:"source_latency_ms"`
-			MirrorLatencyMS  int  `json:"mirror_latency_ms"`
-			StatusDiff       bool `json:"status_diff"`
-			Crashed          bool `json:"crashed"`
+			SourceDeploymentID string `json:"source_deployment_id"`
+			MirrorDeploymentID string `json:"mirror_deployment_id"`
+			SourceStatusCode   int    `json:"source_status_code"`
+			MirrorStatusCode   int    `json:"mirror_status_code"`
+			SourceLatencyMS    int    `json:"source_latency_ms"`
+			MirrorLatencyMS    int    `json:"mirror_latency_ms"`
+			StatusDiff         bool   `json:"status_diff"`
+			Crashed            bool   `json:"crashed"`
 		}
 		if err := json.Unmarshal(inv.Result, &result); err == nil {
 			view.HasResult = true
+			view.SourceDeploymentID = result.SourceDeploymentID
+			view.MirrorDeploymentID = result.MirrorDeploymentID
 			view.SourceStatusCode = result.SourceStatusCode
 			view.MirrorStatusCode = result.MirrorStatusCode
 			view.SourceLatencyMS = result.SourceLatencyMS
@@ -434,8 +543,33 @@ func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App
 			view.Crashed = result.Crashed
 		}
 	}
+	if err := json.Unmarshal(inv.Headers, &metadata); err == nil {
+		if view.SourceDeploymentID == "" {
+			view.SourceDeploymentID = metadata[api.DebugReplayDeploymentIDHeader]
+		}
+		if view.MirrorDeploymentID == "" && metadata[api.DebugReplayMirrorRuleIDHeader] != "" {
+			if rules, err := s.store.ListMirrorRules(ctx, app.ID); err == nil {
+				for _, rule := range rules {
+					if rule.ID == metadata[api.DebugReplayMirrorRuleIDHeader] {
+						view.MirrorDeploymentID = rule.MirrorDeploymentID
+						break
+					}
+				}
+			}
+		}
+	}
 	data.Replay = view
 	return nil
+}
+
+// Replay envelopes use the public trace/request identifier when telemetry has
+// one, while dashboard links may address the same request by its internal row
+// UUID. Accept either identifier only when the selected request provides it.
+func dashboardDebugReplayMatchesRequest(replayRequestID, requestID, traceID string) bool {
+	if replayRequestID == "" {
+		return false
+	}
+	return replayRequestID == requestID || (traceID != "" && replayRequestID == traceID)
 }
 
 func dashboardDebugReplayState(invState state.InvocationState) string {
@@ -1197,165 +1331,8 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 	return nil
 }
 
-const debugCriticalPathMaxSpans = 32
-
-type debugCriticalTimedSpan struct {
-	span  api.DebugTelemetrySpan
-	start time.Time
-	end   time.Time
-}
-
 func buildDebugCriticalPath(spans []api.DebugTelemetrySpan) *api.DebugRequestCriticalPath {
-	timed := make([]debugCriticalTimedSpan, 0, len(spans))
-	complete := true
-	for _, span := range spans {
-		start, startErr := time.Parse(time.RFC3339Nano, span.StartTime)
-		end, endErr := time.Parse(time.RFC3339Nano, span.EndTime)
-		if startErr != nil || endErr != nil || end.Before(start) {
-			complete = false
-			continue
-		}
-		timed = append(timed, debugCriticalTimedSpan{span: span, start: start, end: end})
-	}
-	if len(timed) == 0 {
-		return nil
-	}
-
-	byID := make(map[string]int, len(timed))
-	children := make(map[string][]int, len(timed))
-	for index, span := range timed {
-		byID[span.span.SpanID] = index
-		if span.span.ParentSpanID != "" {
-			children[span.span.ParentSpanID] = append(children[span.span.ParentSpanID], index)
-		}
-	}
-
-	exclusive := make([]time.Duration, len(timed))
-	for index, parent := range timed {
-		intervals := make([][2]time.Time, 0, len(children[parent.span.SpanID]))
-		for _, childIndex := range children[parent.span.SpanID] {
-			child := timed[childIndex]
-			start, end := child.start, child.end
-			if start.Before(parent.start) {
-				start = parent.start
-			}
-			if end.After(parent.end) {
-				end = parent.end
-			}
-			if end.After(start) {
-				intervals = append(intervals, [2]time.Time{start, end})
-			}
-		}
-		sort.Slice(intervals, func(i, j int) bool {
-			if !intervals[i][0].Equal(intervals[j][0]) {
-				return intervals[i][0].Before(intervals[j][0])
-			}
-			return intervals[i][1].Before(intervals[j][1])
-		})
-		covered := time.Duration(0)
-		if len(intervals) > 0 {
-			currentStart, currentEnd := intervals[0][0], intervals[0][1]
-			for _, interval := range intervals[1:] {
-				if !interval[0].After(currentEnd) {
-					if interval[1].After(currentEnd) {
-						currentEnd = interval[1]
-					}
-					continue
-				}
-				covered += currentEnd.Sub(currentStart)
-				currentStart, currentEnd = interval[0], interval[1]
-			}
-			covered += currentEnd.Sub(currentStart)
-		}
-		wall := parent.end.Sub(parent.start)
-		exclusive[index] = wall - covered
-		if exclusive[index] < 0 {
-			exclusive[index] = 0
-		}
-	}
-
-	var best []int
-	var bestDuration time.Duration
-	var bestEnd time.Time
-	bestLeafID := ""
-	for leafIndex, leaf := range timed {
-		chain := make([]int, 0, debugCriticalPathMaxSpans)
-		seen := make(map[string]struct{}, debugCriticalPathMaxSpans)
-		current := leafIndex
-		for len(chain) < debugCriticalPathMaxSpans {
-			span := timed[current]
-			if _, ok := seen[span.span.SpanID]; ok {
-				complete = false
-				break
-			}
-			seen[span.span.SpanID] = struct{}{}
-			chain = append(chain, current)
-			parentID := span.span.ParentSpanID
-			if parentID == "" {
-				break
-			}
-			parentIndex, ok := byID[parentID]
-			if !ok {
-				complete = false
-				break
-			}
-			current = parentIndex
-		}
-		if len(chain) == debugCriticalPathMaxSpans && timed[chain[len(chain)-1]].span.ParentSpanID != "" {
-			complete = false
-		}
-		if len(chain) == 0 {
-			continue
-		}
-		root := timed[chain[len(chain)-1]]
-		duration := leaf.end.Sub(root.start)
-		if duration < 0 {
-			duration = 0
-		}
-		if best == nil || duration > bestDuration || (duration == bestDuration && leaf.end.After(bestEnd)) || (duration == bestDuration && leaf.end.Equal(bestEnd) && leaf.span.SpanID < bestLeafID) {
-			best = append(best[:0], chain...)
-			bestDuration = duration
-			bestEnd = leaf.end
-			bestLeafID = leaf.span.SpanID
-		}
-	}
-	if len(best) == 0 {
-		return nil
-	}
-
-	// The parent walk above is leaf-to-root; expose the path in causal order.
-	for left, right := 0, len(best)-1; left < right; left, right = left+1, right-1 {
-		best[left], best[right] = best[right], best[left]
-	}
-	path := &api.DebugRequestCriticalPath{
-		DurationMS: bestDuration.Milliseconds(),
-		Complete:   complete && len(timed) == len(spans),
-		SpanCount:  len(best),
-		Spans:      make([]api.DebugCriticalPathSpan, 0, len(best)),
-	}
-	for _, index := range best {
-		span := timed[index]
-		exclusiveMS := exclusive[index].Milliseconds()
-		path.Spans = append(path.Spans, api.DebugCriticalPathSpan{
-			SpanID:         span.span.SpanID,
-			ParentSpanID:   span.span.ParentSpanID,
-			Name:           span.span.Name,
-			Kind:           span.span.Kind,
-			DependencyType: span.span.DependencyType,
-			DependencyKind: span.span.DependencyKind,
-			Status:         span.span.Status,
-			StartTime:      span.span.StartTime,
-			EndTime:        span.span.EndTime,
-			DurationMS:     span.end.Sub(span.start).Milliseconds(),
-			ExclusiveMS:    exclusiveMS,
-		})
-		if exclusiveMS > path.SlowestExclusiveMS {
-			path.SlowestExclusiveMS = exclusiveMS
-			path.SlowestSpanID = span.span.SpanID
-			path.SlowestSpanName = span.span.Name
-		}
-	}
-	return path
+	return debugger.BuildCriticalPath(spans)
 }
 
 func dashboardDebugCriticalPathView(path *api.DebugRequestCriticalPath) *dashboard.DebugCriticalPathView {

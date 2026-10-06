@@ -38,9 +38,16 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
-	FlagsEnabled          bool   `toml:"flags_enabled"`
-	FlagsWorkloadJWKSPath string `toml:"flags_workload_jwks_path"`
-	FlagsWorkloadIssuer   string `toml:"flags_workload_issuer"`
+	// Empty preview policy path keeps admission closed. No boolean/env override.
+	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
+	// Runtime trust remains available independently of new admission.
+	OperationsWorkloadJWKSPath string `toml:"operations_workload_jwks_path"`
+	OperationsWorkloadIssuer   string `toml:"operations_workload_issuer"`
+	// OutboundProbeGatewayURL is the operator-trusted HTTPS origin reachable by task guests.
+	OutboundProbeGatewayURL string `toml:"outbound_probe_gateway_url"`
+	FlagsEnabled            bool   `toml:"flags_enabled"`
+	FlagsWorkloadJWKSPath   string `toml:"flags_workload_jwks_path"`
+	FlagsWorkloadIssuer     string `toml:"flags_workload_issuer"`
 	// ListenAddr is the loopback bind address for the customer-facing
 	// REST API + dashboard. Defaults to 127.0.0.1:8081 (legacy single-
 	// box default; gatewayd-public reverse-proxies 0.0.0.0:443 in

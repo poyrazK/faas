@@ -64,8 +64,8 @@ func cmdMan(args []string) int {
 	case 1:
 		cmd, ok := lookupCliCommand(args[0])
 		if !ok {
-			_, _ = fmt.Fprintf(os.Stderr, "gregale man: unknown command %q\n", args[0])
-			if sug, has := suggestCommand(args[0]); has {
+			printCommandValidation(os.Stderr, "gregale man: unknown command %q\n", args[0])
+			if sug, has := suggestCommand(args[0]); has && !jsonOutput {
 				_, _ = fmt.Fprintf(os.Stderr, "  Did you mean %q?\n", sug)
 			}
 			return 1
@@ -185,6 +185,7 @@ func renderManCommand(w io.Writer, c cliCommand) {
 				_, _ = fmt.Fprintln(w, ".TP")
 				_, _ = fmt.Fprintf(w, ".BR %s\n", s.Name)
 				writeRoffParagraph(w, s.Short)
+				writeRoffParagraph(w, mdSubSynopsis(c, []string{s.Name}, s.Positionals, s.Flags))
 				if len(s.Examples) > 0 {
 					writeManExamples(w, s.Examples)
 				}
@@ -193,6 +194,7 @@ func renderManCommand(w io.Writer, c cliCommand) {
 					_, _ = fmt.Fprintln(w, ".TP")
 					_, _ = fmt.Fprintf(w, ".BR %s\n", child.Name)
 					writeRoffParagraph(w, child.Short)
+					writeRoffParagraph(w, mdSubSynopsis(c, []string{s.Name, child.Name}, child.Positionals, child.Flags))
 					if len(child.Examples) > 0 {
 						writeManExamples(w, child.Examples)
 					}
@@ -275,7 +277,7 @@ func manSynopsisFlag(w io.Writer, f cliFlag) {
 	if f.Repeatable {
 		repeat = " ..."
 	}
-	if value == "" && f.Req {
+	if value == "" && f.Req && !f.Bool {
 		value = "value"
 	}
 	if value != "" {
@@ -433,7 +435,7 @@ func suggestSubcommand(query string, c cliCommand) (string, bool) {
 // top-level dispatcher. No-op when sug == "" (ambiguous or
 // over-threshold — see suggestSubcommand).
 func maybeSuggestSub(sug string) {
-	if sug == "" {
+	if sug == "" || jsonOutput {
 		return
 	}
 	_, _ = fmt.Fprintf(os.Stderr, "  Did you mean %q?\n", sug)

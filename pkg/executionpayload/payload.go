@@ -28,6 +28,9 @@ const (
 	// Namespace prevents an execution ciphertext from being replayed as a
 	// different secretbox byte-envelope (for example a webhook secret).
 	Namespace = "execution_payload"
+	// WorkflowPlanNamespace keeps encrypted orchestration plans distinct from
+	// guest execution payloads even though both use the host age identity.
+	WorkflowPlanNamespace = "execution_workflow_plan"
 )
 
 var (
@@ -40,20 +43,24 @@ var (
 // deliberately together so the scheduler opens one authenticated object and
 // never has to reconcile independently sealed fields.
 type Envelope struct {
-	Version    uint16              `json:"version"`
-	Source     string              `json:"source,omitempty"`
-	Entrypoint string              `json:"entrypoint,omitempty"`
-	Files      []api.ExecutionFile `json:"files,omitempty"`
-	Input      json.RawMessage     `json:"input"`
+	Profile     api.ExecutionProfile `json:"profile,omitempty"`
+	Version     uint16               `json:"version"`
+	Source      string               `json:"source,omitempty"`
+	Entrypoint  string               `json:"entrypoint,omitempty"`
+	Files       []api.ExecutionFile  `json:"files,omitempty"`
+	OutputFiles []string             `json:"output_files,omitempty"`
+	Input       json.RawMessage      `json:"input"`
 }
 
 // DecodedPayload is the authenticated plaintext handed to the scheduler
 // immediately before guest dispatch. Callers must discard it after use.
 type DecodedPayload struct {
-	Source     string
-	Entrypoint string
-	Files      []api.ExecutionFile
-	Input      json.RawMessage
+	Profile     api.ExecutionProfile
+	Source      string
+	Entrypoint  string
+	Files       []api.ExecutionFile
+	OutputFiles []string
+	Input       json.RawMessage
 }
 
 // Validate enforces the same hard limits as the guest protocol before any
@@ -61,6 +68,9 @@ type DecodedPayload struct {
 // checked by apid; these bounds prevent a malformed ciphertext from bypassing
 // the host/guest protocol's allocation guard.
 func (e Envelope) Validate() error {
+	if !e.Profile.Valid() {
+		return fmt.Errorf("%w: unknown profile", ErrInvalid)
+	}
 	if e.Version != CurrentVersion {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalid, e.Version)
 	}
@@ -70,6 +80,9 @@ func (e Envelope) Validate() error {
 		}
 	} else if err := api.ValidateExecutionBundle(e.Entrypoint, e.Files, api.ExecutionPlaintextFieldMaxBytes); err != nil {
 		return fmt.Errorf("%w: bundle is invalid: %w", ErrInvalid, err)
+	}
+	if err := api.ValidateExecutionOutputFiles(e.OutputFiles); err != nil {
+		return fmt.Errorf("%w: output files invalid", ErrInvalid)
 	}
 	if len(e.Input) == 0 || len(e.Input) > api.ExecutionPlaintextFieldMaxBytes || !json.Valid(e.Input) {
 		return fmt.Errorf("%w: input is missing, too large, or invalid JSON", ErrInvalid)
@@ -94,11 +107,16 @@ func SealRequest(recipient *age.X25519Recipient, request api.ResolvedExecutionRe
 		input = json.RawMessage("null")
 	}
 	envelope := Envelope{
-		Version:    CurrentVersion,
-		Source:     request.Source,
-		Entrypoint: request.Entrypoint,
-		Files:      cloneFiles(request.Files),
-		Input:      append(json.RawMessage(nil), input...),
+		Profile:     request.Profile,
+		Version:     CurrentVersion,
+		Source:      request.Source,
+		Entrypoint:  request.Entrypoint,
+		Files:       cloneFiles(request.Files),
+		OutputFiles: append([]string(nil), request.OutputFiles...),
+		Input:       append(json.RawMessage(nil), input...),
+	}
+	if envelope.Profile.Normalized() == api.ExecutionProfileStandard {
+		envelope.Profile = ""
 	}
 	if err := envelope.Validate(); err != nil {
 		return nil, err
@@ -112,6 +130,55 @@ func SealRequest(recipient *age.X25519Recipient, request api.ResolvedExecutionRe
 		return nil, fmt.Errorf("executionpayload: seal envelope: %w", err)
 	}
 	return sealed, nil
+}
+
+// SealWorkflowPlan encrypts the complete bounded plan before it is persisted.
+// Plan plaintext contains customer source and input and must never be logged.
+func SealWorkflowPlan(recipient *age.X25519Recipient, plan []byte) ([]byte, error) {
+	if recipient == nil || len(plan) == 0 || len(plan) > api.ExecutionWorkflowManagedPlanMaxBytes || !json.Valid(plan) {
+		return nil, fmt.Errorf("%w: workflow plan is invalid or outside hard bounds", ErrInvalid)
+	}
+	sealed, err := secretbox.SealBytes(recipient, WorkflowPlanNamespace, plan, api.ExecutionWorkflowManagedPlanMaxBytes+64*1024)
+	if err != nil {
+		return nil, fmt.Errorf("executionpayload: seal workflow plan: %w", err)
+	}
+	return sealed, nil
+}
+
+// DecodeWorkflowPlan opens an encrypted server-managed plan only for the
+// identity named by kid. The caller must discard the returned plaintext after
+// one worker iteration.
+func DecodeWorkflowPlan(ctx context.Context, identities []*age.X25519Identity, sealed []byte, kid string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(sealed) == 0 || len(sealed) > api.ExecutionWorkflowManagedPlanMaxBytes+64*1024 {
+		return nil, ErrInvalid
+	}
+	identity := identityForKID(identities, kid)
+	if identity == nil {
+		return nil, ErrKIDMismatch
+	}
+	namespace, plaintext, err := secretbox.OpenBytes(identity, sealed)
+	if err != nil {
+		if opensWithAnotherIdentity(identities, identity, sealed) {
+			return nil, ErrKIDMismatch
+		}
+		return nil, ErrInvalid
+	}
+	if subtle.ConstantTimeCompare([]byte(namespace), []byte(WorkflowPlanNamespace)) != 1 {
+		clear(plaintext)
+		return nil, ErrWrongNamespace
+	}
+	if err := ctx.Err(); err != nil {
+		clear(plaintext)
+		return nil, err
+	}
+	if len(plaintext) == 0 || len(plaintext) > api.ExecutionWorkflowManagedPlanMaxBytes || !json.Valid(plaintext) {
+		clear(plaintext)
+		return nil, ErrInvalid
+	}
+	return plaintext, nil
 }
 
 // Decode opens one ciphertext under the current/previous host identities and
@@ -159,8 +226,9 @@ func DecodeRequest(ctx context.Context, identities []*age.X25519Identity, sealed
 		return DecodedPayload{}, err
 	}
 	return DecodedPayload{
-		Source: envelope.Source, Entrypoint: envelope.Entrypoint,
-		Files: cloneFiles(envelope.Files), Input: append(json.RawMessage(nil), envelope.Input...),
+		Profile: envelope.Profile.Normalized(),
+		Source:  envelope.Source, Entrypoint: envelope.Entrypoint,
+		Files: cloneFiles(envelope.Files), OutputFiles: append([]string(nil), envelope.OutputFiles...), Input: append(json.RawMessage(nil), envelope.Input...),
 	}, nil
 }
 

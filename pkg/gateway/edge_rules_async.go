@@ -65,6 +65,8 @@ type AsyncRouteRequest struct {
 	PlatformTenantID string
 	AppID            string
 	AccountID        string
+	// Scope is selected by host routing, never by a customer header.
+	Scope            string
 	OnSuccessWebhook string
 	OnFailureWebhook string
 	RetryPolicy      *api.RetryPolicyDTO
@@ -98,8 +100,10 @@ func (h *Handler) matchAsyncRoute(r *http.Request, sidecarName string) *EdgeRule
 	return matcher.MatchAsync(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
 }
 
-func (h *Handler) applyEdgeRuleCacheUnlessAsync(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, asyncRule *EdgeRuleAsyncResolved) (bool, *EdgeRuleCacheResolved) {
-	if asyncRule != nil {
+func (h *Handler) applyEdgeRuleCacheUnlessAsync(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, asyncRule *EdgeRuleAsyncResolved, deploymentSmoke bool) (bool, *EdgeRuleCacheResolved) {
+	// Reuse the established challenge verdict so a slow policy evaluation or
+	// challenge expiry cannot send a candidate probe through customer caches.
+	if asyncRule != nil || deploymentSmoke {
 		return false, nil
 	}
 	return h.applyEdgeRuleCache(w, r, app, rec)
@@ -150,6 +154,7 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 	accepted, err := h.asyncRoutes.EnqueueAsyncRoute(r.Context(), AsyncRouteRequest{
 		AppID:            app.ID,
 		AccountID:        app.AccountID,
+		Scope:            app.Scope,
 		PlatformTenantID: authenticatedFrom(r.Context()).PlatformTenantID,
 		OnSuccessWebhook: rule.OnSuccessWebhook,
 		OnFailureWebhook: rule.OnFailureWebhook,
@@ -162,6 +167,12 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		IdempotencyKey:   r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
+		if errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "invocation_environment_work_isolation_unavailable",
+				"Stage work unavailable", "Work policies, queues, and completion destinations need isolated stage configuration."))
+			h.observeAsyncRule(rule, "blocked", "error")
+			return true
+		}
 		status := http.StatusServiceUnavailable
 		switch {
 		case errors.Is(err, state.ErrPlatformTenantSuspended):
@@ -283,7 +294,7 @@ func asyncRouteHeaders(in http.Header) map[string]string {
 			continue
 		}
 		if lower == "authorization" || lower == "cookie" || lower == "content-length" ||
-			lower == "host" || strings.HasPrefix(lower, "x-faas-") || lower == "x-gregale-dev-session-context" || strings.HasPrefix(lower, "x-gregale-dev-bridge-") || isHopByHopHeader(canonical) {
+			lower == "host" || api.IsReservedOperationHeader(lower) || strings.HasPrefix(lower, "x-faas-") || lower == "x-gregale-dev-session-context" || strings.HasPrefix(lower, "x-gregale-dev-bridge-") || isHopByHopHeader(canonical) {
 			continue
 		}
 		out[canonical] = strings.Join(values, ", ")

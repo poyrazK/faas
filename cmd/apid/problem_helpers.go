@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // writeCustomerInternalProblem keeps dependency and storage error text in
@@ -28,6 +29,6 @@ func customerCapacityProblem(log *slog.Logger, operation, title, detail, hint st
 
 func logCustomerFailure(log *slog.Logger, operation string, cause error) {
 	if log != nil && cause != nil {
-		log.Error("customer request failed", "operation", operation, "err", cause)
+		log.Error("customer request failed", "operation", logsanitize.Field(operation), "err", logsanitize.FieldAny(cause))
 	}
 }

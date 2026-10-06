@@ -12,7 +12,7 @@ import (
 var _ ObjectBucketStore = (*PgStore)(nil)
 
 func objectBucketFromSQL(b sqlc.ObjectBucket) ObjectBucket {
-	return ObjectBucket{ID: pgUUIDString(b.ID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, PublicRead: b.PublicRead, ServeAt: b.ServeAt.String, EnvironmentCloneSourceBucketID: pgUUIDString(b.EnvironmentCloneSourceBucketID), CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time, AttemptCount: b.AttemptCount, RetryAt: b.RetryAt.Time, LastErrorCode: b.LastErrorCode}
+	return ObjectBucket{ID: pgUUIDString(b.ID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, PublicRead: b.PublicRead, ServeAt: b.ServeAt.String, EnvironmentCloneSourceBucketID: pgUUIDString(b.EnvironmentCloneSourceBucketID), EnvironmentCloneOperationID: pgUUIDString(b.EnvironmentCloneOperationID), CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time, AttemptCount: b.AttemptCount, RetryAt: b.RetryAt.Time, LastErrorCode: b.LastErrorCode}
 }
 
 func (s *PgStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, error) {
@@ -21,23 +21,40 @@ func (s *PgStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit
 }
 
 func (s *PgStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
+	if b.EnvironmentCloneOperationID != "" {
+		return ObjectBucket{}, false, ErrConflict
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return ObjectBucket{}, false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	reserved, created, err := reserveObjectBucketTx(ctx, tx, b, limit)
+	if err != nil {
+		return ObjectBucket{}, false, err
+	}
+	return reserved, created, tx.Commit(ctx)
+}
+
+func reserveObjectBucketTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
 	q := sqlc.New()
+	if _, err := q.ObjectBucketReserveLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ObjectBucket{}, false, ErrConflict
+		}
+		return ObjectBucket{}, false, mapErr(err)
+	}
 	// Serializes quota/name checks across replicas and with app deletion.
-	_, err = q.ObjectBucketLockApp(ctx, tx, sqlc.ObjectBucketLockAppParams{ID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID)})
+	_, err := q.ObjectBucketLockApp(ctx, tx, sqlc.ObjectBucketLockAppParams{ID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID)})
 	if err != nil {
 		return ObjectBucket{}, false, mapErr(err)
 	}
 	old, err := q.ObjectBucketByName(ctx, tx, sqlc.ObjectBucketByNameParams{AppID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID), Name: b.Name, Scope: b.Scope})
 	if err == nil {
-		if old.PublicRead != b.PublicRead || old.ServeAt.String != b.ServeAt || pgUUIDString(old.EnvironmentCloneSourceBucketID) != b.EnvironmentCloneSourceBucketID {
+		if old.PublicRead != b.PublicRead || old.ServeAt.String != b.ServeAt || pgUUIDString(old.EnvironmentCloneSourceBucketID) != b.EnvironmentCloneSourceBucketID || pgUUIDString(old.EnvironmentCloneOperationID) != b.EnvironmentCloneOperationID {
 			return ObjectBucket{}, false, ErrConflict
 		}
-		return objectBucketFromSQL(old), false, tx.Commit(ctx)
+		return objectBucketFromSQL(old), false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return ObjectBucket{}, false, err
@@ -53,12 +70,13 @@ func (s *PgStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBuc
 	if b.EnvironmentCloneSourceBucketID != "" {
 		cloneSource = mustPgUUID(b.EnvironmentCloneSourceBucketID)
 	}
-	out, err := q.ObjectBucketInsert(ctx, tx, sqlc.ObjectBucketInsertParams{ID: mustPgUUID(b.ID), AccountID: mustPgUUID(b.AccountID), AppID: mustPgUUID(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, PublicRead: b.PublicRead, ServeAt: pgtype.Text{String: b.ServeAt, Valid: b.ServeAt != ""}, EnvironmentCloneSourceBucketID: cloneSource})
+	var cloneOperation pgtype.UUID
+	if b.EnvironmentCloneOperationID != "" {
+		cloneOperation = mustPgUUID(b.EnvironmentCloneOperationID)
+	}
+	out, err := q.ObjectBucketInsert(ctx, tx, sqlc.ObjectBucketInsertParams{ID: mustPgUUID(b.ID), AccountID: mustPgUUID(b.AccountID), AppID: mustPgUUID(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, PublicRead: b.PublicRead, ServeAt: pgtype.Text{String: b.ServeAt, Valid: b.ServeAt != ""}, EnvironmentCloneSourceBucketID: cloneSource, EnvironmentCloneOperationID: cloneOperation})
 	if err != nil {
 		return ObjectBucket{}, false, mapErr(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return ObjectBucket{}, false, err
 	}
 	return objectBucketFromSQL(out), true, nil
 }
@@ -92,11 +110,33 @@ func (s *PgStore) claimObjectBucket(ctx context.Context, accountID, appID, id, t
 	if token == "" || (next != "provisioning" && next != "deleting") {
 		return ObjectBucket{}, ErrConflict
 	}
-	b, err := sqlc.New().ObjectBucketClaim(ctx, s.pool, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id), Recovery: recovery})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectBucket{}, mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	// Write admission locks the account before the source bucket. After the
+	// bucket lock, evaluate both pending-write and clone-fence dependencies
+	// in a new statement so evidence committed during the wait is visible.
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(accountID)); err != nil {
+		return ObjectBucket{}, mapErr(err)
+	}
+	if _, err := q.ObjectBucketMutationLock(ctx, tx, sqlc.ObjectBucketMutationLockParams{
+		BucketID: mustPgUUID(id), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ObjectBucket{}, ErrConflict
+		}
+		return ObjectBucket{}, mapErr(err)
+	}
+	b, err := q.ObjectBucketClaim(ctx, tx, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id), Recovery: recovery})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ObjectBucket{}, ErrConflict
 	}
-	return objectBucketFromSQL(b), mapErr(err)
+	if err != nil {
+		return ObjectBucket{}, mapErr(err)
+	}
+	return objectBucketFromSQL(b), mapErr(tx.Commit(ctx))
 }
 
 func (s *PgStore) RetryObjectBucket(ctx context.Context, id, token, code string, delay time.Duration) error {

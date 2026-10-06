@@ -141,3 +141,38 @@ func TestSampler_ScheduledFloorUsesInjectedClock(t *testing.T) {
 			"wall clock instead of its injected clock, so a back-dated sample bills the wrong floor")
 	}
 }
+
+type closedMinuteScheduleStore struct{ *state.MemStore }
+
+func (s *closedMinuteScheduleStore) InstanceBillingSeconds(context.Context, time.Time, time.Time) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
+
+// adr: 195 — the scheduled capacity floor belongs to the billed interval.
+func TestSamplerScheduledFloorClosedMinute(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		hour     int
+		minute   int
+		duration int
+		want     int64
+	}{{"window_opens", 9, 0, 3600, 0}, {"window_closes", 10, 0, 3600, 15840}, {"partial_last_minute", 9, 2, 90, 7920}, {"short_window", 9, 1, 30, 7920}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &closedMinuteScheduleStore{state.NewMemStore()}
+			appID, _ := seedFloorApp(t, store, api.PlanHobby, 256)
+			setPolicy(t, store, appID, state.ScalingPolicy{Timezone: "UTC", Schedules: []state.ScalingSchedule{{Cron: "0 9 * * *", DurationS: tc.duration, MinInstances: 1}}})
+			now := time.Date(2026, 10, 4, tc.hour, tc.minute, 0, 0, time.UTC)
+			rows, err := NewSampler(store, nil, func() time.Time { return now }).SampleAndRoll(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got int64
+			for _, row := range rows {
+				got += row.MBSeconds
+			}
+			if got != tc.want {
+				t.Fatalf("closed minute %s: billed %d MB-seconds, want %d", now.Add(-time.Minute), got, tc.want)
+			}
+		})
+	}
+}

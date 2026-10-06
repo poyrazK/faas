@@ -63,8 +63,13 @@ func (v *executionTestVMM) DialExecution(_ context.Context, _ Lease) (*Execution
 func TestManagerExecuteExecutionDestroysExecutionOnlyInstance(t *testing.T) {
 	vmm := &executionTestVMM{fakeVMM: &fakeVMM{}}
 	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.0.0", nil, nil)
+	lease, leaseErr := m.alloc.Acquire("exec-vm-1")
+	if leaseErr != nil {
+		t.Fatal(leaseErr)
+	}
+	lease.Networkless = true
 	m.live["exec-vm-1"] = &Instance{
-		Lease:         Lease{Instance: "exec-vm-1"},
+		Lease:         lease,
 		ExecutionOnly: true,
 	}
 
@@ -134,8 +139,13 @@ func TestManagerExecuteExecutionBoundsDirectCallToRequestTimeout(t *testing.T) {
 		guestClosed: make(chan struct{}),
 	}
 	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.0.0", nil, nil)
+	lease, leaseErr := m.alloc.Acquire("exec-timeout-vm")
+	if leaseErr != nil {
+		t.Fatal(leaseErr)
+	}
+	lease.Networkless = true
 	m.live["exec-timeout-vm"] = &Instance{
-		Lease:         Lease{Instance: "exec-timeout-vm"},
+		Lease:         lease,
 		ExecutionOnly: true,
 	}
 	started := time.Now()
@@ -181,12 +191,24 @@ func TestManagerWakeExecutionIsNetworkless(t *testing.T) {
 		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/test",
 		BaseKey: "base/test", LayerKey: "layer/test", VcpuCount: 2,
 		MemSizeMiB: 256, CPUMillicores: 500,
+		LeaseToken:             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		OutboundIntegrationIDs: []string{"11111111-1111-4111-8111-111111111111"},
 	})
 	if err != nil {
 		t.Fatalf("WakeExecution: %v", err)
 	}
 	if inst == nil || !inst.ExecutionOnly || !inst.Lease.Networkless {
 		t.Fatalf("execution instance = %#v, want execution-only networkless lease", inst)
+	}
+	accountID, executionID, leaseToken, err := m.ExecutionOutboundIdentity(inst.Lease.Instance, "11111111-1111-4111-8111-111111111111")
+	if err != nil {
+		t.Fatalf("ExecutionOutboundIdentity: %v", err)
+	}
+	if accountID != "acct-1" || executionID != "exec-wake-1" || leaseToken != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" {
+		t.Fatalf("execution outbound identity = (%q, %q, %q)", accountID, executionID, leaseToken)
+	}
+	if _, _, _, err := m.ExecutionOutboundIdentity(inst.Lease.Instance, "22222222-2222-4222-8222-222222222222"); err == nil {
+		t.Fatal("unrequested integration received execution identity")
 	}
 	vmm.mu.Lock()
 	spec := vmm.coldBootSpecs[len(vmm.coldBootSpecs)-1]
@@ -202,6 +224,40 @@ func TestManagerWakeExecutionIsNetworkless(t *testing.T) {
 	}
 	if err := m.Destroy(context.Background(), inst.Lease.Instance); err != nil {
 		t.Fatalf("Destroy: %v", err)
+	}
+}
+
+func TestManagerWakeExecutionRejectsUnpairedOutboundMetadata(t *testing.T) {
+	m := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "kernel/test"}, "1.0.0", nil, nil)
+	base := ExecutionWakeRequest{
+		Instance: "exec-invalid", AccountID: "acct-1", Plan: api.PlanPro,
+		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/test",
+		BaseKey: "base/test", LayerKey: "layer/test", VcpuCount: 2,
+		MemSizeMiB: 256, CPUMillicores: 500,
+	}
+	tests := []struct {
+		name string
+		edit func(*ExecutionWakeRequest)
+	}{
+		{name: "missing lease", edit: func(req *ExecutionWakeRequest) {
+			req.OutboundIntegrationIDs = []string{"11111111-1111-4111-8111-111111111111"}
+		}},
+		{name: "lease without grants", edit: func(req *ExecutionWakeRequest) {
+			req.LeaseToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		}},
+		{name: "invalid integration", edit: func(req *ExecutionWakeRequest) {
+			req.LeaseToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+			req.OutboundIntegrationIDs = []string{"not-a-uuid"}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := base
+			tt.edit(&req)
+			if _, err := m.WakeExecution(context.Background(), req); err == nil {
+				t.Fatal("WakeExecution accepted invalid outbound metadata")
+			}
+		})
 	}
 }
 

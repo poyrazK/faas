@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.sidecar import Sidecar
     from ..models.workflow_spec import WorkflowSpec
 
@@ -19,6 +20,23 @@ T = TypeVar("T", bound="UploadDeployOptions")
 class UploadDeployOptions:
     """Deployment metadata persisted with the upload session and applied at commit."""
 
+    healthcheck: DeploymentHealthcheck | Unset = UNSET
+    """Startup healthcheck shape on the deploy-time override object (issue #460 /
+    ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
+    Check) selects the startup admission action. The gRPC probe uses the
+    app's published port; an empty service checks overall server health.
+
+    Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
+    - Exactly one of `path` and `grpc` must be set.
+    - `path`, when set, must start with `/`.
+    - `grpc.service` is optional and limited to 256 characters.
+    - `interval_s`, `timeout_s`, `retries` must be `>= 0`.
+    - Missing tuning fields default to 0; the host readiness deadline is
+      resolved separately from the app's plan and startup policy.
+
+    OCI `test` argv and `start_period_s` remain deploy metadata; the host
+    readiness gate uses only the selected HTTP path or gRPC health RPC.
+    """
     runtime: str | Unset = UNSET
     handler: str | Unset = UNSET
     dockerfile: bool | Unset = UNSET
@@ -50,6 +68,10 @@ class UploadDeployOptions:
     """Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."""
 
     def to_dict(self) -> dict[str, Any]:
+        healthcheck: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.healthcheck, Unset):
+            healthcheck = self.healthcheck.to_dict()
+
         runtime = self.runtime
 
         handler = self.handler
@@ -112,6 +134,8 @@ class UploadDeployOptions:
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
+        if healthcheck is not UNSET:
+            field_dict["healthcheck"] = healthcheck
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
         if handler is not UNSET:
@@ -153,10 +177,18 @@ class UploadDeployOptions:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.sidecar import Sidecar
         from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
+        _healthcheck = d.pop("healthcheck", UNSET)
+        healthcheck: DeploymentHealthcheck | Unset
+        if isinstance(_healthcheck, Unset):
+            healthcheck = UNSET
+        else:
+            healthcheck = DeploymentHealthcheck.from_dict(_healthcheck)
+
         runtime = d.pop("runtime", UNSET)
 
         handler = d.pop("handler", UNSET)
@@ -229,6 +261,7 @@ class UploadDeployOptions:
         no_triggers = d.pop("no_triggers", UNSET)
 
         upload_deploy_options = cls(
+            healthcheck=healthcheck,
             runtime=runtime,
             handler=handler,
             dockerfile=dockerfile,

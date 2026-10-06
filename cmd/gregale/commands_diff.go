@@ -207,7 +207,14 @@ func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA2
 		// the operator's current working directory.
 		if !imageDeploy && srcDir != "" {
 			if profile, err := frameworkprofile.AnalyzeDir(srcDir); err == nil {
-				plan.Framework = profile.Framework
+				// BuildPlan.Framework is the runtime family the deployment
+				// records (node, python, …). Sending the refined framework
+				// ("express") made every diff of an unchanged app report
+				// "deployment.framework node → express".
+				plan.Framework = profile.Family
+				if plan.Framework == "" {
+					plan.Framework = profile.Framework
+				}
 				plan.Version = profile.FrameworkVer
 				plan.Entrypoint = profile.StartCommand
 				plan.Port = profile.Port

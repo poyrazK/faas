@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FailureRules } from './FailureRules.js';
+import type { SchedulePolicy } from './SchedulePolicy.js';
 /**
  * Job creation payload — name + image + command + caps; schedule enables recurring runs.
  */
@@ -23,5 +25,7 @@ export type CreateJobRequest = {
   task_timeout_sec?: number;
   max_parallelism?: number;
   retry_max?: number;
+  schedule_policy?: SchedulePolicy;
+  failure_rules?: FailureRules;
 };
 

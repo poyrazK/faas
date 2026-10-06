@@ -200,7 +200,7 @@ func NewSpansAccumulator() *SpansAccumulator {
 // request_telemetry row (the SQL UPDATE doesn't bind
 // account_id, see code-review #1). On mismatch this Add
 // returns ErrAccountMismatch without touching the bucket;
-// the handler 401s the contested POST. The OLD account's
+// the handler rejects those spans. The OLD account's
 // legitimate spans already buffered in the bucket are
 // preserved — they'll flush normally on the next tick.
 func (s *SpansAccumulator) Add(traceID string, accountID uuid.UUID, spans []summarizedSpan) (int, error) {

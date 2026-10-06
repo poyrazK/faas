@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 const appTaskTestDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -230,7 +231,10 @@ func TestAppTaskResponseProjectsTerminalEvidence(t *testing.T) {
 	failureCode := "process_exit"
 	failureMessage := "command exited unsuccessfully"
 	lease := "scheduler-secret"
+	decision := &workpolicy.Decision{Classification: "permanent", Action: "fail_partition", Reason: "outcome_code_matched", PolicyVersion: workpolicy.Version}
 	response := appTaskResponse(state.AppTask{
+		WorkDecision:    decision,
+		OutcomeCode:     "invalid_record",
 		ID:              "2bdd4251-f567-4a48-9f66-a155bbfa7751",
 		AppID:           "app-id",
 		DeploymentID:    "deployment-id",
@@ -261,6 +265,9 @@ func TestAppTaskResponseProjectsTerminalEvidence(t *testing.T) {
 	}
 	if response.StartedAt == nil || response.FinishedAt == nil {
 		t.Fatalf("terminal timestamps missing: %+v", response)
+	}
+	if response.OutcomeCode != "invalid_record" || response.WorkDecision == nil || response.WorkDecision.Action != "fail_partition" {
+		t.Fatalf("structured outcome projection = %+v", response)
 	}
 }
 

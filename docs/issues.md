@@ -52,6 +52,40 @@ except Exception as error:
 issues.close()
 ```
 
+Go:
+
+```go
+// Imports include context, os, time, and faas "github.com/poyrazK/faas/sdk/go".
+issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	BaseURL: os.Getenv("GREGALE_API_URL"),
+	App:     "exports",
+	Token:   os.Getenv("GREGALE_ISSUE_TOKEN"),
+})
+if err != nil {
+	return err
+}
+defer func() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = issues.Close(ctx)
+}()
+
+if err := generateExport(); err != nil {
+	issues.CaptureException(err, faas.IssueContext{
+		RequestID: requestID,
+		TraceID:   traceID,
+		Route:     "/exports",
+	})
+	return err
+}
+```
+
+For worker panics, `defer issues.RecoverAndRepanic(faas.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
+captures the panic best-effort and re-panics with the original value. Standard Go errors do not
+carry creation-time stacks, so the helper records the current goroutine's stack
+at the capture call. No locals, request bodies, or arbitrary context fields are
+included.
+
 `install()` registers exception hooks while preserving the prior application
 hooks and fatal-exception behavior. Explicit wrappers capture then rethrow the
 original exception. Delivery uses a bounded in-memory queue, timeouts, and stable
@@ -94,12 +128,87 @@ Open an app's **Issues** page, or use:
 
 ```sh
 gregale issues list --app exports --state open
+gregale issues list --app exports --assignee me
+gregale issues list --app exports --assignee unassigned
+gregale issues list --app exports --sort impact
+gregale issues list --app exports --sort impact --min-customers 3
 gregale issues get ISSUE_ID --app exports
 gregale issues assign ISSUE_ID --app exports --assignee ACCOUNT_ID
 gregale issues resolve ISSUE_ID --app exports --deployment FIXED_DEPLOYMENT_ID
 gregale issues reopen ISSUE_ID --app exports
 gregale issues ignore ISSUE_ID --app exports --until 2026-10-02T12:00:00Z
 ```
+
+Use `--assignee me`, `--assignee unassigned`, or an account UUID to narrow
+the CLI list. The dashboard provides Mine and Unassigned owner views and shows
+each issue's owner and recurrence count.
+
+Configure prospective automatic ownership rules in the Issues dashboard or
+with the CLI. The file uses an ordered `rules` array; every populated matcher
+on a rule must match, and the first matching rule wins:
+
+```json
+{
+  "rules": [
+    {"source_kind": "worker", "assignee_account_id": "ACCOUNT_UUID"},
+    {"exception_type": "DateFormatError", "route_prefix": "/exports", "assignee_account_id": "ACCOUNT_UUID"}
+  ]
+}
+```
+
+Read the configured rules or replace the complete policy (an empty rules array
+disables routing):
+
+```sh
+gregale issues ownership-rules --app exports
+gregale issues ownership-rules --app exports --rules-file issue-routing.json
+```
+
+The `GET /v1/apps/{slug}/issue-ownership-rules` endpoint reads the policy, and
+`PUT /v1/apps/{slug}/issue-ownership-rules` accepts the same `{ "rules": [...] }`
+object to replace it. A rule can match an exact exception
+type, one source kind (`exception`, `http`, `runtime`, or `worker`), and/or a
+route path prefix. Route prefixes match the exact path or a following `/`, so
+`/exports` matches `/exports/42` but not `/export-service`. Each target must be
+the app owner or an active organization member; at most 50 rules are allowed.
+Only new issue groups are routed. Existing issues and their assignments are
+unchanged, and future occurrences do not override a manual assignment. The
+automatic assignment is recorded as normal issue activity and emits
+`issue.assigned` for configured webhooks.
+
+By default, issue lists are ordered by most recently seen. Use `--sort impact`
+to rank by verified distinct customers with observed failures in the previous
+24 hours, or `--min-customers N` to hide issues below a customer threshold.
+The dashboard has matching sort and threshold controls. Impact ranking and
+thresholds use accepted, retained, attributable events; they do not estimate
+customers whose failures were not instrumented or retained. Pagination cursors
+preserve the selected ordering, threshold, and 24-hour window, so keep those
+filters unchanged when requesting the next page.
+
+The inbox also reports retained events, verified distinct customers, and
+unattributed events from the previous 24 hours. These counts are an observed,
+bounded view of instrumented failures and do not estimate customer impact
+outside retained and attributable events.
+
+To notify a configured app webhook when an issue becomes customer-impacting,
+set a rolling 24-hour threshold:
+
+```sh
+gregale issues impact-alert --app exports                 # read current policy
+gregale issues impact-alert --app exports --min-customers 5
+gregale issues impact-alert --app exports --min-customers 0 # disable
+```
+
+The policy fires when verified distinct customer impact moves from below the
+configured threshold to at or above it. It uses the same tenant-first verified
+identity as the inbox; unattributed occurrences do not count. A later request
+telemetry enrichment can trigger the transition when it supplies the identity
+that crosses the threshold. Changing a policy does not backfill alerts for
+issues already above the new threshold. The transition appears in issue
+activity and emits `issue.impact_threshold_reached`; subscribe an app webhook
+to that event to receive it. Delivery uses Gregale's durable outbox and retry
+ledger. The payload's `details` contains the threshold, observed customer
+count, window bounds, and deployment that supplied the crossing evidence.
 
 Issue identity survives deployments. Grouping removes line numbers and known
 container/build roots but preserves source directories and function names.
@@ -127,10 +236,23 @@ detail request. Keep `since` consistent when paging occurrences. The Go client
 offers `GetIssuePage` for independent collection cursors. Dashboard history links
 load earlier pages.
 
+When an occurrence links to retained request telemetry, the dashboard can send
+that request's metadata to an enabled mirror deployment configured for the
+deployment that served it. The action is CSRF-protected and selects only those
+enabled targets. It queues the same bodyless replay used by the request
+debugger: request bodies and credentials are not retained or sent. The issue
+page shows the queued/running state and the bounded source-versus-mirror status
+and latency comparison, with a link to the debugger receipt. Mirror targets are
+available on plans that support mirror rules and require a matching enabled
+rule; the action stays hidden when the occurrence has no linked request or
+configured target.
+
 ## Notifications and recovery
 
 Register an existing app webhook with filters `issue.created`, `issue.assigned`,
 `issue.resolved`, `issue.reopened`, `issue.ignored`, or `issue.regressed`.
+Add `issue.impact_threshold_reached` to the filter to receive the configured
+customer-impact alert.
 Payloads contain the issue, transition ID, and bounded action details. The issue
 transaction snapshots recipients in the existing webhook outbox. The normal
 relay and signed delivery ledger recover committed transitions after restart.
@@ -176,3 +298,54 @@ external-service isolation; external state may prevent exact reproduction.
 and runs real API, SDK-process, dashboard, attribution, webhook recovery, quota,
 and retention checks. The gate refuses missing/disabled/unreachable PostgreSQL.
 It does not deploy to production or require KVM because VM lifecycle is unchanged.
+
+## Staging smoke test
+
+`make issues-smoke` starts two minimal instrumented Node sample apps on loopback,
+one per deployment token, and triggers an HTTP-handler failure and a worker
+failure in each. It checks that each failure type forms one issue across both
+releases and that the issue retains its occurrences and release history. Use a
+dedicated staging app; the command groups its events into two smoke issues and
+adds four retained events on every run. Events expire under the app's normal
+Issues retention policy.
+
+Create a short-lived issue token for each of two deployments of the same staging
+app. Set the target before token creation so the CLI cannot fall back to its saved
+API host, then save each one-time `g_issue_…` value securely:
+
+```sh
+export GREGALE_API_URL=https://api.staging.gregale.dev
+export GREGALE_ISSUES_SMOKE_TARGET=api.staging.gregale.dev
+export GREGALE_APP=issues-smoke
+export GREGALE_ISSUES_SMOKE_ENVIRONMENT=staging
+export GREGALE_ISSUES_SMOKE_DEPLOYMENT_A=DEPLOYMENT_UUID_A
+export GREGALE_ISSUES_SMOKE_DEPLOYMENT_B=DEPLOYMENT_UUID_B
+export FAAS_TOKEN='your-Gregale-API-key-with-issue-read-access'
+
+FAAS_API="$GREGALE_API_URL" gregale issues create-token --app "$GREGALE_APP" \
+  --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_A" \
+  --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-a --expires-in 24h
+FAAS_API="$GREGALE_API_URL" gregale issues create-token --app "$GREGALE_APP" \
+  --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_B" \
+  --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-b --expires-in 24h
+
+# Load the one-time values from your approved local secret store.
+export GREGALE_ISSUES_SMOKE_TOKEN_A='g_issue_token_for_deployment_a'
+export GREGALE_ISSUES_SMOKE_TOKEN_B='g_issue_token_for_deployment_b'
+npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
+make issues-smoke
+```
+
+The hostname confirmation must exactly match `GREGALE_API_URL`; the hostname
+must also identify staging, preview, sandbox, dev, or test. The smoke command
+rejects the configured production API, requires HTTPS except for loopback, and
+has no default API target. The smoke script uses the API token only to list and
+read issues; the two issue-ingest tokens can report events only for their bound
+deployments.
+
+For a request debugger link check, also set
+`GREGALE_ISSUES_SMOKE_REQUEST_ID` to a request ID from deployment A that has
+unambiguous retained telemetry within five minutes of the smoke run. For an
+invocation link check, set `GREGALE_ISSUES_SMOKE_INVOCATION_ID` to a real worker
+invocation UUID belonging to the app. The command reports these checks as skipped
+when either ID is absent; it never fabricates platform evidence.

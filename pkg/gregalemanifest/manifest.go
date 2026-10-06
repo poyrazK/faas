@@ -40,10 +40,12 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -127,6 +129,239 @@ type WorkPolicy struct {
 	PendingUpdates           string `yaml:"pending_updates,omitempty" toml:"pending_updates"`
 	DebounceMS               int64  `yaml:"debounce_ms,omitempty" toml:"debounce_ms"`
 	ExpiresAfterMS           int64  `yaml:"expires_after_ms,omitempty" toml:"expires_after_ms"`
+}
+
+// ExclusiveOperationPolicy declares account-owned coordination for one or
+// more app slugs. App names are resolved to account-owned IDs only by the
+// authenticated CLI reconciliation path.
+type ExclusiveOperationPolicy struct {
+	Name              string   `yaml:"name" toml:"name"`
+	Scope             string   `yaml:"scope" toml:"scope"`
+	EnvironmentID     string   `yaml:"environment_id,omitempty" toml:"environment_id"`
+	MemberApps        []string `yaml:"member_apps,omitempty" toml:"member_apps"`
+	MemberJobIDs      []string `yaml:"member_job_ids,omitempty" toml:"member_job_ids"`
+	Contention        string   `yaml:"contention" toml:"contention"`
+	LeaseSeconds      int      `yaml:"lease_seconds,omitempty" toml:"lease_seconds"`
+	MaxAttemptSeconds int      `yaml:"max_attempt_seconds,omitempty" toml:"max_attempt_seconds"`
+	MaxAttempts       int      `yaml:"max_attempts,omitempty" toml:"max_attempts"`
+	RetryAfterSeconds int      `yaml:"retry_after_seconds,omitempty" toml:"retry_after_seconds"`
+}
+
+// ExclusiveOperationBinding selects an existing app trigger or recurring
+// Job schedule by stable manifest identity. Key remains a business value;
+// tenant identity is a separate trusted platform field.
+type ExclusiveOperationBinding struct {
+	Source           string `yaml:"source" toml:"source"`
+	App              string `yaml:"app" toml:"app"`
+	Job              string `yaml:"job,omitempty" toml:"job"`
+	Schedule         string `yaml:"schedule,omitempty" toml:"schedule"`
+	Path             string `yaml:"path,omitempty" toml:"path"`
+	Name             string `yaml:"name,omitempty" toml:"name"`
+	Kind             string `yaml:"kind,omitempty" toml:"kind"`
+	Policy           string `yaml:"policy" toml:"policy"`
+	Key              any    `yaml:"key" toml:"key"`
+	PlatformTenantID string `yaml:"platform_tenant_id,omitempty" toml:"platform_tenant_id"`
+	EquivalenceKey   string `yaml:"equivalence_key,omitempty" toml:"equivalence_key"`
+}
+
+// ExclusiveOperationsConfig is applied explicitly with
+// `gregale operations reconcile --dir <project>`. It does not mutate account
+// coordination state as a side effect of an ordinary code deployment.
+type ExclusiveOperationsConfig struct {
+	Policies []ExclusiveOperationPolicy  `yaml:"policies" toml:"policies"`
+	Bindings []ExclusiveOperationBinding `yaml:"bindings" toml:"bindings"`
+}
+
+// KeyJSON encodes and validates a manifest business key as a JSON scalar.
+func (b ExclusiveOperationBinding) KeyJSON() (json.RawMessage, error) {
+	if b.Key == nil {
+		return nil, fmt.Errorf("key is required")
+	}
+	encoded, err := json.Marshal(b.Key)
+	if err != nil {
+		return nil, fmt.Errorf("encode key: %w", err)
+	}
+	var scalar any
+	if err := json.Unmarshal(encoded, &scalar); err != nil {
+		return nil, fmt.Errorf("encode key: %w", err)
+	}
+	switch value := scalar.(type) {
+	case string:
+		if value == "" || len(value) > 128 {
+			return nil, fmt.Errorf("key string must contain 1..128 bytes")
+		}
+	case float64, bool:
+	default:
+		return nil, fmt.Errorf("key must be a JSON string, number, or boolean")
+	}
+	return json.RawMessage(encoded), nil
+}
+
+// Validate enforces manifest-local identity and scope rules before any API
+// writes are attempted. Account ownership and app existence remain server
+// checks during reconciliation.
+func (c ExclusiveOperationsConfig) Validate() error {
+	policies := make(map[string]ExclusiveOperationPolicy, len(c.Policies))
+	for i, policy := range c.Policies {
+		field := fmt.Sprintf("exclusive_operations.policies[%d]", i)
+		if !exclusivework.NamePattern.MatchString(policy.Name) {
+			return fmt.Errorf("%s.name must match %s", field, exclusivework.NamePattern.String())
+		}
+		if policy.Scope != "account" && policy.Scope != "platform_tenant" {
+			return fmt.Errorf("%s.scope must be account or platform_tenant", field)
+		}
+		if policy.Contention != "queue" && policy.Contention != "reject" && policy.Contention != "join_existing" {
+			return fmt.Errorf("%s.contention must be queue, reject, or join_existing", field)
+		}
+		if len(policy.MemberApps)+len(policy.MemberJobIDs) == 0 || len(policy.MemberApps)+len(policy.MemberJobIDs) > api.MaxExclusiveMembers {
+			return fmt.Errorf("%s must contain 1..%d combined app and job members", field, api.MaxExclusiveMembers)
+		}
+		if policy.EnvironmentID != "" && len(policy.MemberJobIDs) > 0 {
+			return fmt.Errorf("%s.environment_id cannot be combined with member_job_ids", field)
+		}
+		if policy.Scope == "platform_tenant" && len(policy.MemberJobIDs) > 0 {
+			return fmt.Errorf("%s.member_job_ids require account scope", field)
+		}
+		members := make(map[string]struct{}, len(policy.MemberApps))
+		for _, app := range policy.MemberApps {
+			if !isDNSSafeSlug(app) {
+				return fmt.Errorf("%s.member_apps contains invalid app slug %q", field, app)
+			}
+			if _, duplicate := members[app]; duplicate {
+				return fmt.Errorf("%s.member_apps contains duplicate app slug %q", field, app)
+			}
+			members[app] = struct{}{}
+		}
+		for _, jobID := range policy.MemberJobIDs {
+			parsed, err := uuid.Parse(jobID)
+			if err != nil {
+				return fmt.Errorf("%s.member_job_ids contains invalid job UUID %q", field, jobID)
+			}
+			canonical := parsed.String()
+			if _, duplicate := members["job:"+canonical]; duplicate {
+				return fmt.Errorf("%s.member_job_ids contains duplicate job UUID %q", field, jobID)
+			}
+			members["job:"+canonical] = struct{}{}
+		}
+		lease := policy.LeaseSeconds
+		if lease == 0 {
+			lease = api.DefaultExclusiveLeaseSeconds
+		}
+		maxAttempt := policy.MaxAttemptSeconds
+		if maxAttempt == 0 {
+			maxAttempt = lease * 10
+		}
+		if lease < api.MinExclusiveLeaseSeconds || lease > api.MaxExclusiveLeaseSeconds ||
+			maxAttempt < lease || maxAttempt > api.MaxExclusiveAttemptSeconds {
+			return fmt.Errorf("%s: lease_seconds or max_attempt_seconds is out of range", field)
+		}
+		if policy.MaxAttempts < 0 || policy.MaxAttempts > api.MaxExclusiveAttempts ||
+			policy.RetryAfterSeconds < 0 || policy.RetryAfterSeconds > api.MaxExclusiveRetrySeconds {
+			return fmt.Errorf("%s: retry settings are out of range", field)
+		}
+		if policy.EnvironmentID != "" {
+			if _, err := uuid.Parse(policy.EnvironmentID); err != nil {
+				return fmt.Errorf("%s.environment_id must be a UUID", field)
+			}
+		}
+		if _, duplicate := policies[policy.Name]; duplicate {
+			return fmt.Errorf("%s.name %q is duplicated", field, policy.Name)
+		}
+		policies[policy.Name] = policy
+	}
+	seenBindings := make(map[string]struct{}, len(c.Bindings))
+	for i, binding := range c.Bindings {
+		field := fmt.Sprintf("exclusive_operations.bindings[%d]", i)
+		jobSchedule := binding.Source == "job_schedule"
+		if jobSchedule {
+			if !isDNSSafeSlug(binding.Job) || binding.App != "" || binding.Schedule != "" || binding.Path != "" || binding.Name != "" || binding.Kind != "" {
+				return fmt.Errorf("%s: job_schedule requires job name only", field)
+			}
+		} else {
+			if !isDNSSafeSlug(binding.App) || binding.Job != "" {
+				return fmt.Errorf("%s.app must be a valid app slug and job must be omitted", field)
+			}
+		}
+		policy, ok := policies[binding.Policy]
+		if !ok {
+			return fmt.Errorf("%s.policy %q must be declared in exclusive_operations.policies", field, binding.Policy)
+		}
+		if jobSchedule {
+			if len(policy.MemberJobIDs) == 0 {
+				return fmt.Errorf("%s.job requires a policy with member_job_ids", field)
+			}
+			if policy.Scope != "account" || binding.PlatformTenantID != "" {
+				return fmt.Errorf("%s.job_schedule requires account scope and cannot set platform_tenant_id", field)
+			}
+		} else {
+			member := false
+			for _, app := range policy.MemberApps {
+				if app == binding.App {
+					member = true
+					break
+				}
+			}
+			if !member {
+				return fmt.Errorf("%s.app %q is not a member of policy %q", field, binding.App, binding.Policy)
+			}
+			if policy.Scope == "platform_tenant" && binding.PlatformTenantID == "" {
+				return fmt.Errorf("%s.platform_tenant_id is required for a platform_tenant policy", field)
+			}
+			if policy.Scope == "account" && binding.PlatformTenantID != "" {
+				return fmt.Errorf("%s.platform_tenant_id is only valid for a platform_tenant policy", field)
+			}
+		}
+		if policy.Contention == "join_existing" && binding.EquivalenceKey == "" {
+			return fmt.Errorf("%s.equivalence_key is required for join_existing", field)
+		}
+		if len(binding.EquivalenceKey) > api.MaxExclusiveIdentityBytes {
+			return fmt.Errorf("%s.equivalence_key exceeds %d bytes", field, api.MaxExclusiveIdentityBytes)
+		}
+		if _, err := binding.KeyJSON(); err != nil {
+			return fmt.Errorf("%s: %w", field, err)
+		}
+		if binding.PlatformTenantID != "" {
+			if _, err := uuid.Parse(binding.PlatformTenantID); err != nil {
+				return fmt.Errorf("%s.platform_tenant_id must be a UUID", field)
+			}
+		}
+		switch binding.Source {
+		case "job_schedule":
+			// Job membership and account ownership are resolved by the CLI before writes.
+		case "cron":
+			if binding.Schedule == "" || !strings.HasPrefix(binding.Path, "/") || binding.Name != "" || binding.Kind != "" {
+				return fmt.Errorf("%s: cron requires schedule and absolute path only", field)
+			}
+		case "inbound_webhook":
+			if binding.Name == "" || binding.Schedule != "" || binding.Path != "" || binding.Kind != "" {
+				return fmt.Errorf("%s: inbound_webhook requires name only", field)
+			}
+		case "broker":
+			if binding.Name == "" || binding.Kind == "" || binding.Schedule != "" || binding.Path != "" {
+				return fmt.Errorf("%s: broker requires kind and name only", field)
+			}
+			if !validExclusiveBrokerKind(binding.Kind) {
+				return fmt.Errorf("%s.kind %q is not a supported broker trigger kind", field, binding.Kind)
+			}
+		default:
+			return fmt.Errorf("%s.source must be cron, inbound_webhook, broker, or job_schedule", field)
+		}
+		identity := binding.Source + "\x00" + binding.App + "\x00" + binding.Job + "\x00" + binding.Schedule + "\x00" + binding.Path + "\x00" + binding.Name + "\x00" + binding.Kind
+		if _, duplicate := seenBindings[identity]; duplicate {
+			return fmt.Errorf("%s duplicates an earlier trigger binding", field)
+		}
+		seenBindings[identity] = struct{}{}
+	}
+	return nil
+}
+
+func validExclusiveBrokerKind(kind string) bool {
+	switch kind {
+	case "kafka", "nats", "redis_streams", "sqs_compat", "queue", "amqp", "rabbitmq":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p WorkPolicy) ToPolicy() workpolicy.Policy {
@@ -1151,7 +1386,8 @@ func (d BucketDependency) EffectiveLabel() string {
 // The supported top-level declarations are `schema_version`, `hosting`,
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
 // `triggers`, `event_triggers`, `async_routes`, `companions`, `main_depends_on`,
-// `extensions`, `workflows`, `databases`, `buckets`, and the local-only `dev`
+// `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
+// and the local-only `dev`
 // profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
@@ -1174,12 +1410,15 @@ type Manifest struct {
 	// [[triggers.event]] in gregale.toml. YAML trigger entries remain in
 	// Triggers for backward compatibility; the separate slice keeps event
 	// subscriptions from changing that wire shape.
-	EventTriggers []EventTrigger `yaml:"event_triggers,omitempty"`
-	WorkPolicies  []WorkPolicy   `yaml:"work_policies,omitempty"`
+	EventTriggers       []EventTrigger             `yaml:"event_triggers,omitempty"`
+	WorkPolicies        []WorkPolicy               `yaml:"work_policies,omitempty"`
+	ExclusiveOperations *ExclusiveOperationsConfig `yaml:"exclusive_operations,omitempty"`
 	// AsyncRoutes are manifest-owned async edge rules. A nil slice leaves
 	// existing managed routes unchanged; an explicit empty list clears them.
-	AsyncRoutes []AsyncRoute    `yaml:"async_routes,omitempty"`
-	Companions  []CompanionSpec `yaml:"companions,omitempty"`
+	Operations         []Operation                   `yaml:"operations,omitempty"`
+	ResolvedOperations []api.OperationDefinitionSpec `yaml:"-"`
+	AsyncRoutes        []AsyncRoute                  `yaml:"async_routes,omitempty"`
+	Companions         []CompanionSpec               `yaml:"companions,omitempty"`
 	// MainDependsOn gates the primary application workload on declared
 	// long-running companions. Init companions remain implicit prerequisites.
 	MainDependsOn []ExtensionDependency `yaml:"main_depends_on,omitempty"`
@@ -1561,12 +1800,14 @@ func parseManifest(b []byte) (*Manifest, error) {
 }
 
 type tomlManifest struct {
-	SchemaVersion int                   `toml:"schema_version"`
-	Triggers      tomlTriggers          `toml:"triggers"`
-	WorkPolicies  []WorkPolicy          `toml:"work_policies"`
-	Companions    []CompanionSpec       `toml:"companions"`
-	MainDependsOn []ExtensionDependency `toml:"main_depends_on"`
-	Extensions    []ExtensionSpec       `toml:"extensions"`
+	Operations          []Operation                `toml:"operations"`
+	SchemaVersion       int                        `toml:"schema_version"`
+	Triggers            tomlTriggers               `toml:"triggers"`
+	WorkPolicies        []WorkPolicy               `toml:"work_policies"`
+	ExclusiveOperations *ExclusiveOperationsConfig `toml:"exclusive_operations"`
+	Companions          []CompanionSpec            `toml:"companions"`
+	MainDependsOn       []ExtensionDependency      `toml:"main_depends_on"`
+	Extensions          []ExtensionSpec            `toml:"extensions"`
 }
 
 type tomlTriggers struct {
@@ -1587,12 +1828,14 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("unsupported TOML field(s): %s", strings.Join(keys, ", "))
 	}
 	return &Manifest{
-		SchemaVersion: raw.SchemaVersion,
-		EventTriggers: raw.Triggers.Event,
-		WorkPolicies:  raw.WorkPolicies,
-		Companions:    raw.Companions,
-		MainDependsOn: raw.MainDependsOn,
-		Extensions:    raw.Extensions,
+		Operations:          raw.Operations,
+		SchemaVersion:       raw.SchemaVersion,
+		EventTriggers:       raw.Triggers.Event,
+		WorkPolicies:        raw.WorkPolicies,
+		ExclusiveOperations: raw.ExclusiveOperations,
+		Companions:          raw.Companions,
+		MainDependsOn:       raw.MainDependsOn,
+		Extensions:          raw.Extensions,
 	}, nil
 }
 
@@ -1624,6 +1867,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
 	}
+	if err := m.validateOperations(plan); err != nil {
+		return err
+	}
 	if m.SchemaVersion != 0 && m.SchemaVersion != 1 {
 		return fmt.Errorf("schema_version: unsupported version %d; supported versions: 1", m.SchemaVersion)
 	}
@@ -1647,6 +1893,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if m.RetryPolicy != nil {
 		if err := validateAppRetryPolicy(m.RetryPolicy); err != nil {
+			return err
+		}
+	}
+	if m.ExclusiveOperations != nil {
+		if err := m.ExclusiveOperations.Validate(); err != nil {
 			return err
 		}
 	}
@@ -1892,8 +2143,8 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("database[%d]: env: %w", i, problem)
 		}
 		access := dependency.EffectiveAccess()
-		if access != "read_write" && access != "read_only" {
-			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only}", i, access)
+		if access != "read_write" && access != "read_only" && access != "migration" {
+			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration}", i, access)
 		}
 		// A database dependency targets one environment variable on one
 		// workload. Different databases must not silently compete for the
@@ -2030,6 +2281,9 @@ func supportedKindsList() string {
 // The cost is one extra allocation per trigger per manifest apply;
 // negligible relative to the apid round-trip.
 func (t Trigger) validateKindConfig(idx int) error {
+	if _, present := t.Config["queue_binding_id"]; present {
+		return fmt.Errorf("trigger[%d]: queue_binding_id is reserved for binding-owned consumers", idx)
+	}
 	switch t.Kind {
 	case TriggerKindCron:
 		if _, err := sched.ParseSchedule(t.Schedule); err != nil {

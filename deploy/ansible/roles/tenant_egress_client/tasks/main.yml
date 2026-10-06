@@ -85,7 +85,9 @@
       notify: restart faas tenant egress tunnel
 
     # The gateway is optional in inventory: an operator who manages it by
-    # hand registers the key printed below instead.
+    # hand registers the key printed below instead. delegate_to is templated
+    # before `when` (ansible-core 2.21), so it must resolve even without the
+    # group; production-us rc.241 node join failed on the bare [0] index.
     - name: tenant_egress_client — register this node with the gateway
       ansible.builtin.template:
         src: peer.conf.j2
@@ -93,13 +95,13 @@
         owner: root
         group: root
         mode: "0600"
-      delegate_to: "{{ groups['tenant_egress_gateway'][0] }}"
+      delegate_to: "{{ (groups['tenant_egress_gateway'] | default([]) + [inventory_hostname]) | first }}"
       when: groups['tenant_egress_gateway'] | default([]) | length > 0
       register: faas_tenant_egress_peer
 
     - name: tenant_egress_client — apply the peer on the gateway  # noqa: no-handler (handlers only fire at play end; the tunnel starts below and needs a live peer)
       ansible.builtin.command: /usr/local/sbin/faas-tenant-egress-sync
-      delegate_to: "{{ groups['tenant_egress_gateway'][0] }}"
+      delegate_to: "{{ (groups['tenant_egress_gateway'] | default([]) + [inventory_hostname]) | first }}"
       when: faas_tenant_egress_peer is changed
       changed_when: true
 

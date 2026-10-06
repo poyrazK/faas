@@ -797,7 +797,7 @@ func (c *LocalCacheBackend) openCache(key string) (io.ReadCloser, bool) {
 	// a frequently restored app layer was evicted merely because it had been
 	// downloaded before an inactive layer.
 	c.touchCacheFile(path)
-	return f, true
+	return &cacheFileReader{File: f, cache: c}, true
 }
 
 // touchCacheFile queues the mtime update used by the byte-budget eviction
@@ -891,7 +891,43 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 	if err != nil {
 		return nil, fmt.Errorf("cache open %q: %w", path, err)
 	}
-	return f, nil
+	return &cacheFileReader{File: f, cache: c}, nil
+}
+
+// cacheFileReader can retain its opened inode without another full copy.
+// Serialize the link with this backend's eviction/refresh, then verify inode
+// identity because other daemons also share and can replace the cache path.
+type cacheFileReader struct {
+	*os.File
+	cache *LocalCacheBackend
+}
+
+func (r *cacheFileReader) LinkTo(path string) error {
+	r.cache.mu.Lock()
+	defer r.cache.mu.Unlock()
+	return linkOpenCacheFile(r.File, path)
+}
+
+func linkOpenCacheFile(file *os.File, path string) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("cache stat opened file: %w", err)
+	}
+	if !opened.Mode().IsRegular() {
+		return fmt.Errorf("cache link: opened file is not regular")
+	}
+	if err := os.Link(file.Name(), path); err != nil {
+		return fmt.Errorf("cache retain opened file: %w", err)
+	}
+	linked, err := os.Lstat(path)
+	if err != nil || !os.SameFile(opened, linked) {
+		_ = os.Remove(path)
+		if err != nil {
+			return fmt.Errorf("cache stat retained file: %w", err)
+		}
+		return fmt.Errorf("cache retain opened file: cache path was replaced")
+	}
+	return nil
 }
 
 // cacheTempReader removes an oversized, non-cached materialization when the
@@ -899,6 +935,10 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 type cacheTempReader struct {
 	*os.File
 	path string
+}
+
+func (r *cacheTempReader) LinkTo(path string) error {
+	return linkOpenCacheFile(r.File, path)
 }
 
 func (r *cacheTempReader) Close() error {

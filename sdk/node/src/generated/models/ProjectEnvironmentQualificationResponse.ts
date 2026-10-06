@@ -7,6 +7,10 @@ import type { ProjectEnvironmentQualificationCheck } from './ProjectEnvironmentQ
  * Non-secret, 24-hour qualification receipt for an immutable release set and the exact source configuration and per-workload secret revision snapshots probed.
  */
 export type ProjectEnvironmentQualificationResponse = {
+  /**
+   * Immutable per-workload fingerprints bound to this qualification receipt.
+   */
+  workload_config_hashes?: Record<string, string>;
   id: string;
   environment: string;
   release_set_id: string;

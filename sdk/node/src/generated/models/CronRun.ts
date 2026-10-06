@@ -23,9 +23,9 @@ export type CronRun = {
    */
   duration_ms?: number | null;
   /**
-   * Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget was exhausted; `running` means the run has not reached a terminal state yet. Branch on this, never on `error`.
+   * Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget was exhausted; `running` means the run has not reached a terminal state yet; `uncertain` means delivery may have reached the app without a completion receipt. Branch on this, never on `error`.
    */
-  outcome: 'success' | 'failed' | 'timeout' | 'dead_letter' | 'running' | 'cancelled';
+  outcome: 'success' | 'failed' | 'timeout' | 'dead_letter' | 'running' | 'cancelled' | 'uncertain';
   /**
    * Dispatch attempts for this run; greater than 1 means it was retried.
    */

@@ -1,0 +1,6 @@
+# github.com/onebox-faas/faas/pkg/fcvm.test
+ld: warning: '/private/tmp/mpb-d4841725/go-link-3054686738/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/onebox-faas/faas/pkg/fcvm	22.580s
+# github.com/onebox-faas/faas/cmd/vmmd.test
+ld: warning: '/private/tmp/mpb-d4841725/go-link-601027317/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/onebox-faas/faas/cmd/vmmd	11.231s

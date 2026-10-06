@@ -1,10 +1,11 @@
 from typing import Literal
 
-FlagDecisionSource = Literal["configuration", "fallback"]
+FlagDecisionSource = Literal["configuration", "fallback", "inherited"]
 
 FLAG_DECISION_SOURCE_VALUES: set[FlagDecisionSource] = {
     "configuration",
     "fallback",
+    "inherited",
 }
 
 

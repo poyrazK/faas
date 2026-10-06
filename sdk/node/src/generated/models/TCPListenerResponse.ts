@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TCPListenerTLSConfig } from './TCPListenerTLSConfig.js';
 /**
  * One app-owned raw TCP listener with a stable public endpoint.
  */
@@ -26,5 +27,6 @@ export type TCPListenerResponse = {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  tls: TCPListenerTLSConfig;
 };
 

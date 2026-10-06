@@ -139,6 +139,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		canarySpec             *api.CanaryPresetSpec
 		rollbackOn5xx          *bool
 		disableStartupCPUBoost *bool
+		healthcheck            *api.DeploymentHealthcheck
 		noTriggers             bool
 		ann                    annotationForm
 		stagedManifest         sourceRefManifestStaged
@@ -160,7 +161,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 
 	for {
 		part, err := mr.NextPart()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -292,6 +293,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			disableStartupCPUBoost = &value
+		case "healthcheck":
+			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
+			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &healthcheck) != nil {
+				api.WriteProblem(w, api.ErrValidation("healthcheck must be a valid startup probe object"))
+				return
+			}
 		case "no_triggers":
 			noTriggers = isFlagSet(part)
 		case "reason":
@@ -337,6 +344,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -363,7 +376,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	rollout, prob := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -488,42 +501,45 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// dockerfile deploys and produced misleading split-by-source
 		// dashboards.
 		_, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-			Activity:               s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": string(kind), "scope": rollout.Scope}),
-			AppID:                  app.ID,
-			Kind:                   kind,
-			SourcePath:             sourcePath,
-			SourceBytes:            sourceBytes,
-			SourceRoot:             sourceRoot,
-			SourceURL:              sourceURL,
-			CommitSHA:              commitSHA,
-			Scope:                  rollout.Scope,
-			Handler:                handler,
-			FunctionRuntime:        functionRuntimeForApp(app),
-			LogSpool:               spoolRoot(),
-			Log:                    s.log,
-			ActorUserID:            acct.ID,
-			ActorVia:               routeKindForRequest(r),
-			ActorFromIP:            middleware.ClientIP(r),
-			Workflows:              marshalWorkflowDefinitions(workflows),
-			Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
-			Reason:                 ann.Reason,
-			Tag:                    ann.Tag,
-			DeployedBy:             ann.DeployedBy,
-			PRNumber:               ann.PRNumber,
-			TrafficPercent:         rollout.TrafficPercent,
-			TrafficPercentExplicit: rollout.TrafficPercentExplicit,
-			RollbackOn5xx:          rollout.RollbackOn5xx,
-			DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
-			CanaryPreset:           rollout.CanaryPreset,
-			CanaryStep:             rollout.CanaryStep,
-			CanaryTotalSteps:       rollout.CanaryTotalSteps,
-			CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
-			CanaryStages:           rollout.CanaryStages,
-			ReleaseCommand:         releaseCommand.command,
-			ReleaseCommandShell:    releaseCommand.shell,
-			HostingObserver:        s.ops,
-			HostingFlow:            hostingFlow,
-			ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && trafficPercent == nil && canarySpec == nil,
+			OperationDefinitions:      sourceOperationSpecs(manifest),
+			OperationAdmissionEnabled: s.operationDefinitionAdmission(app.AccountID, app.ID, rollout.Scope),
+			Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": string(kind), "scope": rollout.Scope}),
+			AppID:                     app.ID,
+			Kind:                      kind,
+			SourcePath:                sourcePath,
+			SourceBytes:               sourceBytes,
+			SourceRoot:                sourceRoot,
+			SourceURL:                 sourceURL,
+			CommitSHA:                 commitSHA,
+			Scope:                     rollout.Scope,
+			Handler:                   handler,
+			FunctionRuntime:           functionRuntimeForApp(app),
+			LogSpool:                  spoolRoot(),
+			Log:                       s.log,
+			ActorUserID:               acct.ID,
+			ActorVia:                  routeKindForRequest(r),
+			ActorFromIP:               middleware.ClientIP(r),
+			Workflows:                 marshalWorkflowDefinitions(workflows),
+			Sidecars:                  append(json.RawMessage(nil), rollout.Sidecars...),
+			Reason:                    ann.Reason,
+			Tag:                       ann.Tag,
+			DeployedBy:                ann.DeployedBy,
+			PRNumber:                  ann.PRNumber,
+			TrafficPercent:            rollout.TrafficPercent,
+			TrafficPercentExplicit:    rollout.TrafficPercentExplicit,
+			RollbackOn5xx:             rollout.RollbackOn5xx,
+			DisableStartupCPUBoost:    rollout.DisableStartupCPUBoost,
+			OverrideHealthcheck:       append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+			CanaryPreset:              rollout.CanaryPreset,
+			CanaryStep:                rollout.CanaryStep,
+			CanaryTotalSteps:          rollout.CanaryTotalSteps,
+			CanaryStepStartedAt:       rollout.CanaryStepStartedAt,
+			CanaryStages:              rollout.CanaryStages,
+			ReleaseCommand:            releaseCommand.command,
+			ReleaseCommandShell:       releaseCommand.shell,
+			HostingObserver:           s.ops,
+			HostingFlow:               hostingFlow,
+			ServiceRollout:            app.Manifest.ExecutionMode == api.ExecutionModeService && trafficPercent == nil && canarySpec == nil,
 		})
 		if err != nil {
 			s.writeDeploymentCreateError(w, err)
@@ -730,6 +746,18 @@ func scanForStatefulShape(path string, dockerfileFlag bool) *api.Problem {
 // must not make a selected app look stateful merely because they contain a
 // top-level data/ or db/ directory of their own.
 func scanForStatefulShapeAtRoot(path string, dockerfileFlag bool, sourceRoot string) *api.Problem {
+	return scanForStatefulShapeWithDockerfileAtRoot(path, dockerfileFlag, sourceRoot, "Dockerfile")
+}
+
+// scanForStatefulShapeWithDockerfileAtRoot checks the exact Dockerfile selected
+// for a reviewed build. A root Dockerfile cannot substitute for that file.
+func scanForStatefulShapeWithDockerfileAtRoot(path string, dockerfileFlag bool, sourceRoot, dockerfilePath string) *api.Problem {
+	if dockerfilePath == "" {
+		dockerfilePath = "Dockerfile"
+	}
+	if filepath.Clean(dockerfilePath) != dockerfilePath || dockerfilePath == "." || escapesArchiveRoot(dockerfilePath) || strings.ContainsAny(dockerfilePath, "\\\x00") {
+		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad Dockerfile path", "Dockerfile must be a relative path within the selected source root")
+	}
 	logicalRoot, rootErr := archiveLogicalRoot(path, sourceRoot)
 	if rootErr != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error())
@@ -749,7 +777,7 @@ func scanForStatefulShapeAtRoot(path string, dockerfileFlag bool, sourceRoot str
 	var dockerfileBytes []byte
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -767,11 +795,17 @@ func scanForStatefulShapeAtRoot(path string, dockerfileFlag bool, sourceRoot str
 				return api.ErrStatelessOnlyViolation("tarball", reason)
 			}
 		}
-		// Only read the Dockerfile at the selected source root. We do this
+		// Only read the selected Dockerfile within the source root. We do this
 		// lazily — dockerfileMaxBytes caps the read so a hostile
 		// heredoc can't pin apid.
-		if rel == "Dockerfile" {
-			dockerfileBytes, _ = io.ReadAll(io.LimitReader(tr, dockerfileMaxBytes))
+		if rel == dockerfilePath {
+			if hdr.Typeflag != tar.TypeReg || hdr.Size > dockerfileMaxBytes {
+				return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad Dockerfile", "selected Dockerfile must be a bounded regular file")
+			}
+			dockerfileBytes, err = io.ReadAll(io.LimitReader(tr, dockerfileMaxBytes))
+			if err != nil {
+				return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad Dockerfile", "selected Dockerfile is incomplete")
+			}
 		}
 	}
 
@@ -783,7 +817,7 @@ func scanForStatefulShapeAtRoot(path string, dockerfileFlag bool, sourceRoot str
 	if dockerfileFlag && len(dockerfileBytes) == 0 {
 		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid,
 			"Dockerfile missing",
-			"`dockerfile=true` was set but no Dockerfile was found at the selected source root")
+			"a Dockerfile build was requested but the selected Dockerfile was not found within the source root")
 	}
 	if len(dockerfileBytes) > 0 {
 		if reason := scanDockerfileForStatefulShape(dockerfileBytes); reason != "" {
@@ -825,7 +859,7 @@ func archiveHasRootDockerfileAtRoot(path, sourceRoot string) (bool, error) {
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return false, nil
 		}
 		if err != nil {
@@ -892,7 +926,7 @@ func archiveHasSourceRoot(path, sourceRoot string) (bool, error) {
 	prefix := strings.TrimSuffix(logicalRoot, "/") + "/"
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return false, nil
 		}
 		if err != nil {

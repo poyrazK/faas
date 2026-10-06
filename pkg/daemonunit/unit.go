@@ -108,6 +108,8 @@ type Unit struct {
 	// Empty omits the directive.
 	MemoryHigh            string
 	MemoryMax             string
+	CPUQuota              string // aggregate process and subprocess CPU ceiling
+	TasksMax              string // aggregate process/thread ceiling
 	Delegate              bool
 	CapabilityBoundingSet []string
 	AmbientCapabilities   []string
@@ -137,6 +139,8 @@ type Unit struct {
 	// Filesystem
 	ReadOnlyPaths        []string
 	ReadWritePaths       []string
+	StateDirectory       string
+	StateDirectoryMode   string
 	RuntimeDirectory     string // legacy generic field; vmmd uses host tmpfiles instead
 	RuntimeDirectoryMode string
 
@@ -152,7 +156,7 @@ func BoolPtr(b bool) *bool { return &b }
 // then [Service], then [Install] — matching every shipped faas unit.
 // Inside [Service], field ordering is fixed (Type → User → Group →
 // ExecStartPre → ExecStart → Restart → RestartSec →
-// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → Delegate →
+// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → CPUQuota → TasksMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
@@ -206,6 +210,8 @@ func (u Unit) Render() []byte {
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
+	writeStringKV(&buf, "CPUQuota", u.CPUQuota)
+	writeStringKV(&buf, "TasksMax", u.TasksMax)
 	if u.Delegate {
 		buf.WriteString("Delegate=yes\n")
 	}
@@ -318,6 +324,12 @@ func (u Unit) Render() []byte {
 
 	writeStringList(&buf, "ReadOnlyPaths", u.ReadOnlyPaths)
 	writeStringList(&buf, "ReadWritePaths", u.ReadWritePaths)
+	if u.StateDirectory != "" {
+		buf.WriteString("StateDirectory=" + u.StateDirectory + "\n")
+		if u.StateDirectoryMode != "" {
+			buf.WriteString("StateDirectoryMode=" + u.StateDirectoryMode + "\n")
+		}
+	}
 	if u.RuntimeDirectory != "" {
 		buf.WriteString("RuntimeDirectory=")
 		buf.WriteString(u.RuntimeDirectory)
@@ -508,6 +520,10 @@ func apply(u *Unit, section, key, val string) error {
 		u.MemoryHigh = val
 	case "[Service]/MemoryMax":
 		u.MemoryMax = val
+	case "[Service]/CPUQuota":
+		u.CPUQuota = val
+	case "[Service]/TasksMax":
+		u.TasksMax = val
 	case "[Service]/Delegate":
 		u.Delegate = parseYes(val)
 	case "[Service]/CapabilityBoundingSet":
@@ -573,6 +589,10 @@ func apply(u *Unit, section, key, val string) error {
 		u.ReadOnlyPaths = strings.Fields(val)
 	case "[Service]/ReadWritePaths":
 		u.ReadWritePaths = strings.Fields(val)
+	case "[Service]/StateDirectory":
+		u.StateDirectory = val
+	case "[Service]/StateDirectoryMode":
+		u.StateDirectoryMode = val
 	case "[Service]/RuntimeDirectory":
 		u.RuntimeDirectory = val
 	case "[Service]/RuntimeDirectoryMode":
@@ -679,6 +699,8 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "Slice", a.Slice, b.Slice)
 	add("[Service]", "MemoryHigh", a.MemoryHigh, b.MemoryHigh)
 	add("[Service]", "MemoryMax", a.MemoryMax, b.MemoryMax)
+	add("[Service]", "CPUQuota", a.CPUQuota, b.CPUQuota)
+	add("[Service]", "TasksMax", a.TasksMax, b.TasksMax)
 	add("[Service]", "Delegate", boolStr(a.Delegate), boolStr(b.Delegate))
 	add("[Service]", "CapabilityBoundingSet",
 		fmt.Sprintf("%v|%d", sortClone(a.CapabilityBoundingSet), len(a.CapabilityBoundingSet)),
@@ -714,6 +736,8 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "ReadWritePaths",
 		fmt.Sprintf("%v", sortClone(a.ReadWritePaths)),
 		fmt.Sprintf("%v", sortClone(b.ReadWritePaths)))
+	add("[Service]", "StateDirectory", a.StateDirectory, b.StateDirectory)
+	add("[Service]", "StateDirectoryMode", a.StateDirectoryMode, b.StateDirectoryMode)
 	add("[Service]", "RuntimeDirectory", a.RuntimeDirectory, b.RuntimeDirectory)
 	add("[Service]", "RuntimeDirectoryMode", a.RuntimeDirectoryMode, b.RuntimeDirectoryMode)
 	add("[Install]", "WantedBy", a.WantedBy, b.WantedBy)

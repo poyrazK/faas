@@ -108,7 +108,15 @@ def sync_detailed(
     different type, schema version, or data returns 409. Older snake_case input attribute
     names remain accepted during migration. API keys require
     `events:publish`, `deploy:write`, or `admin`.
-    Matching and delivery are asynchronous follow-up work.
+    Matching and delivery are asynchronous follow-up work. The Location header
+    and receipt_url point to GET /v1/events/receipt for delivery evidence.
+    Identical identity retries return the original accepted_at timestamp,
+    including when retained customer event storage is full. New identities
+    exceeding the account count or byte budget return 429 with code
+    event_storage_capacity_exhausted, limit/observed and Retry-After. No ledger
+    or receipt is committed on rejection. Storage is released by receipt
+    retention pruning, not by delivery completion. GET /v1/events/storage
+    reports current usage and plan limits.
 
     Args:
         idempotency_key (str | Unset):
@@ -150,7 +158,15 @@ def sync(
     different type, schema version, or data returns 409. Older snake_case input attribute
     names remain accepted during migration. API keys require
     `events:publish`, `deploy:write`, or `admin`.
-    Matching and delivery are asynchronous follow-up work.
+    Matching and delivery are asynchronous follow-up work. The Location header
+    and receipt_url point to GET /v1/events/receipt for delivery evidence.
+    Identical identity retries return the original accepted_at timestamp,
+    including when retained customer event storage is full. New identities
+    exceeding the account count or byte budget return 429 with code
+    event_storage_capacity_exhausted, limit/observed and Retry-After. No ledger
+    or receipt is committed on rejection. Storage is released by receipt
+    retention pruning, not by delivery completion. GET /v1/events/storage
+    reports current usage and plan limits.
 
     Args:
         idempotency_key (str | Unset):
@@ -187,7 +203,15 @@ async def asyncio_detailed(
     different type, schema version, or data returns 409. Older snake_case input attribute
     names remain accepted during migration. API keys require
     `events:publish`, `deploy:write`, or `admin`.
-    Matching and delivery are asynchronous follow-up work.
+    Matching and delivery are asynchronous follow-up work. The Location header
+    and receipt_url point to GET /v1/events/receipt for delivery evidence.
+    Identical identity retries return the original accepted_at timestamp,
+    including when retained customer event storage is full. New identities
+    exceeding the account count or byte budget return 429 with code
+    event_storage_capacity_exhausted, limit/observed and Retry-After. No ledger
+    or receipt is committed on rejection. Storage is released by receipt
+    retention pruning, not by delivery completion. GET /v1/events/storage
+    reports current usage and plan limits.
 
     Args:
         idempotency_key (str | Unset):
@@ -227,7 +251,15 @@ async def asyncio(
     different type, schema version, or data returns 409. Older snake_case input attribute
     names remain accepted during migration. API keys require
     `events:publish`, `deploy:write`, or `admin`.
-    Matching and delivery are asynchronous follow-up work.
+    Matching and delivery are asynchronous follow-up work. The Location header
+    and receipt_url point to GET /v1/events/receipt for delivery evidence.
+    Identical identity retries return the original accepted_at timestamp,
+    including when retained customer event storage is full. New identities
+    exceeding the account count or byte budget return 429 with code
+    event_storage_capacity_exhausted, limit/observed and Retry-After. No ledger
+    or receipt is committed on rejection. Storage is released by receipt
+    retention pruning, not by delivery completion. GET /v1/events/storage
+    reports current usage and plan limits.
 
     Args:
         idempotency_key (str | Unset):

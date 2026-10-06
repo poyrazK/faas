@@ -17,6 +17,8 @@ class PublishEventResponse:
     id: str
     accepted_at: datetime.datetime
     account_id: UUID
+    receipt_url: str
+    """Account-authenticated relative URL for this event receipt."""
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
@@ -25,6 +27,8 @@ class PublishEventResponse:
 
         account_id = str(self.account_id)
 
+        receipt_url = self.receipt_url
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -32,6 +36,7 @@ class PublishEventResponse:
                 "id": id,
                 "accepted_at": accepted_at,
                 "account_id": account_id,
+                "receipt_url": receipt_url,
             }
         )
 
@@ -46,10 +51,13 @@ class PublishEventResponse:
 
         account_id = UUID(d.pop("account_id"))
 
+        receipt_url = d.pop("receipt_url")
+
         publish_event_response = cls(
             id=id,
             accepted_at=accepted_at,
             account_id=account_id,
+            receipt_url=receipt_url,
         )
 
         return publish_event_response

@@ -1,0 +1,141 @@
+-- All mutation SQL is fixed SQLC input. Names are quoted by server format %I;
+-- option tokens are selected from constant TRUE/FALSE values, never raw input.
+-- name: MembershipSchemaExists :one
+SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='gregale_copy_memberships')::boolean;
+
+-- name: InstallMembershipSchema :exec
+CREATE SCHEMA gregale_copy_memberships;
+
+-- name: InstallMembershipReceipt :exec
+CREATE TABLE gregale_copy_memberships.receipt (
+ singleton boolean PRIMARY KEY CHECK (singleton),
+ version integer NOT NULL CHECK (version=1),
+ plan jsonb NOT NULL, applied_at timestamptz NOT NULL
+);
+
+-- name: PrivateMembershipReceipt :one
+SELECT EXISTS (
+ SELECT 1 FROM pg_catalog.pg_namespace n JOIN pg_catalog.pg_class c ON c.relnamespace=n.oid
+ WHERE n.nspname='gregale_copy_memberships' AND c.relname='receipt' AND c.relkind='r'
+ AND n.nspowner=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=current_user)
+ AND c.relowner=n.nspowner AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity
+ AND NOT EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE(n.nspacl,pg_catalog.acldefault('n',n.nspowner))) a WHERE a.grantee<>n.nspowner)
+ AND NOT EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE(c.relacl,pg_catalog.acldefault('r',c.relowner))) a WHERE a.grantee<>c.relowner)
+ AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t WHERE t.tgrelid=c.oid)
+ AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_rewrite r WHERE r.ev_class=c.oid)
+ AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p WHERE p.pronamespace=n.oid)
+ AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class extra WHERE extra.relnamespace=n.oid AND extra.oid<>c.oid AND extra.relkind<>'i')
+ AND (SELECT pg_catalog.array_agg(a.attname::text ORDER BY a.attnum) FROM pg_catalog.pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped)
+   = ARRAY['singleton','version','plan','applied_at']::text[]
+ AND (SELECT pg_catalog.array_agg(a.atttypid::regtype::text ORDER BY a.attnum) FROM pg_catalog.pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped)
+   = ARRAY['boolean','integer','jsonb','timestamp with time zone']::text[]
+ AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND (a.attisdropped OR NOT a.attnotnull OR a.attgenerated<>''))
+ AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attrdef a WHERE a.adrelid=c.oid)
+)::boolean;
+
+-- name: InstallMembershipReadFunction :exec
+CREATE OR REPLACE FUNCTION pg_temp.gregale_copy_memberships() RETURNS jsonb
+LANGUAGE sql SECURITY INVOKER SET search_path=pg_catalog AS $$
+ SELECT COALESCE(jsonb_agg(jsonb_build_object(
+ 'role_oid',a.roleid::bigint,'role',r.rolname,'member_oid',a.member::bigint,'member',m.rolname,
+ 'grantor_oid',a.grantor::bigint,'grantor',g.rolname,'admin',a.admin_option,
+ 'inherit',a.inherit_option,'set',a.set_option) ORDER BY a.roleid,a.member,a.grantor),'[]'::jsonb)
+ FROM pg_catalog.pg_auth_members a JOIN pg_catalog.pg_roles r ON r.oid=a.roleid
+ JOIN pg_catalog.pg_roles m ON m.oid=a.member JOIN pg_catalog.pg_roles g ON g.oid=a.grantor
+$$;
+
+-- name: InstallMembershipApplyFunction :exec
+CREATE OR REPLACE FUNCTION pg_temp.gregale_apply_memberships(input jsonb) RETURNS timestamptz
+LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
+DECLARE previous gregale_copy_memberships.receipt%ROWTYPE; seed gregale_copy_roles.receipt%ROWTYPE;
+ actor pg_catalog.pg_roles%ROWTYPE; x jsonb; s jsonb; expected_roles jsonb; desired jsonb;
+ before jsonb; actual jsonb; old_admin boolean; desired_admin boolean; at timestamptz;
+BEGIN
+ IF input->>'version' IS DISTINCT FROM '1' OR current_user<>session_user OR
+   current_setting('server_version_num')::integer<160000 OR
+   current_setting('server_version_num')::integer/10000<>(input->'seed_plan'->'target'->'Scope'->>'PostgresMajor')::integer OR
+   current_database() IS DISTINCT FROM input->'seed_plan'->'target'->>'DatabaseName' OR
+   (SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database()) IS DISTINCT FROM (input->'seed_plan'->'target'->>'DatabaseOID')::oid THEN
+  RAISE EXCEPTION 'invalid membership target' USING ERRCODE='22023';
+ END IF;
+ SELECT * INTO actor FROM pg_catalog.pg_roles WHERE rolname=current_user;
+ IF actor.oid IS DISTINCT FROM (input->'seed_plan'->'target'->>'RoleOID')::oid OR
+   actor.rolname IS DISTINCT FROM input->'seed_plan'->'target'->>'RoleName' THEN
+  RAISE EXCEPTION 'membership actor changed' USING ERRCODE='55000';
+ END IF;
+ LOCK TABLE gregale_copy_roles.receipt IN ACCESS SHARE MODE;
+ SELECT * INTO seed FROM gregale_copy_roles.receipt WHERE singleton;
+ IF NOT FOUND OR seed.version<>1 OR seed.plan IS DISTINCT FROM input->'seed_plan' OR
+   seed.created_roles IS DISTINCT FROM input->'seed_receipt'->'created_roles' OR
+   seed.seeded_at IS DISTINCT FROM (input->'seed_receipt'->>'seeded_at')::timestamptz THEN
+  RAISE EXCEPTION 'original role seed changed' USING ERRCODE='55000';
+ END IF;
+ expected_roles:=seed.plan->'baseline';
+ FOR x IN SELECT value FROM jsonb_array_elements(seed.created_roles) LOOP
+  SELECT value->'source' INTO s FROM jsonb_array_elements(seed.plan->'roles') WHERE (value->'source'->>'oid')::oid=(x->>'source_oid')::oid;
+  IF s IS NULL THEN RAISE EXCEPTION 'role seed receipt changed' USING ERRCODE='55000'; END IF;
+  expected_roles:=expected_roles||jsonb_build_array(s||jsonb_build_object('oid',(x->>'target_oid')::bigint,'login',false));
+ END LOOP;
+ PERFORM pg_temp.gregale_assert_seed_roles(expected_roles);
+ desired:=COALESCE(NULLIF(input->'desired','null'::jsonb),'[]'::jsonb);
+ LOCK TABLE gregale_copy_memberships.receipt IN ACCESS EXCLUSIVE MODE;
+ SELECT * INTO previous FROM gregale_copy_memberships.receipt WHERE singleton;
+ IF FOUND THEN
+  IF previous.version<>1 OR previous.plan IS DISTINCT FROM input OR pg_temp.gregale_copy_memberships() IS DISTINCT FROM desired THEN
+   RAISE EXCEPTION 'membership receipt or grant graph changed' USING ERRCODE='55000';
+  END IF;
+  RETURN previous.applied_at;
+ END IF;
+ IF pg_temp.gregale_copy_memberships() IS DISTINCT FROM COALESCE(NULLIF(input->'baseline','null'::jsonb),'[]'::jsonb) THEN
+  RAISE EXCEPTION 'membership baseline changed' USING ERRCODE='55000';
+ END IF;
+ LOOP
+  before:=pg_temp.gregale_copy_memberships();
+  EXIT WHEN before=desired;
+  -- Establish desired grants in dependency order. Existing ADMIN remains until
+  -- dependent removals/desired replacements are resolved; no new ADMIN is added
+  -- unless it was captured in the source. Explicit grantors avoid default drift.
+  FOR x IN SELECT value FROM jsonb_array_elements(desired) LOOP
+   SELECT a.admin_option INTO old_admin FROM pg_catalog.pg_auth_members a
+    WHERE a.roleid=(x->>'role_oid')::oid AND a.member=(x->>'member_oid')::oid AND a.grantor=(x->>'grantor_oid')::oid;
+   desired_admin:=(x->>'admin')::boolean OR COALESCE(old_admin,false);
+   IF EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members a WHERE a.roleid=(x->>'role_oid')::oid AND a.member=(x->>'member_oid')::oid AND a.grantor=(x->>'grantor_oid')::oid
+     AND a.admin_option=desired_admin AND a.inherit_option=(x->>'inherit')::boolean AND a.set_option=(x->>'set')::boolean) THEN CONTINUE; END IF;
+   BEGIN
+    EXECUTE pg_catalog.format('GRANT %I TO %I WITH ADMIN %s, INHERIT %s, SET %s GRANTED BY %I',x->>'role',x->>'member',
+     CASE WHEN desired_admin THEN 'TRUE' ELSE 'FALSE' END,
+     CASE WHEN (x->>'inherit')::boolean THEN 'TRUE' ELSE 'FALSE' END,
+     CASE WHEN (x->>'set')::boolean THEN 'TRUE' ELSE 'FALSE' END,x->>'grantor');
+   EXCEPTION WHEN insufficient_privilege OR dependent_objects_still_exist OR invalid_grant_operation THEN NULL;
+   END;
+  END LOOP;
+  -- RESTRICT and fixed-point leaf removal preserve desired dependent grants.
+  -- Never use CASCADE to make a partial final graph look successful.
+  FOR x IN SELECT value FROM jsonb_array_elements(pg_temp.gregale_copy_memberships()) LOOP
+   IF EXISTS(SELECT 1 FROM jsonb_array_elements(desired) d WHERE d.value->>'role_oid'=x->>'role_oid' AND d.value->>'member_oid'=x->>'member_oid' AND d.value->>'grantor_oid'=x->>'grantor_oid') THEN CONTINUE; END IF;
+   BEGIN
+    EXECUTE pg_catalog.format('REVOKE %I FROM %I GRANTED BY %I RESTRICT',x->>'role',x->>'member',x->>'grantor');
+   EXCEPTION WHEN insufficient_privilege OR dependent_objects_still_exist THEN NULL;
+   END;
+  END LOOP;
+  -- After graph changes, reduce previously held ADMIN options where requested.
+  FOR x IN SELECT value FROM jsonb_array_elements(desired) LOOP
+   IF (x->>'admin')::boolean OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members a WHERE a.roleid=(x->>'role_oid')::oid AND a.member=(x->>'member_oid')::oid AND a.grantor=(x->>'grantor_oid')::oid AND a.admin_option) THEN CONTINUE; END IF;
+   BEGIN
+    EXECUTE pg_catalog.format('REVOKE ADMIN OPTION FOR %I FROM %I GRANTED BY %I RESTRICT',x->>'role',x->>'member',x->>'grantor');
+   EXCEPTION WHEN insufficient_privilege OR dependent_objects_still_exist THEN NULL;
+   END;
+  END LOOP;
+  actual:=pg_temp.gregale_copy_memberships();
+  IF actual=before AND actual<>desired THEN
+   RAISE EXCEPTION 'exact membership authority unavailable' USING ERRCODE='42501';
+  END IF;
+ END LOOP;
+ PERFORM pg_temp.gregale_assert_seed_roles(expected_roles);
+ at:=clock_timestamp();
+ INSERT INTO gregale_copy_memberships.receipt(singleton,version,plan,applied_at) VALUES(true,1,input,at);
+ RETURN at;
+END $$;
+
+-- name: ApplyTargetMemberships :one
+SELECT pg_temp.gregale_apply_memberships(sqlc.arg(private_plan)::jsonb)::timestamptz AS applied_at;

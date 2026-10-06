@@ -2,21 +2,30 @@ package apihostingreceipt
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
 const (
-	SmokeErrorNotConfigured         = "smoke_not_configured"
-	SmokeErrorVerifierNotConfigured = "smoke_verifier_not_configured"
-	SmokeErrorAuthorizationFailed   = "smoke_authorization_failed"
-	SmokeErrorDeploymentMismatch    = "smoke_deployment_mismatch"
+	SmokeErrorNotConfigured            = "smoke_not_configured"
+	SmokeErrorVerifierNotConfigured    = "smoke_verifier_not_configured"
+	SmokeErrorAuthorizationFailed      = "smoke_authorization_failed"
+	SmokeErrorAuthorizationUnavailable = "smoke_authorization_unavailable"
+	SmokeErrorVerificationUnavailable  = "smoke_verification_unavailable"
+	SmokeErrorGatewayUnavailable       = "smoke_gateway_unavailable"
+	SmokeErrorTransportUnavailable     = "smoke_transport_unavailable"
+	SmokeErrorDeploymentMismatch       = "smoke_deployment_mismatch"
+	SmokeErrorResponseUnproven         = "smoke_response_unproven"
 )
 
 const (
@@ -24,6 +33,8 @@ const (
 	PlatformSmokeTokenHeader      = "X-Faas-Platform-Smoke-Token"
 	PlatformSmokeDeploymentHeader = "X-Faas-Platform-Smoke-Deployment"
 	ServedDeploymentHeader        = "X-Faas-Deployment-Id"
+	// ServedResponseHeader is gateway-authored only after an upstream response.
+	ServedResponseHeader = "X-Faas-Platform-Smoke-Response"
 )
 
 // Verifier performs the post-readiness public HTTP check. BaseURL is the
@@ -56,8 +67,30 @@ func (v Verifier) Verify(ctx context.Context, slug, path string) (SmokeResult, e
 // Production callers provide deploymentID and an Authorize callback; the
 // legacy Verify wrapper remains useful for hermetic/offline callers.
 func (v Verifier) VerifyDeployment(ctx context.Context, slug, path, deploymentID string) (SmokeResult, error) {
+	return v.verifyWithContract(ctx, slug, path, deploymentID, VerificationHTTPHealth)
+}
+
+// VerifyDeploymentRoute checks candidate reachability for TCP-ready images
+// that declare no HTTP health endpoint. It never establishes endpoint health.
+func (v Verifier) VerifyDeploymentRoute(ctx context.Context, slug, deploymentID string) (SmokeResult, error) {
+	return v.verifyWithContract(ctx, slug, "/", deploymentID, VerificationRouteConnectivity)
+}
+
+func (v Verifier) verifyWithContract(ctx context.Context, slug, path, deploymentID, verification string) (SmokeResult, error) {
+	result, err := v.verifyDeployment(ctx, slug, path, deploymentID, verification)
+	result.Verification = verification
+	if deploymentID != "" {
+		result.Authentication = AuthenticationPlatformChallenge
+	}
+	return result, err
+}
+
+func (v Verifier) verifyDeployment(ctx context.Context, slug, path, deploymentID, verification string) (SmokeResult, error) {
 	path = normalizePath(path)
 	result := SmokeResult{Status: SmokeSkipped, Path: path}
+	if verification == VerificationRouteConnectivity && strings.TrimSpace(deploymentID) == "" {
+		return failedSmoke(path, SmokeErrorDeploymentMismatch, fmt.Errorf("route verification requires a candidate deployment")), nil
+	}
 	if strings.TrimSpace(v.BaseURL) == "" {
 		if v.Required {
 			result.Status = SmokeFailed
@@ -68,6 +101,16 @@ func (v Verifier) VerifyDeployment(ctx context.Context, slug, path, deploymentID
 		}
 		return result, nil
 	}
+	origin, err := url.Parse(v.BaseURL)
+	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Host == "" {
+		return failedSmoke(path, SmokeErrorVerifierNotConfigured, fmt.Errorf("public hosting smoke origin must be an absolute HTTP or HTTPS URL")), nil
+	}
+	verifyCtx := ctx
+	cancel := func() {}
+	if v.Timeout > 0 {
+		verifyCtx, cancel = context.WithTimeout(ctx, v.Timeout)
+	}
+	defer cancel()
 
 	var token string
 	if deploymentID != "" {
@@ -80,8 +123,15 @@ func (v Verifier) VerifyDeployment(ctx context.Context, slug, path, deploymentID
 		}
 		token = base64.RawURLEncoding.EncodeToString(raw)
 		expiresAt := time.Now().UTC().Add(max(v.Timeout, 10*time.Second) + 5*time.Second)
-		if err := v.Authorize(ctx, deploymentID, token, expiresAt); err != nil {
-			return failedSmoke(path, SmokeErrorAuthorizationFailed, err), nil
+		authorizeCtx, authorizeCancel := challengePublicationContext(verifyCtx, v.RequestTimeout)
+		err := v.Authorize(authorizeCtx, deploymentID, token, expiresAt)
+		if err == nil {
+			err = authorizeCtx.Err()
+		}
+		authorizeCancel()
+		if err != nil {
+			unavailable := &ChallengePublicationError{Cause: err}
+			return SmokeResult{Status: SmokeSkipped, Path: path, ErrorCode: SmokeErrorAuthorizationUnavailable, Error: unavailable.Error()}, unavailable
 		}
 	}
 
@@ -93,43 +143,85 @@ func (v Verifier) VerifyDeployment(ctx context.Context, slug, path, deploymentID
 	if v.RequestTimeout > 0 {
 		requestTimeout = v.RequestTimeout
 	}
-	if requestTimeout > 0 {
+	if requestTimeout > 0 || deploymentID != "" {
 		copy := *client
-		copy.Timeout = requestTimeout
+		if requestTimeout > 0 {
+			copy.Timeout = requestTimeout
+		}
+		if deploymentID != "" {
+			// Candidate proofs apply to one response. Redirects cannot move
+			// a platform challenge to a different route, host or deployment.
+			copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		}
 		client = &copy
 	}
-	verifyCtx := ctx
-	cancel := func() {}
-	if v.Timeout > 0 {
-		verifyCtx, cancel = context.WithTimeout(ctx, v.Timeout)
-	}
-	defer cancel()
+	return v.verifyAttempts(verifyCtx, client, slug, path, deploymentID, token, verification)
+}
+
+func (v Verifier) verifyAttempts(ctx context.Context, client *http.Client, slug, path, deploymentID, token, verification string) (SmokeResult, error) {
+	var result SmokeResult
+	var attemptErr error
 	started := time.Now()
+	recoveryDeadline, _ := ctx.Value(verificationRecoveryDeadlineKey{}).(time.Time)
+	proven := false
 	for {
-		result = verifyOnce(verifyCtx, client, v.BaseURL, v.AppsDomain, slug, path, deploymentID, token)
+		if result.Status != "" && verificationContextExpired(ctx) {
+			return result, attemptErr
+		}
+		attemptCtx := ctx
+		attemptCancel := func() {}
+		if !proven && !recoveryDeadline.IsZero() {
+			attemptCtx, attemptCancel = context.WithDeadline(ctx, recoveryDeadline)
+		}
+		result, attemptErr = verifyOnce(attemptCtx, client, v.BaseURL, v.AppsDomain, slug, path, deploymentID, token, verification)
+		attemptCancel()
+		proven = attemptErr == nil
 		result.LatencyMS = time.Since(started).Milliseconds()
 		if result.Status == SmokeVerified || v.Timeout <= 0 || !retryableSmoke(result) {
-			return result, nil
+			return result, attemptErr
+		}
+		if attemptErr != nil && !recoveryDeadline.IsZero() && !time.Now().Before(recoveryDeadline) {
+			return result, attemptErr
 		}
 		interval := v.RetryInterval
 		if interval <= 0 {
 			interval = 100 * time.Millisecond
 		}
+		if attemptErr != nil && !recoveryDeadline.IsZero() {
+			interval = min(interval, time.Until(recoveryDeadline))
+		}
+		if deadline, ok := ctx.Deadline(); ok {
+			interval = min(interval, time.Until(deadline))
+		}
 		timer := time.NewTimer(interval)
 		select {
-		case <-verifyCtx.Done():
+		case <-ctx.Done():
 			timer.Stop()
-			return result, nil
+			return result, attemptErr
 		case <-timer.C:
+			if verificationContextExpired(ctx) || (attemptErr != nil && !recoveryDeadline.IsZero() && !time.Now().Before(recoveryDeadline)) {
+				return result, attemptErr
+			}
 		}
 	}
 }
 
-func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, slug, path, deploymentID, token string) SmokeResult {
+func verificationContextExpired(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	// The deadline can pass before the context's cancellation timer runs.
+	// Check the timestamp too so a retry cannot replace the last verdict
+	// with a request that starts after the probe budget has expired.
+	deadline, ok := ctx.Deadline()
+	return ok && !time.Now().Before(deadline)
+}
+
+func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, slug, path, deploymentID, token, verification string) (SmokeResult, error) {
 	result := SmokeResult{Status: SmokeSkipped, Path: path}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+path, nil)
 	if err != nil {
-		return failedSmoke(path, "smoke_request_failed", err)
+		return failedSmoke(path, SmokeErrorVerifierNotConfigured, fmt.Errorf("public hosting smoke request is invalid")), nil
 	}
 	req.Header.Set(PlatformSmokeHeader, "1")
 	if deploymentID != "" {
@@ -141,10 +233,13 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return failedSmoke(path, "smoke_request_failed", err)
+		if deploymentID != "" {
+			return unavailableSmoke(result, SmokeErrorTransportUnavailable, err)
+		}
+		return failedSmoke(path, "smoke_request_failed", err), nil
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	result.StatusCode = resp.StatusCode
 	result.VerifiedAt = time.Now().UTC()
 	if id := resp.Header.Get("X-Faas-Request-ID"); id != "" {
@@ -153,26 +248,57 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 		result.RequestID = id
 	}
 	result.DeploymentID = resp.Header.Get(ServedDeploymentHeader)
-	// Report an error response as what it is. Checking the deployment header
-	// first turned every gateway refusal (a 429 or 503 carries no deployment
-	// header) into "reached deployment \"\"", which hid the real status.
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+	if deploymentID != "" {
+		if result.DeploymentID != "" && result.DeploymentID != deploymentID {
+			return unavailableSmoke(result, SmokeErrorDeploymentMismatch, nil)
+		}
+		proof := resp.Header.Get(ServedResponseHeader)
+		if result.DeploymentID != deploymentID || !hmac.Equal([]byte(proof), []byte(CandidateResponseProof(deploymentID, token))) {
+			code := SmokeErrorResponseUnproven
+			if proof == "" && resp.StatusCode >= http.StatusBadRequest {
+				code = SmokeErrorGatewayUnavailable
+			}
+			unavailable, err := unavailableSmoke(result, code, nil)
+			if problem := problemCode(resp.Header.Get("Content-Type"), body); code == SmokeErrorGatewayUnavailable && problem != "" {
+				// A bounded problem identifier is diagnostic only. An app can
+				// imitate this body; only the proof establishes its origin.
+				unavailable.Error += " (" + problem + ")"
+			}
+			return unavailable, err
+		}
+	}
+	// Only authenticated candidate responses can establish an app verdict.
+	// An identical gateway status without proof remains unavailable evidence.
+	acceptable := resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
+	if verification == VerificationRouteConnectivity {
+		// 415 is how a gRPC server answers a non-gRPC request (the gRPC
+		// HTTP/2 spec); like 401/403/404 it proves the candidate answered.
+		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
+			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
+			resp.StatusCode == http.StatusUnsupportedMediaType
+	}
+	if !acceptable {
 		result.Status = SmokeFailed
 		result.ErrorCode = "smoke_http_status"
 		result.Error = fmt.Sprintf("health probe returned HTTP %d", resp.StatusCode)
 		if code := problemCode(resp.Header.Get("Content-Type"), body); code != "" {
 			result.Error += " (" + code + ")"
 		}
-		return result
+		return result, nil
 	}
-	if deploymentID != "" && result.DeploymentID != deploymentID {
-		result.Status = SmokeFailed
-		result.ErrorCode = SmokeErrorDeploymentMismatch
-		result.Error = fmt.Sprintf("health probe reached deployment %q, expected %q", result.DeploymentID, deploymentID)
-		return result
+	if deploymentID != "" && readErr != nil {
+		return unavailableSmoke(result, SmokeErrorTransportUnavailable, readErr)
 	}
 	result.Status = SmokeVerified
-	return result
+	return result, nil
+}
+
+// CandidateResponseProof binds upstream evidence to this authorized challenge
+// and candidate. The token is never forwarded to the application or persisted.
+func CandidateResponseProof(deploymentID, token string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	_, _ = mac.Write([]byte("gregale-candidate-response:" + deploymentID))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // problemCode extracts the stable RFC 7807 "code" from a JSON error body.
@@ -198,10 +324,10 @@ func problemCode(contentType string, body []byte) string {
 }
 
 func retryableSmoke(result SmokeResult) bool {
-	if result.ErrorCode == "smoke_request_failed" {
+	if IsVerificationRecoveryCode(result.ErrorCode) {
 		return true
 	}
-	if result.ErrorCode == SmokeErrorDeploymentMismatch {
+	if result.ErrorCode == "smoke_request_failed" {
 		return true
 	}
 	switch result.StatusCode {
