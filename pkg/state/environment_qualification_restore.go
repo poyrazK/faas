@@ -20,6 +20,13 @@ type EnvironmentQualificationRestoreStore interface {
 	MarkEnvironmentQualificationRestoreDispatched(context.Context, EnvironmentWorkloadQualificationRequest, EnvironmentQualificationExecution) error
 }
 
+// Restore targets publish their runtime against the separate restore execution
+// and original capture reservation. They never borrow the capture instance's
+// runtime receipt or ordinary qualification publisher.
+type EnvironmentQualificationRestoreRuntimeStore interface {
+	PublishEnvironmentQualificationRestoreRuntime(context.Context, EnvironmentWorkloadQualificationRequest, EnvironmentQualificationExecution, EnvironmentWorkloadQualificationRuntime) (Instance, error)
+}
+
 func qualificationRestoreCaptureMatches(current EnvironmentWorkloadQualificationRequest, original EnvironmentQualificationExecutionStatus, capture EnvironmentQualificationSnapshotReceipt) bool {
 	e := original.Execution
 	return original.CaptureInstanceID == "" && original.DispatchStarted && original.RetiredAt != nil &&

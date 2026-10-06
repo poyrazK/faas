@@ -48,6 +48,11 @@ func TestPgEnvironmentQualificationRestoreRawGuardsAndMigrationReplay(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(t.Context(), `INSERT INTO instance_runtime_config_receipts
+		(instance_id,wake_id,scope,boundary_at,variables,secret_versions,all_secrets,secret_refs,sidecar_secret_versions)
+		VALUES($1,$2,'production','epoch','{}','{}',true,'{}','{}')`, admission.Instance.ID, admission.Instance.WakeID); err == nil {
+		t.Fatal("raw runtime receipt bypassed the restore dispatch fence")
+	}
 	for _, statement := range []string{
 		`update environment_qualification_restore_reservations set capture_instance_id=gen_random_uuid() where instance_id=$1`,
 		`delete from environment_qualification_restore_reservations where instance_id=$1`,
@@ -66,6 +71,9 @@ func TestPgEnvironmentQualificationRestoreRawGuardsAndMigrationReplay(t *testing
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=$1`, int64(20261006142500001)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=$1`, int64(20261006173000001)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
@@ -94,6 +102,46 @@ func TestPgEnvironmentQualificationRestoreRawGuardsAndMigrationReplay(t *testing
 	if err == nil {
 		t.Fatal("raw target cleanup borrowed source physical generation")
 	}
+}
+
+func TestEnvironmentQualificationRestoreRuntimePublication(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		claimed, capture := qualificationRestoreFixture(t, basic)
+		retireCapturedQualification(t, basic, capture)
+		admissions := basic.(state.EnvironmentQualificationRestoreStore)
+		admission, err := admissions.CreateEnvironmentQualificationRestore(t.Context(), claimed, qualificationPlacement(t, basic, capture.Execution.RAMMB+api.PerVMOverheadMB))
+		if err != nil || !admission.Created {
+			t.Fatalf("restore admission: %+v %v", admission, err)
+		}
+		publisher := basic.(state.EnvironmentQualificationRestoreRuntimeStore)
+		runtime := state.EnvironmentWorkloadQualificationRuntime{
+			NodeID: admission.Instance.NodeID, WakeID: admission.Instance.WakeID,
+			Netns: "qualification-restore-" + admission.Instance.ID, HostIP: "10.100.0.220", GuestUID: 20220, Inputs: capture.Inputs,
+		}
+		if _, err := publisher.PublishEnvironmentQualificationRestoreRuntime(t.Context(), claimed, admission.Execution, runtime); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("undispatched restore published runtime: %v", err)
+		}
+		if err := admissions.MarkEnvironmentQualificationRestoreDispatched(t.Context(), claimed, admission.Execution); err != nil {
+			t.Fatal(err)
+		}
+		instance, err := publisher.PublishEnvironmentQualificationRestoreRuntime(t.Context(), claimed, admission.Execution, runtime)
+		if err != nil || instance.ID != admission.Instance.ID || instance.State != string(state.StateRunning) || instance.HostIP != runtime.HostIP {
+			t.Fatalf("restore runtime publication: %+v %v", instance, err)
+		}
+		receipts := basic.(state.RuntimeConfigReceiptStore)
+		inputs, exists, err := receipts.InstanceRuntimeConfigReceipt(t.Context(), instance.ID)
+		if err != nil || !exists || inputs.Scope != capture.Inputs.Scope || !inputs.Boundary.Equal(capture.Inputs.Boundary) {
+			t.Fatalf("restore target runtime receipt: %+v exists=%t %v", inputs, exists, err)
+		}
+		if _, err := publisher.PublishEnvironmentQualificationRestoreRuntime(t.Context(), claimed, admission.Execution, runtime); err != nil {
+			t.Fatal("identical runtime receipt retry failed", err)
+		}
+		forged := runtime
+		forged.Netns = "substituted-target-netns"
+		if _, err := publisher.PublishEnvironmentQualificationRestoreRuntime(t.Context(), claimed, admission.Execution, forged); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("restore runtime receipt replacement accepted: %v", err)
+		}
+	})
 }
 
 func retireCapturedQualification(t *testing.T, basic gitOpsTestStore, capture state.EnvironmentQualificationSnapshotReceipt) {

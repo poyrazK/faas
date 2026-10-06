@@ -3464,3 +3464,33 @@ transport checkpoint only; runtime publication, scoped binding delivery,
 original Firecracker provenance, complete graph smoke and serving convergence
 still need their own evidence. The test node was user-approved for this work;
 this scoped result does not claim production acceptance.
+
+### Restored target runtime receipt and service selection (2026-10-06)
+
+Restoring a captured workload creates a distinct instance and execution frame.
+Runtime publication now requires that exact current restore admission, the
+original capture identity, durable dispatch, current source/account/node
+authority and fresh runtime inputs. The target transitions to running and gets
+its own immutable runtime-input receipt in the same state transaction. Exact
+replays are idempotent; a changed runtime identity or input receipt is rejected.
+The PostgreSQL receipt trigger applies the same restored-frame fence to direct
+writes and keeps it in force if application binaries roll back.
+
+The private HTTP resolver follows a workload's current restore reservation once
+present; it never substitutes the retired capture instance. It rejects a
+reserved or dispatched target until that target has published its own runtime
+receipt. Both the restored caller and restored dependency must have current,
+fresh receipts before a graph route is returned. A route remains bounded by the
+qualification lease and uses only the explicit reviewed target port.
+
+Race-enabled scheduler and in-memory store/integration selections passed. The
+approved internal x86_64 KVM node passed PostgreSQL-backed restore publication,
+service-routing and migration-replay selections in 15.058 seconds; migration
+replay and trigger guards passed, and the full Go-source inventory matched all
+8,340 local hashes. Changed-code lint reported zero issues. This is a
+state-store receipt and route-selection contract, not evidence that the
+production scheduler dispatched a native restore or that a guest received its
+runtime configuration or bindings. Manager/RPC dispatch, the private guest
+delivery adapter, application acknowledgement, graph smoke and serving
+convergence remain gated. The combined PR remains deferred until the agreed
+implementation pieces are ready.

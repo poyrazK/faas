@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"strings"
 	"time"
@@ -53,16 +54,31 @@ func (s *PgStore) EnvironmentQualificationNetworkCaller(ctx context.Context, nod
 	return held, err
 }
 
-func (s *PgStore) qualificationServiceEndpointTx(ctx context.Context, tx pgx.Tx, request EnvironmentWorkloadQualificationRequest) (EnvironmentQualificationExecutionStatus, Instance, error) {
+func (s *PgStore) qualificationServiceEndpointTx(ctx context.Context, tx pgx.Tx, request EnvironmentWorkloadQualificationRequest, instanceID string) (EnvironmentQualificationExecutionStatus, Instance, error) {
 	var zero EnvironmentQualificationExecutionStatus
 	q := sqlc.New()
-	row, err := q.LockEnvironmentQualificationExecution(ctx, tx, mustPgUUID(request.ReservedInstanceID))
+	row, err := q.LockEnvironmentQualificationExecution(ctx, tx, mustPgUUID(instanceID))
 	if err != nil {
 		return zero, Instance{}, mapErr(err)
 	}
 	status, err := qualificationExecutionFromSQL(row)
 	if err != nil {
 		return zero, Instance{}, err
+	}
+	if status.CaptureInstanceID != "" {
+		if _, err := q.SetEnvironmentWorkloadQualificationContext(ctx, tx, request.LeaseToken); err != nil {
+			return zero, Instance{}, mapErr(err)
+		}
+		reservation, err := q.EnvironmentQualificationRestoreReservation(ctx, tx, sqlc.EnvironmentQualificationRestoreReservationParams{RequestID: mustPgUUID(request.ID), Attempt: request.Attempt})
+		if err != nil || pgUUIDString(reservation.InstanceID) != instanceID || pgUUIDString(reservation.CaptureInstanceID) != request.ReservedInstanceID {
+			return zero, Instance{}, ErrConflict
+		}
+		current, err := q.EnvironmentQualificationRestoreCurrent(ctx, tx, sqlc.EnvironmentQualificationRestoreCurrentParams{RequestID: mustPgUUID(request.ID), CaptureInstanceID: mustPgUUID(request.ReservedInstanceID)})
+		if err != nil || !current {
+			return zero, Instance{}, ErrConflict
+		}
+	} else if instanceID != request.ReservedInstanceID {
+		return zero, Instance{}, ErrConflict
 	}
 	if _, err := q.EnvironmentQualificationAdmissionInputs(ctx, tx, sqlc.EnvironmentQualificationAdmissionInputsParams{AppID: mustPgUUID(request.AppID), NodeID: mustPgUUID(status.Execution.NodeID)}); err != nil {
 		return zero, Instance{}, mapErr(err)
@@ -130,7 +146,7 @@ func (s *PgStore) ResolveEnvironmentQualificationService(ctx context.Context, re
 		return zero, err
 	}
 	caller := qualificationRequestFromSQL(row)
-	if caller.GraphID != request.GraphID || caller.ReservedInstanceID != instanceID {
+	if caller.GraphID != request.GraphID {
 		return zero, ErrConflict
 	}
 	binding, exists := caller.FrozenInputs.ServiceBindings[request.Binding]
@@ -161,14 +177,21 @@ func (s *PgStore) ResolveEnvironmentQualificationService(ctx context.Context, re
 	if protocol != "" && protocol != api.AppProtocolHTTP1 {
 		return zero, ErrEnvironmentWorkloadPreparationUnavailable
 	}
-	callerStatus, callerIns, err := s.qualificationServiceEndpointTx(ctx, tx, caller)
+	callerStatus, callerIns, err := s.qualificationServiceEndpointTx(ctx, tx, caller, instanceID)
 	if err != nil {
 		return zero, err
 	}
 	if callerIns.NodeID != request.NodeID || callerIns.HostIP != request.HostIP {
 		return zero, ErrConflict
 	}
-	targetStatus, _, err := s.qualificationServiceEndpointTx(ctx, tx, target)
+	targetInstanceID := target.ReservedInstanceID
+	restore, restoreErr := q.EnvironmentQualificationRestoreReservation(ctx, tx, sqlc.EnvironmentQualificationRestoreReservationParams{RequestID: mustPgUUID(target.ID), Attempt: target.Attempt})
+	if restoreErr == nil {
+		targetInstanceID = pgUUIDString(restore.InstanceID)
+	} else if !errors.Is(restoreErr, pgx.ErrNoRows) {
+		return zero, mapErr(restoreErr)
+	}
+	targetStatus, _, err := s.qualificationServiceEndpointTx(ctx, tx, target, targetInstanceID)
 	if err != nil {
 		return zero, err
 	}

@@ -141,6 +141,68 @@ func TestEnvironmentQualificationPrivateServiceBindsBothOriginalAttempts(t *test
 	})
 }
 
+func TestEnvironmentQualificationPrivateServiceUsesRestoredRuntimeReceipts(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		_, requests, original := privateQualificationServiceFixture(t, basic)
+		snapshots := basic.(state.EnvironmentQualificationSnapshotStore)
+		executor := basic.(state.EnvironmentQualificationExecutionStore)
+		retirements := make([]state.EnvironmentQualificationSnapshotReceipt, len(requests))
+		for i, request := range requests {
+			status, err := executor.EnvironmentQualificationExecution(t.Context(), original[i].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retirements[i], err = snapshots.RecordEnvironmentQualificationSnapshot(t.Context(), request, status.Execution, captureProof(status.Execution))
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof := qualificationNativeProof()
+			proof.NativeGeneration, proof.KernelBootID = retirements[i].Snapshot.NativeGeneration, retirements[i].Snapshot.KernelBootID
+			if err := executor.RetireEnvironmentQualificationExecution(t.Context(), status.Execution, proof); err != nil {
+				t.Fatal(err)
+			}
+		}
+		admissions := basic.(state.EnvironmentQualificationRestoreStore)
+		publisher := basic.(state.EnvironmentQualificationRestoreRuntimeStore)
+		instances := make([]state.Instance, len(requests))
+		for i, request := range requests {
+			placement := qualificationPlacement(t, basic, 4096)
+			admission, err := admissions.CreateEnvironmentQualificationRestore(t.Context(), request, placement)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := admissions.MarkEnvironmentQualificationRestoreDispatched(t.Context(), request, admission.Execution); err != nil {
+				t.Fatal(err)
+			}
+			runtime := state.EnvironmentWorkloadQualificationRuntime{NodeID: admission.Instance.NodeID, WakeID: admission.Instance.WakeID,
+				Netns: "restored-" + admission.Instance.ID, HostIP: fmt.Sprintf("10.100.1.%d", i+2), GuestUID: 20201 + i, Inputs: retirements[i].Inputs}
+			if i == 0 {
+				instances[i], err = publisher.PublishEnvironmentQualificationRestoreRuntime(t.Context(), request, admission.Execution, runtime)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				instances[i] = admission.Instance
+				if _, err := basic.(state.EnvironmentQualificationServiceStore).ResolveEnvironmentQualificationService(t.Context(), state.EnvironmentQualificationServiceRequest{
+					NodeID: instances[0].NodeID, HostIP: instances[0].HostIP, GraphID: requests[0].GraphID, Binding: "backend",
+				}); err == nil {
+					t.Fatal("binding routed to a restored target before its runtime receipt")
+				}
+				instances[i], err = publisher.PublishEnvironmentQualificationRestoreRuntime(t.Context(), request, admission.Execution, runtime)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		route, err := basic.(state.EnvironmentQualificationServiceStore).ResolveEnvironmentQualificationService(t.Context(), state.EnvironmentQualificationServiceRequest{
+			NodeID: instances[0].NodeID, HostIP: instances[0].HostIP, GraphID: requests[0].GraphID, Binding: "backend",
+		})
+		if err != nil || route.Caller.InstanceID != instances[0].ID || route.Target.InstanceID != instances[1].ID || route.Port != 8082 {
+			t.Fatalf("restored private service route: %+v %v", route, err)
+		}
+	})
+}
+
 func TestEnvironmentQualificationPrivateServiceRejectsRevokedEndpoints(t *testing.T) {
 	for _, change := range []string{"source", "node", "account", "protocol", "caller_retired", "target_retired"} {
 		t.Run(change, func(t *testing.T) {

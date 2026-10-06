@@ -23,6 +23,32 @@ func (m *MemStore) qualificationNetworkInstanceLocked(nodeID, hostIP string) (In
 	return caller, nil
 }
 
+func (m *MemStore) qualificationServiceRuntimeInstanceLocked(request EnvironmentWorkloadQualificationRequest) (Instance, EnvironmentQualificationExecutionStatus, error) {
+	var restore Instance
+	var restoreStatus EnvironmentQualificationExecutionStatus
+	for id, status := range m.qualificationExecutions {
+		if status.Execution.RequestID != request.ID || status.Execution.Attempt != request.Attempt || status.CaptureInstanceID != request.ReservedInstanceID {
+			continue
+		}
+		if restore.ID != "" {
+			return Instance{}, EnvironmentQualificationExecutionStatus{}, ErrConflict
+		}
+		restore, restoreStatus = m.instances[id], status
+	}
+	if restore.ID != "" {
+		if !qualificationServiceExecutionCurrent(request, restoreStatus, restore, time.Now()) {
+			return Instance{}, EnvironmentQualificationExecutionStatus{}, ErrConflict
+		}
+		return restore, restoreStatus, nil
+	}
+	instance := m.instances[request.ReservedInstanceID]
+	status := m.qualificationExecutions[request.ReservedInstanceID]
+	if !qualificationServiceExecutionCurrent(request, status, instance, time.Now()) {
+		return Instance{}, EnvironmentQualificationExecutionStatus{}, ErrConflict
+	}
+	return instance, status, nil
+}
+
 func (m *MemStore) EnvironmentQualificationNetworkCaller(ctx context.Context, nodeID, hostIP string) (bool, error) {
 	if !qualificationNetworkIdentityValid(nodeID, hostIP) {
 		return false, ErrInvalidArgument
@@ -66,8 +92,8 @@ func (m *MemStore) ResolveEnvironmentQualificationService(ctx context.Context, r
 			target = candidate
 		}
 	}
-	targetIns, targetStatus := m.instances[target.ReservedInstanceID], m.qualificationExecutions[target.ReservedInstanceID]
-	if !qualificationServiceExecutionCurrent(target, targetStatus, targetIns, time.Now()) {
+	targetIns, targetStatus, err := m.qualificationServiceRuntimeInstanceLocked(target)
+	if err != nil {
 		return zero, ErrConflict
 	}
 	if protocol := m.apps[target.AppID].AppProtocol; protocol != "" && protocol != api.AppProtocolHTTP1 {

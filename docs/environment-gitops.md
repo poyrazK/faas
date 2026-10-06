@@ -11,7 +11,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
 | Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Production capture, isolated smoke and native qualification restore |
-| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, verified anonymous restore inputs, private load/resume/entropy-hook and process-bound restored platform channels | Manager/RPC dispatch, original Firecracker provenance, restored runtime/binding delivery, artifact retirement, complete graph smoke and serving convergence |
+| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, verified anonymous restore inputs, private load/resume/entropy-hook and process-bound restored platform channels; restore-target runtime receipts and receipt-gated route selection in both stores | Manager/RPC dispatch, original Firecracker provenance, restored guest runtime and binding delivery, artifact retirement, complete graph smoke and serving convergence |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -128,6 +128,17 @@ artifact, fresh runtime input acknowledgement and private capture namespace.
 It is immutable and retryable after a lost commit response. Retirement must
 identify the same native generation and kernel boot that produced the capture;
 the receipt remains historical after retirement.
+
+Restore runtime publication is tied to the distinct, durably dispatched target
+frame and its original capture reservation. The target gets its own runtime
+input receipt; it cannot borrow the retired capture instance's receipt. Private
+service resolution selects the current restored reservation when one exists and
+fails closed until both caller and dependency have current runtime receipts. The
+memory and PostgreSQL stores enforce this boundary, including migration replay
+and direct-write guards. This records state-store evidence only: production
+scheduler-to-VMMD restore dispatch, guest configuration delivery, application
+acknowledgement and readiness are still required before a restored workload can
+qualify.
 
 The internal graph assessment reports prepared artifacts and current capture
 counts separately. A partial cohort, changed artifact or stale runtime input

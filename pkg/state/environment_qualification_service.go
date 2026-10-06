@@ -39,8 +39,12 @@ func qualificationServiceRequestValid(request EnvironmentQualificationServiceReq
 }
 
 func qualificationServiceExecutionCurrent(request EnvironmentWorkloadQualificationRequest, status EnvironmentQualificationExecutionStatus, ins Instance, now time.Time) bool {
+	expected := qualificationExecution(request, ins, status.Execution.CleanupToken)
+	if status.CaptureInstanceID != "" {
+		expected = qualificationRestoreExecution(request, ins, status.Execution.CleanupToken, request.ReservedInstanceID)
+	}
 	return qualificationLeaseMatches(request, request, now) && status.DispatchStarted && status.RetiredAt == nil &&
-		status.Execution == qualificationExecution(request, ins, status.Execution.CleanupToken) &&
+		status.Execution == expected &&
 		ins.State == string(StateRunning) && ins.Netns != "" && ins.HostIP != "" && ins.WakeID != ""
 }
 
