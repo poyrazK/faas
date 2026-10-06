@@ -6792,6 +6792,24 @@
     "kind": "operational"
   },
   {
+    "table": "runtime_upgrade_verifications",
+    "columns": [
+      "created_at",
+      "cutover_at",
+      "deadline_at",
+      "finished_at",
+      "gateway_sessions",
+      "last_observation",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "operation_id",
+      "phase",
+      "reason"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "safe_release_worker_lease",
     "columns": [
       "expires_at",

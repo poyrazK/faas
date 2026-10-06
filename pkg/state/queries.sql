@@ -14080,6 +14080,39 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,sqlc.arg(phase)::text,sqlc.arg(source_path)::tex
 -- name: GetRuntimeUpgradeOperation :one
 SELECT * FROM runtime_upgrade_operations WHERE id=$1;
 
+-- Private immutable reviewed participants and durable verification (ADR-608).
+-- name: InsertRuntimeUpgradeVerification :one
+INSERT INTO runtime_upgrade_verifications(operation_id,gateway_sessions,cutover_at,deadline_at)
+VALUES ($1,$2,$3,$3::timestamptz+make_interval(secs=>sqlc.arg(deadline_seconds)::int)) RETURNING *;
+
+-- name: GetRuntimeUpgradeVerification :one
+SELECT v.* FROM runtime_upgrade_verifications v JOIN runtime_upgrade_operations o ON o.id=v.operation_id
+WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::uuid;
+
+-- name: ClaimRuntimeUpgradeVerification :one
+WITH due AS (
+ SELECT operation_id FROM runtime_upgrade_verifications WHERE phase='pending'
+ AND (next_attempt_at<=clock_timestamp() OR deadline_at<=clock_timestamp()) AND (lease_until IS NULL OR lease_until<=clock_timestamp())
+ ORDER BY next_attempt_at,created_at,operation_id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE runtime_upgrade_verifications v SET lease_token=gen_random_uuid(),lease_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::int)
+FROM due WHERE v.operation_id=due.operation_id RETURNING v.*;
+
+-- name: LockRuntimeUpgradeVerification :one
+SELECT * FROM runtime_upgrade_verifications WHERE operation_id=$1 AND lease_token=$2 AND lease_until>clock_timestamp() AND phase='pending' FOR UPDATE;
+
+-- name: CheckpointRuntimeUpgradeVerification :one
+WITH checkpoint AS MATERIALIZED (SELECT clock_timestamp() AS checked_at)
+UPDATE runtime_upgrade_verifications SET
+ phase=CASE WHEN deadline_at<=checkpoint.checked_at THEN 'expired' ELSE sqlc.arg(phase)::text END,
+ reason=CASE WHEN deadline_at<=checkpoint.checked_at THEN 'deadline_exceeded' ELSE sqlc.arg(reason)::text END,
+ last_observation=sqlc.arg(last_observation)::jsonb,
+ next_attempt_at=checkpoint.checked_at+make_interval(secs=>sqlc.arg(interval_seconds)::int),lease_token=NULL,lease_until=NULL,
+ finished_at=CASE WHEN deadline_at<=checkpoint.checked_at OR sqlc.arg(phase)::text<>'pending' THEN checkpoint.checked_at ELSE NULL END
+FROM checkpoint
+WHERE operation_id=sqlc.arg(operation_id)::uuid AND lease_token=sqlc.arg(lease_token)::uuid AND lease_until>checkpoint.checked_at AND phase='pending'
+ AND (sqlc.arg(phase)::text<>'verified' OR sqlc.arg(evidence_expires_at)::timestamptz>checkpoint.checked_at) RETURNING runtime_upgrade_verifications.*;
+
 -- name: ClaimRuntimeUpgradeOperation :one
 WITH due AS (
  SELECT id FROM runtime_upgrade_operations WHERE (phase IN ('prepared','waiting') OR (phase='reserved' AND deadline_at<=clock_timestamp()))

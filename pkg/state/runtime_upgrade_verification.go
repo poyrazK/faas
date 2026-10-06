@@ -154,7 +154,7 @@ func evaluateRuntimeUpgradeVerification(out RuntimeUpgradeVerification, cutover 
 	// Prometheus increase is fractional. The producer truncates counts while
 	// retaining its unrounded rate; validate its integer-truncation interval.
 	count, failures := float64(requests.RequestCount), float64(requests.ServerErrors)
-	minimumRate := max(0, failures-0.5) / (count + 0.5) * 100
+	minimumRate := failures / (count + 1) * 100
 	maximumRate := min(100, (failures+1)/count*100)
 	if requests.ErrorRatePct < minimumRate-1e-9 || requests.ErrorRatePct > maximumRate+1e-9 {
 		out.Reason = "request_evidence_invalid"

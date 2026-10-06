@@ -1,6 +1,7 @@
 package state
 
 // adr: 607
+// adr: 608
 
 import (
 	"errors"
@@ -98,6 +99,10 @@ func TestRuntimeUpgradeVerificationRequiresFreshScopedPostCutoverEvidence(t *tes
 		}},
 		{"inconsistent_rate", "request_evidence_invalid", func(_ *RuntimeUpgradeVerification, _ *RuntimeUpgradeCutover, _ *string, _ *[]runtimeUpgradeGatewayReceipt, h *api.AppHealthResponse) {
 			h.Requests.ServerErrors = 5
+		}},
+		{"truncation_lower_bound", "request_evidence_invalid", func(_ *RuntimeUpgradeVerification, _ *RuntimeUpgradeCutover, _ *string, _ *[]runtimeUpgradeGatewayReceipt, h *api.AppHealthResponse) {
+			h.Requests.ServerErrors = 2
+			h.Requests.ErrorRatePct = 1.7
 		}},
 		{"elevated_errors", "request_error_rate_elevated", func(_ *RuntimeUpgradeVerification, _ *RuntimeUpgradeCutover, _ *string, _ *[]runtimeUpgradeGatewayReceipt, h *api.AppHealthResponse) {
 			h.Requests.ServerErrors = 5

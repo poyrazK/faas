@@ -6024,6 +6024,21 @@ type RuntimeUpgradeOperation struct {
 	SourcePath                string
 }
 
+type RuntimeUpgradeVerification struct {
+	OperationID     pgtype.UUID
+	GatewaySessions []pgtype.UUID
+	CutoverAt       pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	DeadlineAt      pgtype.Timestamptz
+	Phase           string
+	Reason          string
+	LastObservation []byte
+	NextAttemptAt   pgtype.Timestamptz
+	LeaseToken      pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+}
+
 type SafeReleaseWorkerLease struct {
 	Singleton bool
 	HealthyAt pgtype.Timestamptz

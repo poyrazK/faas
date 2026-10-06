@@ -5476,6 +5476,35 @@ $$;
 
 
 --
+-- Name: guard_runtime_upgrade_verification(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_verification() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE canonical uuid[];
+BEGIN
+ SELECT array_agg(DISTINCT s ORDER BY s) INTO canonical FROM unnest(NEW.gateway_sessions) s;
+ IF NEW.gateway_sessions IS DISTINCT FROM canonical OR array_position(NEW.gateway_sessions,NULL::uuid) IS NOT NULL
+  OR array_position(NEW.gateway_sessions,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL THEN
+  RAISE EXCEPTION 'invalid runtime upgrade verification participants' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NOT EXISTS (SELECT 1 FROM runtime_upgrade_operations o JOIN deployment_runtime_upgrade_cutovers c ON c.deployment_id=o.deployment_id
+   WHERE o.id=NEW.operation_id AND o.phase='complete' AND c.cutover_at=NEW.cutover_at AND c.serving_deployment_id=o.serving_deployment_id
+   AND c.target_release_id=o.target_release_id AND c.wake_id=o.wake_id AND c.qualification_report_sha256=o.qualification_report_sha256) THEN
+   RAISE EXCEPTION 'runtime upgrade verification requires matching activation' USING ERRCODE='23514';
+  END IF;
+ ELSIF (NEW.operation_id,NEW.gateway_sessions,NEW.cutover_at,NEW.created_at,NEW.deadline_at)
+   IS DISTINCT FROM (OLD.operation_id,OLD.gateway_sessions,OLD.cutover_at,OLD.created_at,OLD.deadline_at)
+   OR (OLD.phase<>'pending' AND NEW IS DISTINCT FROM OLD) THEN
+  RAISE EXCEPTION 'immutable runtime upgrade verification' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_scoped_queue_binding_work(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19226,6 +19255,40 @@ CREATE TABLE public.runtime_upgrade_operations (
 
 
 --
+-- Name: runtime_upgrade_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_verifications (
+    operation_id uuid NOT NULL,
+    gateway_sessions uuid[] NOT NULL,
+    cutover_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    phase text DEFAULT 'pending'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    last_observation jsonb,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    finished_at timestamp with time zone,
+    CONSTRAINT runtime_upgrade_verifications_check CHECK ((isfinite(deadline_at) AND (deadline_at = (cutover_at + '00:30:00'::interval)))),
+    CONSTRAINT runtime_upgrade_verifications_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT runtime_upgrade_verifications_check2 CHECK ((((phase = 'pending'::text) AND (finished_at IS NULL)) OR ((phase <> 'pending'::text) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)))),
+    CONSTRAINT runtime_upgrade_verifications_check3 CHECK (((phase <> 'verified'::text) OR ((reason = ''::text) AND (last_observation IS NOT NULL) AND (NOT ((last_observation ->> 'status'::text) IS DISTINCT FROM 'verified'::text))))),
+    CONSTRAINT runtime_upgrade_verifications_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_verifications_cutover_at_check CHECK (isfinite(cutover_at)),
+    CONSTRAINT runtime_upgrade_verifications_finished_at_check CHECK (isfinite(finished_at)),
+    CONSTRAINT runtime_upgrade_verifications_gateway_sessions_check CHECK (((cardinality(gateway_sessions) >= 1) AND (cardinality(gateway_sessions) <= 64))),
+    CONSTRAINT runtime_upgrade_verifications_last_observation_check CHECK (((jsonb_typeof(last_observation) = 'object'::text) AND (octet_length((last_observation)::text) <= 8192))),
+    CONSTRAINT runtime_upgrade_verifications_lease_token_check CHECK ((lease_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_verifications_lease_until_check CHECK (isfinite(lease_until)),
+    CONSTRAINT runtime_upgrade_verifications_next_attempt_at_check CHECK (isfinite(next_attempt_at)),
+    CONSTRAINT runtime_upgrade_verifications_phase_check CHECK ((phase = ANY (ARRAY['pending'::text, 'verified'::text, 'blocked'::text, 'expired'::text]))),
+    CONSTRAINT runtime_upgrade_verifications_reason_check CHECK ((reason ~ '^[a-z_]{0,64}$'::text))
+);
+
+
+--
 -- Name: safe_release_worker_lease; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24943,6 +25006,14 @@ ALTER TABLE ONLY public.runtime_upgrade_operations
 
 
 --
+-- Name: runtime_upgrade_verifications runtime_upgrade_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_verifications
+    ADD CONSTRAINT runtime_upgrade_verifications_pkey PRIMARY KEY (operation_id);
+
+
+--
 -- Name: safe_release_worker_lease safe_release_worker_lease_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30252,6 +30323,13 @@ CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations
 
 
 --
+-- Name: runtime_upgrade_verifications_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verifications USING btree (next_attempt_at, created_at, operation_id) WHERE (phase = 'pending'::text);
+
+
+--
 -- Name: scenario_test_members_run_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33315,6 +33393,13 @@ CREATE TRIGGER runtime_upgrade_source_immutable BEFORE UPDATE ON public.deployme
 --
 
 CREATE TRIGGER runtime_upgrade_target_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_targets FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: runtime_upgrade_verifications runtime_upgrade_verification_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_verification_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_verifications FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_verification();
 
 
 --
@@ -39603,6 +39688,14 @@ ALTER TABLE ONLY public.runtime_upgrade_operations
 
 ALTER TABLE ONLY public.runtime_upgrade_operations
     ADD CONSTRAINT runtime_upgrade_operations_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_verifications runtime_upgrade_verifications_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_verifications
+    ADD CONSTRAINT runtime_upgrade_verifications_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.runtime_upgrade_operations(id) ON DELETE CASCADE;
 
 
 --

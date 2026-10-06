@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -99,8 +100,19 @@ func (s *PgStore) VerifyRuntimeUpgrade(ctx context.Context, accountID, id string
 		return RuntimeUpgradeVerification{}, fmt.Errorf("begin runtime upgrade verification: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	frozen, err := sqlc.New().GetRuntimeUpgradeVerification(ctx, tx, sqlc.GetRuntimeUpgradeVerificationParams{OperationID: mustPgUUID(id), AccountID: mustPgUUID(accountID)})
+	if err == nil && !slices.Equal(out.GatewaySessions, runtimeUpgradeVerificationSessions(frozen.GatewaySessions)) {
+		return RuntimeUpgradeVerification{}, ErrConflict
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return RuntimeUpgradeVerification{}, fmt.Errorf("read frozen verification participants: %w", err)
+	}
+	return runtimeUpgradeVerificationDB(ctx, tx, accountID, out)
+}
+
+func runtimeUpgradeVerificationDB(ctx context.Context, tx pgx.Tx, accountID string, out RuntimeUpgradeVerification) (RuntimeUpgradeVerification, error) {
 	q := sqlc.New()
-	row, err := q.GetRuntimeUpgradeOperation(ctx, tx, mustPgUUID(id))
+	row, err := q.GetRuntimeUpgradeOperation(ctx, tx, mustPgUUID(out.OperationID))
 	if err != nil {
 		return RuntimeUpgradeVerification{}, mapErr(err)
 	}

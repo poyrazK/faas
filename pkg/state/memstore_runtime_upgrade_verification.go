@@ -2,6 +2,8 @@ package state
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -89,6 +91,15 @@ func (m *MemStore) VerifyRuntimeUpgrade(_ context.Context, accountID, id string,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if frozen, ok := m.runtimeUpgradeVerifications[id]; ok && m.runtimeUpgradeOperations[id].AccountID == accountID && !slices.Equal(out.GatewaySessions, frozen.GatewaySessions) {
+		return RuntimeUpgradeVerification{}, ErrConflict
+	}
+	return m.verifyRuntimeUpgradeLocked(accountID, out)
+}
+
+func (m *MemStore) verifyRuntimeUpgradeLocked(accountID string, out RuntimeUpgradeVerification) (RuntimeUpgradeVerification, error) {
+	out.CheckedAt = time.Now().UTC()
+	id := out.OperationID
 	op, ok := m.runtimeUpgradeOperations[id]
 	if !ok || op.AccountID != accountID {
 		return RuntimeUpgradeVerification{}, ErrNotFound
@@ -106,9 +117,16 @@ func (m *MemStore) VerifyRuntimeUpgrade(_ context.Context, accountID, id string,
 	baseline, ok := m.runtimeUpgradeBaselines[candidate.ID]
 	pin := m.runtimeUpgradeTargets[candidate.ID]
 	current, err := m.runtimeUpgradeBaselineForTargetModeLocked(candidate, op.ServingDeploymentID, pin, true)
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidArgument) {
+		out.Reason = "activation_inputs_changed"
+		return out, nil
+	}
+	if err != nil {
+		return RuntimeUpgradeVerification{}, fmt.Errorf("read memory verification baseline: %w", err)
+	}
 	target, qualification := m.runtimeReleases[op.TargetReleaseID], m.runtimeReleaseQualifications[op.TargetReleaseID]
 	binding := m.runtimeArtifactBindings[runtimeArtifactBindingKey(accountID, candidate.RootfsKey)]
-	if !ok || err != nil || !sameRuntimeUpgradeBaseline(baseline, current) || binding != target.ID || qualification.ReportSHA256 != op.QualificationReportSHA256 || !validRuntimeReleaseQualification(target, qualification, out.CheckedAt) {
+	if !ok || !sameRuntimeUpgradeBaseline(baseline, current) || binding != target.ID || qualification.ReportSHA256 != op.QualificationReportSHA256 || !validRuntimeReleaseQualification(target, qualification, out.CheckedAt) {
 		out.Reason = "activation_inputs_changed"
 		return out, nil
 	}

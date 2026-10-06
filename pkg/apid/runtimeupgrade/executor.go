@@ -15,7 +15,8 @@ import (
 )
 
 type Executor struct {
-	Store state.RuntimeUpgradeOperationStore
+	Store             state.RuntimeUpgradeOperationStore
+	VerificationStore state.RuntimeUpgradeVerificationJournalStore
 	// Observe runs after a bounded iteration, including recoverable errors.
 	// Worker wiring uses this for liveness and sanitized failure telemetry.
 	Observe func(error)
@@ -55,6 +56,10 @@ func (e Executor) Run(ctx context.Context) error {
 			return err
 		}
 		_, err := e.RunOnce(ctx)
+		if e.VerificationStore != nil && ctx.Err() == nil {
+			_, verificationErr := (VerificationExecutor{Store: e.VerificationStore}).RunOnce(ctx)
+			err = errors.Join(err, verificationErr)
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

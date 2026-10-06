@@ -2325,6 +2325,57 @@ func (q *Queries) CheckpointRuntimeUpgradeOperationControl(ctx context.Context, 
 	return i, err
 }
 
+const checkpointRuntimeUpgradeVerification = `-- name: CheckpointRuntimeUpgradeVerification :one
+WITH checkpoint AS MATERIALIZED (SELECT clock_timestamp() AS checked_at)
+UPDATE runtime_upgrade_verifications SET
+ phase=CASE WHEN deadline_at<=checkpoint.checked_at THEN 'expired' ELSE $1::text END,
+ reason=CASE WHEN deadline_at<=checkpoint.checked_at THEN 'deadline_exceeded' ELSE $2::text END,
+ last_observation=$3::jsonb,
+ next_attempt_at=checkpoint.checked_at+make_interval(secs=>$4::int),lease_token=NULL,lease_until=NULL,
+ finished_at=CASE WHEN deadline_at<=checkpoint.checked_at OR $1::text<>'pending' THEN checkpoint.checked_at ELSE NULL END
+FROM checkpoint
+WHERE operation_id=$5::uuid AND lease_token=$6::uuid AND lease_until>checkpoint.checked_at AND phase='pending'
+ AND ($1::text<>'verified' OR $7::timestamptz>checkpoint.checked_at) RETURNING runtime_upgrade_verifications.operation_id, runtime_upgrade_verifications.gateway_sessions, runtime_upgrade_verifications.cutover_at, runtime_upgrade_verifications.created_at, runtime_upgrade_verifications.deadline_at, runtime_upgrade_verifications.phase, runtime_upgrade_verifications.reason, runtime_upgrade_verifications.last_observation, runtime_upgrade_verifications.next_attempt_at, runtime_upgrade_verifications.lease_token, runtime_upgrade_verifications.lease_until, runtime_upgrade_verifications.finished_at
+`
+
+type CheckpointRuntimeUpgradeVerificationParams struct {
+	Phase             string
+	Reason            string
+	LastObservation   []byte
+	IntervalSeconds   int32
+	OperationID       pgtype.UUID
+	LeaseToken        pgtype.UUID
+	EvidenceExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) CheckpointRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, checkpointRuntimeUpgradeVerification,
+		arg.Phase,
+		arg.Reason,
+		arg.LastObservation,
+		arg.IntervalSeconds,
+		arg.OperationID,
+		arg.LeaseToken,
+		arg.EvidenceExpiresAt,
+	)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const claimAppHealth = `-- name: ClaimAppHealth :one
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
@@ -4016,6 +4067,36 @@ func (q *Queries) ClaimRuntimeUpgradeOperation(ctx context.Context, db DBTX, lea
 		&i.LeaseUntil,
 		&i.FinishedAt,
 		&i.SourcePath,
+	)
+	return i, err
+}
+
+const claimRuntimeUpgradeVerification = `-- name: ClaimRuntimeUpgradeVerification :one
+WITH due AS (
+ SELECT operation_id FROM runtime_upgrade_verifications WHERE phase='pending'
+ AND (next_attempt_at<=clock_timestamp() OR deadline_at<=clock_timestamp()) AND (lease_until IS NULL OR lease_until<=clock_timestamp())
+ ORDER BY next_attempt_at,created_at,operation_id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE runtime_upgrade_verifications v SET lease_token=gen_random_uuid(),lease_until=clock_timestamp()+make_interval(secs=>$1::int)
+FROM due WHERE v.operation_id=due.operation_id RETURNING v.operation_id, v.gateway_sessions, v.cutover_at, v.created_at, v.deadline_at, v.phase, v.reason, v.last_observation, v.next_attempt_at, v.lease_token, v.lease_until, v.finished_at
+`
+
+func (q *Queries) ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, claimRuntimeUpgradeVerification, leaseSeconds)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
 	)
 	return i, err
 }
@@ -14781,6 +14862,36 @@ func (q *Queries) GetRuntimeUpgradeOperationForDeployment(ctx context.Context, d
 	return i, err
 }
 
+const getRuntimeUpgradeVerification = `-- name: GetRuntimeUpgradeVerification :one
+SELECT v.operation_id, v.gateway_sessions, v.cutover_at, v.created_at, v.deadline_at, v.phase, v.reason, v.last_observation, v.next_attempt_at, v.lease_token, v.lease_until, v.finished_at FROM runtime_upgrade_verifications v JOIN runtime_upgrade_operations o ON o.id=v.operation_id
+WHERE v.operation_id=$1::uuid AND o.account_id=$2::uuid
+`
+
+type GetRuntimeUpgradeVerificationParams struct {
+	OperationID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) GetRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg GetRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, getRuntimeUpgradeVerification, arg.OperationID, arg.AccountID)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const getSession = `-- name: GetSession :one
 select id, account_id,
        coalesce(host(issued_ip), '') as issued_ip,
@@ -18974,6 +19085,44 @@ func (q *Queries) InsertRuntimeUpgradeOperation(ctx context.Context, db DBTX, ar
 		&i.LeaseUntil,
 		&i.FinishedAt,
 		&i.SourcePath,
+	)
+	return i, err
+}
+
+const insertRuntimeUpgradeVerification = `-- name: InsertRuntimeUpgradeVerification :one
+INSERT INTO runtime_upgrade_verifications(operation_id,gateway_sessions,cutover_at,deadline_at)
+VALUES ($1,$2,$3,$3::timestamptz+make_interval(secs=>$4::int)) RETURNING operation_id, gateway_sessions, cutover_at, created_at, deadline_at, phase, reason, last_observation, next_attempt_at, lease_token, lease_until, finished_at
+`
+
+type InsertRuntimeUpgradeVerificationParams struct {
+	OperationID     pgtype.UUID
+	GatewaySessions []pgtype.UUID
+	CutoverAt       pgtype.Timestamptz
+	DeadlineSeconds int32
+}
+
+// Private immutable reviewed participants and durable verification (ADR-608).
+func (q *Queries) InsertRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, insertRuntimeUpgradeVerification,
+		arg.OperationID,
+		arg.GatewaySessions,
+		arg.CutoverAt,
+		arg.DeadlineSeconds,
+	)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
 	)
 	return i, err
 }
@@ -30848,6 +30997,35 @@ func (q *Queries) LockRuntimeUpgradeTargetApp(ctx context.Context, db DBTX, depl
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockRuntimeUpgradeVerification = `-- name: LockRuntimeUpgradeVerification :one
+SELECT operation_id, gateway_sessions, cutover_at, created_at, deadline_at, phase, reason, last_observation, next_attempt_at, lease_token, lease_until, finished_at FROM runtime_upgrade_verifications WHERE operation_id=$1 AND lease_token=$2 AND lease_until>clock_timestamp() AND phase='pending' FOR UPDATE
+`
+
+type LockRuntimeUpgradeVerificationParams struct {
+	OperationID pgtype.UUID
+	LeaseToken  pgtype.UUID
+}
+
+func (q *Queries) LockRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg LockRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeVerification, arg.OperationID, arg.LeaseToken)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+	)
+	return i, err
 }
 
 const lockSnapshotPublicationApp = `-- name: LockSnapshotPublicationApp :one

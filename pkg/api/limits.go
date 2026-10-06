@@ -8730,6 +8730,8 @@ const (
 	RuntimeUpgradeOperationMaxAge      = 30 * time.Minute // private executor, includes queue and readiness
 	RuntimeUpgradeOperationLease       = 30 * time.Second
 	RuntimeUpgradeOperationInterval    = 5 * time.Second
+	RuntimeUpgradeVerificationMaxAge   = 30 * time.Minute // from cutover, never extended by enrollment/retry
+	RuntimeUpgradeVerificationMaxBytes = 8192             // bounded safe journal evidence
 	RuntimeUpgradeWorkerRetryMax       = 30 * time.Second
 	RuntimeQualificationReportMaxBytes = 64 * 1024
 	RuntimeQualificationLogMaxBytes    = 64 * 1024 * 1024
