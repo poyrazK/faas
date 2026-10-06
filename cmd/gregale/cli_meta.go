@@ -129,7 +129,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "mcp", "openapi", "preview", "projects", "registry", "rollback", "routes", "scan", "secrets", "tenant-surfaces", "platform-tenants", "trusted-publishers":
 		return "API"
-	case "add", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
@@ -214,6 +214,9 @@ type cliFlag struct {
 	// them); the marker exists for the man-page SYNOPSIS section
 	// to render the required marker `(<name>|<placeholder>)`.
 	Req bool
+	// Bool marks a switch that takes no value, including when it is
+	// required. Use it for explicit confirmation flags such as --yes.
+	Bool bool
 	// Value is the placeholder for a value-taking flag (for example,
 	// "slug" or "PATH"). Empty means the flag is boolean unless Req or
 	// ClosedSet says otherwise.
@@ -1138,17 +1141,64 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "automations",
+		DocSlug: "automations",
+		Short:   "Build, monitor and control customer-built automations",
+		Examples: []string{
+			"gregale automations list --app billing",
+			"gregale automations get --app billing --name paid-invoice",
+			"gregale automations health --app billing --name paid-invoice",
+			"gregale automations pause --app billing --name paid-invoice --expected-version 8",
+			"gregale automations resume --app billing --name paid-invoice --expected-version 9",
+			"gregale automations revisions list --app billing --name paid-invoice",
+			"gregale automations revisions show --app billing --name paid-invoice --revision 42",
+			"gregale automations validate --app billing --file automation.yaml",
+			"gregale automations simulate --app billing --file automation.yaml --input-file sample.json",
+			"gregale automations apply --app billing --file automation.yaml --expected-version 0",
+			"gregale automations publish --app billing --name paid-invoice --expected-version 1",
+			"gregale automations restore --app billing --name paid-invoice --revision 42 --expected-version 47",
+			"gregale automations delete --app billing --name paid-invoice --expected-version 48 --yes",
+		},
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List automation versions and ownership for an app", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}}},
+			{Name: "get", Short: "Inspect automation state or export a definition", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "definition-out", Short: "export the selected definition as JSON to a new file", Value: "PATH"}, {Name: "published", Short: "export the published definition instead of the draft"}}},
+			{Name: "health", Short: "Show bounded run reliability and failed-step metrics", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "created-after", Short: "inclusive RFC3339 window start (max 30 days)", Value: "RFC3339"}, {Name: "created-before", Short: "inclusive RFC3339 window end", Value: "RFC3339"}}},
+			{Name: "pause", Short: "Stop future scheduled and event-triggered admissions", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current automation version", Req: true, Value: "N"}}},
+			{Name: "resume", Short: "Resume automatic scheduled and event-triggered admissions", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current automation version", Req: true, Value: "N"}}},
+			{Name: "revisions", Short: "Inspect immutable published snapshots", Subcommands: []cliSub{
+				{Name: "list", Short: "List published revisions for an automation", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "limit", Short: "page size (1..100, default 50)", Value: "N"}, {Name: "offset", Short: "number of revisions to skip", Value: "N"}}},
+				{Name: "show", Short: "Inspect a revision or export its definition", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "revision", Short: "published revision number", Req: true, Value: "N"}, {Name: "definition-out", Short: "export the definition as JSON to a new file", Value: "PATH"}}},
+			}},
+			{Name: "restore", Short: "Restore a published revision as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "revision", Short: "published revision number to restore", Req: true, Value: "N"}, {Name: "expected-version", Short: "current version; use 0 if deleted", Req: true, Value: "N"}}},
+			{Name: "delete", Short: "Delete an automation using its current version", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current automation version", Req: true, Value: "N"}, {Name: "yes", Short: "required explicit confirmation of automation deletion", Req: true, Bool: true}, {Name: "restore-manifest", Short: "allow the current YAML definition to own this automation again"}}},
+			{Name: "validate", Short: "Validate an automation definition without saving it", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}}},
+			{Name: "simulate", Short: "Trace an automation using sample input and mocked outputs, without running steps", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "input-file", Short: "sample workflow input JSON file", Value: "PATH"}, {Name: "mock-outputs-file", Short: "JSON object of action outputs keyed by step name", Value: "PATH"}, {Name: "mock-item-outputs-file", Short: "JSON object of for_each output arrays keyed by step name", Value: "PATH"}, {Name: "mock-attempts-file", Short: "JSON object of ordered attempt outcomes keyed by step name", Value: "PATH"}, {Name: "require-complete", Short: "fail if mocks leave steps unresolved"}}},
+			{Name: "apply", Short: "Save an automation definition as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "expected-version", Short: "current version; use 0 for a new draft", Req: true, Value: "N"}}},
+			{Name: "publish", Short: "Publish the current automation draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current version of the draft", Req: true, Value: "N"}, {Name: "take-over-manifest", Short: "explicitly take over YAML ownership"}}},
+		},
+	},
+	{
 		Name:    "workflows",
 		DocSlug: "workflows",
 		Short:   "Manage durable execution workflows",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List workflow runs for an app"},
+			{Name: "list", Short: "List workflow runs for an app", Examples: []string{"gregale workflows list --app billing --workflow-name paid-invoice --status failed", "gregale workflows list --app billing --created-after 2026-10-01T00:00:00Z --created-before 2026-10-05T23:59:59Z"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
+				{Name: "limit", Short: "page size (1..100)", Value: "N"},
+				{Name: "offset", Short: "page offset", Value: "N"},
+				{Name: "status", Short: "filter by workflow run status", Value: "STATUS"},
+				{Name: "workflow-name", Short: "filter by exact workflow name", Value: "NAME"},
+				{Name: "created-after", Short: "inclusive RFC3339 creation-time start", Value: "RFC3339"},
+				{Name: "created-before", Short: "inclusive RFC3339 creation-time end", Value: "RFC3339"},
+			}},
 			{Name: "schedules", Short: "Inspect recurring workflow schedules and their latest admission", Flags: []cliFlag{{Name: "app", Short: "application slug", Req: true, Value: "SLUG"}}},
-			{Name: "run", Short: "Trigger a new workflow run", Positionals: []string{"<workflow-name>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "input", Short: "JSON input payload (default {})", Value: "JSON"}}},
+			{Name: "run", Short: "Trigger a new workflow run", Positionals: []string{"<workflow-name>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "input", Short: "JSON input payload (default {})", Value: "JSON"}, {Name: "idempotency-key", Short: "stable key for retrying an uncertain run start", Value: "KEY"}}},
 			{Name: "status", Short: "Show details of a workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "steps", Short: "List steps for a workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "attempts", Short: "List retry attempts and managed effect delivery status for a workflow step", Positionals: []string{"<run_id>", "<step_name>"}},
 			{Name: "retry", Short: "Retry one safely resumable failed HTTP step", Positionals: []string{"<run_id>", "<step_name>"}},
+			{Name: "resume", Short: "Resume eligible failed actions in a workflow run", Positionals: []string{"<run_id>"}, Flags: []cliFlag{{Name: "expected-resume-count", Short: "current resume_count shown by workflows status", Req: true, Value: "N"}, {Name: "idempotency-key", Short: "stable key for retrying the same resume request", Value: "KEY"}}},
+			{Name: "resumes", Short: "List continuation history for a workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "cancel", Short: "Cancel an active workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "events", Short: "Send external event to a workflow run", Positionals: []string{"<run_id>", "<event_name>"}},
 		},

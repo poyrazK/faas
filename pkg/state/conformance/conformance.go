@@ -161,6 +161,8 @@ func Run(t *testing.T, open Open) {
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"app_task_lifecycle_pins_deployment_and_fences_replay", testAppTaskLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
+		{"workflow_run_creation_is_idempotent_and_quota_safe", testWorkflowRunCreateIdempotency},
+		{"workflow_concurrency_limit_queues_and_releases_runs", testWorkflowConcurrencyLimitQueues},
 		{"workflow_waits_and_attempts_are_durable", testWorkflowWaitsAndAttempts},
 		{"workflow_control_steps_are_consistent", testWorkflowControlSteps},
 		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
@@ -2140,6 +2142,143 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 	unchanged, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, "replacement reason")
 	if err != nil || unchanged.LastError == nil || *unchanged.LastError != reason {
 		t.Fatalf("CancelWorkflowRun(terminal) = (%#v, %v), want original terminal result", unchanged, err)
+	}
+}
+
+func testWorkflowConcurrencyLimitQueues(t *testing.T, fx *Fixture) {
+	definition := json.RawMessage(`{"name":"limited","max_concurrent_runs":1,"steps":[{"name":"work","run":"handler"}]}`)
+	base := time.Now().UTC().Add(-time.Minute)
+	first := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "limited", Status: state.WorkflowRunStatusPending,
+		DefinitionSnapshot: definition, ScheduledFor: base}
+	second := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "limited", Status: state.WorkflowRunStatusPending,
+		DefinitionSnapshot: definition, ScheduledFor: base.Add(time.Second)}
+	for _, run := range []*state.WorkflowRun{first, second} {
+		if err := fx.Store.CreateWorkflowRun(fx.Ctx, run); err != nil {
+			t.Fatalf("CreateWorkflowRun(%s): %v", run.WorkflowName, err)
+		}
+	}
+
+	type claimResult struct {
+		run *state.WorkflowRun
+		err error
+	}
+	start := make(chan struct{})
+	results := make(chan claimResult, 2)
+	for range 2 {
+		go func() {
+			<-start
+			run, err := fx.Store.ClaimNextDueWorkflowRun(fx.Ctx)
+			results <- claimResult{run: run, err: err}
+		}()
+	}
+	close(start)
+	var claimed *state.WorkflowRun
+	for range 2 {
+		result := <-results
+		if result.err == nil {
+			if claimed != nil {
+				t.Fatalf("concurrent claims started both runs at max_concurrent_runs=1: %s and %s", claimed.ID, result.run.ID)
+			}
+			claimed = result.run
+		} else if !errors.Is(result.err, state.ErrNotFound) {
+			t.Fatalf("concurrent claim error = %v, want ErrNotFound for the queued run", result.err)
+		}
+	}
+	if claimed == nil || claimed.Status != state.WorkflowRunStatusRunning {
+		t.Fatalf("concurrent claims produced no running slot: %+v", claimed)
+	}
+	queuedID := first.ID
+	if claimed.ID == first.ID {
+		queuedID = second.ID
+	}
+	if err := fx.Store.MarkWorkflowRunStatus(fx.Ctx, claimed.ID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
+		t.Fatalf("finish running slot: %v", err)
+	}
+	queued, err := fx.Store.ClaimNextDueWorkflowRun(fx.Ctx)
+	if err != nil || queued.ID != queuedID || queued.Status != state.WorkflowRunStatusRunning {
+		t.Fatalf("queued run after slot release = (%+v, %v), want run %s running", queued, err, queuedID)
+	}
+}
+
+func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
+	key := "conformance-" + uuid.NewString()
+	fingerprint := []byte("01234567890123456789012345678901")
+	type result struct {
+		run      *state.WorkflowRun
+		active   int
+		replayed bool
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			<-start
+			run := &state.WorkflowRun{
+				AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
+				Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
+			}
+			active, replayed, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, run, 1, key, fingerprint)
+			results <- result{run: run, active: active, replayed: replayed, err: err}
+		}()
+	}
+	close(start)
+	var runID string
+	created, replayed := 0, 0
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("CreateWorkflowRunAdmittedWithIdempotencyKey: %v", got.err)
+		}
+		if runID == "" {
+			runID = got.run.ID
+		} else if got.run.ID != runID {
+			t.Fatalf("concurrent idempotency keys created different runs %s and %s", runID, got.run.ID)
+		}
+		if got.replayed {
+			replayed++
+		} else {
+			created++
+			if got.active != 1 {
+				t.Fatalf("first admission active count = %d, want 1", got.active)
+			}
+		}
+	}
+	if created != 1 || replayed != 1 {
+		t.Fatalf("concurrent create outcomes = created:%d replayed:%d, want one of each", created, replayed)
+	}
+
+	changedDefinition := &state.WorkflowRun{
+		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
+		Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"new-published-definition","steps":[]}`),
+	}
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, key, fingerprint); err != nil || !isReplay {
+		t.Fatalf("replay after definition update = (replayed:%t, err:%v), want original run", isReplay, err)
+	}
+	var replayedSnapshot, expectedSnapshot any
+	if err := json.Unmarshal(changedDefinition.DefinitionSnapshot, &replayedSnapshot); err != nil {
+		t.Fatalf("decode replayed definition snapshot: %v", err)
+	}
+	if err := json.Unmarshal([]byte(`{"name":"idempotent-create","steps":[]}`), &expectedSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if changedDefinition.ID != runID || !reflect.DeepEqual(replayedSnapshot, expectedSnapshot) {
+		t.Fatalf("definition update changed replayed run = %+v", changedDefinition)
+	}
+
+	changedInputFingerprint := append([]byte(nil), fingerprint...)
+	changedInputFingerprint[0] = 'x'
+	conflict := &state.WorkflowRun{
+		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
+		Input: json.RawMessage(`{"order_id":"different"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
+	}
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, conflict, 1, key, changedInputFingerprint); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) || isReplay {
+		t.Fatalf("changed-input retry = (replayed:%t, err:%v), want idempotency conflict", isReplay, err)
+	}
+
+	other := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "idempotent-create", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{}`)}
+	if _, _, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, other, 1, "other-"+uuid.NewString(), fingerprint); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+		t.Fatalf("new key after quota consumed = %v, want ErrWorkflowRunQuotaExceeded", err)
 	}
 }
 

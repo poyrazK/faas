@@ -183,6 +183,51 @@ func TestCreateWorkflowRun_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateWorkflowRun_IdempotencyKeyReplaysAndRejectsChangedInput(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedWorkflowApp(t, e, "idempotent-run-app")
+	path := fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug)
+	headers := map[string]string{"Idempotency-Key": "invoice-paid-event-42"}
+	first := e.do(t, http.MethodPost, path, json.RawMessage(`{"order_id":"ord_42","currency":"usd"}`), headers)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create = %d: %s", first.Code, first.Body.String())
+	}
+	var firstRun api.WorkflowRunResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &firstRun); err != nil {
+		t.Fatal(err)
+	}
+
+	// JSON object ordering and insignificant whitespace do not change the
+	// request fingerprint, and replay survives a runtime outage.
+	e.s.WithWorkflowRuntimeEnabled(false)
+	replay := e.do(t, http.MethodPost, path, json.RawMessage("{ \"currency\": \"usd\", \"order_id\": \"ord_42\" }"), headers)
+	if replay.Code != http.StatusCreated || replay.Header().Get("Idempotent-Replayed") != "true" {
+		t.Fatalf("replay = %d headers=%v: %s", replay.Code, replay.Header(), replay.Body.String())
+	}
+	var replayedRun api.WorkflowRunResponse
+	if err := json.Unmarshal(replay.Body.Bytes(), &replayedRun); err != nil || replayedRun.ID != firstRun.ID {
+		t.Fatalf("replayed run = %+v, err=%v; want original %s", replayedRun, err, firstRun.ID)
+	}
+
+	conflict := e.do(t, http.MethodPost, path, json.RawMessage(`{"order_id":"ord_43","currency":"usd"}`), headers)
+	assertProblem(t, conflict, http.StatusConflict, api.CodeConflict)
+	active, err := e.store.CountActiveRunsByApp(context.Background(), app.ID)
+	if err != nil || active != 1 {
+		t.Fatalf("active runs after replay/conflict = %d, err=%v; want 1", active, err)
+	}
+}
+
+func TestCreateWorkflowRun_RejectsInvalidIdempotencyKey(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedWorkflowApp(t, e, "invalid-idempotency-key-app")
+	rec := e.do(t, http.MethodPost, fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{}, map[string]string{"Idempotency-Key": "   "})
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	active, err := e.store.CountActiveRunsByApp(context.Background(), app.ID)
+	if err != nil || active != 0 {
+		t.Fatalf("active runs after invalid key = %d, err=%v; want 0", active, err)
+	}
+}
+
 func TestCreateWorkflowRun_RuntimeDisabledRejectsBeforePersistence(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "runtime-disabled-app")
@@ -384,6 +429,36 @@ func TestListWorkflowRuns_RejectsInvalidStatus(t *testing.T) {
 	app := seedWorkflowApp(t, e, "list-status-app")
 	rec := e.do(t, "GET", fmt.Sprintf("/v1/apps/%s/workflows/runs?status=nonsense", app.Slug), nil, nil)
 	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+}
+
+func TestListWorkflowRuns_FiltersAndValidatesCreatedRange(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedWorkflowApp(t, e, "list-filters-app")
+	for _, workflow := range []string{"w1", "approval", "w1"} {
+		created := e.do(t, http.MethodPost, fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", app.Slug, workflow), map[string]any{}, nil)
+		if created.Code != http.StatusCreated {
+			t.Fatalf("create %s run = %d: %s", workflow, created.Code, created.Body.String())
+		}
+	}
+
+	filtered := e.do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?workflow_name=w1&created_after=1970-01-01T00:00:00Z&created_before=9999-12-31T23:59:59Z", app.Slug), nil, nil)
+	if filtered.Code != http.StatusOK {
+		t.Fatalf("filtered list = %d: %s", filtered.Code, filtered.Body.String())
+	}
+	var response api.ListWorkflowRunsResponse
+	if err := json.Unmarshal(filtered.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Total != 2 || len(response.Runs) != 2 || response.Runs[0].WorkflowName != "w1" || response.Runs[1].WorkflowName != "w1" {
+		t.Fatalf("filtered workflow run response = %#v", response)
+	}
+
+	invalidTimestamp := e.do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?created_after=yesterday", app.Slug), nil, nil)
+	assertProblem(t, invalidTimestamp, http.StatusBadRequest, api.CodeValidation)
+	reversedRange := e.do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?created_after=2026-10-02T00:00:00Z&created_before=2026-10-01T00:00:00Z", app.Slug), nil, nil)
+	assertProblem(t, reversedRange, http.StatusBadRequest, api.CodeValidation)
+	emptyName := e.do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?workflow_name=", app.Slug), nil, nil)
+	assertProblem(t, emptyName, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestWorkflowSteps_Events_And_Cancel(t *testing.T) {

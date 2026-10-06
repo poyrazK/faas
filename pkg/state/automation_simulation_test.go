@@ -132,6 +132,128 @@ func TestAutomationSimulationFailureRouteOrderingAndNull(t *testing.T) {
 	}
 }
 
+func TestAutomationSimulationRetriesThenSucceeds(t *testing.T) {
+	status := 503
+	spec := api.WorkflowSpec{Name: "retry", Steps: []api.WorkflowStepSpec{
+		{Name: "source", Run: "lookup", Retry: &api.WorkflowRetrySpec{MaxAttempts: 3}},
+		{Name: "handler", Run: "recover", OnFailure: ""},
+	}}
+	// Route the recovery step from the source after it has become terminally
+	// failed in the second half of this test; successful retries skip it.
+	spec.Steps[0].OnFailure = "handler"
+	response := simulateTest(t, api.SimulateAutomationRequest{Definition: spec, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{
+		"source": {{Outcome: "failure", HTTPStatus: &status}, {Outcome: "success", Output: json.RawMessage(`{"ok":true}`)}},
+	}, MockOutputs: map[string]json.RawMessage{"handler": json.RawMessage(`null`)}})
+	source := simulationStep(t, response, "source")
+	if !response.Complete || source.State != "mocked" || len(source.Attempts) != 2 || source.Attempts[0].Outcome != "failure" || source.Attempts[1].Outcome != "success" {
+		t.Fatalf("retry success trace: %+v", response)
+	}
+	if handler := simulationStep(t, response, "handler"); handler.State != "skipped" || handler.Reason != WorkflowSkipRouteNotTaken {
+		t.Fatalf("successful retry activated recovery: %+v", handler)
+	}
+}
+
+func TestAutomationSimulationTerminalFailureRoutesFailureContext(t *testing.T) {
+	failureStatus := 503
+	terminalStatus := 400
+	spec := api.WorkflowSpec{Name: "recover", Steps: []api.WorkflowStepSpec{
+		{Name: "source", Run: "charge", Retry: &api.WorkflowRetrySpec{MaxAttempts: 3}, OnFailure: "handler"},
+		{Name: "handler", Run: "recover", Input: json.RawMessage(`"{{failure}}"`)},
+		{Name: "dependent", Run: "notify", DependsOn: []string{"source"}},
+	}}
+	response := simulateTest(t, api.SimulateAutomationRequest{Definition: spec, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{
+		"source": {{Outcome: "failure", HTTPStatus: &failureStatus}, {Outcome: "failure", HTTPStatus: &terminalStatus}},
+	}, MockOutputs: map[string]json.RawMessage{"handler": json.RawMessage(`{"recovered":true}`)}})
+	source := simulationStep(t, response, "source")
+	if !response.Complete || source.State != WorkflowStepStatusFailed || source.Reason != "non_retryable_failure" || len(source.Attempts) != 2 {
+		t.Fatalf("terminal failure trace: %+v", response)
+	}
+	handler := simulationStep(t, response, "handler")
+	wantFailure := `{"step":"source","status":"failed","attempt":2,"message":"HTTP 400"}`
+	if handler.State != "mocked" || !equalWorkflowJSON(handler.Input, json.RawMessage(wantFailure)) {
+		t.Fatalf("failure context was not resolved: %+v", handler)
+	}
+	if dependent := simulationStep(t, response, "dependent"); dependent.State != "skipped" || dependent.Reason != WorkflowSkipDependencyFailed {
+		t.Fatalf("failure did not close dependent branch: %+v", dependent)
+	}
+}
+
+func TestAutomationSimulationWaitTimeoutRoutesHandler(t *testing.T) {
+	spec := api.WorkflowSpec{Name: "timeout", Steps: []api.WorkflowStepSpec{
+		{Name: "event", WaitForEvent: "paid", Timeout: time.Minute, OnTimeout: "fallback"},
+		{Name: "fallback", Run: "notify"},
+	}}
+	response := simulateTest(t, api.SimulateAutomationRequest{Definition: spec,
+		MockAttempts: map[string][]api.AutomationSimulationMockAttempt{"event": {{Outcome: "timeout"}}},
+		MockOutputs:  map[string]json.RawMessage{"fallback": json.RawMessage(`{"sent":true}`)},
+	})
+	event := simulationStep(t, response, "event")
+	if !response.Complete || event.State != "timed_out" || string(event.Output) != `{"timeout":true}` {
+		t.Fatalf("timeout trace: %+v", response)
+	}
+	if fallback := simulationStep(t, response, "fallback"); fallback.State != "mocked" {
+		t.Fatalf("timeout route was not activated: %+v", fallback)
+	}
+}
+
+func TestAutomationSimulationIncompleteRetryWaitsForNextMock(t *testing.T) {
+	status := 503
+	spec := api.WorkflowSpec{Name: "retry", Steps: []api.WorkflowStepSpec{
+		{Name: "source", Run: "lookup", Retry: &api.WorkflowRetrySpec{MaxAttempts: 2}, OnFailure: "handler"},
+		{Name: "handler", Run: "recover"},
+	}}
+	response := simulateTest(t, api.SimulateAutomationRequest{Definition: spec, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{
+		"source": {{Outcome: "failure", HTTPStatus: &status}},
+	}})
+	if response.Complete {
+		t.Fatal("missing retry outcome produced a complete trace")
+	}
+	if source := simulationStep(t, response, "source"); source.State != "would_retry" {
+		t.Fatalf("retry was not left unresolved: %+v", source)
+	}
+	if handler := simulationStep(t, response, "handler"); handler.State != "blocked" || handler.Reason != "exception_outcome_missing" {
+		t.Fatalf("incomplete retry triggered failure handler: %+v", handler)
+	}
+}
+
+func TestAutomationSimulationMatchesOutboundRetrySafety(t *testing.T) {
+	const integrationID = "00000000-0000-0000-0000-000000000001"
+	status := 429
+	safe := api.WorkflowSpec{Name: "safe", Steps: []api.WorkflowStepSpec{{
+		Name: "read", Outbound: &api.WorkflowOutboundSpec{IntegrationID: integrationID, Method: "GET", Path: "/v1/items"},
+		Retry: &api.WorkflowRetrySpec{MaxAttempts: 2},
+	}}}
+	response := simulateTest(t, api.SimulateAutomationRequest{Definition: safe, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{
+		"read": {{Outcome: "failure", HTTPStatus: &status}, {Outcome: "success", Output: json.RawMessage(`[]`)}},
+	}})
+	if !response.Complete || simulationStep(t, response, "read").State != "mocked" || len(simulationStep(t, response, "read").Attempts) != 2 {
+		t.Fatalf("safe outbound did not retry a transient response: %+v", response)
+	}
+	unsafe := api.WorkflowSpec{Name: "unsafe", Steps: []api.WorkflowStepSpec{{
+		Name: "write", Outbound: &api.WorkflowOutboundSpec{IntegrationID: integrationID, Method: "POST", Path: "/v1/items"},
+	}}}
+	response = simulateTest(t, api.SimulateAutomationRequest{Definition: unsafe, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{
+		"write": {{Outcome: "failure", HTTPStatus: &status}},
+	}})
+	write := simulationStep(t, response, "write")
+	if !response.Complete || write.State != WorkflowStepStatusFailed || write.Reason != "non_retryable_failure" || len(write.Attempts) != 1 {
+		t.Fatalf("unsafe outbound incorrectly retried a transient response: %+v", response)
+	}
+}
+
+func TestAutomationSimulationTransportErrorIsDead(t *testing.T) {
+	spec := api.WorkflowSpec{Name: "transport-error", Steps: []api.WorkflowStepSpec{{Name: "source", Run: "lookup", Retry: &api.WorkflowRetrySpec{MaxAttempts: 1}}}}
+	response := simulateTest(t, api.SimulateAutomationRequest{Definition: spec, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{
+		"source": {{Outcome: "failure", Error: "connection reset"}},
+	}})
+	if !response.Complete {
+		t.Fatalf("transport error did not produce a terminal trace: %+v", response)
+	}
+	if source := simulationStep(t, response, "source"); source.State != WorkflowStepStatusDead || source.Reason != "retry_limit_reached" {
+		t.Fatalf("transport error did not match scheduler terminal status: %+v", source)
+	}
+}
+
 func TestAutomationSimulationEvaluationErrorAndInactiveDescendants(t *testing.T) {
 	spec := api.WorkflowSpec{Name: "errors", Steps: []api.WorkflowStepSpec{
 		{Name: "bad", Run: "read", Input: json.RawMessage(`"{{input.missing}}"`), OnFailure: "handler"},
@@ -215,15 +337,45 @@ func TestAutomationSimulationSequentialLoop(t *testing.T) {
 	}
 }
 
+func TestAutomationSimulationForEachGuardsPreserveItemPositions(t *testing.T) {
+	spec := simulationLoopSpec()
+	spec.Steps[0].ForEach.OnItemFailure = "continue"
+	spec.Steps[0].ForEach.Action.When = &api.WorkflowGuardSpec{Ref: "input.item.active", Op: "eq", Value: json.RawMessage("true")}
+	request := api.SimulateAutomationRequest{
+		Definition:      spec,
+		Input:           json.RawMessage(`{"items":[{"id":"skip","active":false},{"id":"send","active":true},{"id":"skip-too","active":false}]}`),
+		MockItemOutputs: map[string][]json.RawMessage{"batch": {json.RawMessage(`null`), json.RawMessage(`"sent"`), json.RawMessage(`null`)}},
+		MockOutputs:     map[string]json.RawMessage{"finish": json.RawMessage(`null`)},
+	}
+	response := simulateTest(t, request)
+	batch := simulationStep(t, response, "batch")
+	if !response.Complete || batch.State != "resolved" || string(batch.Output) != `[null,"sent",null]` {
+		t.Fatalf("guarded simulation did not preserve positional results: %+v", response)
+	}
+	for index, matched := range []bool{false, true, false} {
+		item := simulationStep(t, response, api.WorkflowForEachItemName("batch", index))
+		if item.WhenMatched == nil || *item.WhenMatched != matched {
+			t.Fatalf("item %d guard trace: %+v", index, item)
+		}
+		if !matched && (item.State != "skipped" || item.Reason != WorkflowSkipWhenFalse) {
+			t.Fatalf("item %d skip trace: %+v", index, item)
+		}
+	}
+}
+
 func TestAutomationSimulationInvalidSamplesAndDefinitions(t *testing.T) {
 	base := api.WorkflowSpec{Name: "test", Steps: []api.WorkflowStepSpec{{Name: "a", Run: "a"}}}
 	for name, request := range map[string]api.SimulateAutomationRequest{
-		"unknown":             {Definition: base, MockOutputs: map[string]json.RawMessage{"missing": json.RawMessage(`null`)}},
-		"invalid JSON":        {Definition: base, Input: json.RawMessage(`{`)},
-		"empty output":        {Definition: base, MockOutputs: map[string]json.RawMessage{"a": nil}},
-		"control mock":        {Definition: simulationLoopSpec(), MockOutputs: map[string]json.RawMessage{"batch": json.RawMessage(`[]`)}},
-		"wrong item parent":   {Definition: base, MockItemOutputs: map[string][]json.RawMessage{"a": {json.RawMessage(`null`)}}},
-		"excess item samples": {Definition: simulationLoopSpec(), Input: json.RawMessage(`{"items":[]}`), MockItemOutputs: map[string][]json.RawMessage{"batch": {json.RawMessage(`null`)}}},
+		"unknown":                  {Definition: base, MockOutputs: map[string]json.RawMessage{"missing": json.RawMessage(`null`)}},
+		"invalid JSON":             {Definition: base, Input: json.RawMessage(`{`)},
+		"empty output":             {Definition: base, MockOutputs: map[string]json.RawMessage{"a": nil}},
+		"control mock":             {Definition: simulationLoopSpec(), MockOutputs: map[string]json.RawMessage{"batch": json.RawMessage(`[]`)}},
+		"wrong item parent":        {Definition: base, MockItemOutputs: map[string][]json.RawMessage{"a": {json.RawMessage(`null`)}}},
+		"excess item samples":      {Definition: simulationLoopSpec(), Input: json.RawMessage(`{"items":[]}`), MockItemOutputs: map[string][]json.RawMessage{"batch": {json.RawMessage(`null`)}}},
+		"attempts on control":      {Definition: simulationLoopSpec(), MockAttempts: map[string][]api.AutomationSimulationMockAttempt{"batch": {{Outcome: "timeout"}}}},
+		"empty attempts":           {Definition: base, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{"a": {}}},
+		"output after success":     {Definition: base, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{"a": {{Outcome: "success", Output: json.RawMessage(`null`)}, {Outcome: "success", Output: json.RawMessage(`null`)}}}},
+		"conflicting mock formats": {Definition: base, MockOutputs: map[string]json.RawMessage{"a": json.RawMessage(`null`)}, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{"a": {{Outcome: "success", Output: json.RawMessage(`null`)}}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := SimulateAutomation(context.Background(), request, api.PlanHobby); !errors.Is(err, ErrAutomationSimulationInvalid) {

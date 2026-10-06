@@ -6928,19 +6928,45 @@ func (c *Client) DeleteCorsPreset(ctx context.Context, id string) error {
 
 // RunWorkflow (ADR-081) triggers a new workflow execution run for an app.
 func (c *Client) RunWorkflow(ctx context.Context, slug, workflowName string, input json.RawMessage) (WorkflowRunResponse, error) {
+	return c.RunWorkflowWithIdempotencyKey(ctx, slug, workflowName, input, "")
+}
+
+// RunWorkflowWithIdempotencyKey starts a durable run with a caller-stable key.
+// Reuse the same key after an uncertain response; a different input with that
+// key returns a conflict. An empty key uses the SDK's per-request default.
+func (c *Client) RunWorkflowWithIdempotencyKey(ctx context.Context, slug, workflowName string, input json.RawMessage, idempotencyKey string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse
 	path := fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", slug, workflowName)
-	err := c.do(ctx, "POST", path, input, &resp)
+	err := c.doWithIdempotencyKey(ctx, "POST", path, input, &resp, idempotencyKey)
 	return resp, err
 }
 
 // ListWorkflowRuns (ADR-081) lists workflow runs for an app.
 func (c *Client) ListWorkflowRuns(ctx context.Context, slug string, limit, offset int, status string) (ListWorkflowRunsResponse, error) {
+	return c.ListWorkflowRunsWithOptions(ctx, slug, WorkflowRunListOptions{
+		Limit: limit, Offset: offset, Status: status,
+	})
+}
+
+// ListWorkflowRunsWithOptions lists workflow runs for an app with optional filters.
+func (c *Client) ListWorkflowRunsWithOptions(ctx context.Context, slug string, opts WorkflowRunListOptions) (ListWorkflowRunsResponse, error) {
 	var resp ListWorkflowRunsResponse
-	path := fmt.Sprintf("/v1/apps/%s/workflows/runs?limit=%d&offset=%d", slug, limit, offset)
-	if status != "" {
-		path += "&status=" + status
+	query := url.Values{}
+	query.Set("limit", strconv.Itoa(opts.Limit))
+	query.Set("offset", strconv.Itoa(opts.Offset))
+	if opts.Status != "" {
+		query.Set("status", opts.Status)
 	}
+	if opts.WorkflowName != "" {
+		query.Set("workflow_name", opts.WorkflowName)
+	}
+	if opts.CreatedAfter != nil {
+		query.Set("created_after", opts.CreatedAfter.UTC().Format(time.RFC3339Nano))
+	}
+	if opts.CreatedBefore != nil {
+		query.Set("created_before", opts.CreatedBefore.UTC().Format(time.RFC3339Nano))
+	}
+	path := fmt.Sprintf("/v1/apps/%s/workflows/runs?%s", slug, query.Encode())
 	err := c.do(ctx, "GET", path, nil, &resp)
 	return resp, err
 }

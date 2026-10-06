@@ -76,6 +76,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"invocation_plain_replays":            CloneSchemaOperational,
 		"app_service_address_cursors":         CloneSchemaOperational,
 		"workflow_automation_definitions":     CloneSchemaConfiguration,
+		"workflow_automation_revisions":       CloneSchemaConfiguration,
 		"workflow_event_receipts":             CloneSchemaOperational,
 		"workflow_operation_effects":          CloneSchemaOperational,
 		"workflow_run_resumes":                CloneSchemaOperational,
