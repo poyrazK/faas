@@ -8,6 +8,7 @@ import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAtt
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
 import type { EventReceiptReplayHistoryResponse } from '../models/EventReceiptReplayHistoryResponse.js';
 import type { EventReceiptResponse } from '../models/EventReceiptResponse.js';
+import type { EventReplayPreviewResponse } from '../models/EventReplayPreviewResponse.js';
 import type { EventSchema } from '../models/EventSchema.js';
 import type { EventStorageUsageResponse } from '../models/EventStorageUsageResponse.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
@@ -527,6 +528,88 @@ export class EventsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Preview historical retained events for one subscription.
+   * Read-only, account-scoped preview using the current enabled ordinary
+   * application subscription and the routing matcher. Work-bound subscriptions
+   * are unsupported. Select a half-open platform acceptance-time range; producer
+   * event time is not the range key. A fixed cutoff excludes later acceptances.
+   * Each page examines at most limit envelopes, so a page can contain no matches
+   * and still have next_after. Counts describe this page only. Pass the cursor
+   * unchanged with the same target and range; a changed declaration returns 409.
+   * Matches contain metadata and original captured-membership status, never
+   * payloads. Captured membership does not imply successful delivery or define
+   * replay eligibility. No deliveries, replay jobs or retention pins are created.
+   * Retention can remove rows between pages. This is a live retained view, not a
+   * frozen export or a complete archive; late commits can change visible rows.
+   * Settled receipts retain 30 days from routing settlement; pending receipts may
+   * survive longer. Earliest retained acceptance is account-wide and does not
+   * establish coverage of a requested range. Responses use Cache-Control: no-store
+   * and require the existing read scopes and MFA rules.
+   *
+   * @returns EventReplayPreviewResponse Matching retained-event metadata and page-local counts.
+   * @throws ApiError
+   */
+  public static previewEventReplay({
+    slug,
+    subscriptionId,
+    from,
+    until,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Current subscription owned by this app and account.
+     */
+    subscriptionId: string,
+    /**
+     * Inclusive acceptance-time lower bound, preceding the cutoff.
+     */
+    from: string,
+    /**
+     * Exclusive acceptance-time upper bound; future values are capped at the first page observation.
+     */
+    until: string,
+    /**
+     * Opaque next_after continuation bound to account, target, revision, range and fixed cutoff.
+     */
+    after?: string,
+    /**
+     * Maximum envelopes examined per page, including nonmatches.
+     */
+    limit?: number,
+  }): CancelablePromise<EventReplayPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'from': from,
+        'until': until,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Subscription changed, disabled or work-bound (event_replay_preview_changed, event_replay_preview_disabled, event_replay_preview_unsupported).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Retained-event read failed or exceeded the five-second deadline (event_replay_preview_read_timeout).`,
       },
     });
   }

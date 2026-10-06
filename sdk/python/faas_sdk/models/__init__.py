@@ -924,6 +924,11 @@ from .event_receipt_response_routing_summary import EventReceiptResponseRoutingS
 from .event_receipt_routing_response import EventReceiptRoutingResponse
 from .event_receipt_routing_response_capacity_scope import EventReceiptRoutingResponseCapacityScope
 from .event_receipt_routing_response_state import EventReceiptRoutingResponseState
+from .event_replay_preview_match import EventReplayPreviewMatch
+from .event_replay_preview_match_original_recipient import EventReplayPreviewMatchOriginalRecipient
+from .event_replay_preview_response import EventReplayPreviewResponse
+from .event_replay_preview_response_coverage import EventReplayPreviewResponseCoverage
+from .event_replay_preview_retention import EventReplayPreviewRetention
 from .event_schema import EventSchema
 from .event_storage_usage_response import EventStorageUsageResponse
 from .event_storage_usage_response_limits import EventStorageUsageResponseLimits
@@ -3595,6 +3600,11 @@ __all__ = (
     "EventReceiptRoutingResponse",
     "EventReceiptRoutingResponseCapacityScope",
     "EventReceiptRoutingResponseState",
+    "EventReplayPreviewMatch",
+    "EventReplayPreviewMatchOriginalRecipient",
+    "EventReplayPreviewResponse",
+    "EventReplayPreviewResponseCoverage",
+    "EventReplayPreviewRetention",
     "EventSchema",
     "EventStorageUsageResponse",
     "EventStorageUsageResponseLimits",

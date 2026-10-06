@@ -469,6 +469,9 @@ export type { EventReceiptRecoveryResponse } from './EventReceiptRecoveryRespons
 export type { EventReceiptReplayHistoryResponse } from './EventReceiptReplayHistoryResponse.js';
 export type { EventReceiptResponse } from './EventReceiptResponse.js';
 export type { EventReceiptRoutingResponse } from './EventReceiptRoutingResponse.js';
+export type { EventReplayPreviewMatch } from './EventReplayPreviewMatch.js';
+export type { EventReplayPreviewResponse } from './EventReplayPreviewResponse.js';
+export type { EventReplayPreviewRetention } from './EventReplayPreviewRetention.js';
 export type { EventSchema } from './EventSchema.js';
 export type { EventStorageUsageResponse } from './EventStorageUsageResponse.js';
 export type { EventSubscriptionListResponse } from './EventSubscriptionListResponse.js';
