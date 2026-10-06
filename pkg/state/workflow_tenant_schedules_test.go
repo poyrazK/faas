@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -84,7 +85,7 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 			t.Fatalf("pause tenant schedule=%+v err=%v", paused, err)
 		}
 		if _, err := schedules.UpdateTenantWorkflowSchedule(ctx, account.ID, tenantIDs[0], app.ID, "nightly",
-			0, "* * * * *", "UTC", "skip", true); err != ErrConflict {
+			0, "* * * * *", "UTC", "skip", true); !errors.Is(err, ErrConflict) {
 			t.Fatalf("stale schedule update=%v, want ErrConflict", err)
 		}
 		updatedList, err := schedules.ListTenantWorkflowSchedules(ctx, account.ID, tenantIDs[0], app.ID)

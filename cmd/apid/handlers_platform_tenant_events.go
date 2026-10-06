@@ -172,7 +172,7 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 	location := tenantEventReceiptURL(app.Slug, envelope.Source, envelope.ID)
 	w.Header().Set("Location", location)
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusAccepted, api.PublishEventResponse{ReceiptURL: location, ID: envelope.ID,
+	writeJSON(w, http.StatusAccepted, api.PlatformTenantPublishEventResponse{ReceiptURL: location, ID: envelope.ID,
 		ClientEventID: clientEventID, AcceptedAt: acceptedAt})
 }
 

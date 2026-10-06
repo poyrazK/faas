@@ -64,15 +64,19 @@ func TestPlatformTenantEventStartsScopedWorkflowAndExposesReceipt(t *testing.T) 
 	request := map[string]any{"id": "invoice-42", "source": "billing.stripe", "type": "invoice.paid", "data": map[string]any{"amount": 125},
 		"appid": "00000000-0000-0000-0000-000000000001", "platformtenantid": otherTenant.ID, "tenanteventid": "forged"}
 	first := e.do(t, http.MethodPost, path, request, headers)
-	var accepted api.PublishEventResponse
+	var accepted api.PlatformTenantPublishEventResponse
 	if first.Code != http.StatusAccepted || json.Unmarshal(first.Body.Bytes(), &accepted) != nil || accepted.ID == "" || accepted.ID == "invoice-42" || accepted.ClientEventID != "invoice-42" {
 		t.Fatalf("publish tenant event: %d %s", first.Code, first.Body)
 	}
-	if first.Header().Get("Location") != accepted.ReceiptURL || accepted.AccountID != "" {
+	var responseFields map[string]json.RawMessage
+	if err := json.Unmarshal(first.Body.Bytes(), &responseFields); err != nil {
+		t.Fatal(err)
+	}
+	if first.Header().Get("Location") != accepted.ReceiptURL || responseFields["account_id"] != nil {
 		t.Fatalf("tenant response leaked account identity or mismatched receipt URL: %d %s", first.Code, first.Body)
 	}
 	duplicate := e.do(t, http.MethodPost, path, request, headers)
-	var repeated api.PublishEventResponse
+	var repeated api.PlatformTenantPublishEventResponse
 	if duplicate.Code != http.StatusAccepted || json.Unmarshal(duplicate.Body.Bytes(), &repeated) != nil || repeated.ID != accepted.ID {
 		t.Fatalf("same event retry: %d %s", duplicate.Code, duplicate.Body)
 	}

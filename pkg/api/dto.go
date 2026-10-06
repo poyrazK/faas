@@ -72,6 +72,16 @@ type PublishEventResponse struct {
 	AccountID     string    `json:"account_id,omitempty"`
 }
 
+// PlatformTenantPublishEventResponse confirms tenant-scoped event acceptance.
+// It omits account identity because the tenant API is authenticated by its
+// linked tenant token rather than an account token.
+type PlatformTenantPublishEventResponse struct {
+	ID            string    `json:"id"`
+	ClientEventID string    `json:"client_event_id"`
+	AcceptedAt    time.Time `json:"accepted_at"`
+	ReceiptURL    string    `json:"receipt_url"`
+}
+
 // EventStorageUsageResponse describes retained customer publication storage.
 // Pending events remain charged until routing settles and retention expires.
 type EventStorageUsageResponse struct {

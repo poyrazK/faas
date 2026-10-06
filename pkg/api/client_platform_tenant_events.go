@@ -8,8 +8,8 @@ import (
 
 // PublishPlatformTenantSelfEvent publishes an event as the tenant bound to
 // the client's token. The caller's id is scoped by tenant, app, and source.
-func (c *Client) PublishPlatformTenantSelfEvent(ctx context.Context, slug string, req PublishEventRequest) (PublishEventResponse, error) {
-	var out PublishEventResponse
+func (c *Client) PublishPlatformTenantSelfEvent(ctx context.Context, slug string, req PublishEventRequest) (PlatformTenantPublishEventResponse, error) {
+	var out PlatformTenantPublishEventResponse
 	path := "/v1/platform-tenant-self/apps/" + url.PathEscape(slug) + "/events:publish"
 	return out, c.do(ctx, "POST", path, req, &out)
 }

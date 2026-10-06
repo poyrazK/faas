@@ -111,7 +111,7 @@ func (m *MemStore) tenantWorkflowEventRecipientsLocked(accountID, appID, tenantI
 			filter = json.RawMessage(`{}`)
 		}
 		result = append(result, PublishedEventRecipient{ID: workflowTenantEventRecipientID(appID, tenantID, definition.Name),
-			AppID: appID, AccountID: accountID, PlatformTenantID: tenantID, DeploymentID: deployment.ID,
+			AppID: appID, AccountID: app.AccountID, PlatformTenantID: tenantID, DeploymentID: deployment.ID,
 			Source: trigger.Source, Type: trigger.EventType, Filter: filter, Workflow: raw})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
