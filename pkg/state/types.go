@@ -6116,7 +6116,9 @@ type Snapshot struct {
 	MemBytes         int64
 	DiskBytes        int64
 	// StoredBytes is the physical filesystem allocation of the published
-	// mem + vmstate + private-drive artifacts. Zero identifies legacy writers.
+	// mem + vmstate + private-drive artifacts. Private-drive blocks shared
+	// with the deployment's app layer count under the layer (ADR-633).
+	// Zero identifies legacy writers.
 	StoredBytes int64
 	// Tier (issue #470 / ADR-055) is which snapshot tier this row
 	// belongs to: "init" (taken right after guest-init signals
