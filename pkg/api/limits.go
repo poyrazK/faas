@@ -20,6 +20,14 @@ import (
 	"time"
 )
 
+// Historical replay preview bounds retained-envelope reads (ADR-624).
+const (
+	EventReplayPreviewPageDefault    = 50
+	EventReplayPreviewPageMax        = 100
+	EventReplayPreviewCursorMaxBytes = 4096
+	EventReplayPreviewReadTimeout    = 5 * time.Second
+)
+
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
 const (
 	EventBacklogPageDefault      = 100

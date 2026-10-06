@@ -2254,6 +2254,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/event-schemas", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.registerEventSchema)))))
 	mux.HandleFunc("GET /v1/event-schemas", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventSchemas))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventSubscriptions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewEventReplay))))
 	mux.HandleFunc("GET /v1/apps/{slug}/work-policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkPolicies))))
 	mux.HandleFunc("GET /v1/account/operation-policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listExclusivePolicies))))
 	mux.HandleFunc("PUT /v1/account/operation-policies/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.upsertExclusivePolicy))))

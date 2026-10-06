@@ -28407,6 +28407,13 @@ CREATE INDEX event_fanout_history_summaries_prune_idx ON public.event_fanout_his
 
 
 --
+-- Name: event_fanout_outbox_account_accepted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_outbox_account_accepted_idx ON public.event_fanout_outbox USING btree (account_id, created_at, id);
+
+
+--
 -- Name: event_fanout_outbox_lease_idx; Type: INDEX; Schema: public; Owner: -
 --
 

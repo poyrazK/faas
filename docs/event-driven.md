@@ -941,6 +941,38 @@ gregale events deliveries APP --state failed --json
 This is useful after a deploy or manifest change: it shows the normalized
 source, type, filter, and enabled state that the router will use.
 
+To discover older retained events matching one current ordinary subscription,
+use the read-only historical replay preview:
+
+```bash
+gregale events replay-preview APP --subscription-id SUBSCRIPTION_UUID \
+  --from 2026-10-01T00:00:00Z --until 2026-10-06T00:00:00Z --limit 50
+```
+
+The API is `GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview`;
+the Go client is `pkg/api.Client.PreviewEventReplay`. The range uses **platform
+acceptance time** `[from, until)`, independent of producer event time. Events
+accepted before the subscription was created can match its current filter. The
+preview returns event metadata and receipt links without creating deliveries.
+Work-bound subscriptions, workflow starts and object notification declarations
+are outside this first historical preview surface.
+
+Each page examines at most `--limit` retained envelopes (default 50, maximum
+100), including nonmatches. Counts apply to that page. An empty matching page
+may still have `next_after`; continue with `--after` and the same app,
+subscription and range. The cursor preserves the first page's `cutoff_at` and
+subscription revision. A changed or disabled subscription requires restarting
+the preview. `original_recipient` distinguishes `captured`, `not_captured` and
+legacy `unknown` membership; it does not imply successful delivery or define
+which events a future backfill runner would execute.
+
+Settled receipts retain thirty days after **routing settlement**; unresolved
+receipts can survive longer. `earliest_retained_at` is account-wide and does not
+prove gap-free history. `history_complete` is always false. Retention can remove
+rows between pages, and delayed commits of older acceptances can change visible
+membership. This preview does not pin events or provide a frozen export. See
+[ADR-624](adr/624-subscription-retained-event-replay-preview.md) for the contract.
+
 Inspect one published event across every captured consumer:
 
 ```bash

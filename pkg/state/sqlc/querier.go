@@ -537,6 +537,9 @@ type Querier interface {
 	EventRecipientReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientReplayReceiptParams) (EventRecipientReplayReceiptRow, error)
 	EventRecipientSettleReceipt(ctx context.Context, db DBTX, id int64) error
 	EventRecipientUpdateProgress(ctx context.Context, db DBTX, arg EventRecipientUpdateProgressParams) error
+	EventReplayPreviewCandidates(ctx context.Context, db DBTX, arg EventReplayPreviewCandidatesParams) ([]EventReplayPreviewCandidatesRow, error)
+	EventReplayPreviewEarliestRetained(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Timestamptz, error)
+	EventReplayPreviewTarget(ctx context.Context, db DBTX, arg EventReplayPreviewTargetParams) (EventReplayPreviewTargetRow, error)
 	EventRoutingClaimReceipt(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRoutingClaimReceiptRow, error)
 	// Evaluate the wall clock only after all admission locks have been acquired.
 	EventRoutingClaimValid(ctx context.Context, db DBTX, arg EventRoutingClaimValidParams) (bool, error)

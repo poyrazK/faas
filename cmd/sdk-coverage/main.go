@@ -1064,6 +1064,10 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/delayed-tasks/{id}":                                          "CancelDelayedTask",
 	"GET /v1/invocations":                                                    "ListInvocations",
 	"GET /v1/invocations/{id}":                                               "GetInvocation",
+
+	// ADR-624: historical subscription replay is a metadata-only preview.
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview": "PreviewEventReplay",
+
 	// Issue #279 — operator credits. The auto-derivation produces
 	// "PostAdminAccountsIdCredits" which reads as a Swagger-style
 	// artifact; the SDK verb is "issue" (the operator's mental
