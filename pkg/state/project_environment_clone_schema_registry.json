@@ -7393,6 +7393,20 @@
     ]
   },
   {
+    "table": "workflow_automation_revisions",
+    "kind": "configuration",
+    "columns": [
+      "app_id",
+      "definition",
+      "legacy_snapshot",
+      "name",
+      "published_by_account_id",
+      "published_by_api_key_id",
+      "recorded_at",
+      "version"
+    ]
+  },
+  {
     "table": "workflow_callback_webhook_bindings",
     "columns": [
       "created_at",
@@ -7463,6 +7477,8 @@
       "app_id",
       "cancelled_at",
       "created_at",
+      "create_idempotency_key",
+      "create_request_fingerprint",
       "current_step",
       "definition_snapshot",
       "finished_at",

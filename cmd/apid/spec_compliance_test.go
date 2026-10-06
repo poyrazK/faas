@@ -369,6 +369,8 @@ var dtoExclude = map[string]bool{
 	"ListPlatformTenantOffboardingReceiptsOptions":    true, // client-only pagination query parameters, not a wire DTO
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
+	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
+	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
 	"InboundWebhookEndpointRow":                       true,
 	"AppLogDrainRow":                                  true,
 	"QueueBindingRow":                                 true,

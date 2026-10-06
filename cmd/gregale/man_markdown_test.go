@@ -52,7 +52,10 @@ func TestMarkdownReferenceShape(t *testing.T) {
 		Short:       "Change the subscription plan.",
 		Positionals: []string{"<plan>"},
 		ClosedSet:   []string{"free", "hobby"},
-		Flags:       []cliFlag{{Name: "json", Short: "machine output"}},
+		Flags: []cliFlag{
+			{Name: "json", Short: "machine output"},
+			{Name: "yes", Short: "explicit confirmation", Req: true, Bool: true},
+		},
 		Subcommands: []cliSub{{
 			Name:  "show",
 			Short: "Print the plan.",
@@ -63,9 +66,10 @@ func TestMarkdownReferenceShape(t *testing.T) {
 	for _, want := range []string{
 		"# gregale CLI reference",
 		"## plan",
-		"`gregale plan [<subcommand>] <plan> [--json]`",
+		"`gregale plan [<subcommand>] <plan> [--json] --yes`",
 		"`free` · `hobby`",
 		"| `--json` | machine output |  |",
+		"| `--yes` | explicit confirmation | required |",
 		"### plan show",
 		"| `--org <slug>` | org slug | required |",
 	} {

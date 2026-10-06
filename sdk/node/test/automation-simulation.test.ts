@@ -3,11 +3,13 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import { FaaSClient, WorkflowsService } from '../src/index.js';
+import type { SimulateAutomationRequest } from '../src/generated/models/SimulateAutomationRequest.js';
 
 test('simulation SDK preserves null mocks, loop order and false decisions', async t => {
-  const requestBody = {
-    definition: { name: 'sample', steps: [{ name: 'a', run: 'a' }] },
+  const requestBody: SimulateAutomationRequest = {
+    definition: { name: 'sample', steps: [{ name: 'a', run: 'a' }, { name: 'b', run: 'b' }] },
     input: { active: false }, mock_outputs: { a: null }, mock_item_outputs: { batch: [false, null] },
+    mock_attempts: { b: [{ outcome: 'failure', http_status: 503 }, { outcome: 'success', output: null }] },
   };
   const server = createServer((req, res) => {
     void (async () => {
@@ -18,7 +20,7 @@ test('simulation SDK preserves null mocks, loop order and false decisions', asyn
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), requestBody);
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ definition_valid: true, definition_hash: 'hash', complete: false, issues: [], warnings: [], step_order: ['a'], trace: [{ step_name: 'a', kind: 'run', state: 'mocked', output: null, when_matched: false }] }));
+      res.end(JSON.stringify({ definition_valid: true, definition_hash: 'hash', complete: false, issues: [], warnings: [], step_order: ['b'], trace: [{ step_name: 'b', kind: 'run', state: 'mocked', output: null, when_matched: false, attempts: [{ attempt: 1, outcome: 'failure', http_status: 503 }, { attempt: 2, outcome: 'success' }] }] }));
     })().catch(error => { res.statusCode = 500; res.end(JSON.stringify({ error: String(error) })); });
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -31,4 +33,6 @@ test('simulation SDK preserves null mocks, loop order and false decisions', asyn
   const row = response.trace[0]; assert.ok(row);
   assert.equal(row.output, null);
   assert.equal(row.when_matched, false);
+  assert.equal(row.attempts?.length, 2);
+  assert.equal(row.attempts?.[0]?.http_status, 503);
 });
