@@ -14,8 +14,7 @@ import (
 
 func readInvocationWorkEnvironmentAdmissionDB(ctx context.Context, db sqlc.DBTX, id string) (InvocationWorkEnvironmentAdmission, error) {
 	if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil {
-		// No ledger row can carry a non-UUID identity; see InvocationEnvironmentID.
-		return InvocationWorkEnvironmentAdmission{}, ErrNotFound
+		return InvocationWorkEnvironmentAdmission{}, ErrInvalidArgument
 	}
 	row, err := sqlc.New().ReadInvocationWorkEnvironmentAdmission(ctx, db, mustPgUUID(id))
 	if err != nil {
