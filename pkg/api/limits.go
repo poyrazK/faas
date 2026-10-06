@@ -184,8 +184,8 @@ const (
 
 // Workflow coordinator attempts use the positive PostgreSQL integer domain.
 const (
-	OperationWorkflowClaimsMaxPerRun = 1<<31 - 1
-	OperationWorkflowStepAttemptsMax = 1<<31 - 1
+	OperationWorkflowClaimsMaxPerRun   = 1<<31 - 1
+	OperationWorkflowStepAttemptsMax   = 1<<31 - 1
 	OperationWorkflowStepErrorMaxBytes = 4096
 )
 
