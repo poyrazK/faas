@@ -2942,3 +2942,83 @@ These are scoped nested-node, original-publication and content-read results.
 They do not establish native qualification restore, complete graph readiness,
 binding delivery, serving convergence, live GCS retirement or local conditional
 retirement. Those gates stay closed and the combined PR stays deferred.
+
+### Receipt-bound restore input barrier (2026-10-06)
+
+The internal restore preparation boundary now reads the original immutable
+publication intent and all four durable object receipts as one complete cohort.
+A missing receipt returns no partial cohort. The original completed capture must
+match the intent's instance, generation, boot and start frame, logical memory and
+device-state sizes, and the sum of the first three original encoded/allocated
+sizes. Aliased receipt files, canonical object keys or local inode observations,
+reordered objects and accounting overflow refuse before storage IO. The backing
+sidecar is excluded from accounting but remains required.
+
+Materialization uses only receipt-bound storage readers, sequentially copying
+verified logical bytes with bounded sparse writes into anonymous `O_TMPFILE`
+inodes on a pinned private ext4/XFS/Btrfs disk outside the jail. The shared storage
+copy helper includes exact EOF, logical SHA-256, size and original reader Close
+verification in its result. An uncertain or incomplete source supplies no usable
+copy receipt. Ordinary Get, LocalPath, cache fallbacks and caller-selected host
+artifact paths cannot replace that proof. The directory's original inode and
+placement and all original intent/receipt files are checked before each copy and
+again before the synchronous consumer receives any descriptor.
+
+Only after all four source readers have closed successfully are the output
+descriptors handed to the consumer: original anonymous inodes at offset zero,
+mode 0400 and read-only access; the sole writable description is already closed.
+The backing JSON parser rejects ambiguous, missing, null, duplicate, unknown and
+trailing fields and requires equality with the completed capture's original
+backing identity. Its bound is `api.NativeSnapshotBackingRecordMaxBytes` (4096).
+Every output descriptor closes before this boundary returns, including on
+consumer failure, cancellation or a final journal-check failure. Failed copies
+leave no named staging files and never delete canonical objects or receipts.
+
+This is a verified-byte barrier, not execution authorization. Reading retained
+evidence cannot create a recovered producer, a new native generation, launch,
+qualification restore, isolated smoke, readiness, artifact retirement or graph
+activation authority. Production support gates remain closed. The real-VM
+acceptance fixture materializes the verified bytes into a separate disposable
+test-only store and exercise ordinary two-drive restore there; production inputs
+remain anonymous pending native staging ownership and the original qualification
+restore execution frame. Owner-authorized retirement, local conditional
+retirement, qualification restore/smoke, binding delivery and serving evidence
+remain outstanding. No new PR is opened until the requested combined scope is
+ready.
+
+### Restore input barrier validation (2026-10-06)
+
+On the user-approved nested GCP KVM node with Go 1.25.13, the complete storage
+race suite passed (6.854 s), as did the final native/qualification/snapshot race
+suite (36.136 s). Normal storage/fcvm lint and changed-code metal lint each
+reported zero issues. The existing unrelated full-metal lint findings remain
+outside this change. macOS receipt-materialization race tests also passed
+(1.892 s; the existing linker `LC_DYSYMTAB` warning was non-fatal).
+
+The final `make test-metal` selection passed (39.337 s), including native
+ownership/recovery, persistent publication intent/receipt corruption and the
+new restore-input fault cases. `make leakcheck` reported no leaked namespaces,
+TAPs, jails, cgroups, processes, mounts or native loops. Actual Firecracker
+capture and receipt-verified ordinary restore passed in the isolated child
+(13.50 s; 14.59 s including the namespace parent). The original VM resumed,
+retired and restored through verified copies without cold fallback; the fresh
+guest supplied a new readiness/entropy UUID. Its original receipts observed
+134,217,728 logical / 65,171,456 allocated memory bytes, 13,696 logical / 16,384
+allocated device-state bytes and 67,108,864 logical / 86,016 allocated drive
+bytes. The 177-byte / 4096-allocated-byte backing sidecar was required but
+excluded from the 65,273,856-byte stored total.
+
+A separate compiled storage test published, materialized and hashed dense
+536,870,912-byte source data under `MemoryMax=256M`, `MemorySwapMax=0` (18.67 s).
+Its private copy retained `nlink=0`; this exercises bounded dirty-page copying
+while the original artifact and second anonymous disk copy both exist. All nine
+changed Go fingerprints match the final node validation source. The first metal
+attempt stopped on a test diagnostic formatting error; the next refused restore
+because the separate test store lacked the fixture's modeled scan sidecar.
+Both had clean leak checks. The final run preserved that modeled admission
+evidence in the disposable store and passed without weakening the scan guard.
+
+This is scoped nested-node lifecycle and verified-byte evidence, not Grype,
+bare-metal/reboot/power-loss, native qualification restore, complete graph smoke,
+binding delivery, serving convergence or artifact-retirement acceptance.
+Production gates stay closed and the combined PR stays deferred.

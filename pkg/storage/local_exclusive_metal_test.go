@@ -40,3 +40,41 @@ func TestMetalLargeExclusiveArtifactPublication(t *testing.T) {
 	}
 	t.Logf("verified %d-byte exclusive artifact with bounded dirty-page writes", size)
 }
+
+// Receipt materialization must retain the same dirty-page bound while holding
+// an original source and a second anonymous dense 512 MiB disk copy.
+func TestMetalLargeExclusiveArtifactMaterialization(t *testing.T) {
+	const size = int64(512 << 20)
+	backend := exclusiveLocalFixture(t)
+	expected := sha256.New()
+	source := io.TeeReader(io.LimitReader(repeatedArtifactReader{}, size), expected)
+	receipt, err := PutExclusiveArtifact(t.Context(), backend, exclusiveCapturePrefix+"drive", source, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd, err := unix.Open(backend.root, unix.O_TMPFILE|unix.O_RDWR|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := os.NewFile(uintptr(fd), "anonymous-verified-artifact")
+	defer func() {
+		if err := output.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if n, err := CopyExclusiveArtifact(t.Context(), backend, receipt, output); err != nil || n != size {
+		t.Fatal("dense original receipt copy failed", n, err)
+	}
+	if err := output.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil || stat.Nlink != 0 || stat.Size != size {
+		t.Fatal("verified private copy lost anonymous identity", err)
+	}
+	actual := sha256.New()
+	if n, err := io.Copy(actual, io.NewSectionReader(output, 0, size)); err != nil || n != size || string(actual.Sum(nil)) != string(expected.Sum(nil)) {
+		t.Fatal("dense original receipt copy changed source bytes", n, err)
+	}
+	t.Logf("verified %d-byte original receipt materialization with bounded dirty-page writes", size)
+}

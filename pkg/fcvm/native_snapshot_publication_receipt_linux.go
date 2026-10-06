@@ -22,6 +22,34 @@ func nativePublicationReceiptName(capture, kind string) string {
 	return capture + "." + kind + ".receipt.json"
 }
 
+// This read barrier supplies immutable evidence only. It is never a recovered
+// capture capability or authorization to restore, retire or activate a graph.
+func (j *linuxNativeSnapshotPublicationJournal) ReadRestoreCohort(ctx context.Context, capture string) (cohort nativeSnapshotRestoreCohort, result error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	defer func() {
+		if result != nil {
+			cohort = nativeSnapshotRestoreCohort{}
+		}
+	}()
+	if err := j.checkLocked(); err != nil {
+		return cohort, err
+	}
+	intent, err := j.readLocked(ctx, capture)
+	if err != nil {
+		return cohort, err
+	}
+	cohort.Intent = intent
+	for i, kind := range [...]string{"mem", "vmstate", "drive", "backing"} {
+		receipt, err := j.readObjectLocked(ctx, intent, kind)
+		if err != nil {
+			return cohort, err
+		}
+		cohort.Objects[i] = receipt
+	}
+	return cohort, ctx.Err()
+}
+
 func nativePublicationReceiptEntry(name string) (capture, kind string, ok bool) {
 	base, ok := strings.CutSuffix(name, ".receipt.json")
 	if !ok {

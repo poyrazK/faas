@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,8 +28,8 @@ import (
 )
 
 // This opt-in boots a real native-owned Firecracker VM, captures through the
-// internal producer and restores its artifacts through the existing ordinary
-// restore path. It does not grant native qualification restore, object cleanup
+// internal producer and restores receipt-verified bytes through an isolated
+// ordinary lifecycle fixture. It does not grant native qualification restore, object cleanup
 // or graph activation evidence, and never opens the production capture gate.
 func TestMetalNativeCaptureVM(t *testing.T) {
 	if os.Getenv("FAAS_NATIVE_CAPTURE_VM") != "1" {
@@ -244,23 +246,60 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	restoredManager = NewManager(runner, restoreVMM, Paths{Kernel: kernel}, version, nil, nil)
 	restoredManager.WithStorage(canonical)
 	restoredManager.alloc.free = []int{MaxSlots - 1}
-	keys := qualificationSnapshotProof(incoming, info)
-	restored, err := restoredManager.Wake(ctx, WakeRequest{Instance: restoredID, Plan: api.PlanHobby,
-		BaseKey: base, LayerKey: layer, VcpuCount: 1, MemSizeMiB: frame.RAMMB, DisableStartupCPUBoost: true,
-		Snapshot: &Snapshot{FCVersion: version, StorageKey: keys.StorageKey, VMStateStorageKey: keys.VMStateStorageKey}})
+	completed, err := r.journal.qualifications(frame.NodeID).readCapture(incoming)
 	if err != nil {
-		t.Fatal("restore native-produced artifacts:", err)
+		t.Fatal("original capture completion missing:", err)
 	}
-	if restored.Method != WakeRestore {
-		t.Fatal("native artifact acceptance used cold fallback:", restored.RestoreError)
-	}
-	if got := fetchV6UUID(t, restored.Lease.HostIP.String()); got == "" || got == originalUUID {
-		t.Fatal("restored guest lacks fresh readiness/entropy witness", got)
+	err = withNativeSnapshotRestoreInputs(ctx, r.publications.(nativeSnapshotRestoreReceiptJournal), canonical, completed, images, func(inputs nativeSnapshotRestoreInputs) (result error) {
+		// Only this disposable acceptance fixture names the verified copies.
+		// Production inputs stay anonymous and need native staging ownership.
+		verifiedRoot := filepath.Join(disk, "verified-restore")
+		if err := os.Mkdir(verifiedRoot, 0o700); err != nil {
+			return err
+		}
+		verified, err := storage.NewLocalStorageBackend(verifiedRoot)
+		if err != nil {
+			return err
+		}
+		for i, receipt := range inputs.Cohort.Objects {
+			if err := verified.Put(ctx, receipt.Object.Key, io.NewSectionReader(inputs.Files[i], 0, receipt.Object.LogicalBytes)); err != nil {
+				return err
+			}
+		}
+		// Preserve the fixture's modeled admission evidence in its separate
+		// store. No scan guard is bypassed and this is still not Grype proof.
+		if err := verified.Put(ctx, wire.ScanKeyForBaseKey(base), bytes.NewReader(scan)); err != nil {
+			return err
+		}
+		restoreVMM.WithStorage(verified)
+		restoredManager.WithStorage(verified)
+		defer func() {
+			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+			defer stop()
+			result = errors.Join(result, restoredManager.Destroy(cleanup, restoredID))
+		}()
+		keys := qualificationSnapshotProof(incoming, info)
+		restored, err := restoredManager.Wake(ctx, WakeRequest{Instance: restoredID, Plan: api.PlanHobby,
+			BaseKey: base, LayerKey: layer, VcpuCount: 1, MemSizeMiB: frame.RAMMB, DisableStartupCPUBoost: true,
+			Snapshot: &Snapshot{FCVersion: version, StorageKey: keys.StorageKey, VMStateStorageKey: keys.VMStateStorageKey}})
+		if err != nil {
+			return err
+		}
+		if restored.Method != WakeRestore {
+			return fmt.Errorf("receipt-verified artifact acceptance used cold fallback: %s", restored.RestoreError)
+		}
+		if got := fetchV6UUID(t, restored.Lease.HostIP.String()); got == "" || got == originalUUID {
+			return errors.New("receipt-verified restore lacks fresh readiness/entropy witness")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal("restore receipt-verified native-produced artifacts:", err)
 	}
 	if v.checkEnvironmentQualificationSnapshotSupport() == nil {
 		t.Fatal("VM acceptance opened production native qualification capture")
 	}
-	t.Logf("actual native capture: memory=%d device-state=%d allocated-total=%d; original resumed, retired and artifacts restored", info.MemBytes, info.VMStateBytes, info.StoredBytes)
+	t.Logf("actual native capture: memory=%d device-state=%d allocated-total=%d; original resumed, retired and receipt-verified cohort restored", info.MemBytes, info.VMStateBytes, info.StoredBytes)
 }
 
 // Invoke the internal original producer without overriding the public support
@@ -290,7 +329,14 @@ func nativeMetalCaptureVMProducer(ctx context.Context, m *Manager, v *JailerVMM,
 		return info, incoming, err
 	}
 	info, err = v.captureEnvironmentQualificationSnapshot(nativeSnapshotCaptureContext(ctx, incoming, capture, physical), incoming.NativeLease, backing)
-	return info, incoming, err
+	if err != nil {
+		return info, incoming, err
+	}
+	if err := q.requireSnapshotPhysical(ctx, incoming); err != nil {
+		return SnapshotInfo{}, incoming, err
+	}
+	capture.Info, capture.Backing, capture.CompletedAt = info, backing, q.clock().UTC()
+	return info, incoming, errors.Join(q.writeCapture(incoming, capture), ctx.Err())
 }
 
 func nativeCaptureVMMemoryLimit(t *testing.T, scope string) uint64 {

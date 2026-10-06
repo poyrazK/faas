@@ -94,6 +94,10 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
 const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
 
+// A receipt-bound restore sidecar carries only version and two image digests.
+// Refuse oversized metadata before any restore input is materialized.
+const NativeSnapshotBackingRecordMaxBytes = 4096
+
 // Native snapshot retirement can scan the unified hierarchy to distinguish a
 // removed original inode from a retained cgroup. Exceeding these parser bounds
 // retains ownership; these are diagnostic limits, not tenant quotas.

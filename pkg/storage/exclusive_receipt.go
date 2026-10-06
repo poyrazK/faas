@@ -10,6 +10,7 @@ import (
 	"errors"
 	"hash"
 	"io"
+	"os"
 	"path/filepath"
 )
 
@@ -120,6 +121,36 @@ type ExclusiveArtifactBackend interface {
 // inside the backend operation. A stat followed by ordinary Delete is forbidden.
 type ExclusiveArtifactRetirer interface {
 	RetireExclusiveArtifact(context.Context, ExclusiveArtifactReceipt) error
+}
+
+// CopyExclusiveArtifact materializes only the acknowledged object into a fresh
+// private regular file owned by the caller. Success includes source EOF, digest,
+// length and Close verification. The caller must seal the output and retain its
+// ownership; this operation supplies no launch, readiness or deletion authority.
+func CopyExclusiveArtifact(ctx context.Context, backend StorageBackend, receipt ExclusiveArtifactReceipt, output *os.File) (int64, error) {
+	if output == nil {
+		return 0, errors.New("storage: original private materialization output is required")
+	}
+	info, err := output.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() != 0 {
+		return 0, errors.Join(err, errors.New("storage: artifact materialization requires a fresh regular output"))
+	}
+	offset, err := output.Seek(0, io.SeekCurrent)
+	if err != nil || offset != 0 {
+		return 0, errors.Join(err, errors.New("storage: artifact materialization output is not at its original offset"))
+	}
+	reader, err := GetExclusiveArtifact(ctx, backend, receipt)
+	if err != nil {
+		return 0, err
+	}
+	count, copyErr := copySparseArtifactContext(ctx, output, reader)
+	if err := errors.Join(copyErr, reader.Close(), ctx.Err()); err != nil {
+		return 0, err
+	}
+	if count != receipt.LogicalBytes {
+		return 0, ErrArtifactReceiptMismatch
+	}
+	return count, nil
 }
 
 func (r ExclusiveArtifactReceipt) Validate() error {

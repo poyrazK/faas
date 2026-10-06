@@ -10,8 +10,8 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection and scoped ownership guards | Scoped binding execution and inherited non-image provenance |
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
-| Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Isolated smoke, restored readiness and native capture publication |
-| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume, exclusive four-object publication and durable writer receipts | Production adapter wiring, artifact retirement, native qualification restore and bare-metal acceptance |
+| Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Production capture, isolated smoke and native qualification restore |
+| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume, exclusive four-object publication, durable writer receipts and verified anonymous restore inputs | Production adapter wiring, artifact retirement, native qualification restore and bare-metal acceptance |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -205,7 +205,13 @@ encoded/allocated bytes, excluding the backing sidecar. These reads bypass cache
 and fallback stores. GCS offers generation-conditional retirement; local
 retirement is explicitly unsupported because stat followed by unlink can remove
 a replacement. Owner-authorized automatic retirement and restore/smoke evidence
-remain outstanding. The internal producer begins
+remain outstanding. An internal restore-input barrier now requires the complete
+four-receipt cohort and its matching capture completion. It verifies each source
+to EOF, joins reader Close, checks the bounded backing sidecar against the
+original identity and supplies only private anonymous read-only disk descriptors
+to a synchronous consumer. All descriptors close before return; a partial copy
+creates no named file or cleanup authority. This byte verification does not
+enable native qualification restore or readiness. The internal producer begins
 intent before output preparation and publishes memory, device state, the frozen
 private drive and backing identity. Actual buffered snapshot writes require the
 existing temporary snapshot headroom policy. The producer pins and journals the
