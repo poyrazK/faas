@@ -692,7 +692,7 @@ jobs:
       - name: state tests (shard ${{ matrix.shard }})
         run: |
           STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -shard=${{ matrix.shard }})
-          go test -race -count=1 -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+          go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
       - name: upload state coverage
         uses: actions/upload-artifact@v4
         with:
@@ -822,7 +822,10 @@ jobs:
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
           COVERARGS=()
+          TESTLOGARGS=()
           if [ '${{ matrix.state_coverage }}' = 'true' ]; then
+            # Keep named adapter outcomes alongside the complete coverage run.
+            TESTLOGARGS=(-v)
             python3 -m unittest discover -s scripts/ci -p 'test_normalize_go_cover_profile.py'
             # External GitOps and Operations tests exercise the state adapters.
             # Union those calls with both complete state test shards below.
@@ -831,7 +834,7 @@ jobs:
             COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | grep -v '/pkg/state/sqlc$' | sort -u | paste -sd, -)
             COVERARGS=(-coverpkg="$COVERPKGS")
           fi
-          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${TESTLOGARGS[@]}" "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
           if [ '${{ matrix.state_coverage }}' = 'true' ]; then
             # Credit the union of blocks covered by multiple test binaries.
             python3 scripts/ci/normalize_go_cover_profile.py "coverage/${{ matrix.coverage_file }}"

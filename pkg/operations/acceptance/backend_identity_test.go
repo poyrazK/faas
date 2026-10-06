@@ -53,11 +53,11 @@ func TestPgOperationBackendIdentityLedger(t *testing.T) {
 	}
 	for _, kind := range []string{"workflow", "job"} {
 		t.Run(kind, func(t *testing.T) {
-			run := backendRunFixture(t, s, kind, account.ID, app.ID, tenant.ID)
-			foreignRun := backendRunFixture(t, s, kind, otherAccount.ID, otherApp.ID, "")
+			run := backendRunFixture(t, ctx, s, kind, account.ID, app.ID, tenant.ID)
+			foreignRun := backendRunFixture(t, ctx, s, kind, otherAccount.ID, otherApp.ID, "")
 			var otherTenantRun string
 			if kind == "workflow" {
-				otherTenantRun = backendRunFixture(t, s, kind, account.ID, app.ID, otherTenant.ID)
+				otherTenantRun = backendRunFixture(t, ctx, s, kind, account.ID, app.ID, otherTenant.ID)
 			}
 			tx, err := pool.Begin(ctx)
 			if err != nil {
@@ -182,20 +182,20 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	}
 }
 
-func backendRunFixture(t *testing.T, s *state.PgStore, kind, account, app, tenant string) string {
+func backendRunFixture(t *testing.T, ctx context.Context, s *state.PgStore, kind, account, app, tenant string) string {
 	t.Helper()
 	if kind == "workflow" {
 		run := state.WorkflowRun{AppID: app, PlatformTenantID: tenant, WorkflowName: "export", DefinitionSnapshot: []byte(`{}`)}
-		if err := s.CreateWorkflowRun(t.Context(), &run); err != nil {
+		if err := s.CreateWorkflowRun(ctx, &run); err != nil {
 			t.Fatal(err)
 		}
 		return run.ID
 	}
-	job, err := s.JobCreate(t.Context(), account, "backend-export", "batch", "test/image", []string{"true"}, 128, 30, 1, 0, nil)
+	job, err := s.JobCreate(ctx, account, "backend-export", "batch", "test/image", []string{"true"}, 128, 30, 1, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, _, err := s.JobRunCreate(t.Context(), job.ID, account, "manual", nil, nil, nil, nil, 1)
+	run, _, err := s.JobRunCreate(ctx, job.ID, account, "manual", nil, nil, nil, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
