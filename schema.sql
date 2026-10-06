@@ -5385,6 +5385,30 @@ $$;
 
 
 --
+-- Name: guard_runtime_upgrade_gateway_roster(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_gateway_roster() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE canonical uuid[]; unique_sessions integer;
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'immutable runtime upgrade gateway roster' USING ERRCODE='23514';
+ END IF;
+ SELECT array_agg(DISTINCT s ORDER BY s) INTO canonical FROM unnest(NEW.slot_ids) s;
+ SELECT count(DISTINCT s) INTO unique_sessions FROM unnest(NEW.gateway_sessions) s;
+ IF NEW.slot_ids IS DISTINCT FROM canonical OR unique_sessions<>cardinality(NEW.gateway_sessions)
+  OR array_position(NEW.slot_ids,NULL::uuid) IS NOT NULL OR array_position(NEW.gateway_sessions,NULL::uuid) IS NOT NULL
+  OR array_position(NEW.slot_ids,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL
+  OR array_position(NEW.gateway_sessions,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL THEN
+  RAISE EXCEPTION 'invalid runtime upgrade gateway roster' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_runtime_upgrade_operation(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5490,13 +5514,19 @@ BEGIN
   RAISE EXCEPTION 'invalid runtime upgrade verification participants' USING ERRCODE='23514';
  END IF;
  IF TG_OP='INSERT' THEN
+  PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+  IF NEW.gateway_roster_revision IS NULL OR NOT EXISTS (
+   SELECT 1 FROM runtime_upgrade_gateway_rosters r JOIN runtime_upgrade_gateway_roster_head h ON h.revision=r.revision
+   WHERE r.revision=NEW.gateway_roster_revision AND NEW.gateway_sessions=(SELECT array_agg(s ORDER BY s) FROM unnest(r.gateway_sessions) s)) THEN
+   RAISE EXCEPTION 'runtime upgrade verification requires full current gateway roster' USING ERRCODE='23514';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM runtime_upgrade_operations o JOIN deployment_runtime_upgrade_cutovers c ON c.deployment_id=o.deployment_id
    WHERE o.id=NEW.operation_id AND o.phase='complete' AND c.cutover_at=NEW.cutover_at AND c.serving_deployment_id=o.serving_deployment_id
    AND c.target_release_id=o.target_release_id AND c.wake_id=o.wake_id AND c.qualification_report_sha256=o.qualification_report_sha256) THEN
    RAISE EXCEPTION 'runtime upgrade verification requires matching activation' USING ERRCODE='23514';
   END IF;
- ELSIF (NEW.operation_id,NEW.gateway_sessions,NEW.cutover_at,NEW.created_at,NEW.deadline_at)
-   IS DISTINCT FROM (OLD.operation_id,OLD.gateway_sessions,OLD.cutover_at,OLD.created_at,OLD.deadline_at)
+ ELSIF (NEW.operation_id,NEW.gateway_sessions,NEW.gateway_roster_revision,NEW.cutover_at,NEW.created_at,NEW.deadline_at)
+   IS DISTINCT FROM (OLD.operation_id,OLD.gateway_sessions,OLD.gateway_roster_revision,OLD.cutover_at,OLD.created_at,OLD.deadline_at)
    OR (OLD.phase<>'pending' AND NEW IS DISTINCT FROM OLD) THEN
   RAISE EXCEPTION 'immutable runtime upgrade verification' USING ERRCODE='23514';
  END IF;
@@ -19199,6 +19229,23 @@ CREATE TABLE public.runtime_snapshots (
 
 
 --
+-- Name: runtime_upgrade_gateway_heartbeats; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_heartbeats (
+    slot_id uuid NOT NULL,
+    gateway_session_id uuid NOT NULL,
+    roster_revision uuid NOT NULL,
+    seen_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_gateway_heartbeats_check CHECK ((isfinite(expires_at) AND (expires_at = (seen_at + '00:01:00'::interval)))),
+    CONSTRAINT runtime_upgrade_gateway_heartbeats_gateway_session_id_check CHECK ((gateway_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_gateway_heartbeats_seen_at_check CHECK (isfinite(seen_at)),
+    CONSTRAINT runtime_upgrade_gateway_heartbeats_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: runtime_upgrade_gateway_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19209,6 +19256,33 @@ CREATE TABLE public.runtime_upgrade_gateway_receipts (
     cutover_at timestamp with time zone NOT NULL,
     installed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT runtime_upgrade_gateway_receipts_check CHECK ((installed_at >= cutover_at))
+);
+
+
+--
+-- Name: runtime_upgrade_gateway_roster_head; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_roster_head (
+    singleton boolean DEFAULT true NOT NULL,
+    revision uuid,
+    CONSTRAINT runtime_upgrade_gateway_roster_head_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: runtime_upgrade_gateway_rosters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_rosters (
+    revision uuid NOT NULL,
+    slot_ids uuid[] NOT NULL,
+    gateway_sessions uuid[] NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_gateway_rosters_check CHECK (((cardinality(gateway_sessions) = cardinality(slot_ids)) AND (array_ndims(gateway_sessions) = 1) AND (array_lower(gateway_sessions, 1) = 1))),
+    CONSTRAINT runtime_upgrade_gateway_rosters_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_gateway_rosters_revision_check CHECK ((revision <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_gateway_rosters_slot_ids_check CHECK ((((cardinality(slot_ids) >= 1) AND (cardinality(slot_ids) <= 64)) AND (array_ndims(slot_ids) = 1) AND (array_lower(slot_ids, 1) = 1)))
 );
 
 
@@ -19271,6 +19345,7 @@ CREATE TABLE public.runtime_upgrade_verifications (
     lease_token uuid,
     lease_until timestamp with time zone,
     finished_at timestamp with time zone,
+    gateway_roster_revision uuid,
     CONSTRAINT runtime_upgrade_verifications_check CHECK ((isfinite(deadline_at) AND (deadline_at = (cutover_at + '00:30:00'::interval)))),
     CONSTRAINT runtime_upgrade_verifications_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT runtime_upgrade_verifications_check2 CHECK ((((phase = 'pending'::text) AND (finished_at IS NULL)) OR ((phase <> 'pending'::text) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)))),
@@ -24982,11 +25057,35 @@ ALTER TABLE ONLY public.runtime_snapshots
 
 
 --
+-- Name: runtime_upgrade_gateway_heartbeats runtime_upgrade_gateway_heartbeats_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_heartbeats
+    ADD CONSTRAINT runtime_upgrade_gateway_heartbeats_pkey PRIMARY KEY (slot_id);
+
+
+--
 -- Name: runtime_upgrade_gateway_receipts runtime_upgrade_gateway_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
     ADD CONSTRAINT runtime_upgrade_gateway_receipts_pkey PRIMARY KEY (app_id, gateway_session_id);
+
+
+--
+-- Name: runtime_upgrade_gateway_roster_head runtime_upgrade_gateway_roster_head_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_roster_head
+    ADD CONSTRAINT runtime_upgrade_gateway_roster_head_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: runtime_upgrade_gateway_rosters runtime_upgrade_gateway_rosters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_rosters
+    ADD CONSTRAINT runtime_upgrade_gateway_rosters_pkey PRIMARY KEY (revision);
 
 
 --
@@ -33368,6 +33467,13 @@ CREATE TRIGGER runtime_upgrade_cutover_operation_guard BEFORE INSERT ON public.d
 
 
 --
+-- Name: runtime_upgrade_gateway_rosters runtime_upgrade_gateway_roster_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_gateway_roster_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_gateway_rosters FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_gateway_roster();
+
+
+--
 -- Name: runtime_upgrade_operations runtime_upgrade_operation_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -39635,6 +39741,14 @@ ALTER TABLE ONLY public.runtime_release_qualifications
 
 
 --
+-- Name: runtime_upgrade_gateway_heartbeats runtime_upgrade_gateway_heartbeats_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_heartbeats
+    ADD CONSTRAINT runtime_upgrade_gateway_heartbeats_roster_revision_fkey FOREIGN KEY (roster_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
 -- Name: runtime_upgrade_gateway_receipts runtime_upgrade_gateway_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39648,6 +39762,14 @@ ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
 
 ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
     ADD CONSTRAINT runtime_upgrade_gateway_receipts_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_cutovers(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_roster_head runtime_upgrade_gateway_roster_head_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_roster_head
+    ADD CONSTRAINT runtime_upgrade_gateway_roster_head_revision_fkey FOREIGN KEY (revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
 
 
 --
@@ -39688,6 +39810,14 @@ ALTER TABLE ONLY public.runtime_upgrade_operations
 
 ALTER TABLE ONLY public.runtime_upgrade_operations
     ADD CONSTRAINT runtime_upgrade_operations_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_verifications runtime_upgrade_verifications_gateway_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_verifications
+    ADD CONSTRAINT runtime_upgrade_verifications_gateway_roster_revision_fkey FOREIGN KEY (gateway_roster_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
 
 
 --

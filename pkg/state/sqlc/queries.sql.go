@@ -2335,7 +2335,7 @@ UPDATE runtime_upgrade_verifications SET
  finished_at=CASE WHEN deadline_at<=checkpoint.checked_at OR $1::text<>'pending' THEN checkpoint.checked_at ELSE NULL END
 FROM checkpoint
 WHERE operation_id=$5::uuid AND lease_token=$6::uuid AND lease_until>checkpoint.checked_at AND phase='pending'
- AND ($1::text<>'verified' OR $7::timestamptz>checkpoint.checked_at) RETURNING runtime_upgrade_verifications.operation_id, runtime_upgrade_verifications.gateway_sessions, runtime_upgrade_verifications.cutover_at, runtime_upgrade_verifications.created_at, runtime_upgrade_verifications.deadline_at, runtime_upgrade_verifications.phase, runtime_upgrade_verifications.reason, runtime_upgrade_verifications.last_observation, runtime_upgrade_verifications.next_attempt_at, runtime_upgrade_verifications.lease_token, runtime_upgrade_verifications.lease_until, runtime_upgrade_verifications.finished_at
+ AND ($1::text<>'verified' OR $7::timestamptz>checkpoint.checked_at) RETURNING runtime_upgrade_verifications.operation_id, runtime_upgrade_verifications.gateway_sessions, runtime_upgrade_verifications.cutover_at, runtime_upgrade_verifications.created_at, runtime_upgrade_verifications.deadline_at, runtime_upgrade_verifications.phase, runtime_upgrade_verifications.reason, runtime_upgrade_verifications.last_observation, runtime_upgrade_verifications.next_attempt_at, runtime_upgrade_verifications.lease_token, runtime_upgrade_verifications.lease_until, runtime_upgrade_verifications.finished_at, runtime_upgrade_verifications.gateway_roster_revision
 `
 
 type CheckpointRuntimeUpgradeVerificationParams struct {
@@ -2372,6 +2372,7 @@ func (q *Queries) CheckpointRuntimeUpgradeVerification(ctx context.Context, db D
 		&i.LeaseToken,
 		&i.LeaseUntil,
 		&i.FinishedAt,
+		&i.GatewayRosterRevision,
 	)
 	return i, err
 }
@@ -4078,7 +4079,7 @@ WITH due AS (
  ORDER BY next_attempt_at,created_at,operation_id FOR UPDATE SKIP LOCKED LIMIT 1
 )
 UPDATE runtime_upgrade_verifications v SET lease_token=gen_random_uuid(),lease_until=clock_timestamp()+make_interval(secs=>$1::int)
-FROM due WHERE v.operation_id=due.operation_id RETURNING v.operation_id, v.gateway_sessions, v.cutover_at, v.created_at, v.deadline_at, v.phase, v.reason, v.last_observation, v.next_attempt_at, v.lease_token, v.lease_until, v.finished_at
+FROM due WHERE v.operation_id=due.operation_id RETURNING v.operation_id, v.gateway_sessions, v.cutover_at, v.created_at, v.deadline_at, v.phase, v.reason, v.last_observation, v.next_attempt_at, v.lease_token, v.lease_until, v.finished_at, v.gateway_roster_revision
 `
 
 func (q *Queries) ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeVerification, error) {
@@ -4097,6 +4098,7 @@ func (q *Queries) ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, 
 		&i.LeaseToken,
 		&i.LeaseUntil,
 		&i.FinishedAt,
+		&i.GatewayRosterRevision,
 	)
 	return i, err
 }
@@ -14863,7 +14865,7 @@ func (q *Queries) GetRuntimeUpgradeOperationForDeployment(ctx context.Context, d
 }
 
 const getRuntimeUpgradeVerification = `-- name: GetRuntimeUpgradeVerification :one
-SELECT v.operation_id, v.gateway_sessions, v.cutover_at, v.created_at, v.deadline_at, v.phase, v.reason, v.last_observation, v.next_attempt_at, v.lease_token, v.lease_until, v.finished_at FROM runtime_upgrade_verifications v JOIN runtime_upgrade_operations o ON o.id=v.operation_id
+SELECT v.operation_id, v.gateway_sessions, v.cutover_at, v.created_at, v.deadline_at, v.phase, v.reason, v.last_observation, v.next_attempt_at, v.lease_token, v.lease_until, v.finished_at, v.gateway_roster_revision FROM runtime_upgrade_verifications v JOIN runtime_upgrade_operations o ON o.id=v.operation_id
 WHERE v.operation_id=$1::uuid AND o.account_id=$2::uuid
 `
 
@@ -14888,6 +14890,7 @@ func (q *Queries) GetRuntimeUpgradeVerification(ctx context.Context, db DBTX, ar
 		&i.LeaseToken,
 		&i.LeaseUntil,
 		&i.FinishedAt,
+		&i.GatewayRosterRevision,
 	)
 	return i, err
 }
@@ -15196,6 +15199,29 @@ func (q *Queries) HasProjectEnvironmentClonePostgresVerificationAttempts(ctx con
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const heartbeatRuntimeUpgradeGateway = `-- name: HeartbeatRuntimeUpgradeGateway :execrows
+WITH heartbeat AS MATERIALIZED (SELECT clock_timestamp() AS seen_at)
+INSERT INTO runtime_upgrade_gateway_heartbeats(slot_id,gateway_session_id,roster_revision,seen_at,expires_at)
+SELECT $1::uuid,$2::uuid,r.revision,heartbeat.seen_at,heartbeat.seen_at+make_interval(secs=>$3::int)
+FROM runtime_upgrade_gateway_rosters r JOIN runtime_upgrade_gateway_roster_head h ON h.revision=r.revision CROSS JOIN heartbeat
+WHERE h.singleton AND r.gateway_sessions[array_position(r.slot_ids,$1::uuid)]=$2::uuid
+ON CONFLICT (slot_id) DO UPDATE SET gateway_session_id=EXCLUDED.gateway_session_id,roster_revision=EXCLUDED.roster_revision,seen_at=EXCLUDED.seen_at,expires_at=EXCLUDED.expires_at
+`
+
+type HeartbeatRuntimeUpgradeGatewayParams struct {
+	SlotID           pgtype.UUID
+	GatewaySessionID pgtype.UUID
+	LeaseSeconds     int32
+}
+
+func (q *Queries) HeartbeatRuntimeUpgradeGateway(ctx context.Context, db DBTX, arg HeartbeatRuntimeUpgradeGatewayParams) (int64, error) {
+	result, err := db.Exec(ctx, heartbeatRuntimeUpgradeGateway, arg.SlotID, arg.GatewaySessionID, arg.LeaseSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const incrementAppError = `-- name: IncrementAppError :one
@@ -19031,6 +19057,28 @@ func (q *Queries) InsertRoutePolicyReceipt(ctx context.Context, db DBTX, arg Ins
 	return err
 }
 
+const insertRuntimeUpgradeGatewayRoster = `-- name: InsertRuntimeUpgradeGatewayRoster :one
+INSERT INTO runtime_upgrade_gateway_rosters(revision,slot_ids,gateway_sessions) VALUES ($1,$2,$3) RETURNING revision, slot_ids, gateway_sessions, created_at
+`
+
+type InsertRuntimeUpgradeGatewayRosterParams struct {
+	Revision        pgtype.UUID
+	SlotIds         []pgtype.UUID
+	GatewaySessions []pgtype.UUID
+}
+
+func (q *Queries) InsertRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeGatewayRosterParams) (RuntimeUpgradeGatewayRoster, error) {
+	row := db.QueryRow(ctx, insertRuntimeUpgradeGatewayRoster, arg.Revision, arg.SlotIds, arg.GatewaySessions)
+	var i RuntimeUpgradeGatewayRoster
+	err := row.Scan(
+		&i.Revision,
+		&i.SlotIds,
+		&i.GatewaySessions,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertRuntimeUpgradeOperation = `-- name: InsertRuntimeUpgradeOperation :one
 INSERT INTO runtime_upgrade_operations(id,account_id,app_id,deployment_id,serving_deployment_id,target_release_id,source_sha256,qualification_report_sha256,phase,source_path,deadline_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text,$10::text,clock_timestamp()+make_interval(secs=>$11::int)) RETURNING id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path
@@ -19090,15 +19138,16 @@ func (q *Queries) InsertRuntimeUpgradeOperation(ctx context.Context, db DBTX, ar
 }
 
 const insertRuntimeUpgradeVerification = `-- name: InsertRuntimeUpgradeVerification :one
-INSERT INTO runtime_upgrade_verifications(operation_id,gateway_sessions,cutover_at,deadline_at)
-VALUES ($1,$2,$3,$3::timestamptz+make_interval(secs=>$4::int)) RETURNING operation_id, gateway_sessions, cutover_at, created_at, deadline_at, phase, reason, last_observation, next_attempt_at, lease_token, lease_until, finished_at
+INSERT INTO runtime_upgrade_verifications(operation_id,gateway_sessions,cutover_at,deadline_at,gateway_roster_revision)
+VALUES ($1,$2,$3,$3::timestamptz+make_interval(secs=>$4::int),$5) RETURNING operation_id, gateway_sessions, cutover_at, created_at, deadline_at, phase, reason, last_observation, next_attempt_at, lease_token, lease_until, finished_at, gateway_roster_revision
 `
 
 type InsertRuntimeUpgradeVerificationParams struct {
-	OperationID     pgtype.UUID
-	GatewaySessions []pgtype.UUID
-	CutoverAt       pgtype.Timestamptz
-	DeadlineSeconds int32
+	OperationID           pgtype.UUID
+	GatewaySessions       []pgtype.UUID
+	CutoverAt             pgtype.Timestamptz
+	DeadlineSeconds       int32
+	GatewayRosterRevision pgtype.UUID
 }
 
 // Private immutable reviewed participants and durable verification (ADR-608).
@@ -19108,6 +19157,7 @@ func (q *Queries) InsertRuntimeUpgradeVerification(ctx context.Context, db DBTX,
 		arg.GatewaySessions,
 		arg.CutoverAt,
 		arg.DeadlineSeconds,
+		arg.GatewayRosterRevision,
 	)
 	var i RuntimeUpgradeVerification
 	err := row.Scan(
@@ -19123,6 +19173,7 @@ func (q *Queries) InsertRuntimeUpgradeVerification(ctx context.Context, db DBTX,
 		&i.LeaseToken,
 		&i.LeaseUntil,
 		&i.FinishedAt,
+		&i.GatewayRosterRevision,
 	)
 	return i, err
 }
@@ -30913,6 +30964,17 @@ func (q *Queries) LockRuntimeUpgradeCutoverDeployments(ctx context.Context, db D
 	return items, nil
 }
 
+const lockRuntimeUpgradeGatewayRosterHead = `-- name: LockRuntimeUpgradeGatewayRosterHead :one
+SELECT revision FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradeGatewayRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeGatewayRosterHead)
+	var revision pgtype.UUID
+	err := row.Scan(&revision)
+	return revision, err
+}
+
 const lockRuntimeUpgradeOperation = `-- name: LockRuntimeUpgradeOperation :one
 SELECT id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path FROM runtime_upgrade_operations WHERE id=$1 AND lease_token=$2 AND lease_until>clock_timestamp()
  AND phase IN ('reserved','prepared','waiting') FOR UPDATE
@@ -31000,7 +31062,7 @@ func (q *Queries) LockRuntimeUpgradeTargetApp(ctx context.Context, db DBTX, depl
 }
 
 const lockRuntimeUpgradeVerification = `-- name: LockRuntimeUpgradeVerification :one
-SELECT operation_id, gateway_sessions, cutover_at, created_at, deadline_at, phase, reason, last_observation, next_attempt_at, lease_token, lease_until, finished_at FROM runtime_upgrade_verifications WHERE operation_id=$1 AND lease_token=$2 AND lease_until>clock_timestamp() AND phase='pending' FOR UPDATE
+SELECT operation_id, gateway_sessions, cutover_at, created_at, deadline_at, phase, reason, last_observation, next_attempt_at, lease_token, lease_until, finished_at, gateway_roster_revision FROM runtime_upgrade_verifications WHERE operation_id=$1 AND lease_token=$2 AND lease_until>clock_timestamp() AND phase='pending' FOR UPDATE
 `
 
 type LockRuntimeUpgradeVerificationParams struct {
@@ -31024,6 +31086,7 @@ func (q *Queries) LockRuntimeUpgradeVerification(ctx context.Context, db DBTX, a
 		&i.LeaseToken,
 		&i.LeaseUntil,
 		&i.FinishedAt,
+		&i.GatewayRosterRevision,
 	)
 	return i, err
 }
@@ -41747,6 +41810,24 @@ func (q *Queries) PublishRuntimeRelease(ctx context.Context, db DBTX, arg Publis
 	return i, err
 }
 
+const publishRuntimeUpgradeGatewayRoster = `-- name: PublishRuntimeUpgradeGatewayRoster :execrows
+UPDATE runtime_upgrade_gateway_roster_head SET revision=$1::uuid
+WHERE singleton AND revision IS NOT DISTINCT FROM $2::uuid
+`
+
+type PublishRuntimeUpgradeGatewayRosterParams struct {
+	Revision         pgtype.UUID
+	ExpectedRevision pgtype.UUID
+}
+
+func (q *Queries) PublishRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX, arg PublishRuntimeUpgradeGatewayRosterParams) (int64, error) {
+	result, err := db.Exec(ctx, publishRuntimeUpgradeGatewayRoster, arg.Revision, arg.ExpectedRevision)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const publishRuntimeUpgradeOperationBuild = `-- name: PublishRuntimeUpgradeOperationBuild :execrows
 UPDATE deployments SET status='building',build_id=$1::uuid WHERE id=$2::uuid AND status='pending'
 `
@@ -47615,6 +47696,36 @@ func (q *Queries) ReadRuntimeUpgradeGatewayDeployments(ctx context.Context, db D
 	return items, nil
 }
 
+const readRuntimeUpgradeGatewayHeartbeats = `-- name: ReadRuntimeUpgradeGatewayHeartbeats :many
+SELECT slot_id, gateway_session_id, roster_revision, seen_at, expires_at FROM runtime_upgrade_gateway_heartbeats WHERE roster_revision=$1 ORDER BY slot_id
+`
+
+func (q *Queries) ReadRuntimeUpgradeGatewayHeartbeats(ctx context.Context, db DBTX, rosterRevision pgtype.UUID) ([]RuntimeUpgradeGatewayHeartbeat, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeGatewayHeartbeats, rosterRevision)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradeGatewayHeartbeat{}
+	for rows.Next() {
+		var i RuntimeUpgradeGatewayHeartbeat
+		if err := rows.Scan(
+			&i.SlotID,
+			&i.GatewaySessionID,
+			&i.RosterRevision,
+			&i.SeenAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readRuntimeUpgradeGatewayReceipts = `-- name: ReadRuntimeUpgradeGatewayReceipts :many
 SELECT app_id, gateway_session_id, deployment_id, cutover_at, installed_at FROM runtime_upgrade_gateway_receipts WHERE app_id=$1
 `
@@ -47643,6 +47754,23 @@ func (q *Queries) ReadRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX
 		return nil, err
 	}
 	return items, nil
+}
+
+const readRuntimeUpgradeGatewayRoster = `-- name: ReadRuntimeUpgradeGatewayRoster :one
+SELECT r.revision, r.slot_ids, r.gateway_sessions, r.created_at FROM runtime_upgrade_gateway_rosters r JOIN runtime_upgrade_gateway_roster_head h ON h.revision=r.revision WHERE h.singleton
+`
+
+// Private desired gateway roster (apid) and operational liveness (gatewayd), ADR-609.
+func (q *Queries) ReadRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX) (RuntimeUpgradeGatewayRoster, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeGatewayRoster)
+	var i RuntimeUpgradeGatewayRoster
+	err := row.Scan(
+		&i.Revision,
+		&i.SlotIds,
+		&i.GatewaySessions,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const readRuntimeUpgradeOperationCandidate = `-- name: ReadRuntimeUpgradeOperationCandidate :one
@@ -52374,6 +52502,15 @@ func (q *Queries) ResetManagedPostgresReconciliationCoverage(ctx context.Context
 	return err
 }
 
+const resetRuntimeUpgradeGatewayHeartbeats = `-- name: ResetRuntimeUpgradeGatewayHeartbeats :exec
+DELETE FROM runtime_upgrade_gateway_heartbeats
+`
+
+func (q *Queries) ResetRuntimeUpgradeGatewayHeartbeats(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, resetRuntimeUpgradeGatewayHeartbeats)
+	return err
+}
+
 const resetWorkflowResumeStep = `-- name: ResetWorkflowResumeStep :exec
 UPDATE workflow_steps SET status='pending',retry_base=attempt,output=NULL,error=NULL,finished_at=NULL,
  next_retry_at=NULL,next_check_at=NULL,skip_reason=NULL,outbound_attempt_token=NULL
@@ -55472,6 +55609,17 @@ func (q *Queries) SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg Set
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const shareRuntimeUpgradeGatewayRosterHead = `-- name: ShareRuntimeUpgradeGatewayRosterHead :one
+SELECT revision FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE
+`
+
+func (q *Queries) ShareRuntimeUpgradeGatewayRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, shareRuntimeUpgradeGatewayRosterHead)
+	var revision pgtype.UUID
+	err := row.Scan(&revision)
+	return revision, err
 }
 
 const skipPendingWorkflowStep = `-- name: SkipPendingWorkflowStep :exec

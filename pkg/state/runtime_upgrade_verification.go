@@ -11,17 +11,18 @@ import (
 )
 
 // Verification is a fresh observation of the explicitly reviewed gateway
-// sessions, not a fleet membership, uptime, drain or automatic rollback proof.
+// sessions and desired roster. It is not a drain or automatic rollback proof.
 // The historical operation phase remains complete after later traffic changes.
 type RuntimeUpgradeVerification struct {
-	OperationID       string    `json:"operation_id"`
-	Status            string    `json:"status"`
-	Reason            string    `json:"reason,omitempty"`
-	CheckedAt         time.Time `json:"checked_at"`
-	ValidForSeconds   int       `json:"valid_for_seconds"`
-	GatewaySessions   []string  `json:"gateway_sessions"`
-	ConfirmedGateways int       `json:"confirmed_gateways"`
-	HealthEvaluatedAt string    `json:"health_evaluated_at,omitempty"`
+	GatewayRosterRevision string    `json:"gateway_roster_revision,omitempty"`
+	OperationID           string    `json:"operation_id"`
+	Status                string    `json:"status"`
+	Reason                string    `json:"reason,omitempty"`
+	CheckedAt             time.Time `json:"checked_at"`
+	ValidForSeconds       int       `json:"valid_for_seconds"`
+	GatewaySessions       []string  `json:"gateway_sessions"`
+	ConfirmedGateways     int       `json:"confirmed_gateways"`
+	HealthEvaluatedAt     string    `json:"health_evaluated_at,omitempty"`
 }
 
 type RuntimeUpgradeVerificationStore interface {

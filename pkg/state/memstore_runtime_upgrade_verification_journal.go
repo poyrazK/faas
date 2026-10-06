@@ -36,7 +36,11 @@ func (m *MemStore) StartRuntimeUpgradeVerification(ctx context.Context, accountI
 	if !ok || op.Phase != RuntimeUpgradeComplete || !op.cutover(op.WakeID).matches(cutover) {
 		return RuntimeUpgradeVerificationJournal{}, ErrConflict
 	}
-	j := RuntimeUpgradeVerificationJournal{OperationID: id, GatewaySessions: out.GatewaySessions, Phase: RuntimeUpgradeVerificationPending,
+	roster := m.runtimeUpgradeGatewayRoster
+	if roster.Revision == "" || !slices.Equal(out.GatewaySessions, roster.sessions()) {
+		return RuntimeUpgradeVerificationJournal{}, ErrConflict
+	}
+	j := RuntimeUpgradeVerificationJournal{GatewayRosterRevision: roster.Revision, OperationID: id, GatewaySessions: out.GatewaySessions, Phase: RuntimeUpgradeVerificationPending,
 		CutoverAt: cutover.CutoverAt, CreatedAt: out.CheckedAt, NextAttemptAt: out.CheckedAt, DeadlineAt: cutover.CutoverAt.Add(api.RuntimeUpgradeVerificationMaxAge)}
 	if m.runtimeUpgradeVerifications == nil {
 		m.runtimeUpgradeVerifications = map[string]RuntimeUpgradeVerificationJournal{}

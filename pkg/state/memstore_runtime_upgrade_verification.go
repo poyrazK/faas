@@ -136,5 +136,10 @@ func (m *MemStore) verifyRuntimeUpgradeLocked(accountID string, out RuntimeUpgra
 			receipts = append(receipts, r)
 		}
 	}
+	out.CheckedAt = time.Now().UTC()
+	out = m.runtimeUpgradeGatewayMembershipLocked(out)
+	if out.Reason != "" {
+		return out, nil
+	}
 	return evaluateRuntimeUpgradeVerification(out, cutover, candidate.Scope, receipts, m.appHealthHistory[op.AppID].Latest, op.AppID), nil
 }

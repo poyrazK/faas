@@ -5995,12 +5995,32 @@ type RuntimeSnapshot struct {
 	Profile             string
 }
 
+type RuntimeUpgradeGatewayHeartbeat struct {
+	SlotID           pgtype.UUID
+	GatewaySessionID pgtype.UUID
+	RosterRevision   pgtype.UUID
+	SeenAt           pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
 type RuntimeUpgradeGatewayReceipt struct {
 	AppID            pgtype.UUID
 	GatewaySessionID pgtype.UUID
 	DeploymentID     pgtype.UUID
 	CutoverAt        pgtype.Timestamptz
 	InstalledAt      pgtype.Timestamptz
+}
+
+type RuntimeUpgradeGatewayRoster struct {
+	Revision        pgtype.UUID
+	SlotIds         []pgtype.UUID
+	GatewaySessions []pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+}
+
+type RuntimeUpgradeGatewayRosterHead struct {
+	Singleton bool
+	Revision  pgtype.UUID
 }
 
 type RuntimeUpgradeOperation struct {
@@ -6025,18 +6045,19 @@ type RuntimeUpgradeOperation struct {
 }
 
 type RuntimeUpgradeVerification struct {
-	OperationID     pgtype.UUID
-	GatewaySessions []pgtype.UUID
-	CutoverAt       pgtype.Timestamptz
-	CreatedAt       pgtype.Timestamptz
-	DeadlineAt      pgtype.Timestamptz
-	Phase           string
-	Reason          string
-	LastObservation []byte
-	NextAttemptAt   pgtype.Timestamptz
-	LeaseToken      pgtype.UUID
-	LeaseUntil      pgtype.Timestamptz
-	FinishedAt      pgtype.Timestamptz
+	OperationID           pgtype.UUID
+	GatewaySessions       []pgtype.UUID
+	CutoverAt             pgtype.Timestamptz
+	CreatedAt             pgtype.Timestamptz
+	DeadlineAt            pgtype.Timestamptz
+	Phase                 string
+	Reason                string
+	LastObservation       []byte
+	NextAttemptAt         pgtype.Timestamptz
+	LeaseToken            pgtype.UUID
+	LeaseUntil            pgtype.Timestamptz
+	FinishedAt            pgtype.Timestamptz
+	GatewayRosterRevision pgtype.UUID
 }
 
 type SafeReleaseWorkerLease struct {

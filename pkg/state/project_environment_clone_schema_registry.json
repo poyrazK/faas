@@ -6757,6 +6757,17 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "runtime_upgrade_gateway_heartbeats",
+    "columns": [
+      "expires_at",
+      "gateway_session_id",
+      "roster_revision",
+      "seen_at",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "runtime_upgrade_gateway_receipts",
     "columns": [
       "app_id",
@@ -6766,6 +6777,24 @@
       "installed_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_gateway_roster_head",
+    "columns": [
+      "revision",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_gateway_rosters",
+    "columns": [
+      "created_at",
+      "gateway_sessions",
+      "revision",
+      "slot_ids"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "runtime_upgrade_operations",
@@ -6798,6 +6827,7 @@
       "cutover_at",
       "deadline_at",
       "finished_at",
+      "gateway_roster_revision",
       "gateway_sessions",
       "last_observation",
       "lease_token",

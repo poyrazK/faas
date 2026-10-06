@@ -159,7 +159,10 @@ func runtimeUpgradeVerificationDB(ctx context.Context, tx pgx.Tx, accountID stri
 			return RuntimeUpgradeVerification{}, ErrConflict
 		}
 	}
-	out.CheckedAt = time.Now().UTC()
+	out, err = runtimeUpgradeGatewayMembershipDB(ctx, tx, accountID, out)
+	if err != nil || out.Reason != "" {
+		return out, err
+	}
 	return evaluateRuntimeUpgradeVerification(out, cutover, candidate.Scope, receipts, health, op.AppID), nil
 }
 

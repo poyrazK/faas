@@ -1,6 +1,7 @@
 package state_test
 
 // adr: 608
+// adr: 609
 
 import (
 	"errors"
@@ -58,6 +59,7 @@ func TestPgRuntimeUpgradeVerificationJournalRecoversAndRetainsHistoricalSuccess(
 	app, serving, candidate, r := completeVerificationFixture(t, s)
 	verificationJournalAgeCutover(t, pool, candidate.ID, 6*time.Minute)
 	sessions := []string{uuid.NewString(), uuid.NewString()}
+	seedReviewedRuntimeUpgradeGateways(t, s, sessions)
 	j, err := s.StartRuntimeUpgradeVerification(t.Context(), r.AccountID, r.ID, sessions)
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +129,7 @@ func TestPgRuntimeUpgradeVerificationJournalExpiresWithoutExtendingDeadline(t *t
 	_, _, candidate, r := completeVerificationFixture(t, s)
 	verificationJournalAgeCutover(t, pool, candidate.ID, 31*time.Minute)
 	sessions := []string{uuid.NewString()}
+	seedReviewedRuntimeUpgradeGateways(t, s, sessions)
 	j, err := s.StartRuntimeUpgradeVerification(t.Context(), r.AccountID, r.ID, sessions)
 	if err != nil || j.DeadlineAt.After(time.Now()) {
 		t.Fatal(j, err)
@@ -147,7 +150,9 @@ func TestPgRuntimeUpgradeVerificationJournalExpiresWithoutExtendingDeadline(t *t
 func TestPgRuntimeUpgradeVerificationJournalBlocksRollback(t *testing.T) {
 	s, pool, _ := pgStoreWithPool(t)
 	_, serving, candidate, r := completeVerificationFixture(t, s)
-	if _, err := s.StartRuntimeUpgradeVerification(t.Context(), r.AccountID, r.ID, []string{uuid.NewString()}); err != nil {
+	sessions := []string{uuid.NewString()}
+	seedReviewedRuntimeUpgradeGateways(t, s, sessions)
+	if _, err := s.StartRuntimeUpgradeVerification(t.Context(), r.AccountID, r.ID, sessions); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.UpdateDeploymentTraffic(t.Context(), serving.ID, 100, candidate.ID); err != nil {
@@ -165,7 +170,9 @@ func TestPgRuntimeUpgradeVerificationJournalBlocksRollback(t *testing.T) {
 func TestPgRuntimeUpgradeVerificationJournalLeaseExpiryAtAppFencePublishesNothing(t *testing.T) {
 	s, pool, _ := pgStoreWithPool(t)
 	app, _, _, r := completeVerificationFixture(t, s)
-	if _, err := s.StartRuntimeUpgradeVerification(t.Context(), r.AccountID, r.ID, []string{uuid.NewString()}); err != nil {
+	sessions := []string{uuid.NewString()}
+	seedReviewedRuntimeUpgradeGateways(t, s, sessions)
+	if _, err := s.StartRuntimeUpgradeVerification(t.Context(), r.AccountID, r.ID, sessions); err != nil {
 		t.Fatal(err)
 	}
 	claim, err := s.ClaimRuntimeUpgradeVerification(t.Context())

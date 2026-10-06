@@ -52,11 +52,24 @@ func (s *PgStore) StartRuntimeUpgradeVerification(ctx context.Context, accountID
 	if !op.cutover(op.WakeID).matches(runtimeUpgradeCutoverFromRow(c)) {
 		return RuntimeUpgradeVerificationJournal{}, ErrConflict
 	}
+	if _, err := q.ShareRuntimeUpgradeGatewayRosterHead(ctx, tx); err != nil {
+		return RuntimeUpgradeVerificationJournal{}, fmt.Errorf("fence verification gateway roster: %w", err)
+	}
+	roster, err := q.ReadRuntimeUpgradeGatewayRoster(ctx, tx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RuntimeUpgradeVerificationJournal{}, ErrConflict
+	}
+	if err != nil {
+		return RuntimeUpgradeVerificationJournal{}, fmt.Errorf("read enrollment gateway roster: %w", err)
+	}
+	if !slices.Equal(out.GatewaySessions, runtimeUpgradeGatewayRosterFromRow(roster).sessions()) {
+		return RuntimeUpgradeVerificationJournal{}, ErrConflict
+	}
 	participants := make([]pgtype.UUID, len(out.GatewaySessions))
 	for i, session := range out.GatewaySessions {
 		participants[i] = mustPgUUID(session)
 	}
-	row, err := q.InsertRuntimeUpgradeVerification(ctx, tx, sqlc.InsertRuntimeUpgradeVerificationParams{OperationID: mustPgUUID(id), GatewaySessions: participants, CutoverAt: c.CutoverAt, DeadlineSeconds: int32(api.RuntimeUpgradeVerificationMaxAge / time.Second)})
+	row, err := q.InsertRuntimeUpgradeVerification(ctx, tx, sqlc.InsertRuntimeUpgradeVerificationParams{OperationID: mustPgUUID(id), GatewaySessions: participants, GatewayRosterRevision: roster.Revision, CutoverAt: c.CutoverAt, DeadlineSeconds: int32(api.RuntimeUpgradeVerificationMaxAge / time.Second)})
 	if err != nil {
 		return RuntimeUpgradeVerificationJournal{}, fmt.Errorf("freeze verification participants: %w", runtimeUpgradeBaselineError(err))
 	}
@@ -99,7 +112,7 @@ func (s *PgStore) AdvanceRuntimeUpgradeVerification(ctx context.Context, claim R
 	if err != nil {
 		return RuntimeUpgradeVerificationJournal{}, mapErr(err)
 	}
-	// Same operation -> journal -> environment/app/workload order as enrollment.
+	// Operation -> journal -> roster -> environment/app/workload fence order.
 	r, err = q.LockRuntimeUpgradeOperationControl(ctx, tx, sqlc.LockRuntimeUpgradeOperationControlParams{ID: r.ID, AccountID: r.AccountID})
 	if err != nil {
 		return RuntimeUpgradeVerificationJournal{}, fmt.Errorf("lock verification operation: %w", err)
@@ -114,6 +127,10 @@ func (s *PgStore) AdvanceRuntimeUpgradeVerification(ctx context.Context, claim R
 	j, err := runtimeUpgradeVerificationJournalFromRow(row)
 	if err != nil {
 		return RuntimeUpgradeVerificationJournal{}, err
+	}
+	// Roster review/heartbeat take only this head fence; no app lock inversion.
+	if _, err := q.ShareRuntimeUpgradeGatewayRosterHead(ctx, tx); err != nil {
+		return RuntimeUpgradeVerificationJournal{}, fmt.Errorf("fence verification membership: %w", err)
 	}
 	op := runtimeUpgradeOperationFromRow(r)
 	observation, err := advanceRuntimeUpgradeVerificationDB(ctx, tx, op, j)
@@ -176,7 +193,7 @@ func runtimeUpgradeVerificationSessions(ids []pgtype.UUID) []string {
 }
 
 func runtimeUpgradeVerificationJournalFromRow(r sqlc.RuntimeUpgradeVerification) (RuntimeUpgradeVerificationJournal, error) {
-	j := RuntimeUpgradeVerificationJournal{OperationID: pgUUIDString(r.OperationID), GatewaySessions: runtimeUpgradeVerificationSessions(r.GatewaySessions),
+	j := RuntimeUpgradeVerificationJournal{GatewayRosterRevision: pgUUIDString(r.GatewayRosterRevision), OperationID: pgUUIDString(r.OperationID), GatewaySessions: runtimeUpgradeVerificationSessions(r.GatewaySessions),
 		Phase: RuntimeUpgradeVerificationPhase(r.Phase), Reason: r.Reason, CutoverAt: r.CutoverAt.Time.UTC(), CreatedAt: r.CreatedAt.Time.UTC(), DeadlineAt: r.DeadlineAt.Time.UTC(),
 		FinishedAt: r.FinishedAt.Time.UTC(), LeaseToken: pgUUIDString(r.LeaseToken), LeaseUntil: r.LeaseUntil.Time.UTC(), NextAttemptAt: r.NextAttemptAt.Time.UTC()}
 	if len(r.LastObservation) > 0 && json.Unmarshal(r.LastObservation, &j.LastObservation) != nil {

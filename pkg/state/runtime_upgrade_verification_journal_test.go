@@ -1,6 +1,7 @@
 package state_test
 
 // adr: 608
+// adr: 609
 
 import (
 	"errors"
@@ -26,6 +27,7 @@ func TestRuntimeUpgradeVerificationJournalFreezesReviewAndPersistsProgress(t *te
 			store := s.(state.RuntimeUpgradeVerificationJournalStore)
 			controls := runtimeupgrade.Controls{Store: s.(state.RuntimeUpgradeReservationStore)}
 			sessions := []string{uuid.NewString(), uuid.NewString()}
+			seedReviewedRuntimeUpgradeGateways(t, s, sessions)
 			if _, err := controls.StartVerification(t.Context(), uuid.NewString(), r.ID, sessions); !errors.Is(err, state.ErrNotFound) {
 				t.Fatal("cross-account enrollment", err)
 			}

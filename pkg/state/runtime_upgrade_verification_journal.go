@@ -18,18 +18,19 @@ const (
 // Journal completion is historical evidence, never permission to drain, delete
 // rollback artifacts or skip a fresh check. Participants and deadline are fixed.
 type RuntimeUpgradeVerificationJournal struct {
-	OperationID     string                          `json:"operation_id"`
-	GatewaySessions []string                        `json:"gateway_sessions"`
-	Phase           RuntimeUpgradeVerificationPhase `json:"phase"`
-	Reason          string                          `json:"reason,omitempty"`
-	CutoverAt       time.Time                       `json:"cutover_at"`
-	CreatedAt       time.Time                       `json:"created_at"`
-	DeadlineAt      time.Time                       `json:"deadline_at"`
-	FinishedAt      time.Time                       `json:"finished_at,omitzero"`
-	LastObservation *RuntimeUpgradeVerification     `json:"last_observation,omitempty"`
-	LeaseToken      string                          `json:"-"`
-	LeaseUntil      time.Time                       `json:"-"`
-	NextAttemptAt   time.Time                       `json:"-"`
+	GatewayRosterRevision string                          `json:"gateway_roster_revision,omitempty"`
+	OperationID           string                          `json:"operation_id"`
+	GatewaySessions       []string                        `json:"gateway_sessions"`
+	Phase                 RuntimeUpgradeVerificationPhase `json:"phase"`
+	Reason                string                          `json:"reason,omitempty"`
+	CutoverAt             time.Time                       `json:"cutover_at"`
+	CreatedAt             time.Time                       `json:"created_at"`
+	DeadlineAt            time.Time                       `json:"deadline_at"`
+	FinishedAt            time.Time                       `json:"finished_at,omitzero"`
+	LastObservation       *RuntimeUpgradeVerification     `json:"last_observation,omitempty"`
+	LeaseToken            string                          `json:"-"`
+	LeaseUntil            time.Time                       `json:"-"`
+	NextAttemptAt         time.Time                       `json:"-"`
 }
 
 // Private apid controls enroll an already activated operation. Gateway restarts
@@ -58,7 +59,7 @@ func runtimeUpgradeVerificationCheckpoint(j RuntimeUpgradeVerificationJournal, o
 		j.Phase, j.Reason = RuntimeUpgradeVerificationExpired, "deadline_exceeded"
 	} else if observation.Status == "verified" {
 		j.Phase, j.Reason = RuntimeUpgradeVerificationVerified, ""
-	} else if observation.Reason == "activation_changed" || observation.Reason == "activation_inputs_changed" || observation.Reason == "health_scope_unsupported" {
+	} else if observation.Reason == "activation_changed" || observation.Reason == "activation_inputs_changed" || observation.Reason == "health_scope_unsupported" || observation.Reason == "gateway_membership_changed" || observation.Reason == "gateway_membership_unreviewed" || observation.Reason == "gateway_membership_mismatch" {
 		j.Phase = RuntimeUpgradeVerificationBlocked
 	}
 	if j.Phase != RuntimeUpgradeVerificationPending {

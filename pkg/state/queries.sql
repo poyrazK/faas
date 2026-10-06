@@ -14082,8 +14082,8 @@ SELECT * FROM runtime_upgrade_operations WHERE id=$1;
 
 -- Private immutable reviewed participants and durable verification (ADR-608).
 -- name: InsertRuntimeUpgradeVerification :one
-INSERT INTO runtime_upgrade_verifications(operation_id,gateway_sessions,cutover_at,deadline_at)
-VALUES ($1,$2,$3,$3::timestamptz+make_interval(secs=>sqlc.arg(deadline_seconds)::int)) RETURNING *;
+INSERT INTO runtime_upgrade_verifications(operation_id,gateway_sessions,cutover_at,deadline_at,gateway_roster_revision)
+VALUES (sqlc.arg(operation_id),sqlc.arg(gateway_sessions),sqlc.arg(cutover_at),sqlc.arg(cutover_at)::timestamptz+make_interval(secs=>sqlc.arg(deadline_seconds)::int),sqlc.arg(gateway_roster_revision)) RETURNING *;
 
 -- name: GetRuntimeUpgradeVerification :one
 SELECT v.* FROM runtime_upgrade_verifications v JOIN runtime_upgrade_operations o ON o.id=v.operation_id
@@ -14249,3 +14249,34 @@ DELETE FROM runtime_upgrade_gateway_receipts WHERE (app_id,gateway_session_id) I
  SELECT app_id,gateway_session_id FROM runtime_upgrade_gateway_receipts
  WHERE installed_at<clock_timestamp()-make_interval(secs => sqlc.arg(max_age_seconds)::integer)
  ORDER BY installed_at LIMIT sqlc.arg(page_limit)::integer);
+
+-- Private desired gateway roster (apid) and operational liveness (gatewayd), ADR-609.
+-- name: ReadRuntimeUpgradeGatewayRoster :one
+SELECT r.* FROM runtime_upgrade_gateway_rosters r JOIN runtime_upgrade_gateway_roster_head h ON h.revision=r.revision WHERE h.singleton;
+
+-- name: LockRuntimeUpgradeGatewayRosterHead :one
+SELECT revision FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR UPDATE;
+
+-- name: ShareRuntimeUpgradeGatewayRosterHead :one
+SELECT revision FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+
+-- name: InsertRuntimeUpgradeGatewayRoster :one
+INSERT INTO runtime_upgrade_gateway_rosters(revision,slot_ids,gateway_sessions) VALUES ($1,$2,$3) RETURNING *;
+
+-- name: PublishRuntimeUpgradeGatewayRoster :execrows
+UPDATE runtime_upgrade_gateway_roster_head SET revision=sqlc.arg(revision)::uuid
+WHERE singleton AND revision IS NOT DISTINCT FROM sqlc.narg(expected_revision)::uuid;
+
+-- name: ResetRuntimeUpgradeGatewayHeartbeats :exec
+DELETE FROM runtime_upgrade_gateway_heartbeats;
+
+-- name: HeartbeatRuntimeUpgradeGateway :execrows
+WITH heartbeat AS MATERIALIZED (SELECT clock_timestamp() AS seen_at)
+INSERT INTO runtime_upgrade_gateway_heartbeats(slot_id,gateway_session_id,roster_revision,seen_at,expires_at)
+SELECT sqlc.arg(slot_id)::uuid,sqlc.arg(gateway_session_id)::uuid,r.revision,heartbeat.seen_at,heartbeat.seen_at+make_interval(secs=>sqlc.arg(lease_seconds)::int)
+FROM runtime_upgrade_gateway_rosters r JOIN runtime_upgrade_gateway_roster_head h ON h.revision=r.revision CROSS JOIN heartbeat
+WHERE h.singleton AND r.gateway_sessions[array_position(r.slot_ids,sqlc.arg(slot_id)::uuid)]=sqlc.arg(gateway_session_id)::uuid
+ON CONFLICT (slot_id) DO UPDATE SET gateway_session_id=EXCLUDED.gateway_session_id,roster_revision=EXCLUDED.roster_revision,seen_at=EXCLUDED.seen_at,expires_at=EXCLUDED.expires_at;
+
+-- name: ReadRuntimeUpgradeGatewayHeartbeats :many
+SELECT * FROM runtime_upgrade_gateway_heartbeats WHERE roster_revision=$1 ORDER BY slot_id;

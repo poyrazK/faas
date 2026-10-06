@@ -1,6 +1,7 @@
 package state_test
 
 // adr: 607
+// adr: 609
 
 import (
 	"errors"
@@ -46,6 +47,7 @@ func TestRuntimeUpgradeVerificationReceiptOwnershipAndRollback(t *testing.T) {
 			controls := runtimeupgrade.Controls{Store: s.(state.RuntimeUpgradeReservationStore)}
 			receipts := s.(state.RuntimeUpgradeGatewayStore)
 			session := uuid.NewString()
+			seedReviewedRuntimeUpgradeGateways(t, s, []string{session})
 			if _, err := controls.Verify(t.Context(), uuid.NewString(), r.ID, []string{session}); !errors.Is(err, state.ErrNotFound) {
 				t.Fatal("cross-account verification", err)
 			}
@@ -71,7 +73,7 @@ func TestRuntimeUpgradeVerificationReceiptOwnershipAndRollback(t *testing.T) {
 				t.Fatal("lost notify repair omitted cutover", apps, err)
 			}
 			restarted, err := controls.Verify(t.Context(), r.AccountID, r.ID, []string{uuid.NewString()})
-			if err != nil || restarted.Reason != "gateway_confirmation_pending" {
+			if err != nil || restarted.Reason != "gateway_membership_mismatch" {
 				t.Fatal("restart inherited process receipt", restarted, err)
 			}
 			if _, err := s.UpdateDeploymentTraffic(t.Context(), serving.ID, 100, candidate.ID); err != nil {
@@ -107,6 +109,7 @@ func TestPgRuntimeUpgradeVerificationFreshHealthAndReceiptExpiry(t *testing.T) {
 	}
 
 	session := uuid.NewString()
+	seedReviewedRuntimeUpgradeGateways(t, s, []string{session})
 	if err := s.RecordRuntimeUpgradeGateway(t.Context(), app.ID, session, candidate.ID); err != nil {
 		t.Fatal(err)
 	}

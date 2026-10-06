@@ -1397,10 +1397,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
-	runtimeGatewaySession := ""
+	runtimeGatewaySession, runtimeGatewaySlot := "", ""
 	if osGetenv("FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION") == "1" {
 		runtimeGatewaySession = uuid.NewString()
-		log.Info("gatewayd: private runtime routing confirmation enabled", "gateway_session_id", runtimeGatewaySession)
+		runtimeGatewaySlot = strings.TrimSpace(osGetenv("FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID"))
+		if err := gatewayconfirmation.ValidateIdentity(runtimeGatewaySlot, runtimeGatewaySession); err != nil {
+			return fmt.Errorf("private runtime gateway slot configuration: %w", err)
+		}
+		log.Info("gatewayd: private runtime routing confirmation enabled", "gateway_session_id", runtimeGatewaySession, "gateway_slot_id", runtimeGatewaySlot)
 	}
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
@@ -1619,6 +1623,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	if runtimeGatewaySession != "" {
 		go gatewayconfirmation.Run(ctx, pgStore, backend, log)
+		go gatewayconfirmation.RunHeartbeat(ctx, pgStore, runtimeGatewaySlot, runtimeGatewaySession, log)
 	}
 	deps.backend = backend
 	// Flush per-instance last_request_at to schedd so its idle reaper sees
