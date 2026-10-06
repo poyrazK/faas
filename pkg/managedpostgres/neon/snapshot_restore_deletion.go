@@ -133,39 +133,20 @@ func (p *Provider) snapshotRestoreDeletionOperations(ctx context.Context, projec
 		}
 		return ops, nil
 	}
-	var ops []operation
-	seenCursors, seenIDs := map[string]bool{}, map[string]bool{}
-	cursor := ""
-	for {
-		query := url.Values{"limit": {"1000"}}
-		if cursor != "" {
-			query.Set("cursor", cursor)
-		}
-		var response operationsResponse
-		if err := p.doJSON(ctx, http.MethodGet, path, query, nil, &response, http.StatusOK); err != nil {
-			return nil, err
-		}
-		if response.Operations == nil {
-			return nil, managedpostgres.ErrUnavailable
-		}
-		for _, op := range response.Operations {
-			if op.ProjectID != projectID || seenIDs[op.ID] {
-				return nil, managedpostgres.ErrConflict
-			}
-			seenIDs[op.ID] = true
-			if op.BranchID == targetID {
-				ops = append(ops, op)
-			}
-		}
-		cursor = response.Pagination.Cursor
-		if cursor == "" {
-			return ops, nil
-		}
-		if seenCursors[cursor] {
-			return nil, managedpostgres.ErrUnavailable
-		}
-		seenCursors[cursor] = true
+	all, err := p.listProjectOperations(ctx, projectID)
+	if err != nil {
+		return nil, err
 	}
+	var ops []operation
+	for _, op := range all {
+		if op.ProjectID != projectID {
+			return nil, managedpostgres.ErrConflict
+		}
+		if op.BranchID == targetID {
+			ops = append(ops, op)
+		}
+	}
+	return ops, nil
 }
 
 func snapshotRestoreDeletionOperationProof(projectID, targetID string, createdAt time.Time, ops []operation) ([]string, bool, bool, error) {
