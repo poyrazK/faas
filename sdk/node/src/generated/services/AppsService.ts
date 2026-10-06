@@ -17,6 +17,7 @@ import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.
 import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
+import type { BindingReleasePolicy } from '../models/BindingReleasePolicy.js';
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
@@ -84,6 +85,7 @@ import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfig
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js';
 import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
+import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
@@ -100,6 +102,101 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
+  /**
+   * Read a scope's stored binding release policy.
+   * Requires apps:read or admin and completed MFA. Defaults to off with revision 0. No probes or provider calls occur.
+   * @returns BindingReleasePolicy Stored policy, or the disabled default.
+   * @throws ApiError
+   */
+  public static getBindingReleasePolicy({
+    slug,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact deployment scope. Omit to select default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/release-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a binding release policy using its current revision.
+   * Requires deploy:write or admin and completed MFA. expected_revision is
+   * mandatory (0 initially); each accepted write increments it. Enforcement
+   * requires complete fresh verification on every deployment gaining traffic,
+   * including through redistribution. Promotion, direct traffic PATCH and
+   * canary advance evaluate the policy; request flags may only strengthen it.
+   * New candidates must be admitted with explicit zero traffic. Automatic
+   * cutovers, legacy recovery and project release graph switches fail closed
+   * until they support binding fences. To recover without evidence, explicitly
+   * set off with the current revision and a reason, then retry. Every update
+   * has durable policy history. Existing traffic is not changed by this call.
+   *
+   * @returns BindingReleasePolicy Saved policy with incremented revision.
+   * @throws ApiError
+   */
+  public static setBindingReleasePolicy({
+    slug,
+    requestBody,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetBindingReleasePolicyRequest,
+    /**
+     * Exact deployment scope. Omit to select default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/bindings/release-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
   /**
    * Inspect all runtime resource bindings attached to an app.
    * Read-only, best-effort metadata for service, PostgreSQL, object-storage,

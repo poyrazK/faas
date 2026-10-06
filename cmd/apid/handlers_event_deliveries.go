@@ -300,15 +300,31 @@ func (s *server) listEventFanoutAttemptHistory(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrInternal("event fanout attempt history"))
 		return
 	}
-	rows, err := store.ListEventFanoutAttemptsForApp(r.Context(), app.ID, limit+1, before,
-		eventSource, eventID, subscriptionID)
+	out, err := s.eventFanoutHistoryResponse(r, store, app, limit, before, eventSource, eventID, subscriptionID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("event fanout attempt history"))
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) eventFanoutHistoryResponse(r *http.Request, store state.EventFanoutAttemptHistoryStore, app state.App, limit int, before state.EventFanoutAttemptCursor, eventSource, eventID, subscriptionID string) (api.EventFanoutAttemptHistoryResponse, error) {
 	out := api.EventFanoutAttemptHistoryResponse{
-		AppSlug: app.Slug, EventSource: eventSource, EventID: eventID,
-		SubscriptionID: subscriptionID, History: make([]api.EventFanoutAttemptResponse, 0, len(rows)),
+		AppSlug: app.Slug, EventSource: eventSource, EventID: eventID, SubscriptionID: subscriptionID,
+		Coverage: state.EventRoutingHistoryCoverage, History: make([]api.EventFanoutAttemptResponse, 0), Summaries: make([]api.EventFanoutHistorySummaryResponse, 0),
+	}
+	rows, err := store.ListEventFanoutAttemptsForApp(r.Context(), app.ID, limit+1, before, eventSource, eventID, subscriptionID)
+	if err != nil {
+		return out, err
+	}
+	summaryStore, ok := s.store.(state.EventFanoutHistorySummaryStore)
+	if !ok {
+		return out, errors.New("routing history summaries unavailable")
+	}
+	summaries, err := summaryStore.ListEventFanoutHistorySummariesForApp(r.Context(), app.ID, eventSource, eventID, subscriptionID)
+	if err != nil {
+		return out, err
 	}
 	if len(rows) > limit {
 		out.NextBefore = encodeEventFanoutAttemptCursor(app.ID, eventSource, eventID, subscriptionID, rows[limit-1])
@@ -316,12 +332,21 @@ func (s *server) listEventFanoutAttemptHistory(w http.ResponseWriter, r *http.Re
 	}
 	for _, row := range rows {
 		out.History = append(out.History, api.EventFanoutAttemptResponse{
-			SubscriptionID: row.SubscriptionID, Action: row.Action, State: row.State,
-			AttemptNumber: row.Attempts, FailureCode: row.FailureCode,
+			SubscriptionID: row.SubscriptionID, Action: row.Action, State: row.State, AttemptNumber: row.Attempts, FailureCode: row.FailureCode,
 			Retryable: row.Retryable, LastError: row.LastError, OccurredAt: row.OccurredAt,
+			CapacityScope: row.CapacityScope, CapacityDeferrals: row.CapacityDeferrals, DetailsTruncated: row.DetailsTruncated,
 		})
 	}
-	writeJSON(w, http.StatusOK, out)
+	for _, row := range summaries {
+		out.Summaries = append(out.Summaries, api.EventFanoutHistorySummaryResponse{
+			SubscriptionID: row.SubscriptionID, ObservedOutcomes: row.ObservedOutcomes, CapacityDeferrals: row.CapacityDeferrals,
+			CoalescedOutcomes: row.CoalescedOutcomes, CompactedOutcomes: row.CompactedOutcomes, CompactedThroughID: row.CompactedThroughID,
+			CompactedThroughAt: row.CompactedThroughAt, FirstCapacityWaitAt: row.FirstCapacityWaitAt, LastCapacityWaitAt: row.LastCapacityWaitAt,
+			LastCapacityScope: row.LastCapacityScope, RetainedRecords: row.RetainedRecords, RetainedBytes: row.RetainedBytes,
+		})
+	}
+	return out, nil
+
 }
 
 // replayEventFanoutFailure requeues exactly one terminal recipient from the

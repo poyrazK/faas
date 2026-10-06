@@ -489,6 +489,8 @@ func run(args []string) (status int) {
 		// Tier C: per-account invocation ledger (issue #394 follow-up).
 		// Mirrors `audit-events` for dispatcher shape.
 		return cmdInvocations(args[1:])
+	case "customer-operations":
+		return cmdCustomerOperations(args[1:])
 	case "operations":
 		// Durable exclusive operations: reconcile coordination policies and
 		// trigger bindings, submit work, inspect ownership, or cancel it.
@@ -651,7 +653,11 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 			return true
 		}
 		if helpPath == "rollouts recover" {
-			PrintUsage(w, rolloutsUsage, command.DocSlug)
+			PrintUsage(w, rolloutsRecoverUsage, command.DocSlug)
+			return true
+		}
+		if helpPath == "rollouts status" {
+			PrintUsage(w, rolloutsStatusUsage, command.DocSlug)
 			return true
 		}
 		if helpPath == "deploys retry" {
@@ -675,6 +681,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	switch command.Name {
 	case "rollback":
 		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
+		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackStatusUsage, "usage: "))
 		if len(command.Examples) > 0 {
 			_, _ = fmt.Fprintln(w, "\nExamples:")
 			printCLIExamples(w, command.Examples)

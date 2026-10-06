@@ -35,6 +35,45 @@ func TestCreateAppTaskRequestBindingDeploymentSelection(t *testing.T) {
 	}
 }
 
+// adr: 597
+func TestCreateAppTaskRequestSmokeDeploymentSelection(t *testing.T) {
+	id := uuid.NewString()
+	command := []string{AppTaskServiceBindingSmokeCommand, "billing", uuid.NewString(), "/ready?key=private", "200"}
+	request := CreateAppTaskRequest{SmokeDeploymentID: strings.ReplaceAll(id, "-", ""), Command: command}
+	resolved, problem := request.Resolve()
+	if problem != nil || resolved.SmokeDeploymentID != id || resolved.VerificationDeploymentID != "" {
+		t.Fatalf("resolved=%+v problem=%+v", resolved, problem)
+	}
+	for _, bad := range []CreateAppTaskRequest{
+		{SmokeDeploymentID: "v12", Command: command},
+		{SmokeDeploymentID: uuid.Nil.String(), Command: command},
+		{SmokeDeploymentID: id, VerificationDeploymentID: id, Command: command},
+		{SmokeDeploymentID: id, Command: []string{"echo", "billing"}},
+		{SmokeDeploymentID: id, Command: []string{AppTaskServiceBindingProbeCommand, "billing"}},
+		{SmokeDeploymentID: id, Command: command, CommandShell: true},
+	} {
+		if _, problem := bad.Resolve(); problem == nil {
+			t.Fatalf("accepted unsafe smoke selector: %+v", bad)
+		}
+	}
+	for _, change := range []func([]string) []string{
+		func(c []string) []string { return c[:4] },
+		func(c []string) []string { c[1] = "BILLING"; return c },
+		func(c []string) []string { c[2] = uuid.Nil.String(); return c },
+		func(c []string) []string { c[3] = "https://outside.example/ready"; return c },
+		func(c []string) []string { c[4] = "199"; return c },
+		func(c []string) []string { c[4] = "600"; return c },
+		func(c []string) []string { c[4] = "2xx"; return c },
+	} {
+		bad := change(append([]string(nil), command...))
+		for _, selector := range []string{"", id} {
+			if _, problem := (CreateAppTaskRequest{SmokeDeploymentID: selector, Command: bad}).Resolve(); problem == nil {
+				t.Fatalf("accepted malformed reserved command: %v", bad)
+			}
+		}
+	}
+}
+
 func TestGetAppBindingInventoryForDeploymentSendsBothSelectors(t *testing.T) {
 	id := uuid.NewString()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

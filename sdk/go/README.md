@@ -322,6 +322,29 @@ A replacement must contain at least one rule; use DELETE to clear it. Starting
 or resuming a due scan returns its durable ID. A completed scan means discovery
 finished; admitted cleanup can still be retrying. Removing rules preserves that
 cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules-and-discovery).
+## Internal HTTP Operations preview
+
+Operations is staged; production admission remains disabled. The typed client
+includes `StartPlatformTenantSelfOperation`, status, cancellation, event pages
+and resumable streams. Submission requires a caller-owned stable idempotency key.
+`DownloadPlatformTenantSelfOperationArtifact` and `DownloadOperationArtifact`
+verify the retained length and SHA-256 and reject credential-bearing redirects.
+Account `RecoverOperation` requires the current generation and recovery evidence.
+
+HTTP runtimes can call `ReportOperationProgress` and `AttachOperationArtifact`
+with a fresh workload bearer and the invocation's `OperationRuntimeProof`.
+The proof redacts its capability from formatted output and JSON. Do not persist
+or share it between requests. See [Operations](../../docs/operations.md).
+
+Completion delivery inspection, attempt history, and immutable retry decisions
+are exposed through the Operations APIs (`getOperationDelivery`,
+`getOperationDeliveryAttempts`, `retryOperationDeliveryWithReceipt`; PascalCase
+in Go and snake_case Python modules). New retries carry `retry_id`, `delivery_id`
+and an explicit `expected_replay_generation`, including zero. Reuse the same
+request after an uncertain reply; the returned `queued` receipt describes the
+original decision. Read delivery status separately. Business results and
+execution generations are unaffected. The legacy retry method remains available.
+
 
 ## Object version protection
 

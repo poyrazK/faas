@@ -67,7 +67,9 @@ func newNativeConnectionClosureFixture(t *testing.T) *nativeConnectionClosureFix
 		ProviderResourceID: "project-source", DataResourceID: f.request.SourceResourceID}
 	createdDBs, createdRoles := []string{}, []string{}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// Dropping three databases forces separate native checkpoints. Bound the
+		// whole cleanup without making ordinary disk contention leak fixtures.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		for _, name := range createdDBs {
 			if _, err := root.Exec(ctx, "DROP DATABASE "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)"); err != nil {
@@ -181,6 +183,18 @@ func (f *nativeConnectionClosureFixture) selectedFlags(t *testing.T, open bool) 
 	}
 }
 
+// sameClosedDatabases compares the closure record a replacement worker
+// adopted. Sessions is a live pg_stat_activity count, not part of that
+// record: an autovacuum worker visiting the database between two
+// observations changes it, and the shared CI cluster has enough databases
+// for that to happen.
+func sameClosedDatabases(actual, original []managedpostgres.CheckpointConnectionDatabase) bool {
+	return slices.EqualFunc(actual, original, func(a, o managedpostgres.CheckpointConnectionDatabase) bool {
+		a.Sessions, o.Sessions = 0, 0
+		return a == o
+	})
+}
+
 func TestCheckpointConnectionClosureNativePipelineRecoversAndObservesDrain(t *testing.T) {
 	f := newNativeConnectionClosureFixture(t)
 	ctx := t.Context()
@@ -196,7 +210,7 @@ func TestCheckpointConnectionClosureNativePipelineRecoversAndObservesDrain(t *te
 		t.Fatal(err)
 	}
 	closed, err := f.p.checkpointConnectionClosure(ctx, f.definition, f.maintenance, f.request, true, f.connectPool(t))
-	if err != nil || closed.Validate(f.request) != nil || closed.Drained || len(closed.Databases) != 2 {
+	if err != nil || closed.Validate(f.request) != nil || closed.Drained || len(closed.Databases) != 2 || closed.UnselectedDatabases < 3 {
 		t.Fatalf("admitted writer was reported drained: %+v %v", closed, err)
 	}
 	f.selectedFlags(t, false)
@@ -209,7 +223,7 @@ func TestCheckpointConnectionClosureNativePipelineRecoversAndObservesDrain(t *te
 	}
 	for _, closeAdmission := range []bool{false, true} {
 		actual, err := f.p.checkpointConnectionClosure(ctx, f.definition, f.maintenance, f.request, closeAdmission, f.connectPool(t))
-		if err != nil || actual.Drained || !actual.ClosedAt.Equal(closed.ClosedAt) || !reflect.DeepEqual(actual.Databases, closed.Databases) {
+		if err != nil || actual.Drained || !actual.ClosedAt.Equal(closed.ClosedAt) || !sameClosedDatabases(actual.Databases, closed.Databases) {
 			t.Fatalf("replacement worker changed original closure: %+v %v", actual, err)
 		}
 	}

@@ -80,7 +80,7 @@ func (h *Handler) loadURLPutReceipt(w http.ResponseWriter, r *http.Request, req 
 		return state.ObjectUploadCompletion{}, false
 	}
 	c, err := st.GetObjectUploadReceipt(r.Context(), req.bucket.AccountID, req.bucket.AppID, "", req.credential.ID, req.credential.URL.ReceiptID)
-	if err != nil || c.BucketID != req.bucket.ID || c.Key != req.credential.URL.Request.Key || !c.Encryption.Equal(req.encryption) {
+	if err != nil || c.BucketID != req.bucket.ID || c.Key != req.credential.URL.Request.Key || !sameURLProtectionSelection(c.Protection, req.protection) || !c.Encryption.Equal(req.encryption) {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, req.credential.URL.Request.Key)
 		return c, false
 	}
@@ -115,4 +115,12 @@ func (h *Handler) replayURLPut(w http.ResponseWriter, r *http.Request, req reque
 	}
 	_, ready := h.loadURLPutReceipt(w, r, req, st)
 	return !ready
+}
+
+func sameURLProtectionSelection(a, b state.ObjectWriteProtectionSnapshot) bool {
+	a.Enabled, b.Enabled = false, false
+	a.Revision, b.Revision = 0, 0
+	a.CapturedAt, b.CapturedAt = nil, nil
+	a.DefaultRetention, b.DefaultRetention = nil, nil
+	return a.Equal(b)
 }

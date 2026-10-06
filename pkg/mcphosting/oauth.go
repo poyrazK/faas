@@ -22,7 +22,7 @@ func (c *Client) VerifyOAuth(ctx context.Context) error {
 	metadataURL := *u
 	metadataURL.Path = "/.well-known/oauth-protected-resource" + u.Path
 	metadataURL.RawPath = ""
-	x, _ := unauth.request(ctx, "tools/list", nil, nil, false)
+	x, _ := unauth.request(ctx, "server/discover", nil, nil, false)
 	scheme, _, _ := strings.Cut(x.AuthChallenge, " ")
 	if x.HTTPStatus != http.StatusUnauthorized || !strings.EqualFold(scheme, "Bearer") || !strings.Contains(x.AuthChallenge, `resource_metadata="`+metadataURL.String()+`"`) {
 		return fmt.Errorf("OAuth endpoint must return 401 with canonical protected-resource metadata in WWW-Authenticate")

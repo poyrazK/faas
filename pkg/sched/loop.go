@@ -116,42 +116,44 @@ type Loop struct {
 	// `go func`, plus slow workflow, trigger, and event dispatch ticks.
 	// Lazily built by workPool() so a Loop constructed
 	// without Run (tests) still dispatches.
-	work                   *workPool
-	workOnce               sync.Once
-	workflowDispatchCursor atomic.Uint32
-	eventFanoutLastPrune   time.Time
-	now                    func() time.Time
-	flowCounts             FlowCounter
-	ops                    *wire.OpsMetrics                        // issue #171 shared registry; nil safe
-	audit                  *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
-	watchdog               *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
-	liveness               *wire.Liveness                          // ADR-190 main-loop progress beats; nil opts out
-	retention              *Retention                              // §17 retention sweep; nil means "no retention" (tests can opt out)
-	deadLetterRetention    *DeadLetterRetention                    // unified Failed Events projection retention
-	invocationsRetention   *InvocationsRetention                   // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
-	triggersRetention      *TriggersRetention                      // ADR-134 PR-E: trigger_records retention sweep; nil opts out
-	heartbeat              *Heartbeat                              // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
-	diskDrift              *DiskDrift                              // PR scale-out readiness #3 read-only /srv/fc/snap vs DB drift sweep; nil opts out
-	migratingWatchdog      *MigratingWatchdog                      // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
-	deadNodeReconciler     *DeadNodeReconciler                     // dead-node billing-leak self-healer; nil opts out (no ticker arm)
-	instanceDivergence     *DeadNodeReconciler                     // ADR-191 vmmd-vs-row divergence sweep; nil opts out (no ticker arm)
-	instStats              InstanceStatsPoller                     // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
-	instanceActivity       InstanceActivityReader                  // fresh per-instance request activity used by scale-in; nil opts out
-	scaleup                *scaleup.Trigger                        // issue #169 / #172 reactive scale-up trigger; nil opts out
-	scaleupMu              sync.Mutex                              // serializes asynchronous scale-up ticks
-	scaleupRunning         bool                                    // true while one scale-up tick is in flight
-	targets                *targets.Trigger                        // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
-	floor                  *floor.Trigger                          // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
-	prewarm                *prewarm.Trigger                        // scheduled/predicted demand-window capacity restore; nil opts out
-	recentLoad             *recentload.RecentLoad                  // issue #171 aggressive-reaper signal mirror; nil opts out
-	livenessWindow         *LivenessWindow                         // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
-	appDelete              *AppDeleteSubscriber                    // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
-	privateNetwork         *PrivateNetworkAttachmentSubscriber     // durable private-route detach handler; nil = no-op dispatch
-	privateNetworkPolicy   *PrivateNetworkPolicySubscriber         // durable network policy convergence handler; nil = no-op dispatch
-	privateNetworkPeering  *PrivateNetworkPeeringSubscriber        // durable peering withdrawal/replay handler; nil = no-op dispatch
-	privateNetworkDelete   *PrivateNetworkFabricDeletionSubscriber // durable node-fabric teardown handler; nil = no-op dispatch
-	reaperAggressive       bool                                    // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
-	reaperParkCap          int                                     // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
+	work                        *workPool
+	workOnce                    sync.Once
+	workflowDispatchCursor      atomic.Uint32
+	eventFanoutLastPrune        time.Time
+	eventFanoutHistoryLastPrune time.Time
+	eventRecipientClaims        bool
+	now                         func() time.Time
+	flowCounts                  FlowCounter
+	ops                         *wire.OpsMetrics                        // issue #171 shared registry; nil safe
+	audit                       *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
+	watchdog                    *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
+	liveness                    *wire.Liveness                          // ADR-190 main-loop progress beats; nil opts out
+	retention                   *Retention                              // §17 retention sweep; nil means "no retention" (tests can opt out)
+	deadLetterRetention         *DeadLetterRetention                    // unified Failed Events projection retention
+	invocationsRetention        *InvocationsRetention                   // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
+	triggersRetention           *TriggersRetention                      // ADR-134 PR-E: trigger_records retention sweep; nil opts out
+	heartbeat                   *Heartbeat                              // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
+	diskDrift                   *DiskDrift                              // PR scale-out readiness #3 read-only /srv/fc/snap vs DB drift sweep; nil opts out
+	migratingWatchdog           *MigratingWatchdog                      // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
+	deadNodeReconciler          *DeadNodeReconciler                     // dead-node billing-leak self-healer; nil opts out (no ticker arm)
+	instanceDivergence          *DeadNodeReconciler                     // ADR-191 vmmd-vs-row divergence sweep; nil opts out (no ticker arm)
+	instStats                   InstanceStatsPoller                     // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
+	instanceActivity            InstanceActivityReader                  // fresh per-instance request activity used by scale-in; nil opts out
+	scaleup                     *scaleup.Trigger                        // issue #169 / #172 reactive scale-up trigger; nil opts out
+	scaleupMu                   sync.Mutex                              // serializes asynchronous scale-up ticks
+	scaleupRunning              bool                                    // true while one scale-up tick is in flight
+	targets                     *targets.Trigger                        // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
+	floor                       *floor.Trigger                          // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
+	prewarm                     *prewarm.Trigger                        // scheduled/predicted demand-window capacity restore; nil opts out
+	recentLoad                  *recentload.RecentLoad                  // issue #171 aggressive-reaper signal mirror; nil opts out
+	livenessWindow              *LivenessWindow                         // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
+	appDelete                   *AppDeleteSubscriber                    // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
+	privateNetwork              *PrivateNetworkAttachmentSubscriber     // durable private-route detach handler; nil = no-op dispatch
+	privateNetworkPolicy        *PrivateNetworkPolicySubscriber         // durable network policy convergence handler; nil = no-op dispatch
+	privateNetworkPeering       *PrivateNetworkPeeringSubscriber        // durable peering withdrawal/replay handler; nil = no-op dispatch
+	privateNetworkDelete        *PrivateNetworkFabricDeletionSubscriber // durable node-fabric teardown handler; nil = no-op dispatch
+	reaperAggressive            bool                                    // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
+	reaperParkCap               int                                     // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
 	// lastFloorByApp (issue #557 closure / ADR-072): per-app
 	// effective floor from the previous reaper tick, used to emit
 	// `instances.parked_min_instances_released` when the floor
@@ -3459,17 +3461,27 @@ func (h *httpGatewaySynth) Invoke(ctx context.Context, appID string, inv state.I
 // executor seam. Unlike the legacy Invoke method it returns the downstream
 // HTTP status, which is required for durable retry classification.
 func (h *httpGatewaySynth) ExecuteStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte, error) {
-	return h.executeStep(ctx, appID, path, method, headers, body, timeout, "", 0)
+	return h.executeStep(ctx, appID, path, method, headers, body, timeout, "", 0, WorkflowStepIdentity{})
+}
+
+func (h *httpGatewaySynth) ExecuteWorkflowStep(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
+	if identity.RunID == "" || strings.TrimSpace(headers["X-Faas-Workflow-Run-Id"]) != identity.RunID {
+		return 0, nil, errors.New("sched: workflow run metadata does not match persisted identity")
+	}
+	if operationID == "" && generation != 0 || operationID != "" && generation < 1 {
+		return 0, nil, errors.New("sched: invalid managed workflow operation context")
+	}
+	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, identity)
 }
 
 func (h *httpGatewaySynth) ExecuteManagedOperationStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
 	if operationID == "" || generation < 1 {
 		return 0, nil, errors.New("sched: invalid managed workflow operation context")
 	}
-	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation)
+	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, WorkflowStepIdentity{})
 }
 
-func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
+func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -3482,6 +3494,7 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 	inv := state.Invocation{
 		ID:                         "workflow-" + middleware.NewRequestID(),
 		AppID:                      appID,
+		PlatformTenantID:           identity.PlatformTenantID,
 		Source:                     state.InvocationSource("workflow"),
 		Method:                     method,
 		Path:                       path,

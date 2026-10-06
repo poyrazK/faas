@@ -13,7 +13,7 @@ func DecodeObjectVersionRetention(body []byte) (api.ObjectVersionRetention, erro
 	if int64(len(body)) > api.MaxObjectLockBodyBytes {
 		return api.ObjectVersionRetention{}, ErrInvalid
 	}
-	r, err := parseObjectRetention(body)
+	r, err := parseObjectRetentionPolicy(body, false)
 	if err != nil || !r.ValidForWrite() {
 		return api.ObjectVersionRetention{}, ErrInvalid
 	}

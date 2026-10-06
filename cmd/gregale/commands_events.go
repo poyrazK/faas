@@ -21,12 +21,18 @@ const eventFanoutReplayBatchMax = 100
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|backlog|inspect|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
+	case "backlog":
+		return cmdEventsBacklog(args[1:])
 	case "preview":
 		return cmdEventsPreview(args[1:])
+	case "inspect":
+		return cmdEventsInspect(args[1:])
+	case "attempts":
+		return cmdEventsAttempts(args[1:])
 	case "publish":
 		return cmdEventsPublish(args[1:])
 	case "subscriptions", "list":
@@ -454,5 +460,8 @@ func cmdEventsPublish(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Event %s accepted for account %s.", resp.ID, resp.AccountID)
+	if resp.ReceiptURL != "" {
+		_, _ = fmt.Fprintf(osStdout, "Receipt: %s\n", resp.ReceiptURL)
+	}
 	return 0
 }

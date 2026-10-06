@@ -64,3 +64,35 @@ func TestVersionProtectionClient(t *testing.T) {
 		t.Fatal(calls)
 	}
 }
+
+// adr: 608
+func TestEventHoldProtectionClient(t *testing.T) {
+	day, year := int32(30), int32(1)
+	for _, policy := range []ObjectVersionRetention{
+		{Mode: "COMPLIANCE", EventHold: "ON", EventHoldDuration: &ObjectRetentionPeriod{Days: &day}},
+		{Mode: "GOVERNANCE", EventHold: "ON", EventHoldDuration: &ObjectRetentionPeriod{Years: &year}},
+		{Mode: "COMPLIANCE", EventHold: "OFF"},
+	} {
+		t.Run(policy.Mode+policy.EventHold, func(t *testing.T) {
+			in := ObjectVersionRetentionRequest{ID: "00000000-0000-4000-8000-000000000001", Retention: policy}
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var got ObjectVersionRetentionRequest
+				if r.Method != "PUT" || r.URL.Query().Get("version_id") != "null" || r.URL.Query().Get("key") != "目录/+ %" || json.NewDecoder(r.Body).Decode(&got) != nil {
+					t.Error("invalid request", r.URL)
+				}
+				want, _ := json.Marshal(in)
+				body, _ := json.Marshal(got)
+				if string(want) != string(body) {
+					t.Error("changed event intent", string(body))
+				}
+				w.WriteHeader(202)
+				_, _ = w.Write([]byte(`{"id":"` + in.ID + `","state":"waiting"}`))
+			}))
+			defer s.Close()
+			c := NewClient(s.URL, "token")
+			if out, e := c.PutObjectVersionRetention(t.Context(), "demo", "bucket", "目录/+ %", "null", in); e != nil || out.ID != in.ID {
+				t.Fatal(out, e)
+			}
+		})
+	}
+}

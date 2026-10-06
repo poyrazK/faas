@@ -177,12 +177,16 @@ func ClearGuestIdentityHeaders(h http.Header) {
 // immediately before forwarding; keeping the allowlist here makes the same
 // trust policy apply to HTTP/1, streaming, and upgrade forwarding paths.
 func IsGuestIdentityHeader(name string) bool {
+	if IsReservedOperationHeader(name) {
+		return true
+	}
 	switch strings.ToLower(name) {
 	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",
 		"x-faas-tenant-id", "x-faas-platform-tenant-id", "x-faas-instance-id", "x-faas-node-id",
 		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
 		"x-faas-deployment-created-at", "x-faas-image-digest", "x-faas-flag-context",
-		"x-gregale-operation-id", "x-gregale-operation-generation", "x-gregale-operation-result-version":
+		"x-gregale-operation-id", "x-gregale-operation-generation", "x-gregale-operation-result-version",
+		"x-gregale-customer-operation-id", "x-gregale-operation-attempt", "x-gregale-operation-capability":
 		return true
 	default:
 		return false

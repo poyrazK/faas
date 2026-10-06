@@ -18,6 +18,7 @@ import (
 
 func cliInvestigation(opts api.RouteHealthInvestigationOptions) api.RouteHealthInvestigation {
 	r := cliClientErrorReport()
+	r.Routes[0].Method, r.Routes[0].Path = opts.Method, opts.Path
 	i := routehealth.NewInvestigation(r, r.Routes[0], opts.Selection())
 	i.EvidenceStatus = "observed"
 	for j := range i.Windows {

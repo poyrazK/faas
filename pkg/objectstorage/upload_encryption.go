@@ -24,6 +24,16 @@ func (h *uploadHandler) writeCapturedRouteUpload(ctx context.Context, st state.O
 }
 
 func (h *uploadHandler) writeUnfencedCapturedRouteUpload(ctx context.Context, st state.ObjectTrackedUploadStore, writer TrackedObjectWriter, bucket state.ObjectBucket, c *state.ObjectUploadCompletion, body io.Reader) (UploadResult, error) {
+	var err error
+	ctx, err = WithObjectWriteProtection(ctx, writer, c.Protection, func(ctx context.Context) error {
+		if h.requestMetrics == nil {
+			return ErrConfiguration
+		}
+		return h.requestMetrics.RecordObjectStorageProviderRequest(ctx, bucket.ID, h.now())
+	})
+	if err != nil {
+		return UploadResult{}, ErrWriteRejected
+	}
 	metadata := ObjectMetadata{ContentType: c.ContentType}
 	if c.Encryption.Empty() {
 		return writer.WriteTrackedObject(ctx, bucket.PhysicalName, c.Key, c.ID, body, c.Bytes, metadata)

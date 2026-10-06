@@ -77,6 +77,13 @@ from .alert_preset_response_category import AlertPresetResponseCategory
 from .alert_preset_response_comparison import AlertPresetResponseComparison
 from .alert_preset_response_minimum_plan import AlertPresetResponseMinimumPlan
 from .alert_preset_response_window_spec import AlertPresetResponseWindowSpec
+from .alert_rollback import AlertRollback
+from .alert_rollback_deployment_evidence import AlertRollbackDeploymentEvidence
+from .alert_rollback_deployment_evidence_status import AlertRollbackDeploymentEvidenceStatus
+from .alert_rollback_deployment_evidence_version import AlertRollbackDeploymentEvidenceVersion
+from .alert_rollback_rollback_phase import AlertRollbackRollbackPhase
+from .alert_rollback_service_phase import AlertRollbackServicePhase
+from .alert_rollback_status import AlertRollbackStatus
 from .alert_rule_response import AlertRuleResponse
 from .alert_rule_response_action import AlertRuleResponseAction
 from .alert_rule_response_comparison import AlertRuleResponseComparison
@@ -330,6 +337,8 @@ from .binding_promotion_response import BindingPromotionResponse
 from .binding_refresh import BindingRefresh
 from .binding_refresh_failure_reason import BindingRefreshFailureReason
 from .binding_refresh_status import BindingRefreshStatus
+from .binding_release_policy import BindingReleasePolicy
+from .binding_release_policy_mode import BindingReleasePolicyMode
 from .binding_runtime_deployment import BindingRuntimeDeployment
 from .binding_runtime_deployment_status import BindingRuntimeDeploymentStatus
 from .binding_runtime_freshness import BindingRuntimeFreshness
@@ -860,21 +869,54 @@ from .environment_workload_source import EnvironmentWorkloadSource
 from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .event_backlog_consumer import EventBacklogConsumer
+from .event_backlog_recipient import EventBacklogRecipient
+from .event_backlog_recipient_capacity_scope import EventBacklogRecipientCapacityScope
+from .event_backlog_recipient_routing_mode import EventBacklogRecipientRoutingMode
+from .event_backlog_recipient_state import EventBacklogRecipientState
+from .event_backlog_recipient_waiting_reason import EventBacklogRecipientWaitingReason
+from .event_backlog_response import EventBacklogResponse
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
 from .event_delivery_response_state import EventDeliveryResponseState
 from .event_fanout_attempt_history_response import EventFanoutAttemptHistoryResponse
+from .event_fanout_attempt_history_response_coverage import EventFanoutAttemptHistoryResponseCoverage
 from .event_fanout_attempt_response import EventFanoutAttemptResponse
 from .event_fanout_attempt_response_action import EventFanoutAttemptResponseAction
+from .event_fanout_attempt_response_capacity_scope import EventFanoutAttemptResponseCapacityScope
 from .event_fanout_attempt_response_failure_code import EventFanoutAttemptResponseFailureCode
 from .event_fanout_attempt_response_state import EventFanoutAttemptResponseState
 from .event_fanout_failure_response import EventFanoutFailureResponse
 from .event_fanout_failure_response_failure_code import EventFanoutFailureResponseFailureCode
 from .event_fanout_failure_response_state import EventFanoutFailureResponseState
+from .event_fanout_history_summary_response import EventFanoutHistorySummaryResponse
+from .event_fanout_history_summary_response_last_capacity_scope import (
+    EventFanoutHistorySummaryResponseLastCapacityScope,
+)
 from .event_preview_subscription import EventPreviewSubscription
 from .event_preview_subscription_filter import EventPreviewSubscriptionFilter
+from .event_receipt_attempt_history_response import EventReceiptAttemptHistoryResponse
+from .event_receipt_attempt_history_response_coverage import EventReceiptAttemptHistoryResponseCoverage
+from .event_receipt_cancellation_response import EventReceiptCancellationResponse
+from .event_receipt_execution_response import EventReceiptExecutionResponse
+from .event_receipt_execution_response_state import EventReceiptExecutionResponseState
+from .event_receipt_recipient_response import EventReceiptRecipientResponse
+from .event_receipt_recipient_response_execution_unavailable import EventReceiptRecipientResponseExecutionUnavailable
+from .event_receipt_recovery_action import EventReceiptRecoveryAction
+from .event_receipt_recovery_action_kind import EventReceiptRecoveryActionKind
+from .event_receipt_recovery_action_method import EventReceiptRecoveryActionMethod
+from .event_receipt_recovery_response import EventReceiptRecoveryResponse
+from .event_receipt_replay_history_response import EventReceiptReplayHistoryResponse
+from .event_receipt_response import EventReceiptResponse
+from .event_receipt_response_routing_mode import EventReceiptResponseRoutingMode
+from .event_receipt_response_routing_summary import EventReceiptResponseRoutingSummary
+from .event_receipt_routing_response import EventReceiptRoutingResponse
+from .event_receipt_routing_response_capacity_scope import EventReceiptRoutingResponseCapacityScope
+from .event_receipt_routing_response_state import EventReceiptRoutingResponseState
 from .event_schema import EventSchema
+from .event_storage_usage_response import EventStorageUsageResponse
+from .event_storage_usage_response_limits import EventStorageUsageResponseLimits
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
@@ -1028,6 +1070,8 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
+from .get_event_backlog_state import GetEventBacklogState
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
@@ -1096,6 +1140,8 @@ from .invitation_with_token_response import InvitationWithTokenResponse
 from .invite_member_request import InviteMemberRequest
 from .invite_member_request_role import InviteMemberRequestRole
 from .invocation import Invocation
+from .invocation_attempt_response import InvocationAttemptResponse
+from .invocation_attempt_response_outcome import InvocationAttemptResponseOutcome
 from .invocation_destinations import InvocationDestinations
 from .invocation_headers import InvocationHeaders
 from .invocation_payload import InvocationPayload
@@ -1180,6 +1226,7 @@ from .kafka_trigger_config import KafkaTriggerConfig
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
+from .list_account_operations_state import ListAccountOperationsState
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -1208,6 +1255,7 @@ from .list_operator_runtime_config_revisions_response_200 import ListOperatorRun
 from .list_org_activity_actor_type import ListOrgActivityActorType
 from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
+from .list_platform_tenant_self_operations_state import ListPlatformTenantSelfOperationsState
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
@@ -1444,6 +1492,7 @@ from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
 from .object_version_retention_mode import ObjectVersionRetentionMode
 from .object_version_retention_request import ObjectVersionRetentionRequest
 from .object_version_retention_result import ObjectVersionRetentionResult
+from .object_write_protection import ObjectWriteProtection
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
 from .object_write_receipt_list import ObjectWriteReceiptList
@@ -1465,9 +1514,58 @@ from .open_api_contract_break_kind import OpenAPIContractBreakKind
 from .open_api_contract_break_method import OpenAPIContractBreakMethod
 from .open_api_contract_diff_response import OpenAPIContractDiffResponse
 from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseSource
+from .operation_accepted_response import OperationAcceptedResponse
+from .operation_artifact_request import OperationArtifactRequest
+from .operation_cancellation_request import OperationCancellationRequest
+from .operation_definition_response import OperationDefinitionResponse
+from .operation_definition_spec import OperationDefinitionSpec
+from .operation_definition_spec_method import OperationDefinitionSpecMethod
+from .operation_definition_spec_owner import OperationDefinitionSpecOwner
+from .operation_definition_spec_recovery import OperationDefinitionSpecRecovery
+from .operation_definition_summary import OperationDefinitionSummary
+from .operation_definition_summary_method import OperationDefinitionSummaryMethod
+from .operation_definition_summary_owner import OperationDefinitionSummaryOwner
+from .operation_definition_summary_recovery import OperationDefinitionSummaryRecovery
+from .operation_definitions_response import OperationDefinitionsResponse
+from .operation_delivery_attempt import OperationDeliveryAttempt
+from .operation_delivery_attempt_outcome import OperationDeliveryAttemptOutcome
+from .operation_delivery_attempts_response import OperationDeliveryAttemptsResponse
+from .operation_delivery_inspection import OperationDeliveryInspection
+from .operation_delivery_inspection_business_state import OperationDeliveryInspectionBusinessState
+from .operation_delivery_response import OperationDeliveryResponse
+from .operation_delivery_response_state import OperationDeliveryResponseState
+from .operation_delivery_retry_request import OperationDeliveryRetryRequest
+from .operation_delivery_retry_response import OperationDeliveryRetryResponse
+from .operation_delivery_retry_response_state import OperationDeliveryRetryResponseState
+from .operation_delivery_summary import OperationDeliverySummary
+from .operation_delivery_summary_state import OperationDeliverySummaryState
+from .operation_doctor_check import OperationDoctorCheck
+from .operation_doctor_check_impact import OperationDoctorCheckImpact
+from .operation_doctor_check_status import OperationDoctorCheckStatus
+from .operation_doctor_response import OperationDoctorResponse
+from .operation_doctor_response_observation_scope import OperationDoctorResponseObservationScope
+from .operation_doctor_response_plan import OperationDoctorResponsePlan
+from .operation_doctor_response_submission_state import OperationDoctorResponseSubmissionState
 from .operation_effect_payload import OperationEffectPayload
 from .operation_effect_record import OperationEffectRecord
 from .operation_effect_record_status import OperationEffectRecordStatus
+from .operation_event import OperationEvent
+from .operation_event_type import OperationEventType
+from .operation_events_response import OperationEventsResponse
+from .operation_execution import OperationExecution
+from .operation_executions_response import OperationExecutionsResponse
+from .operation_list_response import OperationListResponse
+from .operation_progress import OperationProgress
+from .operation_recovery_request import OperationRecoveryRequest
+from .operation_recovery_request_resolution import OperationRecoveryRequestResolution
+from .operation_report_request import OperationReportRequest
+from .operation_response import OperationResponse
+from .operation_response_state import OperationResponseState
+from .operation_result_artifact import OperationResultArtifact
+from .operation_start_request import OperationStartRequest
+from .operation_summary import OperationSummary
+from .operation_summary_state import OperationSummaryState
+from .operation_tenant_identity import OperationTenantIdentity
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -1990,12 +2088,16 @@ from .retry_policy_dto import RetryPolicyDTO
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
+from .rollback_operation import RollbackOperation
+from .rollback_operation_status import RollbackOperationStatus
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
 from .rollout_aborted_webhook_payload_rollout_state import RolloutAbortedWebhookPayloadRolloutState
 from .rollout_completed_webhook_payload import RolloutCompletedWebhookPayload
 from .rollout_completed_webhook_payload_rollout_state import RolloutCompletedWebhookPayloadRolloutState
+from .rollout_recovery_receipt import RolloutRecoveryReceipt
+from .rollout_recovery_receipt_restored_traffic_percent import RolloutRecoveryReceiptRestoredTrafficPercent
 from .rollout_transition_response import RolloutTransitionResponse
 from .rotate_alert_rule_secret_request import RotateAlertRuleSecretRequest
 from .rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
@@ -2265,15 +2367,22 @@ from .service_caller_scopes import ServiceCallerScopes
 from .service_reliability_policies import ServiceReliabilityPolicies
 from .service_reliability_policy import ServiceReliabilityPolicy
 from .service_replicas import ServiceReplicas
+from .service_rollout_binding_gate import ServiceRolloutBindingGate
+from .service_rollout_binding_gate_action import ServiceRolloutBindingGateAction
+from .service_rollout_binding_gate_status import ServiceRolloutBindingGateStatus
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
 from .service_rollout_handoff_response_phase import ServiceRolloutHandoffResponsePhase
+from .service_rollout_recovery_receipt import ServiceRolloutRecoveryReceipt
+from .service_rollout_recovery_receipt_status import ServiceRolloutRecoveryReceiptStatus
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_automation_enabled_request import SetAutomationEnabledRequest
+from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
+from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
 from .set_canary_route_gate_request import SetCanaryRouteGateRequest
 from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
 from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
@@ -2640,6 +2749,13 @@ __all__ = (
     "AlertPresetResponseComparison",
     "AlertPresetResponseMinimumPlan",
     "AlertPresetResponseWindowSpec",
+    "AlertRollback",
+    "AlertRollbackDeploymentEvidence",
+    "AlertRollbackDeploymentEvidenceStatus",
+    "AlertRollbackDeploymentEvidenceVersion",
+    "AlertRollbackRollbackPhase",
+    "AlertRollbackServicePhase",
+    "AlertRollbackStatus",
     "AlertRuleResponse",
     "AlertRuleResponseAction",
     "AlertRuleResponseComparison",
@@ -2893,6 +3009,8 @@ __all__ = (
     "BindingRefresh",
     "BindingRefreshFailureReason",
     "BindingRefreshStatus",
+    "BindingReleasePolicy",
+    "BindingReleasePolicyMode",
     "BindingRuntimeDeployment",
     "BindingRuntimeDeploymentStatus",
     "BindingRuntimeFreshness",
@@ -3407,21 +3525,52 @@ __all__ = (
     "EnvironmentWorkloadSourceKind",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
+    "EventBacklogConsumer",
+    "EventBacklogRecipient",
+    "EventBacklogRecipientCapacityScope",
+    "EventBacklogRecipientRoutingMode",
+    "EventBacklogRecipientState",
+    "EventBacklogRecipientWaitingReason",
+    "EventBacklogResponse",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
     "EventDeliveryResponseState",
     "EventFanoutAttemptHistoryResponse",
+    "EventFanoutAttemptHistoryResponseCoverage",
     "EventFanoutAttemptResponse",
     "EventFanoutAttemptResponseAction",
+    "EventFanoutAttemptResponseCapacityScope",
     "EventFanoutAttemptResponseFailureCode",
     "EventFanoutAttemptResponseState",
     "EventFanoutFailureResponse",
     "EventFanoutFailureResponseFailureCode",
     "EventFanoutFailureResponseState",
+    "EventFanoutHistorySummaryResponse",
+    "EventFanoutHistorySummaryResponseLastCapacityScope",
     "EventPreviewSubscription",
     "EventPreviewSubscriptionFilter",
+    "EventReceiptAttemptHistoryResponse",
+    "EventReceiptAttemptHistoryResponseCoverage",
+    "EventReceiptCancellationResponse",
+    "EventReceiptExecutionResponse",
+    "EventReceiptExecutionResponseState",
+    "EventReceiptRecipientResponse",
+    "EventReceiptRecipientResponseExecutionUnavailable",
+    "EventReceiptRecoveryAction",
+    "EventReceiptRecoveryActionKind",
+    "EventReceiptRecoveryActionMethod",
+    "EventReceiptRecoveryResponse",
+    "EventReceiptReplayHistoryResponse",
+    "EventReceiptResponse",
+    "EventReceiptResponseRoutingMode",
+    "EventReceiptResponseRoutingSummary",
+    "EventReceiptRoutingResponse",
+    "EventReceiptRoutingResponseCapacityScope",
+    "EventReceiptRoutingResponseState",
     "EventSchema",
+    "EventStorageUsageResponse",
+    "EventStorageUsageResponseLimits",
     "EventSubscriptionListResponse",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
@@ -3573,6 +3722,8 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetEventBacklogCapacityScope",
+    "GetEventBacklogState",
     "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
@@ -3641,6 +3792,8 @@ __all__ = (
     "InviteMemberRequest",
     "InviteMemberRequestRole",
     "Invocation",
+    "InvocationAttemptResponse",
+    "InvocationAttemptResponseOutcome",
     "InvocationDestinations",
     "InvocationHeaders",
     "InvocationPayload",
@@ -3725,6 +3878,7 @@ __all__ = (
     "LatestDeploymentsByAppResponse",
     "LinkPlatformTenantConsumerRequest",
     "LinkPlatformTenantSurfaceRequest",
+    "ListAccountOperationsState",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -3753,6 +3907,7 @@ __all__ = (
     "ListOrgActivityActorType",
     "ListOrgActivityResponse",
     "ListOrgAPIKeysResponse",
+    "ListPlatformTenantSelfOperationsState",
     "ListProjectEnvironmentPromotionsStatus",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
@@ -3987,6 +4142,7 @@ __all__ = (
     "ObjectVersionRetentionMode",
     "ObjectVersionRetentionRequest",
     "ObjectVersionRetentionResult",
+    "ObjectWriteProtection",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",
     "ObjectWriteReceiptList",
@@ -4006,9 +4162,58 @@ __all__ = (
     "OpenAPIContractBreakMethod",
     "OpenAPIContractDiffResponse",
     "OpenAPIContractDiffResponseSource",
+    "OperationAcceptedResponse",
+    "OperationArtifactRequest",
+    "OperationCancellationRequest",
+    "OperationDefinitionResponse",
+    "OperationDefinitionSpec",
+    "OperationDefinitionSpecMethod",
+    "OperationDefinitionSpecOwner",
+    "OperationDefinitionSpecRecovery",
+    "OperationDefinitionsResponse",
+    "OperationDefinitionSummary",
+    "OperationDefinitionSummaryMethod",
+    "OperationDefinitionSummaryOwner",
+    "OperationDefinitionSummaryRecovery",
+    "OperationDeliveryAttempt",
+    "OperationDeliveryAttemptOutcome",
+    "OperationDeliveryAttemptsResponse",
+    "OperationDeliveryInspection",
+    "OperationDeliveryInspectionBusinessState",
+    "OperationDeliveryResponse",
+    "OperationDeliveryResponseState",
+    "OperationDeliveryRetryRequest",
+    "OperationDeliveryRetryResponse",
+    "OperationDeliveryRetryResponseState",
+    "OperationDeliverySummary",
+    "OperationDeliverySummaryState",
+    "OperationDoctorCheck",
+    "OperationDoctorCheckImpact",
+    "OperationDoctorCheckStatus",
+    "OperationDoctorResponse",
+    "OperationDoctorResponseObservationScope",
+    "OperationDoctorResponsePlan",
+    "OperationDoctorResponseSubmissionState",
     "OperationEffectPayload",
     "OperationEffectRecord",
     "OperationEffectRecordStatus",
+    "OperationEvent",
+    "OperationEventsResponse",
+    "OperationEventType",
+    "OperationExecution",
+    "OperationExecutionsResponse",
+    "OperationListResponse",
+    "OperationProgress",
+    "OperationRecoveryRequest",
+    "OperationRecoveryRequestResolution",
+    "OperationReportRequest",
+    "OperationResponse",
+    "OperationResponseState",
+    "OperationResultArtifact",
+    "OperationStartRequest",
+    "OperationSummary",
+    "OperationSummaryState",
+    "OperationTenantIdentity",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",
@@ -4487,12 +4692,16 @@ __all__ = (
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
     "RollbackFeatureFlagsRequest",
+    "RollbackOperation",
+    "RollbackOperationStatus",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
     "RolloutAbortedWebhookPayloadRolloutState",
     "RolloutCompletedWebhookPayload",
     "RolloutCompletedWebhookPayloadRolloutState",
+    "RolloutRecoveryReceipt",
+    "RolloutRecoveryReceiptRestoredTrafficPercent",
     "RolloutTransitionResponse",
     "RotateAlertRuleSecretRequest",
     "RotateAlertRuleSecretResponse",
@@ -4756,15 +4965,22 @@ __all__ = (
     "ServiceReliabilityPolicies",
     "ServiceReliabilityPolicy",
     "ServiceReplicas",
+    "ServiceRolloutBindingGate",
+    "ServiceRolloutBindingGateAction",
+    "ServiceRolloutBindingGateStatus",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",
     "ServiceRolloutHandoffResponsePhase",
+    "ServiceRolloutRecoveryReceipt",
+    "ServiceRolloutRecoveryReceiptStatus",
     "SessionInfo",
     "SessionListResponse",
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
     "SetAutomationEnabledRequest",
+    "SetBindingReleasePolicyRequest",
+    "SetBindingReleasePolicyRequestMode",
     "SetCanaryRouteGateRequest",
     "SetCanaryRouteGateRequestMode",
     "SetCommitSourceEnabledBody",

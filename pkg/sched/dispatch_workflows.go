@@ -23,6 +23,20 @@ type WorkflowStepExecutor interface {
 	ExecuteStep(ctx context.Context, appID string, path, method string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte, error)
 }
 
+// WorkflowStepIdentity is persisted with the run and accompanies every
+// synthetic app invocation. Executors must treat it as internal metadata.
+type WorkflowStepIdentity struct {
+	RunID            string
+	PlatformTenantID string
+}
+
+// WorkflowIdentityExecutor carries the durable run identity through the
+// scheduler-to-gateway envelope. Legacy executors remain usable for unscoped
+// runs; tenant-bound runs fail closed if the executor cannot carry identity.
+type WorkflowIdentityExecutor interface {
+	ExecuteWorkflowStep(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error)
+}
+
 // WorkflowManagedOperationExecutor is implemented by the authenticated
 // scheduler-to-gateway transport. The operation identity is host metadata;
 // it must never be supplied as a customer HTTP header.
@@ -100,6 +114,23 @@ func workflowHTTPStatus(statusCode int, callErr error) *int {
 		return nil
 	}
 	return &statusCode
+}
+
+func (o *WorkflowOrchestrator) executeWorkflowHandler(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error) {
+	if executor, ok := o.executor.(WorkflowIdentityExecutor); ok {
+		return executor.ExecuteWorkflowStep(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID}, path, method, headers, body, timeout, managedOperationID, generation)
+	}
+	if run.PlatformTenantID != "" {
+		return 0, nil, errors.New("workflow executor cannot carry platform tenant identity")
+	}
+	if managedOperationID != "" {
+		executor, ok := o.executor.(WorkflowManagedOperationExecutor)
+		if !ok {
+			return 0, nil, errors.New("managed workflow operation transport is unavailable")
+		}
+		return executor.ExecuteManagedOperationStep(ctx, run.AppID, path, method, headers, body, timeout, managedOperationID, generation)
+	}
+	return o.executor.ExecuteStep(ctx, run.AppID, path, method, headers, body, timeout)
 }
 
 // workflowFinalOutput uses completion order, never insertion order. Among
@@ -961,20 +992,14 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			defer release()
 		}
 		if spec.ManagedOperation {
-			managedExecutor, ok := o.executor.(WorkflowManagedOperationExecutor)
-			if !ok {
-				err = errors.New("managed workflow operation transport is unavailable")
-			} else {
-				var identityErr error
-				managedOperationID, identityErr = api.ManagedWorkflowStepOperationID(run.ID, step.StepName)
-				if identityErr != nil {
-					err = identityErr
-				} else {
-					statusCode, body, err = managedExecutor.ExecuteManagedOperationStep(execCtx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout, managedOperationID, int64(step.Attempt+1))
-				}
+			managedOperationID, err = api.ManagedWorkflowStepOperationID(run.ID, step.StepName)
+		}
+		if err == nil {
+			generation := int64(0)
+			if managedOperationID != "" {
+				generation = int64(step.Attempt + 1)
 			}
-		} else {
-			statusCode, body, err = o.executor.ExecuteStep(execCtx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout)
+			statusCode, body, err = o.executeWorkflowHandler(execCtx, run, workflowStepPath(spec), method, headers, inputBytes, timeout, managedOperationID, generation)
 		}
 	}
 	auditOutput := string(body)
@@ -1200,7 +1225,7 @@ func (o *WorkflowOrchestrator) executeConditionCheck(ctx context.Context, run *s
 		"Idempotency-Key": fmt.Sprintf("workflow/%s/%s/%d", run.ID, step.StepName, attempt),
 		"Content-Type":    "application/json",
 	}
-	statusCode, body, callErr := o.executor.ExecuteStep(ctx, run.AppID, "/"+condition.Run, "POST", headers, input, 30*time.Second)
+	statusCode, body, callErr := o.executeWorkflowHandler(ctx, run, "/"+condition.Run, "POST", headers, input, 30*time.Second, "", 0)
 	update.Checked = true
 	update.HTTPStatus = workflowHTTPStatus(statusCode, callErr)
 	if callErr == nil && statusCode >= 200 && statusCode < 300 {

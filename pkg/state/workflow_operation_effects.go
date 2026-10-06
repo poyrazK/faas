@@ -67,21 +67,26 @@ func workflowOperationEffectID(operationID, name string) string {
 	return uuid.NewSHA1(namespace, []byte("gregale-workflow-operation-effect-v1\n"+name)).String()
 }
 
-func workflowOperationEffectBody(operationID, appID string, generation int64, effect exclusivework.Effect) ([]byte, error) {
+func workflowOperationEffectBody(operationID, appID, platformTenantID string, generation int64, effect exclusivework.Effect) ([]byte, error) {
 	return json.Marshal(api.OperationEffectPayload{
-		OperationID: operationID,
-		AppID:       appID,
-		Generation:  generation,
-		Name:        effect.Name,
-		Type:        effect.Type,
-		Data:        effect.Payload,
+		OperationID:      operationID,
+		AppID:            appID,
+		PlatformTenantID: platformTenantID,
+		Generation:       generation,
+		Name:             effect.Name,
+		Type:             effect.Type,
+		Data:             effect.Payload,
 	})
 }
 
-func managedWorkflowEffectDestinationMatches(accountID, appID string, hook AppWebhook) bool {
-	return hook.Enabled && canonicalMemUUID(hook.AccountID) == canonicalMemUUID(accountID) &&
-		(hook.Scope == "" || hook.Scope == AppWebhookScopeApp) &&
-		canonicalMemUUID(hook.AppID) == canonicalMemUUID(appID) && slices.Contains(hook.EventFilter, OperationEffectEvent)
+func managedWorkflowEffectDestinationMatches(accountID, appID, platformTenantID string, hook AppWebhook) bool {
+	if !hook.Enabled || canonicalMemUUID(hook.AccountID) != canonicalMemUUID(accountID) || !slices.Contains(hook.EventFilter, OperationEffectEvent) {
+		return false
+	}
+	if platformTenantID != "" {
+		return hook.Scope == AppWebhookScopePlatformTenant && canonicalMemUUID(hook.PlatformTenantID) == canonicalMemUUID(platformTenantID)
+	}
+	return (hook.Scope == "" || hook.Scope == AppWebhookScopeApp) && canonicalMemUUID(hook.AppID) == canonicalMemUUID(appID)
 }
 
 func workflowEffectStatusRecord(effect workflowOperationStoredEffect, delivery AppWebhookDelivery, deliveryExists, receiverExists bool) api.OperationEffectRecord {

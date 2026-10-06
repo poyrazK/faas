@@ -644,6 +644,13 @@ surface.
 
 The unified Trigger primitive replaces six unrelated invocation surfaces with one resource + one batch envelope + one FSM.
 
+Internal application-event fanout additionally follows
+[ADR-606](adr/606-independent-event-recipient-routing.md): snapshot-backed
+receipts can adopt independent recipient routing leases, retry schedules, and
+replay generations through an opt-in schedd flag. Acceptance and deterministic
+invocation deduplication stay unchanged. Recipient routing settlement is
+separate from handler completion and imposes no publication-order guarantee.
+
 #### Resource model
 
 One row per customer surface in the `triggers` table (migrations/00267_triggers.sql). The discriminator is `kind`:

@@ -6,6 +6,10 @@
  * Partial update — every field is optional. Omitted means leave alone.
  */
 export type UpdateAlertRuleRequest = {
+  /**
+   * Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry qualifies.
+   */
+  post_deploy_rollback_window_seconds?: number;
   name?: string;
   enabled?: boolean;
   /**

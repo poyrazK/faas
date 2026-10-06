@@ -61,6 +61,12 @@ func (p *serviceConnectionClosureProvider) closureResult(ctx context.Context, d 
 		o.Databases[0].OID = o.Databases[1].OID
 	case "negative_sessions":
 		o.Databases[0].Sessions = -1
+	case "negative_prepared":
+		o.Databases[0].PreparedTransactions = -1
+	case "negative_unselected":
+		o.UnselectedDatabases = -1
+	case "false_prepared_drain":
+		o.Databases[0].PreparedTransactions = 1
 	case "false_drain":
 		o.Databases[0].Sessions = 1
 	case "false_busy":
@@ -68,6 +74,11 @@ func (p *serviceConnectionClosureProvider) closureResult(ctx context.Context, d 
 	case "busy":
 		o.Databases[0].Sessions = 1
 		o.Drained = false
+	case "prepared":
+		o.Databases[0].PreparedTransactions = 1
+		o.Drained = false
+	case "unselected":
+		o.UnselectedDatabases = 1
 	case "order":
 		slices.Reverse(o.Databases)
 	case "mutated_request":
@@ -112,10 +123,11 @@ func TestCheckpointConnectionClosureServicePreservesScopeAndSeparatesDrain(t *te
 	s.provisioningEnabled = func() bool { return false }
 	s.provisioningAllowed = func(context.Context, string) bool { return false }
 	for _, call := range []func(context.Context, RestoreSourceDefinition, CheckpointMaintenance, CheckpointConnectionRequest) (CheckpointConnectionClosure, error){s.CloseCheckpointConnections, s.ObserveCheckpointConnectionClosure} {
-		for _, fault := range []string{"", "busy"} {
+		for _, fault := range []string{"", "busy", "prepared", "unselected"} {
 			p.fault = fault
 			actual, err := call(t.Context(), d, m, r)
-			if err != nil || actual.Validate(r) != nil || actual.Drained != (fault == "") || p.definition != d || p.maintenance != m ||
+			if err != nil || actual.Validate(r) != nil || actual.Drained != (fault == "" || fault == "unselected") ||
+				actual.Databases[0].PreparedTransactions != p.result.Databases[0].PreparedTransactions || actual.UnselectedDatabases != p.result.UnselectedDatabases || p.definition != d || p.maintenance != m ||
 				!reflect.DeepEqual(p.request, r) || !p.deadline || !slices.Equal(r.DatabaseNames, []string{"z\";%", "a"}) {
 				t.Fatalf("%s scoped closure: %+v %v", fault, actual, err)
 			}
@@ -125,7 +137,7 @@ func TestCheckpointConnectionClosureServicePreservesScopeAndSeparatesDrain(t *te
 			}
 		}
 	}
-	if p.closes != 2 || p.observes != 2 {
+	if p.closes != 4 || p.observes != 4 {
 		t.Fatalf("close/observe dispatches: %d/%d", p.closes, p.observes)
 	}
 }
@@ -197,7 +209,7 @@ func TestCheckpointConnectionClosureServiceRejectsAuthorityBeforeIO(t *testing.T
 func TestCheckpointConnectionClosureServiceRejectsFalseOrCanceledEvidence(t *testing.T) {
 	s, p, d, m, r := connectionClosureServiceFixture(t)
 	for _, call := range []func(context.Context, RestoreSourceDefinition, CheckpointMaintenance, CheckpointConnectionRequest) (CheckpointConnectionClosure, error){s.CloseCheckpointConnections, s.ObserveCheckpointConnectionClosure} {
-		for _, fault := range []string{"owner", "source", "state", "missing_time", "future_time", "precision", "missing_database", "name", "missing_oid", "missing_owner", "duplicate_oid", "negative_sessions", "false_drain", "false_busy", "order", "mutated_request", "error", "canceled"} {
+		for _, fault := range []string{"owner", "source", "state", "missing_time", "future_time", "precision", "missing_database", "name", "missing_oid", "missing_owner", "duplicate_oid", "negative_sessions", "negative_prepared", "negative_unselected", "false_prepared_drain", "false_drain", "false_busy", "order", "mutated_request", "error", "canceled"} {
 			ctx, cancel := context.WithCancel(t.Context())
 			p.fault, p.cancel = fault, cancel
 			want := ErrConflict

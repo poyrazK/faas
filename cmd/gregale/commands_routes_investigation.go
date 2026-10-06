@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
+	"github.com/onebox-faas/faas/pkg/routeimpact"
 )
 
 func cmdRoutesHealthInvestigate(args []string) int {
@@ -18,6 +19,7 @@ func cmdRoutesHealthInvestigate(args []string) int {
 	fs := newFlagSet("routes health investigate", flag.ContinueOnError)
 	deployment := fs.String("deployment", "", "candidate deployment UUID")
 	label := fs.String("route", "", "exact configured telemetry label, e.g. POST /checkout")
+	sourceImpactPath := fs.String("source-impact", "", "correlate a local route impact report with both deployment revisions")
 	output := fs.String("out", "", "save investigation JSON to a new file")
 	var opts api.RouteHealthInvestigationOptions
 	fs.StringVar(&opts.Signal, "signal", "", "errors (default) or latency; latency requires a configured latency check")
@@ -38,6 +40,15 @@ func cmdRoutesHealthInvestigate(args []string) int {
 			return printErr("Invalid --out", errors.New("choose a new path; existing files and symlinks are not replaced"))
 		}
 	}
+	var source routeimpact.Report
+	var sourceDigest string
+	if *sourceImpactPath != "" {
+		var err error
+		source, sourceDigest, err = readPreviewSourceImpact(*sourceImpactPath)
+		if err != nil {
+			return printErr("Invalid source impact report", err)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -51,8 +62,13 @@ func cmdRoutesHealthInvestigate(args []string) int {
 	if err := validateCLIInvestigation(report, opts, positional[0], *deployment); err != nil {
 		return printErr("Invalid route investigation response", err)
 	}
+	var sourceCorrelation *routeInvestigationSourceCorrelation
+	if *sourceImpactPath != "" {
+		correlation := correlateRouteInvestigationSource(ctx, client, report, source, sourceDigest)
+		sourceCorrelation = &correlation
+	}
 	if *output != "" {
-		body, err := json.MarshalIndent(report, "", "  ")
+		body, err := marshalRouteInvestigation(report, sourceCorrelation)
 		if err != nil {
 			return printErr("Could not encode investigation", err)
 		}
@@ -61,10 +77,23 @@ func cmdRoutesHealthInvestigate(args []string) int {
 		}
 	}
 	if jsonOutput {
+		if sourceCorrelation != nil {
+			return jsonOut(writeJSON(routeInvestigationWithSource{RouteHealthInvestigation: report, SourceCorrelation: sourceCorrelation}))
+		}
 		return jsonOut(writeJSON(report))
 	}
 	renderRouteInvestigation(report, positional[0])
+	if sourceCorrelation != nil {
+		renderRouteInvestigationSource(*sourceCorrelation)
+	}
 	return 0
+}
+
+func marshalRouteInvestigation(report api.RouteHealthInvestigation, source *routeInvestigationSourceCorrelation) ([]byte, error) {
+	if source == nil {
+		return json.MarshalIndent(report, "", "  ")
+	}
+	return json.MarshalIndent(routeInvestigationWithSource{RouteHealthInvestigation: report, SourceCorrelation: source}, "", "  ")
 }
 
 func validateCLIInvestigation(r api.RouteHealthInvestigation, opts api.RouteHealthInvestigationOptions, slug, deployment string) error {

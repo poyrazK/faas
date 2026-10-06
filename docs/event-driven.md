@@ -162,12 +162,14 @@ rather than the protocol envelope. The resolved step input is also persisted
 before dispatch, keeping the request fingerprint stable across retries.
 
 The wrapper may also return named webhook effects. Before the step is marked
-succeeded, Gregale verifies that each `webhook_id` is an enabled webhook owned
-by the workflow app and explicitly subscribed to `operation.effect`. It then
-records the effect, queues its signed delivery, and completes the step in one
-platform transaction. Delivery uses the ordinary at-least-once webhook
-dispatcher. Register the receiver under `POST /v1/apps/{slug}/webhooks`; tenant
-receivers are not supported for workflow effects. See
+succeeded, Gregale verifies that each `webhook_id` is enabled and explicitly
+subscribed to `operation.effect`, then records the effect, queues its signed
+delivery, and completes the step in one platform transaction. Account-scoped
+runs target an app receiver under `POST /v1/apps/{slug}/webhooks`. Tenant-bound
+runs target a receiver owned by that same tenant under
+`POST /v1/platform-tenants/{tenant_id}/webhooks`; the active tenant-to-app link
+is checked when the result is committed and before each delivery attempt.
+Delivery uses the ordinary at-least-once webhook dispatcher. See
 [`managed-operation-effects.md`](managed-operation-effects.md) for the handler
 envelope and event payload.
 
@@ -805,6 +807,75 @@ outcome for each captured candidate, so a transient enqueue error retries only
 that candidate. Retries are capped at 12; terminal routing failures remain on
 the outbox receipt and are logged by the scheduler. Once an invocation is
 enqueued, its handler retry and dead-letter lifecycle applies independently.
+
+Snapshot-backed application routing admits the invocation or work-policy
+cancellation and records success in one transaction. An expired routing worker
+cannot enqueue, supersede or cancel work. Recovery after an uncertain commit
+uses the stored checkpoint, including after delivery rows are pruned; it cannot
+admit another delivery or cancel work created later while the receipt is retained.
+This applies to both whole-event and independent-recipient routing once every
+scheduler is upgraded. Older receipts without snapshots and specialized object
+notification destinations keep their existing routing paths. See
+[ADR-613](adr/613-atomic-event-routing-handoff.md) for the transaction and upgrade
+boundary. Handler side effects still require application deduplication.
+
+When operators enable independent recipient routing (ADR-606), each captured
+candidate has its own five-minute lease and backoff from five seconds to five
+minutes. A terminal recipient can be replayed while its siblings are routing
+or waiting to retry. Each replay gets a fresh twelve-attempt routing budget;
+the visible attempt count and history remain cumulative. Successful siblings
+are not rerun. The flag `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED=1` enables adoption
+on schedd after all API and scheduler binaries are compatible. It defaults off;
+disabling it stops adoption but continues draining already adopted receipts.
+See [ADR-606](adr/606-independent-event-recipient-routing.md) for rollout and
+rollback requirements.
+
+Publish acceptance means the event is durably stored. A recipient marked
+`enqueued` has been handled by routing; normally it has an invocation, while
+work-policy `cancel_pending` creates a cancellation receipt instead; the receipt is `delivered` when all routing
+candidates settle, including terminal failures. Handler completion is tracked
+by the invocation lifecycle. Handler execution is at least once: use an
+idempotency key or version check for side effects. Gregale does not promise
+FIFO ordering across events or subscriptions. Retry backoff, recovery, and
+replay can change enqueue and completion order; work policies constrain
+dispatch within a key without guaranteeing publication order.
+
+Find recipients waiting to be routed without knowing their event IDs:
+
+```bash
+gregale events backlog
+gregale events backlog --app analytics --capacity-scope consumer --min-age 10m
+gregale events backlog --subscription-id SUB --state pending --json
+```
+
+The API is `GET /v1/events/backlog` with `app`, `subscription_id`, `state`,
+`capacity_scope` and `min_age_seconds` filters. It lists captured application
+recipients waiting in either routing mode, including capacity waits before
+an invocation exists. Rows show event identity, recorded wait reason, age
+since acceptance, cumulative deferrals, retry/lease metadata and links to
+receipt and routing history. Consumer counts cover all matching waiting rows,
+independently of the recipient page. This view excludes settled routing and
+handler execution queues, which remain available through delivery inspection.
+
+Use `--after` for the recipient continuation and `--consumers-after` for the
+independent consumer continuation; the API names the latter `consumers_after`.
+Both pages default to 100 and cap at 200; `--consumer-limit` controls consumer
+summaries. Keep filters unchanged and use cursors from the same `window_at`
+when passing both together. The window anchors acceptance/age filtering, while
+membership and counts remain live: recovered recipients disappear, even if
+their row supplied the cursor. Replay can restore older work behind a cursor;
+restart discovery to include it. Listing oldest first does not promise delivery
+FIFO. A whole-event lease appears as `receipt_processing` because it does not
+identify which recipient is currently being routed.
+
+The response declares `coverage=captured_application_recipients` and reports
+unresolved older receipts without snapshots as `unattributed_receipts`. That
+count is account-wide and uses only the acceptance/age window, even with other
+filters. The API requires a read key, returns metadata with no-store caching,
+and bounds reads to five seconds. Narrow filters and retry on
+`event_backlog_read_timeout`. Apply the [backlog migration](adr/617-event-consumer-backlog-inspection.md)
+before upgrading the API; routing behavior and recipient adoption are unchanged.
+
 Published and inbox envelopes use CloudEvents `datacontenttype` and the
 `accountid` extension. The API accepts the older `data_content_type` and
 `account_id` request spellings for existing clients.
@@ -870,6 +941,124 @@ gregale events deliveries APP --state failed --json
 This is useful after a deploy or manifest change: it shows the normalized
 source, type, filter, and enabled state that the router will use.
 
+Inspect one published event across every captured consumer:
+
+```bash
+gregale events inspect --source billing.stripe --id evt-123
+gregale events inspect --source billing.stripe --id evt-123 --json
+```
+
+Publish returns a `receipt_url` and `Location` header for
+`GET /v1/events/receipt?source=SOURCE&id=ID`. Identical publish retries keep the
+original `accepted_at`. The receipt includes every source/type candidate captured
+at acceptance, even before an invocation exists, and separates routing from
+handler execution. Whole-snapshot counts cover pending, processing, filtered,
+enqueued, and failed recipients. Handler outcomes preserve cancellation,
+supersession, expiry, and dead letters. A `cancel_pending` operation reports its
+cancellation receipt rather than a handler invocation.
+
+Use `--limit` (1–200, default 100) and `--after` with `next_after` for larger
+fanouts. Pagination follows captured recipient order even during retries or
+replay; outcomes can change between pages. `routing_settled_at` means routing
+has settled, including failures, and `retain_until` is thirty days later. These
+fields are absent while routing is active. Legacy receipts without snapshots
+report `snapshot_captured=false`; their membership cannot be reconstructed.
+Whole-event routing exposes retained checkpoints, so a pending recipient can
+still have an active parent worker.
+
+Each recipient includes its routing attempts, retry time, error, replay count,
+and routing history URL, plus the retained original invocation or cancellation.
+`record_unavailable` means the original execution record was not found after
+routing; it does not assert success. Execution records have independent
+retention. The JSON response supplies applicable selective recovery requests;
+calling them requires the existing write scopes and rechecks current eligibility.
+Routing replay and in-place dead-letter replay remain visible on the original
+receipt. Generic handler replay creates a new invocation with ledger-owned parent
+and root identity. The receipt preserves the original failure and adds `recovery`
+with `latest_replay`, `retained_replay_count`, and `history_url`. A completed latest
+replay means that replay succeeded; text inspection labels it `recovered`.
+Recovery requests target the latest retained replay, and are absent while that
+replay is active or completed. Independent consumer outcomes remain separate.
+
+Plain handler replay uses `POST /v1/invocations/{id}/replay` (or
+`gregale invocations get --replay INVOCATION_ID`). Each failed parent creates
+one durable child. Repeated and concurrent requests return that child even
+with different request keys or after success; further recovery targets the
+failed child. Customer self-service and account-operator replay share this
+identity and preserve the captured customer and environment. If the child has
+been pruned, its retained parent returns `invocation_replay_unavailable` and
+receipts suppress its handler replay action. Existing accepted replay IDs
+remain readable when an old deployment pin expires. Delivery remains at least
+once; applications still deduplicate external side effects. See
+[ADR-612](adr/612-durable-plain-invocation-replay.md).
+
+Failed keyed handlers use `keyed_handler_replay`, which calls
+`POST /v1/invocations/{id}/replay-keyed`. It preserves the captured policy
+revision, key, fairness controls and environment, and joins the end of that
+key's queue. It does not supersede newer pending work or restart debounce.
+The original pending expiry remains effective: expired work needs a new
+publication with a new event ID and fresh lifetime. Retrying the same accepted
+event does not renew its deadline. Generic invocation replay rejects keyed
+work so it cannot bypass its claim gate.
+
+```bash
+gregale invocations get --replay-keyed INVOCATION_ID
+```
+
+Repeated keyed recovery requests return the same child, even after it completes.
+To recover again, target that child after it fails. If the child has been pruned
+while the parent remains, the parent cannot create another execution; receipts
+suppress that action. Queue-bound dead letters retain their existing in-place
+replay path. See [ADR-609](adr/609-safe-keyed-invocation-replay.md) for ordering,
+expiry and retention behavior.
+
+Keyed dead-letter replay keeps the original receipt and sequence. It waits
+for any same-key invocation or broker delivery already running, including a
+later sequence. An expired lease must be recovered before the replay can
+proceed. Once that ownership is resolved, pending work follows sequence order;
+other keys remain eligible. Replay preserves the original pending expiry.
+See [ADR-610](adr/610-keyed-dead-letter-replay-claim-exclusion.md).
+
+Inspect the original handler's delivery attempts and its trusted replay children:
+
+```bash
+gregale events attempts --source billing.stripe --id evt-123 \
+  --subscription SUBSCRIPTION_ID --limit 100
+```
+
+This reads `GET /v1/events/receipt/attempts`; receipt recipients expose its
+`attempt_history_url`. Each entry contains invocation ID, replay generation,
+attempt number, start and finish times, outcome, error and next retry time.
+An expired dispatch lease settles as `unknown`: the history does not prove
+whether the handler ran or applied side effects. Use application idempotency.
+Pagination uses the returned `next_after` with `--after`, newest attempt first.
+
+Only recorded, retained attempts are shown. History starts with claims made
+after the attempt-ledger upgrade and is not backfilled. Closed attempts expire
+after at most 30 days, earlier for shorter result retention or invocation
+deletion; running attempts are not pruned. An empty history does not establish
+that no delivery occurred. See [ADR-611](adr/611-invocation-backed-event-attempt-history.md).
+
+List a consumer's retained replay executions, newest first:
+
+```bash
+gregale events inspect --source billing.stripe --id evt-123 --subscription SUB
+gregale events inspect --source billing.stripe --id evt-123 --subscription SUB --json
+```
+
+This reads `GET /v1/events/receipt/replays` with the same source, ID and captured
+`subscription_id`. Use `--limit` and the returned `next_after` with `--after` to
+read older pages. Replay cursors are separate from recipient cursors and remain
+usable when their execution anchor expires. Root identity and its creation time
+survive on descendants, so expired intermediate rows cannot sever recovery or
+attach it to a later reuse of the event identity. Counts cover retained rows,
+not lifetime replays. When all replay records expire, absence of `recovery` does
+not establish that recovery never happened. Older generic replays without trusted
+lineage remain in app delivery history; guest headers cannot reconstruct it.
+
+Captured target IDs remain, but current metadata and recovery actions
+are unavailable when the target no longer belongs to the account.
+
 After publishing, use `events deliveries` to see the matching event id,
 delivery state, attempt count, and last lifecycle timestamp without searching
 the account-wide invocation ledger. The history includes operator replays and
@@ -901,11 +1090,26 @@ gregale events fanout-history APP \
   --event-id evt-123
 ```
 
-History is ordered newest first and retained for the same period as the event
-fanout receipt. Use `--subscription-id` to narrow it to one captured recipient;
-use `--before` with `next_before` from JSON output to page through older rows.
-Replay rows include the failure details that led to the replay, even after the
-recipient later succeeds.
+History is ordered newest first. Each recipient retains at most 128 detail rows
+and 64 KiB of logical detail bytes; unprotected detail expires after thirty days,
+including while the event remains pending. Compaction prioritizes the latest
+outcome, real failure and replay request. Error details are bounded to 1,024 UTF-8
+bytes and clipped rows set `details_truncated`.
+
+Repeated consecutive capacity waits with the same scope update durable counters
+instead of appending detail. JSON output includes `coverage=bounded_recorded_outcomes`
+and recipient `summaries`: cumulative deferrals, wait first/last times, coalesced
+and compacted counts, retained records/bytes, and the boundary of removed detail.
+Summaries describe recorded observations and survive with the receipt; older
+unrecorded transitions cannot be reconstructed. The last capacity scope is the
+most recent recorded wait, including after recovery.
+
+Use `--subscription-id` to narrow the view and `--before` with `next_before` from
+JSON output to page through older rows. Cursors remain valid when their detail
+row is removed, although an older page may become empty. Summaries reflect current
+observations independently of the page cursor. Recovery uses the durable recipient
+checkpoint and does not depend on retaining every history row. See
+[ADR-616](adr/616-bounded-event-routing-history.md).
 
 To retry one terminal pre-invocation failure, pass its event ID, source, and
 subscription ID from the failure row:
@@ -917,8 +1121,10 @@ gregale events replay APP \
   --subscription-id 5ef2a270-2c12-4ddd-a2a7-a0873995f7c8
 ```
 
-Replay becomes available after the event's fanout receipt settles. It queues
-only that recipient and keeps the event payload and recipient configuration
+For receipts using independent recipient routing, replay is available as soon
+as that recipient fails, even while siblings are active. Legacy receipts must
+wait until the event's fanout receipt settles. Replay queues only that recipient
+and keeps the event payload and recipient configuration
 captured when the event was accepted. A replay therefore uses the same filter
 and target app; fix persistent routing or app problems before retrying. Other
 recipients that already succeeded or failed are not rerun.
@@ -934,9 +1140,10 @@ This command requeues only terminal failures classified as retryable, oldest
 first, and never more than 100 recipients per call. Add both `--event-source`
 and `--event-id` to scope it to one published event. `--yes` confirms the
 batch; repeat the command when the response reports `has_more: true`. A queued
-event can accept additional replay batches while pending. If its worker is
-already processing it, the command leaves that event alone and continues to
-report more failures; repeat after the event settles.
+event can accept additional replay batches while pending. Independent recipient
+routing also permits replay while siblings are processing. A legacy event with
+an active whole-event worker is left alone and continues to report more
+failures; repeat after that event settles.
 Configuration failures such as an invalid
 subscription or unavailable target remain untouched for explicit repair and
 single-recipient replay.

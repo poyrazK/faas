@@ -35,6 +35,57 @@ func (s *server) resumeWorkflowRun(w http.ResponseWriter, r *http.Request, accou
 		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
 		return
 	}
+	expectedResumeCount, ok := decodeWorkflowResumeCount(w, r)
+	if !ok {
+		return
+	}
+	store, ok := s.store.(state.WorkflowResumeStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("workflow resume storage unavailable"))
+		return
+	}
+	resumed, _, active, err := store.ResumeWorkflowRun(r.Context(), state.WorkflowResumeOptions{RunID: run.ID, AppID: run.AppID, AccountID: account.ID, ExpectedResumeCount: expectedResumeCount})
+	if err != nil {
+		writeWorkflowResumeError(w, err, account.Plan, active)
+		return
+	}
+	writeJSON(w, http.StatusOK, workflowRunResponse(resumed))
+}
+
+func (s *server) resumePlatformTenantSelfWorkflowRun(w http.ResponseWriter, r *http.Request, account state.Account) {
+	run, ok := s.loadPlatformTenantSelfWorkflowRun(w, r, account)
+	if !ok {
+		return
+	}
+	if !account.Plan.WorkflowsAllowed() {
+		api.WriteProblem(w, api.ErrPlanWorkflowsNotAllowed(account.Plan))
+		return
+	}
+	if !s.workflowRuntimeEnabled {
+		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
+		return
+	}
+	expectedResumeCount, ok := decodeWorkflowResumeCount(w, r)
+	if !ok {
+		return
+	}
+	store, ok := s.store.(state.WorkflowResumeStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("workflow resume storage unavailable"))
+		return
+	}
+	resumed, _, active, err := store.ResumeWorkflowRun(r.Context(), state.WorkflowResumeOptions{
+		RunID: run.ID, AppID: run.AppID, AccountID: account.ID,
+		PlatformTenantID: run.PlatformTenantID, ExpectedResumeCount: expectedResumeCount,
+	})
+	if err != nil {
+		writeWorkflowResumeError(w, err, account.Plan, active)
+		return
+	}
+	writeJSON(w, http.StatusOK, workflowRunResponse(resumed))
+}
+
+func decodeWorkflowResumeCount(w http.ResponseWriter, r *http.Request) (int, bool) {
 	var body api.ResumeWorkflowRunRequest
 	if err := decodeJSONSized(r, &body, api.WorkflowResumeRequestMaxBytes); err != nil {
 		var maxErr *http.MaxBytesError
@@ -43,23 +94,13 @@ func (s *server) resumeWorkflowRun(w http.ResponseWriter, r *http.Request, accou
 		} else {
 			api.WriteProblem(w, api.ErrValidation("request must contain expected_resume_count"))
 		}
-		return
+		return 0, false
 	}
 	if body.ExpectedResumeCount == nil || *body.ExpectedResumeCount < 0 || *body.ExpectedResumeCount > api.WorkflowRunMaxResumes {
 		api.WriteProblem(w, api.ErrValidation("expected_resume_count must be between 0 and 16"))
-		return
+		return 0, false
 	}
-	store, ok := s.store.(state.WorkflowResumeStore)
-	if !ok {
-		api.WriteProblem(w, api.ErrCapacity("workflow resume storage unavailable"))
-		return
-	}
-	resumed, _, active, err := store.ResumeWorkflowRun(r.Context(), state.WorkflowResumeOptions{RunID: run.ID, AppID: run.AppID, AccountID: account.ID, ExpectedResumeCount: *body.ExpectedResumeCount})
-	if err != nil {
-		writeWorkflowResumeError(w, err, account.Plan, active)
-		return
-	}
-	writeJSON(w, http.StatusOK, workflowRunResponse(resumed))
+	return *body.ExpectedResumeCount, true
 }
 func writeWorkflowResumeError(w http.ResponseWriter, err error, plan api.Plan, active int) {
 	var problem *api.Problem
