@@ -472,6 +472,10 @@ e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Po
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
 	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
 
+.PHONY: event-delivery-acceptance
+event-delivery-acceptance: ## Events & Delivery recovery through real daemons and HTTP consumers; requires PostgreSQL, no KVM.
+	@GO="$(GO)" bash scripts/ci/run-event-delivery-acceptance.sh
+
 .PHONY: e2e-sandbox
 e2e-sandbox: ## Live Paddle sandbox walk (operator-only; PR-P3). Reads secrets from secrets/.env.sandbox — NEVER committed.
 	@test -f secrets/.env.sandbox || (echo "secrets/.env.sandbox missing; create it with FAAS_PADDLE_SANDBOX_API_KEY + FAAS_PADDLE_SANDBOX_WEBHOOK_SECRET from api.sandbox.paddle.com" ; exit 1)

@@ -830,6 +830,11 @@ disabling it stops adoption but continues draining already adopted receipts.
 See [ADR-606](adr/606-independent-event-recipient-routing.md) for rollout and
 rollback requirements.
 
+Run `make event-delivery-acceptance` to qualify two-consumer handler execution,
+retry exhaustion, selective DLQ recovery and process restart in both routing
+modes. The same gate can run against dedicated staging fixture apps; see
+[Events & Delivery recovery acceptance](ops/event-delivery-acceptance.md).
+
 Publish acceptance means the event is durably stored. A recipient marked
 `enqueued` has been handled by routing; normally it has an invocation, while
 work-policy `cancel_pending` creates a cancellation receipt instead; the receipt is `delivered` when all routing

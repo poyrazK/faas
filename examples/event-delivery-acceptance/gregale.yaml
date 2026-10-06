@@ -1,0 +1,3 @@
+event_triggers:
+  - source: acceptance.events.delivery
+    type: delivery.recovery

@@ -91,6 +91,14 @@ acknowledgement without duplicate invocations, and a fresh replay retry budget.
 These gates qualify routing storage and recovery; staging rollout and real
 handler execution/DLQ recovery remain operational acceptance work.
 
+The [executable delivery recovery gate](../ops/event-delivery-acceptance.md)
+now exercises actual HTTP handlers through real API, scheduler and gateway
+processes in both routing modes, including scheduler/API restart and selective
+DLQ recovery. `make event-delivery-acceptance` refuses skipped qualification.
+Its shared runner and consumer fixture also support an explicitly provisioned
+staging deployment. CI's VMMD protocol fixture does not qualify native guest
+execution; production adoption still requires the staging gates above.
+
 Local qualification used Go 1.25.13 and PostgreSQL 16 on macOS arm64. Recipient
 state, migration replay, and scheduler routing regressions passed with the race
 detector; lint passed for the changed packages. SQL regeneration, migration
