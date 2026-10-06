@@ -1,6 +1,6 @@
-// Package activity records process-local forwarding activity for private
-// runtime-upgrade drain observations (ADR-610). It provides no admission fence
-// or authority to retire an instance or deployment.
+// Package activity records process-local forwarding activity (ADR-610) and
+// optional private forwarding admission fences (ADR-611). It provides no
+// scheduler or VM authority to retire an instance or deployment.
 package activity
 
 import (
@@ -48,6 +48,8 @@ type Tracker struct {
 	unknownReason string
 	active        map[key]int
 	total         int
+	fencing       bool
+	fences        map[string]Fence
 }
 
 func canonicalIdentity(id string) bool {

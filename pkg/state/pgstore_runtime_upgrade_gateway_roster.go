@@ -131,6 +131,12 @@ func runtimeUpgradeGatewayMembershipDB(ctx context.Context, tx pgx.Tx, accountID
 	for i, h := range rows {
 		heartbeats[i] = runtimeUpgradeGatewayHeartbeat{Revision: pgUUIDString(h.RosterRevision), SlotID: pgUUIDString(h.SlotID), SessionID: pgUUIDString(h.GatewaySessionID), SeenAt: h.SeenAt.Time, ExpiresAt: h.ExpiresAt.Time}
 	}
-	out.CheckedAt = time.Now().UTC()
+	// ADR-611: compare database-timestamped heartbeats and receipts against
+	// the same clock, after membership reads, rather than the apid host clock.
+	clock, err := q.ReadRuntimeUpgradeDrainClock(ctx, tx)
+	if err != nil {
+		return RuntimeUpgradeVerification{}, fmt.Errorf("read gateway membership clock: %w", err)
+	}
+	out.CheckedAt = clock.Time
 	return evaluateRuntimeUpgradeGatewayMembership(out, runtimeUpgradeGatewayRosterFromRow(r), pgUUIDString(frozen.GatewayRosterRevision), enrolled, heartbeats), nil
 }

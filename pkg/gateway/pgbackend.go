@@ -2044,10 +2044,11 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 		return err
 	}
 	defer unlock()
-	rows, err := b.store.LiveDeployments(ctx, appID)
+	snapshot, err := readDeploymentWeightsSnapshot(ctx, b.store, appID)
 	if err != nil {
 		return fmt.Errorf("gatewayd-internal: refresh deployment weights app=%s: %w", appID, err)
 	}
+	rows := snapshot.Rows
 	next := buildDeploymentWeights(rows)
 	b.tgtMu.Lock()
 	picker, ok := b.appsPicker[appID]
@@ -2076,6 +2077,12 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 		}
 	}
 	b.tgtMu.Unlock()
+	if observer, ok := b.store.(InstalledWeightsSnapshotObserver); ok {
+		if err := observer.DeploymentWeightsSnapshotInstalled(ctx, appID, snapshot); err != nil {
+			return fmt.Errorf("confirm installed deployment snapshot: %w", err)
+		}
+		return nil
+	}
 	if observer, ok := b.store.(InstalledWeightsObserver); ok {
 		if err := observer.DeploymentWeightsInstalled(ctx, appID, rows); err != nil {
 			return fmt.Errorf("confirm installed deployment weights: %w", err)

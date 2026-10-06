@@ -1740,6 +1740,7 @@ type Deployment struct {
 	GithubInstallationID       pgtype.Int8
 	EnvironmentWorkloadRuntime []byte
 	ServingEndedAt             pgtype.Timestamptz
+	RuntimeUpgradeRoutingToken pgtype.UUID
 }
 
 type DeploymentAlias struct {
@@ -5993,6 +5994,23 @@ type RuntimeSnapshot struct {
 	PublishedAt         pgtype.Timestamptz
 	RetiredAt           pgtype.Timestamptz
 	Profile             string
+}
+
+type RuntimeUpgradeGatewayDrain struct {
+	AppID                 pgtype.UUID
+	GatewaySessionID      pgtype.UUID
+	SlotID                pgtype.UUID
+	OperationID           pgtype.UUID
+	DeploymentID          pgtype.UUID
+	ServingDeploymentID   pgtype.UUID
+	GatewayRosterRevision pgtype.UUID
+	RoutingRevision       string
+	FenceID               pgtype.UUID
+	ActivityVersion       string
+	ActiveForwards        int32
+	CutoverAt             pgtype.Timestamptz
+	ObservedAt            pgtype.Timestamptz
+	ExpiresAt             pgtype.Timestamptz
 }
 
 type RuntimeUpgradeGatewayHeartbeat struct {

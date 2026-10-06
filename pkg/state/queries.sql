@@ -14280,3 +14280,51 @@ ON CONFLICT (slot_id) DO UPDATE SET gateway_session_id=EXCLUDED.gateway_session_
 
 -- name: ReadRuntimeUpgradeGatewayHeartbeats :many
 SELECT * FROM runtime_upgrade_gateway_heartbeats WHERE roster_revision=$1 ORDER BY slot_id;
+
+-- Private forwarding drain facts, ADR-611. Snapshot and receipt writes use SQLC.
+-- name: ReadRuntimeUpgradeDrainDeployments :many
+SELECT id::text,app_id::text,scope,status,traffic_percent,traffic_percent_explicit,deleted_at,runtime_upgrade_routing_token::text
+FROM deployments WHERE app_id=$1 AND status='live' ORDER BY id LIMIT $2;
+
+-- name: LockRuntimeUpgradeDrainDeployments :many
+SELECT id FROM deployments WHERE app_id=$1 AND status='live' ORDER BY id LIMIT $2 FOR SHARE;
+
+-- name: ReadRuntimeUpgradeDrainClock :one
+SELECT clock_timestamp()::timestamptz AS checked_at;
+
+-- name: RecordRuntimeUpgradeGatewayDrain :execrows
+WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+INSERT INTO runtime_upgrade_gateway_drains(app_id,gateway_session_id,slot_id,operation_id,deployment_id,serving_deployment_id,
+ gateway_roster_revision,routing_revision,fence_id,activity_version,cutover_at,observed_at,expires_at)
+SELECT sqlc.arg(app_id)::uuid,sqlc.arg(gateway_session_id)::uuid,sqlc.arg(slot_id)::uuid,sqlc.arg(operation_id)::uuid,
+ sqlc.arg(deployment_id)::uuid,sqlc.arg(serving_deployment_id)::uuid,sqlc.arg(gateway_roster_revision)::uuid,
+ sqlc.arg(routing_revision)::text,sqlc.arg(fence_id)::uuid,sqlc.arg(activity_version)::text,sqlc.arg(cutover_at)::timestamptz,
+ observation.observed_at,observation.observed_at+make_interval(secs=>sqlc.arg(lease_seconds)::integer)
+FROM observation JOIN runtime_upgrade_gateway_heartbeats h ON h.slot_id=sqlc.arg(slot_id)::uuid
+JOIN runtime_upgrade_gateway_roster_head head ON head.singleton AND head.revision=h.roster_revision
+WHERE h.gateway_session_id=sqlc.arg(gateway_session_id)::uuid AND h.roster_revision=sqlc.arg(gateway_roster_revision)::uuid
+AND h.seen_at<=observation.observed_at AND h.expires_at>observation.observed_at
+AND (EXISTS(SELECT 1 FROM runtime_upgrade_gateway_drains d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.gateway_session_id=sqlc.arg(gateway_session_id)::uuid)
+ OR (SELECT count(*) FROM runtime_upgrade_gateway_drains d WHERE d.app_id=sqlc.arg(app_id)::uuid)<sqlc.arg(session_limit)::integer)
+ON CONFLICT(app_id,gateway_session_id) DO UPDATE SET slot_id=EXCLUDED.slot_id,operation_id=EXCLUDED.operation_id,
+ deployment_id=EXCLUDED.deployment_id,serving_deployment_id=EXCLUDED.serving_deployment_id,
+ gateway_roster_revision=EXCLUDED.gateway_roster_revision,routing_revision=EXCLUDED.routing_revision,fence_id=EXCLUDED.fence_id,
+ activity_version=EXCLUDED.activity_version,cutover_at=EXCLUDED.cutover_at,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at
+WHERE runtime_upgrade_gateway_drains.activity_version::numeric<=EXCLUDED.activity_version::numeric;
+
+-- name: ReadRuntimeUpgradeGatewayDrains :many
+SELECT * FROM runtime_upgrade_gateway_drains WHERE app_id=$1 ORDER BY gateway_session_id LIMIT $2;
+
+-- name: PruneRuntimeUpgradeGatewayDrains :execrows
+DELETE FROM runtime_upgrade_gateway_drains WHERE (app_id,gateway_session_id) IN
+ (SELECT app_id,gateway_session_id FROM runtime_upgrade_gateway_drains WHERE expires_at<=statement_timestamp()
+ ORDER BY expires_at LIMIT $1);
+
+-- name: ListRuntimeUpgradeGatewayDrainRepairApps :many
+SELECT DISTINCT d.app_id::text FROM deployment_runtime_upgrade_cutovers c JOIN deployments d ON d.id=c.deployment_id
+WHERE c.cutover_at>=clock_timestamp()-make_interval(secs=>sqlc.arg(max_age_seconds)::integer)
+AND d.app_id::text>sqlc.arg(after_app_id)::text AND d.deleted_at IS NULL
+ORDER BY d.app_id::text LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: PruneAppRuntimeUpgradeGatewayDrains :exec
+DELETE FROM runtime_upgrade_gateway_drains WHERE app_id=$1 AND expires_at<=statement_timestamp();

@@ -25029,7 +25029,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -25143,6 +25143,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.GithubInstallationID,
 			&i.EnvironmentWorkloadRuntime,
 			&i.ServingEndedAt,
+			&i.RuntimeUpgradeRoutingToken,
 		); err != nil {
 			return nil, err
 		}
@@ -27087,6 +27088,39 @@ func (q *Queries) ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRunt
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRuntimeUpgradeGatewayDrainRepairApps = `-- name: ListRuntimeUpgradeGatewayDrainRepairApps :many
+SELECT DISTINCT d.app_id::text FROM deployment_runtime_upgrade_cutovers c JOIN deployments d ON d.id=c.deployment_id
+WHERE c.cutover_at>=clock_timestamp()-make_interval(secs=>$1::integer)
+AND d.app_id::text>$2::text AND d.deleted_at IS NULL
+ORDER BY d.app_id::text LIMIT $3::integer
+`
+
+type ListRuntimeUpgradeGatewayDrainRepairAppsParams struct {
+	MaxAgeSeconds int32
+	AfterAppID    string
+	PageLimit     int32
+}
+
+func (q *Queries) ListRuntimeUpgradeGatewayDrainRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayDrainRepairAppsParams) ([]string, error) {
+	rows, err := db.Query(ctx, listRuntimeUpgradeGatewayDrainRepairApps, arg.MaxAgeSeconds, arg.AfterAppID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var d_app_id string
+		if err := rows.Scan(&d_app_id); err != nil {
+			return nil, err
+		}
+		items = append(items, d_app_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -30946,6 +30980,35 @@ SELECT id FROM deployments WHERE app_id=$1 ORDER BY id FOR UPDATE
 
 func (q *Queries) LockRuntimeUpgradeCutoverDeployments(ctx context.Context, db DBTX, appID pgtype.UUID) ([]pgtype.UUID, error) {
 	rows, err := db.Query(ctx, lockRuntimeUpgradeCutoverDeployments, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockRuntimeUpgradeDrainDeployments = `-- name: LockRuntimeUpgradeDrainDeployments :many
+SELECT id FROM deployments WHERE app_id=$1 AND status='live' ORDER BY id LIMIT $2 FOR SHARE
+`
+
+type LockRuntimeUpgradeDrainDeploymentsParams struct {
+	AppID pgtype.UUID
+	Limit int32
+}
+
+func (q *Queries) LockRuntimeUpgradeDrainDeployments(ctx context.Context, db DBTX, arg LockRuntimeUpgradeDrainDeploymentsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockRuntimeUpgradeDrainDeployments, arg.AppID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -41179,6 +41242,15 @@ func (q *Queries) PruneAppHealthHistory(ctx context.Context, db DBTX, arg PruneA
 	return err
 }
 
+const pruneAppRuntimeUpgradeGatewayDrains = `-- name: PruneAppRuntimeUpgradeGatewayDrains :exec
+DELETE FROM runtime_upgrade_gateway_drains WHERE app_id=$1 AND expires_at<=statement_timestamp()
+`
+
+func (q *Queries) PruneAppRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, pruneAppRuntimeUpgradeGatewayDrains, appID)
+	return err
+}
+
 const pruneCustomerOperationEvents = `-- name: PruneCustomerOperationEvents :execrows
 WITH doomed AS (SELECT e.operation_id,e.sequence FROM customer_operation_events e JOIN customer_operations o ON o.id=e.operation_id
  WHERE (o.record->>'event_expires_at')::timestamptz<=$1::timestamptz
@@ -41411,6 +41483,20 @@ type PruneRouteMonitorIncidentsParams struct {
 func (q *Queries) PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error {
 	_, err := db.Exec(ctx, pruneRouteMonitorIncidents, arg.AppID, arg.MaxEntries, arg.MaxBytes)
 	return err
+}
+
+const pruneRuntimeUpgradeGatewayDrains = `-- name: PruneRuntimeUpgradeGatewayDrains :execrows
+DELETE FROM runtime_upgrade_gateway_drains WHERE (app_id,gateway_session_id) IN
+ (SELECT app_id,gateway_session_id FROM runtime_upgrade_gateway_drains WHERE expires_at<=statement_timestamp()
+ ORDER BY expires_at LIMIT $1)
+`
+
+func (q *Queries) PruneRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, limit int32) (int64, error) {
+	result, err := db.Exec(ctx, pruneRuntimeUpgradeGatewayDrains, limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const pruneRuntimeUpgradeGatewayReceipts = `-- name: PruneRuntimeUpgradeGatewayReceipts :exec
@@ -47629,6 +47715,68 @@ func (q *Queries) ReadRuntimeUpgradeCutoverOwner(ctx context.Context, db DBTX, i
 	return i, err
 }
 
+const readRuntimeUpgradeDrainClock = `-- name: ReadRuntimeUpgradeDrainClock :one
+SELECT clock_timestamp()::timestamptz AS checked_at
+`
+
+func (q *Queries) ReadRuntimeUpgradeDrainClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeDrainClock)
+	var checked_at pgtype.Timestamptz
+	err := row.Scan(&checked_at)
+	return checked_at, err
+}
+
+const readRuntimeUpgradeDrainDeployments = `-- name: ReadRuntimeUpgradeDrainDeployments :many
+SELECT id::text,app_id::text,scope,status,traffic_percent,traffic_percent_explicit,deleted_at,runtime_upgrade_routing_token::text
+FROM deployments WHERE app_id=$1 AND status='live' ORDER BY id LIMIT $2
+`
+
+type ReadRuntimeUpgradeDrainDeploymentsParams struct {
+	AppID pgtype.UUID
+	Limit int32
+}
+
+type ReadRuntimeUpgradeDrainDeploymentsRow struct {
+	ID                         string
+	AppID                      string
+	Scope                      string
+	Status                     string
+	TrafficPercent             int32
+	TrafficPercentExplicit     bool
+	DeletedAt                  pgtype.Timestamptz
+	RuntimeUpgradeRoutingToken string
+}
+
+// Private forwarding drain facts, ADR-611. Snapshot and receipt writes use SQLC.
+func (q *Queries) ReadRuntimeUpgradeDrainDeployments(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeDrainDeploymentsParams) ([]ReadRuntimeUpgradeDrainDeploymentsRow, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeDrainDeployments, arg.AppID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeUpgradeDrainDeploymentsRow{}
+	for rows.Next() {
+		var i ReadRuntimeUpgradeDrainDeploymentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Scope,
+			&i.Status,
+			&i.TrafficPercent,
+			&i.TrafficPercentExplicit,
+			&i.DeletedAt,
+			&i.RuntimeUpgradeRoutingToken,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readRuntimeUpgradeEligibleFailureFallback = `-- name: ReadRuntimeUpgradeEligibleFailureFallback :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.id<>$2::uuid
  AND d.status='live' AND d.deleted_at IS NULL
@@ -47685,6 +47833,50 @@ func (q *Queries) ReadRuntimeUpgradeGatewayDeployments(ctx context.Context, db D
 			&i.TrafficPercent,
 			&i.TrafficPercentExplicit,
 			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradeGatewayDrains = `-- name: ReadRuntimeUpgradeGatewayDrains :many
+SELECT app_id, gateway_session_id, slot_id, operation_id, deployment_id, serving_deployment_id, gateway_roster_revision, routing_revision, fence_id, activity_version, active_forwards, cutover_at, observed_at, expires_at FROM runtime_upgrade_gateway_drains WHERE app_id=$1 ORDER BY gateway_session_id LIMIT $2
+`
+
+type ReadRuntimeUpgradeGatewayDrainsParams struct {
+	AppID pgtype.UUID
+	Limit int32
+}
+
+func (q *Queries) ReadRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeGatewayDrainsParams) ([]RuntimeUpgradeGatewayDrain, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeGatewayDrains, arg.AppID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradeGatewayDrain{}
+	for rows.Next() {
+		var i RuntimeUpgradeGatewayDrain
+		if err := rows.Scan(
+			&i.AppID,
+			&i.GatewaySessionID,
+			&i.SlotID,
+			&i.OperationID,
+			&i.DeploymentID,
+			&i.ServingDeploymentID,
+			&i.GatewayRosterRevision,
+			&i.RoutingRevision,
+			&i.FenceID,
+			&i.ActivityVersion,
+			&i.ActiveForwards,
+			&i.CutoverAt,
+			&i.ObservedAt,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -49921,6 +50113,65 @@ func (q *Queries) RecordRuntimeReleaseQualification(ctx context.Context, db DBTX
 		&i.RevocationSha256,
 	)
 	return i, err
+}
+
+const recordRuntimeUpgradeGatewayDrain = `-- name: RecordRuntimeUpgradeGatewayDrain :execrows
+WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+INSERT INTO runtime_upgrade_gateway_drains(app_id,gateway_session_id,slot_id,operation_id,deployment_id,serving_deployment_id,
+ gateway_roster_revision,routing_revision,fence_id,activity_version,cutover_at,observed_at,expires_at)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::uuid,$6::uuid,$7::uuid,
+ $8::text,$9::uuid,$10::text,$11::timestamptz,
+ observation.observed_at,observation.observed_at+make_interval(secs=>$12::integer)
+FROM observation JOIN runtime_upgrade_gateway_heartbeats h ON h.slot_id=$3::uuid
+JOIN runtime_upgrade_gateway_roster_head head ON head.singleton AND head.revision=h.roster_revision
+WHERE h.gateway_session_id=$2::uuid AND h.roster_revision=$7::uuid
+AND h.seen_at<=observation.observed_at AND h.expires_at>observation.observed_at
+AND (EXISTS(SELECT 1 FROM runtime_upgrade_gateway_drains d WHERE d.app_id=$1::uuid AND d.gateway_session_id=$2::uuid)
+ OR (SELECT count(*) FROM runtime_upgrade_gateway_drains d WHERE d.app_id=$1::uuid)<$13::integer)
+ON CONFLICT(app_id,gateway_session_id) DO UPDATE SET slot_id=EXCLUDED.slot_id,operation_id=EXCLUDED.operation_id,
+ deployment_id=EXCLUDED.deployment_id,serving_deployment_id=EXCLUDED.serving_deployment_id,
+ gateway_roster_revision=EXCLUDED.gateway_roster_revision,routing_revision=EXCLUDED.routing_revision,fence_id=EXCLUDED.fence_id,
+ activity_version=EXCLUDED.activity_version,cutover_at=EXCLUDED.cutover_at,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at
+WHERE runtime_upgrade_gateway_drains.activity_version::numeric<=EXCLUDED.activity_version::numeric
+`
+
+type RecordRuntimeUpgradeGatewayDrainParams struct {
+	AppID                 pgtype.UUID
+	GatewaySessionID      pgtype.UUID
+	SlotID                pgtype.UUID
+	OperationID           pgtype.UUID
+	DeploymentID          pgtype.UUID
+	ServingDeploymentID   pgtype.UUID
+	GatewayRosterRevision pgtype.UUID
+	RoutingRevision       string
+	FenceID               pgtype.UUID
+	ActivityVersion       string
+	CutoverAt             pgtype.Timestamptz
+	LeaseSeconds          int32
+	SessionLimit          int32
+}
+
+func (q *Queries) RecordRuntimeUpgradeGatewayDrain(ctx context.Context, db DBTX, arg RecordRuntimeUpgradeGatewayDrainParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRuntimeUpgradeGatewayDrain,
+		arg.AppID,
+		arg.GatewaySessionID,
+		arg.SlotID,
+		arg.OperationID,
+		arg.DeploymentID,
+		arg.ServingDeploymentID,
+		arg.GatewayRosterRevision,
+		arg.RoutingRevision,
+		arg.FenceID,
+		arg.ActivityVersion,
+		arg.CutoverAt,
+		arg.LeaseSeconds,
+		arg.SessionLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordRuntimeUpgradeGatewayReceipt = `-- name: RecordRuntimeUpgradeGatewayReceipt :execrows
@@ -52802,7 +53053,7 @@ func (q *Queries) RetainProjectEnvironmentClonePostgresSnapshot(ctx context.Cont
 
 const retainedLayerBytesWithClonePins = `-- name: RetainedLayerBytesWithClonePins :one
 WITH retained_deployments AS (
-    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at FROM deployments d JOIN apps a ON a.id = d.app_id
+    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)

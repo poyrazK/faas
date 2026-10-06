@@ -2125,6 +2125,7 @@
       "rootfs_bytes",
       "rootfs_key",
       "rootfs_path",
+      "runtime_upgrade_routing_token",
       "scan_result",
       "scan_status",
       "scanned_at",
@@ -6755,6 +6756,26 @@
       "vm_state_bytes"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_gateway_drains",
+    "columns": [
+      "active_forwards",
+      "activity_version",
+      "app_id",
+      "cutover_at",
+      "deployment_id",
+      "expires_at",
+      "fence_id",
+      "gateway_roster_revision",
+      "gateway_session_id",
+      "observed_at",
+      "operation_id",
+      "routing_revision",
+      "serving_deployment_id",
+      "slot_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "runtime_upgrade_gateway_heartbeats",

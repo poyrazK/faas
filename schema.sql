@@ -2753,6 +2753,7 @@ CREATE TABLE public.deployments (
     github_installation_id bigint,
     environment_workload_runtime jsonb,
     serving_ended_at timestamp with time zone,
+    runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -2777,6 +2778,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
     CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
+    CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployments_secret_reload_signal_chk CHECK (((secret_reload_signal IS NULL) OR (secret_reload_signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))),
@@ -7588,6 +7590,19 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: renew_runtime_upgrade_routing_token(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.renew_runtime_upgrade_routing_token() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ NEW.runtime_upgrade_routing_token:=gen_random_uuid();
+ RETURN NEW;
+END $$;
 
 
 --
@@ -19229,6 +19244,38 @@ CREATE TABLE public.runtime_snapshots (
 
 
 --
+-- Name: runtime_upgrade_gateway_drains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_drains (
+    app_id uuid NOT NULL,
+    gateway_session_id uuid NOT NULL,
+    slot_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    serving_deployment_id uuid NOT NULL,
+    gateway_roster_revision uuid NOT NULL,
+    routing_revision text NOT NULL,
+    fence_id uuid NOT NULL,
+    activity_version text NOT NULL,
+    active_forwards integer DEFAULT 0 NOT NULL,
+    cutover_at timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_gateway_drains_active_forwards_check CHECK ((active_forwards = 0)),
+    CONSTRAINT runtime_upgrade_gateway_drains_activity_version_check CHECK (((activity_version ~ '^[1-9][0-9]{0,19}$'::text) AND ((activity_version)::numeric <= '18446744073709551615'::numeric))),
+    CONSTRAINT runtime_upgrade_gateway_drains_check CHECK ((serving_deployment_id <> deployment_id)),
+    CONSTRAINT runtime_upgrade_gateway_drains_check1 CHECK ((isfinite(expires_at) AND (expires_at = (observed_at + '00:01:00'::interval)))),
+    CONSTRAINT runtime_upgrade_gateway_drains_cutover_at_check CHECK (isfinite(cutover_at)),
+    CONSTRAINT runtime_upgrade_gateway_drains_fence_id_check CHECK ((fence_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_gateway_drains_gateway_session_id_check CHECK ((gateway_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_gateway_drains_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_gateway_drains_routing_revision_check CHECK ((routing_revision ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_gateway_drains_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: runtime_upgrade_gateway_heartbeats; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25057,6 +25104,14 @@ ALTER TABLE ONLY public.runtime_snapshots
 
 
 --
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_pkey PRIMARY KEY (app_id, gateway_session_id);
+
+
+--
 -- Name: runtime_upgrade_gateway_heartbeats runtime_upgrade_gateway_heartbeats_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30401,6 +30456,13 @@ CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USI
 
 
 --
+-- Name: runtime_upgrade_gateway_drains_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_gateway_drains_expiry ON public.runtime_upgrade_gateway_drains USING btree (expires_at);
+
+
+--
 -- Name: runtime_upgrade_gateway_receipts_expiry; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -32043,6 +32105,13 @@ CREATE TRIGGER deployments_record_traffic_change_trg AFTER UPDATE OF traffic_per
 --
 
 CREATE TRIGGER deployments_rollout_outcome_webhooks AFTER UPDATE OF rollout_state ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enqueue_rollout_outcome_webhooks();
+
+
+--
+-- Name: deployments deployments_runtime_upgrade_routing_token; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_runtime_upgrade_routing_token BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.renew_runtime_upgrade_routing_token();
 
 
 --
@@ -39738,6 +39807,46 @@ ALTER TABLE ONLY public.runtime_instance_config_proofs
 
 ALTER TABLE ONLY public.runtime_release_qualifications
     ADD CONSTRAINT runtime_release_qualifications_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_cutovers(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_gateway_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_gateway_roster_revision_fkey FOREIGN KEY (gateway_roster_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.runtime_upgrade_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_serving_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_serving_deployment_id_fkey FOREIGN KEY (serving_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

@@ -18,7 +18,12 @@ func WithDeploymentActivity(factory func(Target) http.Handler, tracker *activity
 	return func(target Target) http.Handler {
 		forward := factory(target)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer tracker.Begin(target.AppID, target.DeploymentID)()
+			done, allowed := tracker.TryBegin(target.AppID, target.DeploymentID)
+			if !allowed {
+				writeForwarderProblem(w, http.StatusServiceUnavailable)
+				return
+			}
+			defer done()
 			forward.ServeHTTP(w, r)
 		})
 	}

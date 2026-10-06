@@ -8741,14 +8741,18 @@ const (
 
 // Private runtime gateway confirmation bounds (ADR-607).
 const (
-	RuntimeUpgradeGatewayReceiptMaxAge   = time.Minute
-	RuntimeUpgradeGatewayHeartbeatMaxAge = time.Minute
-	RuntimeUpgradeGatewayRepairInterval  = 15 * time.Second
-	RuntimeUpgradeGatewayRepairTimeout   = 10 * time.Second
-	RuntimeUpgradeGatewayRepairBatch     = 32
-	RuntimeUpgradeGatewaySessionLimit    = 64
-	RuntimeUpgradeActivityKeyLimit       = 4096  // active app/deployment pairs per gateway process (ADR-610)
-	RuntimeUpgradeActivityForwardLimit   = 65536 // tracked concurrent forwards per process (ADR-610)
+	RuntimeUpgradeGatewayReceiptMaxAge         = time.Minute
+	RuntimeUpgradeGatewayHeartbeatMaxAge       = time.Minute
+	RuntimeUpgradeGatewayRepairInterval        = 15 * time.Second
+	RuntimeUpgradeGatewayRepairTimeout         = 10 * time.Second
+	RuntimeUpgradeGatewayRepairBatch           = 32
+	RuntimeUpgradeGatewaySessionLimit          = 64
+	RuntimeUpgradeActivityKeyLimit             = 4096  // active app/deployment pairs per gateway process (ADR-610)
+	RuntimeUpgradeActivityForwardLimit         = 65536 // tracked concurrent forwards per process (ADR-610)
+	RuntimeUpgradeActivityFenceLimit           = 256   // held predecessor fences per process (ADR-611)
+	RuntimeUpgradeActivityFenceBindingMaxBytes = 73    // operation UUID + ':' + optional roster UUID
+	RuntimeUpgradeDrainDeploymentLimit         = 256   // complete live-row routing snapshot (ADR-611)
+	RuntimeUpgradeDrainReceiptMaxAge           = time.Minute
 )
 
 // Private runtime qualification collector budgets (ADR-601).

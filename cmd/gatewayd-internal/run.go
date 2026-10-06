@@ -1400,6 +1400,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.responseCache = responseCache
 	runtimeGatewaySession, runtimeGatewaySlot := "", ""
 	var runtimeActivity *activity.Tracker
+	runtimeDrainEnabled, err := privateRuntimeDrainEnabled(osGetenv)
+	if err != nil {
+		return err
+	}
 	if osGetenv("FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION") == "1" {
 		runtimeGatewaySession = uuid.NewString()
 		runtimeGatewaySlot = strings.TrimSpace(osGetenv("FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID"))
@@ -1407,6 +1411,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("private runtime gateway slot configuration: %w", err)
 		}
 		runtimeActivity, err = activity.New(runtimeGatewaySession)
+		if runtimeDrainEnabled {
+			runtimeActivity, err = activity.NewWithFences(runtimeGatewaySession)
+		}
 		if err != nil {
 			return fmt.Errorf("private runtime gateway activity configuration: %w", err)
 		}
@@ -1575,7 +1582,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// picker's weight table. The adapter translates
 		// state.Deployment to gateway.DeploymentWeightsRow
 		// (the gateway package does not import pkg/state).
-		WithStore(weightsStoreAdapter{store: pgStore, sessionID: runtimeGatewaySession}).
+		WithStore(weightsStoreAdapter{store: pgStore, sessionID: runtimeGatewaySession, slotID: runtimeGatewaySlot, drainTracker: runtimeActivity, drainEnabled: runtimeDrainEnabled}).
 		// Issue #72 / ADR-125: mirror dispatch and debugger replay
 		// consume the same enabled-rule cache. The adapter keeps the
 		// gateway package independent of pkg/state while allowing replay
@@ -1628,7 +1635,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.invalidationsReady = invalidationsReady
 
 	if runtimeGatewaySession != "" {
-		go gatewayconfirmation.Run(ctx, pgStore, backend, log)
+		var repairStore gatewayconfirmation.Store = pgStore
+		if runtimeDrainEnabled {
+			repairStore = gatewayconfirmation.DrainRepair{Store: pgStore, Tracker: runtimeActivity}
+		}
+		go gatewayconfirmation.Run(ctx, repairStore, backend, log)
 		go gatewayconfirmation.RunHeartbeat(ctx, pgStore, runtimeGatewaySlot, runtimeGatewaySession, log)
 	}
 	deps.backend = backend
@@ -4236,8 +4247,11 @@ func installComputeMetricsRoute(mux *http.ServeMux, boxRole role.Role, control h
 // pkg/state import already exists. It translates state.Deployment to
 // gateway.DeploymentWeightsRow (only fields the picker reads).
 type weightsStoreAdapter struct {
-	store     liveDeploymentStore
-	sessionID string
+	store        liveDeploymentStore
+	sessionID    string
+	slotID       string
+	drainTracker *activity.Tracker
+	drainEnabled bool
 }
 
 func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) ([]gateway.DeploymentWeightsRow, error) {
