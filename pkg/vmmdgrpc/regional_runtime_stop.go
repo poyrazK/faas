@@ -1,6 +1,7 @@
 package vmmdgrpc
 
 // adr: 631
+// adr: 642
 import (
 	"context"
 	"encoding/json"
@@ -41,7 +42,7 @@ func (s *Server) RetireRegionalRuntime(ctx context.Context, req *vmmdpb.RetireRe
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	if stop.Validate() != nil || stop.Permit != p {
+	if stop.Validate() != nil || stop.Permit != p || stop.HostFenceID != "" {
 		return nil, status.Error(codes.FailedPrecondition, "native retirement ownership acknowledgement conflicts")
 	}
 	if err := ctx.Err(); err != nil {

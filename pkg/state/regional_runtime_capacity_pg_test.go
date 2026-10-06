@@ -3,6 +3,7 @@
 package state
 
 // adr: 618
+// adr: 642
 import (
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -154,14 +156,24 @@ func TestPGRegionalRuntimeCapacitySQLGuards(t *testing.T) {
 	f.usage(t, 0, 0, 0)
 }
 
-func TestPGRegionalRuntimeCapacityEmptyMigrationRoundTrip(t *testing.T) {
+func TestPGRegionalRuntimeCapacityRetainedSourcePreventsDowngrade(t *testing.T) {
 	s, _, _, _ := releasePGFixture(t)
-	up, down := regionalCapacityMigration(t)
-	resumeUp, resumeDown := regionalServingResumeMigration(t)
-	for _, statement := range []string{resumeDown, down, up, resumeUp} {
-		if _, err := s.pool.Exec(t.Context(), statement); err != nil {
-			t.Fatal(err)
-		}
+	_, down := regionalCapacityMigration(t)
+	_, resumeDown := regionalServingResumeMigration(t)
+	tx, err := s.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	if _, err = tx.Exec(t.Context(), resumeDown); err != nil {
+		t.Fatal(err)
+	}
+	// Launch provenance is retained even on rollback (ADR-633). Removing the
+	// older capacity table must refuse its surviving foreign-key dependency.
+	_, err = tx.Exec(t.Context(), down)
+	var dependency *pgconn.PgError
+	if !errors.As(err, &dependency) || dependency.Code != "2BP01" || !strings.Contains(dependency.Detail, "regional_runtime_launch_sources") {
+		t.Fatalf("retained launch source allowed destructive downgrade: %v", err)
 	}
 }
 

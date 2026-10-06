@@ -1,6 +1,7 @@
 package state
 
 // adr: 631
+// adr: 642
 import (
 	"context"
 
@@ -11,6 +12,25 @@ import (
 // authenticated the exact native assertion. The ledger signs and closes under
 // the same app journal lock as issuance and retirement, using historical pins.
 func (a RegionalRuntimeCapacityAuthority) CompleteHostRetirement(ctx context.Context, stop runtimequota.CapacityStop, signer runtimequota.Signer) (RegionalRuntimeCapacityReceipt, error) {
+	if stop.HostFenceID != "" {
+		return RegionalRuntimeCapacityReceipt{}, ErrInvalidArgument
+	}
+	return a.completeHostRetirement(ctx, stop, signer)
+}
+
+// CompleteHostRetirementReconciliation joins the cell's original fence to an
+// authenticated original native stop. It never changes either first fence or
+// infers physical absence. Call only after verifying the native node transport.
+func (a RegionalRuntimeCapacityAuthority) CompleteHostRetirementReconciliation(ctx context.Context, cellFence string, hostStop runtimequota.CapacityStop, signer runtimequota.Signer) (RegionalRuntimeCapacityReceipt, error) {
+	if hostStop.Validate() != nil || hostStop.HostFenceID != "" {
+		return RegionalRuntimeCapacityReceipt{}, ErrInvalidArgument
+	}
+	stop := hostStop
+	stop.FenceID, stop.HostFenceID = cellFence, hostStop.FenceID
+	return a.completeHostRetirement(ctx, stop, signer)
+}
+
+func (a RegionalRuntimeCapacityAuthority) completeHostRetirement(ctx context.Context, stop runtimequota.CapacityStop, signer runtimequota.Signer) (RegionalRuntimeCapacityReceipt, error) {
 	if a.Store == nil || a.Cells.CheckSigner(signer, runtimequota.Cell) != nil || signer.IssuerID() != stop.Permit.Grant.Binding.CellID {
 		return RegionalRuntimeCapacityReceipt{}, runtimequota.ErrTrust
 	}

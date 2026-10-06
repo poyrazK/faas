@@ -1,6 +1,7 @@
 package sched_test
 
 // adr: 631
+// adr: 642
 import (
 	"context"
 	"crypto/ed25519"
@@ -236,7 +237,7 @@ func TestRegionalRuntimeRetirementAuthenticatedWireAndLostReply(t *testing.T) {
 }
 
 func TestRegionalRuntimeRetirementWireRefusalsRetainCapacity(t *testing.T) {
-	for _, name := range []string{"wrong-client-role", "wrong-server-node", "plaintext", "legacy-native", "different-host-fence", "wrong-permit", "malformed-response", "wrong-instance", "missing-resolver", "untrusted-signer", "native-uncertain"} {
+	for _, name := range []string{"wrong-client-role", "wrong-server-node", "plaintext", "legacy-native", "native-forged-relation", "wire-forged-relation", "wrong-permit", "malformed-response", "wrong-instance", "missing-resolver", "untrusted-signer", "native-uncertain"} {
 		t.Run(name, func(t *testing.T) {
 			f := newRetirementCell(t, true)
 			v := &retirementWireVMM{fakeVMM: &fakeVMM{}, store: f.store}
@@ -249,21 +250,29 @@ func TestRegionalRuntimeRetirementWireRefusalsRetainCapacity(t *testing.T) {
 				clientCN = "gatewayd.faas"
 			case "wrong-server-node":
 				serverCN = "native-b"
+				v.firstFence = uuid.NewString()
 			case "plaintext":
 				plaintext = true
 			case "legacy-native":
 				native = &fakeVMM{}
-			case "different-host-fence":
-				v.firstFence = uuid.NewString()
+			case "native-forged-relation":
+				v.mutate = func(s *runtimequota.CapacityStop) { s.HostFenceID = uuid.NewString() }
 			case "wrong-permit":
 				v.mutate = func(s *runtimequota.CapacityStop) { s.Permit.RunID = uuid.NewString() }
-			case "malformed-response", "wrong-instance":
+			case "malformed-response", "wrong-instance", "wire-forged-relation":
 				interceptor = func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
 					resp, err := h(ctx, req)
 					if err == nil {
 						r := resp.(*vmmdpb.RetireRegionalRuntimeResponse)
 						if name == "malformed-response" {
 							r.Stop = append([]byte(" "), r.Stop...)
+						} else if name == "wire-forged-relation" {
+							var stop runtimequota.CapacityStop
+							if err := json.Unmarshal(r.Stop, &stop); err != nil {
+								return nil, err
+							}
+							stop.HostFenceID = uuid.NewString()
+							r.Stop, err = json.Marshal(stop)
 						} else {
 							r.Instance = uuid.NewString()
 						}

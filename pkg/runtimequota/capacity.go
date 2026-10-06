@@ -1,6 +1,7 @@
 package runtimequota
 
 // adr: 618
+// adr: 642
 
 // CapacityPermit binds one physical runtime attempt to its original allowance
 // and host incarnation. An issued marker is retained bookkeeping, not permission
@@ -89,10 +90,17 @@ type CapacityStop struct {
 	FenceID         string
 	AdmissionFrozen bool
 	CountedRuntimes int
+	// HostFenceID records an independently retained native first fence. Only
+	// the cell may derive this relation; FenceID remains its original fence.
+	// Omission preserves the canonical encoding of existing stop receipts.
+	HostFenceID string `json:",omitempty"`
 }
 
 func (s CapacityStop) Validate() error {
 	if s.Permit.Validate() != nil || !validID(s.FenceID) || !s.AdmissionFrozen || s.CountedRuntimes != 0 {
+		return ErrInvalid
+	}
+	if s.HostFenceID != "" && (!validID(s.HostFenceID) || s.HostFenceID == s.FenceID) {
 		return ErrInvalid
 	}
 	return nil

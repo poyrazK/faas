@@ -1,6 +1,7 @@
 package sched
 
 // adr: 631
+// adr: 642
 import (
 	"context"
 	"fmt"
@@ -50,10 +51,11 @@ func (r RegionalRuntimeRetirement) Retire(ctx context.Context, instance string, 
 	if err != nil {
 		return state.RegionalRuntimeCapacityReceipt{}, fmt.Errorf("sched: native regional retirement: %w", err)
 	}
-	if stop.Validate() != nil || stop.Permit != p || stop.FenceID != receipt.FenceID {
-		// Host and cell first fences are immutable independent journals. A
-		// conflict requires reconciliation; silently replacing either is unsafe.
+	if stop.Validate() != nil || stop.Permit != p || stop.HostFenceID != "" {
 		return state.RegionalRuntimeCapacityReceipt{}, runtimequota.ErrBinding
+	}
+	if stop.FenceID != receipt.FenceID {
+		return r.Authority.CompleteHostRetirementReconciliation(ctx, receipt.FenceID, stop, r.Signer)
 	}
 	return r.Authority.CompleteHostRetirement(ctx, stop, r.Signer)
 }

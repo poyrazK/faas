@@ -1,6 +1,7 @@
 package runtimequota
 
 // adr: 631
+// adr: 642
 import (
 	"bytes"
 	"encoding/json"
@@ -20,9 +21,11 @@ func DecodeCapacityPermit(raw []byte) (CapacityPermit, error) {
 	return p, nil
 }
 
+// DecodeCapacityStop accepts unsigned native assertions only. Signed cell
+// relations must pass Trust.VerifyCapacityStop instead.
 func DecodeCapacityStop(raw []byte) (CapacityStop, error) {
 	var s CapacityStop
-	if decodeCapacityObject(raw, &s) != nil || s.Validate() != nil {
+	if decodeCapacityObject(raw, &s) != nil || s.Validate() != nil || s.HostFenceID != "" {
 		return CapacityStop{}, ErrInvalid
 	}
 	return s, nil

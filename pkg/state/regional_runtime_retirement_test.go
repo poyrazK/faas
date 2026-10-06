@@ -1,6 +1,7 @@
 package state
 
 // adr: 631
+// adr: 642
 import (
 	"context"
 	"crypto/ed25519"
@@ -17,6 +18,7 @@ import (
 
 func runRegionalRuntimeRetirementContract(t *testing.T, fixture func(*testing.T) regionalCapacityFixture) {
 	t.Helper()
+	runRegionalRuntimeReconciliationContract(t, fixture)
 	t.Run("unissued-local-cancellation", func(t *testing.T) {
 		f := fixture(t)
 		p := f.permit(runtimequota.CapacityWarm)
@@ -118,8 +120,8 @@ func runRegionalRuntimeRetirementContract(t *testing.T, fixture func(*testing.T)
 		if _, err := f.ledger.BeginRegionalRuntimeRetirement(t.Context(), bad, uuid.NewString()); !errors.Is(err, ErrConflict) {
 			t.Fatal("full permit rebound", err)
 		}
-		stop := runtimequota.CapacityStop{Permit: p, FenceID: r.FenceID, AdmissionFrozen: true}
-		if _, err := f.authority.CompleteHostRetirement(t.Context(), stop, f.cell); err != nil {
+		stop := runtimequota.CapacityStop{Permit: p, FenceID: uuid.NewString(), AdmissionFrozen: true}
+		if _, err := f.authority.CompleteHostRetirementReconciliation(t.Context(), r.FenceID, stop, f.cell); err != nil {
 			t.Fatal("historical grant refused", err)
 		}
 		f.usage(t, 0, 0, 0)
