@@ -25,9 +25,10 @@ type environmentQualificationSnapshotProducer interface {
 }
 
 // The internal native producer must pass actual capture/restore acceptance and
-// acquire artifact-generation/cleanup receipts before this gate can open.
+// acquire owner-fenced artifact retirement and qualification/graph restore proof
+// before this gate can open. Writer receipts alone do not enable capture.
 func (v *JailerVMM) checkEnvironmentQualificationSnapshotSupport() error {
-	return fmt.Errorf("native qualification: capture acceptance and artifact receipts are unavailable: %w", state.ErrConflict)
+	return fmt.Errorf("native qualification: artifact retirement and qualification restore acceptance are unavailable: %w", state.ErrConflict)
 }
 
 // CaptureEnvironmentQualification captures exactly the original private VM.

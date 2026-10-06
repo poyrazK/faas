@@ -89,6 +89,11 @@ const EnvironmentGitOpsQualificationDispatchBatchMax = 100
 // NativeHostHelperCgroupEventsMaxBytes bounds the kernel control-file parser.
 const NativeHostHelperCgroupEventsMaxBytes = 4096
 
+// Receipt-bound compressed artifact reads cap the decoder's streaming window;
+// logical size and digest are verified separately through the complete reader.
+const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
+const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
+
 // Native snapshot retirement can scan the unified hierarchy to distinguish a
 // removed original inode from a retained cgroup. Exceeding these parser bounds
 // retains ownership; these are diagnostic limits, not tenant quotas.

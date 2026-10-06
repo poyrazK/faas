@@ -5,6 +5,8 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -26,51 +28,77 @@ func (l *LocalStorageBackend) CheckExclusivePut(ctx context.Context, key string)
 	return parent.Close()
 }
 
-func (l *LocalStorageBackend) PutExclusive(ctx context.Context, key string, reader io.Reader, size int64) (err error) {
+func (l *LocalStorageBackend) PutExclusive(ctx context.Context, key string, reader io.Reader, size int64) error {
+	_, err := l.PutExclusiveArtifact(ctx, key, reader, size)
+	return err
+}
+
+func (l *LocalStorageBackend) CheckExclusiveArtifact(ctx context.Context, key string) error {
+	return l.CheckExclusivePut(ctx, key)
+}
+
+func (l *LocalStorageBackend) PutExclusiveArtifact(ctx context.Context, key string, reader io.Reader, size int64) (receipt ExclusiveArtifactReceipt, err error) {
+	defer func() {
+		if err != nil {
+			receipt = ExclusiveArtifactReceipt{}
+		}
+	}()
 	if err := validateKey(key); err != nil {
-		return err
+		return receipt, err
 	}
 	if reader == nil || size <= 0 {
-		return errors.New("storage: exclusive publication requires a nonempty original reader")
+		return receipt, errors.New("storage: exclusive publication requires a nonempty original reader")
 	}
 	parent, err := l.exclusiveParent(ctx, key, true)
 	if err != nil {
-		return err
+		return receipt, err
 	}
 	defer func() { err = errors.Join(err, parent.Close()) }()
+	root, err := l.exclusiveParent(ctx, "root-probe", false)
+	if err != nil {
+		return receipt, err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
 	fd, err := unix.Openat(int(parent.Fd()), ".", unix.O_TMPFILE|unix.O_RDWR|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		return fmt.Errorf("storage: exclusive put %q: anonymous output: %w", key, err)
+		return receipt, fmt.Errorf("storage: exclusive put %q: anonymous output: %w", key, err)
 	}
 	output := os.NewFile(uintptr(fd), "exclusive-artifact")
 	defer func() { err = errors.Join(err, output.Close()) }()
-	source := &exactArtifactReader{source: reader, remaining: size}
+	digest := sha256.New()
+	source := &exactArtifactReader{source: io.TeeReader(reader, digest), remaining: size}
 	written, err := copySparseArtifactContext(ctx, output, source)
 	if err != nil || !source.complete || written != size {
-		return errors.Join(err, errors.New("storage: exclusive copy did not finish its original source"))
+		return receipt, errors.Join(err, errors.New("storage: exclusive copy did not finish its original source"))
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := errors.Join(output.Chmod(0o644), output.Sync()); err != nil {
-		return err
+	if err := errors.Join(ctx.Err(), output.Chmod(0o644), output.Sync()); err != nil {
+		return receipt, err
 	}
 	if err := l.checkExclusiveParentPlacement(ctx, key, parent); err != nil {
-		return err
+		return receipt, err
 	}
 	parts := strings.Split(key, "/")
-	// The procfs name refers to this still-open anonymous FD, never to a
-	// caller-supplied filename. linkat publishes atomically and cannot replace
-	// an existing file, symlink or directory at the immutable destination.
+	// Link only the original still-open anonymous file, without replacement.
 	if err := unix.Linkat(unix.AT_FDCWD, "/proc/self/fd/"+strconv.Itoa(fd), int(parent.Fd()), parts[len(parts)-1], unix.AT_SYMLINK_FOLLOW); err != nil {
 		if errors.Is(err, unix.EEXIST) {
-			return errors.Join(ErrArtifactExists, err)
+			err = errors.Join(ErrArtifactExists, err)
 		}
-		return err
+		return receipt, err
 	}
-	// A post-link failure preserves the uncertain original destination. Only
-	// the caller's durable key intent can authorize cleanup or a new attempt.
-	return errors.Join(parent.Sync(), ctx.Err())
+	// Post-link uncertainty retains the object and supplies no receipt. Metadata
+	// is read from the original output descriptor, never from a later key lookup.
+	if err := errors.Join(parent.Sync(), ctx.Err(), l.checkExclusiveParentPlacement(ctx, key, parent)); err != nil {
+		return receipt, err
+	}
+	var artifact, rootStat, parentStat unix.Stat_t
+	if err := errors.Join(unix.Fstat(fd, &artifact), unix.Fstat(int(root.Fd()), &rootStat), unix.Fstat(int(parent.Fd()), &parentStat)); err != nil {
+		return receipt, err
+	}
+	if artifact.Nlink != 1 || artifact.Size != size || artifact.Blocks < 0 {
+		return receipt, ErrArtifactReceiptMismatch
+	}
+	receipt = ExclusiveArtifactReceipt{Version: 1, Key: key, ObjectKey: key, Backend: "local", Location: l.root, LogicalBytes: size, StoredBytes: artifact.Blocks * 512, SHA256: hex.EncodeToString(digest.Sum(nil)), Local: &ExclusiveLocalReceipt{Device: uint64(artifact.Dev), Inode: artifact.Ino, RootDevice: uint64(rootStat.Dev), RootInode: rootStat.Ino, ParentDevice: uint64(parentStat.Dev), ParentInode: parentStat.Ino}}
+	return receipt, receipt.Validate()
 }
 
 func (l *LocalStorageBackend) exclusiveParent(ctx context.Context, key string, create bool) (parent *os.File, err error) {

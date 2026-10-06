@@ -2848,3 +2848,97 @@ complete graph binding delivery and serving transition evidence remain pending.
 Production qualification polling, native capture, enforcement and graph
 activation gates remain closed. The combined PR remains deferred until those
 requested parts are ready.
+
+
+### Original artifact receipts and pinned reads (2026-10-06)
+
+The internal capture producer now preflights a separate original-receipt storage
+capability for all four objects. Only the original acknowledged exclusive writer
+supplies a receipt: logical and canonical keys, canonical location, source length
+and SHA-256, encoded/allocated stored bytes, and either the original GCS
+object generation or local root/parent/output inode observations. GCS reads the
+successful writer response; it never looks up the destination after an uncertain
+commit to manufacture a receipt. Any source, response, cancellation or joined
+close failure supplies no receipt. Old exclusive-only delegates remain usable
+through their old API but cannot satisfy native capture preflight.
+
+Receipts are append-only anonymous-file publications in the original persistent
+intent directory, bound to the exact intent inode and capture. Each object must
+have its own acknowledged durable receipt before publication succeeds. The
+complete cohort rechecks all four original receipt files before supplying a
+result. Startup validates retained receipts without replay, cleanup or producing
+a live capability. Substitution, aliases, duplicate/missing/unknown fields,
+foreign keys, orphan receipts and corrupt generations retain the original records
+and refuse ownership. Parser bounds live in `pkg/api/limits.go`.
+
+Receipt-bound reads bypass caches and fallback stores. GCS opens only the recorded
+generation, including original encoded size; local opens pin the canonical owned
+directory and original inode observations. The complete reader verifies logical
+length and SHA-256 to the original EOF. Early close, mutation and read failure
+supply no complete content evidence. Local inode observations alone are not
+cross-reboot generation authority: content verification remains required.
+Compressed receipt reads have a 64 MiB streaming decoder window limit, with
+logical size checked separately.
+
+`SnapshotInfo.StoredBytes` now sums the original memory/state/private-drive
+encoded or allocated observations rather than logical source lengths. It retains
+the existing exclusion of the small backing sidecar, whose receipt is nevertheless
+required. Local allocation can change later through filesystem compression or
+deduplication; the receipt is an original commit-time observation, not a permanent
+allocation promise.
+
+GCS retirement uses the exact acknowledged generation and generation-match
+precondition in the deletion operation. A missing original generation is
+idempotent evidence; a replacement is never deleted. This primitive grants no
+owner authorization or native automatic-retirement wiring. Local retirement is
+explicitly unsupported: Linux has no conditional inode-matching unlink operation,
+and a stat followed by unlink can delete a replacement. Original local objects
+are retained pending a separately proven retirement protocol. Never downgrade
+that refusal to ordinary `StorageBackend.Delete`.
+
+Production qualification polling, native capture, native qualification restore,
+graph activation and serving convergence stay gated. Real VM acceptance and
+ordinary restoration are distinct from graph/qualification restoration. Artifact
+retirement wiring, local retirement, native qualification restore/smoke, generated
+binding delivery and complete graph evidence remain outstanding. The combined PR
+is deferred until the requested scope is ready.
+
+
+### Original artifact receipt validation (2026-10-06)
+
+All 21 Go source fingerprints match the validation checkout on the
+user-authorized internal nested KVM node. Full storage race tests passed
+(7.116 s), as did native/qualification and ordinary snapshot race regressions
+(34.279 s). Normal storage/fcvm lint and changed-code metal lint each reported
+zero issues. The previous full-metal lint baseline of thirteen untouched findings
+is not represented as clean. The actual GCS SDK upload/read/delete fixture also
+passed under the macOS race detector (3.999 s); its HTTP service and generation
+replacement cases are modeled, not live GCS bucket acceptance. That fixture
+caught and corrected incompatibility between the JSON client and the explicit
+compressed-read option; final reads pin the generation and reject unexpected
+SDK decompression.
+
+Under the shared acceptance lock, `make test-metal` passed native recovery,
+trusted capture protocol, actual Firecracker capture/ordinary restore and the
+persistent intent/object-receipt corruption and restart fixtures (37.289 s).
+`make leakcheck` was clean. The actual VM child passed in 13.66 s (14.75 s
+including its namespace wrapper). All four objects were reopened through their
+original receipts and verified to EOF. Memory was 134,217,728 logical and
+63,950,848 allocated bytes; device state was 13,696 logical and 16,384 allocated;
+the private drive was 67,108,864 logical and 86,016 allocated. The required backing
+sidecar was 177 logical and 4,096 allocated bytes. `StoredBytes` was exactly
+64,053,248, excluding that sidecar, instead of the 201,340,288 logical-byte sum.
+The original VM resumed and retired, its original memory fence was restored
+without an OOM kill, and ordinary restore produced a fresh guest readiness UUID.
+The locally assembled guest's scan admission remains explicitly modeled.
+
+The final exclusive writer separately published and SHA-256-verified 512 MiB of
+dense data under `MemoryMax=256M` and `MemorySwapMax=0` (10.99 s). This exercised
+the receipt-capable writer's bounded dirty-page copy and original metadata
+observation, not an additional VM lifecycle. Logs, patch/archive and matching
+source fingerprints are retained under `outputs/gitops-hardening-20261005`.
+
+These are scoped nested-node, original-publication and content-read results.
+They do not establish native qualification restore, complete graph readiness,
+binding delivery, serving convergence, live GCS retirement or local conditional
+retirement. Those gates stay closed and the combined PR stays deferred.

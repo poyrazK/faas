@@ -4,6 +4,7 @@ package fcvm
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -46,7 +47,7 @@ func (v *JailerVMM) preflightNativeSnapshotPublicationTo(ctx context.Context, le
 		return keys, err
 	}
 	for _, key := range []string{keys.StorageKey, keys.VMStateStorageKey, keys.DriveStorageKey, keys.BackingStorageKey} {
-		if err := storage.CheckExclusivePut(ctx, backend, key); err != nil {
+		if err := storage.CheckExclusiveArtifact(ctx, backend, key); err != nil {
 			return keys, err
 		}
 	}
@@ -105,23 +106,52 @@ func (v *JailerVMM) publishNativeSnapshotOutput(ctx context.Context, lease Lease
 }
 
 // Caller holds the physical and source locks through IO and descriptor close.
-// Sizes describe the original source, conservatively accounting logical bytes;
-// they are not backend object-generation or automatic cleanup receipts.
-func (v *JailerVMM) publishNativeSnapshotReader(ctx context.Context, lease Lease, publication nativeSnapshotPublicationPermit, key string, file *os.File) (int64, error) {
-	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
-		return 0, err
-	}
+// Original backend receipts are persisted before success. Neither a key intent
+// nor a receipt independently grants retirement or qualification authority.
+func (v *JailerVMM) publishNativeSnapshotReader(ctx context.Context, lease Lease, publication nativeSnapshotPublicationPermit, key string, file *os.File) (nativeSnapshotPublicationObjectReceipt, error) {
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 {
-		return 0, errors.Join(err, errors.New("native snapshot publication: original source is incomplete"))
+		return nativeSnapshotPublicationObjectReceipt{}, errors.Join(err, errors.New("native snapshot publication: original source is incomplete"))
 	}
-	if err := storage.PutExclusive(ctx, publication.backend, key, file, info.Size()); err != nil {
-		return 0, err
+	return v.publishNativeSnapshotArtifact(ctx, lease, publication, key, file, info.Size())
+}
+
+func (v *JailerVMM) publishNativeSnapshotArtifact(ctx context.Context, lease Lease, publication nativeSnapshotPublicationPermit, key string, reader io.Reader, size int64) (nativeSnapshotPublicationObjectReceipt, error) {
+	var empty nativeSnapshotPublicationObjectReceipt
+	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+		return empty, err
+	}
+	journal, ok := publication.journal.(nativeSnapshotPublicationReceiptJournal)
+	if !ok {
+		return empty, errors.New("native snapshot publication: original receipt journal is required")
+	}
+	kind := ""
+	for _, candidate := range []string{"mem", "vmstate", "drive", "backing"} {
+		if nativePublicationObjectKey(publication.intent, candidate) == key {
+			kind = candidate
+		}
+	}
+	if kind == "" {
+		return empty, errors.New("native snapshot publication: object is outside original intent")
+	}
+	object, err := storage.PutExclusiveArtifact(ctx, publication.backend, key, reader, size)
+	if err != nil {
+		return empty, err
 	}
 	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
-		return 0, err
+		return empty, err
 	}
-	return info.Size(), ctx.Err()
+	receipt, err := journal.RecordObject(ctx, publication.intent, kind, object)
+	if err != nil {
+		return empty, err
+	}
+	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+		return empty, err
+	}
+	if err := journal.RequireObject(ctx, publication.intent, receipt); err != nil {
+		return empty, err
+	}
+	return receipt, ctx.Err()
 }
 
 // Caller holds the physical lock. Never take an incoming or physical lock

@@ -12,7 +12,6 @@ import (
 	"math"
 	"os"
 
-	"github.com/onebox-faas/faas/pkg/storage"
 	"golang.org/x/sys/unix"
 )
 
@@ -237,42 +236,49 @@ func (v *JailerVMM) publishNativeSnapshotCohort(ctx context.Context, lease Lease
 	if err != nil {
 		return info, err
 	}
-	for _, output := range []struct {
-		kind string
-		key  string
-		size *int64
-	}{{"mem", publication.intent.Keys.Memory, &info.MemBytes}, {"vmstate", publication.intent.Keys.VMState, &info.VMStateBytes}} {
-		if err := images.withCaptureOutputLocked(ctx, permit, v.chrootRoot(lease.Instance), output.kind, func(file *os.File) error {
-			var err error
-			*output.size, err = v.publishNativeSnapshotReader(ctx, lease, publication, output.key, file)
+	journal, ok := publication.journal.(nativeSnapshotPublicationReceiptJournal)
+	if !ok {
+		return info, errors.New("native snapshot capture: original receipt journal is unavailable")
+	}
+	var receipts []nativeSnapshotPublicationObjectReceipt
+	for _, kind := range []string{"mem", "vmstate"} {
+		if err := images.withCaptureOutputLocked(ctx, permit, v.chrootRoot(lease.Instance), kind, func(file *os.File) error {
+			receipt, err := v.publishNativeSnapshotReader(ctx, lease, publication, nativePublicationObjectKey(publication.intent, kind), file)
+			if err == nil {
+				receipts = append(receipts, receipt)
+			}
 			return err
 		}); err != nil {
 			return SnapshotInfo{}, err
 		}
 	}
-	driveBytes, err := v.publishNativeSnapshotReader(ctx, lease, publication, publication.intent.Keys.Drive, drive)
+	driveReceipt, err := v.publishNativeSnapshotReader(ctx, lease, publication, publication.intent.Keys.Drive, drive)
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
+	receipts = append(receipts, driveReceipt)
 	body, err := json.Marshal(backing)
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
-	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+	backingReceipt, err := v.publishNativeSnapshotArtifact(ctx, lease, publication, publication.intent.Keys.Backing, bytes.NewReader(body), int64(len(body)))
+	if err != nil {
 		return SnapshotInfo{}, err
 	}
-	if err := storage.PutExclusive(ctx, publication.backend, publication.intent.Keys.Backing, bytes.NewReader(body), int64(len(body))); err != nil {
-		return SnapshotInfo{}, err
+	receipts = append(receipts, backingReceipt)
+	for _, receipt := range receipts {
+		if err := journal.RequireObject(ctx, publication.intent, receipt); err != nil {
+			return SnapshotInfo{}, err
+		}
+		if receipt.Kind != "backing" {
+			if info.StoredBytes > math.MaxInt64-receipt.Object.StoredBytes {
+				return SnapshotInfo{}, errors.New("native snapshot capture: stored artifact sizes overflow")
+			}
+			info.StoredBytes += receipt.Object.StoredBytes
+		}
 	}
-	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
-		return SnapshotInfo{}, err
-	}
-	if info.MemBytes > math.MaxInt64-info.VMStateBytes || info.MemBytes+info.VMStateBytes > math.MaxInt64-driveBytes {
-		return SnapshotInfo{}, errors.New("native snapshot capture: logical artifact sizes overflow")
-	}
-	// The exclusive writer supplies no allocated-byte receipt yet. Logical
-	// accounting is conservative and excludes the small backing sidecar,
-	// matching SnapshotInfo's memory/state/private-drive contract.
-	info.StoredBytes = info.MemBytes + info.VMStateBytes + driveBytes
+	info.MemBytes, info.VMStateBytes = receipts[0].Object.LogicalBytes, receipts[1].Object.LogicalBytes
+	// Stored accounting follows original encoded/allocated writer observations.
+	// The backing sidecar is retained but excluded by SnapshotInfo's contract.
 	return info, ctx.Err()
 }

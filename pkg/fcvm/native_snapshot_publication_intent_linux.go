@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"golang.org/x/sys/unix"
 )
@@ -136,10 +137,10 @@ func (j *linuxNativeSnapshotPublicationJournal) readLocked(ctx context.Context, 
 	if err := unix.Fstat(fd, &stat); err != nil {
 		return r, err
 	}
-	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o077 != 0 || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 || stat.Size <= 0 || stat.Size > 2<<20 {
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o077 != 0 || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 || stat.Size <= 0 || stat.Size > api.NativeSnapshotPublicationRecordMaxBytes {
 		return r, errors.New("native snapshot publication: intent must be one bounded private regular file")
 	}
-	decoder := json.NewDecoder(io.LimitReader(file, 2<<20+1))
+	decoder := json.NewDecoder(io.LimitReader(file, api.NativeSnapshotPublicationRecordMaxBytes+1))
 	if err := decoder.Decode(&r); err != nil {
 		return r, err
 	}
@@ -168,6 +169,16 @@ func (j *linuxNativeSnapshotPublicationJournal) inventoryLocked(ctx context.Cont
 		return err
 	}
 	for _, entry := range entries {
+		if capture, kind, ok := nativePublicationReceiptEntry(entry.Name()); ok {
+			intent, err := j.readLocked(ctx, capture)
+			if err != nil {
+				return err
+			}
+			if _, err := j.readObjectLocked(ctx, intent, kind); err != nil {
+				return err
+			}
+			continue
+		}
 		capture, ok := strings.CutSuffix(entry.Name(), ".json")
 		if !ok || !canonicalNativeHelperID(capture) || !entry.Type().IsRegular() {
 			return errors.New("native snapshot publication: unowned entry requires quarantine")
@@ -204,7 +215,7 @@ func (j *linuxNativeSnapshotPublicationJournal) Begin(ctx context.Context, inten
 		return r, err
 	}
 	data, err := json.Marshal(intent)
-	if err != nil || len(data) > 2<<20 {
+	if err != nil || len(data) > api.NativeSnapshotPublicationRecordMaxBytes {
 		return r, errors.Join(err, errors.New("native snapshot publication: invalid bounded intent"))
 	}
 	if _, err := file.Write(data); err != nil {

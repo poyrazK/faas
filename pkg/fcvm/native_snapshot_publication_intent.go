@@ -98,6 +98,9 @@ func (v *JailerVMM) beginNativeSnapshotPublication(ctx context.Context, lease Le
 		return ctx, errors.New("native snapshot publication: persistent intent adapter is unavailable")
 	}
 	backend := v.storage
+	if _, ok := r.publications.(nativeSnapshotPublicationReceiptJournal); !ok {
+		return ctx, errors.New("native snapshot publication: original receipt journal is unavailable")
+	}
 	if _, err := v.preflightNativeSnapshotPublicationTo(ctx, lease, backend); err != nil {
 		return ctx, err
 	}

@@ -11,7 +11,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
 | Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Isolated smoke, restored readiness and native capture publication |
-| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume and exclusive four-object publication | Production adapter wiring, artifact-generation/cleanup receipts, native qualification restore and bare-metal acceptance |
+| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume, exclusive four-object publication and durable writer receipts | Production adapter wiring, artifact retirement, native qualification restore and bare-metal acceptance |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -145,7 +145,7 @@ The user-authorized internal nested KVM node now passes actual Firecracker
 capture, original-VM resume and retirement, and ordinary restoration of the
 published artifacts into a fresh guest. Ownership/recovery fixtures and
 leakcheck also pass. This is scoped nested-node evidence; native qualification
-restore, backend object receipts, complete graph smoke/readiness and serving
+restore, artifact retirement, complete graph smoke/readiness and serving
 convergence remain outstanding. Production gates stay closed.
 
 Private writable drives and capture outputs default to requiring their data and
@@ -186,7 +186,7 @@ selected canonical backend; the cache wrapper skips its named spool path.
 Unsupported delegates refuse the capability without falling back to ordinary
 writes. An internal adapter connects original memory/device-state readers to
 these writers and retains their ownership locks through publication. The native
-capture entry point remains gated pending artifact receipts, native
+capture entry point remains gated pending artifact retirement, native
 qualification restore and complete graph evidence. Publication errors may follow an
 uncertain commit, so they supply no overwrite or deletion authority.
 
@@ -197,8 +197,15 @@ attempt, physical process, lease and four logical object keys before output
 writes. Writes require that original capability and unchanged intent inode.
 Startup validates old intents without replaying or deleting them. Losing the
 jail journal or rebooting cannot create publication or cleanup authority from
-an intent. Backend-specific object receipts and artifact retirement remain
-outstanding, along with restore/smoke evidence. The internal producer begins
+an intent. Original successful writers now append per-object receipts bound to
+that intent inode. All four receipts are rechecked before the cohort succeeds.
+Receipt-bound reads pin the recorded GCS generation or local inode observations
+and verify source size and SHA-256 to EOF. Stored accounting uses original
+encoded/allocated bytes, excluding the backing sidecar. These reads bypass caches
+and fallback stores. GCS offers generation-conditional retirement; local
+retirement is explicitly unsupported because stat followed by unlink can remove
+a replacement. Owner-authorized automatic retirement and restore/smoke evidence
+remain outstanding. The internal producer begins
 intent before output preparation and publishes memory, device state, the frozen
 private drive and backing identity. Actual buffered snapshot writes require the
 existing temporary snapshot headroom policy. The producer pins and journals the

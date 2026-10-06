@@ -286,7 +286,7 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 	}
 	join()
 	if outcome == "complete" {
-		if captureErr != nil || info != (SnapshotInfo{MemBytes: 12, VMStateBytes: 16, StoredBytes: 50}) || log.String() != "pause\ncreate\nresume\n" {
+		if captureErr != nil || info.MemBytes != 12 || info.VMStateBytes != 16 || info.StoredBytes != nativeMetalPublicationReceiptBytes(t, ctx, v, incoming) || log.String() != "pause\ncreate\nresume\n" {
 			t.Fatal("kernel capture sequence failed:", info, captureErr, log.String())
 		}
 		keys := qualificationSnapshotProof(incoming, SnapshotInfo{})
@@ -316,7 +316,14 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 		t.Fatal("kernel protocol fixture promoted or enabled capture", err)
 	}
 	entries, err := os.ReadDir(intentRoot)
-	if err != nil || len(entries) != 1 || entries[0].Name() != incoming.Generation+".json" {
-		t.Fatal("kernel capture lost original persistent publication intent", err, entries)
+	expectedEntries := 1
+	if outcome == "complete" {
+		expectedEntries = 5
+	}
+	if err != nil || len(entries) != expectedEntries {
+		t.Fatal("kernel capture lost original persistent publication intent/receipts", err, entries)
+	}
+	if _, err := os.Lstat(filepath.Join(intentRoot, incoming.Generation+".json")); err != nil {
+		t.Fatal(err)
 	}
 }

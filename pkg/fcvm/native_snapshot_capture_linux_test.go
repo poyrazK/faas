@@ -477,3 +477,32 @@ func nativeCaptureStoppedAt(events []string, step string) bool {
 	}
 	return false
 }
+
+func (b *nativeCaptureSequenceStore) CheckExclusiveArtifact(ctx context.Context, key string) error {
+	return b.CheckExclusivePut(ctx, key)
+}
+func (b *nativeCaptureSequenceStore) PutExclusiveArtifact(ctx context.Context, key string, reader io.Reader, size int64) (storage.ExclusiveArtifactReceipt, error) {
+	if err := b.PutExclusive(ctx, key, reader, size); err != nil {
+		return storage.ExclusiveArtifactReceipt{}, err
+	}
+	return nativeModeledArtifactReceipt(key, b.blobs[key]), nil
+}
+func (b *nativeCaptureSequenceStore) GetExclusiveArtifact(context.Context, storage.ExclusiveArtifactReceipt) (io.ReadCloser, error) {
+	return nil, errors.New("modeled fixture has no generation reader")
+}
+
+func TestNativeCaptureSequenceRequiresEveryOriginalReceiptAtCompletion(t *testing.T) {
+	f := nativeCaptureSequence(t)
+	f.after = func(step string) error {
+		if step == "put:backing" {
+			j := f.v.nativeRecovery.publications.(*nativeCaptureSequenceIntent).nativePublicationIntentFixture
+			delete(j.objects, "mem")
+		}
+		return nil
+	}
+	info, err := f.v.captureEnvironmentQualificationSnapshot(f.ctx, f.owner.Lease, f.backing)
+	if err == nil || info != (SnapshotInfo{}) || len(f.store.blobs) != 4 {
+		t.Fatal("complete cohort borrowed a missing original receipt", info, err)
+	}
+	assertNativeCaptureSequenceClosed(t, f)
+}

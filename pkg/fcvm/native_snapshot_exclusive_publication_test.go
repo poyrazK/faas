@@ -5,6 +5,8 @@ package fcvm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -41,7 +43,9 @@ func (b *nativeExclusivePublicationFixture) PutExclusive(ctx context.Context, ke
 		return errors.New("fixture: publication supplied writable authority")
 	}
 	if b.consume != nil {
-		return b.consume(ctx, file)
+		if err := b.consume(ctx, file); err != nil {
+			return err
+		}
 	}
 	if _, present := b.blobs[key]; present {
 		return storage.ErrArtifactExists
@@ -55,9 +59,11 @@ func (b *nativeExclusivePublicationFixture) PutExclusive(ctx context.Context, ke
 }
 
 type nativePublicationIntentFixture struct {
-	intent   nativeSnapshotPublicationIntent
-	err      error
-	writeErr error
+	intent         nativeSnapshotPublicationIntent
+	err            error
+	writeErr       error
+	objects        map[string]nativeSnapshotPublicationObjectReceipt
+	objectWriteErr error
 }
 
 func (j *nativePublicationIntentFixture) Acquire(context.Context) error { return j.err }
@@ -269,5 +275,73 @@ func TestNativeExclusivePublicationRequiresOriginalDurableBegin(t *testing.T) {
 				t.Fatal("unowned publication opened its source", err, f.b.opens, backend.puts)
 			}
 		})
+	}
+}
+
+func (b *nativeExclusivePublicationFixture) CheckExclusiveArtifact(ctx context.Context, key string) error {
+	return b.CheckExclusivePut(ctx, key)
+}
+func (b *nativeExclusivePublicationFixture) PutExclusiveArtifact(ctx context.Context, key string, reader io.Reader, size int64) (storage.ExclusiveArtifactReceipt, error) {
+	if err := b.PutExclusive(ctx, key, reader, size); err != nil {
+		return storage.ExclusiveArtifactReceipt{}, err
+	}
+	return nativeModeledArtifactReceipt(key, b.blobs[key]), nil
+}
+func (b *nativeExclusivePublicationFixture) GetExclusiveArtifact(context.Context, storage.ExclusiveArtifactReceipt) (io.ReadCloser, error) {
+	return nil, errors.New("modeled fixture has no original generation reader")
+}
+func nativeModeledArtifactReceipt(key string, body []byte) storage.ExclusiveArtifactReceipt {
+	digest := sha256.Sum256(body)
+	return storage.ExclusiveArtifactReceipt{Version: 1, Key: key, ObjectKey: key, Backend: "gcs", Location: "modeled-native-artifacts", LogicalBytes: int64(len(body)), StoredBytes: int64(len(body)), SHA256: hex.EncodeToString(digest[:]), Generation: 1}
+}
+func (j *nativePublicationIntentFixture) RecordObject(ctx context.Context, intent nativeSnapshotPublicationIntent, kind string, object storage.ExclusiveArtifactReceipt) (nativeSnapshotPublicationObjectReceipt, error) {
+	if err := j.Require(ctx, intent); err != nil {
+		return nativeSnapshotPublicationObjectReceipt{}, err
+	}
+	if j.objects == nil {
+		j.objects = make(map[string]nativeSnapshotPublicationObjectReceipt)
+	}
+	if _, present := j.objects[kind]; present {
+		return nativeSnapshotPublicationObjectReceipt{}, storage.ErrArtifactExists
+	}
+	r := nativeSnapshotPublicationObjectReceipt{Version: 1, Directory: intent.Directory, File: nativeLoopIdentity{Device: 1, Inode: uint64(50 + len(j.objects))}, IntentFile: intent.File, CaptureID: intent.Capture.CaptureID, Kind: kind, Object: object}
+	if err := r.validate(intent); err != nil {
+		return nativeSnapshotPublicationObjectReceipt{}, err
+	}
+	j.objects[kind] = r
+	if j.objectWriteErr != nil {
+		return nativeSnapshotPublicationObjectReceipt{}, j.objectWriteErr
+	}
+	return r, ctx.Err()
+}
+func (j *nativePublicationIntentFixture) RequireObject(ctx context.Context, intent nativeSnapshotPublicationIntent, r nativeSnapshotPublicationObjectReceipt) error {
+	if err := j.Require(ctx, intent); err != nil {
+		return err
+	}
+	current, ok := j.objects[r.Kind]
+	if !ok || current.File != r.File || current.Object.SHA256 != r.Object.SHA256 || current.Object.Key != r.Object.Key {
+		return errors.New("modeled original object receipt changed")
+	}
+	return ctx.Err()
+}
+
+func TestNativeExclusivePublicationLostReceiptAcknowledgementCannotReplay(t *testing.T) {
+	f, _ := nativeReadableCaptureFixture(t)
+	b := nativeExclusivePublicationStore(t, &f)
+	j := f.v.nativeRecovery.publications.(*nativePublicationIntentFixture)
+	lost := errors.New("object receipt acknowledgement lost")
+	j.objectWriteErr = lost
+	if err := f.v.publishNativeSnapshotOutput(f.ctx, f.owner.Lease, "mem"); !errors.Is(err, lost) {
+		t.Fatal("uncertain receipt supplied publication success", err)
+	}
+	if len(j.objects) != 1 || len(b.blobs) != 1 {
+		t.Fatal("fixture did not retain uncertain receipt and object")
+	}
+	j.objectWriteErr = nil
+	if err := f.v.publishNativeSnapshotOutput(f.ctx, f.owner.Lease, "mem"); !errors.Is(err, storage.ErrArtifactExists) {
+		t.Fatal("uncertain receipt was adopted/replayed", err)
+	}
+	if len(j.objects) != 1 || len(b.blobs) != 1 {
+		t.Fatal("replay changed original cohort")
 	}
 }

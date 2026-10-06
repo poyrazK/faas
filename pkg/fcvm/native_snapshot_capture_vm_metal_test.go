@@ -202,8 +202,11 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 		t.Fatal("original native VM fence differs from policy", beforeLimit)
 	}
 	info, incoming, err := nativeMetalCaptureVMProducer(ctx, m, v, frame.InstanceID, frame.NodeID)
-	if err != nil || info.MemBytes != int64(frame.RAMMB)<<20 || info.VMStateBytes <= 0 || info.StoredBytes < info.MemBytes+info.VMStateBytes {
+	if err != nil || info.MemBytes != int64(frame.RAMMB)<<20 || info.VMStateBytes <= 0 || info.StoredBytes <= 0 {
 		t.Fatal("real native capture failed:", info, err)
+	}
+	if stored := nativeMetalPublicationReceiptBytes(t, ctx, v, incoming); stored != info.StoredBytes {
+		t.Fatal("capture accounting differs from original allocation receipts", stored, info.StoredBytes)
 	}
 	if after := nativeCaptureVMMemoryLimit(t, scope); after != beforeLimit {
 		t.Fatal("capture did not restore the original VM fence", beforeLimit, after)
@@ -257,7 +260,7 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	if v.checkEnvironmentQualificationSnapshotSupport() == nil {
 		t.Fatal("VM acceptance opened production native qualification capture")
 	}
-	t.Logf("actual native capture: memory=%d device-state=%d logical-total=%d; original resumed, retired and artifacts restored", info.MemBytes, info.VMStateBytes, info.StoredBytes)
+	t.Logf("actual native capture: memory=%d device-state=%d allocated-total=%d; original resumed, retired and artifacts restored", info.MemBytes, info.VMStateBytes, info.StoredBytes)
 }
 
 // Invoke the internal original producer without overriding the public support
