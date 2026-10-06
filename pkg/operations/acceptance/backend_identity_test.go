@@ -136,7 +136,9 @@ func TestPgOperationBackendMigrationReplayPreservesHTTPIdentity(t *testing.T) {
 }
 
 func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
-	pool := pgtest.Open(t)
+	// Replay the complete historical schema in a private database: frozen
+	// standards migrations include public-qualified application row types.
+	pool := pgtest.OpenDatabase(t)
 	baseline := fstest.MapFS{}
 	files, err := migrations.FS.ReadDir(".")
 	if err != nil {
