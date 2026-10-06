@@ -28,7 +28,7 @@ func checkAdmittedArtifactHash(binding runtimeadmission.Binding, req WakeRequest
 	if binding.ProtocolVersion == runtimeadmission.ProtocolVersion {
 		return nil
 	}
-	if req.KeepPaused {
+	if req.KeepPaused && req.SnapshotRestore == nil {
 		return runtimeadmission.ErrUnavailable
 	}
 	hash, err := runtimeadmission.HashArtifactSources(req.ArtifactSources)

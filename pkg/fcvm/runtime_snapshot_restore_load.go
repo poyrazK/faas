@@ -22,6 +22,7 @@ type verifiedSnapshotRestore struct {
 	keepPaused         bool
 	started, attempted bool
 	resumeAttempted    bool
+	resumeEvidence     runtimeadmission.SnapshotResumeEvidence
 }
 
 // RestoreSnapshotVerified uses retained catalog bytes through the native load

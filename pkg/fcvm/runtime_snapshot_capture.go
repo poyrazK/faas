@@ -188,11 +188,39 @@ func (v *JailerVMM) cancelNativeSnapshot(instance string) {
 }
 
 func (v *JailerVMM) checkSnapshotParent(ctx context.Context, lease Lease, parent runtimeadmission.Receipt) error {
+	if !parent.SnapshotResumeEvidence.IsZero() {
+		return v.checkResumedSnapshotParent(ctx, lease, parent)
+	}
 	observation, err := v.ObservedRuntimeDrives(ctx, lease)
 	if err != nil {
 		return err
 	}
 	if observation.InstanceID != parent.Binding.InstanceID || observation.LeaseUID != int(parent.LeaseUID) || !runtimeConsumptionFromObservation(observation).Equal(parent.ArtifactConsumption) {
+		return runtimeadmission.ErrStale
+	}
+	return ctx.Err()
+}
+
+func (v *JailerVMM) checkResumedSnapshotParent(ctx context.Context, lease Lease, parent runtimeadmission.Receipt) error {
+	if runtimeadmission.CheckSnapshotParent(parent) != nil {
+		return runtimeadmission.ErrInvalid
+	}
+	handoff, err := v.runtimeDriveHandoff(lease)
+	if err != nil || handoff == nil {
+		return errors.Join(runtimeadmission.ErrUnavailable, err)
+	}
+	handoff.mu.Lock()
+	plan := handoff.restoreLoad
+	owned := !handoff.closed && plan != nil && plan.accepted && plan.keepPaused && plan.resumeAttempted && plan.resumeEvidence == parent.SnapshotResumeEvidence
+	handoff.mu.Unlock()
+	if !owned {
+		return runtimeadmission.ErrStale
+	}
+	drives, snapshot, err := v.observedRuntimeSnapshotConsumptionAt(ctx, lease, time.Unix(0, parent.SnapshotResumeEvidence.ParentCompletedAtUnixNano))
+	if err != nil {
+		return err
+	}
+	if !drives.Equal(parent.ArtifactConsumption) || snapshot != parent.SnapshotConsumption {
 		return runtimeadmission.ErrStale
 	}
 	return ctx.Err()

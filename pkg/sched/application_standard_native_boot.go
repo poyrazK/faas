@@ -89,6 +89,11 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 	if err != nil {
 		return nil, err
 	}
+	// Sources are prepared before the catalog envelope. A paused measured load
+	// must have both before any durable grant or native call is issued.
+	if paused && binding.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion && (req.SnapshotRestore == nil || identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion) {
+		return nil, runtimeadmission.ErrUnavailable
+	}
 	binding, err = runtimeadmission.BindingFromProto(req.Binding)
 	if err != nil {
 		return nil, err

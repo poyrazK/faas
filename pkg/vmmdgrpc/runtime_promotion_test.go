@@ -66,3 +66,81 @@ func TestPromoteAdmittedRuntimeAuthenticatesAndChecksNativeReceipt(t *testing.T)
 		})
 	}
 }
+
+// adr: 595 Complete wire lineage with explicit simulated native acknowledgments.
+func TestPromoteMeasuredSnapshotRuntimeRetainsAndChecksResumeReceipt(t *testing.T) {
+	for _, fault := range []string{"complete", "missing", "command", "grant", "parent", "process", "mapping", "unknown-parent", "unsupported"} {
+		t.Run(fault, func(t *testing.T) {
+			s, v, boot := admittedRPCFixture(t)
+			rpcSnapshotRestoreEnvelope(t, boot)
+			v.identity.ProtocolVersion, v.identity.SnapshotRestoreVersion = runtimeadmission.ArtifactProtocolVersion, runtimeadmission.SnapshotRestoreVersion
+			boot.GetRestore().KeepPaused = true
+			rehashAdmittedRequest(t, boot)
+			v.mutate = func(inst *fcvm.Instance, r *runtimeadmission.Receipt) {
+				simulatedRPCSnapshotConsumption(v, inst, r)
+				r.ArtifactConsumption.ConfigHash = runtimeadmission.SnapshotLoadCommandHash(true)
+			}
+			created, err := s.CreateAdmittedRuntime(admittedRPCContext(t), boot)
+			if err != nil {
+				t.Fatal("paused measured RPC boot", err)
+			}
+			parent, err := runtimeadmission.ReceiptFromProto(created.Receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := runtimeadmission.Promotion{Parent: parent, Binding: parent.Binding}
+			p.Binding.Token, p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = uuid.NewString(), time.Now().UnixNano(), time.Now().Add(time.Minute).UnixNano()
+			p.Binding.PayloadHash, err = runtimeadmission.HashPromotionPayload(p.ToProto())
+			if err != nil {
+				t.Fatal(err)
+			}
+			hash, err := runtimeadmission.HashSnapshotResumeParent(parent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v.mutate = func(inst *fcvm.Instance, r *runtimeadmission.Receipt) {
+				clock := r.CompletedAtUnixNano
+				r.SnapshotResumeEvidence = runtimeadmission.SnapshotResumeEvidence{Version: runtimeadmission.SnapshotResumeEvidenceVersion,
+					Binding: p.Binding, ParentBinding: parent.Binding, ParentCompletedAtUnixNano: parent.CompletedAtUnixNano, ParentReceiptHash: hash,
+					ResumeCommandHash: runtimeadmission.SnapshotResumeCommandHash(), ResumeHookPayloadHash: strings.Repeat("a", 64),
+					CommandCompletedAtUnixNano: clock, HostTimeUnixNano: clock, HookCompletedAtUnixNano: clock, CompletedAtUnixNano: clock}
+				switch fault {
+				case "missing":
+					r.SnapshotResumeEvidence = runtimeadmission.SnapshotResumeEvidence{}
+				case "command":
+					r.SnapshotResumeEvidence.ResumeCommandHash = ""
+				case "grant":
+					r.SnapshotResumeEvidence.Binding.Token = uuid.NewString()
+				case "parent":
+					r.SnapshotResumeEvidence.ParentBinding.Token = uuid.NewString()
+				case "process":
+					r.ArtifactConsumption.ProcessStart += "1"
+				case "mapping":
+					r.SnapshotConsumption.MappedMemoryBytes--
+				}
+			}
+			req := p.ToProto()
+			if fault == "unsupported" {
+				v.identity.SnapshotRestoreVersion = 0
+			}
+			if fault == "unknown-parent" {
+				req.Parent.Binding.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x01})
+			}
+			resp, err := s.PromoteAdmittedRuntime(admittedRPCContext(t), req)
+			if fault == "complete" {
+				got, decodeErr := runtimeadmission.ReceiptFromProto(resp.GetReceipt())
+				if err != nil || decodeErr != nil || p.CheckReceipt(got, time.Now()) != nil || len(v.destroyed) != 0 {
+					t.Fatal("RPC lost measured resume lineage", err, decodeErr)
+				}
+			} else {
+				wantDestroyed := 1
+				if fault == "unknown-parent" || fault == "unsupported" {
+					wantDestroyed = 0
+				}
+				if err == nil || resp != nil || len(v.destroyed) != wantDestroyed {
+					t.Fatal("RPC accepted or leaked altered proof", fault, err)
+				}
+			}
+		})
+	}
+}

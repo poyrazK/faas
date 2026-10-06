@@ -12,8 +12,8 @@ import (
 )
 
 // RuntimeSnapshotResumeObservation contains native facts, not a publishable
-// receipt. The load hash continues to describe the original paused command.
-// Durable promotion, readiness and advertised capability remain gated.
+// receipt until checked against the exact promotion. The load hash continues
+// to describe the original paused command. Advertised capability stays gated.
 type RuntimeSnapshotResumeObservation struct {
 	Request             runtimeadmission.Promotion
 	ArtifactConsumption runtimeadmission.ArtifactConsumption
@@ -34,10 +34,22 @@ func (o RuntimeSnapshotResumeObservation) Clone() RuntimeSnapshotResumeObservati
 	return o
 }
 
+func (o RuntimeSnapshotResumeObservation) receipt(p runtimeadmission.Promotion, now time.Time) (runtimeadmission.Receipt, error) {
+	if err := o.Check(p, now); err != nil {
+		return runtimeadmission.Receipt{}, err
+	}
+	r := p.Parent.Clone()
+	r.Binding, r.Paused, r.CompletedAtUnixNano = p.Binding, false, o.ResumeEvidence.CompletedAtUnixNano
+	r.ArtifactConsumption, r.SnapshotConsumption, r.SnapshotResumeEvidence = o.ArtifactConsumption.Clone(), o.SnapshotConsumption, o.ResumeEvidence
+	if err := p.CheckReceipt(r, now); err != nil {
+		return runtimeadmission.Receipt{}, err
+	}
+	return r, nil
+}
+
 // PromoteSnapshotVerified resumes a retained paused load at most once. It
 // reobserves the same process, descriptors and private mappings around the
-// actual resume and hook acknowledgments. Manager/RPC publication does not use
-// this operation until the complete durable promotion contract is implemented.
+// actual resume and hook acknowledgments before Manager/RPC publication.
 func (v *JailerVMM) PromoteSnapshotVerified(ctx context.Context, lease Lease, p runtimeadmission.Promotion) (result RuntimeSnapshotResumeObservation, err error) {
 	p = p.Clone()
 	if err := p.CheckSnapshotResumeRequest(time.Now()); err != nil {
@@ -99,12 +111,21 @@ func (v *JailerVMM) PromoteSnapshotVerified(ctx context.Context, lease Lease, p 
 	}
 	result = RuntimeSnapshotResumeObservation{Request: p.Clone(), ArtifactConsumption: drives, SnapshotConsumption: snapshot,
 		ResumeEvidence: runtimeadmission.SnapshotResumeEvidence{Version: runtimeadmission.SnapshotResumeEvidenceVersion, Binding: p.Binding, ParentReceiptHash: parentHash,
+			ParentBinding: p.Parent.Binding, ParentCompletedAtUnixNano: p.Parent.CompletedAtUnixNano,
 			ResumeCommandHash: command.CommandHash, ResumeHookPayloadHash: hook.PayloadHash,
 			CommandCompletedAtUnixNano: command.CompletedAtUnixNano, HostTimeUnixNano: hook.HostTimeUnixNano,
 			HookCompletedAtUnixNano: hook.CompletedAtUnixNano, CompletedAtUnixNano: completed.UnixNano()}}
 	if err := result.Check(p, completed); err != nil {
 		return result, err
 	}
+	flight.handoff.mu.Lock()
+	plan := flight.handoff.restoreLoad
+	if flight.handoff.closed || plan == nil || plan.request.Binding != p.Parent.Binding || !plan.resumeAttempted || ctx.Err() != nil {
+		flight.handoff.mu.Unlock()
+		return result, runtimeadmission.ErrStale
+	}
+	plan.resumeEvidence = result.ResumeEvidence
+	flight.handoff.mu.Unlock()
 	return result, nil
 }
 

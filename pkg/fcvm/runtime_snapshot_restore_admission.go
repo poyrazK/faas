@@ -18,6 +18,11 @@ type consumedSnapshotVMM interface {
 	ObservedRuntimeSnapshotConsumption(context.Context, Lease) (runtimeadmission.ArtifactConsumption, runtimeadmission.SnapshotConsumption, error)
 }
 
+type resumedSnapshotVMM interface {
+	consumedSnapshotVMM
+	PromoteSnapshotVerified(context.Context, Lease, runtimeadmission.Promotion) (RuntimeSnapshotResumeObservation, error)
+}
+
 // Physical restore/promotion acceptance is still required before advertising.
 func (v *JailerVMM) RuntimeSnapshotRestoreVersion() uint32 { return 0 }
 
@@ -35,7 +40,7 @@ func checkAdmittedSnapshotRestore(b runtimeadmission.Binding, req WakeRequest) e
 		}
 		return nil
 	}
-	if req.Snapshot == nil || req.KeepPaused {
+	if req.Snapshot == nil {
 		return runtimeadmission.ErrUnavailable
 	}
 	return req.SnapshotRestore.Check(b, req.ArtifactSources, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, req.Snapshot.FCVersion, int64(wakeGuestMemoryMiB(req))<<20, time.Now())
@@ -52,9 +57,14 @@ func (m *Manager) restoreWithAdmission(ctx context.Context, lease Lease, nc netn
 	if err := checkAdmittedSnapshotRestore(*req.admission, req); err != nil {
 		return err
 	}
+	if req.KeepPaused {
+		if _, ok := m.vmm.(resumedSnapshotVMM); !ok {
+			return runtimeadmission.ErrUnavailable
+		}
+	}
 	inputs := SnapshotRestoreInputs{Binding: *req.admission, Capture: req.SnapshotRestore.Capture.Clone(), Snapshot: *req.Snapshot,
 		Runtime: m.coldBootSpecForWake(nc, req, discoveryIP), Sources: req.ArtifactSources}
-	return v.RestoreSnapshotVerified(ctx, lease, inputs, false)
+	return v.RestoreSnapshotVerified(ctx, lease, inputs, req.KeepPaused)
 }
 
 func (m *Manager) admittedRuntimeConsumption(ctx context.Context, binding runtimeadmission.Binding, req WakeRequest, inst *Instance) (runtimeadmission.ArtifactConsumption, runtimeadmission.SnapshotConsumption, error) {

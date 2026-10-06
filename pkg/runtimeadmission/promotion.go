@@ -42,6 +42,9 @@ func HashPromotionPayload(req *vmmdpb.PromoteAdmittedRuntimeRequest) (string, er
 }
 
 func (p Promotion) Validate(now time.Time) error {
+	if p.Binding.ProtocolVersion == ArtifactProtocolVersion {
+		return p.CheckSnapshotResumeRequest(now)
+	}
 	if err := p.Binding.Validate(now); err != nil {
 		return err
 	}
@@ -76,6 +79,9 @@ func (p Promotion) CheckReceipt(r Receipt, now time.Time) error {
 	}
 	if r.Paused || r.NativeInputHash != p.Parent.NativeInputHash || r.Netns != p.Parent.Netns || r.HostIP != p.Parent.HostIP || r.LeaseUID != p.Parent.LeaseUID || r.Method != p.Parent.Method || r.CompletedAtUnixNano < p.Parent.CompletedAtUnixNano {
 		return ErrInvalid
+	}
+	if p.Binding.ProtocolVersion == ArtifactProtocolVersion {
+		return r.SnapshotResumeEvidence.Check(p, r.ArtifactConsumption, r.SnapshotConsumption, now)
 	}
 	return nil
 }

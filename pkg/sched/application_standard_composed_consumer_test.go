@@ -25,6 +25,8 @@ type composedWaveNativeVMM struct {
 	captures             int
 	snapshotColdFallback bool
 	editSnapshotReceipt  func(*runtimeadmission.Receipt)
+	measuredPromotions   int
+	editPromotionReceipt func(*runtimeadmission.Receipt)
 }
 
 func newComposedWaveNativeVMM(t *testing.T, s composedWaveStore) *composedWaveNativeVMM {
@@ -74,7 +76,7 @@ func (v *composedWaveNativeVMM) CreateAdmittedRuntime(ctx context.Context, nodeI
 		if err != nil {
 			return nil, err
 		}
-		r.ArtifactConsumption.ConfigHash = runtimeadmission.SnapshotLoadCommandHash(false)
+		r.ArtifactConsumption.ConfigHash = runtimeadmission.SnapshotLoadCommandHash(r.Paused)
 		r.SnapshotConsumption = runtimeadmission.SnapshotConsumption{Version: runtimeadmission.SnapshotRestoreVersion,
 			CaptureToken: evidence.CaptureToken, EvidenceHash: r.Binding.SnapshotEvidenceHash,
 			Memory: evidence.Capture.Memory, VMState: evidence.Capture.VMState, PrivateDrive: evidence.Capture.PrivateDrive,

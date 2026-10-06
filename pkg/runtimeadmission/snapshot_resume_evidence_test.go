@@ -22,7 +22,7 @@ func snapshotResumeEvidenceFixture(t *testing.T) (Promotion, SnapshotResumeEvide
 		t.Fatal(err)
 	}
 	clock := p.Binding.IssuedAtUnixNano + int64(time.Millisecond)
-	e := SnapshotResumeEvidence{Version: SnapshotResumeEvidenceVersion, Binding: p.Binding, ParentReceiptHash: parentHash,
+	e := SnapshotResumeEvidence{Version: SnapshotResumeEvidenceVersion, Binding: p.Binding, ParentBinding: p.Parent.Binding, ParentCompletedAtUnixNano: p.Parent.CompletedAtUnixNano, ParentReceiptHash: parentHash,
 		ResumeCommandHash: SnapshotResumeCommandHash(), ResumeHookPayloadHash: strings.Repeat("b", 64),
 		CommandCompletedAtUnixNano: clock, HostTimeUnixNano: clock + 1, HookCompletedAtUnixNano: clock + 2, CompletedAtUnixNano: clock + 3}
 	return p, e, time.Unix(0, e.CompletedAtUnixNano)
@@ -148,8 +148,8 @@ func TestSnapshotResumeEvidenceWireRoundTripAndRefusesUnknownFields(t *testing.T
 	if err := json.Unmarshal(jsonRaw, &jsonCopy); err != nil || jsonCopy != e {
 		t.Fatal("JSON changed proof identity", err)
 	}
-	// Evidence alone still cannot publish or capture a paused load as serving.
-	if p.Validate(now) == nil || !errors.Is(p.Parent.Check(p.Parent.Binding, time.Unix(0, p.Parent.CompletedAtUnixNano)), ErrUnavailable) {
-		t.Fatal("native evidence enabled durable promotion prematurely")
+	// A paused load alone still cannot authorize serving publication.
+	if p.Validate(now) != nil || p.CheckReceipt(p.Parent, now) == nil {
+		t.Fatal("paused parent crossed the serving boundary")
 	}
 }

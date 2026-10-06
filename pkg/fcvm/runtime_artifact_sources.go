@@ -26,7 +26,7 @@ func (m *Manager) checkAdmittedArtifactSources(req WakeRequest) error {
 		return err
 	}
 	if len(req.ArtifactSources) != 0 {
-		if _, capable := m.vmm.(verifiedSourceVMM); !capable || req.KeepPaused {
+		if _, capable := m.vmm.(verifiedSourceVMM); !capable || req.KeepPaused && req.SnapshotRestore == nil {
 			return runtimeadmission.ErrUnavailable
 		}
 	}

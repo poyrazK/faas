@@ -22,6 +22,9 @@ func validateOwnedNativeReceipt(p RuntimeInstancePublication) error {
 	if r == nil {
 		return nil
 	}
+	if p.PromotionReceipt == nil && !r.SnapshotResumeEvidence.IsZero() {
+		return ErrApplicationStandardRuntimeStale
+	}
 	b := r.Binding
 	if !sameStandardUUID(b.InstanceID, p.InstanceID) || !sameStandardUUID(b.AppID, p.AppID) || !sameStandardUUID(b.AccountID, p.AccountID) || !sameStandardUUID(b.NodeID, p.NodeID) || !sameStandardUUID(b.DeploymentID, p.Fence.DeploymentID) || r.Netns != p.Netns || r.HostIP != p.HostIP || int(r.LeaseUID) != p.GuestUID || !standardRuntimeReceiptTarget(State(p.targetState()), *r) || r.Check(b, time.Unix(0, r.CompletedAtUnixNano)) != nil {
 		return ErrApplicationStandardRuntimeStale

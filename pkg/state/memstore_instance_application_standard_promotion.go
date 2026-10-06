@@ -82,6 +82,9 @@ func (m *MemStore) IssueInstanceApplicationStandardPromotion(ctx context.Context
 		return runtimeadmission.Promotion{}, err
 	}
 	p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = now.UnixNano(), expires.UnixNano()
+	if err := m.checkStandardSnapshotRestoreLocked(p.Binding, capture, now, nil); err != nil {
+		return runtimeadmission.Promotion{}, err
+	}
 	if m.instanceApplicationStandardPromotions == nil {
 		m.instanceApplicationStandardPromotions = map[string]instanceStandardPromotion{}
 	}
@@ -126,6 +129,9 @@ func (m *MemStore) publishStandardPromotionLocked(ctx context.Context, r runtime
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if p.Grant.CheckReceipt(r, now) != nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
+	}
+	if err := m.checkStandardSnapshotRestoreLocked(r.Binding, capture, now, &r); err != nil {
+		return Instance{}, err
 	}
 	if p.Receipt != nil && !p.Receipt.Equal(r) {
 		return Instance{}, ErrConflict

@@ -14,13 +14,17 @@ import (
 
 type consumedSnapshotTestVMM struct {
 	*consumedRuntimeVMM
-	version          uint32
-	loads, witnesses int
-	inputs           SnapshotRestoreInputs
-	ownerLease       Lease
-	loadErr          error
-	editProof        func(*runtimeadmission.ArtifactConsumption, *runtimeadmission.SnapshotConsumption)
-	observeSnapshot  func(context.Context) error
+	version             uint32
+	loads, witnesses    int
+	inputs              SnapshotRestoreInputs
+	ownerLease          Lease
+	loadErr             error
+	editProof           func(*runtimeadmission.ArtifactConsumption, *runtimeadmission.SnapshotConsumption)
+	observeSnapshot     func(context.Context) error
+	allowPaused, paused bool
+	resumeCalls         int
+	resumeErr           error
+	editResume          func(*RuntimeSnapshotResumeObservation)
 }
 
 func (v *consumedSnapshotTestVMM) RuntimeSnapshotRestoreVersion() uint32 { return v.version }
@@ -39,20 +43,21 @@ func (v *consumedSnapshotTestVMM) ObservedRuntimeDrives(ctx context.Context, l L
 
 func (v *consumedSnapshotTestVMM) RestoreSnapshotVerified(ctx context.Context, lease Lease, req SnapshotRestoreInputs, paused bool) error {
 	v.loads++
-	if paused {
+	if paused && !v.allowPaused {
 		return runtimeadmission.ErrUnavailable
 	}
 	if err := checkVerifiedSnapshotLoadRequest(lease, req); err != nil {
 		return err
 	}
 	v.inputs = req
+	v.paused = paused
 	v.ownerLease = lease
 	v.inputs.Capture, v.inputs.Runtime = req.Capture.Clone(), cloneSnapshotRestoreRuntime(req.Runtime)
 	if v.loadErr != nil {
 		return v.loadErr
 	}
 	v.sources, v.spec = req.Sources, req.Runtime
-	return v.fakeVMM.Restore(ctx, lease, snapshotRestoreSpec(lease, req, false))
+	return v.fakeVMM.Restore(ctx, lease, snapshotRestoreSpec(lease, req, paused))
 }
 
 func (v *consumedSnapshotTestVMM) ObservedRuntimeSnapshotConsumption(ctx context.Context, lease Lease) (runtimeadmission.ArtifactConsumption, runtimeadmission.SnapshotConsumption, error) {
@@ -67,13 +72,40 @@ func (v *consumedSnapshotTestVMM) ObservedRuntimeSnapshotConsumption(ctx context
 		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, err
 	}
 	drives := runtimeConsumptionFromObservation(o)
-	drives.ConfigHash = runtimeadmission.SnapshotLoadCommandHash(false)
+	drives.ConfigHash = runtimeadmission.SnapshotLoadCommandHash(v.paused)
 	b, c := v.inputs.Binding, v.inputs.Capture
 	proof := runtimeadmission.SnapshotConsumption{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: b.SnapshotCaptureToken, EvidenceHash: b.SnapshotEvidenceHash, Memory: c.Memory, VMState: c.VMState, PrivateDrive: c.PrivateDrive, MappedMemoryBytes: c.Memory.Bytes}
 	if v.editProof != nil {
 		v.editProof(&drives, &proof)
 	}
 	return drives, proof, nil
+}
+
+// Simulates the measured native owner; actual transport/process acceptance is
+// covered separately and never inferred from these Manager tests.
+func (v *consumedSnapshotTestVMM) PromoteSnapshotVerified(ctx context.Context, lease Lease, p runtimeadmission.Promotion) (RuntimeSnapshotResumeObservation, error) {
+	v.resumeCalls++
+	if v.resumeErr != nil {
+		return RuntimeSnapshotResumeObservation{}, v.resumeErr
+	}
+	drives, snapshot, err := v.ObservedRuntimeSnapshotConsumption(ctx, lease)
+	if err != nil {
+		return RuntimeSnapshotResumeObservation{}, err
+	}
+	hash, err := runtimeadmission.HashSnapshotResumeParent(p.Parent)
+	if err != nil {
+		return RuntimeSnapshotResumeObservation{}, err
+	}
+	clock := time.Now().UnixNano()
+	o := RuntimeSnapshotResumeObservation{Request: p.Clone(), ArtifactConsumption: drives, SnapshotConsumption: snapshot,
+		ResumeEvidence: runtimeadmission.SnapshotResumeEvidence{Version: runtimeadmission.SnapshotResumeEvidenceVersion,
+			Binding: p.Binding, ParentBinding: p.Parent.Binding, ParentCompletedAtUnixNano: p.Parent.CompletedAtUnixNano,
+			ParentReceiptHash: hash, ResumeCommandHash: runtimeadmission.SnapshotResumeCommandHash(), ResumeHookPayloadHash: p.Binding.PayloadHash,
+			CommandCompletedAtUnixNano: clock, HostTimeUnixNano: clock, HookCompletedAtUnixNano: clock, CompletedAtUnixNano: clock}}
+	if v.editResume != nil {
+		v.editResume(&o)
+	}
+	return o, ctx.Err()
 }
 
 func admittedSnapshotFixture(t *testing.T, sidecar bool) (*Manager, *consumedSnapshotTestVMM, AdmittedWakeRequest) {
@@ -186,7 +218,7 @@ func TestNativeSnapshotAdmissionRefusesBeforeAllocation(t *testing.T) {
 		{"unbound envelope", func(_ *consumedSnapshotTestVMM, r *AdmittedWakeRequest) {
 			r.Binding.SnapshotCaptureToken, r.Binding.SnapshotEvidenceHash = "", ""
 		}},
-		{"paused", func(_ *consumedSnapshotTestVMM, r *AdmittedWakeRequest) { r.Request.KeepPaused = true }},
+		{"unadvertised paused", func(v *consumedSnapshotTestVMM, r *AdmittedWakeRequest) { r.Request.KeepPaused = true; v.version = 0 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, v, r := admittedSnapshotFixture(t, false)

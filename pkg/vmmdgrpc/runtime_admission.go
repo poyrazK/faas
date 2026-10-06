@@ -184,7 +184,7 @@ func (s *Server) parseAdmittedRuntime(ctx context.Context, req *vmmdpb.CreateAdm
 	}
 	if b.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion {
 		actual, err := runtimeadmission.HashArtifactSources(wr.ArtifactSources)
-		if err != nil || actual != b.ArtifactSourcesHash || wr.KeepPaused {
+		if err != nil || actual != b.ArtifactSourcesHash || wr.KeepPaused && req.SnapshotRestore == nil {
 			return empty, 0, "", runtimeadmission.ErrInvalid
 		}
 	}
@@ -221,6 +221,9 @@ func validateAdmittedApp(app *vmmdpb.AppSpec) error {
 }
 
 func checkNativeReceipt(req fcvm.AdmittedWakeRequest, inst *fcvm.Instance, receipt runtimeadmission.Receipt) error {
+	if !receipt.SnapshotResumeEvidence.IsZero() {
+		return runtimeadmission.ErrInvalid
+	}
 	if err := receipt.Check(req.Binding, time.Now()); err != nil {
 		return err
 	}

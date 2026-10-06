@@ -2613,6 +2613,8 @@ message RuntimeBootReceipt {
   RuntimeArtifactConsumption artifact_consumption = 9;
   // Shares artifact_consumption's process and exact snapshot load command.
   RuntimeSnapshotConsumption snapshot_consumption = 10;
+  // Original paused load plus the measured resume under a fresh promotion.
+  RuntimeSnapshotResumeEvidence snapshot_resume_evidence = 11;
 }
 
 message RuntimeSnapshotConsumption {
@@ -2625,8 +2627,8 @@ message RuntimeSnapshotConsumption {
   int64 mapped_memory_bytes = 7;
 }
 
-// Native resume facts, kept separate from RuntimeBootReceipt until durable
-// promotion publication can validate the complete paused-load lineage.
+// Nonrecursive lineage: reconstruct the paused parent from these historical
+// identity fields and the serving receipt's unchanged native consumption.
 message RuntimeSnapshotResumeEvidence {
   uint32 version = 1;
   RuntimeBootBinding binding = 2;
@@ -2637,6 +2639,8 @@ message RuntimeSnapshotResumeEvidence {
   int64 host_time_unix_nano = 7;
   int64 hook_completed_at_unix_nano = 8;
   int64 completed_at_unix_nano = 9;
+  RuntimeBootBinding parent_binding = 10;
+  int64 parent_completed_at_unix_nano = 11;
 }
 
 message RuntimeArtifactConsumption {

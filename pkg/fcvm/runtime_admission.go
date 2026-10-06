@@ -156,6 +156,11 @@ func (m *Manager) prepareAdmittedInputs(request AdmittedWakeRequest, identity ru
 	if err := checkAdmittedSnapshotRestore(binding, req); err != nil {
 		return WakeRequest{}, "", err
 	}
+	if req.KeepPaused && req.SnapshotRestore != nil {
+		if _, ok := m.vmm.(resumedSnapshotVMM); !ok {
+			return WakeRequest{}, "", runtimeadmission.ErrUnavailable
+		}
+	}
 	return req, hash, nil
 }
 

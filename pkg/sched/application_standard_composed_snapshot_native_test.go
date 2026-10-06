@@ -41,11 +41,10 @@ func (v *composedWaveNativeVMM) createComposedRuntime(ctx context.Context, node 
 	if req.GetRestore() == nil {
 		return v.standardNativeTestVMM.CreateAdmittedRuntime(ctx, node, req)
 	}
-	// Match the current native source consumer contract: sources require a
-	// verified cold fallback; paused restore is unavailable. A portable fake
-	// must not certify a restore that the native manager cannot perform.
+	// Simulate only the registered measured catalog capability. A paused load
+	// also requires that complete envelope; bare source admission cannot resume.
 	b, err := runtimeadmission.BindingFromProto(req.Binding)
-	if err != nil || b.Validate(time.Now()) != nil || node != v.identity.NodeID || b.Incarnation != v.identity.Incarnation || req.GetRestore().KeepPaused {
+	if err != nil || b.Validate(time.Now()) != nil || node != v.identity.NodeID || b.Incarnation != v.identity.Incarnation || req.GetRestore().KeepPaused && (req.SnapshotRestore == nil || v.identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion) {
 		return nil, runtimeadmission.ErrUnavailable
 	}
 	hash, err := runtimeadmission.HashBootPayload(req)
@@ -67,6 +66,6 @@ func (v *composedWaveNativeVMM) createComposedRuntime(ctx context.Context, node 
 	if err != nil {
 		return nil, err
 	}
-	out.RuntimeAdmissionReceipt = &runtimeadmission.Receipt{Binding: b, NativeInputHash: strings.Repeat("b", 64), Netns: out.Netns, HostIP: out.HostIP, LeaseUID: out.LeaseUID, Method: out.Method, CompletedAtUnixNano: time.Now().UnixNano()}
+	out.RuntimeAdmissionReceipt = &runtimeadmission.Receipt{Binding: b, NativeInputHash: strings.Repeat("b", 64), Netns: out.Netns, HostIP: out.HostIP, LeaseUID: out.LeaseUID, Method: out.Method, Paused: req.GetRestore().KeepPaused, CompletedAtUnixNano: time.Now().UnixNano()}
 	return out, nil
 }

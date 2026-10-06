@@ -1,6 +1,6 @@
 package runtimeadmission
 
-// adr: 595 This private native request check does not enable paused publication.
+// adr: 595 Paused history requires complete load evidence and a fresh promotion.
 
 import (
 	"time"
@@ -10,14 +10,13 @@ import (
 )
 
 // CheckSnapshotResumeRequest checks a fresh request against complete historical
-// paused-load identity. Receipt.Check and Promotion.Validate continue refusing
-// protocol-2 paused history until the durable promotion proof is implemented.
+// paused-load identity without treating the original expired grant as current.
 func (p Promotion) CheckSnapshotResumeRequest(now time.Time) error {
 	if err := p.Binding.Validate(now); err != nil {
 		return err
 	}
 	r := p.Parent
-	if r.Binding.ProtocolVersion != ArtifactProtocolVersion || !r.Paused || r.Method != vmmdpb.WakeMethod_WAKE_RESTORE || r.CompletedAtUnixNano <= 0 || r.CompletedAtUnixNano > now.Add(api.ApplicationStandardRuntimeAdmissionClockSkew).UnixNano() {
+	if r.Binding.ProtocolVersion != ArtifactProtocolVersion || !r.Paused || !r.SnapshotResumeEvidence.IsZero() || r.Method != vmmdpb.WakeMethod_WAKE_RESTORE || r.CompletedAtUnixNano <= 0 || r.CompletedAtUnixNano > now.Add(api.ApplicationStandardRuntimeAdmissionClockSkew).UnixNano() {
 		return ErrInvalid
 	}
 	if err := r.checkRuntimeIdentity(r.Binding, time.Unix(0, r.CompletedAtUnixNano)); err != nil {

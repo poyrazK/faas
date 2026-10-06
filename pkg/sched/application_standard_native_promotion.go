@@ -47,6 +47,9 @@ func (e *Engine) resumeWarmWithStandards(ctx context.Context, warm state.Instanc
 	if identity.Validate() != nil || identity.NodeID != warm.NodeID || identity.Incarnation != parent.Binding.Incarnation || capture.NativeInputHash != parent.Binding.CapturedInputHash {
 		return nil, runtimeadmission.ErrStale
 	}
+	if parent.Binding.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion && (identity.ProtocolVersion < runtimeadmission.ArtifactProtocolVersion || identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion) {
+		return nil, runtimeadmission.ErrUnavailable
+	}
 	p := runtimeadmission.Promotion{Binding: parent.Binding, Parent: parent}
 	now := time.Now().UTC()
 	p.Binding.Token, p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = uuid.NewString(), now.UnixNano(), now.Add(api.ApplicationStandardRuntimeAdmissionTTL).UnixNano()

@@ -36,6 +36,8 @@ func TestMigrations_StandardRestoreWireContract(t *testing.T) {
 		"snapshot-consumption": &vmmdpb.RuntimeSnapshotConsumption{},
 		"receipt":              &vmmdpb.RuntimeBootReceipt{},
 		"binding":              &vmmdpb.RuntimeBootBinding{},
+		"resume":               &vmmdpb.RuntimeSnapshotResumeEvidence{},
+		"promotion":            &vmmdpb.PromoteAdmittedRuntimeRequest{},
 	} {
 		t.Run(kind, func(t *testing.T) {
 			var raw []byte
@@ -71,7 +73,7 @@ func TestMigrations_StandardRestoreWireContract(t *testing.T) {
 				}
 				want := map[protoreflect.Kind]string{protoreflect.StringKind: "string", protoreflect.Uint32Kind: "u32", protoreflect.Int32Kind: "i32", protoreflect.Int64Kind: "i64", protoreflect.BoolKind: "bool", protoreflect.EnumKind: "i32"}[d.Kind()]
 				if d.Kind() == protoreflect.MessageKind {
-					want = map[protoreflect.Name]string{"RuntimeBootBinding": "binding", "RuntimeBootReceipt": "receipt", "RuntimeSnapshotCapture": "capture", "RuntimeCapturedArtifact": "artifact", "RuntimeArtifactSource": "source", "RuntimeArtifactConsumption": "consumption", "RuntimeSnapshotConsumption": "snapshot-consumption"}[d.Message().Name()]
+					want = map[protoreflect.Name]string{"RuntimeBootBinding": "binding", "RuntimeBootReceipt": "receipt", "RuntimeSnapshotCapture": "capture", "RuntimeCapturedArtifact": "artifact", "RuntimeArtifactSource": "source", "RuntimeArtifactConsumption": "consumption", "RuntimeSnapshotConsumption": "snapshot-consumption", "RuntimeSnapshotResumeEvidence": "resume"}[d.Message().Name()]
 					if d.IsList() && d.Message().Name() == "RuntimeConsumedDrive" {
 						want = "drives"
 					}

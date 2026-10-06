@@ -37,7 +37,7 @@ func bindSnapshotResumePayload(t *testing.T, p *Promotion) {
 	}
 }
 
-func TestSnapshotResumeRequestUsesFreshGrantAndPreservesPublicRefusal(t *testing.T) {
+func TestSnapshotResumeRequestUsesFreshGrantAndPreservesPausedHistory(t *testing.T) {
 	p := snapshotResumeRequestFixture(t)
 	if !errors.Is(p.Parent.Binding.Validate(time.Now()), ErrExpired) {
 		t.Fatal("historical load authority was renewed")
@@ -45,8 +45,8 @@ func TestSnapshotResumeRequestUsesFreshGrantAndPreservesPublicRefusal(t *testing
 	if err := p.CheckSnapshotResumeRequest(time.Now()); err != nil {
 		t.Fatal("fresh native request refused", err)
 	}
-	if !errors.Is(p.Parent.Check(p.Parent.Binding, time.Unix(0, p.Parent.CompletedAtUnixNano)), ErrUnavailable) || p.Validate(time.Now()) == nil || p.CheckReceipt(p.Parent, time.Now()) == nil {
-		t.Fatal("private request enabled public paused promotion")
+	if p.Parent.Check(p.Parent.Binding, time.Unix(0, p.Parent.CompletedAtUnixNano)) != nil || p.Validate(time.Now()) != nil || p.CheckReceipt(p.Parent, time.Now()) == nil {
+		t.Fatal("complete paused history did not retain its separate serving boundary")
 	}
 	decoded, err := PromotionFromProto(p.ToProto())
 	if err != nil || !decoded.Equal(p) || decoded.CheckSnapshotResumeRequest(time.Now()) != nil {

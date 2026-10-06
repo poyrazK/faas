@@ -125,7 +125,7 @@ func (s *PgStore) PublishInstanceApplicationStandardRuntimeWithConfig(ctx contex
 }
 
 func (s *PgStore) publishStandardRuntimeWithConfig(ctx context.Context, expectedState string, next State, receipt runtimeadmission.Receipt, wakeID string, inputs *RuntimeConfigInputs) (Instance, error) {
-	if !standardRuntimeReceiptTarget(next, receipt) {
+	if !receipt.SnapshotResumeEvidence.IsZero() || !standardRuntimeReceiptTarget(next, receipt) {
 		return Instance{}, ErrInvalidArgument
 	}
 	if receipt.Check(receipt.Binding, time.Now()) != nil {

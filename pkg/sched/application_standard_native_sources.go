@@ -17,9 +17,6 @@ func prepareStandardAdmittedRuntime(ctx context.Context, binding runtimeadmissio
 		sources = append(sources, source)
 	}
 	if binding.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion {
-		if paused {
-			return nil, runtimeadmission.ErrUnavailable
-		}
 		hash, err := runtimeadmission.HashArtifactSources(sources)
 		if err != nil {
 			return nil, err

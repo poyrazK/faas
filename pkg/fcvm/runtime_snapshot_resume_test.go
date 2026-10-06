@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -88,7 +89,11 @@ func TestSnapshotResumeHistoricalClockCannotRenewOrdinaryObservation(t *testing.
 		t.Fatal("ordinary observation renewed historical authority", err)
 	}
 	drives, snapshot, err = f.vmm.observedRuntimeSnapshotConsumptionAt(t.Context(), f.lease, historical)
-	if !errors.Is(err, runtimeadmission.ErrUnavailable) || !drives.IsZero() || !snapshot.IsZero() {
+	want := runtimeadmission.ErrUnavailable // Native observation is unavailable on non-Linux hosts.
+	if runtime.GOOS == "linux" {
+		want = runtimeadmission.ErrStale
+	} // The absent owned process defeats the Linux observation.
+	if !errors.Is(err, want) || !drives.IsZero() || !snapshot.IsZero() {
 		t.Fatal("historical observation lost its native ownership fence", err)
 	}
 	plan := f.spec.verifiedSnapshot
@@ -193,7 +198,7 @@ func TestSnapshotResumeObservationOwnsAndChecksCompleteEvidence(t *testing.T) {
 	clock := time.Now().UnixNano()
 	o := RuntimeSnapshotResumeObservation{Request: p.Clone(), ArtifactConsumption: drives.Clone(), SnapshotConsumption: snapshot,
 		ResumeEvidence: runtimeadmission.SnapshotResumeEvidence{Version: runtimeadmission.SnapshotResumeEvidenceVersion,
-			Binding: p.Binding, ParentReceiptHash: hash, ResumeCommandHash: runtimeadmission.SnapshotResumeCommandHash(), ResumeHookPayloadHash: strings.Repeat("a", 64),
+			Binding: p.Binding, ParentBinding: p.Parent.Binding, ParentCompletedAtUnixNano: p.Parent.CompletedAtUnixNano, ParentReceiptHash: hash, ResumeCommandHash: runtimeadmission.SnapshotResumeCommandHash(), ResumeHookPayloadHash: strings.Repeat("a", 64),
 			CommandCompletedAtUnixNano: clock, HostTimeUnixNano: clock, HookCompletedAtUnixNano: clock, CompletedAtUnixNano: clock}}
 	// This checks the contract only; the simulated process must still be refused
 	// by PromoteSnapshotVerified's actual owner observation before any command.

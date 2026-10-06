@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -220,6 +221,15 @@ func TestSnapshotResumeCouplesActualProcessAndAcknowledgments(t *testing.T) {
 			}
 			if err != nil || result.Check(p, time.Now()) != nil || !result.Request.Equal(p) || !result.ArtifactConsumption.Equal(drives) || result.SnapshotConsumption != snapshot || result.ArtifactConsumption.ConfigHash != runtimeadmission.SnapshotLoadCommandHash(true) || result.ResumeEvidence.ResumeCommandHash != runtimeResumePayloadHash("gregale.runtime-resume.command.v1\x00", []byte(`{"state":"Resumed"}`)) || result.ResumeEvidence.ResumeHookPayloadHash != runtimeResumePayloadHash("gregale.runtime-resume.hook.v1\x00", hook.frame) || !plan.keepPaused || !plan.resumeAttempted || calls.Load() != 1 {
 				t.Fatalf("native coupled facts lost original paused load: result=%+v error=%v", result, err)
+			}
+			serving, err := result.receipt(p, time.Now())
+			if err != nil || f.vmm.checkSnapshotParent(t.Context(), f.lease, serving) != nil || plan.resumeEvidence != serving.SnapshotResumeEvidence {
+				t.Fatal("actual resumed owner lost capture-parent lineage", err)
+			}
+			changed := serving.Clone()
+			changed.SnapshotResumeEvidence.ResumeHookPayloadHash = strings.Repeat("0", 64)
+			if f.vmm.checkSnapshotParent(t.Context(), f.lease, changed) == nil {
+				t.Fatal("capture accepted resume facts not retained by the native owner")
 			}
 			if result.ResumeEvidence.CommandCompletedAtUnixNano > result.ResumeEvidence.HostTimeUnixNano || result.ResumeEvidence.HostTimeUnixNano > result.ResumeEvidence.HookCompletedAtUnixNano || result.ResumeEvidence.HookCompletedAtUnixNano > result.ResumeEvidence.CompletedAtUnixNano || result.ResumeEvidence.HookCompletedAtUnixNano < hook.acked {
 				t.Fatal("resume/hook observation clocks are not ordered")

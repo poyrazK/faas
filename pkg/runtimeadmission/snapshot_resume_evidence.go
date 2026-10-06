@@ -15,7 +15,8 @@ import (
 const SnapshotResumeEvidenceVersion = 1
 
 // SnapshotResumeEvidence records acknowledgments coupled to an owned paused
-// load. It is not a Receipt and does not enable durable serving publication.
+// load. ParentBinding and ParentCompletedAtUnixNano allow a serving receipt to
+// reconstruct its complete original parent without a recursive receipt tree.
 // Only the native owner can establish the command, hook and process facts;
 // Check independently binds those facts to the complete historical receipt and
 // fresh grant. The original paused load hash is never replaced.
@@ -29,6 +30,8 @@ type SnapshotResumeEvidence struct {
 	HostTimeUnixNano           int64   `json:"host_time_unix_nano"`
 	HookCompletedAtUnixNano    int64   `json:"hook_completed_at_unix_nano"`
 	CompletedAtUnixNano        int64   `json:"completed_at_unix_nano"`
+	ParentBinding              Binding `json:"parent_binding"`
+	ParentCompletedAtUnixNano  int64   `json:"parent_completed_at_unix_nano"`
 }
 
 func (e SnapshotResumeEvidence) IsZero() bool { return e == (SnapshotResumeEvidence{}) }
@@ -44,7 +47,7 @@ func SnapshotResumeCommandHash() string {
 // paused load command, process start, exact drives and complete private mapping.
 // The fresh Promotion payload separately binds this same historical parent.
 func HashSnapshotResumeParent(r Receipt) (string, error) {
-	if r.Binding.ProtocolVersion != ArtifactProtocolVersion || !r.Paused || r.Method != vmmdpb.WakeMethod_WAKE_RESTORE || r.CompletedAtUnixNano <= 0 ||
+	if r.Binding.ProtocolVersion != ArtifactProtocolVersion || !r.Paused || !r.SnapshotResumeEvidence.IsZero() || r.Method != vmmdpb.WakeMethod_WAKE_RESTORE || r.CompletedAtUnixNano <= 0 ||
 		r.checkRuntimeIdentity(r.Binding, time.Unix(0, r.CompletedAtUnixNano)) != nil ||
 		r.SnapshotConsumption.Check(r.Binding, r.ArtifactConsumption, true) != nil {
 		return "", ErrInvalid
@@ -62,7 +65,7 @@ func (e SnapshotResumeEvidence) Check(p Promotion, drives ArtifactConsumption, s
 		return err
 	}
 	parentHash, err := HashSnapshotResumeParent(p.Parent)
-	if err != nil || e.Version != SnapshotResumeEvidenceVersion || e.Binding != p.Binding || e.ParentReceiptHash != parentHash ||
+	if err != nil || e.Version != SnapshotResumeEvidenceVersion || e.Binding != p.Binding || e.ParentBinding != p.Parent.Binding || e.ParentCompletedAtUnixNano != p.Parent.CompletedAtUnixNano || e.ParentReceiptHash != parentHash ||
 		e.ResumeCommandHash != SnapshotResumeCommandHash() || !ValidHash(e.ResumeHookPayloadHash) ||
 		!drives.Equal(p.Parent.ArtifactConsumption) || snapshot != p.Parent.SnapshotConsumption {
 		return ErrInvalid
@@ -74,4 +77,17 @@ func (e SnapshotResumeEvidence) Check(p Promotion, drives ArtifactConsumption, s
 		return ErrInvalid
 	}
 	return nil
+}
+
+// CheckReceipt validates the original paused load and fresh promotion payload
+// independently of a database lookup. Stores must additionally match that
+// reconstructed parent against their immutable, issued boot history.
+func (e SnapshotResumeEvidence) CheckReceipt(r Receipt, now time.Time) error {
+	if r.Paused || r.Binding != e.Binding || r.CompletedAtUnixNano != e.CompletedAtUnixNano || r.SnapshotResumeEvidence != e {
+		return ErrInvalid
+	}
+	parent := r.Clone()
+	parent.Binding, parent.Paused, parent.CompletedAtUnixNano = e.ParentBinding, true, e.ParentCompletedAtUnixNano
+	parent.SnapshotResumeEvidence = SnapshotResumeEvidence{}
+	return e.Check(Promotion{Binding: r.Binding, Parent: parent}, r.ArtifactConsumption, r.SnapshotConsumption, now)
 }

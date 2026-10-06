@@ -23,6 +23,11 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 	if p.Binding.NodeID != identity.NodeID || p.Binding.Incarnation != identity.Incarnation {
 		return nil, runtimeadmission.Receipt{}, runtimeadmission.ErrStale
 	}
+	if p.Binding.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion {
+		if _, ok := m.vmm.(resumedSnapshotVMM); !ok || m.runtimeSnapshotRestoreVersion() != runtimeadmission.SnapshotRestoreVersion {
+			return nil, runtimeadmission.Receipt{}, runtimeadmission.ErrUnavailable
+		}
+	}
 	flightCtx, cancel := context.WithDeadline(ctx, time.Unix(0, p.Binding.ExpiresAtUnixNano))
 	defer cancel()
 	unlock, err := m.lockAppEgressPolicyForWake(flightCtx, p.Binding.AppID)
@@ -36,12 +41,7 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 		return nil, runtimeadmission.Receipt{}, err
 	}
 	defer m.finishRuntimeAdmissionFlight(p.Binding.InstanceID, flight)
-	err = m.vmm.ResumeVM(flightCtx, inst.Lease)
-	if err == nil {
-		// KeepPaused skipped the restore hook. Complete entropy reseeding and
-		// clock correction before monitors or serving publication can start.
-		err = m.vmm.TriggerResumeHook(flightCtx, inst.Lease, time.Now().UnixNano())
-	}
+	r, err := m.resumeAdmittedRuntime(flightCtx, inst.Lease, p)
 	if err == nil {
 		m.mu.Lock()
 		if m.live[p.Binding.InstanceID] != inst || !inst.Paused || !inst.runtimeAdmissionReceipt.Equal(p.Parent) {
@@ -67,6 +67,9 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 	if err == nil && (m.live[p.Binding.InstanceID] != inst || inst.Paused || !inst.runtimeAdmissionReceipt.Equal(p.Parent)) {
 		err = runtimeadmission.ErrStale
 	}
+	if err == nil {
+		err = p.CheckReceipt(r, completed)
+	}
 	if err != nil {
 		m.finishRuntimeAdmissionFlightLocked(p.Binding.InstanceID, flight)
 		m.mu.Unlock()
@@ -74,12 +77,33 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 		defer cleanupCancel()
 		return nil, runtimeadmission.Receipt{}, errors.Join(err, m.Destroy(cleanupCtx, p.Binding.InstanceID))
 	}
-	r := p.Parent.Clone()
-	r.Binding, r.Paused, r.CompletedAtUnixNano = p.Binding, false, completed.UnixNano()
 	inst.Paused, inst.runtimeAdmissionReceipt = false, r.Clone()
 	m.finishRuntimeAdmissionFlightLocked(p.Binding.InstanceID, flight)
 	m.mu.Unlock()
 	return inst, r, nil
+}
+
+func (m *Manager) resumeAdmittedRuntime(ctx context.Context, lease Lease, p runtimeadmission.Promotion) (runtimeadmission.Receipt, error) {
+	if p.Binding.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion {
+		v, ok := m.vmm.(resumedSnapshotVMM)
+		if !ok {
+			return runtimeadmission.Receipt{}, runtimeadmission.ErrUnavailable
+		}
+		observation, err := v.PromoteSnapshotVerified(ctx, lease, p.Clone())
+		if err != nil {
+			return runtimeadmission.Receipt{}, err
+		}
+		return observation.receipt(p, time.Now())
+	}
+	if err := m.vmm.ResumeVM(ctx, lease); err != nil {
+		return runtimeadmission.Receipt{}, err
+	}
+	if err := m.vmm.TriggerResumeHook(ctx, lease, time.Now().UnixNano()); err != nil {
+		return runtimeadmission.Receipt{}, err
+	}
+	r := p.Parent.Clone()
+	r.Binding, r.Paused, r.CompletedAtUnixNano = p.Binding, false, time.Now().UnixNano()
+	return r, p.CheckReceipt(r, time.Now())
 }
 
 func (m *Manager) consumeRuntimePromotion(p runtimeadmission.Promotion, flight *runtimeAdmissionFlight) (*Instance, error) {

@@ -97,6 +97,9 @@ func (s *PgStore) IssueInstanceApplicationStandardPromotion(ctx context.Context,
 		return runtimeadmission.Promotion{}, err
 	}
 	p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = now.UnixNano(), expires.UnixNano()
+	if err := checkStandardSnapshotRestoreTx(ctx, tx, p.Binding, input.capture, now, nil); err != nil {
+		return runtimeadmission.Promotion{}, err
+	}
 	raw, err := json.Marshal(p.Binding)
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
@@ -151,6 +154,9 @@ func publishStandardPromotionTx(ctx context.Context, tx pgx.Tx, r runtimeadmissi
 		return Instance{}, err
 	}
 	if input.State != string(StateRunning) {
+		if err := checkStandardSnapshotRestoreTx(ctx, tx, r.Binding, input.capture, time.Unix(0, input.ClockUnixNano), &r); err != nil {
+			return Instance{}, err
+		}
 		if p.Receipt == nil {
 			if err := recordStandardPromotionReceipt(ctx, tx, r); err != nil {
 				return Instance{}, err

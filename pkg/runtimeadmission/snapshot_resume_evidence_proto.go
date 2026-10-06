@@ -9,7 +9,8 @@ func (e SnapshotResumeEvidence) ToProto() *vmmdpb.RuntimeSnapshotResumeEvidence 
 	return &vmmdpb.RuntimeSnapshotResumeEvidence{Version: e.Version, Binding: e.Binding.ToProto(), ParentReceiptHash: e.ParentReceiptHash,
 		ResumeCommandHash: e.ResumeCommandHash, ResumeHookPayloadHash: e.ResumeHookPayloadHash,
 		CommandCompletedAtUnixNano: e.CommandCompletedAtUnixNano, HostTimeUnixNano: e.HostTimeUnixNano,
-		HookCompletedAtUnixNano: e.HookCompletedAtUnixNano, CompletedAtUnixNano: e.CompletedAtUnixNano}
+		HookCompletedAtUnixNano: e.HookCompletedAtUnixNano, CompletedAtUnixNano: e.CompletedAtUnixNano,
+		ParentBinding: e.ParentBinding.ToProto(), ParentCompletedAtUnixNano: e.ParentCompletedAtUnixNano}
 }
 
 func SnapshotResumeEvidenceFromProto(p *vmmdpb.RuntimeSnapshotResumeEvidence) (SnapshotResumeEvidence, error) {
@@ -20,8 +21,13 @@ func SnapshotResumeEvidenceFromProto(p *vmmdpb.RuntimeSnapshotResumeEvidence) (S
 	if err != nil {
 		return SnapshotResumeEvidence{}, err
 	}
+	parent, err := BindingFromProto(p.ParentBinding)
+	if err != nil {
+		return SnapshotResumeEvidence{}, err
+	}
 	return SnapshotResumeEvidence{Version: p.Version, Binding: b, ParentReceiptHash: p.ParentReceiptHash,
 		ResumeCommandHash: p.ResumeCommandHash, ResumeHookPayloadHash: p.ResumeHookPayloadHash,
 		CommandCompletedAtUnixNano: p.CommandCompletedAtUnixNano, HostTimeUnixNano: p.HostTimeUnixNano,
-		HookCompletedAtUnixNano: p.HookCompletedAtUnixNano, CompletedAtUnixNano: p.CompletedAtUnixNano}, nil
+		HookCompletedAtUnixNano: p.HookCompletedAtUnixNano, CompletedAtUnixNano: p.CompletedAtUnixNano,
+		ParentBinding: parent, ParentCompletedAtUnixNano: p.ParentCompletedAtUnixNano}, nil
 }

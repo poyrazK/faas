@@ -131,7 +131,7 @@ func (m *MemStore) publishStandardRuntimeWithConfig(ctx context.Context, expecte
 	if err := ctx.Err(); err != nil {
 		return Instance{}, err
 	}
-	if !standardRuntimeReceiptTarget(next, receipt) {
+	if !receipt.SnapshotResumeEvidence.IsZero() || !standardRuntimeReceiptTarget(next, receipt) {
 		return Instance{}, ErrInvalidArgument
 	}
 	if receipt.Check(receipt.Binding, time.Now()) != nil {

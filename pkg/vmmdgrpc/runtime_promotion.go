@@ -57,6 +57,9 @@ func (s *Server) parseAdmittedPromotion(ctx context.Context, req *vmmdpb.Promote
 	if err != nil || i.Validate() != nil || i.NodeID != s.nodeID || i.NodeID != p.Binding.NodeID || i.Incarnation != p.Binding.Incarnation {
 		return nil, runtimeadmission.Promotion{}, admissionStatus(runtimeadmission.ErrStale)
 	}
+	if p.Binding.ProtocolVersion > i.ProtocolVersion || p.Binding.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion && i.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion {
+		return nil, runtimeadmission.Promotion{}, admissionStatus(runtimeadmission.ErrUnavailable)
+	}
 	return vmm, p, nil
 }
 

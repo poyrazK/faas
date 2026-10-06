@@ -2817,3 +2817,55 @@ Only the bound resume path rechecks historical load identity at its saved clock;
 it separately requires fresh promotion authority. Portable refusal tests and
 the Linux process fixture ensure that an expired original grant cannot produce
 an ordinary consumption observation or replace actual process ownership.
+
+
+## Durable measured promotion receipts (2026-10-06)
+
+The receipt now carries the checked resume evidence together with the original
+paused-load consumption. Historical parent binding and completion fields allow
+reconstruction of the entire original receipt without a recursive receipt tree.
+Its deterministic protobuf hash and the fresh promotion payload must both match.
+The serving receipt retains the exact paused load command, PID/start, drives and
+private mapping; separate command/hook hashes and ordered clocks prove resume.
+A boolean change, invented serving load command or substituted parent is refused.
+Receipt field 11 and resume fields 10–11 are additive. An absent resume proof
+keeps historical boot/capture protobuf and JSON encodings unchanged.
+
+Manager forwards a requested paused load only to a measured catalog backend
+with resume support, then calls its owned measured operation for protocol 2.
+It checks the returned proof before serving monitors or receipt publication and
+joins retirement on failure, cancellation or loss of current ownership. Legacy
+promotion remains a separate protocol-1 path. RPC validates the complete receipt
+and refuses unknown nested lineage; initial boot publication cannot carry resume
+proof. Scheduler probes the required capability, saves a fresh promotion grant
+before resume, and checks the returned receipt before atomic publication.
+
+MemStore and PgStore retain the immutable original boot receipt and separate
+issued promotion. First publication rechecks current policy, node incarnation,
+producer approval, catalog and expiry. A committed identical retry does not
+renew authority. The additive resume-receipt migration mirrors the complete
+proof and deterministic wire hashes for raw SQL, rejects proof submitted to a
+boot row, and fences the final warm-to-running transition against current catalog
+state. Previously applied migrations remain unchanged.
+
+A new capture selects the actual promoted serving receipt in both stores. The
+native owner retains its accepted resume evidence and reobserves the original
+process, drives and mapping before accepting it as a capture parent. An expired
+original boot grant remains historical identity; ordinary observation still
+requires current authority. Linux and non-Linux refusal tests assert their
+respective native ownership errors rather than conflating those platforms.
+
+Portable Manager, RPC and scheduler tests simulate native acknowledgments.
+Real PostgreSQL and MemStore tests cover complete promotion, altered proof,
+raw-writer refusal, SQL/protobuf parity, retry and capture of the promoted parent.
+Historical cross-tenant event/replay fixtures explicitly verify the creating
+account guard, seed pre-ADR-595 state only inside an isolated test schema or
+private test database, then restore the guard transactionally. Current writers
+continue to be refused.
+
+These software contracts supersede the implementation gaps recorded in the
+preceding resume checkpoints. Jailer restore advertisement remains zero and
+public activation remains disabled. Dedicated native test-metal/leakcheck,
+physical guest entropy/clock/isolation, real fleet recovery, remaining onboarding
+and environment scope, and all eleven release checklist items remain pending.
+The user confirmed no dedicated native acceptance host is available.

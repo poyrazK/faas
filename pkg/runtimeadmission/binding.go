@@ -117,23 +117,24 @@ func BindingFromProto(p *vmmdpb.RuntimeBootBinding) (Binding, error) {
 }
 
 type Receipt struct {
-	Binding             Binding             `json:"binding"`
-	NativeInputHash     string              `json:"native_input_hash"`
-	Netns               string              `json:"netns"`
-	HostIP              string              `json:"host_ip"`
-	LeaseUID            int32               `json:"lease_uid"`
-	Method              vmmdpb.WakeMethod   `json:"method"`
-	Paused              bool                `json:"paused"`
-	CompletedAtUnixNano int64               `json:"completed_at_unix_nano"`
-	ArtifactConsumption ArtifactConsumption `json:"artifact_consumption,omitzero"`
-	SnapshotConsumption SnapshotConsumption `json:"snapshot_consumption,omitzero"`
+	Binding                Binding                `json:"binding"`
+	NativeInputHash        string                 `json:"native_input_hash"`
+	Netns                  string                 `json:"netns"`
+	HostIP                 string                 `json:"host_ip"`
+	LeaseUID               int32                  `json:"lease_uid"`
+	Method                 vmmdpb.WakeMethod      `json:"method"`
+	Paused                 bool                   `json:"paused"`
+	CompletedAtUnixNano    int64                  `json:"completed_at_unix_nano"`
+	ArtifactConsumption    ArtifactConsumption    `json:"artifact_consumption,omitzero"`
+	SnapshotConsumption    SnapshotConsumption    `json:"snapshot_consumption,omitzero"`
+	SnapshotResumeEvidence SnapshotResumeEvidence `json:"snapshot_resume_evidence,omitzero"`
 }
 
 func (r Receipt) Check(binding Binding, now time.Time) error {
 	if err := r.checkRuntimeIdentity(binding, now); err != nil {
 		return err
 	}
-	return r.checkArtifactProtocol()
+	return r.checkArtifactProtocol(now)
 }
 
 func (r Receipt) checkRuntimeIdentity(binding Binding, now time.Time) error {
@@ -154,32 +155,30 @@ func (r Receipt) checkRuntimeIdentity(binding Binding, now time.Time) error {
 	return nil
 }
 
-func (r Receipt) checkArtifactProtocol() error {
+func (r Receipt) checkArtifactProtocol(now time.Time) error {
 	if r.Binding.ProtocolVersion == ProtocolVersion {
-		if !r.ArtifactConsumption.IsZero() || !r.SnapshotConsumption.IsZero() {
+		if !r.ArtifactConsumption.IsZero() || !r.SnapshotConsumption.IsZero() || !r.SnapshotResumeEvidence.IsZero() {
 			return ErrInvalid
 		}
 		return nil
-	}
-	// Paused restore remains unavailable until the native and durable
-	// promotion path carries complete load and resume lineage.
-	if r.Paused {
-		return ErrUnavailable
 	}
 	if r.Method == vmmdpb.WakeMethod_WAKE_RESTORE {
 		if r.SnapshotConsumption.IsZero() {
 			return ErrUnavailable
 		}
-		return r.SnapshotConsumption.Check(r.Binding, r.ArtifactConsumption, false)
+		if !r.SnapshotResumeEvidence.IsZero() {
+			return r.SnapshotResumeEvidence.CheckReceipt(r, now)
+		}
+		return r.SnapshotConsumption.Check(r.Binding, r.ArtifactConsumption, r.Paused)
 	}
-	if !r.SnapshotConsumption.IsZero() {
+	if r.Paused || !r.SnapshotConsumption.IsZero() || !r.SnapshotResumeEvidence.IsZero() {
 		return ErrInvalid
 	}
 	return r.ArtifactConsumption.Check(r.Binding.ArtifactSourcesHash)
 }
 
 func (r Receipt) Equal(other Receipt) bool {
-	return r.Binding == other.Binding && r.NativeInputHash == other.NativeInputHash && r.Netns == other.Netns && r.HostIP == other.HostIP && r.LeaseUID == other.LeaseUID && r.Method == other.Method && r.Paused == other.Paused && r.CompletedAtUnixNano == other.CompletedAtUnixNano && r.ArtifactConsumption.Equal(other.ArtifactConsumption) && r.SnapshotConsumption == other.SnapshotConsumption
+	return r.Binding == other.Binding && r.NativeInputHash == other.NativeInputHash && r.Netns == other.Netns && r.HostIP == other.HostIP && r.LeaseUID == other.LeaseUID && r.Method == other.Method && r.Paused == other.Paused && r.CompletedAtUnixNano == other.CompletedAtUnixNano && r.ArtifactConsumption.Equal(other.ArtifactConsumption) && r.SnapshotConsumption == other.SnapshotConsumption && r.SnapshotResumeEvidence == other.SnapshotResumeEvidence
 }
 
 func (r Receipt) Clone() Receipt {
@@ -188,7 +187,7 @@ func (r Receipt) Clone() Receipt {
 }
 
 func (r Receipt) ToProto() *vmmdpb.RuntimeBootReceipt {
-	return &vmmdpb.RuntimeBootReceipt{Binding: r.Binding.ToProto(), NativeInputHash: r.NativeInputHash, Netns: r.Netns, HostIp: r.HostIP, LeaseUid: r.LeaseUID, Method: r.Method, Paused: r.Paused, CompletedAtUnixNano: r.CompletedAtUnixNano, ArtifactConsumption: r.ArtifactConsumption.ToProto(), SnapshotConsumption: r.SnapshotConsumption.ToProto()}
+	return &vmmdpb.RuntimeBootReceipt{Binding: r.Binding.ToProto(), NativeInputHash: r.NativeInputHash, Netns: r.Netns, HostIp: r.HostIP, LeaseUid: r.LeaseUID, Method: r.Method, Paused: r.Paused, CompletedAtUnixNano: r.CompletedAtUnixNano, ArtifactConsumption: r.ArtifactConsumption.ToProto(), SnapshotConsumption: r.SnapshotConsumption.ToProto(), SnapshotResumeEvidence: r.SnapshotResumeEvidence.ToProto()}
 }
 
 func ReceiptFromProto(p *vmmdpb.RuntimeBootReceipt) (Receipt, error) {
@@ -207,5 +206,12 @@ func ReceiptFromProto(p *vmmdpb.RuntimeBootReceipt) (Receipt, error) {
 	if err != nil {
 		return Receipt{}, err
 	}
-	return Receipt{Binding: b, NativeInputHash: p.NativeInputHash, Netns: p.Netns, HostIP: p.HostIp, LeaseUID: p.LeaseUid, Method: p.Method, Paused: p.Paused, CompletedAtUnixNano: p.CompletedAtUnixNano, ArtifactConsumption: consumption, SnapshotConsumption: snapshot}, nil
+	var resume SnapshotResumeEvidence
+	if p.SnapshotResumeEvidence != nil {
+		resume, err = SnapshotResumeEvidenceFromProto(p.SnapshotResumeEvidence)
+		if err != nil {
+			return Receipt{}, err
+		}
+	}
+	return Receipt{Binding: b, NativeInputHash: p.NativeInputHash, Netns: p.Netns, HostIP: p.HostIp, LeaseUID: p.LeaseUid, Method: p.Method, Paused: p.Paused, CompletedAtUnixNano: p.CompletedAtUnixNano, ArtifactConsumption: consumption, SnapshotConsumption: snapshot, SnapshotResumeEvidence: resume}, nil
 }

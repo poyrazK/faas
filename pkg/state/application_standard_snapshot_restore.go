@@ -71,7 +71,8 @@ func checkStandardSnapshotReceipt(receipt *runtimeadmission.Receipt, record Appl
 		return nil
 	}
 	evidence, err := StandardSnapshotRestoreEvidence(record)
-	if err != nil || receipt.SnapshotConsumption.CheckEvidence(receipt.Binding, receipt.ArtifactConsumption, receipt.Paused, evidence, now) != nil {
+	pausedLoad := receipt.Paused || !receipt.SnapshotResumeEvidence.IsZero()
+	if err != nil || receipt.SnapshotConsumption.CheckEvidence(receipt.Binding, receipt.ArtifactConsumption, pausedLoad, evidence, now) != nil {
 		return ErrApplicationStandardRuntimeStale
 	}
 	return nil
