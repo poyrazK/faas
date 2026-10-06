@@ -13,6 +13,12 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		"app_binding_release_policies":            CloneSchemaConfiguration,
+		"app_binding_release_policy_history":      CloneSchemaConfiguration,
+		"alert_rollback_actions":                  CloneSchemaOperational,
+		"alert_historical_rollback_claims":        CloneSchemaOperational,
+		"deployment_recovery_lineage":             CloneSchemaOperational,
+		"deployment_rollback_operations":          CloneSchemaOperational,
 		"app_environment_secret_refs":             CloneSchemaConfiguration,
 		"app_environment_secret_ref_suppressions": CloneSchemaConfiguration,
 		"app_environment_workload_intents":        CloneSchemaConfiguration,
@@ -53,6 +59,16 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"project_environment_clone_object_grant_revocations": CloneSchemaOperational,
 
 		"customer_operation_code_pins":        CloneSchemaOperational,
+		"event_delivery_capacity":             CloneSchemaOperational,
+		"event_delivery_slots":                CloneSchemaOperational,
+		"event_fanout_history_summaries":      CloneSchemaOperational,
+		"event_fanout_recipients":             CloneSchemaOperational,
+		"event_routing_backlog":               CloneSchemaOperational,
+		"event_routing_fairness":              CloneSchemaOperational,
+		"event_storage_admission":             CloneSchemaOperational,
+		"invocation_attempt_history":          CloneSchemaOperational,
+		"invocation_keyed_replays":            CloneSchemaOperational,
+		"invocation_plain_replays":            CloneSchemaOperational,
 		"app_service_address_cursors":         CloneSchemaOperational,
 		"workflow_automation_definitions":     CloneSchemaConfiguration,
 		"workflow_event_receipts":             CloneSchemaOperational,

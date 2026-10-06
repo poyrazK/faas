@@ -1183,7 +1183,7 @@ export class StorageService {
   }
   /**
    * Request a durable exact version retention change
-   * Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+   * Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Separately enrolled event holds support ON with one days or years duration and OFF without a duration. Releasing an active hold preserves its observed retention bound and verifies the provider-calculated final date. Governance bypass is unsupported.
    * @returns ObjectVersionProtection Existing retention operation receipt
    * @returns Problem Retention mutation rejected by validation, capability, ownership or mutation fencing
    * @throws ApiError
@@ -1273,7 +1273,7 @@ export class StorageService {
   }
   /**
    * Request a durable exact version legal hold change
-   * Accept durable legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+   * Accept durable independent ON or OFF legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies exact-version readback without repeating a dispatched PUT. Retention and event hold policies remain independent.
    * @returns ObjectVersionProtection Existing legal hold operation receipt
    * @returns Problem Legal hold mutation rejected by validation, capability, ownership or mutation fencing
    * @throws ApiError

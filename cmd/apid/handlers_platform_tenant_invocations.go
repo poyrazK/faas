@@ -1,12 +1,8 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"net/http"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -74,42 +70,9 @@ func (s *server) replayPlatformTenantSelfInvocation(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	if orig.State != state.InvocationFailed && orig.State != state.InvocationDeadLetter {
-		api.WriteProblem(w, api.ErrInvocationNotReplayable(string(orig.State)))
+	if problem := plainReplayEligibility(orig); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	inv, err := s.enqueuePlatformTenantReplay(r.Context(), acct, orig, r.Header.Get("Idempotency-Key"))
-	if errors.Is(err, state.ErrPlatformTenantSuspended) {
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Platform tenant suspended", "resume this customer before replaying work"))
-		return
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("replay tenant invocation"))
-		return
-	}
-	writeJSON(w, http.StatusAccepted, api.AsyncInvokeResponse{ID: inv.ID,
-		StatusURL: "/v1/platform-tenant-self/invocations/" + inv.ID})
-}
-
-func (s *server) enqueuePlatformTenantReplay(ctx context.Context, acct state.Account, orig state.Invocation, idempotencyKey string) (state.Invocation, error) {
-	inv := state.Invocation{AppID: orig.AppID, AccountID: acct.ID, PlatformTenantID: orig.PlatformTenantID,
-		Source: state.InvocationReplay, Method: orig.Method, Path: orig.Path, Payload: orig.Payload,
-		Headers: orig.Headers, DueAt: time.Now().UTC(), RetryPolicyJSON: orig.RetryPolicyJSON,
-		DeadlineAt: deadlineForRequest(nil, acct), ResultRetentionUntil: retentionForRequest(nil, acct)}
-	// Ownership is checked before the idempotency lookup; account-wide response
-	// caching would disclose a customer's replay to another tenant on this path.
-	if key := idempotencyKey; key != "" {
-		inv.ID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale.dev/tenant-replay/v1\x00"+orig.PlatformTenantID+"\x00"+orig.ID+"\x00"+key)).String()
-	}
-	prepared, _, err := state.ResolveInvocationVersion(ctx, s.store, inv)
-	if err == nil {
-		inv, err = s.store.EnqueueInvocation(ctx, prepared)
-	}
-	if errors.Is(err, state.ErrConflict) && prepared.ID != "" {
-		inv, err = s.store.InvocationByID(ctx, prepared.ID)
-		if inv.PlatformTenantID != orig.PlatformTenantID || inv.AppID != orig.AppID || inv.AccountID != acct.ID {
-			err = state.ErrConflict
-		}
-	}
-	return inv, err
+	s.servePlainReplay(w, r, acct, orig, orig.RetryPolicyJSON, "/v1/platform-tenant-self/invocations/")
 }

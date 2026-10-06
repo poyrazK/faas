@@ -3325,12 +3325,13 @@ func IsValidAlertAction(v string) bool {
 // ignore a FailureSource change, which is a footgun — the field
 // exists nowhere on this struct on purpose.
 type UpdateAlertRuleParams struct {
-	Name       *string
-	Enabled    *bool
-	Metric     *AlertMetric
-	Comparison *AlertComparison
-	Threshold  *float64
-	WindowSpec *AlertWindowSpec
+	PostDeployRollbackWindowSeconds *int
+	Name                            *string
+	Enabled                         *bool
+	Metric                          *AlertMetric
+	Comparison                      *AlertComparison
+	Threshold                       *float64
+	WindowSpec                      *AlertWindowSpec
 	// Action (issue #976 / ADR-122 / SAFE-RELEASES-B). Pointer
 	// PATCH shape so a missing body field leaves the row alone.
 	// Validated against pkg/api.AllowedAlertRuleActions at the
@@ -3349,25 +3350,26 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
-	ID                  string
-	AccountID           string
-	AppID               string // empty = account-wide
-	Name                string
-	Enabled             bool
-	Metric              AlertMetric
-	Comparison          AlertComparison
-	Threshold           float64
-	WindowSpec          AlertWindowSpec
-	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
-	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
-	WebhookURL          string
-	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
-	CooldownMinutes     int
-	State               AlertState
-	LastFiredAt         time.Time // zero until first fire
-	LastEvaluatedAt     time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	PostDeployRollbackWindowSeconds int
+	ID                              string
+	AccountID                       string
+	AppID                           string // empty = account-wide
+	Name                            string
+	Enabled                         bool
+	Metric                          AlertMetric
+	Comparison                      AlertComparison
+	Threshold                       float64
+	WindowSpec                      AlertWindowSpec
+	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
+	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	WebhookURL                      string
+	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged
+	CooldownMinutes                 int
+	State                           AlertState
+	LastFiredAt                     time.Time // zero until first fire
+	LastEvaluatedAt                 time.Time
+	CreatedAt                       time.Time
+	UpdatedAt                       time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
@@ -4023,6 +4025,11 @@ type Invocation struct {
 	// ReplayGeneration fences deliveries across an operator retry-budget reset.
 	// It is ledger-owned and never accepted from customer headers or metadata.
 	ReplayGeneration int64 `json:"-"`
+	// Replay lineage is ledger-owned. Admission derives the root from the
+	// immediate parent, never from customer payloads or invocation headers.
+	ReplayedFromInvocationID string     `json:"-"`
+	ReplayRootInvocationID   string     `json:"-"`
+	ReplayRootCreatedAt      *time.Time `json:"-"`
 	// QuotaReserved records whether ClaimInvocationWithCap acquired one
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.
@@ -4288,6 +4295,7 @@ const (
 // sites across pkg/sched and the test suites; only the two deadline
 // paths in the drain need to say anything beyond the default.
 type FailOptions struct {
+	Claim *InvocationClaim
 	// Outcome overrides the terminal classification on the permanent
 	// branch (retryAfter == 0). Ignored on the transient-requeue
 	// branch, which leaves the row non-terminal and therefore
@@ -4321,6 +4329,16 @@ func WithDispatchNotStarted() FailOption { return func(f *FailOptions) { f.Dispa
 
 func WithClaimAttempt(attempt int) FailOption {
 	return func(f *FailOptions) { f.ClaimAttempt = attempt }
+}
+
+// WithInvocationClaim fences dispatch results across retries and in-place replay.
+func WithInvocationClaim(inv Invocation) FailOption {
+	return func(f *FailOptions) {
+		f.ClaimAttempt = inv.Attempts
+		if inv.Source == InvocationAsyncInvoke || inv.Source == InvocationReplay {
+			f.Claim = &InvocationClaim{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration}
+		}
+	}
 }
 
 // WithWorkClassification persists the application result and policy decision

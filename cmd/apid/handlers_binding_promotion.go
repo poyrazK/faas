@@ -144,6 +144,25 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 	if problem != nil {
 		return observation, problem
 	}
+	policyStore, ok := s.store.(state.BindingReleasePolicyStore)
+	if !ok {
+		return observation, api.ErrCapacity("binding release policies are unavailable")
+	}
+	releasePolicy, err := policyStore.GetBindingReleasePolicy(r.Context(), acct.ID, app.ID, deployment.Scope)
+	if err != nil {
+		return observation, api.ErrCapacity("binding release policy could not be read")
+	}
+	if releasePolicy.Mode == "enforce" {
+		storedAge, err := time.ParseDuration(releasePolicy.MaxVerificationAge)
+		if err != nil {
+			return observation, api.ErrCapacity("binding release policy is invalid")
+		}
+		if age > storedAge {
+			age = storedAge
+		}
+		req.AllowUnsupported = false
+		req.RequireApplicationAck = req.RequireApplicationAck || releasePolicy.RequireApplicationAck
+	}
 	inventoryRequest := r.Clone(r.Context())
 	query := inventoryRequest.URL.Query()
 	query.Set("deployment_id", deployment.ID)
@@ -160,7 +179,7 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 	}
 	deadline, expiration := bindingPromotionDeadline(observation.report, inventory, age)
 	observation.expiration = expiration
-	observation.fence = state.BindingPromotionFence{AccountID: acct.ID, AppID: app.ID, DeploymentID: deployment.ID, Scope: report.Scope, Revision: revision, ValidUntil: deadline}
+	observation.fence = state.BindingPromotionFence{AccountID: acct.ID, AppID: app.ID, DeploymentID: deployment.ID, Scope: report.Scope, Revision: revision, ValidUntil: deadline, PolicyRevision: releasePolicy.Revision, MaxVerificationAge: age, AllowUnsupported: req.AllowUnsupported, RequireApplicationAck: req.RequireApplicationAck}
 	return observation, nil
 }
 
@@ -223,6 +242,10 @@ func bindingPromotionProblem(code, title, detail string, report api.BindingCheck
 
 func bindingPromotionWriteProblem(err error, report api.BindingCheckReport, expiration api.BindingCheckFinding) *api.Problem {
 	switch {
+	case errors.Is(err, state.ErrCheckedRollbackRequired):
+		return api.NewProblem(http.StatusConflict, "rollback_operation_required", "Checked rollback in progress", "Use the exact rollback operation status to inspect this traffic handoff.")
+	case state.IsBindingReleaseRequired(err):
+		return bindingReleaseRequiredProblem()
 	case errors.Is(err, state.ErrBindingPromotionChanged), errors.Is(err, state.ErrBindingPromotionExpired), errors.Is(err, managedpostgres.ErrConflict):
 		report.Passed = false
 		finding := api.BindingCheckFinding{Code: "promotion_observations_changed", Scope: report.Scope, DeploymentID: report.DeploymentID,

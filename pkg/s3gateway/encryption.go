@@ -92,6 +92,11 @@ func (h *Handler) encryptionContext(ctx context.Context, req requestContext) con
 }
 
 func (h *Handler) ensureCapturedMultipart(ctx context.Context, req requestContext, u state.ObjectMultipartUpload) (string, error) {
+	var err error
+	ctx, err = h.protectionContext(ctx, req, u.Protection)
+	if err != nil {
+		return "", err
+	}
 	r := objectstorage.MultipartCreateRequest{SessionID: u.ID, Key: u.Key, SizeBytes: u.SizeBytes,
 		Metadata: objectstorage.ObjectMetadata{ContentType: u.ContentType, CacheControl: u.Metadata.CacheControl,
 			ContentDisposition: u.Metadata.ContentDisposition, ContentEncoding: u.Metadata.ContentEncoding,

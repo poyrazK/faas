@@ -89,15 +89,18 @@ def sync_detailed(
 
      Accept durable retention intent with storage manage scope, a bucket write grant and backend
     enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward
-    to milliseconds. Event hold changes and governance bypass are unsupported.
+    to milliseconds. Separately enrolled event holds support ON with one days or years duration and OFF
+    without a duration. Releasing an active hold preserves its observed retention bound and verifies the
+    provider-calculated final date. Governance bypass is unsupported.
 
     Args:
         slug (str):
         bucket (UUID):
         key (str):
         version_id (str):
-        body (ObjectVersionRetentionRequest): Stable identity and fixed retention intent for an
-            owned version.
+        body (ObjectVersionRetentionRequest): Stable identity and fixed or enrolled event hold
+            retention intent for an owned version. ON requires a duration; OFF omits duration and
+            requires a previously active hold unless a fixed date is supplied.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,15 +138,18 @@ def sync(
 
      Accept durable retention intent with storage manage scope, a bucket write grant and backend
     enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward
-    to milliseconds. Event hold changes and governance bypass are unsupported.
+    to milliseconds. Separately enrolled event holds support ON with one days or years duration and OFF
+    without a duration. Releasing an active hold preserves its observed retention bound and verifies the
+    provider-calculated final date. Governance bypass is unsupported.
 
     Args:
         slug (str):
         bucket (UUID):
         key (str):
         version_id (str):
-        body (ObjectVersionRetentionRequest): Stable identity and fixed retention intent for an
-            owned version.
+        body (ObjectVersionRetentionRequest): Stable identity and fixed or enrolled event hold
+            retention intent for an owned version. ON requires a duration; OFF omits duration and
+            requires a previously active hold unless a fixed date is supplied.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,15 +182,18 @@ async def asyncio_detailed(
 
      Accept durable retention intent with storage manage scope, a bucket write grant and backend
     enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward
-    to milliseconds. Event hold changes and governance bypass are unsupported.
+    to milliseconds. Separately enrolled event holds support ON with one days or years duration and OFF
+    without a duration. Releasing an active hold preserves its observed retention bound and verifies the
+    provider-calculated final date. Governance bypass is unsupported.
 
     Args:
         slug (str):
         bucket (UUID):
         key (str):
         version_id (str):
-        body (ObjectVersionRetentionRequest): Stable identity and fixed retention intent for an
-            owned version.
+        body (ObjectVersionRetentionRequest): Stable identity and fixed or enrolled event hold
+            retention intent for an owned version. ON requires a duration; OFF omits duration and
+            requires a previously active hold unless a fixed date is supplied.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -220,15 +229,18 @@ async def asyncio(
 
      Accept durable retention intent with storage manage scope, a bucket write grant and backend
     enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward
-    to milliseconds. Event hold changes and governance bypass are unsupported.
+    to milliseconds. Separately enrolled event holds support ON with one days or years duration and OFF
+    without a duration. Releasing an active hold preserves its observed retention bound and verifies the
+    provider-calculated final date. Governance bypass is unsupported.
 
     Args:
         slug (str):
         bucket (UUID):
         key (str):
         version_id (str):
-        body (ObjectVersionRetentionRequest): Stable identity and fixed retention intent for an
-            owned version.
+        body (ObjectVersionRetentionRequest): Stable identity and fixed or enrolled event hold
+            retention intent for an owned version. ON requires a duration; OFF omits duration and
+            requires a previously active hold unless a fixed date is supplied.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

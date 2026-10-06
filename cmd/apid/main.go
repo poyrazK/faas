@@ -717,6 +717,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
 		go srv.runSafeReleaseEmergencyAbort(ctx)
+		go srv.runServiceRolloutBindingWorker(ctx)
+		go srv.runCheckedRollbackWorker(ctx)
+		go srv.runAlertRollbackWorker(ctx)
 		go srv.runOperationArtifactCleanup(ctx)
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)

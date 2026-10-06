@@ -48,7 +48,7 @@ func optionalURLUUID(id string) pgtype.UUID {
 }
 
 func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Credential, receipt ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectS3Credential, ObjectUploadCompletion, error) {
-	if receipt.EncryptionDefaultRevision != 0 || !validObjectURLCredential(c, receipt, time.Now()) {
+	if !receipt.Protection.ValidInput() || receipt.VerifiedProtection != "" || receipt.EncryptionDefaultRevision != 0 || !validObjectURLCredential(c, receipt, time.Now()) {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrConflict
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -57,6 +57,9 @@ func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Creden
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
+	}
 	if _, err = q.ObjectURLCredentialLockBucket(ctx, tx, sqlc.ObjectURLCredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
 	}
@@ -69,11 +72,12 @@ func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Creden
 			return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(fenceErr)
 		}
 	}
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
-		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
-	}
 	if c.URL.Request.Method == http.MethodPut {
 		receipt.Encryption, receipt.EncryptionDefaultRevision, err = captureObjectBucketDefaultSQL(ctx, tx, receipt.BucketID, receipt.Encryption)
+		if err != nil {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, err
+		}
+		receipt.Protection, err = captureObjectWriteProtectionSQL(ctx, tx, receipt.BucketID, receipt.Protection)
 		if err != nil {
 			return ObjectS3Credential{}, ObjectUploadCompletion{}, err
 		}
@@ -134,6 +138,10 @@ func issueObjectURLWriteSQL(ctx context.Context, tx pgx.Tx, credential ObjectS3C
 	if b.State != "ready" {
 		return c, ErrConflict
 	}
+	protection, err := protectionSnapshotJSON(c.Protection)
+	if err != nil {
+		return c, err
+	}
 	encryption, err := encryptionSnapshotJSON(c.Encryption)
 	if err != nil {
 		return c, err
@@ -141,7 +149,7 @@ func issueObjectURLWriteSQL(ctx context.Context, tx pgx.Tx, credential ObjectS3C
 	if err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID, true); err != nil {
 		return c, err
 	}
-	row, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: "gateway", EncryptionSnapshot: encryption, EncryptionDefaultRevision: c.EncryptionDefaultRevision, RetrySeconds: int32(credential.URL.Request.ExpiresIn)})
+	row, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: "gateway", ProtectionSnapshot: protection, EncryptionSnapshot: encryption, EncryptionDefaultRevision: c.EncryptionDefaultRevision, RetrySeconds: int32(credential.URL.Request.ExpiresIn)})
 	if err != nil {
 		return c, mapErr(err)
 	}

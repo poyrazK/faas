@@ -140,7 +140,25 @@ channels:
         $ref: '#/components/messages/PlatformTenantCustomerOffboarded'
   internalEventPublish:
     address: /v1/events:publish
-    description: Publish one tenant-scoped event for asynchronous content-based fanout.
+    description: |
+      Publish one tenant-scoped event for durable asynchronous content-based
+      fanout. Acceptance acknowledges routing intent, not handler completion.
+      The HTTP 202 response includes a receipt_url (also the Location header)
+      for GET /v1/events/receipt?source=SOURCE&id=ID. It exposes all captured
+      candidates, routing checkpoints, original execution or cancellation
+      evidence, latest trusted handler replay recovery and paginated replay
+      history, and selective recovery requests. Identical publish retries
+      preserve the original accepted_at timestamp.
+      With independent recipient routing enabled, each captured subscription
+      has its own routing lease, retry schedule, and selective replay budget.
+      Handler execution is at least once. Routing and in-place dead-letter
+      recovery preserve invocation identity; generic handler replay creates a
+      new invocation with ledger-owned parent/root lineage.
+      Failed keyed handler recovery uses a dedicated replay operation which
+      retains the captured work policy and appends to its existing key lane
+      without superseding newer work or renewing the original pending expiry.
+      Repeated requests for that failed execution return the same child.
+      Events have no publication-order guarantee across or within subscriptions.
     servers:
       - $ref: '#/servers/api'
     messages:

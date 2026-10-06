@@ -193,6 +193,11 @@ type AlertDelivery struct {
 	IsTest         bool
 }
 
+type AlertHistoricalRollbackClaim struct {
+	DeploymentID pgtype.UUID
+	FireID       pgtype.UUID
+}
+
 type AlertPreset struct {
 	ID                     pgtype.UUID
 	Name                   string
@@ -210,27 +215,36 @@ type AlertPreset struct {
 	UpdatedAt              pgtype.Timestamptz
 }
 
+type AlertRollbackAction struct {
+	FireID    pgtype.UUID
+	AppID     pgtype.UUID
+	Status    string
+	Receipt   []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AlertRule struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	Name                string
-	Enabled             bool
-	Metric              string
-	Comparison          string
-	Threshold           float64
-	WindowSpec          string
-	FailureSource       pgtype.Text
-	WebhookUrl          string
-	WebhookSecretSealed []byte
-	CooldownMinutes     int32
-	State               string
-	LastFiredAt         pgtype.Timestamptz
-	LastEvaluatedAt     pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	OrgID               pgtype.UUID
-	Action              string
+	ID                              pgtype.UUID
+	AccountID                       pgtype.UUID
+	AppID                           pgtype.UUID
+	Name                            string
+	Enabled                         bool
+	Metric                          string
+	Comparison                      string
+	Threshold                       float64
+	WindowSpec                      string
+	FailureSource                   pgtype.Text
+	WebhookUrl                      string
+	WebhookSecretSealed             []byte
+	CooldownMinutes                 int32
+	State                           string
+	LastFiredAt                     pgtype.Timestamptz
+	LastEvaluatedAt                 pgtype.Timestamptz
+	CreatedAt                       pgtype.Timestamptz
+	UpdatedAt                       pgtype.Timestamptz
+	OrgID                           pgtype.UUID
+	Action                          string
+	PostDeployRollbackWindowSeconds int32
 }
 
 type ApiConsumer struct {
@@ -439,9 +453,29 @@ type AppApiRoute struct {
 }
 
 type AppBindingPromotionRevision struct {
-	AppID    pgtype.UUID
-	Epoch    pgtype.UUID
-	Revision int64
+	AppID           pgtype.UUID
+	Epoch           pgtype.UUID
+	Revision        int64
+	ServiceRevision int64
+}
+
+type AppBindingReleasePolicy struct {
+	AppID                 pgtype.UUID
+	Scope                 string
+	Mode                  string
+	Revision              int64
+	MaxAgeSeconds         int64
+	RequireApplicationAck bool
+	Reason                string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type AppBindingReleasePolicyHistory struct {
+	AppID     pgtype.UUID
+	Scope     string
+	Revision  int64
+	Policy    []byte
+	ChangedAt pgtype.Timestamptz
 }
 
 type AppCpuPolicyNodeStatus struct {
@@ -1795,11 +1829,27 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentRecoveryLineage struct {
+	DeploymentID            pgtype.UUID
+	PredecessorDeploymentID pgtype.UUID
+}
+
 type DeploymentRevisionPin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	ExpiresAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
+}
+
+type DeploymentRollbackOperation struct {
+	ID                  pgtype.UUID
+	AppID               pgtype.UUID
+	Scope               string
+	TargetDeploymentID  pgtype.UUID
+	CurrentDeploymentID pgtype.UUID
+	Status              string
+	Receipt             []byte
+	UpdatedAt           pgtype.Timestamptz
 }
 
 type DeploymentRoutePolicySnapshot struct {
@@ -2193,39 +2243,132 @@ type Event struct {
 	OutboxID       pgtype.Int8
 }
 
-type EventFanoutAttemptHistory struct {
-	ID             int64
-	OutboxID       int64
+type EventDeliveryCapacity struct {
+	AccountID     pgtype.UUID
+	ConsumerLimit int32
+	AppLimit      int32
+	AccountLimit  int32
+}
+
+type EventDeliverySlot struct {
+	InvocationID   pgtype.UUID
+	AccountID      pgtype.UUID
 	AppID          pgtype.UUID
 	SubscriptionID string
-	Action         string
-	State          string
-	Attempts       int32
-	FailureCode    string
-	Retryable      bool
-	LastError      string
-	OccurredAt     pgtype.Timestamptz
+}
+
+type EventFanoutAttemptHistory struct {
+	ID                int64
+	OutboxID          int64
+	AppID             pgtype.UUID
+	SubscriptionID    string
+	Action            string
+	State             string
+	Attempts          int32
+	FailureCode       string
+	Retryable         bool
+	LastError         string
+	OccurredAt        pgtype.Timestamptz
+	CapacityScope     string
+	CapacityDeferrals int64
+	DetailsTruncated  bool
+	HistoryBytes      int64
+}
+
+type EventFanoutHistorySummary struct {
+	OutboxID                 int64
+	SubscriptionID           string
+	AppID                    pgtype.UUID
+	ObservedOutcomes         int64
+	CapacityDeferrals        int64
+	CoalescedOutcomes        int64
+	CompactedOutcomes        int64
+	CompactedThroughID       int64
+	CompactedThroughAt       pgtype.Timestamptz
+	FirstCapacityWaitAt      pgtype.Timestamptz
+	LastCapacityWaitAt       pgtype.Timestamptz
+	LastCapacityScope        string
+	LastOutcomeCapacityScope string
+	LastWasCoalesced         bool
+	LatestID                 int64
+	LatestFailureID          int64
+	LatestReplayID           int64
+	NextPruneAt              pgtype.Timestamptz
 }
 
 type EventFanoutOutbox struct {
-	ID                int64
+	ID                   int64
+	AccountID            pgtype.UUID
+	Source               string
+	EventID              string
+	EventType            string
+	SchemaVersion        pgtype.Text
+	EventData            []byte
+	Payload              []byte
+	State                string
+	Attempts             int32
+	AvailableAt          pgtype.Timestamptz
+	LeaseUntil           pgtype.Timestamptz
+	ClaimToken           pgtype.UUID
+	LastError            pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	DeliveredAt          pgtype.Timestamptz
+	RecipientSnapshot    []byte
+	RecipientProgress    []byte
+	RecipientClaims      bool
+	CustomerStorageBytes int64
+}
+
+type EventFanoutRecipient struct {
+	OutboxID                    int64
+	SubscriptionID              string
+	AppID                       pgtype.UUID
+	Recipient                   []byte
+	State                       string
+	Generation                  int64
+	Attempts                    int32
+	TotalAttempts               int32
+	AvailableAt                 pgtype.Timestamptz
+	ClaimToken                  pgtype.UUID
+	LeaseUntil                  pgtype.Timestamptz
+	CapacityDeferrals           int32
+	GenerationCapacityDeferrals int32
+}
+
+type EventRoutingBacklog struct {
+	OutboxID          int64
+	SubscriptionID    string
 	AccountID         pgtype.UUID
-	Source            string
-	EventID           string
-	EventType         string
-	SchemaVersion     pgtype.Text
-	EventData         []byte
-	Payload           []byte
-	State             string
+	AppID             pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+	RoutingMode       string
+	RoutingState      string
+	CapacityScope     string
 	Attempts          int32
-	AvailableAt       pgtype.Timestamptz
+	CapacityDeferrals int32
+	NextAttemptAt     pgtype.Timestamptz
 	LeaseUntil        pgtype.Timestamptz
-	ClaimToken        pgtype.UUID
-	LastError         pgtype.Text
-	CreatedAt         pgtype.Timestamptz
-	DeliveredAt       pgtype.Timestamptz
-	RecipientSnapshot []byte
-	RecipientProgress []byte
+}
+
+type EventRoutingBacklogSource struct {
+	OutboxID          int64
+	SubscriptionID    interface{}
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+	RoutingMode       string
+	RoutingState      interface{}
+	CapacityScope     string
+	Attempts          interface{}
+	CapacityDeferrals interface{}
+	NextAttemptAt     pgtype.Timestamptz
+	LeaseUntil        interface{}
+}
+
+type EventRoutingFairness struct {
+	AccountID      pgtype.UUID
+	SubscriptionID string
+	LastClaimedAt  pgtype.Timestamptz
 }
 
 type EventSchema struct {
@@ -2235,6 +2378,10 @@ type EventSchema struct {
 	Version   string
 	Schema    []byte
 	CreatedAt pgtype.Timestamptz
+}
+
+type EventStorageAdmission struct {
+	AccountID pgtype.UUID
 }
 
 type EventSubscription struct {
@@ -2778,6 +2925,25 @@ type Invocation struct {
 	ReplayGeneration         int64
 	OutcomeCode              string
 	EnvironmentID            pgtype.UUID
+	ReplayRootInvocationID   pgtype.UUID
+	ReplayRootCreatedAt      pgtype.Timestamptz
+}
+
+type InvocationAttemptHistory struct {
+	ID               int64
+	InvocationID     pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	RootInvocationID pgtype.UUID
+	RootCreatedAt    pgtype.Timestamptz
+	ReplayGeneration int64
+	Attempt          int32
+	StartedAt        pgtype.Timestamptz
+	FinishedAt       pgtype.Timestamptz
+	Outcome          string
+	ErrorDetail      string
+	NextAttemptAt    pgtype.Timestamptz
+	RetainUntil      pgtype.Timestamptz
 }
 
 type InvocationEnvironmentQueueAdmission struct {
@@ -2803,6 +2969,17 @@ type InvocationEnvironmentQueueReceipt struct {
 	OwnerHash      string
 	IssuedAt       pgtype.Timestamptz
 	LeaseExpiresAt pgtype.Timestamptz
+}
+
+type InvocationKeyedReplay struct {
+	ParentInvocationID pgtype.UUID
+	ReplayInvocationID pgtype.UUID
+}
+
+type InvocationPlainReplay struct {
+	ParentInvocationID pgtype.UUID
+	ReplayInvocationID pgtype.UUID
+	ReplayCreatedAt    pgtype.Timestamptz
 }
 
 type InvocationWorkCancellation struct {
@@ -3817,6 +3994,9 @@ type ObjectDeletion struct {
 	LifecycleBinding        []byte
 	TargetProviderVersionID string
 	RecoveryClaimed         bool
+	ProtectionRequired      bool
+	ProtectionVerified      bool
+	DeletionVerified        bool
 }
 
 type ObjectLifecycleScan struct {
@@ -4027,6 +4207,9 @@ type ObjectStorageMultipartUpload struct {
 	EncryptionVerified         bool
 	FixedAdmission             bool
 	EncryptionDefaultRevision  int64
+	ProtectionSnapshot         []byte
+	ProtectionLeaseToken       string
+	ProtectionVerified         bool
 }
 
 type ObjectStorageRequestMetric struct {
@@ -4159,6 +4342,9 @@ type ObjectUploadCompletion struct {
 	EncryptionDefaultRevision int64
 	SourceBucketID            pgtype.UUID
 	SourceCopyGrantID         pgtype.UUID
+	ProtectionSnapshot        []byte
+	ProtectionDispatched      bool
+	ProtectionVerified        bool
 }
 
 type ObjectUploadRoute struct {
@@ -4177,22 +4363,23 @@ type ObjectUploadRoute struct {
 }
 
 type ObjectVersionProtection struct {
-	ID              pgtype.UUID
-	BucketID        pgtype.UUID
-	AccountID       pgtype.UUID
-	AppID           pgtype.UUID
-	ObjectKey       string
-	PublicVersionID string
-	NativeVersionID string
-	Intent          []byte
-	State           string
-	LeaseToken      string
-	LeaseUntil      pgtype.Timestamptz
-	RetryAt         pgtype.Timestamptz
-	Dispatched      bool
-	LastErrorCode   string
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	ObjectKey         string
+	PublicVersionID   string
+	NativeVersionID   string
+	Intent            []byte
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	Dispatched        bool
+	LastErrorCode     string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	EventHoldBaseline []byte
 }
 
 type ObjectVersionReference struct {

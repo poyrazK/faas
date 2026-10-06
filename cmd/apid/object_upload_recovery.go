@@ -63,6 +63,7 @@ func (s *server) confirmObjectUpload(ctx context.Context, st state.ObjectTracked
 		c.Status = "completed"
 		c.ETag = result.ETag
 		c.ProviderVersionID = result.ProviderVersionID
+		c.VerifiedProtection = result.VerifiedProtection
 		c.VerifiedEncryption = result.Encryption
 		c.ErrorCode = ""
 		_, err = st.FinishTrackedObjectUploadRecovery(finishCtx, c)
@@ -113,6 +114,10 @@ func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadComp
 			return objectstorage.ErrConfiguration
 		}
 		return metrics.RecordObjectStorageProviderRequest(ctx, c.BucketID, time.Now().UTC())
+	}
+	ctx, err = objectstorage.WithObjectWriteProtection(ctx, backend.Provider, c.Protection, before)
+	if err != nil {
+		return page, err
 	}
 	if err = before(ctx); err != nil {
 		return page, err

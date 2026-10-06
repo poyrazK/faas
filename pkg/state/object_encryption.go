@@ -115,12 +115,13 @@ func encryptionSnapshotFromJSON(data []byte, account string) (ObjectEncryptionSn
 }
 
 func cloneObjectUploadCompletion(c ObjectUploadCompletion) ObjectUploadCompletion {
+	c.Protection = c.Protection.Clone()
 	c.Encryption = c.Encryption.Clone()
 	c.VerifiedEncryption = cloneEncryptionSelection(c.VerifiedEncryption)
 	return c
 }
 
 func validTrackedEncryptionResult(old, c ObjectUploadCompletion) bool {
-	return sameCopySourceProvenance(old, c) && old.EncryptionDefaultRevision == c.EncryptionDefaultRevision && old.Encryption.Equal(c.Encryption) && old.Encryption.ValidFor(old.AccountID) &&
+	return validTrackedProtectionResult(old, c) && sameCopySourceProvenance(old, c) && old.EncryptionDefaultRevision == c.EncryptionDefaultRevision && old.Encryption.Equal(c.Encryption) && old.Encryption.ValidFor(old.AccountID) &&
 		(c.Status != "completed" && c.VerifiedEncryption.Empty() || c.Status == "completed" && equalEncryptionSelection(old.Encryption.Selection, c.VerifiedEncryption))
 }

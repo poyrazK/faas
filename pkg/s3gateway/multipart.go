@@ -154,6 +154,22 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 			h.settleMultipartTransfer(transferCtx, req, upload.ID, part, transferToken, transfers)
 		}
 	}()
+	body := io.Reader(integrity)
+	if !upload.Protection.Empty() {
+		file, checksum, cleanup, ok := h.stageProtectedMultipartPart(w, r, req, integrity)
+		if !ok {
+			return
+		}
+		defer cleanup()
+		body = file
+		var bindErr error
+		transferCtx, bindErr = h.protectionContext(transferCtx, req, upload.Protection)
+		if bindErr != nil {
+			h.providerError(w, r, req, bindErr, key)
+			return
+		}
+		transferCtx = objectstorage.WithObjectWriteChecksum(transferCtx, checksum)
+	}
 	if req.credential.URL == nil && !h.recordProviderRequest(w, r, req) {
 		return
 	}
@@ -164,7 +180,7 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		h.providerError(w, r, req, err, key)
 		return
 	}
-	upstream, err := http.NewRequestWithContext(transferCtx, http.MethodPut, signed.URL, io.LimitReader(integrity, r.ContentLength))
+	upstream, err := http.NewRequestWithContext(transferCtx, http.MethodPut, signed.URL, io.LimitReader(body, r.ContentLength))
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
@@ -463,7 +479,7 @@ func (h *Handler) admitPublicMultipart(w http.ResponseWriter, r *http.Request, r
 	}
 	upload, err := store.ReserveObjectMultipartUpload(r.Context(), state.ObjectMultipartUpload{
 		ID: uuid.NewString(), AccountID: req.credential.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID,
-		Key: key, ContentType: metadata.ContentType, Encryption: req.encryption.Clone(), ExpiresAt: h.now().UTC().Add(publicMultipartTTL),
+		Key: key, ContentType: metadata.ContentType, Protection: req.protection.Clone(), Encryption: req.encryption.Clone(), ExpiresAt: h.now().UTC().Add(publicMultipartTTL),
 		Metadata: state.ObjectMultipartMetadata{
 			CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition,
 			ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage,

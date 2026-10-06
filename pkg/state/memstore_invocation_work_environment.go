@@ -20,7 +20,7 @@ func cloneInvocationWorkEnvelope(inv Invocation) Invocation {
 	inv.Headers = append(json.RawMessage(nil), inv.Headers...)
 	inv.WorkKeyDigest = append([]byte(nil), inv.WorkKeyDigest...)
 	inv.WorkFairnessDigest = append([]byte(nil), inv.WorkFairnessDigest...)
-	for _, field := range []**time.Time{&inv.WorkExpiresAt, &inv.ScheduledAt, &inv.LeaseExpiresAt, &inv.ReceivedAt, &inv.CompletedAt, &inv.DeadlineAt, &inv.ResultRetentionUntil, &inv.LastReplayedAt} {
+	for _, field := range []**time.Time{&inv.WorkExpiresAt, &inv.ScheduledAt, &inv.LeaseExpiresAt, &inv.ReceivedAt, &inv.CompletedAt, &inv.DeadlineAt, &inv.ResultRetentionUntil, &inv.LastReplayedAt, &inv.ReplayRootCreatedAt} {
 		if *field != nil {
 			value := **field
 			*field = &value
