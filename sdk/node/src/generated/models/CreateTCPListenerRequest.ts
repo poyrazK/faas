@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TCPListenerTLSConfig } from './TCPListenerTLSConfig.js';
 /**
  * Request to expose one workload TCP port.
  */
@@ -12,5 +13,6 @@ export type CreateTCPListenerRequest = {
    * Optional stable public port; Gregale allocates one when omitted.
    */
   public_port?: number;
+  tls?: TCPListenerTLSConfig;
 };
 

@@ -26,7 +26,7 @@ func (m *MemStore) CompleteBuild(_ context.Context, claim Build, path, key strin
 	if prov.SBOMStorageKey == "" {
 		prov.SBOMStorageKey = m.buildProvenance[claim.ID].SBOMStorageKey
 	}
-	m.deployments[dep.ID] = dep
+	m.putDeploymentLocked(dep.ID, dep)
 	m.builds[b.ID] = b
 	m.buildProvenance[b.ID] = prov
 	return nil
@@ -39,6 +39,9 @@ func (m *MemStore) ListBuildsAwaitingImage(_ context.Context, nodeID string, lim
 	for _, b := range m.builds {
 		dep, ok := m.deployments[b.DeploymentID]
 		if !ok || (dep.Status != DeployPending && dep.Status != DeployBuilding) || dep.RootfsPath == "" || b.Status != BuildSucceeded {
+			continue
+		}
+		if _, started := m.imagePreparations[dep.ID]; started {
 			continue
 		}
 		prov, ok := m.buildProvenance[b.ID]
@@ -74,6 +77,9 @@ func (m *MemStore) FailBuild(_ context.Context, claim Build, fc FailureClass, me
 	d, ok := m.deployments[claim.DeploymentID]
 	if !ok || (d.Status != DeployPending && d.Status != DeployBuilding) {
 		return ErrNotFound
+	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return err
 	}
 	b.Status, b.FailureClass, b.FinishedAt = BuildFailed, fc, time.Now()
 	m.builds[b.ID] = b

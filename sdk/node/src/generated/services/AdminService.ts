@@ -564,6 +564,7 @@ export class AdminService {
         401: `code: unauthorized`,
         403: `code: admin_required — call requires an admin-scoped Bearer with the caller email in FAAS_ADMIN_EMAILS AND a verified MFA factor.`,
         404: `code: not_found`,
+        409: `Invoice was imported from history without a verifiable historical Gregale plan; credit proration is not available.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

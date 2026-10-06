@@ -55,6 +55,11 @@ func TestNodeFixture_Shape(t *testing.T) {
 		"package.json", "index.js", "faas-build-token")
 }
 
+func TestManagedWorkflowRecoveryFixture_Shape(t *testing.T) {
+	assertFixtureContains(t, ManagedWorkflowRecoveryFixture(t, "00000000-0000-4000-8000-000000000001"),
+		"package.json", "index.js", "gregale.yaml", "faas-build-token")
+}
+
 func TestPythonFixture_Shape(t *testing.T) {
 	assertFixtureContains(t, PythonFixture(t),
 		"requirements.txt", "app.py", "faas-build-token")
@@ -73,4 +78,8 @@ func TestGoFixture_Shape(t *testing.T) {
 func TestGoDockerfileFixture_Shape(t *testing.T) {
 	assertFixtureContains(t, GoDockerfileFixture(t),
 		"Dockerfile", "go.mod", "main.go", "faas-build-token")
+}
+
+func TestNodeFixtureUDP_Shape(t *testing.T) {
+	assertFixtureContains(t, NodeFixtureUDP(t), "package.json", "index.js", ".faas-fixture", "faas-build-token")
 }

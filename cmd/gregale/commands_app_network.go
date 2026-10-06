@@ -23,7 +23,7 @@ import (
 const (
 	subNetwork                 = "network"
 	appNetworkServiceDomain    = "svc.gregale"
-	appNetworkServiceProxyPort = 10080
+	appNetworkServiceProxyPort = api.ServiceBindingPort
 	appNetworkProbeFreshness   = 15 * time.Minute
 )
 

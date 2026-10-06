@@ -35,6 +35,8 @@ func (s *server) requireAppTaskAPI(w http.ResponseWriter) bool {
 
 func appTaskResponse(row state.AppTask) api.AppTaskResponse {
 	resp := api.AppTaskResponse{
+		WorkDecision:        row.WorkDecision,
+		OutcomeCode:         row.OutcomeCode,
 		ID:                  row.ID,
 		AppID:               row.AppID,
 		DeploymentID:        row.DeploymentID,
@@ -101,48 +103,78 @@ func (s *server) createAppTask(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 
-	deployment, err := s.store.LiveDeployment(r.Context(), app.ID)
-	if errors.Is(err, state.ErrNotFound) {
-		writeAppTaskDeploymentUnavailable(w)
-		return
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not select the app task deployment"))
-		return
-	}
-	row, err := s.store.CreateAppTask(r.Context(), state.CreateAppTaskParams{
-		AccountID:      acct.ID,
-		AppID:          app.ID,
-		DeploymentID:   deployment.ID,
-		Kind:           state.AppTaskKindManual,
-		Command:        resolved.Command,
-		CommandShell:   resolved.CommandShell,
-		TimeoutSeconds: resolved.TimeoutSeconds,
-		MaxOutputBytes: resolved.MaxOutputBytes,
-		CreatedAt:      time.Now().UTC(),
-	})
-	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
-		writeAppTaskDeploymentUnavailable(w)
-		return
-	}
-	if errors.Is(err, state.ErrAppTaskInvalid) {
-		api.WriteProblem(w, api.ErrValidation("invalid app task request"))
-		return
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not persist app task admission"))
+	row, problem := s.admitAppTask(r, acct, app, resolved)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, appTaskResponse(row))
 }
 
+func (s *server) admitAppTask(r *http.Request, acct state.Account, app state.App, resolved api.ResolvedCreateAppTaskRequest) (state.AppTask, *api.Problem) {
+	if api.IsServiceBindingSmokeCommand(resolved.Command, resolved.CommandShell) && !declaresSmokeService(app, resolved.Command[1]) {
+		return state.AppTask{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Service binding unavailable", "The selected service is not declared for this app.")
+	}
+	deployment, problem := s.selectAppTaskDeployment(r.Context(), app, resolved)
+	if problem != nil {
+		return state.AppTask{}, problem
+	}
+	pin, pinErr := s.captureBindingVerificationPin(r, acct, app, deployment, resolved)
+	if pinErr != nil {
+		return state.AppTask{}, api.ErrInternal("could not capture binding verification metadata")
+	}
+	if (resolved.VerificationDeploymentID != "" || len(resolved.Command) > 0 && resolved.Command[0] == api.AppTaskOutboundBindingProbeCommand) && pin == nil {
+		return state.AppTask{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Binding verification unavailable", "The selected binding is not available for verification with this request.")
+	}
+	command, err := bindingVerificationTaskCommand(resolved.Command, pin)
+	if err != nil {
+		return state.AppTask{}, api.ErrInternal("could not encode outbound probe")
+	}
+	row, err := s.store.CreateAppTask(r.Context(), state.CreateAppTaskParams{
+		RequireLiveDeployment: resolved.VerificationDeploymentID != "" || resolved.SmokeDeploymentID != "",
+		BindingVerification:   pin,
+		AccountID:             acct.ID,
+		AppID:                 app.ID,
+		DeploymentID:          deployment.ID,
+		Kind:                  state.AppTaskKindManual,
+		Command:               command,
+		CommandShell:          resolved.CommandShell,
+		TimeoutSeconds:        resolved.TimeoutSeconds,
+		MaxOutputBytes:        resolved.MaxOutputBytes,
+		CreatedAt:             time.Now().UTC(),
+	})
+	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
+		return state.AppTask{}, appTaskDeploymentUnavailableProblem()
+	}
+	if errors.Is(err, state.ErrAppTaskInvalid) {
+		return state.AppTask{}, api.ErrValidation("invalid app task request")
+	}
+	if err != nil {
+		return state.AppTask{}, api.ErrInternal("could not persist app task admission")
+	}
+	return row, nil
+}
+
+func declaresSmokeService(app state.App, service string) bool {
+	for _, item := range serviceBindingInventory(app) {
+		if item.Name == service {
+			return true
+		}
+	}
+	return false
+}
+
 func writeAppTaskDeploymentUnavailable(w http.ResponseWriter) {
-	api.WriteProblem(w, api.NewProblem(
+	api.WriteProblem(w, appTaskDeploymentUnavailableProblem())
+}
+
+func appTaskDeploymentUnavailableProblem() *api.Problem {
+	return api.NewProblem(
 		http.StatusConflict,
 		api.CodeConflict,
 		"App task deployment unavailable",
 		"the app needs a live deployment with a materialized runtime image before it can run a task",
-	))
+	)
 }
 
 func (s *server) listAppTasks(w http.ResponseWriter, r *http.Request, acct state.Account) {

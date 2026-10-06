@@ -2198,6 +2198,18 @@ type sseHoldSink struct {
 }
 
 func (s *sseHoldSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// cmdTail resolves --app and builds its id→slug labels from the app
+	// API before it attaches; answer those reads like apid does.
+	if r.URL.Path == "/v1/apps" {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[]"))
+		return
+	}
+	if slug, ok := strings.CutPrefix(r.URL.Path, "/v1/apps/"); ok && !strings.Contains(slug, "/") {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"id":%q,"slug":%q}`, slug, slug)
+		return
+	}
 	if r.URL.Path != "/v1/events" {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

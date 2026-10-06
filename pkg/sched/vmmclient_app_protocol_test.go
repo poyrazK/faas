@@ -1,7 +1,12 @@
 // adr: 057 — readiness probe configuration is forwarded to the VM runtime.
 package sched
 
-import "testing"
+import (
+	"testing"
+
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/apptaskproto"
+)
 
 func TestAppSpecToProtoCarriesAppProtocol(t *testing.T) {
 	got := (AppSpec{AppProtocol: "grpc"}).toProto().GetAppProtocol()
@@ -17,5 +22,15 @@ func TestAppSpecToProtoCarriesGRPCHealthcheck(t *testing.T) {
 	}
 	if got.GetHealthcheckGrpcService() != "catalog.v1.Catalog" {
 		t.Fatalf("healthcheck_grpc_service = %q, want catalog.v1.Catalog", got.GetHealthcheckGrpcService())
+	}
+}
+
+// adr: 385 — structured application outcomes cross the VM execution protocol.
+func TestAppTaskResponseCarriesStructuredOutcome(t *testing.T) {
+	result := appTaskResultFromResponse(&vmmdpb.ExecuteAppTaskResponse{
+		TaskId: "task-1", Status: string(apptaskproto.StatusSucceeded), OutcomeCode: "invalid_record",
+	})
+	if result.Status != apptaskproto.StatusSucceeded || result.OutcomeCode != "invalid_record" {
+		t.Fatalf("app task result = %+v", result)
 	}
 }

@@ -35,17 +35,18 @@ type edgeRuleMutationLocker interface {
 }
 
 type edgeRuleConvergence struct {
-	notif      Notifier
-	events     <-chan db.Notification
-	cancel     func()
-	unlock     func(context.Context)
-	done       sync.Once
-	generation int64
-	appID      string
-	ruleID     string
-	operation  string
-	hosts      []string
-	expected   map[string]struct{}
+	notif             Notifier
+	events            <-chan db.Notification
+	cancel            func()
+	unlock            func(context.Context)
+	done              sync.Once
+	generation        int64
+	appID             string
+	ruleID            string
+	operation         string
+	hosts             []string
+	expected          map[string]struct{}
+	onAcknowledgement func(context.Context, string) error
 }
 
 var edgeRuleMutationMu sync.Mutex
@@ -64,6 +65,13 @@ func (s *server) prepareEdgeRuleMutation(ctx context.Context, appID, ruleID, ope
 			edgeRuleMutationMu.Unlock()
 		}
 	}
+	return s.prepareEdgeRuleMutationLocked(ctx, appID, ruleID, operation, unlock, hosts...)
+}
+
+// Batch callers acquire the process and per-app locks once, in app ID order.
+// Each convergence owns only its subscription; the batch retains those locks
+// until every prepare, intent transaction, and apply attempt has finished.
+func (s *server) prepareEdgeRuleMutationLocked(ctx context.Context, appID, ruleID, operation string, unlock func(context.Context), hosts ...string) (*edgeRuleConvergence, error) {
 	allocator, ok := s.store.(edgeRuleGenerationStore)
 	if !ok {
 		unlock(ctx)
@@ -79,20 +87,13 @@ func (s *server) prepareEdgeRuleMutation(ctx context.Context, appID, ruleID, ope
 		operation: operation, hosts: canonicalEdgeRuleHosts(hosts), expected: map[string]struct{}{},
 		cancel: func() {}, unlock: unlock,
 	}
-	nodes, err := s.store.ListComputeNodes(ctx, false)
+	nodes, err := s.servingEdgeRuleNodes(ctx)
 	if err != nil {
 		conv.close(ctx)
 		return nil, fmt.Errorf("list serving gateways: %w", err)
 	}
 	for _, node := range nodes {
-		role := ""
-		if node.Role != nil {
-			role = strings.TrimSpace(*node.Role)
-		}
-		if (role != "compute-only" && role != "compute-node") || node.GatewayTargetURL == nil || strings.TrimSpace(*node.GatewayTargetURL) == "" {
-			continue
-		}
-		conv.expected[node.Name] = struct{}{}
+		conv.expected[node] = struct{}{}
 	}
 	// A fleet mutation with no serving gateway authority is unsafe: it
 	// could report success while an unregistered edge continues serving stale
@@ -124,6 +125,29 @@ func (s *server) prepareEdgeRuleMutation(ctx context.Context, appID, ruleID, ope
 		return nil, err
 	}
 	return conv, nil
+}
+
+func (s *server) servingEdgeRuleNodes(ctx context.Context) ([]string, error) {
+	nodes, err := s.store.ListComputeNodes(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	for _, node := range nodes {
+		role := ""
+		if node.Role != nil {
+			role = strings.TrimSpace(*node.Role)
+		}
+		if (role == "compute-only" || role == "compute-node") && node.GatewayTargetURL != nil && strings.TrimSpace(*node.GatewayTargetURL) != "" {
+			seen[node.Name] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for node := range seen {
+		out = append(out, node)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func canonicalEdgeRuleHosts(hosts []string) []string {
@@ -186,6 +210,14 @@ func (c *edgeRuleConvergence) notifyAndWait(ctx context.Context, phase string) e
 				continue
 			}
 			if _, expected := c.expected[ack.Node]; expected {
+				if _, duplicate := seen[ack.Node]; duplicate {
+					continue
+				}
+				if c.onAcknowledgement != nil {
+					if err := c.onAcknowledgement(waitCtx, ack.Node); err != nil {
+						return fmt.Errorf("persist edge-rule acknowledgement: %w", err)
+					}
+				}
 				seen[ack.Node] = struct{}{}
 			}
 		case <-retry.C:

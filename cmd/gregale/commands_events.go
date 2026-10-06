@@ -21,12 +21,18 @@ const eventFanoutReplayBatchMax = 100
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|backlog|inspect|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
+	case "backlog":
+		return cmdEventsBacklog(args[1:])
 	case "preview":
 		return cmdEventsPreview(args[1:])
+	case "inspect":
+		return cmdEventsInspect(args[1:])
+	case "attempts":
+		return cmdEventsAttempts(args[1:])
 	case "publish":
 		return cmdEventsPublish(args[1:])
 	case "subscriptions", "list":
@@ -48,7 +54,7 @@ func cmdEvents(args []string) int {
 // cmdEventsReplayRetryableFanoutFailures retries a bounded set of terminal
 // pre-invocation recipients that were classified as retryable.
 func cmdEventsReplayRetryableFanoutFailures(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "yes")
 	fs := newFlagSet("events replay-retryable", flag.ContinueOnError)
 	eventSource := fs.String("event-source", "", "limit replay to one published event source")
 	eventID := fs.String("event-id", "", "limit replay to one published event")
@@ -190,7 +196,7 @@ func cmdEventsPreview(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "(no enabled subscriptions match this source and type)")
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "APP\tSUBSCRIPTION\tRESULT\tFILTER")
+	_, _ = fmt.Fprintln(osStdout, "APP\tSUBSCRIPTION\tWORKFLOW\tRESULT\tFILTER")
 	for _, subscription := range resp.Matches {
 		writeEventPreviewSubscription(subscription)
 	}
@@ -208,7 +214,7 @@ func writeEventPreviewSubscription(subscription api.EventPreviewSubscription) {
 	if filter == "" {
 		filter = "{}"
 	}
-	_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", subscription.AppSlug, subscription.SubscriptionID, subscription.Reason, filter)
+	_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", subscription.AppSlug, subscription.SubscriptionID, subscription.WorkflowName, subscription.Reason, filter)
 }
 
 // cmdEventsDeliveries implements `gregale events deliveries <app>`. It is a
@@ -454,5 +460,8 @@ func cmdEventsPublish(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Event %s accepted for account %s.", resp.ID, resp.AccountID)
+	if resp.ReceiptURL != "" {
+		_, _ = fmt.Fprintf(osStdout, "Receipt: %s\n", resp.ReceiptURL)
+	}
 	return 0
 }

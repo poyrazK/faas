@@ -18,6 +18,8 @@ def _get_kwargs(
     key: str,
     *,
     customer_id: UUID | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    config_version: int | Unset = UNSET,
     since: str | Unset = "24h",
 ) -> dict[str, Any]:
 
@@ -27,6 +29,10 @@ def _get_kwargs(
     if not isinstance(customer_id, Unset):
         json_customer_id = str(customer_id)
     params["customer_id"] = json_customer_id
+
+    params["rule_id"] = rule_id
+
+    params["config_version"] = config_version
 
     params["since"] = since
 
@@ -102,19 +108,24 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     customer_id: UUID | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    config_version: int | Unset = UNSET,
     since: str | Unset = "24h",
 ) -> Response[FlagOutcomesResponse | Problem]:
     """Compare retained request outcomes by evaluated flag value.
 
      Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is
-    application-reported. HTTP 5xx rates and request-weighted latency percentiles are operational
-    observations, not causal experiment results. Latencies use conservative bucket upper bounds.
+    application-reported. Optional rule and configuration-version filters isolate a targeting decision.
+    HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal
+    experiment results. Latencies use conservative bucket upper bounds.
 
     Args:
         slug (str):
         environment (str):
         key (str):
         customer_id (UUID | Unset):
+        rule_id (str | Unset):
+        config_version (int | Unset):
         since (str | Unset):  Default: '24h'.
 
     Raises:
@@ -130,6 +141,8 @@ def sync_detailed(
         environment=environment,
         key=key,
         customer_id=customer_id,
+        rule_id=rule_id,
+        config_version=config_version,
         since=since,
     )
 
@@ -147,19 +160,24 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     customer_id: UUID | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    config_version: int | Unset = UNSET,
     since: str | Unset = "24h",
 ) -> FlagOutcomesResponse | Problem | None:
     """Compare retained request outcomes by evaluated flag value.
 
      Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is
-    application-reported. HTTP 5xx rates and request-weighted latency percentiles are operational
-    observations, not causal experiment results. Latencies use conservative bucket upper bounds.
+    application-reported. Optional rule and configuration-version filters isolate a targeting decision.
+    HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal
+    experiment results. Latencies use conservative bucket upper bounds.
 
     Args:
         slug (str):
         environment (str):
         key (str):
         customer_id (UUID | Unset):
+        rule_id (str | Unset):
+        config_version (int | Unset):
         since (str | Unset):  Default: '24h'.
 
     Raises:
@@ -176,6 +194,8 @@ def sync(
         key=key,
         client=client,
         customer_id=customer_id,
+        rule_id=rule_id,
+        config_version=config_version,
         since=since,
     ).parsed
 
@@ -187,19 +207,24 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     customer_id: UUID | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    config_version: int | Unset = UNSET,
     since: str | Unset = "24h",
 ) -> Response[FlagOutcomesResponse | Problem]:
     """Compare retained request outcomes by evaluated flag value.
 
      Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is
-    application-reported. HTTP 5xx rates and request-weighted latency percentiles are operational
-    observations, not causal experiment results. Latencies use conservative bucket upper bounds.
+    application-reported. Optional rule and configuration-version filters isolate a targeting decision.
+    HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal
+    experiment results. Latencies use conservative bucket upper bounds.
 
     Args:
         slug (str):
         environment (str):
         key (str):
         customer_id (UUID | Unset):
+        rule_id (str | Unset):
+        config_version (int | Unset):
         since (str | Unset):  Default: '24h'.
 
     Raises:
@@ -215,6 +240,8 @@ async def asyncio_detailed(
         environment=environment,
         key=key,
         customer_id=customer_id,
+        rule_id=rule_id,
+        config_version=config_version,
         since=since,
     )
 
@@ -230,19 +257,24 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     customer_id: UUID | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    config_version: int | Unset = UNSET,
     since: str | Unset = "24h",
 ) -> FlagOutcomesResponse | Problem | None:
     """Compare retained request outcomes by evaluated flag value.
 
      Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is
-    application-reported. HTTP 5xx rates and request-weighted latency percentiles are operational
-    observations, not causal experiment results. Latencies use conservative bucket upper bounds.
+    application-reported. Optional rule and configuration-version filters isolate a targeting decision.
+    HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal
+    experiment results. Latencies use conservative bucket upper bounds.
 
     Args:
         slug (str):
         environment (str):
         key (str):
         customer_id (UUID | Unset):
+        rule_id (str | Unset):
+        config_version (int | Unset):
         since (str | Unset):  Default: '24h'.
 
     Raises:
@@ -260,6 +292,8 @@ async def asyncio(
             key=key,
             client=client,
             customer_id=customer_id,
+            rule_id=rule_id,
+            config_version=config_version,
             since=since,
         )
     ).parsed

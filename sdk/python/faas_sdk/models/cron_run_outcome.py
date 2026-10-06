@@ -1,6 +1,6 @@
 from typing import Literal
 
-CronRunOutcome = Literal["cancelled", "dead_letter", "failed", "running", "success", "timeout"]
+CronRunOutcome = Literal["cancelled", "dead_letter", "failed", "running", "success", "timeout", "uncertain"]
 
 CRON_RUN_OUTCOME_VALUES: set[CronRunOutcome] = {
     "cancelled",
@@ -9,6 +9,7 @@ CRON_RUN_OUTCOME_VALUES: set[CronRunOutcome] = {
     "running",
     "success",
     "timeout",
+    "uncertain",
 }
 
 

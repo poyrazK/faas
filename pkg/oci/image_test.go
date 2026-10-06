@@ -191,9 +191,9 @@ func TestNormalizeUser(t *testing.T) {
 		"":          "",
 		"1000":      "app",
 		"root":      "root",
-		"app:app":   "app",
+		"app:app":   "app:app",
 		"1001":      "1001",
-		"node:node": "node",
+		"node:node": "node:node",
 	}
 	for in, want := range tests {
 		if got := normalizeUser(in); got != want {

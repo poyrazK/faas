@@ -52,6 +52,70 @@ func TestProgressTracker_LogGrowthResetsTheClock(t *testing.T) {
 	}
 }
 
+func TestSourceBuildProgressObservesGuestOutputWithEmptyHostLog(t *testing.T) {
+	dir := t.TempDir()
+	dep := state.Deployment{Status: state.DeployBuilding}
+	build := state.Build{ID: "selected", Status: state.BuildRunning}
+	console := filepath.Join(dir, "vm-build-selected.console")
+	start := time.Unix(0, 0)
+	p := newProgressTracker(start, DefaultBuildStallWindow, time.Hour)
+	_ = p.observe(start, sourceBuildSignature(dep, build, dir))
+
+	// BuildKit keeps writing in the VM while builderd waits for completion.
+	// Each write must reset the silence clock even when both host paths are empty.
+	lastWrite := start
+	for _, output := range []string{"exporting image\n", "exporting image\nexporting cache\n"} {
+		lastWrite = lastWrite.Add(DefaultBuildStallWindow - time.Second)
+		if err := os.WriteFile(console, []byte(output), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sig := sourceBuildSignature(dep, build, dir)
+		if sig.logBytes != 0 || sig.consoleBytes == 0 {
+			t.Fatalf("guest-only output was not observed: %+v", sig)
+		}
+		if err := p.observe(lastWrite, sig); err != nil {
+			t.Fatalf("active guest output reported as a stall: %v", err)
+		}
+	}
+	// The same five-minute silence rule still applies after output stops.
+	if err := p.observe(lastWrite.Add(DefaultBuildStallWindow), sourceBuildSignature(dep, build, dir)); !errors.Is(err, errBuildStalled) {
+		t.Fatalf("silent guest reported %v, want a stall", err)
+	}
+	// Even new guest output cannot move the absolute ceiling.
+	p = newProgressTracker(start, DefaultBuildStallWindow, DefaultBuildCeiling)
+	sig := sourceBuildSignature(dep, build, dir)
+	sig.consoleBytes++
+	if err := p.observe(start.Add(DefaultBuildCeiling), sig); !errors.Is(err, errBuildCeiling) {
+		t.Fatalf("guest output bypassed the ceiling: %v", err)
+	}
+}
+
+func TestSourceBuildProgressIgnoresOtherGuestsAndUnsafeConsolePaths(t *testing.T) {
+	dir := t.TempDir()
+	foreign := filepath.Join(dir, "vm-build-other.console")
+	if err := os.WriteFile(foreign, []byte("other build still writing\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(foreign, filepath.Join(dir, "vm-build-link.console")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "vm-build-directory.console"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"selected", "link", "directory", "", ".", "..", "../other", foreign} {
+		t.Run(id, func(t *testing.T) {
+			dep := state.Deployment{Status: state.DeployBuilding}
+			build := state.Build{ID: id, Status: state.BuildRunning}
+			start := time.Unix(0, 0)
+			p := newProgressTracker(start, DefaultBuildStallWindow, time.Hour)
+			_ = p.observe(start, sourceBuildSignature(dep, build, dir))
+			if err := p.observe(start.Add(DefaultBuildStallWindow), sourceBuildSignature(dep, build, dir)); !errors.Is(err, errBuildStalled) {
+				t.Fatalf("unrelated console masked a silent build: %v", err)
+			}
+		})
+	}
+}
+
 // A status transition with no log output yet is still progress — apid
 // enqueuing the build, builderd picking it up.
 func TestProgressTracker_StatusTransitionIsProgress(t *testing.T) {

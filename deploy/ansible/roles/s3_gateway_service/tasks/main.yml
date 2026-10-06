@@ -72,6 +72,7 @@
     - restart faas-s3-gatewayd
     - restart faas-apid for object storage
     - restart faas-gatewayd-public
+    - restart faas-apid-clone-worker for object storage
 
 - name: s3_gateway_service — install optional provider credentials
   ansible.builtin.copy:
@@ -88,6 +89,7 @@
     - restart faas-s3-gatewayd
     - restart faas-apid for object storage
     - restart faas-gatewayd-public
+    - restart faas-apid-clone-worker for object storage
 
 - name: s3_gateway_service — remove stale provider credentials for ADC backends
   ansible.builtin.file:
@@ -100,6 +102,7 @@
     - restart faas-s3-gatewayd
     - restart faas-apid for object storage
     - restart faas-gatewayd-public
+    - restart faas-apid-clone-worker for object storage
 
 - name: s3_gateway_service — read installed provider registry
   ansible.builtin.slurp:
@@ -117,30 +120,37 @@
       us-east-1; upstream provider endpoint and region remain independent.
   when: faas_object_storage_gateway_enabled | bool
 
-- name: s3_gateway_service — create apid drop-in directory
+- name: s3_gateway_service — create APID provider drop-in directories
   ansible.builtin.file:
-    path: /etc/systemd/system/faas-apid.service.d
+    path: "/etc/systemd/system/{{ item }}.service.d"
     state: directory
     owner: root
     group: root
     mode: "0755"
+  loop: [faas-apid, faas-apid-clone-worker]
 
-- name: s3_gateway_service — wire provider registry into apid
+- name: s3_gateway_service — wire provider registry into APID processes
   ansible.builtin.template:
     src: 99-faas-object-storage.conf.j2
-    dest: /etc/systemd/system/faas-apid.service.d/99-faas-object-storage.conf
+    dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-object-storage.conf"
     owner: root
     group: root
     mode: "0644"
   when: faas_object_storage_gateway_enabled | bool
-  notify: restart faas-apid for object storage
+  loop: [faas-apid, faas-apid-clone-worker]
+  notify:
+    - restart faas-apid for object storage
+    - restart faas-apid-clone-worker for object storage
 
-- name: s3_gateway_service — remove apid object-storage wiring when disabled
+- name: s3_gateway_service — remove APID object-storage wiring when disabled
   ansible.builtin.file:
-    path: /etc/systemd/system/faas-apid.service.d/99-faas-object-storage.conf
+    path: "/etc/systemd/system/{{ item }}.service.d/99-faas-object-storage.conf"
     state: absent
   when: not (faas_object_storage_gateway_enabled | bool)
-  notify: restart faas-apid for object storage
+  loop: [faas-apid, faas-apid-clone-worker]
+  notify:
+    - restart faas-apid for object storage
+    - restart faas-apid-clone-worker for object storage
 
 - name: s3_gateway_service — inspect Caddy prerequisites
   ansible.builtin.stat:
@@ -160,21 +170,25 @@
     label: "{{ item.item }}"
   when: faas_object_storage_gateway_enabled | bool
 
+- name: s3_gateway_service — read transfer policy
+  ansible.builtin.set_fact:
+    faas_object_storage_registry: "{{ faas_object_storage_registry_file.content | b64decode | from_json }}"
+  when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — require matching edge and registry profiles
+  ansible.builtin.assert:
+    that:
+      - faas_object_storage_gateway_edge_mode in ['proxied', 'direct']
+      - faas_object_storage_registry.get('transfer', {}).get('profile', 'direct') == faas_object_storage_gateway_edge_mode
+    fail_msg: "Set matching transfer.profile and faas_object_storage_gateway_edge_mode; direct requires DNS-only origin routing."
+  when: faas_object_storage_gateway_enabled | bool
+
 - name: s3_gateway_service — manage isolated Caddy route
   ansible.builtin.blockinfile:
     path: "{{ faas_object_storage_caddyfile }}"
     marker: "# {mark} ANSIBLE MANAGED Gregale object storage"
     state: "{{ 'present' if faas_object_storage_gateway_enabled else 'absent' }}"
-    block: |
-      s3.gregale.dev {
-          reverse_proxy 127.0.0.1:8084 {
-              header_up Host {host}
-              # Cloudflare may rewrite Accept-Encoding before the request
-              # reaches Caddy. SigV4 clients sign the original value, so
-              # preserve identity on the origin hop.
-              header_up Accept-Encoding identity
-          }
-      }
+    block: "{{ lookup('ansible.builtin.template', 's3-origin.caddy.j2') }}"
     validate: "{{ faas_object_storage_caddy_binary }} validate --adapter caddyfile --config %s"
   notify: reload Caddy for object storage
 

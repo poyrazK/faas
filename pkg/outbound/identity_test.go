@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
@@ -28,6 +29,15 @@ func testWorkloadSigner(t *testing.T, issuer string) (*workloadidentity.Signer, 
 		t.Fatal(err)
 	}
 	return signer, jwks
+}
+
+func testExecutionToken(t *testing.T, signer *workloadidentity.Signer, now time.Time, accountID, executionID, leaseToken, integrationID string) string {
+	t.Helper()
+	token, err := signer.MintExecution(now, accountID, executionID, leaseToken, identityAudiencePrefix+integrationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token.BearerValue()
 }
 
 func testWorkloadToken(t *testing.T, signer *workloadidentity.Signer, now time.Time, appID, integrationID string) string {
@@ -76,6 +86,31 @@ func TestWorkloadIdentityVerifierChecksIssuerSignatureAudienceAndTime(t *testing
 	}
 	if _, err := NewWorkloadIdentityVerifier(jwks, "http://identity.example"); err == nil {
 		t.Fatal("accepted an insecure issuer")
+	}
+}
+
+func TestExecutionIdentityVerifierFencesRunAndLeaseClaims(t *testing.T) {
+	signer, jwks := testWorkloadSigner(t, workloadidentity.DefaultIssuer)
+	verifier, err := NewWorkloadIdentityVerifier(jwks, workloadidentity.DefaultIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	accountID, executionID, leaseToken := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	valid := testExecutionToken(t, signer, now, accountID, executionID, leaseToken, "integration-1")
+	got, err := verifier.VerifyExecution(valid, "integration-1")
+	if err != nil || got.AccountID != accountID || got.ExecutionID != executionID || got.LeaseToken != leaseToken {
+		t.Fatalf("verified Run identity = %+v, %v", got, err)
+	}
+	if _, err := verifier.VerifyExecution(valid, "integration-2"); !errors.Is(err, ErrInvalidWorkloadIdentity) {
+		t.Fatalf("wrong integration audience error = %v", err)
+	}
+	appToken := testWorkloadToken(t, signer, now, "app-1", "integration-1")
+	if _, err := verifier.VerifyExecution(appToken, "integration-1"); !errors.Is(err, ErrInvalidWorkloadIdentity) {
+		t.Fatalf("app token accepted as Run identity: %v", err)
+	}
+	if _, err := verifier.VerifyExecution(testExecutionToken(t, signer, now.Add(-10*time.Minute), accountID, executionID, leaseToken, "integration-1"), "integration-1"); !errors.Is(err, ErrInvalidWorkloadIdentity) {
+		t.Fatalf("expired Run identity error = %v", err)
 	}
 }
 

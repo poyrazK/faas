@@ -64,7 +64,7 @@ func (m *MemStore) SetAccountAbuseHold(_ context.Context, accountID, reason stri
 	}
 	held := at.UTC()
 	a.AbuseHoldAt, a.AbuseHoldReason = &held, reason
-	m.accounts[accountID] = a
+	m.storeRouteCheckAccountLocked(accountID, a)
 	return true, nil
 }
 
@@ -80,6 +80,6 @@ func (m *MemStore) ReleaseAccountAbuseHold(_ context.Context, accountID string) 
 		return false, nil
 	}
 	a.AbuseHoldAt, a.AbuseHoldReason = nil, ""
-	m.accounts[accountID] = a
+	m.storeRouteCheckAccountLocked(accountID, a)
 	return true, nil
 }

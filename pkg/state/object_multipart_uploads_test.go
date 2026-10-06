@@ -138,7 +138,10 @@ func objectMultipartUploadStoreSuite(t *testing.T, base state.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = uploads.FinishObjectMultipartUpload(ctx, expired.ID, "abort", state.ObjectMultipartAborted); err != nil {
+	if err = uploads.FinishObjectMultipartUpload(ctx, expired.ID, "abort", state.ObjectMultipartAborted); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("abort acknowledged without cleanup proof", err)
+	}
+	if err = base.(state.ObjectMultipartTransferStore).FinishVerifiedObjectMultipartAbort(ctx, expired.ID, "abort"); err != nil {
 		t.Fatal(err)
 	}
 	public := state.ObjectMultipartUpload{

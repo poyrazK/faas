@@ -33,7 +33,7 @@ func TestMemStoreTCPListenerLifecycleAndRouteLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if created.Protocol != "tcp" || created.ListenerName != "postgres" {
+	if created.Protocol != "tcp" || created.ListenerName != "postgres" || created.TLSMode != api.TCPListenerTLSPassthrough || created.TLSHostname != "" {
 		t.Fatalf("normalized listener = %+v", created)
 	}
 	byName, err := m.TCPListenerByAppAndName(ctx, app.ID, "POSTGRES")
@@ -60,6 +60,32 @@ func TestMemStoreTCPListenerLifecycleAndRouteLookup(t *testing.T) {
 	}
 	if _, err := m.TCPListenerByID(ctx, created.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("read after delete = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemStoreTCPListenerTLSIntent(t *testing.T) {
+	m, ctx, account, app := tcpListenerFixture(t)
+	base := TCPListener{AppID: app.ID, AccountID: account.ID, ListenerName: "echo", GuestPort: 9000, PublicPort: 40125, TLSMode: api.TCPListenerTLSTerminate, TLSHostname: " Echo.Example "}
+	created, err := m.CreateTCPListener(ctx, base)
+	if err != nil || created.TLSMode != api.TCPListenerTLSTerminate || created.TLSHostname != "echo.example" {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+	loaded, err := m.TCPListenerByID(ctx, created.ID)
+	if err != nil || loaded.TLSMode != created.TLSMode || loaded.TLSHostname != created.TLSHostname {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+	if _, err := m.SetTCPListenerEnabled(ctx, created.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := m.SetTCPListenerTLS(ctx, created.ID, api.TCPListenerTLSConfig{})
+	if err != nil || updated.Enabled || updated.TLSMode != api.TCPListenerTLSPassthrough || updated.TLSHostname != "" {
+		t.Fatalf("updated=%+v err=%v", updated, err)
+	}
+	base.ListenerName = "invalid"
+	base.PublicPort++
+	base.TLSHostname = "*.example"
+	if _, err := m.CreateTCPListener(ctx, base); !errors.Is(err, ErrInvalidTCPListener) {
+		t.Fatalf("invalid TLS intent accepted: %v", err)
 	}
 }
 

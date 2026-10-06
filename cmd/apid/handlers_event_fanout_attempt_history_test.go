@@ -92,3 +92,63 @@ func TestListEventFanoutAttemptHistoryRequiresIdentityAndPagesReplayTimeline(t *
 		t.Fatalf("cursor with mismatched recipient filter status = %d, want 400; body=%s", mismatchedCursor.Code, mismatchedCursor.Body.String())
 	}
 }
+
+func TestListEventFanoutHistoryCoverageAndCursorAfterCompaction(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := mustSeedApp(t, e, "history-compaction")
+	ctx := context.Background()
+	sub, _, err := e.store.UpsertEventSubscription(ctx, e.acct.ID, app, "orders", "order.created", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.AppendEvent(ctx, "apid", "event.published", &e.acct.ID, json.RawMessage(`{"id":"history-compaction","source":"orders","type":"order.created","data":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	work, err := e.store.ClaimDuePublishedEvent(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const observations = 150
+	for i := 1; i <= observations; i++ {
+		if err := e.store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, sub.ID, state.PublishedEventRecipientProgress{State: "pending", Attempts: i, FailureCode: state.EventFanoutFailureCodeTargetLookupFailed, Retryable: true, LastError: "transient lookup", UpdatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query := url.Values{"event_source": {"orders"}, "event_id": {"history-compaction"}, "subscription_id": {sub.ID}, "limit": {"2"}}
+	endpoint := "/v1/apps/history-compaction/event-deliveries/attempts?"
+	first := e.do(t, http.MethodGet, endpoint+query.Encode(), nil, nil)
+	var page api.EventFanoutAttemptHistoryResponse
+	if first.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", first.Code, first.Body.String())
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if first.Header().Get("Cache-Control") != "no-store" || page.Coverage != state.EventRoutingHistoryCoverage || len(page.Summaries) != 1 || page.Summaries[0].CompactedOutcomes == 0 || page.NextBefore == "" {
+		t.Fatalf("coverage=%+v", page)
+	}
+	cursor := page.NextBefore
+	if _, err := e.store.PruneEventFanoutHistory(ctx, time.Now().Add(31*24*time.Hour), 50); err != nil {
+		t.Fatal(err)
+	}
+	query.Set("before", cursor)
+	next := e.do(t, http.MethodGet, endpoint+query.Encode(), nil, nil)
+	if next.Code != http.StatusOK {
+		t.Fatalf("cursor expired=%d %s", next.Code, next.Body.String())
+	}
+	if err := json.Unmarshal(next.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.History) != 0 || len(page.Summaries) != 1 || page.Summaries[0].CompactedOutcomes != observations-1 || page.Summaries[0].RetainedRecords != 1 || page.Summaries[0].ObservedOutcomes != observations {
+		t.Fatalf("compacted page=%+v", page)
+	}
+	query.Set("subscription_id", "11111111-1111-1111-1111-111111111111")
+	query.Del("before")
+	isolated := e.do(t, http.MethodGet, endpoint+query.Encode(), nil, nil)
+	if err := json.Unmarshal(isolated.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if isolated.Code != http.StatusOK || len(page.History) != 0 || len(page.Summaries) != 0 {
+		t.Fatalf("recipient metadata leaked=%+v", page)
+	}
+}

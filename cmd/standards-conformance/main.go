@@ -1,5 +1,6 @@
 // Command standards-conformance verifies that registry claims have executable
-// evidence references pointing at real repository test functions.
+// evidence references pointing at real repository test functions and validates
+// the AsyncAPI contract against its pinned official schema.
 package main
 
 import (

@@ -31,6 +31,21 @@ type FeatureFlagStore interface {
 	UpdateFeatureFlags(context.Context, FeatureFlagUpdate) (FeatureFlagVersion, error)
 }
 
+// FeatureFlagAutoRolloutCandidate is an environment whose latest published
+// configuration contains at least one explicitly enabled automatic rollout.
+type FeatureFlagAutoRolloutCandidate struct {
+	Scope           FeatureFlagScope
+	ProjectSlug     string
+	EnvironmentSlug string
+}
+
+// FeatureFlagAutoRolloutLister provides a stable, bounded page for the apid
+// rollout reconciler. It is optional so in-memory stores and non-Postgres
+// deployments never pretend to provide a durable background scan.
+type FeatureFlagAutoRolloutLister interface {
+	ListFeatureFlagAutoRolloutCandidates(context.Context, string, int) ([]FeatureFlagAutoRolloutCandidate, error)
+}
+
 func emptyFeatureFlags(scope FeatureFlagScope) FeatureFlagVersion {
 	return FeatureFlagVersion{Bundle: flags.Bundle{EnvironmentID: scope.EnvironmentID, Config: flags.Config{Flags: []flags.Flag{}, Groups: map[string][]string{}}}}
 }

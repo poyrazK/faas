@@ -38,7 +38,9 @@ type AppRestartResponse struct {
 }
 
 type AppWakeResponse struct {
-	WakeID string `json:"wake_id"`
+	WakeID         string `json:"wake_id"`
+	AlreadyRunning bool   `json:"already_running,omitempty"`
+	InstanceID     string `json:"instance_id,omitempty"`
 }
 
 // RetryPolicyDTO configures exponential retry behavior for invocations.
@@ -50,23 +52,31 @@ type RetryPolicyDTO struct {
 }
 
 type SendAppMessageRequest struct {
+	Environment     string          `json:"environment,omitempty"`
 	ID              string          `json:"id,omitempty"`
 	Source          string          `json:"source,omitempty"`
 	Type            string          `json:"type"`
 	Time            *time.Time      `json:"time,omitempty"`
-	DataContentType string          `json:"data_content_type,omitempty"`
+	DataContentType string          `json:"datacontenttype,omitempty"`
 	Data            json.RawMessage `json:"data"`
-	QueueName       string          `json:"queue_name,omitempty"`
-	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	// FlagContext carries a bounded Gregale Flags context from the producer
+	// request into the queued synthetic request. It is validated and bound to
+	// an active platform tenant before admission.
+	FlagContext string          `json:"flag_context,omitempty"`
+	QueueName   string          `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Work        *InvokeWork     `json:"work,omitempty"`
 }
 
 type SendAppMessageResponse struct {
-	ID        string `json:"id"`
-	EventID   string `json:"event_id"`
-	TargetApp string `json:"target_app"`
-	Status    string `json:"status"`
-	StatusURL string `json:"status_url"`
-	TraceID   string `json:"trace_id,omitempty"`
+	Environment    string `json:"environment,omitempty"`
+	QueueBindingID string `json:"queue_binding_id,omitempty"`
+	ID             string `json:"id"`
+	EventID        string `json:"event_id"`
+	TargetApp      string `json:"target_app"`
+	Status         string `json:"status"`
+	StatusURL      string `json:"status_url"`
+	TraceID        string `json:"trace_id,omitempty"`
 }
 
 // CreateAppRequest creates an app or function.
@@ -649,9 +659,18 @@ type DeploymentResponse struct {
 	// HostingReceipt is the non-secret deployment evidence captured after
 	// readiness. Raw JSON keeps the Go SDK forward-compatible with receipt
 	// schema additions.
-	HostingReceipt json.RawMessage `json:"hosting_receipt,omitempty"`
-	SourceRoot     string          `json:"source_root,omitempty"`
-	TrafficPercent int             `json:"traffic_percent,omitempty"`
+	HostingReceipt        json.RawMessage                `json:"hosting_receipt,omitempty"`
+	SourceRoot            string                         `json:"source_root,omitempty"`
+	TrafficPercent        int                            `json:"traffic_percent,omitempty"`
+	RolloutState          string                         `json:"rollout_state,omitempty"`
+	CanaryStep            int                            `json:"canary_step,omitempty"`
+	CanaryTotalSteps      int                            `json:"canary_total_steps,omitempty"`
+	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
+	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
 
 // UpdateDeploymentTrafficRequest is the body for
@@ -685,7 +704,7 @@ type AccountResponse struct {
 }
 
 // CapabilityStatus is a customer-visible capability with the account plan
-// gate resolved by the API.
+// entitlement and runtime gate resolved by the API.
 type CapabilityStatus struct {
 	Key         string   `json:"key"`
 	Name        string   `json:"name"`
@@ -696,6 +715,10 @@ type CapabilityStatus struct {
 	DocsURL     string   `json:"docs_url"`
 	Acceptance  string   `json:"acceptance"`
 	Enabled     bool     `json:"enabled"`
+	// Optional explanations are omitted for enabled capabilities and may be
+	// absent when communicating with older servers.
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	UnavailableDetail string `json:"unavailable_detail,omitempty"`
 }
 
 // CapabilitiesResponse is the account-scoped capability registry returned by
@@ -761,6 +784,20 @@ type CustomDomainResponse struct {
 	Verified       bool   `json:"verified"`
 	VerifiedAt     string `json:"verified_at,omitempty"`
 	TXTRecord      string `json:"txt_record,omitempty"` // convenience for the customer
+	// DNSRecords lists the records to publish (ADR-520): the TXT ownership
+	// proof, the routing CNAME, and A/AAAA alternatives for a zone apex.
+	DNSRecords []DNSRecordInstruction `json:"dns_records,omitempty"`
+}
+
+// DNSRecordInstruction is one DNS record a customer publishes for a custom
+// domain. Purpose is "verification" or "routing"; Alternative marks an A/AAAA
+// record that replaces the CNAME where a CNAME is not allowed.
+type DNSRecordInstruction struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Purpose     string `json:"purpose"`
+	Alternative bool   `json:"alternative,omitempty"`
 }
 
 // CreateCustomDomainRequest accepts a domain to bind.
@@ -805,50 +842,113 @@ type DomainDoctorCheck struct {
 // schedule or a deployment-attached command schedule. LastFiredAt
 // is the most recent fire stamp schedd wrote.
 type CronResponse struct {
-	ID                  string   `json:"id"`
-	AppID               string   `json:"app_id"`
-	Kind                string   `json:"kind"`
-	Schedule            string   `json:"schedule"`
-	Path                string   `json:"path,omitempty"`
-	Command             []string `json:"command,omitempty"`
-	CommandShell        bool     `json:"command_shell,omitempty"`
-	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
-	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
-	RetryMax            int      `json:"retry_max,omitempty"`
-	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
-	Enabled             bool     `json:"enabled"`
-	SuspendedReason     string   `json:"suspended_reason,omitempty"`
-	Timezone            string   `json:"timezone"`
-	SkipIfRunning       bool     `json:"skip_if_running"`
-	CreatedAt           string   `json:"created_at"`
-	LastFiredAt         string   `json:"last_fired_at,omitempty"`
+	SchedulePolicy      *SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *FailureRules   `json:"failure_rules,omitempty"`
+	ID                  string          `json:"id"`
+	AppID               string          `json:"app_id"`
+	Kind                string          `json:"kind"`
+	Schedule            string          `json:"schedule"`
+	Path                string          `json:"path,omitempty"`
+	Command             []string        `json:"command,omitempty"`
+	CommandShell        bool            `json:"command_shell,omitempty"`
+	TimeoutSeconds      int             `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int             `json:"max_output_bytes,omitempty"`
+	RetryMax            int             `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int             `json:"retry_backoff_seconds,omitempty"`
+	Enabled             bool            `json:"enabled"`
+	SuspendedReason     string          `json:"suspended_reason,omitempty"`
+	Timezone            string          `json:"timezone"`
+	SkipIfRunning       bool            `json:"skip_if_running"`
+	CreatedAt           string          `json:"created_at"`
+	LastFiredAt         string          `json:"last_fired_at,omitempty"`
 }
 
 // CreateCronRequest creates a scheduled HTTP request or deployment command.
 type CreateCronRequest struct {
-	AppID               string   `json:"app_id"`
-	Schedule            string   `json:"schedule"`
-	Path                string   `json:"path,omitempty"`
-	Command             []string `json:"command,omitempty"`
-	CommandShell        bool     `json:"command_shell,omitempty"`
-	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
-	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
-	RetryMax            int      `json:"retry_max,omitempty"`
-	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
-	Enabled             *bool    `json:"enabled,omitempty"`
-	Timezone            string   `json:"timezone,omitempty"`
-	SkipIfRunning       *bool    `json:"skip_if_running,omitempty"`
+	SchedulePolicy      *SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *FailureRules   `json:"failure_rules,omitempty"`
+	AppID               string          `json:"app_id"`
+	Schedule            string          `json:"schedule"`
+	Path                string          `json:"path,omitempty"`
+	Command             []string        `json:"command,omitempty"`
+	CommandShell        bool            `json:"command_shell,omitempty"`
+	TimeoutSeconds      int             `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int             `json:"max_output_bytes,omitempty"`
+	RetryMax            int             `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int             `json:"retry_backoff_seconds,omitempty"`
+	Enabled             *bool           `json:"enabled,omitempty"`
+	Timezone            string          `json:"timezone,omitempty"`
+	SkipIfRunning       *bool           `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
 type UpdateCronRequest struct {
-	Schedule            *string `json:"schedule,omitempty"`
-	Path                *string `json:"path,omitempty"`
-	Enabled             *bool   `json:"enabled,omitempty"`
-	Timezone            *string `json:"timezone,omitempty"`
-	SkipIfRunning       *bool   `json:"skip_if_running,omitempty"`
-	RetryMax            *int    `json:"retry_max,omitempty"`
-	RetryBackoffSeconds *int    `json:"retry_backoff_seconds,omitempty"`
+	SchedulePolicy      *SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *FailureRules   `json:"failure_rules,omitempty"`
+	Schedule            *string         `json:"schedule,omitempty"`
+	Path                *string         `json:"path,omitempty"`
+	Enabled             *bool           `json:"enabled,omitempty"`
+	Timezone            *string         `json:"timezone,omitempty"`
+	SkipIfRunning       *bool           `json:"skip_if_running,omitempty"`
+	RetryMax            *int            `json:"retry_max,omitempty"`
+	RetryBackoffSeconds *int            `json:"retry_backoff_seconds,omitempty"`
+}
+
+// SchedulePolicy controls overlap and missed-run handling for recurring work.
+type SchedulePolicy struct {
+	Version              int    `json:"version"`
+	Overlap              string `json:"overlap"`
+	StartDeadlineSeconds int    `json:"start_deadline_seconds,omitempty"`
+	MissedRuns           string `json:"missed_runs"`
+}
+
+// FailureRule maps explicit guest evidence to a retry or permanent partition failure.
+type FailureRule struct {
+	ExitCodes    []int    `json:"exit_codes,omitempty"`
+	OutcomeCodes []string `json:"outcome_codes,omitempty"`
+	Action       string   `json:"action"`
+}
+
+// FailureRules is the versioned classification policy for batch partitions.
+type FailureRules struct {
+	Version          int           `json:"version"`
+	Rules            []FailureRule `json:"rules"`
+	UnmatchedFailure string        `json:"unmatched_failure"`
+	UncertainOutcome string        `json:"uncertain_outcome"`
+}
+
+// WorkDecision is the persisted classification for one execution result.
+type WorkDecision struct {
+	Classification string `json:"classification"`
+	Action         string `json:"action"`
+	Reason         string `json:"reason"`
+	PolicyVersion  int    `json:"policy_version"`
+}
+
+// ScheduleOccurrenceResponse is the durable lifecycle view for one nominal schedule time.
+type ScheduleOccurrenceResponse struct {
+	ID                   string          `json:"id"`
+	ScheduleRevision     int64           `json:"schedule_revision"`
+	ScheduledFor         time.Time       `json:"scheduled_for"`
+	StartDeadlineAt      *time.Time      `json:"start_deadline_at,omitempty"`
+	SchedulePolicy       *SchedulePolicy `json:"schedule_policy"`
+	Status               string          `json:"status"`
+	Reason               string          `json:"reason,omitempty"`
+	BlockingOccurrenceID string          `json:"blocking_occurrence_id,omitempty"`
+	JobRunID             string          `json:"job_run_id,omitempty"`
+	InvocationID         string          `json:"invocation_id,omitempty"`
+	AppTaskID            string          `json:"app_task_id,omitempty"`
+	StartedAt            *time.Time      `json:"started_at,omitempty"`
+	FinishedAt           *time.Time      `json:"finished_at,omitempty"`
+	CreatedAt            time.Time       `json:"created_at"`
+}
+
+// ListScheduleOccurrencesResponse is a cursor page of newest-first outcomes.
+type ListScheduleOccurrencesResponse struct {
+	Occurrences []ScheduleOccurrenceResponse `json:"occurrences"`
+	Limit       int                          `json:"limit"`
+	Before      string                       `json:"before,omitempty"`
+	NextBefore  string                       `json:"next_before,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
@@ -1341,15 +1441,22 @@ type InvokeResponse struct {
 // 201 Created with the new id; the customer pairs this with the
 // /receive long-poll.
 type QueueSendResponse struct {
-	ID string `json:"id"`
+	Environment    string `json:"environment,omitempty"`
+	QueueBindingID string `json:"queue_binding_id,omitempty"`
+	ID             string `json:"id"`
+	TraceID        string `json:"trace_id,omitempty"`
 }
 
 // QueueReceiveResponse is returned on POST /v1/apps/{slug}/queues/invocations:receive.
 // 200 with the dequeued row's payload + result; 204 on timeout.
 type QueueReceiveResponse struct {
-	ID      string          `json:"id"`
-	Payload json.RawMessage `json:"payload"`
-	Result  json.RawMessage `json:"result,omitempty"`
+	Environment    string          `json:"environment,omitempty"`
+	QueueBindingID string          `json:"queue_binding_id,omitempty"`
+	ID             string          `json:"id"`
+	Payload        json.RawMessage `json:"payload"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	TraceID        string          `json:"trace_id,omitempty"`
+	Traceparent    string          `json:"traceparent,omitempty"`
 }
 
 // DelayedTaskResponse is the create/get/list shape for delayed tasks.
@@ -1386,10 +1493,100 @@ type InvokeRequest struct {
 	Path    string          `json:"path,omitempty"`
 }
 
+type ExclusiveOperationRequest struct {
+	Policy         string          `json:"policy"`
+	Key            json.RawMessage `json:"key"`
+	EquivalenceKey string          `json:"equivalence_key,omitempty"`
+	Invocation     InvokeRequest   `json:"invocation"`
+}
+type ExclusiveJobOperationRequest struct {
+	Policy         string              `json:"policy"`
+	Key            json.RawMessage     `json:"key"`
+	EquivalenceKey string              `json:"equivalence_key,omitempty"`
+	Run            CreateJobRunRequest `json:"run"`
+}
+type ExclusiveAppTaskOperationRequest struct {
+	Policy         string               `json:"policy"`
+	Key            json.RawMessage      `json:"key"`
+	EquivalenceKey string               `json:"equivalence_key,omitempty"`
+	Task           CreateAppTaskRequest `json:"task"`
+}
+type ExclusiveTriggerBindingRequest struct {
+	Policy           string          `json:"policy"`
+	Key              json.RawMessage `json:"key"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	EquivalenceKey   string          `json:"equivalence_key,omitempty"`
+}
+type ExclusiveTriggerBindingRecord struct {
+	Source           string          `json:"source"`
+	TriggerID        string          `json:"trigger_id"`
+	AppID            string          `json:"app_id,omitempty"`
+	JobID            string          `json:"job_id,omitempty"`
+	Policy           string          `json:"policy"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	Key              json.RawMessage `json:"key"`
+	EquivalenceKey   string          `json:"equivalence_key,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+type ExclusiveOperationAccepted struct {
+	ID        string `json:"id"`
+	Joined    bool   `json:"joined"`
+	StatusURL string `json:"status_url"`
+}
+type ExclusiveOperationPolicy struct {
+	Name              string   `json:"name"`
+	Scope             string   `json:"scope"`
+	EnvironmentID     string   `json:"environment_id,omitempty"`
+	MemberAppIDs      []string `json:"member_app_ids,omitempty"`
+	MemberJobIDs      []string `json:"member_job_ids,omitempty"`
+	Contention        string   `json:"contention"`
+	LeaseSeconds      int      `json:"lease_seconds"`
+	MaxAttemptSeconds int      `json:"max_attempt_seconds"`
+	MaxAttempts       int      `json:"max_attempts,omitempty"`
+	RetryAfterSeconds int      `json:"retry_after_seconds,omitempty"`
+}
+type ExclusiveWorkPolicyRecord struct {
+	ID        string                   `json:"id"`
+	Revision  int64                    `json:"revision"`
+	Policy    ExclusiveOperationPolicy `json:"policy"`
+	Retired   bool                     `json:"retired"`
+	CreatedAt time.Time                `json:"created_at"`
+	UpdatedAt time.Time                `json:"updated_at"`
+}
+type ExclusiveWorkPolicyList struct {
+	Policies []ExclusiveWorkPolicyRecord `json:"policies"`
+}
+type ExclusiveOperationRecord struct {
+	ID               string                  `json:"id"`
+	AppID            string                  `json:"app_id,omitempty"`
+	JobID            string                  `json:"job_id,omitempty"`
+	PlatformTenantID string                  `json:"platform_tenant_id,omitempty"`
+	Sequence         int64                   `json:"sequence"`
+	State            string                  `json:"state"`
+	PolicyRevision   int64                   `json:"policy_revision"`
+	Generation       int64                   `json:"generation"`
+	LeaseExpiresAt   *time.Time              `json:"lease_expires_at,omitempty"`
+	AttemptDeadline  *time.Time              `json:"attempt_deadline,omitempty"`
+	Result           json.RawMessage         `json:"result,omitempty"`
+	Effects          []OperationEffectRecord `json:"effects,omitempty"`
+	LastError        string                  `json:"last_error,omitempty"`
+	CreatedAt        time.Time               `json:"created_at"`
+	CompletedAt      *time.Time              `json:"completed_at,omitempty"`
+}
+
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
-	Payload json.RawMessage `json:"payload,omitempty"`
+	// Environment requires an enabled binding in this registered project environment.
+	Environment string          `json:"environment,omitempty"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	// FlagContext carries decisions explicitly marked used by the producer.
+	// The queue handler validates it and retains the customer attribution.
+	FlagContext string          `json:"flag_context,omitempty"`
+	QueueName   string          `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Work        *InvokeWork     `json:"work,omitempty"`
 }
 
 // DelayedTaskRequest is the body for POST /v1/apps/{slug}/delayed-tasks.
@@ -2103,8 +2300,12 @@ type TriggerMetricsResponse struct {
 
 // CreateJobRequest is the body of POST /v1/jobs.
 type CreateJobRequest struct {
+	SchedulePolicy *SchedulePolicy   `json:"schedule_policy,omitempty"`
+	FailureRules   *FailureRules     `json:"failure_rules,omitempty"`
 	Name           string            `json:"name"`
 	Kind           string            `json:"kind,omitempty"`
+	Schedule       string            `json:"schedule,omitempty"`
+	Timezone       string            `json:"timezone,omitempty"`
 	ImageRef       string            `json:"image_ref"`
 	Command        []string          `json:"command"`
 	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
@@ -2116,6 +2317,8 @@ type CreateJobRequest struct {
 
 // UpdateJobRequest is the body of PATCH /v1/jobs/{name}.
 type UpdateJobRequest struct {
+	SchedulePolicy *SchedulePolicy   `json:"schedule_policy,omitempty"`
+	FailureRules   *FailureRules     `json:"failure_rules,omitempty"`
 	ImageRef       *string           `json:"image_ref,omitempty"`
 	Command        []string          `json:"command,omitempty"`
 	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
@@ -2124,10 +2327,13 @@ type UpdateJobRequest struct {
 	MaxParallelism *int              `json:"max_parallelism,omitempty"`
 	RetryMax       *int              `json:"retry_max,omitempty"`
 	Status         *string           `json:"status,omitempty"`
+	Schedule       *string           `json:"schedule,omitempty"`
+	Timezone       *string           `json:"timezone,omitempty"`
 }
 
 // CreateJobRunRequest is the body of POST /v1/jobs/{name}/runs.
 type CreateJobRunRequest struct {
+	FailureRules        *FailureRules     `json:"failure_rules,omitempty"`
 	Tasks               int               `json:"tasks"`
 	Parallelism         *int              `json:"parallelism,omitempty"`
 	RetryMax            *int              `json:"retry_max,omitempty"`
@@ -2150,20 +2356,25 @@ type JobRunInput struct {
 
 // JobResponse is the wire projection of state.Job.
 type JobResponse struct {
-	ID             string            `json:"id"`
-	AccountID      string            `json:"account_id"`
-	Name           string            `json:"name"`
-	Kind           string            `json:"kind"`
-	ImageRef       string            `json:"image_ref"`
-	Command        []string          `json:"command"`
-	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
-	RAMMB          int               `json:"ram_mb"`
-	TaskTimeoutSec int               `json:"task_timeout_sec"`
-	MaxParallelism int               `json:"max_parallelism"`
-	RetryMax       int               `json:"retry_max"`
-	Status         string            `json:"status"`
-	CreatedAt      string            `json:"created_at"`
-	UpdatedAt      string            `json:"updated_at"`
+	SchedulePolicy  *SchedulePolicy   `json:"schedule_policy,omitempty"`
+	FailureRules    *FailureRules     `json:"failure_rules,omitempty"`
+	ID              string            `json:"id"`
+	AccountID       string            `json:"account_id"`
+	Name            string            `json:"name"`
+	Kind            string            `json:"kind"`
+	Schedule        string            `json:"schedule,omitempty"`
+	Timezone        string            `json:"timezone,omitempty"`
+	LastScheduledAt string            `json:"last_scheduled_at,omitempty"`
+	ImageRef        string            `json:"image_ref"`
+	Command         []string          `json:"command"`
+	EnvOverrides    map[string]string `json:"env_overrides,omitempty"`
+	RAMMB           int               `json:"ram_mb"`
+	TaskTimeoutSec  int               `json:"task_timeout_sec"`
+	MaxParallelism  int               `json:"max_parallelism"`
+	RetryMax        int               `json:"retry_max"`
+	Status          string            `json:"status"`
+	CreatedAt       string            `json:"created_at"`
+	UpdatedAt       string            `json:"updated_at"`
 }
 
 // JobRunResponse is the wire projection of state.JobRun.
@@ -2172,6 +2383,9 @@ type JobRunResponse struct {
 	JobID                       string            `json:"job_id"`
 	AccountID                   string            `json:"account_id"`
 	TriggerKind                 string            `json:"trigger_kind"`
+	OccurrenceID                string            `json:"occurrence_id,omitempty"`
+	StartDeadlineAt             *time.Time        `json:"start_deadline_at,omitempty"`
+	FailureRules                *FailureRules     `json:"failure_rules,omitempty"`
 	EnvOverrides                map[string]string `json:"env_overrides,omitempty"`
 	Tasks                       int               `json:"tasks"`
 	InputManifestVersion        int               `json:"input_manifest_version"`
@@ -2205,6 +2419,8 @@ type JobRunResponse struct {
 // JobTaskResponse is the wire projection of state.JobTask.
 // LeaseToken is intentionally OMITTED (internal dispatch primitive).
 type JobTaskResponse struct {
+	WorkDecision    *WorkDecision   `json:"work_decision,omitempty"`
+	OutcomeCode     string          `json:"outcome_code,omitempty"`
 	RunID           string          `json:"run_id"`
 	TaskIndex       int             `json:"task_index"`
 	InputID         string          `json:"input_id,omitempty"`
@@ -2232,6 +2448,8 @@ type JobTaskLogResponse struct {
 }
 
 type JobTaskAttemptResponse struct {
+	WorkDecision   *WorkDecision   `json:"work_decision,omitempty"`
+	OutcomeCode    string          `json:"outcome_code,omitempty"`
 	RunID          string          `json:"run_id"`
 	TaskIndex      int             `json:"task_index"`
 	Attempt        int             `json:"attempt"`
@@ -2354,4 +2572,71 @@ type ClearObsoleteReport struct {
 	AppSlug   string `json:"app_slug"`
 	Count     int    `json:"count"`
 	OlderThan string `json:"older_than"`
+}
+
+type ManagedOperationResult struct {
+	Version int                      `json:"gregale_operation_result"`
+	Result  json.RawMessage          `json:"result"`
+	Effects []ManagedOperationEffect `json:"effects"`
+}
+
+// OperationEffectRecord correlates immutable effect identity with the existing
+// webhook ledger. Unavailable means the delivery history was deleted or pruned.
+type OperationEffectRecord struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Generation int64  `json:"generation"`
+	WebhookID  string `json:"webhook_id,omitempty"`
+	DeliveryID string `json:"delivery_id,omitempty"`
+	Type       string `json:"type,omitempty"`
+	Status     string `json:"status"`
+	Attempt    int    `json:"attempt"`
+	LastError  string `json:"last_error,omitempty"`
+}
+
+// OperationEffectPayload is the data in an operation.effect webhook. Scope and
+// identifiers are supplied by the control plane, not the handler response.
+type OperationEffectPayload struct {
+	OperationID      string          `json:"operation_id"`
+	AppID            string          `json:"app_id"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	Generation       int64           `json:"generation"`
+	Name             string          `json:"name"`
+	Type             string          `json:"type"`
+	Data             json.RawMessage `json:"data"`
+}
+
+type ManagedOperationEffect struct {
+	Name      string          `json:"name"`
+	Payload   json.RawMessage `json:"payload"`
+	WebhookID string          `json:"webhook_id"`
+	Type      string          `json:"type"`
+}
+
+type InvokeWork struct {
+	Policy      string          `json:"policy"`
+	Key         json.RawMessage `json:"key"`
+	FairnessKey json.RawMessage `json:"fairness_key,omitempty"`
+}
+
+// ServiceRolloutHandoffResponse exposes the durable scheduler barrier state
+// for readiness-gated service deployments. Gateway lists contain registered
+// node names only; request or customer identifiers are never used as metric
+// labels or placed in this status payload.
+type ServiceRolloutHandoffResponse struct {
+	BindingsCheck           *ServiceRolloutBindingGate `json:"bindings_check,omitempty"`
+	Action                  string                     `json:"action"`
+	Phase                   string                     `json:"phase"`
+	PredecessorDeploymentID string                     `json:"predecessor_deployment_id,omitempty"`
+	Generation              int64                      `json:"generation,omitempty"`
+	ExpectedGateways        []string                   `json:"expected_gateways,omitempty"`
+	AcknowledgedGateways    []string                   `json:"acknowledged_gateways,omitempty"`
+	MissingGateways         []string                   `json:"missing_gateways,omitempty"`
+	RetryCount              int                        `json:"retry_count"`
+	LastError               string                     `json:"last_error,omitempty"`
+	Reason                  string                     `json:"reason,omitempty"`
+	StartedAt               *time.Time                 `json:"started_at,omitempty"`
+	UpdatedAt               *time.Time                 `json:"updated_at,omitempty"`
+	AcknowledgedAt          *time.Time                 `json:"acknowledged_at,omitempty"`
+	CompletedAt             *time.Time                 `json:"completed_at,omitempty"`
 }

@@ -5,11 +5,47 @@
 //   * openapi-typescript-codegen@0.31.0 emits extensionless relative
 //     imports (`from './Foo'`); NodeNext requires explicit `.js`.
 //   * The generator emits one file per model but no models barrel.
+//   * Blob success bodies must bypass the generator's text decoder.
 //
-// Both behaviours are tested directly via `test/post-process.test.mjs`.
+// These behaviours are tested by the post-process and download tests.
 
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+
+/** Preserve bytes for generated Blob downloads, including JSON metadata files.
+ * Error responses keep the normal JSON/Problem parser. Idempotent and pinned
+ * to known generator anchors so a template change cannot silently undo it.
+ */
+export async function patchBinaryResponses(dir) {
+  const rewrite = async (file, replacements) => {
+    const path = join(dir, 'core', file);
+    let text = await readFile(path, 'utf8');
+    for (const [before, after] of replacements) {
+      if (text.includes(after)) continue;
+      if (!text.includes(before)) throw new Error(`binary response generator anchor missing: ${file}`);
+      text = text.replace(before, after);
+    }
+    await writeFile(path, text, 'utf8');
+  };
+  await rewrite('ApiRequestOptions.ts', [[
+    '  readonly responseHeader?: string;',
+    "  readonly responseType?: 'blob';\n  readonly responseHeader?: string;",
+  ]]);
+  await rewrite('request.ts', [
+    ['getResponseBody = async (response: Response):', "getResponseBody = async (response: Response, responseType?: 'blob'):"],
+    ["  if (response.status !== 204) {\n    try {", "  if (response.status !== 204) {\n    if (response.ok && responseType === 'blob') {\n      return await response.blob();\n    }\n    try {"],
+    ['await getResponseBody(response);', 'await getResponseBody(response, options.responseType);'],
+  ]);
+  await walk(join(dir, 'services'), async (path) => {
+    if (!path.endsWith('.ts')) return;
+    const text = await readFile(path, 'utf8');
+    const patched = text.replace(
+      /(\): CancelablePromise<Blob> \{\s+return __request\(OpenAPI, \{\n)(?!\s*responseType:)/g,
+      "$1      responseType: 'blob',\n",
+    );
+    if (text !== patched) await writeFile(path, patched, 'utf8');
+  });
+}
 
 /**
  * Walk a directory tree and rewrite extensionless relative imports

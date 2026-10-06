@@ -1,0 +1,15 @@
+/var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-source.tar.gz: OK
+/var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-runner.sh: OK
+/var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-change.patch: OK
+/var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-source-hashes.sha256: OK
+MemoryMax=10737418240
+ActiveState=active
+SubState=running
+InvocationID=c47899b595f4469b8f2af9a653f35050
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Running as unit: gregale-managed-pg-resource-links-f8b10c6a-final.service; invocation ID: c47899b595f4469b8f2af9a653f35050

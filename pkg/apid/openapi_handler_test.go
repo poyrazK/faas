@@ -55,13 +55,13 @@ func TestServeOpenAPISpec_ContentType(t *testing.T) {
 	if !bytes.HasPrefix(body, []byte("openapi: 3.1")) {
 		t.Errorf("body must begin with `openapi: 3.1`; got prefix %q", first40(body))
 	}
-	// Spot-check: paths section is present.
-	// The spec has grown past 16 KiB since PR 3 (alert-rules surface
-	// added ~300 lines), so the `paths:` block now sits at ~5.3 KiB.
-	// The original 4 KiB constant broke on PR 3; we keep the assertion
-	// as a "structure is sane" smoke test rather than an exact offset.
-	if !bytes.Contains(body[:min(16384, len(body))], []byte("\npaths:")) {
-		t.Errorf("body missing `paths:` section in first 16 KB; first lines: %q", first40(body))
+	// Metadata can grow ahead of paths. The endpoint must serve the complete
+	// embedded document, including its root paths section, at any byte offset.
+	if !bytes.Equal(body, OpenAPIYAML()) {
+		t.Error("YAML endpoint did not serve the complete embedded specification")
+	}
+	if !bytes.Contains(body, []byte("\npaths:\n")) {
+		t.Errorf("body missing root paths section; first lines: %q", first40(body))
 	}
 }
 
@@ -70,13 +70,6 @@ func first40(b []byte) string {
 		return string(b[:40]) + "..."
 	}
 	return string(b)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // TestOpenAPIYAML_NotEmpty is a smoke test on the package-level getter:

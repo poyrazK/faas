@@ -107,7 +107,8 @@ func (f *qualificationFakeClient) CreateProjectEnvironmentQualification(_ contex
 		ID: "44444444-4444-4444-8444-444444444444", Environment: "staging",
 		ReleaseSetID: request.ReleaseSetID, ConfigurationVersion: request.ConfigurationVersion,
 		ConfigurationHash: request.ConfigurationHash, SecretRevisionHashes: request.SecretRevisionHashes,
-		Status: status, Checks: request.Checks,
+		WorkloadConfigHashes: request.WorkloadConfigHashes,
+		Status:               status, Checks: request.Checks,
 		CreatedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour),
 	}, nil
 }
@@ -154,6 +155,8 @@ func TestQualifyProjectEnvironmentRunsAgainstExactReleaseMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	client.snapshot.Workloads[0].WorkloadConfigHash = api.EmptyProjectEnvironmentConfigHash()
+	client.snapshot.Workloads[0].Release.WorkloadConfigHash = api.EmptyProjectEnvironmentConfigHash()
 	got, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client())
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +164,9 @@ func TestQualifyProjectEnvironmentRunsAgainstExactReleaseMembers(t *testing.T) {
 	if !client.created || client.request.ReleaseSetID != releaseID || client.request.ConfigurationVersion != 3 ||
 		client.request.ConfigurationHash != api.EmptyProjectEnvironmentConfigHash() || got.Status != "passed" || len(got.Checks) != 2 {
 		t.Fatalf("request=%+v response=%+v", client.request, got)
+	}
+	if client.request.WorkloadConfigHashes["api"] != api.EmptyProjectEnvironmentConfigHash() || got.WorkloadConfigHashes["api"] != api.EmptyProjectEnvironmentConfigHash() {
+		t.Fatalf("tested workload hash was not recorded: request=%v receipt=%v", client.request.WorkloadConfigHashes, got.WorkloadConfigHashes)
 	}
 	expectedSecretHash, err := api.ProjectEnvironmentSecretRevisionHash([]api.ProjectEnvironmentSecretRevision{{Key: "STRIPE_KEY", Version: 4}})
 	if err != nil {
@@ -174,6 +180,27 @@ func TestQualifyProjectEnvironmentRunsAgainstExactReleaseMembers(t *testing.T) {
 		if check.Status != "passed" || len(check.Results) != 1 || check.Results[0].DeploymentID != deploymentID || check.Results[0].HTTPStatus == nil || *check.Results[0].HTTPStatus != http.StatusNoContent {
 			t.Fatalf("check = %+v", check)
 		}
+	}
+	client.created = false
+	// ADR-590: flags are observed before probes and included in the submitted
+	// fingerprint without changing the deployment's settings hash.
+	client.snapshot.FeatureFlagsHash = strings.Repeat("a", 64)
+	qualifiedHash, err := api.QualificationWorkloadConfigHash(api.EmptyProjectEnvironmentConfigHash(), client.snapshot.FeatureFlagsHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err != nil || client.request.WorkloadConfigHashes["api"] != qualifiedHash {
+		t.Fatalf("observed flags omitted from qualification: %v", err)
+	}
+	client.created = false
+	client.snapshot.FeatureFlagsHash = "invalid"
+	if _, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err == nil || client.created {
+		t.Fatal("invalid observed flag identity accepted")
+	}
+	client.snapshot.FeatureFlagsHash = ""
+	client.snapshot.Workloads[0].WorkloadConfigHash = strings.Repeat("1", 64)
+	if _, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err == nil || !strings.Contains(err.Error(), "untested desired settings") || client.created {
+		t.Fatalf("untested desired settings accepted: created=%v err=%v", client.created, err)
 	}
 }
 

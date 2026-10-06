@@ -6,8 +6,11 @@ import (
 	"bytes"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/jobresult"
 )
 
 func TestSuperviseJobCommandCapturesExit(t *testing.T) {
@@ -50,5 +53,23 @@ func TestSuperviseJobCommandCapturesStdoutAndStderr(t *testing.T) {
 	}
 	if got := stderr.String(); got != "stderr-marker" {
 		t.Fatalf("stderr = %q, want stderr-marker", got)
+	}
+}
+
+func TestSuperviseJobCommandShipsStructuredOutcomeForFailedPartition(t *testing.T) {
+	manifestPath := filepath.Join(t.TempDir(), "result.json")
+	command := []string{"/bin/sh", "-c", `printf '%s' '{"version":1,"artifacts":[{"name":"partial","uri":"s3://results/partial.bin","size_bytes":0,"sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"outcome_code":"invalid_record"}' > "$GREGALE_OUTPUT_MANIFEST_PATH"; exit 1`}
+	job := JobManifest{
+		Command: command, TaskTimeoutSec: 5, LeaseToken: "lease-outcome",
+		Env: map[string]string{"GREGALE_OUTPUT_MANIFEST_PATH": manifestPath},
+	}
+	payload := superviseJobCommand(job, buildEnvForJob(job), 50*time.Millisecond,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if payload.ExitCode != 1 || payload.ErrorClass != "failed" {
+		t.Fatalf("payload = %+v, want failed exit 1", payload)
+	}
+	result, err := jobresult.Validate(payload.OutputManifest)
+	if err != nil || result.OutcomeCode != "invalid_record" || len(result.Artifacts) != 0 {
+		t.Fatalf("failed result manifest = %+v, err %v; want outcome without artifacts", result, err)
 	}
 }

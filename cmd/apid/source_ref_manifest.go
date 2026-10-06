@@ -30,7 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-const sourceRefManifestMaxBytes = 1 << 20
+const sourceRefManifestMaxBytes = api.SourceManifestMaxBytes
 
 type deploymentReleaseCommand struct {
 	command []string
@@ -104,6 +104,9 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	if err := m.ValidateForPlan(plan); err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
 	}
+	if err := resolveSourceOperations(sourcePath, name, app.Slug, plan, m); err != nil {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid operation schema", err.Error())
+	}
 	return m, nil
 }
 
@@ -137,7 +140,10 @@ func (s *server) applyManifestWorkloads(
 		}
 	}
 	if len(dependencies) > 0 {
-		req.Overrides = &api.CreateDeploymentOverrides{MainDependsOn: dependencies}
+		if req.Overrides == nil {
+			req.Overrides = &api.CreateDeploymentOverrides{}
+		}
+		req.Overrides.MainDependsOn = dependencies
 	}
 	overrides, problem := validateOverrides(req, limits, acct.Plan)
 	if problem != nil {
@@ -295,6 +301,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	if m == nil {
 		return staged, nil
+	}
+	if len(sourceOperationSpecs(m)) > 0 && !s.operationDefinitionAdmission(acct.ID, app.ID, deploymentScope) {
+		return staged, api.ErrCapacity("new operation admission is disabled for this preview cohort")
 	}
 	resolved, problem := s.resolveManifestPostgresBindings(ctx, acct, m, []string{app.Slug}, deploymentScope)
 	if problem != nil {

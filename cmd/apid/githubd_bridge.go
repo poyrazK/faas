@@ -374,6 +374,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	kind := eventKindToDeploymentKind(req.EventKind)
 	activity := g.newDeploymentActivity(ctx, acct, app, req)
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, apidsource.EnqueueParams{
+		OperationDefinitions: sourceOperationSpecs(manifest),
 		Activity:             activity,
 		AppID:                app.ID,
 		DeliveryID:           req.DeliveryId,

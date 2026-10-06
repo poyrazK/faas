@@ -40,21 +40,23 @@ type projectEnvironmentPromotionTokenWire struct {
 }
 
 type projectEnvironmentPromotionPlan struct {
-	ProjectID             string
-	Preview               api.ProjectEnvironmentPromotionPreviewResponse
-	Apps                  map[string]state.App
-	Sources               map[string]state.Deployment
-	Targets               map[string]state.Deployment
-	FromReleaseSet        *state.ProjectReleaseSet
-	ToReleaseSet          *state.ProjectReleaseSet
-	Qualification         *state.ProjectEnvironmentQualification
-	QualificationRequired bool
-	ReleaseGraphMode      bool
-	ReleaseTTLSeconds     int
-	FallbackTargetMembers []state.ProjectReleaseMember
-	SyncConfig            bool
-	SourceConfig          state.ProjectEnvironmentConfig
-	TargetConfig          state.ProjectEnvironmentConfig
+	ProjectID              string
+	Preview                api.ProjectEnvironmentPromotionPreviewResponse
+	Apps                   map[string]state.App
+	Sources                map[string]state.Deployment
+	Targets                map[string]state.Deployment
+	FromReleaseSet         *state.ProjectReleaseSet
+	ToReleaseSet           *state.ProjectReleaseSet
+	Qualification          *state.ProjectEnvironmentQualification
+	QualificationRequired  bool
+	ReleaseGraphMode       bool
+	ReleaseTTLSeconds      int
+	FallbackTargetMembers  []state.ProjectReleaseMember
+	SyncConfig             bool
+	SourceConfig           state.ProjectEnvironmentConfig
+	TargetConfig           state.ProjectEnvironmentConfig
+	SourceFeatureFlagsHash string
+	TargetFeatureFlagsHash string
 }
 
 func (s *server) previewProjectEnvironmentPromotion(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -112,6 +114,9 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 		return plan, problem
 	}
 	plan.SourceConfig, plan.TargetConfig = fromConfig, toConfig
+	if problem := s.loadPromotionFeatureFlagIdentities(ctx, &plan, from, to); problem != nil {
+		return plan, problem
+	}
 	configChanges, err := projectEnvironmentConfigDiff(fromConfig.Values, toConfig.Values)
 	if err != nil {
 		return plan, api.ErrInternal("could not compare environment configurations")
@@ -208,6 +213,12 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 			}
 		}
 		change := projectEnvironmentPromotionChange(app, source, sourceErr == nil, target, targetErr == nil)
+		if syncConfig && sourceErr == nil {
+			change, err = s.promotionWorkloadConfigChange(ctx, app, source, toEnvironment, change)
+			if err != nil {
+				return plan, api.ErrCapacity("could not capture promotion workload settings")
+			}
+		}
 		if change.Kind == "source_missing" {
 			blockingReasons = append(blockingReasons,
 				fmt.Sprintf("workload %q has no live deployment in %s", app.Slug, fromEnvironment))
@@ -247,12 +258,23 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 			if !sameProjectEnvironmentSecretRevisionHashes(qualification.SecretRevisionHashes, currentSecretRevisionHashes) {
 				blockingReasons = append(blockingReasons, "source environment secret revisions changed after qualification; rerun health and smoke checks")
 			}
+			workloadStore, ok := s.store.(state.ProjectEnvironmentWorkloadQualificationStore)
+			if !ok {
+				return plan, api.ErrCapacity("workload configuration fingerprint storage is unavailable")
+			}
+			workloadHashes, scoped, err := workloadStore.ProjectEnvironmentWorkloadConfigHashes(ctx, acct.ID, project.ID, fromEnvironment, plan.FromReleaseSet.ID)
+			if errors.Is(err, state.ErrConflict) || (err == nil && (scoped || len(qualification.WorkloadConfigHashes) != 0) &&
+				!sameProjectEnvironmentSecretRevisionHashes(qualification.WorkloadConfigHashes, workloadHashes)) {
+				blockingReasons = append(blockingReasons, "source workload settings changed after qualification, or feature flags have a new revision; rerun health and smoke checks")
+			} else if err != nil {
+				return plan, api.ErrCapacity("could not inspect source workload settings")
+			}
 		}
 	}
 	qualificationID := projectEnvironmentPromotionQualificationID(plan.Qualification)
 
 	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, configDiff, syncConfig,
-		fromReleaseSet.ID, toReleaseSet.ID, qualificationID, changes)
+		fromReleaseSet.ID, toReleaseSet.ID, qualificationID, changes, plan.SourceFeatureFlagsHash, plan.TargetFeatureFlagsHash)
 	if err != nil {
 		return plan, api.ErrInternal("could not create promotion identity")
 	}
@@ -467,14 +489,39 @@ func (s *server) buildProjectEnvironmentPromotionResumePlan(ctx context.Context,
 				return plan, promotionResumeConflict("a promoted workload deployment is no longer available")
 			}
 		}
-		changes = append(changes, projectEnvironmentPromotionChange(app, source, true, previousTarget, hasPreviousTarget))
+		change := projectEnvironmentPromotionChange(app, source, true, previousTarget, hasPreviousTarget)
+		if promotion.SyncConfig {
+			change, err = s.promotionWorkloadConfigChange(ctx, app, source, to.Slug, change)
+			if err != nil {
+				return plan, api.ErrCapacity("could not inspect captured promotion workload settings")
+			}
+			if store, ok := s.store.(state.ProjectEnvironmentPromotionWorkloadSpecStore); ok {
+				capture, captureErr := store.ProjectEnvironmentPromotionWorkloadSpec(ctx, acct.ID, promotion.ID, app.ID)
+				if captureErr == nil {
+					change.TargetWorkloadConfigHash = capture.PreviousHash
+					if change.Kind == "unchanged" && change.PromotedWorkloadConfigHash != capture.PreviousHash {
+						change.Kind = "update"
+					}
+				} else if !errors.Is(captureErr, state.ErrNotFound) {
+					return plan, api.ErrCapacity("could not inspect promotion configuration checkpoint")
+				}
+			}
+		}
+		changes = append(changes, change)
 		if plan.ReleaseGraphMode && plan.ToReleaseSet == nil && workload.PreviousTargetTrafficPercent == 100 {
 			plan.FallbackTargetMembers = append(plan.FallbackTargetMembers,
 				state.ProjectReleaseMember{AppID: app.ID, DeploymentID: workload.PreviousTargetDeploymentID})
 		}
 	}
-	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, configDiff, promotion.SyncConfig,
-		promotion.SourceReleaseSetID, promotion.PreviousTargetReleaseSetID, promotion.SourceQualificationID, changes)
+	identityConfigDiff := configDiff
+	if problem := s.resumePromotionFeatureFlagIdentities(ctx, &plan, promotion, from, to); problem != nil {
+		return plan, problem
+	}
+	if promotion.SyncConfig && promotion.TargetConfigVersion != 0 {
+		identityConfigDiff.ToHash = promotion.PreviousTargetConfigHash
+	}
+	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, identityConfigDiff, promotion.SyncConfig,
+		promotion.SourceReleaseSetID, promotion.PreviousTargetReleaseSetID, promotion.SourceQualificationID, changes, plan.SourceFeatureFlagsHash, plan.TargetFeatureFlagsHash)
 	if err != nil {
 		return plan, api.ErrInternal("could not recreate promotion identity")
 	}
@@ -660,6 +707,8 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		promotionRecord.PreviousTargetConfigHash = plan.Preview.ConfigDiff.ToHash
 		promotionRecord.SourceConfigSnapshot = projectEnvironmentConfigSnapshot(plan.SourceConfig)
 		promotionRecord.PreviousTargetConfigSnapshot = projectEnvironmentConfigSnapshot(plan.TargetConfig)
+		promotionRecord.SourceFeatureFlagsHash = plan.SourceFeatureFlagsHash
+		promotionRecord.PreviousTargetFeatureFlagsHash = plan.TargetFeatureFlagsHash
 	}
 	promotion, workloads, err := s.store.CreateProjectEnvironmentPromotion(r.Context(), promotionRecord,
 		projectEnvironmentPromotionWorkloads(plan))
@@ -669,6 +718,10 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		promotion, workloads, err = s.store.ProjectEnvironmentPromotionByIdempotencyKey(r.Context(), acct.ID, projectSlug, idempotencyKey)
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, promotionResumeConflict("environment configuration or feature flags changed during promotion creation; preview again"))
+			return
+		}
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not load environment promotion"))
 			return
@@ -880,7 +933,18 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 	if problem != nil {
 		return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion, errors.New("could not inspect active target release graph"))
 	}
-	if previousGraph != nil && active.ID != "" && projectReleaseSetMatchesMembers(active, previousMembers) {
+	if previousGraph != nil && active.ID != "" && projectReleaseSetMatchesMembers(active, previousMembers) &&
+		(!promotion.SyncConfig || active.ID != promotion.TargetReleaseSetID) {
+		if promotion.SyncConfig {
+			configPublisher, ok := s.store.(state.ProjectEnvironmentPromotionReleaseSetStore)
+			if !ok {
+				return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion, errors.New("atomic promotion config rollback is unavailable"))
+			}
+			if _, err := configPublisher.RollbackProjectEnvironmentPromotionReleaseSet(ctx, acct.ID, promotion.ID, previousGraph.TTLSeconds, previousGraph.Members); err != nil {
+				return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
+					fmt.Errorf("%w: restored graph has no matching configuration receipt", state.ErrConflict))
+			}
+		}
 		// Recover if the rollback graph was activated immediately before the
 		// process stopped and its promotion checkpoint was not saved.
 		promotion, err = s.store.UpdateProjectEnvironmentPromotionReleaseSets(ctx, acct.ID, promotion.ID, "", active.ID)
@@ -1182,7 +1246,14 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 		var promoted state.Deployment
 		var promoteErr error
 		if plan.ReleaseGraphMode {
-			promoted, promoteErr = promoteProjectEnvironmentDeploymentDark(ctx, s.store, plan.Sources[workload.WorkloadSlug], promotion.ToEnvironment, promotion.ID)
+			if plan.SyncConfig {
+				input := state.ProjectEnvironmentPromotionWorkloadSpecInput{PromotionID: promotion.ID,
+					SourceDeploymentID: workload.SourceDeploymentID, SourceHash: change.SourceWorkloadConfigHash,
+					PreviousTargetHash: change.TargetWorkloadConfigHash}
+				promoted, promoteErr = promoteProjectEnvironmentDeploymentWithTraffic(ctx, s.store, plan.Sources[workload.WorkloadSlug], promotion.ToEnvironment, promotion.ID, true, input)
+			} else {
+				promoted, promoteErr = promoteProjectEnvironmentDeploymentDark(ctx, s.store, plan.Sources[workload.WorkloadSlug], promotion.ToEnvironment, promotion.ID)
+			}
 		} else {
 			promoted, promoteErr = promoteProjectEnvironmentDeployment(ctx, s.store, plan.Sources[workload.WorkloadSlug], promotion.ToEnvironment, promotion.ID)
 		}
@@ -1280,12 +1351,25 @@ func (s *server) activateProjectEnvironmentPromotionGraph(ctx context.Context, a
 			return promotion, s.failProjectEnvironmentPromotionGraph(ctx, acct, promotion, "the active target graph no longer matches this promotion")
 		}
 		target = active
-	case promotion.TargetReleaseSetID == "" && active.ID != "" && projectReleaseSetMatchesMembers(active, members):
+		if promotion.SyncConfig {
+			configPublisher, ok := s.store.(state.ProjectEnvironmentPromotionReleaseSetStore)
+			if !ok {
+				return promotion, api.ErrCapacity("atomic project release and config activation is unavailable")
+			}
+			target, err = configPublisher.PublishProjectEnvironmentPromotionReleaseSet(ctx, acct.ID, promotion.ID, plan.ReleaseTTLSeconds, members)
+			if err != nil {
+				return promotion, s.failProjectEnvironmentPromotionGraph(ctx, acct, promotion, "the target configuration changed after cutover; inspect the target before retrying")
+			}
+		}
+	case promotion.TargetReleaseSetID == "" && active.ID != "" && active.ID != expectedID && projectReleaseSetMatchesMembers(active, members):
+		if promotion.SyncConfig {
+			return promotion, s.failProjectEnvironmentPromotionGraph(ctx, acct, promotion, "the target graph has no atomic configuration receipt; inspect the target before retrying")
+		}
 		// Recover the commit/checkpoint gap if the graph was published but
 		// the durable promotion row was not yet updated.
 		target = active
 	case promotion.TargetReleaseSetID == "" && active.ID == expectedID:
-		if promotion.SyncConfig {
+		if promotion.SyncConfig || promotion.SourceQualificationID != "" {
 			configPublisher, ok := s.store.(state.ProjectEnvironmentPromotionReleaseSetStore)
 			if !ok {
 				return promotion, api.ErrCapacity("atomic project release and config activation is unavailable")
@@ -1297,7 +1381,7 @@ func (s *server) activateProjectEnvironmentPromotionGraph(ctx context.Context, a
 				promotion.ToEnvironment, expectedID, plan.FallbackTargetMembers, plan.ReleaseTTLSeconds, members)
 		}
 		if errors.Is(err, state.ErrConflict) {
-			return promotion, s.failProjectEnvironmentPromotionGraph(ctx, acct, promotion, "the target route changed after preview; preview and promote again")
+			return promotion, s.failProjectEnvironmentPromotionGraph(ctx, acct, promotion, "the release or environment configuration changed after preview; preview and promote again")
 		}
 		if err != nil {
 			return promotion, api.ErrCapacity("could not atomically activate the promoted release graph")
@@ -1420,6 +1504,15 @@ func (s *server) verifyProjectEnvironmentPromotionGraph(ctx context.Context, acc
 	}
 	if !projectReleaseSetMatchesMembers(active, members) {
 		return errors.New("active target release graph does not match the promotion checkpoints")
+	}
+	if promotion.SyncConfig {
+		publisher, ok := s.store.(state.ProjectEnvironmentPromotionReleaseSetStore)
+		if !ok {
+			return errors.New("atomic promotion configuration verification is unavailable")
+		}
+		if _, err := publisher.PublishProjectEnvironmentPromotionReleaseSet(ctx, acct.ID, promotion.ID, plan.ReleaseTTLSeconds, members); err != nil {
+			return errors.New("target configuration or feature flags changed during promotion verification")
+		}
 	}
 	return nil
 }
@@ -1603,7 +1696,7 @@ func promoteProjectEnvironmentDeploymentDark(ctx context.Context, store state.St
 	return promoteProjectEnvironmentDeploymentWithTraffic(ctx, store, source, targetEnvironment, promotionID, true)
 }
 
-func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store state.Store, source state.Deployment, targetEnvironment, promotionID string, dark bool) (state.Deployment, error) {
+func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store state.Store, source state.Deployment, targetEnvironment, promotionID string, dark bool, configuration ...state.ProjectEnvironmentPromotionWorkloadSpecInput) (state.Deployment, error) {
 	rootfsPath, rootfsKey, rootfsBytes := source.RootfsPath, source.RootfsKey, source.RootfsBytes
 	candidate := source
 	candidate.ID = ""
@@ -1643,7 +1736,17 @@ func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store s
 	candidate.DeployedVia = "api"
 	candidate.Reason = projectEnvironmentPromotionDeploymentReason(promotionID)
 
-	created, err := store.CreateDeployment(ctx, candidate)
+	var created state.Deployment
+	var err error
+	if len(configuration) > 0 {
+		preparer, ok := store.(state.ProjectEnvironmentPromotionWorkloadSpecStore)
+		if !ok {
+			return state.Deployment{}, errors.New("atomic promotion workload settings preparation is unavailable")
+		}
+		created, err = preparer.CreateDeploymentForEnvironmentPromotion(ctx, candidate, configuration[0])
+	} else {
+		created, err = store.CreateDeployment(ctx, candidate)
+	}
 	if err != nil {
 		return state.Deployment{}, err
 	}
@@ -1674,6 +1777,53 @@ func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store s
 		return state.Deployment{}, err
 	}
 	return store.DeploymentByID(ctx, created.ID)
+}
+
+func (s *server) promotionWorkloadConfigChange(ctx context.Context, app state.App, source state.Deployment, targetEnvironment string, change api.ProjectEnvironmentPromotionChange) (api.ProjectEnvironmentPromotionChange, error) {
+	sourceSettings, err := s.promotionWorkloadSettings(ctx, app, source.Scope, source.ID)
+	if err != nil {
+		return change, err
+	}
+	targetSettings, err := s.promotionWorkloadSettings(ctx, app, targetEnvironment, "")
+	if err != nil {
+		return change, err
+	}
+	promotedSettings, err := state.WorkloadSettingsForPromotion(sourceSettings, targetSettings)
+	if err != nil {
+		return change, err
+	}
+	change.SourceWorkloadConfigHash, err = state.WorkloadSettingsHash(sourceSettings)
+	if err != nil {
+		return change, err
+	}
+	change.TargetWorkloadConfigHash, err = state.WorkloadSettingsHash(targetSettings)
+	if err != nil {
+		return change, err
+	}
+	change.PromotedWorkloadConfigHash, err = state.WorkloadSettingsHash(promotedSettings)
+	if err == nil && change.Kind == "unchanged" && change.PromotedWorkloadConfigHash != change.TargetWorkloadConfigHash {
+		change.Kind = "update"
+	}
+	return change, err
+}
+
+func (s *server) promotionWorkloadSettings(ctx context.Context, app state.App, environment, deploymentID string) (state.ProjectEnvironmentWorkloadSettings, error) {
+	var spec state.ProjectEnvironmentWorkloadSpec
+	var err error
+	if deploymentID == "" {
+		if reader, ok := s.store.(state.ProjectEnvironmentWorkloadSpecReader); ok {
+			spec, err = reader.ProjectEnvironmentWorkloadSpec(ctx, app.AccountID, app.ProjectID, environment, app.ID)
+		}
+	} else if reader, ok := s.store.(state.DeploymentWorkloadSpecReader); ok {
+		spec, err = reader.ProjectEnvironmentWorkloadSpecForDeployment(ctx, app.AccountID, app.ProjectID, deploymentID)
+	}
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return state.ProjectEnvironmentWorkloadSettings{}, err
+	}
+	if spec.ID != "" {
+		return spec.Settings, nil
+	}
+	return state.MaterializeEnvironmentWorkloadSettings(ctx, s.store, app, environment)
 }
 
 func projectEnvironmentPromotionChange(app state.App, source state.Deployment, hasSource bool, target state.Deployment, hasTarget bool) api.ProjectEnvironmentPromotionChange {
@@ -1729,23 +1879,34 @@ func projectEnvironmentPromotionHash(
 	syncConfig bool,
 	fromReleaseSetID, toReleaseSetID, sourceQualificationID string,
 	changes []api.ProjectEnvironmentPromotionChange,
+	featureFlagsHashes ...string,
 ) (string, error) {
+	var sourceFlagsHash, targetFlagsHash string
+	if len(featureFlagsHashes) != 0 {
+		if len(featureFlagsHashes) != 2 {
+			return "", state.ErrInvalidArgument
+		}
+		sourceFlagsHash, targetFlagsHash = featureFlagsHashes[0], featureFlagsHashes[1]
+	}
 	identity := struct {
-		ProjectSlug           string                                  `json:"project_slug"`
-		FromEnvironment       string                                  `json:"from_environment"`
-		ToEnvironment         string                                  `json:"to_environment"`
-		FromConfigHash        string                                  `json:"from_config_hash"`
-		ToConfigHash          string                                  `json:"to_config_hash"`
-		SyncConfig            bool                                    `json:"sync_config,omitempty"`
-		FromReleaseSetID      string                                  `json:"from_release_set_id,omitempty"`
-		ToReleaseSetID        string                                  `json:"to_release_set_id,omitempty"`
-		SourceQualificationID string                                  `json:"source_qualification_id,omitempty"`
-		Changes               []api.ProjectEnvironmentPromotionChange `json:"changes"`
+		ProjectSlug            string                                  `json:"project_slug"`
+		FromEnvironment        string                                  `json:"from_environment"`
+		ToEnvironment          string                                  `json:"to_environment"`
+		FromConfigHash         string                                  `json:"from_config_hash"`
+		ToConfigHash           string                                  `json:"to_config_hash"`
+		SyncConfig             bool                                    `json:"sync_config,omitempty"`
+		FromReleaseSetID       string                                  `json:"from_release_set_id,omitempty"`
+		ToReleaseSetID         string                                  `json:"to_release_set_id,omitempty"`
+		SourceQualificationID  string                                  `json:"source_qualification_id,omitempty"`
+		Changes                []api.ProjectEnvironmentPromotionChange `json:"changes"`
+		SourceFeatureFlagsHash string                                  `json:"source_feature_flags_hash,omitempty"`
+		TargetFeatureFlagsHash string                                  `json:"target_feature_flags_hash,omitempty"`
 	}{
 		ProjectSlug: projectSlug, FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
 		FromConfigHash: configDiff.FromHash, ToConfigHash: configDiff.ToHash, SyncConfig: syncConfig,
 		FromReleaseSetID: fromReleaseSetID, ToReleaseSetID: toReleaseSetID,
 		SourceQualificationID: sourceQualificationID, Changes: changes,
+		SourceFeatureFlagsHash: sourceFlagsHash, TargetFeatureFlagsHash: targetFlagsHash,
 	}
 	raw, err := json.Marshal(identity)
 	if err != nil {

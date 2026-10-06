@@ -1,0 +1,7 @@
+# github.com/onebox-faas/faas/pkg/fcvm
+../../../../go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.13.darwin-arm64/src/net/http/transport.go:37:2: package vendor/golang.org/x/net/http/httpproxy is not in std (/Users/poyrazk/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.13.darwin-arm64/src/vendor/golang.org/x/net/http/httpproxy)
+FAIL	github.com/onebox-faas/faas/pkg/fcvm [setup failed]
+# github.com/onebox-faas/faas/cmd/vmmd
+../../../../go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.13.darwin-arm64/src/net/http/transport.go:37:2: package vendor/golang.org/x/net/http/httpproxy is not in std (/Users/poyrazk/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.13.darwin-arm64/src/vendor/golang.org/x/net/http/httpproxy)
+FAIL	github.com/onebox-faas/faas/cmd/vmmd [setup failed]
+FAIL

@@ -117,6 +117,13 @@ type WorkerPoolEngine interface {
 	ReconcileWorkerPool(ctx context.Context, appID string, desired int, trigger string) error
 }
 
+// ScopedWorkerPoolEngine derives each environment's desired count from its
+// captured queue demand. The app-wide observation cannot be used as the target
+// for every live deployment. Production adapters must implement this surface.
+type ScopedWorkerPoolEngine interface {
+	ReconcileWorkerPools(ctx context.Context, appID, trigger string) error
+}
+
 // InstatsReader is the per-instance in-flight signal source (PR-C,
 // issue #462). Wraps the *instancestats.Reader accessor the sched
 // poller populates from the vmmd ActivityTracker wire shape.
@@ -141,7 +148,7 @@ type QueueStatsReader interface {
 // enabled binding's sample so its concurrency cap contributes to the target.
 type QueueBindingStatsReader interface {
 	ListQueueBindingsForApp(ctx context.Context, accountID, appID string) ([]state.QueueBinding, error)
-	QueueStateForQueue(ctx context.Context, appID, queueName string) (state.QueueStats, error)
+	QueueStateForBinding(ctx context.Context, appID, bindingID string) (state.QueueStats, error)
 }
 
 // BrokerLagReader supplies broker-reported consumer lag / queue depth for an app.
@@ -249,7 +256,7 @@ func (s queueDepthSignal) bindingWorkerDemand(target float64) map[string]int {
 				workers = sample.binding.MaxConcurrency
 			}
 		}
-		demand[sample.binding.QueueName] = workers
+		demand[sample.binding.QueueName] += workers
 	}
 	return demand
 }
@@ -591,10 +598,11 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 		}
 		if len(bindings) > 0 {
 			signal := queueDepthSignal{bindings: make([]queueBindingDepth, 0, len(bindings))}
+			byName := map[string]state.QueueStats{}
 			for _, binding := range bindings {
 				var queue state.QueueStats
 				if binding.Enabled {
-					queue, err = t.queueBindings.QueueStateForQueue(ctx, app.ID, binding.QueueName)
+					queue, err = t.queueBindings.QueueStateForBinding(ctx, app.ID, binding.ID)
 					if err != nil {
 						return queueDepthSignal{}, false, fmt.Errorf("queue binding %q: %w", binding.QueueName, err)
 					}
@@ -606,8 +614,18 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 					}
 				}
 				signal.bindings = append(signal.bindings, queueBindingDepth{binding: binding, queue: queue})
-				if t.metrics != nil {
-					t.metrics.SetQueueBindingState(app.ID, binding.QueueName, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
+				aggregate := byName[binding.QueueName]
+				aggregate.Depth += queue.Depth
+				aggregate.InFlight += queue.InFlight
+				aggregate.DeadLetter += queue.DeadLetter
+				if !queue.OldestPendingAt.IsZero() && (aggregate.OldestPendingAt.IsZero() || queue.OldestPendingAt.Before(aggregate.OldestPendingAt)) {
+					aggregate.OldestPendingAt = queue.OldestPendingAt
+				}
+				byName[binding.QueueName] = aggregate
+			}
+			if t.metrics != nil {
+				for name, queue := range byName {
+					t.metrics.SetQueueBindingState(app.ID, name, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
 				}
 			}
 			return withBroker(signal, true, nil)
@@ -708,6 +726,36 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if !haveInflightTarget && !haveQueueTarget && !haveQueueLagTarget && len(customTargets) == 0 {
 			continue
 		}
+		if (haveQueueTarget || haveQueueLagTarget) && (app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker) {
+			if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok {
+				// Keep existing app/binding gauges for visibility. These
+				// aggregate observations never authorize a scoped mutation.
+				if t.metrics != nil {
+					signal, have, err := t.readQueueState(ctx, app, now)
+					if err != nil {
+						t.log.Warn("targets: worker queue telemetry failed", "app_id", app.ID, "err", err)
+					} else if have {
+						queue := signal.queue
+						t.metrics.SetQueueState(app.ID, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
+						if haveQueueTarget {
+							for binding, demand := range signal.bindingWorkerDemand(queueTarget) {
+								t.metrics.SetQueueBindingWorkerDemand(app.ID, binding, demand)
+							}
+						}
+					}
+				}
+				if t.admissionBackoffActive(app.ID, now) {
+					continue
+				}
+				if err := pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
+					t.recordAdmissionFailure(app.ID, now)
+					t.log.Warn("targets: reconcile worker environments failed", "app_id", app.ID, "err", err)
+				} else {
+					t.clearAdmissionBackoff(app.ID)
+				}
+				continue
+			}
+		}
 		conc := 0
 		if t.ledger != nil {
 			conc = t.ledger.Concurrency(app.ID)
@@ -725,7 +773,6 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// reports no_signal exactly as it did before ADR-194.
 		obs := make([]scalesignal.Observation, 0, 2)
 		var dec Decision
-		var observedInflight int64
 		var observedQueueDepth int
 		var observedBrokerLag int64
 		var haveBrokerLag bool
@@ -749,7 +796,6 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				}
 				perInst, haveInflight = t.ring.AppMaxInflight(app.ID, now)
 			}
-			observedInflight = perInst
 			obs = append(obs, scalesignal.Observation{
 				Metric:   api.ScalingMetricConcurrentRequests,
 				Target:   inflightTarget,
@@ -880,8 +926,6 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			ScaleOutCooldownS: policy.ScaleOutCooldownS,
 			Now:               now,
 		}, obs)
-		dec.ObservedInflight = observedInflight
-		dec.ObservedQueueDepth = observedQueueDepth
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit vs cooldown_held is observable.
 		if t.metrics != nil {

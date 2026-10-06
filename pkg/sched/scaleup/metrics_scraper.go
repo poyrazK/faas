@@ -43,25 +43,45 @@ const metricsResponseMaxBytes = 1 << 20
 // trigger's Touch path treats the tick as a no-op without a spammy
 // error log.
 func (s *HTTPPromScraper) Scrape(ctx context.Context) (map[string]int64, error) {
+	body, err := s.fetch(ctx)
+	if err != nil {
+		return map[string]int64{}, err
+	}
+	return parseGatewayRequestsTotal(body), nil
+}
+
+// ScrapeLoad returns the per-app cumulative request counts and the per-app
+// in-flight requests (`gateway_app_inflight_requests`) from one scrape. The
+// scale-in mirror needs both: completions collapse while an overloaded app
+// stalls, but its in-flight requests do not.
+func (s *HTTPPromScraper) ScrapeLoad(ctx context.Context) (counts, inflight map[string]int64, err error) {
+	body, err := s.fetch(ctx)
+	if err != nil {
+		return map[string]int64{}, map[string]int64{}, err
+	}
+	return parseGatewayRequestsTotal(body), parseGatewayAppInflight(body), nil
+}
+
+func (s *HTTPPromScraper) fetch(ctx context.Context) (string, error) {
 	if s == nil || s.URL == "" || s.Client == nil {
-		return map[string]int64{}, nil
+		return "", nil
 	}
 	resp, err := s.Client.Get(ctx, s.URL)
 	if err != nil {
-		return map[string]int64{}, fmt.Errorf("scaleup: scrape GET: %w", err)
+		return "", fmt.Errorf("scaleup: scrape GET: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return map[string]int64{}, fmt.Errorf("scaleup: scrape status %d", resp.StatusCode)
+		return "", fmt.Errorf("scaleup: scrape status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, metricsResponseMaxBytes+1))
 	if err != nil {
-		return map[string]int64{}, fmt.Errorf("scaleup: scrape read: %w", err)
+		return "", fmt.Errorf("scaleup: scrape read: %w", err)
 	}
 	if int64(len(body)) > metricsResponseMaxBytes {
-		return map[string]int64{}, fmt.Errorf("scaleup: scrape response exceeds %d bytes", metricsResponseMaxBytes)
+		return "", fmt.Errorf("scaleup: scrape response exceeds %d bytes", metricsResponseMaxBytes)
 	}
-	return parseGatewayRequestsTotal(string(body)), nil
+	return string(body), nil
 }
 
 // parseGatewayRequestsTotal parses the Prometheus exposition for
@@ -70,22 +90,32 @@ func (s *HTTPPromScraper) Scrape(ctx context.Context) (map[string]int64, error) 
 // per-code; the trigger wants the per-app total). Returns
 // `appID → total count`.
 //
-// The parser is intentionally tiny — gatewayd-internal emits only one metric
-// family with the `app` label, and the surrounding exposition is
-// stable. A more sophisticated parser (e.g. prometheus/common) would
-// pull in a substantial dependency for what is fundamentally a
-// 20-line parse loop.
+// The parser is intentionally tiny — the exposition holds only the two
+// app-labelled families the scheduler reads, and its shape is stable. A
+// more sophisticated parser (e.g. prometheus/common) would pull in a
+// substantial dependency for what is fundamentally a 20-line parse loop.
 func parseGatewayRequestsTotal(body string) map[string]int64 {
+	return sumGatewayAppSamples(body, "gateway_requests_total{")
+}
+
+// parseGatewayAppInflight parses `gateway_app_inflight_requests{app="..."}`
+// rows into `appID → requests in flight`. An app absent from a successful
+// scrape has no in-flight requests on that gateway.
+func parseGatewayAppInflight(body string) map[string]int64 {
+	return sumGatewayAppSamples(body, "gateway_app_inflight_requests{")
+}
+
+// sumGatewayAppSamples sums every sample of the family whose line starts with
+// prefix, keyed by its app label.
+func sumGatewayAppSamples(body, prefix string) map[string]int64 {
 	out := map[string]int64{}
 	for _, line := range strings.Split(body, "\n") {
 		// Skip comments + empty lines + HELP/TYPE metadata.
 		if len(line) == 0 || line[0] == '#' {
 			continue
 		}
-		// Match lines starting with gateway_requests_total. There
-		// is no other metric in this exposition that prefix-
-		// matches, so a startswith check is sufficient.
-		const prefix = "gateway_requests_total{"
+		// The two families have distinct prefixes, so a startswith
+		// check is sufficient.
 		if !strings.HasPrefix(line, prefix) {
 			continue
 		}

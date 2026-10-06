@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -114,5 +115,68 @@ func TestBrokerWorkBindingDispatchAndRedelivery(t *testing.T) {
 	}
 	if count != 1 || recordState != "succeeded" {
 		t.Fatalf("receipt count=%d state=%s", count, recordState)
+	}
+}
+
+func TestExclusiveBrokerTriggerAdmissionAndReplay(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "exclusive-broker@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "exclusive-broker", RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := state.ExclusiveWorkStore(store)
+	if _, err := owners.UpsertExclusiveWorkPolicy(ctx, account.ID, exclusivework.Policy{
+		Name: "crm-sync", Scope: "account", Contention: "queue", MemberAppIDs: []string{app.ID},
+		LeaseSeconds: 5, MaxAttemptSeconds: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	trigger, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "kafka", "crm-sync", true,
+		[]byte(`{"topic":"crm"}`), "", 10, 1000, 3, 1<<20, "commit", api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := state.ExclusiveTriggerBindingStore(store)
+	if _, err := bindings.UpsertExclusiveTriggerBinding(ctx, state.ExclusiveTriggerBinding{
+		Source: "broker", TriggerID: trigger.ID.String(), AccountID: account.ID,
+		PolicyName: "crm-sync", Key: json.RawMessage(`"customer:acme:crm-sync"`), EquivalenceKey: "scheduled-sync",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	poller := &workIdentityTestPoller{deliveries: []SourceRecord{
+		{ItemIdentifier: "orders/0/101", StableIdentifier: "orders/0/42", Payload: []byte(`{"customer":"acme"}`)},
+		{ItemIdentifier: "orders/0/102", StableIdentifier: "orders/0/42", Payload: []byte(`{"customer":"acme"}`)},
+	}}
+	installPollerFactory(t, "kafka", func(sqlc.Trigger) (triggerSource, error) { return poller, nil })
+	loop := makeLoopForDLQ()
+	for range 2 {
+		if err := loop.dispatchOneTrigger(ctx, trigger, store, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(poller.acks) != 2 || poller.acks[0] != "orders/0/101" || poller.acks[1] != "orders/0/102" || len(poller.nacks) != 0 {
+		t.Fatalf("acks=%v nacks=%v", poller.acks, poller.nacks)
+	}
+	operations, err := owners.ListDueExclusiveOperations(ctx, 10)
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("due operations=%+v err=%v, want one idempotent operation", operations, err)
+	}
+	var linked int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM trigger_records
+		WHERE trigger_id=$1 AND state='succeeded'
+		  AND metadata->'_gregale'->>'exclusive_operation_id'=$2`, trigger.ID, operations[0].ID).Scan(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if linked != 2 {
+		t.Fatalf("linked trigger receipts=%d, want both deliveries linked to operation %s", linked, operations[0].ID)
 	}
 }

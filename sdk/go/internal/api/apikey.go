@@ -61,6 +61,8 @@ const (
 	ScopeSecretsRead       = "secrets:read"
 	ScopeSecretsWrite      = "secrets:write"
 	ScopeUsageRead         = "usage:read"
+	ScopeRunsRead          = "runs:read"
+	ScopeRunsWrite         = "runs:write"
 	ScopeDelayedTasksRead  = "delayed_tasks:read"
 	ScopeDelayedTasksWrite = "delayed_tasks:write"
 )
@@ -74,6 +76,8 @@ var validScopes = map[string]struct{}{
 	ScopeSecretsRead:       {},
 	ScopeSecretsWrite:      {},
 	ScopeUsageRead:         {},
+	ScopeRunsRead:          {},
+	ScopeRunsWrite:         {},
 	ScopeDelayedTasksRead:  {},
 	ScopeDelayedTasksWrite: {},
 }

@@ -286,19 +286,19 @@ func TestSignalAndKillRace_AlreadyExitedIsClean(t *testing.T) {
 // the no-watchdog edge: doneCh=nil falls through to the
 // immediate-escalate branch (killSignalSent=true). This is
 // the safety net for a mis-wired Manager where the watchdog
-// goroutine never started; we'd rather SIGKILL than hang.
+// goroutine never started. Send SIGKILL, but return an error without exit proof.
 func TestSignalAndKillRace_NoWatchdogEscalatesImmediately(t *testing.T) {
 	cmd := spawnPy3(t, `
 import signal, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 time.sleep(60)`)
-	defer func() { _ = cmd.Process.Kill() }()
+	defer func() { _ = cmd.Wait() }()
 
 	start := time.Now()
 	killed, _, err := signalAndKillRace(cmd, nil, syscall.SIGTERM, 5*time.Second, 1*time.Second)
 	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("signalAndKillRace: %v", err)
+	if err == nil {
+		t.Fatal("missing watchdog acknowledged an unconfirmed exit")
 	}
 	if !killed {
 		t.Errorf("killSignalSent=false; want true (no watchdog → immediate SIGKILL)")

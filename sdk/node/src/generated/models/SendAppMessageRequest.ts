@@ -9,6 +9,10 @@ import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
  */
 export type SendAppMessageRequest = {
   /**
+   * Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the default environment and legacy shared queues.
+   */
+  environment?: string;
+  /**
    * Generated when omitted.
    */
   id?: string;
@@ -27,10 +31,14 @@ export type SendAppMessageRequest = {
    * Any valid JSON value delivered inside the CloudEvents envelope.
    */
   data: any;
+  /**
+   * Optional bounded Gregale Flags context. The platform validates the envelope, binds it to its active customer, and restores it on the queued request.
+   */
+  flag_context?: string;
   queue_name?: string;
   retry_policy?: RetryPolicyDTO;
   /**
-   * Optional application-keyed policy for an unnamed queue without an active queue consumer.
+   * Optional application-keyed policy. Environment-owned queue bindings require a scoped policy adapter and currently reject this option.
    */
   work?: InvokeWork;
 };

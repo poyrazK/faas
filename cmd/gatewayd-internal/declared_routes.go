@@ -66,6 +66,25 @@ func (m *declaredRoutesMatcher) ResolveScopedRoutePolicy(ctx context.Context, ap
 	if app.PinnedDeploymentScope == "" || m == nil || m.store == nil {
 		return app, nil
 	}
+	if reader, ok := m.store.(state.DeploymentWorkloadSpecReader); ok && app.PinnedDeploymentID != "" && app.ProjectID != "" {
+		expectedScope := app.PinnedDeploymentScope
+		if expectedScope == "default" {
+			expectedScope = "production"
+		}
+		spec, err := reader.ProjectEnvironmentWorkloadSpecForDeployment(ctx, app.AccountID, app.ProjectID, app.PinnedDeploymentID)
+		if err == nil {
+			hash, hashErr := state.WorkloadSettingsHash(spec.Settings)
+			if hashErr != nil || hash != spec.Hash || spec.AppID != app.ID || spec.EnvironmentSlug != expectedScope {
+				return gateway.App{}, state.ErrConflict
+			}
+			app.OnlyAllowDeclaredRoutes = spec.Settings.OnlyAllowDeclaredRoutes
+			app.DeclaredRoutes = gatewayDeclaredRoutes(spec.Settings.DeclaredRoutes)
+			return app, nil
+		}
+		if !errors.Is(err, state.ErrNotFound) {
+			return gateway.App{}, err
+		}
+	}
 	store, ok := m.store.(interface {
 		GetProjectEnvironmentRoutePolicy(context.Context, string, string, string) (state.ProjectEnvironmentRoutePolicy, error)
 	})

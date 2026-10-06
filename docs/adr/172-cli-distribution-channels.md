@@ -77,6 +77,13 @@ nixpkgs, and the distro archives.
   `materialize-release-manifest_test.sh`. The installer's checksum-mismatch
   path is covered, because a silent verification failure in a `curl | sh`
   installer is the worst defect this surface can have.
+- npm upload acceptance can precede registry visibility. The launcher publish
+  waits for all four exact platform manifests, provenance and downloadable
+  tarballs; reruns recheck them even if the launcher already exists. The job
+  removes initial prerelease `latest` tags without replacing a stable tag.
+  `npm-channel-repair.yml` repairs an accepted release without repeat uploads,
+  using checksum-verified GitHub archives and an anonymous install/run/hash
+  check. `scripts/publish-npm-packages_test.sh` covers propagation and retries.
 - Release archives are byte-reproducible for a given commit, and that is
   enforced by a test rather than asserted in a comment. Archive creation
   therefore lives in `scripts/archive-cli-binary.sh` instead of inline in

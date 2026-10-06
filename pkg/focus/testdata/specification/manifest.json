@@ -1,0 +1,152 @@
+{
+  "repository": "FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec",
+  "version": "1.4",
+  "commit": "f1eeb30a78f7c141ef1237d589355296a2761c1c",
+  "files": [
+    {
+      "file": "dataset.md",
+      "path": "specification/datasets/invoice_detail/dataset.md",
+      "sha256": "f893a859997a97f68e858adafa040b102c55af9c71936bf306b97e880d69b365"
+    },
+    {
+      "file": "license.md",
+      "path": "license.md",
+      "sha256": "3b5eefcff8450d7a87fbe33b7440c182cbd6fad0ffb0d5520e9762b308aedac5"
+    },
+    {
+      "file": "schema_metadata_example.md",
+      "path": "specification/appendix/metadata_examples/schema_metadata_example.md",
+      "sha256": "4a39201f589c47eeac6261b81af2778a32cf5d7ab54190143a88ede607c90ad8"
+    },
+    {
+      "file": "billedcost.md",
+      "path": "specification/datasets/invoice_detail/columns/billedcost.md",
+      "sha256": "ef7757e9855644bb8a4dbc019bac4fb20bbbb420fe61e77a6bf64f313dc9dfc0"
+    },
+    {
+      "file": "billingaccountid.md",
+      "path": "specification/datasets/invoice_detail/columns/billingaccountid.md",
+      "sha256": "a0f5cb6037636e1e8114c47b1cb0a56dce7e5a7c81420f5609f83421c43de732"
+    },
+    {
+      "file": "billingcurrency.md",
+      "path": "specification/datasets/invoice_detail/columns/billingcurrency.md",
+      "sha256": "44e8e155b5d4aa21ce8f7395d10bab642f312298ae41b78864d163782d283741"
+    },
+    {
+      "file": "billingperiodend.md",
+      "path": "specification/datasets/invoice_detail/columns/billingperiodend.md",
+      "sha256": "a22163f188cc3ff57b6546e0720c314a1ba55c6e03270dbf0d059d6a3aef48f9"
+    },
+    {
+      "file": "billingperiodstart.md",
+      "path": "specification/datasets/invoice_detail/columns/billingperiodstart.md",
+      "sha256": "467d10ae08230f1bf54a50d33e4798869ed5517b06114c1cc86d57e8d93b85d4"
+    },
+    {
+      "file": "chargecategory.md",
+      "path": "specification/datasets/invoice_detail/columns/chargecategory.md",
+      "sha256": "380dcc23cf6a763ae3af576ff89657f48bff37f3b28e70c5a35c2aa46fdf6f44"
+    },
+    {
+      "file": "invoicedetailcreated.md",
+      "path": "specification/datasets/invoice_detail/columns/invoicedetailcreated.md",
+      "sha256": "9eef514412f830f6f3e95d7f0ee080d5d568f3b2baf51a73ea8c7c599b44948b"
+    },
+    {
+      "file": "invoicedetaildescription.md",
+      "path": "specification/datasets/invoice_detail/columns/invoicedetaildescription.md",
+      "sha256": "8dd7177c121fc7883e27165395b8f46209cbbb3e090f3cb94e88563b5521071c"
+    },
+    {
+      "file": "invoicedetailgrain.md",
+      "path": "specification/datasets/invoice_detail/columns/invoicedetailgrain.md",
+      "sha256": "e27b6d9d8d40902d2644f3dcb62ccc2132e293645ec86d29961c0e5de8b2166e"
+    },
+    {
+      "file": "invoicedetailid.md",
+      "path": "specification/datasets/invoice_detail/columns/invoicedetailid.md",
+      "sha256": "83b3b2b27de9e1bc7a342a31a208846b3607a59b72f9465d4448bd1ae235ffca"
+    },
+    {
+      "file": "invoicedetaillastupdated.md",
+      "path": "specification/datasets/invoice_detail/columns/invoicedetaillastupdated.md",
+      "sha256": "3c77e3183bbe3d055add27976402d630d08d54a0ceb6d0765d945285fffba9ca"
+    },
+    {
+      "file": "invoiceid.md",
+      "path": "specification/datasets/invoice_detail/columns/invoiceid.md",
+      "sha256": "20c79e0366194f47e9a1bd51175ffdbb874e053393ea57e45a16fa2836c46fb8"
+    },
+    {
+      "file": "invoiceissuedate.md",
+      "path": "specification/datasets/invoice_detail/columns/invoiceissuedate.md",
+      "sha256": "dae21318a9adc849aa97d00336f4cf3e050bbb53616ae7e7ac5ca600e83cd694"
+    },
+    {
+      "file": "invoiceissuername.md",
+      "path": "specification/datasets/invoice_detail/columns/invoiceissuername.md",
+      "sha256": "24a2867212e6abebecd12e3b6bd49888cef05aae0e5d8d11d909af4421382bea"
+    },
+    {
+      "file": "invoiceissuestatus.md",
+      "path": "specification/datasets/invoice_detail/columns/invoiceissuestatus.md",
+      "sha256": "7127f22df796767f9a28206f978d128f6529baf1803dab4e5ab46eb1f18ec41d"
+    },
+    {
+      "file": "paymentcurrency.md",
+      "path": "specification/datasets/invoice_detail/columns/paymentcurrency.md",
+      "sha256": "6b44cda3c7a7b371cc7bbec0d10f7eb3ac72788d0db5700aced68c743e1d6bfb"
+    },
+    {
+      "file": "paymentcurrencybilledcost.md",
+      "path": "specification/datasets/invoice_detail/columns/paymentcurrencybilledcost.md",
+      "sha256": "1fbe989440508beb1e2fea010d310a21293ac404265c372c84765a45c40ccc60"
+    },
+    {
+      "file": "paymentcurrencyinvoicedetailid.md",
+      "path": "specification/datasets/invoice_detail/columns/paymentcurrencyinvoicedetailid.md",
+      "sha256": "eb91a7ce22b6e0b17f318708a21f925e04b5c28f1fcf2946d0acbb22c40f5f88"
+    },
+    {
+      "file": "paymentduedate.md",
+      "path": "specification/datasets/invoice_detail/columns/paymentduedate.md",
+      "sha256": "ae60a994887ca0fc41d1a2d9fbdfcae54ab99e49e190e7a8334f10b863007e79"
+    },
+    {
+      "file": "paymentterms.md",
+      "path": "specification/datasets/invoice_detail/columns/paymentterms.md",
+      "sha256": "17c270a238c8ca8854a36dd5b6293c7c373cb62825ed11179e70af542fbef7b0"
+    },
+    {
+      "file": "purchaseordernumber.md",
+      "path": "specification/datasets/invoice_detail/columns/purchaseordernumber.md",
+      "sha256": "1114842628bb713d6b186246d9d5e36288373cfc150db8f87c484ec43d16960d"
+    },
+    {
+      "file": "referenceinvoiceid.md",
+      "path": "specification/datasets/invoice_detail/columns/referenceinvoiceid.md",
+      "sha256": "1f2de114f7d3d6b6a36e81fb4ea646f5ef4c76a78cfa6041e5f4406ce04a4947"
+    },
+    {
+      "file": "metadata_overview.md",
+      "path": "specification/metadata/metadata_overview.md",
+      "sha256": "01688de3d19d32aa29c4573ec9fc4a96d871028a6687124a62980e47af87649f"
+    },
+    {
+      "file": "data_generator_overview.md",
+      "path": "specification/metadata/data_generator/data_generator_overview.md",
+      "sha256": "da8ea0266c0c212c75662c1ac4b02c79c750ba0b68f0e8708c6868fbd7c43543"
+    },
+    {
+      "file": "dataset_instance_overview.md",
+      "path": "specification/metadata/dataset_instance/dataset_instance_overview.md",
+      "sha256": "ce2047906d70ef588427fb3a08050bea372c17260d10b15aba9fb69d0df17995"
+    },
+    {
+      "file": "schema_overview.md",
+      "path": "specification/metadata/schema/schema_overview.md",
+      "sha256": "477ef0849d4882be4a1b2a939c3a9fe5bd3d528e166d6754a892daaf0c79c909"
+    }
+  ]
+}

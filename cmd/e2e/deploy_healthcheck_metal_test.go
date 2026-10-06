@@ -108,7 +108,7 @@ func TestDeployHealthcheckMetal(t *testing.T) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake)
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd)
 	defer h.DumpLogs(t)
 
 	key := h.SeedAccount(context.Background(), api.PlanPro)

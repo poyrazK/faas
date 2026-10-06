@@ -75,6 +75,11 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if a.DisableStartupCPUBoost != nil {
 		_ = w.WriteField("disable_startup_cpu_boost", fmt.Sprintf("%t", *a.DisableStartupCPUBoost))
 	}
+	if a.Healthcheck != nil {
+		if raw, err := json.Marshal(a.Healthcheck); err == nil {
+			_ = w.WriteField("healthcheck", string(raw))
+		}
+	}
 	if a.NoTriggers {
 		_ = w.WriteField("no_triggers", "true")
 	}
@@ -151,6 +156,7 @@ type DeployAnnotations struct {
 	Canary                 *CanaryPresetSpec
 	RollbackOn5xx          *bool
 	DisableStartupCPUBoost *bool
+	Healthcheck            *DeploymentHealthcheck
 	NoTriggers             bool // skip manifest trigger reconciliation
 }
 

@@ -88,13 +88,16 @@ func TestMemStoreStatusHistoryRollupsAndIncidentWindow(t *testing.T) {
 	day2 := day1.AddDate(0, 0, 1)
 	since := day1.Add(-time.Hour)
 	recordCompleteStatusInterval(t, m, day1.Add(time.Hour), "", publicstatus.StateOperational)
+	// Degraded counts as available (publicstatus.CountsAsAvailable); a
+	// partial outage does not.
 	recordCompleteStatusInterval(t, m, day1.Add(2*time.Hour), publicstatus.ComponentObservability, publicstatus.StateDegraded)
+	recordCompleteStatusInterval(t, m, day1.Add(3*time.Hour), publicstatus.ComponentObservability, publicstatus.StatePartialOutage)
 	recordCompleteStatusInterval(t, m, day2.Add(time.Hour), publicstatus.ComponentNetworking, publicstatus.StateMaintenance)
 	buckets, err := m.StatusUptimeBuckets(ctx, since)
 	if err != nil || len(buckets) != 2 {
 		t.Fatalf("buckets = %+v, err=%v", buckets, err)
 	}
-	if !buckets[0].Day.Equal(day1) || buckets[0].Successful != 1 || buckets[0].Total != 2 {
+	if !buckets[0].Day.Equal(day1) || buckets[0].Successful != 2 || buckets[0].Total != 3 {
 		t.Fatalf("day1 bucket = %+v", buckets[0])
 	}
 	if !buckets[1].Day.Equal(day2) || buckets[1].Successful != 1 || buckets[1].Total != 1 {

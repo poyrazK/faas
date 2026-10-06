@@ -1963,7 +1963,16 @@ export class PlatformTenantsService {
   }
   /**
    * Replay this tenant's failed or dead-lettered invocation.
-   * Requires a tenant-bound token with platform_tenant:invocations:manage. Replays only this customer's failed or dead-lettered work into a fresh invocation preserving the original tenant and request. Idempotency-Key is scoped to this tenant and original invocation. Foreign, unbound and missing invocations return the same 404.
+   * Requires a tenant-bound token with platform_tenant:invocations:manage.
+   * Only this customer's failed or dead-lettered unbound unkeyed work is
+   * eligible. Preserves the original customer, request, deployment scope,
+   * retry policy and trusted parent/root lineage. Each parent has one durable
+   * child shared with account-operator replay. Repeated and concurrent
+   * requests return it regardless of Idempotency-Key, including after
+   * completion; further recovery targets the failed child. A pruned child
+   * returns 409 invocation_replay_unavailable. Foreign, unbound and missing
+   * invocations return the same 404. Current app ownership is always checked.
+   *
    * @returns AsyncInvokeResponse Durable replay acceptance with a tenant-self status URL.
    * @throws ApiError
    */
@@ -1976,7 +1985,7 @@ export class PlatformTenantsService {
      */
     id: string,
     /**
-     * Optional key scoped to this tenant and original invocation.
+     * Optional transport key; parent identity deduplicates across keys and account-operator requests.
      */
     idempotencyKey?: string,
   }): CancelablePromise<AsyncInvokeResponse> {

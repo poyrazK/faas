@@ -10,12 +10,27 @@ import {
   WEBHOOK_TIMESTAMP_HEADER,
   WebhookVerificationError,
 } from '../src/index.js';
+import type { CreateAppWebhookRequest, WorkflowFinishedWebhookPayload } from '../src/index.js';
 
 const secret = 'whsec_test_123';
 const timestamp = 1_712_345_678;
 const deliveryId = 'delivery-123';
 const body = Buffer.from('{"type":"invoice.paid","amount":42}');
 const signature = 'sha256=9733751b9a5946bb55cb0f75a16ae54fa21f3d6e827284736a9a5cdf4b07e6d8';
+
+const finishedEvent: WorkflowFinishedWebhookPayload = {
+  app_id: '00000000-0000-0000-0000-000000000001',
+  run_id: '00000000-0000-0000-0000-000000000002',
+  workflow_name: 'invoice-receipt',
+  status: 'succeeded',
+  finished_at: '2026-10-05T12:30:00Z',
+  resume_count: 0,
+};
+const workflowFinishedSubscription: CreateAppWebhookRequest = {
+  target_url: 'https://example.com/gregale',
+  webhook_secret: 'test-secret',
+  event_filter: ['workflow.finished'],
+};
 
 function headers(
   overrides: Partial<Record<string, string | readonly string[]>> = {},
@@ -39,6 +54,11 @@ function sign(secretValue: string, unix: number, id: string, rawBody: Uint8Array
 function errorCode(code: string) {
   return (error: unknown) => error instanceof WebhookVerificationError && error.code === code;
 }
+
+test('generated API types expose workflow.finished and its outcome payload', () => {
+  assert.equal(workflowFinishedSubscription.event_filter?.[0], 'workflow.finished');
+  assert.equal(finishedEvent.status, 'succeeded');
+});
 
 test('verifies Gregale golden signature and returns stable delivery identity', () => {
   const verified = verifyWebhook(secret, headers(), body, { now: timestamp * 1000 });

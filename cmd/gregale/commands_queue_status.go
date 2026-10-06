@@ -139,7 +139,7 @@ func renderQueueStatus(report queueStatusReport) {
 		return
 	}
 	for _, binding := range report.Bindings {
-		_, _ = fmt.Fprintf(osStdout, "binding:    %s queue=%s mode=%s class=%s enabled=%t consumer=%s liveness=%s", binding.Name, binding.QueueName, binding.Mode, binding.WorkloadClass, binding.Enabled, binding.ConsumerState, binding.ConsumerLiveness)
+		_, _ = fmt.Fprintf(osStdout, "binding:    %s queue=%s mode=%s class=%s environment=%s enabled=%t consumer=%s liveness=%s", binding.Name, binding.QueueName, binding.Mode, binding.WorkloadClass, queueEnvironmentLabel(binding.Environment), binding.Enabled, binding.ConsumerState, binding.ConsumerLiveness)
 		if binding.LagMessages != nil {
 			_, _ = fmt.Fprintf(osStdout, " lag=%d", *binding.LagMessages)
 		}
@@ -154,4 +154,11 @@ func renderQueueStatus(report queueStatusReport) {
 			_, _ = fmt.Fprintf(osStdout, "  last_error: %s\n", binding.LastError)
 		}
 	}
+}
+
+func queueEnvironmentLabel(environment string) string {
+	if environment == "" {
+		return "shared"
+	}
+	return environment
 }

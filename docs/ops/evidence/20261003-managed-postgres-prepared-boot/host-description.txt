@@ -1,0 +1,15 @@
+Linux gregale-internal-test-1.us-east1-b.c.gregale-prod.internal 7.0.0-1011-gcp #11~24.04.1-Ubuntu SMP PREEMPT Tue Aug 11 20:14:48 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+go version go1.25.13 linux/amd64
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root        48G   39G  8.9G  82% /
+inactive
+inactive
+inactive
+inactive
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING: Could not setup log file in /Users/poyrazk/.config/gcloud/logs, (OSError: [Errno 28] No space left on device: '/Users/poyrazk/.config/gcloud/logs/2026.10.03/12.39.59.508050.log'.
+The configuration directory may not be writable. To learn more, see https://cloud.google.com/sdk/docs/configurations#creating_a_configuration
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

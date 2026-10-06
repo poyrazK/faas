@@ -1,11 +1,10 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.problem import Problem
 from ...types import Response
 
 
@@ -19,30 +18,24 @@ def _get_kwargs() -> dict[str, Any]:
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | Problem | None:
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | None:
     if response.status_code == 200:
-        response_200 = cast(Any, None)
-        return response_200
+        return None
 
     if response.status_code == 400:
-        response_400 = Problem.from_dict(response.json())
-
-        return response_400
+        return None
 
     if response.status_code == 401:
-        response_401 = Problem.from_dict(response.json())
-
-        return response_401
+        return None
 
     if response.status_code == 402:
-        response_402 = Problem.from_dict(response.json())
+        return None
 
-        return response_402
+    if response.status_code == 415:
+        return None
 
     if response.status_code == 429:
-        response_429 = Problem.from_dict(response.json())
-
-        return response_429
+        return None
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -50,7 +43,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any | Problem]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -62,7 +55,7 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Any | Problem]:
+) -> Response[Any]:
     """OTel spans writer (ADR-127 PR-D).
 
      Standard OTLP/HTTP endpoint for the OTel spans sidecar
@@ -74,14 +67,21 @@ def sync_detailed(
     the OpenTelemetry proto — the spec documents the
     endpoint metadata only. The SDK does not model this
     route (routeExclude on sdk-coverage + spec_compliance);
-    OTel SDKs speak OTLP/HTTP directly.
+    OTel SDKs speak OTLP/HTTP directly. Supports application/json
+    (OTLP hexadecimal trace/span IDs) and application/x-protobuf,
+    optional gzip compression, empty exports, and multi-trace batches.
+    Responses use ExportTraceServiceResponse; per-trace ownership
+    rejection returns partialSuccess with rejectedSpans. Error bodies
+    use google.rpc.Status in the request encoding. Missing Content-Type
+    retains the legacy ordinary-protobuf JSON input decoder. Acceptance
+    stages an in-memory diagnostic summary; it is not durable raw-span storage.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[Any]
     """
 
     kwargs = _get_kwargs()
@@ -93,40 +93,10 @@ def sync_detailed(
     return _build_response(client=client, response=response)
 
 
-def sync(
-    *,
-    client: AuthenticatedClient | Client,
-) -> Any | Problem | None:
-    """OTel spans writer (ADR-127 PR-D).
-
-     Standard OTLP/HTTP endpoint for the OTel spans sidecar
-    protocol (POST ExportTraceServiceRequest). Auth via
-    Authorization: Bearer <api-key>. Plan-gated by
-    DebugTelemetryEnabled; rate-capped by
-    DebugTelemetryRequestsPerMinute; span-capped by
-    DebugTelemetrySpansPerTrace. Body shape is defined by
-    the OpenTelemetry proto — the spec documents the
-    endpoint metadata only. The SDK does not model this
-    route (routeExclude on sdk-coverage + spec_compliance);
-    OTel SDKs speak OTLP/HTTP directly.
-
-    Raises:
-        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
-        httpx.TimeoutException: If the request takes longer than Client.timeout.
-
-    Returns:
-        Any | Problem
-    """
-
-    return sync_detailed(
-        client=client,
-    ).parsed
-
-
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Any | Problem]:
+) -> Response[Any]:
     """OTel spans writer (ADR-127 PR-D).
 
      Standard OTLP/HTTP endpoint for the OTel spans sidecar
@@ -138,14 +108,21 @@ async def asyncio_detailed(
     the OpenTelemetry proto — the spec documents the
     endpoint metadata only. The SDK does not model this
     route (routeExclude on sdk-coverage + spec_compliance);
-    OTel SDKs speak OTLP/HTTP directly.
+    OTel SDKs speak OTLP/HTTP directly. Supports application/json
+    (OTLP hexadecimal trace/span IDs) and application/x-protobuf,
+    optional gzip compression, empty exports, and multi-trace batches.
+    Responses use ExportTraceServiceResponse; per-trace ownership
+    rejection returns partialSuccess with rejectedSpans. Error bodies
+    use google.rpc.Status in the request encoding. Missing Content-Type
+    retains the legacy ordinary-protobuf JSON input decoder. Acceptance
+    stages an in-memory diagnostic summary; it is not durable raw-span storage.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[Any]
     """
 
     kwargs = _get_kwargs()
@@ -153,35 +130,3 @@ async def asyncio_detailed(
     response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
-
-
-async def asyncio(
-    *,
-    client: AuthenticatedClient | Client,
-) -> Any | Problem | None:
-    """OTel spans writer (ADR-127 PR-D).
-
-     Standard OTLP/HTTP endpoint for the OTel spans sidecar
-    protocol (POST ExportTraceServiceRequest). Auth via
-    Authorization: Bearer <api-key>. Plan-gated by
-    DebugTelemetryEnabled; rate-capped by
-    DebugTelemetryRequestsPerMinute; span-capped by
-    DebugTelemetrySpansPerTrace. Body shape is defined by
-    the OpenTelemetry proto — the spec documents the
-    endpoint metadata only. The SDK does not model this
-    route (routeExclude on sdk-coverage + spec_compliance);
-    OTel SDKs speak OTLP/HTTP directly.
-
-    Raises:
-        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
-        httpx.TimeoutException: If the request takes longer than Client.timeout.
-
-    Returns:
-        Any | Problem
-    """
-
-    return (
-        await asyncio_detailed(
-            client=client,
-        )
-    ).parsed
