@@ -40,6 +40,43 @@ WHERE account_id = sqlc.arg(account_id)::uuid
   AND status <> 'deleted' AND preview_of_slug IS NULL
 ORDER BY id FOR UPDATE;
 
+-- name: ReadProjectEnvironmentCloneSourceAppIDs :many
+SELECT id::text AS app_id FROM apps
+WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+  AND status <> 'deleted' AND preview_of_slug IS NULL ORDER BY id;
+
+-- name: AdvanceProjectEnvironmentCloneConfigurationClock :one
+UPDATE project_environment_clone_configuration_clock SET generation = generation + 1
+WHERE singleton AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
+ WHERE o.id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid
+ AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.source_environment=sqlc.arg(source_environment)::text AND o.source_revision_hash=sqlc.arg(source_revision_hash)::text
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp())
+RETURNING generation;
+
+-- name: ReadProjectEnvironmentCloneConfigurationGuard :one
+SELECT * FROM project_environment_clone_configuration_guards
+WHERE project_id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: HoldProjectEnvironmentCloneConfiguration :one
+UPDATE project_environment_clone_configuration_guards g
+SET state='held',operation_id=sqlc.arg(operation_id)::uuid,source_environment=sqlc.arg(source_environment)::text,
+    source_revision_hash=sqlc.arg(source_revision_hash)::text,held_at=clock_timestamp(),generation=generation+1
+WHERE g.project_id=sqlc.arg(project_id)::uuid AND g.account_id=sqlc.arg(account_id)::uuid AND g.state='open'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
+  AND o.project_id=g.project_id AND o.account_id=g.account_id AND o.status='capturing'
+  AND o.source_revision_hash=sqlc.arg(source_revision_hash)::text AND o.source_environment=sqlc.arg(source_environment)::text
+  AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp())
+RETURNING g.*;
+
+-- name: AbandonProjectEnvironmentCloneConfiguration :execrows
+UPDATE project_environment_clone_configuration_guards g
+SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',held_at=NULL,generation=generation+1
+WHERE g.project_id=sqlc.arg(project_id)::uuid AND g.account_id=sqlc.arg(account_id)::uuid AND g.operation_id=sqlc.arg(operation_id)::uuid
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
+  AND o.project_id=g.project_id AND o.account_id=g.account_id AND o.status='compensating'
+  AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp());
+
 -- name: ReadProjectEnvironmentCloneObjectCopyProofs :many
 SELECT m.source_bucket_id::text AS source_bucket_id, m.target_bucket_id::text AS target_bucket_id,
        m.manifest_hash, m.captured_at_exact, m.object_count,
@@ -5677,6 +5714,7 @@ SET status = 'ready', revision = revision + 1, target_release_set_id = sqlc.arg(
     lease_token = NULL, lease_until = NULL
 WHERE id = sqlc.arg(operation_id)::uuid AND status = 'publishing' AND revision = sqlc.arg(revision)::bigint
   AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
+  AND NOT EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g WHERE g.operation_id = project_environment_clone_operations.id)
   AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id = project_environment_clone_operations.id AND f.state<>'released')
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()));
@@ -5777,6 +5815,7 @@ WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::u
     OR NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_snapshots s WHERE s.operation_id=project_environment_clone_operations.id AND s.state<>'deleted'))
   AND (sqlc.arg(next_status)::text IN ('capturing', 'compensating')
     OR (NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
+      AND NOT EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g WHERE g.operation_id = project_environment_clone_operations.id)
       AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id = project_environment_clone_operations.id AND f.state<>'released')))
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()));

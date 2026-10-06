@@ -6965,3 +6965,108 @@ issues. SQLC v1.31.1 parity, ADR-number uniqueness, formatting and whitespace
 checks pass.
 Normal production and test packages compile without source overlays. These
 contracts do not qualify a live native provider or native KVM full clone.
+
+### Retain source configuration across capture barriers (2026-10-06)
+
+A durable, operation-owned configuration guard now freezes the current typed
+source catalogue while the private composed driver closes instrumented data
+writers. The hold records the original project/account, source environment,
+frozen revision, generation and acquisition time. Worker lease expiry, lost
+acquisition replies and replacement workers retain that same hold. A fresh,
+matching capturing lease and a live catalogue equal to the original frozen
+configuration root are required to acquire or recover it. Uncertainty returns
+no usable capture observation.
+
+Database triggers cover the current typed root's App membership and settings,
+environment values and secret references, flags, releases and deployment
+artifacts, policies, workload specifications, selected sidecar state, and
+PostgreSQL/object binding definitions. They reject edits, deletion, insertion
+into previously empty collections and moves into or out of the source project.
+The hold is conservative and project-wide because other environments can share
+App rows and project configuration. It does not supply missing capture strategies
+for the wider configuration schema.
+
+Acquisition briefly serializes with configuration writers through an updated
+synchronization clock. Writers retain a shared clock/guard lock through commit;
+acquisition takes the clock before the operation and project guard, and validates
+the live catalogue without acquiring configuration row locks. This ordering
+drains previously admitted edits and project deletion cascades without locking
+an operation or configuration row needed by those writers. The clock update
+also rejects repeatable-read or serializable writers whose old snapshots could
+hide changed ownership or newly inserted bindings. Other projects resume their
+configuration writes after the acquisition transaction commits. Every lock
+wait is followed by fresh SQL lease authorization, with bounded worker context.
+The fence path locks the operation row without the general workload helper's
+project row lock. Guard observations are plain reads under the owner operation
+lock; only acquisition and owned release update a guard. Open-scope observations
+and unowned abandonment therefore cannot block an admitted project deletion
+that may already own the guard row while waiting for the operation cascade.
+
+The new private stable-barrier entry acquires configuration first, composes the
+existing all-source holds and original grant retirement, then independently
+rechecks the exact configuration hold. Its observation remains transient: it
+selects no common point and releases no successfully captured source.
+
+Active compensation releases an aborted operation's configuration hold before
+attempting data-writer or retained-resource cleanup. A lost release reply is
+recoverable without reclaiming the abandoned configuration. Dispatched native
+retirement still uses its retained original intent after configuration edits;
+unknown data outcomes keep their separate holds and compensation unfinished.
+Copy/publication/terminal transitions reject a retained configuration owner,
+and migration downgrade refuses to remove an owned guard.
+
+OVH is the next live object-storage qualification target within the user's
+requested R2/OVH scope. Its documented
+[versioning](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-versioning)
+and [Object Lock](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-managing-object-lock)
+are relevant to the existing version-addressed snapshot/retention adapter;
+live endpoint, credentials and pre-existing protection still require
+qualification. The clone worker creates no irreversible retention policy on
+customer source objects. R2's
+[S3 API compatibility](https://developers.cloudflare.com/r2/api/s3/api/)
+does not support bucket versioning or Object Lock, so the existing versioned
+capture strategy cannot qualify it. OVH's documented
+[user/policy controls](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-identity-and-access-management)
+also do not establish the required original-capability retirement journal and
+drainage of already admitted native writes. Built-in native retirement remains
+unsupported. No live provider credentials were available for this increment.
+
+The active data capture coordinator and public full-clone gate remain deferred.
+Complete provider, application, external and background writer coverage; the
+common configuration/database/object point; retained recovery identities and
+versions; authenticated successful source release; isolated restoration,
+credential remapping, complete configuration/resource coverage, publication and
+readiness; and qualified promotion preserving production data remain required.
+
+The next writer-coverage slice must include lifecycle deletion, not just the
+gateway/request mutation roster. Repository inspection found that
+`LifecycleExpirationService` calls `DeletionService` through its separate
+`object_deletions` journal. `BeginObjectDeletion` uses `ObjectCapacityFenced`,
+whose conditions do not include the clone's object write fence; the clone's
+request/native counters count `object_bucket_mutations`, not this journal.
+Prepared/dispatched deletion intent and uncertain recovery can therefore outlive
+zero request/native counts. Admission closure, original dispatched-outcome
+recovery and independent drainage must cover those entries before they can
+contribute common-point evidence. Upload/multipart, cleanup, retention and other
+background/provider paths still require a complete writer inventory. This
+inspection is a gap finding, not qualification of object writer coverage.
+
+Qualification uses task-owned migrated PostgreSQL 16.15 with UTF-8 encoding,
+`max_prepared_transactions=32` and the official template-database harness.
+Forty-seven state contracts passed under the race detector (122 including
+subtests), and thirty-three normal APID contracts passed (102 including
+subtests). Seven compute-resize unit/qualification contracts (24 including
+subtests) and five PostgreSQL resize contracts also passed under the race
+detector against the freshly integrated main. No selected test failed or
+skipped. Coverage includes phantom/moved configuration, old transaction
+snapshots, admitted writer and project-deletion drainage, project/App row lock
+inversion, unowned reads during deletion, lease expiry after synchronization,
+lost hold/release replies, worker handoff, retained data holds, downgrade
+refusal, account/App deletion and existing barrier/coordinator regressions.
+Normal production and test packages compile without source overlays. These
+contracts do not qualify a live OVH/R2 provider or native KVM full clone.
+Pinned golangci-lint v2.4.0 built with Go 1.25.13 reports zero issues across
+state, APID and managed PostgreSQL. SQLC v1.31.1 parity, repository policy,
+ADR-number uniqueness, formatting and whitespace checks pass. The policy
+scripts retain their existing optional skips for unavailable Packer and nft;
+no VM lifecycle or native KVM acceptance is claimed by those checks.

@@ -4998,6 +4998,22 @@ type ProjectEnvironmentCloneConfigurationCapture struct {
 	Configuration     []byte
 }
 
+type ProjectEnvironmentCloneConfigurationClock struct {
+	Singleton  bool
+	Generation int64
+}
+
+type ProjectEnvironmentCloneConfigurationGuard struct {
+	ProjectID          pgtype.UUID
+	AccountID          pgtype.UUID
+	Generation         int64
+	OperationID        pgtype.UUID
+	State              string
+	SourceEnvironment  string
+	SourceRevisionHash string
+	HeldAt             pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneLayerPin struct {
 	OperationID pgtype.UUID
 	AppID       pgtype.UUID

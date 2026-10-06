@@ -25068,6 +25068,9 @@ func mapErr(err error) error {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "55000":
+			if pgErr.ConstraintName == "clone_configuration_write_fenced" || pgErr.ConstraintName == "clone_configuration_guard_missing" {
+				return ErrProjectEnvironmentCloneConfigurationFenced
+			}
 			if pgErr.ConstraintName == "layer_artifact_retention_reference_fence" {
 				return ErrLayerArtifactRetired
 			}

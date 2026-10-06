@@ -16,6 +16,11 @@ func projectCloneValueScopesTx(ctx context.Context, tx pgx.Tx, clone ProjectEnvi
 	if err != nil {
 		return nil, mapErr(err)
 	}
+	return projectCloneValueScopesForAppsDB(ctx, tx, clone, appIDs)
+}
+
+func projectCloneValueScopesForAppsDB(ctx context.Context, tx sqlc.DBTX, clone ProjectEnvironmentClone, appIDs []string) ([]byte, error) {
+	queries := new(sqlc.Queries)
 	scopes := make(map[string]string, len(appIDs))
 	if clone.capturedValues != nil && len(clone.capturedValues) != len(appIDs) {
 		return nil, ErrConflict

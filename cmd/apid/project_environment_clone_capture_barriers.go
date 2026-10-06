@@ -23,6 +23,7 @@ type cloneCaptureBarrierStore interface {
 // PostgreSQL background workers. No capture point is selected by this driver.
 type cloneCaptureBarrierObservation struct {
 	configuration              state.ProjectEnvironmentCloneConfigurationCapture
+	configurationFence         state.ProjectEnvironmentCloneConfigurationFence
 	postgres                   []managedpostgres.CheckpointConnectionClosure
 	objects                    []state.ObjectBucketWriteFence
 	objectRetirements          []grantrevocation.Observation

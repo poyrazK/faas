@@ -44,6 +44,37 @@ func (q *Queries) APIKeyByHash(ctx context.Context, db DBTX, keySha256 []byte) (
 	return i, err
 }
 
+const abandonProjectEnvironmentCloneConfiguration = `-- name: AbandonProjectEnvironmentCloneConfiguration :execrows
+UPDATE project_environment_clone_configuration_guards g
+SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',held_at=NULL,generation=generation+1
+WHERE g.project_id=$1::uuid AND g.account_id=$2::uuid AND g.operation_id=$3::uuid
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$3::uuid
+  AND o.project_id=g.project_id AND o.account_id=g.account_id AND o.status='compensating'
+  AND o.revision=$4::bigint AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp())
+`
+
+type AbandonProjectEnvironmentCloneConfigurationParams struct {
+	ProjectID        pgtype.UUID
+	AccountID        pgtype.UUID
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) AbandonProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg AbandonProjectEnvironmentCloneConfigurationParams) (int64, error) {
+	result, err := db.Exec(ctx, abandonProjectEnvironmentCloneConfiguration,
+		arg.ProjectID,
+		arg.AccountID,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const abortLockedInstanceMigration = `-- name: AbortLockedInstanceMigration :execrows
 UPDATE instances SET state = 'parked', lease_token = NULL, migration_started_at = NULL
 WHERE id = $1::uuid AND node_id = $2::uuid
@@ -576,6 +607,41 @@ func (q *Queries) AdvanceImagePreparation(ctx context.Context, db DBTX, arg Adva
 	return result.RowsAffected(), nil
 }
 
+const advanceProjectEnvironmentCloneConfigurationClock = `-- name: AdvanceProjectEnvironmentCloneConfigurationClock :one
+UPDATE project_environment_clone_configuration_clock SET generation = generation + 1
+WHERE singleton AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
+ WHERE o.id=$1::uuid AND o.account_id=$2::uuid AND o.project_id=$3::uuid
+ AND o.status='capturing' AND o.revision=$4::bigint
+ AND o.source_environment=$5::text AND o.source_revision_hash=$6::text
+ AND o.lease_token::text=$7::text AND o.lease_until>clock_timestamp())
+RETURNING generation
+`
+
+type AdvanceProjectEnvironmentCloneConfigurationClockParams struct {
+	OperationID        pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	ExpectedRevision   int64
+	SourceEnvironment  string
+	SourceRevisionHash string
+	WorkerToken        string
+}
+
+func (q *Queries) AdvanceProjectEnvironmentCloneConfigurationClock(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneConfigurationClockParams) (int64, error) {
+	row := db.QueryRow(ctx, advanceProjectEnvironmentCloneConfigurationClock,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ExpectedRevision,
+		arg.SourceEnvironment,
+		arg.SourceRevisionHash,
+		arg.WorkerToken,
+	)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
+}
+
 const advanceProjectEnvironmentCloneOperationStatus = `-- name: AdvanceProjectEnvironmentCloneOperationStatus :execrows
 UPDATE project_environment_clone_operations
 SET status = $1::text, revision = revision + 1,
@@ -593,6 +659,7 @@ WHERE id = $4::uuid AND account_id = $5::uuid AND project_id = $6::uuid
     OR NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_snapshots s WHERE s.operation_id=project_environment_clone_operations.id AND s.state<>'deleted'))
   AND ($1::text IN ('capturing', 'compensating')
     OR (NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
+      AND NOT EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g WHERE g.operation_id = project_environment_clone_operations.id)
       AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id = project_environment_clone_operations.id AND f.state<>'released')))
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()))
@@ -5257,6 +5324,7 @@ SET status = 'ready', revision = revision + 1, target_release_set_id = $1::uuid,
     lease_token = NULL, lease_until = NULL
 WHERE id = $2::uuid AND status = 'publishing' AND revision = $3::bigint
   AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
+  AND NOT EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g WHERE g.operation_id = project_environment_clone_operations.id)
   AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id = project_environment_clone_operations.id AND f.state<>'released')
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()))
@@ -15433,6 +15501,52 @@ func (q *Queries) HasProjectEnvironmentClonePostgresVerificationAttempts(ctx con
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const holdProjectEnvironmentCloneConfiguration = `-- name: HoldProjectEnvironmentCloneConfiguration :one
+UPDATE project_environment_clone_configuration_guards g
+SET state='held',operation_id=$1::uuid,source_environment=$2::text,
+    source_revision_hash=$3::text,held_at=clock_timestamp(),generation=generation+1
+WHERE g.project_id=$4::uuid AND g.account_id=$5::uuid AND g.state='open'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
+  AND o.project_id=g.project_id AND o.account_id=g.account_id AND o.status='capturing'
+  AND o.source_revision_hash=$3::text AND o.source_environment=$2::text
+  AND o.revision=$6::bigint AND o.lease_token::text=$7::text AND o.lease_until>clock_timestamp())
+RETURNING g.project_id, g.account_id, g.generation, g.operation_id, g.state, g.source_environment, g.source_revision_hash, g.held_at
+`
+
+type HoldProjectEnvironmentCloneConfigurationParams struct {
+	OperationID        pgtype.UUID
+	SourceEnvironment  string
+	SourceRevisionHash string
+	ProjectID          pgtype.UUID
+	AccountID          pgtype.UUID
+	ExpectedRevision   int64
+	WorkerToken        string
+}
+
+func (q *Queries) HoldProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg HoldProjectEnvironmentCloneConfigurationParams) (ProjectEnvironmentCloneConfigurationGuard, error) {
+	row := db.QueryRow(ctx, holdProjectEnvironmentCloneConfiguration,
+		arg.OperationID,
+		arg.SourceEnvironment,
+		arg.SourceRevisionHash,
+		arg.ProjectID,
+		arg.AccountID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneConfigurationGuard
+	err := row.Scan(
+		&i.ProjectID,
+		&i.AccountID,
+		&i.Generation,
+		&i.OperationID,
+		&i.State,
+		&i.SourceEnvironment,
+		&i.SourceRevisionHash,
+		&i.HeldAt,
+	)
+	return i, err
 }
 
 const incrementAppError = `-- name: IncrementAppError :one
@@ -45587,6 +45701,32 @@ func (q *Queries) ReadProjectEnvironmentCloneConfigurationCaptureIdentity(ctx co
 	return i, err
 }
 
+const readProjectEnvironmentCloneConfigurationGuard = `-- name: ReadProjectEnvironmentCloneConfigurationGuard :one
+SELECT project_id, account_id, generation, operation_id, state, source_environment, source_revision_hash, held_at FROM project_environment_clone_configuration_guards
+WHERE project_id = $1::uuid AND account_id = $2::uuid
+`
+
+type ReadProjectEnvironmentCloneConfigurationGuardParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneConfigurationGuard(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationGuardParams) (ProjectEnvironmentCloneConfigurationGuard, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneConfigurationGuard, arg.ProjectID, arg.AccountID)
+	var i ProjectEnvironmentCloneConfigurationGuard
+	err := row.Scan(
+		&i.ProjectID,
+		&i.AccountID,
+		&i.Generation,
+		&i.OperationID,
+		&i.State,
+		&i.SourceEnvironment,
+		&i.SourceRevisionHash,
+		&i.HeldAt,
+	)
+	return i, err
+}
+
 const readProjectEnvironmentCloneCoverageSchema = `-- name: ReadProjectEnvironmentCloneCoverageSchema :many
 SELECT c.relname::text AS table_name,
     array_agg(a.attname::text ORDER BY a.attname)::text[] AS columns
@@ -47319,6 +47459,37 @@ func (q *Queries) ReadProjectEnvironmentCloneSidecarSignals(ctx context.Context,
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneSourceAppIDs = `-- name: ReadProjectEnvironmentCloneSourceAppIDs :many
+SELECT id::text AS app_id FROM apps
+WHERE account_id = $1::uuid AND project_id = $2::uuid
+  AND status <> 'deleted' AND preview_of_slug IS NULL ORDER BY id
+`
+
+type ReadProjectEnvironmentCloneSourceAppIDsParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneSourceAppIDs(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceAppIDsParams) ([]string, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneSourceAppIDs, arg.AccountID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var app_id string
+		if err := rows.Scan(&app_id); err != nil {
+			return nil, err
+		}
+		items = append(items, app_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

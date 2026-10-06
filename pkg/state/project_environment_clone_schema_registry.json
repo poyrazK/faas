@@ -5696,6 +5696,28 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_configuration_clock",
+    "columns": [
+      "generation",
+      "singleton"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_configuration_guards",
+    "columns": [
+      "account_id",
+      "generation",
+      "held_at",
+      "operation_id",
+      "project_id",
+      "source_environment",
+      "source_revision_hash",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_layer_pins",
     "columns": [
       "app_id",

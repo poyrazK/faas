@@ -41393,3 +41393,404 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+--
+-- Name: assert_clone_configuration_mutable(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assert_clone_configuration_mutable(project uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    guard_state text;
+BEGIN
+    IF project IS NULL THEN RETURN; END IF;
+    -- A locking read also prevents repeatable-read writers with a snapshot
+    -- predating acquisition from bypassing the committed hold.
+    SELECT state INTO guard_state FROM project_environment_clone_configuration_guards
+    WHERE project_id = project FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'project configuration guard is missing'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
+    END IF;
+    IF guard_state <> 'open' THEN
+        RAISE EXCEPTION 'source configuration is held for stage capture'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_write_fenced';
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: guard_clone_configuration_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_clone_configuration_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    before_row jsonb := CASE WHEN TG_OP <> 'INSERT' THEN to_jsonb(OLD) ELSE '{}'::jsonb END;
+    after_row jsonb := CASE WHEN TG_OP <> 'DELETE' THEN to_jsonb(NEW) ELSE '{}'::jsonb END;
+    before_id uuid := nullif(before_row ->> TG_ARGV[1], '')::uuid;
+    after_id uuid := nullif(after_row ->> TG_ARGV[1], '')::uuid;
+    project uuid;
+BEGIN
+    PERFORM generation FROM project_environment_clone_configuration_clock WHERE singleton FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'configuration synchronization clock is missing'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
+    END IF;
+    FOR project IN
+        SELECT DISTINCT p.project_id FROM (
+            SELECT before_id AS project_id WHERE TG_ARGV[0] = 'project'
+            UNION ALL SELECT after_id WHERE TG_ARGV[0] = 'project'
+            UNION ALL SELECT a.project_id FROM apps a
+                WHERE TG_ARGV[0] = 'app' AND a.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM deployments d JOIN apps a ON a.id = d.app_id
+                WHERE TG_ARGV[0] = 'deployment' AND d.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM object_buckets b JOIN apps a ON a.id = b.app_id
+                WHERE TG_ARGV[0] = 'bucket' AND b.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM managed_postgres_bindings b JOIN apps a ON a.id = b.app_id
+                WHERE TG_ARGV[0] = 'database' AND b.database_id IN (before_id, after_id)
+        ) p WHERE p.project_id IS NOT NULL ORDER BY p.project_id
+    LOOP
+        PERFORM assert_clone_configuration_mutable(project);
+    END LOOP;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: initialize_clone_configuration_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.initialize_clone_configuration_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO project_environment_clone_configuration_guards(project_id, account_id)
+    VALUES (NEW.id, NEW.account_id)
+    ON CONFLICT (project_id) DO UPDATE SET account_id = EXCLUDED.account_id,
+        generation = project_environment_clone_configuration_guards.generation + 1
+    WHERE project_environment_clone_configuration_guards.state = 'open';
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: project_environment_clone_configuration_clock; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_configuration_clock (
+    singleton boolean DEFAULT true NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT project_environment_clone_configuration_clock_generation_check CHECK ((generation > 0)),
+    CONSTRAINT project_environment_clone_configuration_clock_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: project_environment_clone_configuration_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_configuration_guards (
+    project_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    operation_id uuid,
+    state text DEFAULT 'open'::text NOT NULL,
+    source_environment text DEFAULT ''::text NOT NULL,
+    source_revision_hash text DEFAULT ''::text NOT NULL,
+    held_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_configuration_guards_check CHECK ((((state = 'open'::text) AND (operation_id IS NULL) AND (source_environment = ''::text) AND (source_revision_hash = ''::text) AND (held_at IS NULL)) OR ((state = 'held'::text) AND (operation_id IS NOT NULL) AND (source_environment <> ''::text) AND (source_revision_hash ~ '^[a-f0-9]{64}$'::text) AND (held_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_configuration_guards_generation_check CHECK ((generation > 0)),
+    CONSTRAINT project_environment_clone_configuration_guards_state_check CHECK ((state = ANY (ARRAY['open'::text, 'held'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_configuration_clock project_environment_clone_configuration_clock_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_clock
+    ADD CONSTRAINT project_environment_clone_configuration_clock_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guards_pkey PRIMARY KEY (project_id);
+
+
+--
+-- Name: app_environment_secret_ref_suppressions clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_ref_suppressions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_environment_secret_refs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_refs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_environment_workload_intents clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_envs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_secrets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_work_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_work_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: apps clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: deployment_sidecar_layers clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+
+--
+-- Name: deployment_sidecar_secret_reload_signals clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_secret_reload_signals FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+
+--
+-- Name: deployments clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: environment_git_sources clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: event_subscription_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.event_subscription_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: feature_flag_versions clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.feature_flag_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: managed_postgres_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: managed_postgres_databases clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('database', 'id');
+
+
+--
+-- Name: object_bucket_encryption clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_bucket_lifecycle clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_lifecycle FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_bucket_object_lock clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_bucket_versioning clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_buckets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: object_storage_s3_credentials clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_version_protection clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: project_environment_config_versions clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_environment_edge_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_environment_route_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_environment_workload_deployment_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+
+--
+-- Name: project_environment_workload_heads clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_environment_workload_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_environments clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_release_members clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_release_sets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: projects clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE DELETE OR UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'id');
+
+
+--
+-- Name: queue_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: trigger_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.trigger_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: projects initialize_clone_configuration_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER initialize_clone_configuration_guard AFTER INSERT OR UPDATE OF account_id ON public.projects FOR EACH ROW EXECUTE FUNCTION public.initialize_clone_configuration_guard();
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guard_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guard_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guards_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guards_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guards_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
