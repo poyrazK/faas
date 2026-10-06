@@ -587,7 +587,7 @@ func triggerEnabledValue(explicit map[string]bool, enabled, disabled bool) *bool
 }
 
 func triggerJSONFlag(value string) (json.RawMessage, error) {
-	raw, err := resolvePayload(value)
+	raw, err := resolveJSONFlag("--config", value)
 	if err != nil {
 		return nil, err
 	}

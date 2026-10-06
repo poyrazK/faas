@@ -550,6 +550,32 @@ func TestTierD_DelayedTaskAdd_RelativeDelayAndStableIdempotencyKey(t *testing.T)
 	}
 }
 
+// production-us hunt #4: `delayed-task add --app <slug> 20s` is the spelling
+// the help prints, and the parser rejected it as an unexpected positional.
+func TestTierD_DelayedTaskAdd_PositionalDuration(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
+	if code := cmdDelayedTaskAdd([]string{"--app", "demo", "20s", "--path", "/delayed"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["delay_seconds"] != float64(20) || got["path"] != "/delayed" {
+		t.Fatalf("body = %v, want delay_seconds=20 path=/delayed", got)
+	}
+	for _, args := range [][]string{
+		{"--app", "demo", "20s", "--delay", "30m"},
+		{"--app", "demo", "20s", "--scheduled-at", "2030-01-01T00:00:00Z"},
+		{"--app", "demo", "20s", "30s"},
+	} {
+		if code := cmdDelayedTaskAdd(args); code != 1 {
+			t.Fatalf("cmdDelayedTaskAdd(%q) = %d, want 1: a positional duration cannot combine with other timing", args, code)
+		}
+	}
+}
+
 func TestTierD_DelayedTaskAdd_FullInvocationOptions(t *testing.T) {
 	resetJSONOut(t)
 	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)

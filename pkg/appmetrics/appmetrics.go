@@ -109,6 +109,18 @@ func PercentRatioQuery(numerator, denominator string) string {
 	return fmt.Sprintf(`(((%s) or vector(0)) / (%s) * 100) and ((%s) > 0)`, numerator, denominator, denominator)
 }
 
+// ErrorRatePctQuery is the app error rate: 5xx over the eligible 2xx and 5xx
+// responses, as a percentage. Client-caused 3xx/4xx are excluded from the
+// population, so a window whose traffic is all 4xx (404s, edge-rule 429s) has
+// requests but no eligible denominator. That is a 0% error rate, not missing
+// telemetry: production-us hunt #4 found `gregale canary simulate` and
+// `gregale metrics` reporting such an app as "degraded".
+func ErrorRatePctQuery(appID, rng string) string {
+	return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng)))
+}
+
 // HistogramQuantileMSQuery builds an idle-safe latency percentile query.
 // Prometheus returns NaN when histogram_quantile has no observations, while
 // QueryScalar rejects non-finite samples. The matching count expression proves
@@ -147,9 +159,7 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		query = fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{app=%q}[%s])) or vector(0)`, appID, rng)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "error_rate_pct":
-		query = fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng)))
+		query = ErrorRatePctQuery(appID, rng)
 		normalize = SafePercent
 	case "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
 		quantile := map[string]float64{"latency_p50_ms": .50, "latency_p95_ms": .95, "latency_p99_ms": .99}[metric]
@@ -285,10 +295,7 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	// PercentRatioQuery then returns no sample; an app with no requests has
 	// a zero error rate, not unavailable telemetry.
 	if resp.RequestCount > 0 {
-		errQ := PercentRatioQuery(
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng))
-		if v, err := fetcher.QueryScalar(ctx, errQ); err == nil {
+		if v, err := fetcher.QueryScalar(ctx, ErrorRatePctQuery(appID, rng)); err == nil {
 			resp.ErrorRatePct = SafePercent(v)
 		} else {
 			return degradedFromErr(resp, err, log, "error_rate")

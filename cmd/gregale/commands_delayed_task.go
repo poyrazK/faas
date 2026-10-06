@@ -116,8 +116,16 @@ func cmdDelayedTaskAdd(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	// The help has always advertised `delayed-task add --app <slug> <duration>`;
+	// production-us hunt #4 found the parser rejecting that spelling. A lone
+	// positional is the relative delay, and it cannot be combined with
+	// either explicit timing flag.
+	if len(positional) == 1 && *delay == "" && *scheduledAt == "" {
+		*delay = positional[0]
+		positional = nil
+	}
 	if len(positional) != 0 {
-		PrintUsage(os.Stderr, "usage: gregale delayed-task add --app <slug> (--scheduled-at <RFC3339>|--delay <duration>) [--payload <json|@file|->] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "delayed-task")
+		PrintUsage(os.Stderr, "usage: gregale delayed-task add --app <slug> (<duration>|--delay <duration>|--scheduled-at <RFC3339>) [--payload <json|@file|->] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "delayed-task")
 		return 1
 	}
 	if !validateDelayedTaskAddFlags(app, scheduledAt, delay) {

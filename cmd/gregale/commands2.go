@@ -4228,8 +4228,8 @@ func cmdRollback(args []string) int {
 			return printErr("Unexpected argument", fmt.Errorf("%q (rollback takes one <slug>; pass the target with --to)", a))
 		}
 	}
-	if checked && current == "" || timeout <= 0 || interval <= 0 || current == "" && (wait || reason != "") || current != "" && to == "" {
-		return printErr("Invalid rollback", fmt.Errorf("checked rollback requires --to and --expected-current; wait durations must be positive"))
+	if err := validateRollbackFlags(checked, to, current, reason, wait, timeout, interval); err != nil {
+		return printErr("Invalid rollback", err)
 	}
 	if current != "" {
 		return cmdCheckedRollback(slug, to, current, reason, wait, timeout, interval)
@@ -4259,6 +4259,37 @@ func cmdRollback(args []string) int {
 	}
 	PrintOK(osStdout, "Rolled back to %s (%s)", dep.ID, dep.Status)
 	return 0
+}
+
+// validateRollbackFlags names the one rule a rollback invocation breaks.
+// production-us hunt #4: `rollback <slug> --reason X --wait` printed a single
+// sentence covering five different rules, none of which said that --wait and
+// --reason belong to the checked (--expected-current) form.
+func validateRollbackFlags(checked bool, to, current, reason string, wait bool, timeout, interval time.Duration) error {
+	switch {
+	case checked && current == "":
+		return errors.New("--expected-current requires a deployment id or vN revision")
+	case current == "" && (wait || reason != ""):
+		var used []string
+		if reason != "" {
+			used = append(used, "--reason")
+		}
+		if wait {
+			used = append(used, "--wait")
+		}
+		verb, pronoun := "applies", "it"
+		if len(used) > 1 {
+			verb, pronoun = "apply", "them"
+		}
+		return fmt.Errorf("%s only %s to a checked rollback: add --to <deployment|vN> --expected-current <deployment|vN>, or drop %s", strings.Join(used, " and "), verb, pronoun)
+	case current != "" && to == "":
+		return errors.New("a checked rollback (--expected-current) also needs --to <deployment|vN>")
+	case timeout <= 0:
+		return fmt.Errorf("--timeout must be positive; got %s", timeout)
+	case interval <= 0:
+		return fmt.Errorf("--poll-interval must be positive; got %s", interval)
+	}
+	return nil
 }
 
 func cmdPark(args []string) int {
@@ -4422,14 +4453,18 @@ func cmdTrafficSet(args []string) int {
 	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	deployment := fs.String("deployment", "", "deployment id or vN revision to set the traffic split on")
 	percent := fs.Int("percent", -1, "traffic weight in [0, 100]; -1 = unset (server default 100)")
+	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	if err := mergeLeadingSlug(app, slug); err != nil {
+		return printErr("Invalid arguments", err)
+	}
 	if *deployment == "" || *percent < 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic set [--app <slug>] --deployment <id|vN> --percent N", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic set [<slug>|--app <slug>] --deployment <id|vN> --percent N", "traffic")
 		return 1
 	}
 	client, err := authedClient()
@@ -4479,14 +4514,18 @@ func cmdTrafficPromote(args []string) int {
 	maxAge := fs.Duration("max-verification-age", api.DefaultBindingVerificationAge, "maximum binding verification age (requires --require-bindings)")
 	allowUnsupported := fs.Bool("allow-unsupported", false, "waive unsupported queue/outbound probes (requires --require-bindings)")
 	requireAck := fs.Bool("require-application-ack", false, "require current PostgreSQL/object-storage application acknowledgements (requires --require-bindings)")
+	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	if err := mergeLeadingSlug(app, slug); err != nil {
+		return printErr("Invalid arguments", err)
+	}
 	if strings.TrimSpace(*deployment) == "" {
-		PrintUsage(os.Stderr, "usage: gregale traffic promote [--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic promote [<slug>|--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
 		return 1
 	}
 	var ifServingSet, policySet bool
@@ -4574,11 +4613,21 @@ func cmdTrafficPromote(args []string) int {
 // an app's routing table. Read access is available on every plan; Free and
 // Hobby apps normally show one 100% row while Pro/Scale may show a split.
 func cmdTrafficStatus(args []string) int {
-	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+	fs := newFlagSet("traffic status", flag.ContinueOnError)
+	app := fs.String("app", "", appSlugFlagUsage)
+	flags, positional := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	positional, err := mergeAppFlag(positional, strings.TrimSpace(*app), 1)
+	if err != nil {
+		return printErr("Invalid arguments", err)
+	}
+	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
 		PrintUsage(os.Stderr, "usage: gregale traffic status <slug>", "traffic")
 		return 1
 	}
-	slug := strings.TrimSpace(args[0])
+	slug := strings.TrimSpace(positional[0])
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -4621,6 +4670,30 @@ func cmdTrafficStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
+}
+
+// peelLeadingSlug lets the flag-addressed traffic leaves accept the app the
+// way `traffic status <slug>` does. production-us hunt #4: `traffic promote
+// <slug> --deployment v7` failed with "unexpected positional argument(s)".
+// Only a leading non-flag word is taken, so a stray positional after the
+// flags still reaches rejectUnexpectedFlagArgs.
+func peelLeadingSlug(args []string) (string, []string) {
+	if len(args) > 0 && args[0] != "" && !strings.HasPrefix(args[0], "-") {
+		return args[0], args[1:]
+	}
+	return "", args
+}
+
+// mergeLeadingSlug folds a peeled slug into --app, refusing two different apps.
+func mergeLeadingSlug(app *string, slug string) error {
+	if slug == "" {
+		return nil
+	}
+	if *app != "" && *app != slug {
+		return errAppFlagConflict
+	}
+	*app = slug
+	return nil
 }
 
 // cmdTraffic dispatches the implemented traffic leaves.

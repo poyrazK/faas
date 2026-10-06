@@ -186,10 +186,7 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 	// metrics path got this guard in #4181; production-us hunt #4 found
 	// `gregale slo` still reporting idle apps as "degraded".
 	if resp.RequestsTotal > 0 {
-		errQ := appmetrics.PercentRatioQuery(
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, app.ID, window),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, app.ID, window))
-		if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
+		if v, err := s.promqlClient.QueryScalar(ctx, appmetrics.ErrorRatePctQuery(app.ID, window)); err == nil {
 			resp.ErrorRatePct = appmetrics.SafePercent(v)
 		} else {
 			return degradedAppSLO(err, s.log, "error_rate", app.ID, window)

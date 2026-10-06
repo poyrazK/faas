@@ -158,7 +158,7 @@ func cmdEventsPreview(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale events preview [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
 		return 1
 	}
-	body, err := resolvePayload(*data)
+	body, err := resolveJSONFlag("--data", *data)
 	if err != nil {
 		return printErr("Invalid --data", err)
 	}
@@ -427,7 +427,7 @@ func cmdEventsPublish(args []string) int {
 	if eventID == "" {
 		eventID = uuid.NewString()
 	}
-	body, err := resolvePayload(*data)
+	body, err := resolveJSONFlag("--data", *data)
 	if err != nil {
 		return printErr("Invalid --data", err)
 	}
