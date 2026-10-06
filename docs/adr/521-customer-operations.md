@@ -79,12 +79,26 @@ park/restore, scheduler restart, and leakcheck; both are required for the comple
 end-to-end goal. Rollback disables new admission while preserving reads, reports,
 delivery, and recovery for already admitted operations.
 
-Private code retention uses owned operation references and separate code-pin
-receipts. Admission and safe recovery lock the bounded release graph before
-execution rows. Active operations retain their code and idempotency identity
-through long waits; settled work reserves the full documented replay window.
-Code cleanup and rollout changes preserve those references without extending
-the configured public revision or release-header access window.
+Private code retention derives from an owned operation and its immutable
+definition, including every verified member of the selected release graph.
+Accepted/running work retains code and idempotency identity past timestamp
+expiry; stopped work retains code through its result/recovery window. Cutover,
+abort and rollback remove weighted traffic while preserving these references.
+Separate code-pin receipts do not extend public revision-header or release-set
+access deadlines.
+
+Pin cleanup locks apps before deployments and rechecks owned references in a
+fresh READ COMMITTED statement after acquiring the app locks. Retained references
+are excluded before paging, and a page considers at most
+`api.RevisionPinCleanupPageMax` (500) deployment IDs. Expiry, owner deletion and
+inconsistent admission metadata release the private reference without an
+unlimited timestamp pin or a renewal heartbeat.
+
+Fresh admission and safe retry lock every owned release app in ID order before
+its deployments and execution rows, then revalidate all members and release
+usability. A release selected by the definition receives the same checks as an
+explicit request; locking only the originating app cannot protect another graph
+member from code cleanup.
 
 Customer HTTP operation claims use `X-Gregale-Customer-Operation-Id`. Managed
 exclusive operations retain their own identity and result negotiation. A
