@@ -18,7 +18,7 @@ func TestPlatformTenantSelfWorkflowRunHistoryIsTenantScopedAndPaged(t *testing.T
 	if _, err := e.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{PlatformTenantRequired: &required, SetPlatformTenantRequired: true}); err != nil {
 		t.Fatal(err)
 	}
-	tenants := e.store.(state.PlatformTenantStore)
+	var tenants state.PlatformTenantStore = e.store
 	tenantA, _, err := tenants.CreatePlatformTenant(ctx, e.acct.ID, "run-history-customer-a", "Customer A", 10)
 	if err != nil {
 		t.Fatal(err)
