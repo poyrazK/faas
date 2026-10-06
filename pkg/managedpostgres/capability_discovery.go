@@ -4,7 +4,7 @@ import "context"
 
 // CapabilityContractVersion versions customer-visible PostgreSQL behavior.
 // Provider identities and placement fingerprints never belong in this view.
-const CapabilityContractVersion = 1
+const CapabilityContractVersion = 2
 
 type CapabilityDiscovery struct {
 	Region              string

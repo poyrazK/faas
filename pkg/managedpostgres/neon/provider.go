@@ -164,6 +164,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
 		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
 		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
+		ClassResize:                  true,
 		ScaleToZero:                  true,
 		PooledConnections:            true,
 		PointInTimeRestore:           p.maxRestoreWindow > 0,
@@ -409,13 +410,6 @@ func computeState(current string) managedpostgres.ComputeState {
 	default:
 		return managedpostgres.ComputeStateUnknown
 	}
-}
-
-func (*Provider) Update(context.Context, managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
-	// Neon applies class changes to endpoint resources rather than the
-	// project defaults. Keep updates closed until the neutral service has a
-	// durable multi-step update state machine and rollback semantics.
-	return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
 }
 
 func (p *Provider) Discover(ctx context.Context, request managedpostgres.ResourceDiscoveryRequest) (string, error) {

@@ -371,6 +371,36 @@ func (q *Queries) ActivateRetainedRollbackDeployment(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const activeManagedPostgresResize = `-- name: ActiveManagedPostgresResize :one
+SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending'
+`
+
+type ActiveManagedPostgresResizeParams struct {
+	AccountID  pgtype.UUID
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) ActiveManagedPostgresResize(ctx context.Context, db DBTX, arg ActiveManagedPostgresResizeParams) (ManagedPostgresResize, error) {
+	row := db.QueryRow(ctx, activeManagedPostgresResize, arg.AccountID, arg.DatabaseID)
+	var i ManagedPostgresResize
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.DatabaseID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.DataResourceID,
+		&i.SourceSpec,
+		&i.TargetClass,
+		&i.Generation,
+		&i.State,
+		&i.CreatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = $1 AND l.enabled
@@ -1545,6 +1575,60 @@ func (q *Queries) BeginManagedPostgresAccounting(ctx context.Context, db DBTX, a
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const beginManagedPostgresResizeDatabase = `-- name: BeginManagedPostgresResizeDatabase :one
+UPDATE managed_postgres_databases SET state='updating',desired_generation=desired_generation+1,
+    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$1::timestamptz,updated_at=$1::timestamptz
+WHERE id=$2::uuid AND state='ready' AND desired_generation=$3::bigint
+    AND desired_generation=observed_generation AND clone_resource_role='target' AND environment_clone_operation_id IS NULL
+    AND cutover_id IS NULL AND provider_resource_id IS NOT NULL AND data_resource_id IS NOT NULL AND deleted_at IS NULL RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required
+`
+
+type BeginManagedPostgresResizeDatabaseParams struct {
+	At               pgtype.Timestamptz
+	ID               pgtype.UUID
+	SourceGeneration int64
+}
+
+func (q *Queries) BeginManagedPostgresResizeDatabase(ctx context.Context, db DBTX, arg BeginManagedPostgresResizeDatabaseParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, beginManagedPostgresResizeDatabase, arg.At, arg.ID, arg.SourceGeneration)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+		&i.AccountingRequired,
+	)
+	return i, err
 }
 
 const beginProjectEnvironmentClonePostgresCopyReaderCleanup = `-- name: BeginProjectEnvironmentClonePostgresCopyReaderCleanup :one
@@ -3030,6 +3114,69 @@ func (q *Queries) ClaimManagedPostgresLifecycleProvision(ctx context.Context, db
 	return i, err
 }
 
+const claimManagedPostgresResize = `-- name: ClaimManagedPostgresResize :one
+UPDATE managed_postgres_databases SET lease_token=$1::text,lease_until=$2::timestamptz,
+    attempt_count=least(attempt_count+1,30),retry_at=$3::timestamptz,updated_at=$3::timestamptz
+WHERE id=$4::uuid AND account_id=$5::uuid AND state='updating'
+    AND (lease_until IS NULL OR lease_until<=$3::timestamptz) AND retry_at<=$3::timestamptz
+    AND EXISTS(SELECT 1 FROM managed_postgres_resizes r WHERE r.database_id=managed_postgres_databases.id AND r.state='pending'
+        AND r.generation=managed_postgres_databases.desired_generation) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required
+`
+
+type ClaimManagedPostgresResizeParams struct {
+	LeaseToken string
+	Until      pgtype.Timestamptz
+	At         pgtype.Timestamptz
+	ID         pgtype.UUID
+	Account    pgtype.UUID
+}
+
+func (q *Queries) ClaimManagedPostgresResize(ctx context.Context, db DBTX, arg ClaimManagedPostgresResizeParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, claimManagedPostgresResize,
+		arg.LeaseToken,
+		arg.Until,
+		arg.At,
+		arg.ID,
+		arg.Account,
+	)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+		&i.AccountingRequired,
+	)
+	return i, err
+}
+
 const claimNextUnfencedAppTask = `-- name: ClaimNextUnfencedAppTask :one
 WITH candidate AS (
  SELECT task.id FROM app_tasks task JOIN apps app ON app.id=task.app_id
@@ -4134,6 +4281,193 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const cloneObjectGrantRevocationDispatch = `-- name: CloneObjectGrantRevocationDispatch :one
+UPDATE project_environment_clone_object_grant_revocations
+SET state=CASE WHEN state='reserved' THEN 'dispatched' ELSE state END,
+request_started_at=COALESCE(request_started_at,clock_timestamp())
+WHERE operation_id=$1 AND source_bucket_id=$2
+AND request_id=$3 AND plan_sha256=$4
+RETURNING operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at
+`
+
+type CloneObjectGrantRevocationDispatchParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	RequestID      pgtype.UUID
+	PlanSha256     string
+}
+
+func (q *Queries) CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationDispatch,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.RequestID,
+		arg.PlanSha256,
+	)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectGrantRevocationInsert = `-- name: CloneObjectGrantRevocationInsert :one
+INSERT INTO project_environment_clone_object_grant_revocations
+(operation_id, source_bucket_id, request_id, plan, plan_sha256)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at
+`
+
+type CloneObjectGrantRevocationInsertParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	RequestID      pgtype.UUID
+	Plan           []byte
+	PlanSha256     string
+}
+
+func (q *Queries) CloneObjectGrantRevocationInsert(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationInsertParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationInsert,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.RequestID,
+		arg.Plan,
+		arg.PlanSha256,
+	)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectGrantRevocationObserve = `-- name: CloneObjectGrantRevocationObserve :one
+UPDATE project_environment_clone_object_grant_revocations
+SET revocation_id=$1, observed_at=clock_timestamp(),
+state=CASE WHEN $2::boolean THEN 'drained' ELSE state END,
+drained_at=CASE WHEN $2::boolean THEN COALESCE(drained_at,clock_timestamp()) ELSE drained_at END
+WHERE operation_id=$3 AND source_bucket_id=$4
+AND request_id=$5 AND plan_sha256=$6 AND state<>'reserved'
+AND (revocation_id='' OR revocation_id=$1)
+AND (state<>'drained' OR $2::boolean)
+RETURNING operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at
+`
+
+type CloneObjectGrantRevocationObserveParams struct {
+	RevocationID   string
+	Drained        bool
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	RequestID      pgtype.UUID
+	PlanSha256     string
+}
+
+func (q *Queries) CloneObjectGrantRevocationObserve(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationObserveParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationObserve,
+		arg.RevocationID,
+		arg.Drained,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.RequestID,
+		arg.PlanSha256,
+	)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectGrantRevocationRead = `-- name: CloneObjectGrantRevocationRead :one
+SELECT operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at FROM project_environment_clone_object_grant_revocations
+WHERE operation_id=$1 AND source_bucket_id=$2
+`
+
+type CloneObjectGrantRevocationReadParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) CloneObjectGrantRevocationRead(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationReadParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationRead, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectNativeGrantsFinish = `-- name: CloneObjectNativeGrantsFinish :execrows
+DELETE FROM object_bucket_mutations
+WHERE bucket_id=$1 AND id=ANY($2::uuid[]) AND kind='native_grant'
+AND backend_id=$3 AND backend_fingerprint=$4
+AND physical_name=$5
+`
+
+type CloneObjectNativeGrantsFinishParams struct {
+	BucketID           pgtype.UUID
+	GrantIds           []pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+// Only an independently authenticated provider retirement observation may
+// consume this private statement. Request completion cannot call it.
+func (q *Queries) CloneObjectNativeGrantsFinish(ctx context.Context, db DBTX, arg CloneObjectNativeGrantsFinishParams) (int64, error) {
+	result, err := db.Exec(ctx, cloneObjectNativeGrantsFinish,
+		arg.BucketID,
+		arg.GrantIds,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cloneObjectWriteFenceBuckets = `-- name: CloneObjectWriteFenceBuckets :many
 SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id FROM object_buckets b JOIN object_bucket_write_fences f ON f.bucket_id=b.id
 WHERE f.clone_operation_id=$1 ORDER BY b.id
@@ -4189,6 +4523,8 @@ AND f.physical_name=$4
 AND op.id=$5 AND op.status='compensating'
 AND op.revision=$6 AND op.lease_token=$7::uuid
 AND op.lease_until > clock_timestamp()
+AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations r
+ WHERE r.operation_id=op.id AND r.source_bucket_id=f.bucket_id AND r.request_started_at IS NOT NULL AND r.state<>'drained')
 `
 
 type CloneObjectWriteFenceDeleteParams struct {
@@ -4781,6 +5117,31 @@ type CompleteLayerArtifactDeletionParams struct {
 
 func (q *Queries) CompleteLayerArtifactDeletion(ctx context.Context, db DBTX, arg CompleteLayerArtifactDeletionParams) (int64, error) {
 	result, err := db.Exec(ctx, completeLayerArtifactDeletion, arg.StorageKey, arg.DeletionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeManagedPostgresResize = `-- name: CompleteManagedPostgresResize :execrows
+UPDATE managed_postgres_resizes SET state='succeeded',completed_at=$1::timestamptz
+WHERE id=$2::uuid AND database_id=$3::uuid AND generation=$4::bigint AND state='pending'
+`
+
+type CompleteManagedPostgresResizeParams struct {
+	At         pgtype.Timestamptz
+	ID         pgtype.UUID
+	Database   pgtype.UUID
+	Generation int64
+}
+
+func (q *Queries) CompleteManagedPostgresResize(ctx context.Context, db DBTX, arg CompleteManagedPostgresResizeParams) (int64, error) {
+	result, err := db.Exec(ctx, completeManagedPostgresResize,
+		arg.At,
+		arg.ID,
+		arg.Database,
+		arg.Generation,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -8376,7 +8737,7 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 
 const dueManagedPostgresLifecycleDatabases = `-- name: DueManagedPostgresLifecycleDatabases :many
 SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required FROM managed_postgres_databases
-WHERE clone_resource_role='target' AND (state='deleting' OR ($1::boolean AND state IN ('provisioning','failed')))
+WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR ($1::boolean AND state IN ('provisioning','failed')))
     AND retry_at<=$2::timestamptz AND (lease_until IS NULL OR lease_until<=$2::timestamptz)
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired')
@@ -12704,6 +13065,70 @@ func (q *Queries) FinishManagedPostgresLifecycleProvision(ctx context.Context, d
 	return i, err
 }
 
+const finishManagedPostgresResizeDatabase = `-- name: FinishManagedPostgresResizeDatabase :one
+UPDATE managed_postgres_databases SET state='ready',service_class=$1::text,observed_generation=desired_generation,
+    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$2::timestamptz,updated_at=$2::timestamptz
+WHERE id=$3::uuid AND account_id=$4::uuid AND state='updating'
+    AND desired_generation=$5::bigint AND observed_generation=desired_generation-1
+    AND lease_token=$6::text AND lease_until>$2::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required
+`
+
+type FinishManagedPostgresResizeDatabaseParams struct {
+	TargetClass string
+	At          pgtype.Timestamptz
+	ID          pgtype.UUID
+	Account     pgtype.UUID
+	Generation  int64
+	Token       string
+}
+
+func (q *Queries) FinishManagedPostgresResizeDatabase(ctx context.Context, db DBTX, arg FinishManagedPostgresResizeDatabaseParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, finishManagedPostgresResizeDatabase,
+		arg.TargetClass,
+		arg.At,
+		arg.ID,
+		arg.Account,
+		arg.Generation,
+		arg.Token,
+	)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+		&i.AccountingRequired,
+	)
+	return i, err
+}
+
 const finishProductionQueueTriggerInvocations = `-- name: FinishProductionQueueTriggerInvocations :exec
 with targets as (
 			select unnest($4::text[]) as id, unnest($5::int[]) as attempt
@@ -14211,6 +14636,36 @@ func (q *Queries) GetManagedPostgresReconciliationLedger(ctx context.Context, db
 		&i.LastWindow,
 		&i.LastObservation,
 		&i.Invalid,
+	)
+	return i, err
+}
+
+const getManagedPostgresResize = `-- name: GetManagedPostgresResize :one
+SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at FROM managed_postgres_resizes WHERE account_id=$1 AND id=$2
+`
+
+type GetManagedPostgresResizeParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) GetManagedPostgresResize(ctx context.Context, db DBTX, arg GetManagedPostgresResizeParams) (ManagedPostgresResize, error) {
+	row := db.QueryRow(ctx, getManagedPostgresResize, arg.AccountID, arg.ID)
+	var i ManagedPostgresResize
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.DatabaseID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.DataResourceID,
+		&i.SourceSpec,
+		&i.TargetClass,
+		&i.Generation,
+		&i.State,
+		&i.CreatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -16722,6 +17177,59 @@ func (q *Queries) InsertManagedPostgresReservation(ctx context.Context, db DBTX,
 		&i.DataResourceID,
 		&i.CloneResourceRole,
 		&i.AccountingRequired,
+	)
+	return i, err
+}
+
+const insertManagedPostgresResize = `-- name: InsertManagedPostgresResize :one
+INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,
+    source_spec,target_class,generation,state,created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11) RETURNING id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at
+`
+
+type InsertManagedPostgresResizeParams struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DataResourceID     string
+	SourceSpec         []byte
+	TargetClass        string
+	Generation         int64
+	CreatedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) InsertManagedPostgresResize(ctx context.Context, db DBTX, arg InsertManagedPostgresResizeParams) (ManagedPostgresResize, error) {
+	row := db.QueryRow(ctx, insertManagedPostgresResize,
+		arg.ID,
+		arg.AccountID,
+		arg.DatabaseID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.ProviderResourceID,
+		arg.DataResourceID,
+		arg.SourceSpec,
+		arg.TargetClass,
+		arg.Generation,
+		arg.CreatedAt,
+	)
+	var i ManagedPostgresResize
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.DatabaseID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.DataResourceID,
+		&i.SourceSpec,
+		&i.TargetClass,
+		&i.Generation,
+		&i.State,
+		&i.CreatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -33821,6 +34329,39 @@ func (q *Queries) ObjectBucketMutationLock(ctx context.Context, db DBTX, arg Obj
 	return i, err
 }
 
+const objectBucketNativeGrants = `-- name: ObjectBucketNativeGrants :many
+SELECT id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at FROM object_bucket_mutations
+WHERE bucket_id=$1 AND kind='native_grant' ORDER BY id
+`
+
+func (q *Queries) ObjectBucketNativeGrants(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]ObjectBucketMutation, error) {
+	rows, err := db.Query(ctx, objectBucketNativeGrants, bucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucketMutation{}
+	for rows.Next() {
+		var i ObjectBucketMutation
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketID,
+			&i.Kind,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectBucketObjectLockDue = `-- name: ObjectBucketObjectLockDue :many
 SELECT bucket_id FROM object_bucket_object_lock WHERE state<>'ready' AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,bucket_id LIMIT $1
 `
@@ -44732,6 +45273,24 @@ func (q *Queries) ReadManagedPostgresLifecycleRestoreSource(ctx context.Context,
 		&i.CloneResourceRole,
 		&i.AccountingRequired,
 	)
+	return i, err
+}
+
+const readManagedPostgresResizeConflicts = `-- name: ReadManagedPostgresResizeConflicts :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted'
+    AND (state<>'ready' OR rotation_previous_generation<>0 OR lease_token IS NOT NULL)) AS unfinished_bindings,
+    EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state NOT IN ('ready','deleted')) AS unfinished_restores
+`
+
+type ReadManagedPostgresResizeConflictsRow struct {
+	UnfinishedBindings bool
+	UnfinishedRestores bool
+}
+
+func (q *Queries) ReadManagedPostgresResizeConflicts(ctx context.Context, db DBTX, databaseID pgtype.UUID) (ReadManagedPostgresResizeConflictsRow, error) {
+	row := db.QueryRow(ctx, readManagedPostgresResizeConflicts, databaseID)
+	var i ReadManagedPostgresResizeConflictsRow
+	err := row.Scan(&i.UnfinishedBindings, &i.UnfinishedRestores)
 	return i, err
 }
 

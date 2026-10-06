@@ -1072,6 +1072,33 @@ END $$;
 
 
 --
+-- Name: check_managed_postgres_resize_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.check_managed_postgres_resize_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r managed_postgres_resizes; d managed_postgres_databases;
+BEGIN
+ SELECT * INTO r FROM managed_postgres_resizes WHERE id=NEW.id;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ SELECT * INTO d FROM managed_postgres_databases WHERE id=r.database_id FOR UPDATE;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ IF r.account_id<>d.account_id OR (r.state='succeeded' AND d.observed_generation<r.generation)
+  OR (r.state='pending' AND (d.state<>'updating' OR d.desired_generation<>r.generation OR d.observed_generation<>r.generation-1
+    OR d.environment_clone_operation_id IS NOT NULL OR d.clone_resource_role<>'target' OR d.cutover_id IS NOT NULL
+    OR r.backend_id<>d.backend_id OR r.backend_fingerprint<>d.backend_fingerprint
+    OR r.provider_resource_id IS DISTINCT FROM d.provider_resource_id OR r.data_resource_id IS DISTINCT FROM d.data_resource_id
+    OR r.source_spec<>jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,'Class',d.service_class,
+      'Availability',d.availability,'ScaleToZero',d.scale_to_zero,'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds))) THEN
+  RAISE EXCEPTION 'resize receipt does not match database' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
+ END IF;
+ RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: cluster_signing_keys_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5358,6 +5385,57 @@ BEGIN
  SELECT managed_postgres_admission_cutover_id INTO pinned FROM apps WHERE id=NEW.app_id FOR SHARE;
  IF pinned IS NOT NULL THEN
   RAISE EXCEPTION 'instance admission is fenced by a database cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_admission_fenced';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_resize_database(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_resize_database() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM managed_postgres_resizes WHERE database_id=OLD.id AND state='pending') THEN
+  IF TG_OP='DELETE' THEN
+   RAISE EXCEPTION 'database has an unresolved resize' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
+  END IF;
+  IF ROW(NEW.account_id,NEW.backend_id,NEW.backend_fingerprint,NEW.provider_resource_id,NEW.data_resource_id,
+      NEW.region,NEW.postgres_major,NEW.service_class,NEW.availability,NEW.scale_to_zero,NEW.storage_limit_bytes,NEW.restore_window_seconds,
+      NEW.desired_generation,NEW.observed_generation,NEW.cutover_id,NEW.environment_clone_operation_id,NEW.clone_resource_role)
+      IS DISTINCT FROM ROW(OLD.account_id,OLD.backend_id,OLD.backend_fingerprint,OLD.provider_resource_id,OLD.data_resource_id,
+      OLD.region,OLD.postgres_major,OLD.service_class,OLD.availability,OLD.scale_to_zero,OLD.storage_limit_bytes,OLD.restore_window_seconds,
+      OLD.desired_generation,OLD.observed_generation,OLD.cutover_id,OLD.environment_clone_operation_id,OLD.clone_resource_role)
+      OR NEW.state<>'updating' THEN
+   RAISE EXCEPTION 'database has an unresolved resize' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_resize_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_resize_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.state='pending' AND EXISTS(SELECT 1 FROM managed_postgres_databases WHERE id=OLD.database_id) THEN
+   RAISE EXCEPTION 'pending resize intent cannot be removed' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF (to_jsonb(NEW)-'state'-'completed_at') IS DISTINCT FROM (to_jsonb(OLD)-'state'-'completed_at')
+  OR (OLD.state='succeeded' AND NEW IS DISTINCT FROM OLD) THEN
+  RAISE EXCEPTION 'resize intent is immutable' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
  END IF;
  RETURN NEW;
 END;
@@ -15635,6 +15713,36 @@ CREATE TABLE public.managed_postgres_health (
 
 
 --
+-- Name: managed_postgres_resizes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_resizes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    provider_resource_id text NOT NULL,
+    data_resource_id text NOT NULL,
+    source_spec jsonb NOT NULL,
+    target_class text NOT NULL,
+    generation bigint NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT managed_postgres_resizes_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_resizes_backend_id_check CHECK ((length(backend_id) > 0)),
+    CONSTRAINT managed_postgres_resizes_check CHECK ((((state = 'pending'::text) AND (completed_at IS NULL)) OR ((state = 'succeeded'::text) AND (completed_at IS NOT NULL) AND (completed_at >= created_at)))),
+    CONSTRAINT managed_postgres_resizes_data_resource_id_check CHECK (((length(data_resource_id) >= 1) AND (length(data_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_resizes_generation_check CHECK ((generation > 1)),
+    CONSTRAINT managed_postgres_resizes_provider_resource_id_check CHECK (((length(provider_resource_id) >= 1) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_resizes_source_spec_check CHECK ((jsonb_typeof(source_spec) = 'object'::text)),
+    CONSTRAINT managed_postgres_resizes_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'succeeded'::text]))),
+    CONSTRAINT managed_postgres_resizes_target_class_check CHECK ((target_class = ANY (ARRAY['development'::text, 'burstable'::text, 'production'::text])))
+);
+
+
+--
 -- Name: managed_postgres_restore_proofs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18017,6 +18125,39 @@ CREATE TABLE public.project_environment_clone_object_entries (
     CONSTRAINT project_environment_clone_object_entries_source_object_check CHECK ((jsonb_typeof(source_object) = 'object'::text)),
     CONSTRAINT project_environment_clone_object_entries_source_version_check CHECK ((source_version <> ''::text)),
     CONSTRAINT project_environment_clone_object_entries_verified_sha256_check CHECK (((verified_sha256 = ''::text) OR (verified_sha256 ~ '^[a-f0-9]{64}$'::text)))
+);
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_grant_revocations (
+    operation_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    plan jsonb NOT NULL,
+    plan_sha256 text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    revocation_id text DEFAULT ''::text NOT NULL,
+    retained_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    request_started_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    drained_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_object_grant_r_source_bucket_id_check CHECK ((source_bucket_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT project_environment_clone_object_grant_revo_revocation_id_check CHECK ((length(revocation_id) <= 512)),
+    CONSTRAINT project_environment_clone_object_grant_revoca_plan_sha256_check CHECK ((plan_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_object_grant_revocat_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check CHECK (((state = 'reserved'::text) = (request_started_at IS NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check1 CHECK (((state = 'drained'::text) = (drained_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check2 CHECK (((observed_at IS NULL) = (revocation_id = ''::text))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check3 CHECK (((state <> 'drained'::text) OR (observed_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check4 CHECK (((observed_at IS NULL) OR (request_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check5 CHECK (((request_started_at IS NULL) OR (request_started_at >= retained_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check6 CHECK (((observed_at IS NULL) OR (observed_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check7 CHECK (((drained_at IS NULL) OR (drained_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_plan_check CHECK ((jsonb_typeof(plan) = 'object'::text)),
+    CONSTRAINT project_environment_clone_object_grant_revocations_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'dispatched'::text, 'drained'::text])))
 );
 
 
@@ -23730,6 +23871,22 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 
 --
+-- Name: managed_postgres_resizes managed_postgres_resizes_database_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_resizes
+    ADD CONSTRAINT managed_postgres_resizes_database_id_generation_key UNIQUE (database_id, generation);
+
+
+--
+-- Name: managed_postgres_resizes managed_postgres_resizes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_resizes
+    ADD CONSTRAINT managed_postgres_resizes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: managed_postgres_restore_proofs managed_postgres_restore_proofs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24887,6 +25044,22 @@ ALTER TABLE ONLY public.project_environment_clone_object_credentials
 
 ALTER TABLE ONLY public.project_environment_clone_object_entries
     ADD CONSTRAINT project_environment_clone_object_entries_pkey PRIMARY KEY (operation_id, source_bucket_id, object_key);
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revocatio_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revocatio_request_id_key UNIQUE (request_id);
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revocations_pkey PRIMARY KEY (operation_id, source_bucket_id);
 
 
 --
@@ -29722,6 +29895,13 @@ CREATE INDEX managed_postgres_health_next_check_idx ON public.managed_postgres_h
 
 
 --
+-- Name: managed_postgres_resizes_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_resizes_active_idx ON public.managed_postgres_resizes USING btree (database_id) WHERE (state = 'pending'::text);
+
+
+--
 -- Name: managed_postgres_usage_account_period_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33421,6 +33601,27 @@ CREATE TRIGGER managed_postgres_database_bindings_guard BEFORE UPDATE OF state O
 --
 
 CREATE TRIGGER managed_postgres_instance_admission_guard BEFORE INSERT OR UPDATE OF app_id, state ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_instance_admission();
+
+
+--
+-- Name: managed_postgres_databases managed_postgres_resize_database_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_resize_database_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_resize_database();
+
+
+--
+-- Name: managed_postgres_resizes managed_postgres_resize_intent_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_resize_intent_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_resizes FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_resize_intent();
+
+
+--
+-- Name: managed_postgres_resizes managed_postgres_resize_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER managed_postgres_resize_receipt_guard AFTER INSERT OR UPDATE ON public.managed_postgres_resizes DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.check_managed_postgres_resize_receipt();
 
 
 --
@@ -38028,6 +38229,22 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 
 --
+-- Name: managed_postgres_resizes managed_postgres_resizes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_resizes
+    ADD CONSTRAINT managed_postgres_resizes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_resizes managed_postgres_resizes_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_resizes
+    ADD CONSTRAINT managed_postgres_resizes_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_postgres_restore_proofs managed_postgres_restore_proofs_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39329,6 +39546,14 @@ ALTER TABLE ONLY public.project_environment_clone_object_credentials
 
 ALTER TABLE ONLY public.project_environment_clone_object_credentials
     ADD CONSTRAINT project_environment_clone_object_credentials_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revoca_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revoca_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
 
 
 --

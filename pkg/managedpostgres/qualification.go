@@ -89,6 +89,8 @@ type QualificationReport struct {
 	CredentialPrivileges *CredentialPrivilegeEvidence `json:"credential_privileges,omitempty"`
 	CredentialAccess     []CredentialAccess           `json:"credential_access"`
 	ReadOnlyCredentials  *ReadOnlyCredentialEvidence  `json:"read_only_credentials,omitempty"`
+	ClassResize          bool                         `json:"class_resize"`
+	Resize               *ResizeEvidence              `json:"resize,omitempty"`
 }
 
 // LifecycleQualificationReport contains the non-sensitive evidence from a
@@ -101,7 +103,7 @@ type LifecycleQualificationReport struct {
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 4
+const QualificationArtifactVersion = 5
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
@@ -276,6 +278,14 @@ func ValidateQualificationReport(report QualificationReport) error {
 	} else if report.ReadOnlyCredentials != nil {
 		return ErrInvalid
 	}
+	if report.ClassResize {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "compute_resize_probe")
+		if report.Resize == nil || report.Resize.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.Resize != nil {
+		return ErrInvalid
+	}
 	if report.Restore != nil {
 		requiredChecks = append(append([]string(nil), requiredChecks...), restoreQualificationChecks[:]...)
 	}
@@ -443,6 +453,10 @@ func (r *Registry) VerifyQualificationArtifact(artifact QualificationArtifact, e
 		readiness.Reasons = append(readiness.Reasons, "credential_capabilities_mismatch")
 		readiness.Ready = false
 	}
+	if backend.Capabilities.ClassResize != artifact.Report.ClassResize {
+		readiness.Reasons = append(readiness.Reasons, "resize_capabilities_mismatch")
+		readiness.Ready = false
+	}
 	return readiness
 }
 
@@ -584,6 +598,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 
 	capabilities := provider.Capabilities()
 	report.CredentialAccess = append([]CredentialAccess(nil), capabilities.CredentialAccess...)
+	report.ClassResize = capabilities.ClassResize
 	if err := capabilities.Validate(); !record("capabilities_valid", err) {
 		return report, resultErr
 	}
@@ -778,6 +793,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			probeErr = evidence.Validate()
 		}
 		if !record("read_only_credentials_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if capabilities.ClassResize {
+		prober, ok := provider.(ComputeResizeProber)
+		if !ok {
+			record("compute_resize_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeComputeResize(ctx, providerResourceID, options.Spec)
+		report.Resize = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("compute_resize_probe", probeErr) {
 			return report, resultErr
 		}
 	}

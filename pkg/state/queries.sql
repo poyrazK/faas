@@ -10489,7 +10489,7 @@ SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND state<>'deleted
 
 -- name: DueManagedPostgresLifecycleDatabases :many
 SELECT * FROM managed_postgres_databases
-WHERE clone_resource_role='target' AND (state='deleting' OR (sqlc.arg(include_provisioning)::boolean AND state IN ('provisioning','failed')))
+WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR (sqlc.arg(include_provisioning)::boolean AND state IN ('provisioning','failed')))
     AND retry_at<=sqlc.arg(at)::timestamptz AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz)
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired')
@@ -10728,6 +10728,47 @@ WHERE id=sqlc.arg(id) AND bucket_id=sqlc.arg(bucket_id) AND kind='request'
 AND backend_id=sqlc.arg(backend_id) AND backend_fingerprint=sqlc.arg(backend_fingerprint)
 AND physical_name=sqlc.arg(physical_name);
 
+-- name: ObjectBucketNativeGrants :many
+SELECT * FROM object_bucket_mutations
+WHERE bucket_id=sqlc.arg(bucket_id) AND kind='native_grant' ORDER BY id;
+
+-- Only an independently authenticated provider retirement observation may
+-- consume this private statement. Request completion cannot call it.
+-- name: CloneObjectNativeGrantsFinish :execrows
+DELETE FROM object_bucket_mutations
+WHERE bucket_id=sqlc.arg(bucket_id) AND id=ANY(sqlc.arg(grant_ids)::uuid[]) AND kind='native_grant'
+AND backend_id=sqlc.arg(backend_id) AND backend_fingerprint=sqlc.arg(backend_fingerprint)
+AND physical_name=sqlc.arg(physical_name);
+
+-- name: CloneObjectGrantRevocationRead :one
+SELECT * FROM project_environment_clone_object_grant_revocations
+WHERE operation_id=sqlc.arg(operation_id) AND source_bucket_id=sqlc.arg(source_bucket_id);
+
+-- name: CloneObjectGrantRevocationInsert :one
+INSERT INTO project_environment_clone_object_grant_revocations
+(operation_id, source_bucket_id, request_id, plan, plan_sha256)
+VALUES (sqlc.arg(operation_id), sqlc.arg(source_bucket_id), sqlc.arg(request_id), sqlc.arg(plan), sqlc.arg(plan_sha256))
+RETURNING *;
+
+-- name: CloneObjectGrantRevocationDispatch :one
+UPDATE project_environment_clone_object_grant_revocations
+SET state=CASE WHEN state='reserved' THEN 'dispatched' ELSE state END,
+request_started_at=COALESCE(request_started_at,clock_timestamp())
+WHERE operation_id=sqlc.arg(operation_id) AND source_bucket_id=sqlc.arg(source_bucket_id)
+AND request_id=sqlc.arg(request_id) AND plan_sha256=sqlc.arg(plan_sha256)
+RETURNING *;
+
+-- name: CloneObjectGrantRevocationObserve :one
+UPDATE project_environment_clone_object_grant_revocations
+SET revocation_id=sqlc.arg(revocation_id), observed_at=clock_timestamp(),
+state=CASE WHEN sqlc.arg(drained)::boolean THEN 'drained' ELSE state END,
+drained_at=CASE WHEN sqlc.arg(drained)::boolean THEN COALESCE(drained_at,clock_timestamp()) ELSE drained_at END
+WHERE operation_id=sqlc.arg(operation_id) AND source_bucket_id=sqlc.arg(source_bucket_id)
+AND request_id=sqlc.arg(request_id) AND plan_sha256=sqlc.arg(plan_sha256) AND state<>'reserved'
+AND (revocation_id='' OR revocation_id=sqlc.arg(revocation_id))
+AND (state<>'drained' OR sqlc.arg(drained)::boolean)
+RETURNING *;
+
 -- name: ObjectBucketWriteFenceInsert :exec
 INSERT INTO object_bucket_write_fences (bucket_id, token, backend_id, backend_fingerprint, physical_name)
 VALUES (sqlc.arg(bucket_id), sqlc.arg(token), sqlc.arg(backend_id), sqlc.arg(backend_fingerprint), sqlc.arg(physical_name))
@@ -10765,7 +10806,9 @@ AND f.backend_id=sqlc.arg(backend_id) AND f.backend_fingerprint=sqlc.arg(backend
 AND f.physical_name=sqlc.arg(physical_name)
 AND op.id=sqlc.arg(operation_id) AND op.status='compensating'
 AND op.revision=sqlc.arg(expected_revision) AND op.lease_token=sqlc.arg(worker_token)::uuid
-AND op.lease_until > clock_timestamp();
+AND op.lease_until > clock_timestamp()
+AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations r
+ WHERE r.operation_id=op.id AND r.source_bucket_id=f.bucket_id AND r.request_started_at IS NOT NULL AND r.state<>'drained');
 
 -- name: ObjectUploadGrantInsert :one
 WITH receipt_clock AS (SELECT clock_timestamp() AS at)
@@ -14090,6 +14133,48 @@ WHERE id = sqlc.arg(id)::uuid AND account_id = sqlc.arg(account_id)::uuid
 
 -- name: ResetManagedPostgresReconciliationCoverage :exec
 DELETE FROM managed_postgres_usage_coverage WHERE database_id = $1;
+
+-- name: GetManagedPostgresResize :one
+SELECT * FROM managed_postgres_resizes WHERE account_id=$1 AND id=$2;
+
+-- name: ActiveManagedPostgresResize :one
+SELECT * FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending';
+
+-- name: ReadManagedPostgresResizeConflicts :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted'
+    AND (state<>'ready' OR rotation_previous_generation<>0 OR lease_token IS NOT NULL)) AS unfinished_bindings,
+    EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state NOT IN ('ready','deleted')) AS unfinished_restores;
+
+-- name: BeginManagedPostgresResizeDatabase :one
+UPDATE managed_postgres_databases SET state='updating',desired_generation=desired_generation+1,
+    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND state='ready' AND desired_generation=sqlc.arg(source_generation)::bigint
+    AND desired_generation=observed_generation AND clone_resource_role='target' AND environment_clone_operation_id IS NULL
+    AND cutover_id IS NULL AND provider_resource_id IS NOT NULL AND data_resource_id IS NOT NULL AND deleted_at IS NULL RETURNING *;
+
+-- name: InsertManagedPostgresResize :one
+INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,
+    source_spec,target_class,generation,state,created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11) RETURNING *;
+
+-- name: ClaimManagedPostgresResize :one
+UPDATE managed_postgres_databases SET lease_token=sqlc.arg(lease_token)::text,lease_until=sqlc.arg(until)::timestamptz,
+    attempt_count=least(attempt_count+1,30),retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account)::uuid AND state='updating'
+    AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz) AND retry_at<=sqlc.arg(at)::timestamptz
+    AND EXISTS(SELECT 1 FROM managed_postgres_resizes r WHERE r.database_id=managed_postgres_databases.id AND r.state='pending'
+        AND r.generation=managed_postgres_databases.desired_generation) RETURNING *;
+
+-- name: CompleteManagedPostgresResize :execrows
+UPDATE managed_postgres_resizes SET state='succeeded',completed_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND database_id=sqlc.arg(database)::uuid AND generation=sqlc.arg(generation)::bigint AND state='pending';
+
+-- name: FinishManagedPostgresResizeDatabase :one
+UPDATE managed_postgres_databases SET state='ready',service_class=sqlc.arg(target_class)::text,observed_generation=desired_generation,
+    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account)::uuid AND state='updating'
+    AND desired_generation=sqlc.arg(generation)::bigint AND observed_generation=desired_generation-1
+    AND lease_token=sqlc.arg(token)::text AND lease_until>sqlc.arg(at)::timestamptz AND lease_until>clock_timestamp() RETURNING *;
 
 -- name: ReadServiceBindingRevision :one
 SELECT (r.epoch::text || ':' || r.service_revision::text)::text AS revision
