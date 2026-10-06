@@ -14,6 +14,7 @@ import (
 	"time"
 )
 
+// adr: 047 — cancellation tears down a streaming bridge without completing work.
 // TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET covers the
 // bodyless GET path used by Node's built-in Fetch client. The bridge receives
 // a persistent-stream request, forwards it to a guest handler that waits for
@@ -30,6 +31,10 @@ func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) 
 
 	const slowRequests = 8
 	const maxGuestAbortLatency = 750 * time.Millisecond
+	// The harness includes Node startup and scheduling on a race-test runner.
+	// Request cancellation remains bounded by the 150 ms signal and the guest
+	// latency assertion below; the process deadline is only a stuck-test guard.
+	const nodeHarnessTimeout = 30 * time.Second
 	started := 0
 	aborted := 0
 	completed := 0
@@ -83,7 +88,7 @@ func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) 
 	}
 	pool := newGuestTransportPool(guestIP)
 	t.Cleanup(pool.closeIdleConnections)
-	inner := newHandlerWithPool(guestIP, uint16(guestPort), time.Now().Add(10*time.Second), pool)
+	inner := newHandlerWithPool(guestIP, uint16(guestPort), time.Now().Add(nodeHarnessTimeout), pool)
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// ForwardHTTPStream supplies these private wire headers to the
 		// persistent bridge. Set them here to exercise the same dispatch and
@@ -126,7 +131,7 @@ const slow = controllers.map(async controller => {
   process.exitCode = 1;
 });
 `, slowRequests)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), nodeHarnessTimeout)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, node, "-e", script, bridge.URL).CombinedOutput()
 	if err != nil {
