@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
 func TestManagedPostgresComputePolicyRoutesAndReplay(t *testing.T) {
@@ -20,9 +21,24 @@ func TestManagedPostgresComputePolicyRoutesAndReplay(t *testing.T) {
 	if err := json.Unmarshal(capabilities.Body.Bytes(), &support); err != nil || !support.ScaleToZeroUpdate {
 		t.Fatal("policy support not discoverable", err)
 	}
+	// Current bundled plans deny new always-on requests. Seed previously
+	// accepted intent directly in the fixture to test enabling suspension and
+	// replay after the entitlement has closed.
+	alwaysOnID := uuid.NewString()
+	if _, err := service.ChangeComputePolicy(t.Context(), managedpostgres.ChangeComputePolicyRequest{
+		AccountID: e.acct.ID, DatabaseID: d.ID, RequestID: alwaysOnID, ScaleToZero: false,
+	}); err != nil {
+		t.Fatal("existing always-on intent", err)
+	}
+	if _, err := service.Reconcile(t.Context(), e.acct.ID, d.ID); err != nil {
+		t.Fatal(err)
+	}
 	id := uuid.NewString()
 	path := "/v1/postgres/databases/" + d.ID + "/compute-policy"
-	payload := map[string]any{"request_id": id, "scale_to_zero": false}
+	if rec := e.do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "scale_to_zero": false}, nil); rec.Code != http.StatusForbidden {
+		t.Fatal("unentitled always-on request", rec.Code, rec.Body.String())
+	}
+	payload := map[string]any{"request_id": id, "scale_to_zero": true}
 	if rec := e.do(t, http.MethodPost, path, payload, map[string]string{"Authorization": ""}); rec.Code != http.StatusUnauthorized {
 		t.Fatal("unauthenticated policy change", rec.Code)
 	}
@@ -50,7 +66,7 @@ func TestManagedPostgresComputePolicyRoutesAndReplay(t *testing.T) {
 	*enabled = false
 	rec = e.do(t, http.MethodPost, path, payload, nil)
 	var view api.ManagedPostgresComputePolicyChange
-	if err = json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != 202 || view.State != "succeeded" || view.Generation != 2 || !view.ConnectionInterruptionExpected {
+	if err = json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != 202 || view.State != "succeeded" || view.Generation != 3 || view.FromScaleToZero || !view.TargetScaleToZero || !view.ConnectionInterruptionExpected {
 		t.Fatal("replay cached initial acceptance", rec.Code, rec.Body.String(), err)
 	}
 	progress := strings.TrimSuffix(path, "/compute-policy") + "/compute-policy-changes/" + id
@@ -58,9 +74,17 @@ func TestManagedPostgresComputePolicyRoutesAndReplay(t *testing.T) {
 	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("read progress", rec.Code, rec.Body.String())
 	}
-	payload["scale_to_zero"] = true
+	payload["scale_to_zero"] = false
 	if rec = e.do(t, http.MethodPost, path, payload, nil); rec.Code != 409 {
 		t.Fatal("UUID changed target", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodPost, path, map[string]any{"request_id": alwaysOnID, "scale_to_zero": false}, nil)
+	if err = json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != 202 || view.State != "succeeded" || view.Generation != 2 || view.TargetScaleToZero {
+		t.Fatal("accepted always-on replay denied by current entitlement", rec.Code, rec.Body.String(), err)
+	}
+	current, err := service.Get(t.Context(), e.acct.ID, d.ID)
+	if err != nil || !current.Spec.ScaleToZero || current.ObservedGeneration != 3 {
+		t.Fatal("historical replay changed current policy", current, err)
 	}
 }
 func TestManagedPostgresComputePolicyValidationAndPlan(t *testing.T) {

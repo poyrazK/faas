@@ -29,8 +29,10 @@ without changing pending intents or completed policy history.
 A separate `ScaleToZeroUpdate` provider capability declares both directions.
 It requires creation-time scale-to-zero support. API capability contract v3
 reports that support separately from the plan's always-on entitlement. Turning
-suspension off requires that entitlement. New requests require qualification,
-plan and usage admission; accepted intents remain replayable and recoverable
+suspension off requires that entitlement. The existing bundled plans keep
+always-on disabled; this change does not open that entitlement. Previously
+accepted intent still replays under those plans. New requests require
+qualification, plan and usage admission; accepted intents remain replayable and recoverable
 when admission closes. The pinned backend, rather than the regional default,
 decides whether an existing database supports changes.
 
