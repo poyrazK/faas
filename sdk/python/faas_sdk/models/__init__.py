@@ -1327,6 +1327,8 @@ from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeS
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
 from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_recovery_status import ManagedPostgresRecoveryStatus
+from .managed_postgres_recovery_status_status import ManagedPostgresRecoveryStatusStatus
 from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
@@ -3999,6 +4001,8 @@ __all__ = (
     "ManagedPostgresHealthLastErrorCode",
     "ManagedPostgresHealthProviderStatus",
     "ManagedPostgresHealthStatus",
+    "ManagedPostgresRecoveryStatus",
+    "ManagedPostgresRecoveryStatusStatus",
     "ManagedPostgresResize",
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",

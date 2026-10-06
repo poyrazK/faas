@@ -86,6 +86,8 @@ type QualificationReport struct {
 	Checks               []QualificationCheck         `json:"checks"`
 	ScaleToZero          *ScaleToZeroEvidence         `json:"scale_to_zero,omitempty"`
 	Restore              *RestoreEvidence             `json:"restore,omitempty"`
+	RestorePreflight     bool                         `json:"restore_preflight"`
+	Recovery             *RestorePreflightEvidence    `json:"recovery,omitempty"`
 	CredentialPrivileges *CredentialPrivilegeEvidence `json:"credential_privileges,omitempty"`
 	CredentialAccess     []CredentialAccess           `json:"credential_access"`
 	ReadOnlyCredentials  *ReadOnlyCredentialEvidence  `json:"read_only_credentials,omitempty"`
@@ -105,7 +107,7 @@ type LifecycleQualificationReport struct {
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 6
+const QualificationArtifactVersion = 7
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
@@ -296,6 +298,14 @@ func ValidateQualificationReport(report QualificationReport) error {
 	} else if report.ComputePolicy != nil {
 		return ErrInvalid
 	}
+	if report.RestorePreflight {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "restore_preflight_probe")
+		if report.Recovery == nil || report.Recovery.Validate() != nil || report.Restore == nil {
+			return ErrUnavailable
+		}
+	} else if report.Recovery != nil {
+		return ErrInvalid
+	}
 	if report.Restore != nil {
 		requiredChecks = append(append([]string(nil), requiredChecks...), restoreQualificationChecks[:]...)
 	}
@@ -471,6 +481,10 @@ func (r *Registry) VerifyQualificationArtifact(artifact QualificationArtifact, e
 		readiness.Reasons = append(readiness.Reasons, "compute_policy_capabilities_mismatch")
 		readiness.Ready = false
 	}
+	if backend.Capabilities.RestorePreflight != artifact.Report.RestorePreflight {
+		readiness.Reasons = append(readiness.Reasons, "restore_preflight_capabilities_mismatch")
+		readiness.Ready = false
+	}
 	return readiness
 }
 
@@ -614,6 +628,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	report.CredentialAccess = append([]CredentialAccess(nil), capabilities.CredentialAccess...)
 	report.ClassResize = capabilities.ClassResize
 	report.ScaleToZeroUpdate = capabilities.ScaleToZeroUpdate
+	report.RestorePreflight = capabilities.RestorePreflight
 	if err := capabilities.Validate(); !record("capabilities_valid", err) {
 		return report, resultErr
 	}
@@ -623,6 +638,10 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 
 	if !options.Mutating {
 		return report, nil
+	}
+	if capabilities.RestorePreflight && options.Spec.RestoreWindowSeconds == 0 {
+		record("restore_preflight_probe", ErrInvalid)
+		return report, resultErr
 	}
 
 	provisionKey := qualificationKey("provision", options.ResourceID)
@@ -859,9 +878,18 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			return report, resultErr
 		}
 		restorePointInTime = probe.PointInTime
+		restoreSource := providerResourceID
+		if capabilities.RestorePreflight {
+			evidence, preflightErr := qualifyRestorePreflight(ctx, provider, inspected, restorePointInTime)
+			report.Recovery = &evidence
+			if !record("restore_preflight_probe", preflightErr) {
+				return report, resultErr
+			}
+			restoreSource = inspected.DataResourceID
+		}
 		restored, restoreErr := provider.Restore(ctx, RestoreRequest{
 			ResourceID:       restoreResourceID,
-			SourceResourceID: providerResourceID,
+			SourceResourceID: restoreSource,
 			Spec:             options.Spec,
 			PointInTime:      restorePointInTime,
 			IdempotencyKey:   qualificationKey("restore", options.ResourceID),

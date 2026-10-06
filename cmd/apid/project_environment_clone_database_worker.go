@@ -218,10 +218,13 @@ func (s *server) restoreCapturedProjectEnvironmentDatabase(ctx context.Context, 
 	databases := s.store.(state.ProjectEnvironmentCloneDatabaseStore)
 	reservation, err := databases.ProjectEnvironmentCloneDatabaseForLease(ctx, lease, plan.source.ID)
 	if errors.Is(err, state.ErrNotFound) {
-		limit, admissionErr := s.managedPostgres.AdmitRestoreReservation(ctx, plan.source.AccountID, managedpostgres.RestoreSourceDefinition{
-			Spec: plan.source.Spec, BackendID: plan.source.BackendID, BackendFingerprint: plan.source.BackendFingerprint, ProviderResourceID: plan.source.ProviderResourceID, DataResourceID: plan.source.DataResourceID})
+		definition := managedpostgres.RestoreSourceDefinition{Spec: plan.source.Spec, BackendID: plan.source.BackendID, BackendFingerprint: plan.source.BackendFingerprint, ProviderResourceID: plan.source.ProviderResourceID, DataResourceID: plan.source.DataResourceID}
+		limit, admissionErr := s.managedPostgres.AdmitRestoreReservation(ctx, plan.source.AccountID, definition)
 		if admissionErr != nil {
 			return managedpostgres.Database{}, admissionErr
+		}
+		if err := s.managedPostgres.PreflightRestore(ctx, plan.source.AccountID, plan.source.ID, definition, point); err != nil {
+			return managedpostgres.Database{}, err
 		}
 		reservation, _, err = databases.ReserveProjectEnvironmentCloneDatabase(ctx, lease, plan.source.ID, limit)
 	}

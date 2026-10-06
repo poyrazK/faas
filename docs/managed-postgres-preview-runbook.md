@@ -49,7 +49,7 @@ Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
 canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand. Version 6
+passes; rerun qualification instead of extending it by hand. Version 7
 artifacts require runtime DML and RLS enforcement, denied DDL/administration,
 stable migration ownership, and preserved data after migration login retirement.
 When read-only access is advertised, approval also requires actual existing and
@@ -58,7 +58,7 @@ stable recovered passwords, rotation preserving data, and revoked old sessions
 and fresh logins. A capability declaration alone is insufficient.
 They also require a restore timestamp inside the disposable source's lifetime,
 target readiness, earlier committed data, rejection of source credentials on
-the target, and completed deletion. Versions 1–5 cannot authorize this release.
+the target, and completed deletion. Versions 1–6 cannot authorize this release.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against
@@ -66,7 +66,7 @@ the configured backend and current canary list. The artifact is authoritative:
 missing, malformed, stale, tampered, or mismatched approval keeps provisioning
 disabled even if the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED*` variables look
 valid. Those variables are a fallback only when no approval path is set and
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=6` matches the current contract.
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=7` matches the current contract.
 Unversioned environment approvals remain blocked.
 Restart `apid` after replacing the artifact so the new document is loaded.
 
@@ -172,10 +172,10 @@ settle missing windows, final corrections, budget headroom, or provider invoices
 
 Apply `20261001105914375_managed_postgres_migration_credentials.sql` before
 using `migration` bindings. Keep the staging provisioning gate closed until a
-fresh version 6 live Neon qualification passes. Local PostgreSQL tests establish
+fresh version 7 live Neon qualification passes. Local PostgreSQL tests establish
 SQL behavior; they do not establish Neon password recovery or branch isolation.
 
-Version 6 replaces prior approvals, including version 4; keep provisioning
+Version 7 replaces prior approvals, including version 4; keep provisioning
 closed until the new disposable live run and lifecycle smoke pass. Inspect
 `gregale postgres capabilities --json` before adoption: `read_only` is configured
 support, while `provisioning_enabled` reflects the current rollout gate.
@@ -232,12 +232,12 @@ to that parent. With a disposable local `DATABASE_URL`, run
 `go test ./pkg/managedpostgres/neon -run TestPostgresStartersUseMigrationRolesAndSerializeReleases`.
 This exercises the actual migration scripts against restricted SQL roles,
 concurrent release locking, runtime data access, and retained schema after
-migration-login retirement. Keep the existing live version-5 Neon qualification
+migration-login retirement. Keep the existing live version-7 Neon qualification
 and rollout gates; local PostgreSQL evidence does not replace them.
 
 ## Compute resize recovery (ADR-623)
 
-Use a fresh version 6 qualification approval before allowing new Neon intents.
+Use a fresh version 7 qualification approval before allowing new Neon intents.
 The qualification changes the disposable primary's class and restores it,
 checking data, existing logins and read-only permissions after both changes.
 Existing pending resizes remain reconciled when provisioning is disabled.
@@ -257,7 +257,7 @@ Monitor the `updating` database reconciliation metrics and pending request's
 
 Apply the additive compute-policy migration and deploy the matching apid and
 reconciler binaries before enabling this capability. Keep provisioning closed
-until fresh qualification v6 proves both idle policy directions, actual
+until fresh qualification v7 proves both idle policy directions, actual
 suspend/wake, preserved data and credentials, stable replay and restoration.
 Earlier approval artifacts cannot authorize this contract. Qualification now
 defaults to twenty minutes; an explicit timeout must leave room for two real
@@ -286,3 +286,28 @@ specification. Reconciliation continues after admission closes. Diagnose safe
 generations. Existing connections may disconnect and reconnect using their
 existing credentials. Rollback of the additive migration is blocked once any
 policy history exists so completed receipts cannot silently disappear.
+
+## Recovery metadata and restore preflight (ADR-625)
+
+Deploy the matching v7 service and adapter together, and keep admission closed
+until a fresh live Neon v7 qualification and lifecycle smoke pass. The new
+`restore_preflight_probe` must establish the exact inspected dataset and current
+limits for the actual data-recovery point. Review `recovery` evidence together
+with `restore.data_verified` and credential isolation. A disabled-retention spec
+cannot qualify an adapter that advertises preflight.
+
+Inspect `gregale postgres recovery DATABASE --json`. Neon reports
+`limits_known`, `fresh: true`, and `history_bounds_known: false` after validated
+metadata reads. Do not treat the possible range as a certified complete WAL
+interval. No SQL or wake occurs. The read remains available outside rollout
+admission and uses the database's pinned backend.
+
+For `unknown`, inspect the stable diagnostic and repair provider availability or
+metadata; do not substitute old limits. `unavailable` can indicate disabled
+retention, a missing/unready source or empty history. `unsupported` requires a
+qualified adapter and immutable source data identity; do not backfill a legacy
+row by resolving its current default. New requests fail before target
+reservation when evidence is absent or the timestamp is outside current limits.
+Existing matching receipts bypass this new preflight after expiry; restore's
+existing admission and recovery rules still apply. Provider retention changes
+after preflight can still prevent a new restore.

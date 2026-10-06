@@ -22,8 +22,20 @@ type environmentClonePostgresProvider struct {
 func (p *environmentClonePostgresProvider) Capabilities() managedpostgres.Capabilities {
 	c := p.sourceRefManagedPostgresProvider.Capabilities()
 	c.PointInTimeRestore = true
+	c.RestorePreflight = true
 	c.MaxRestoreWindowSeconds = 3600
 	return c
+}
+
+func (p *environmentClonePostgresProvider) ObserveRestoreSource(_ context.Context, d managedpostgres.RestoreSourceDefinition) (managedpostgres.RestoreSourceObservation, error) {
+	o := managedpostgres.RestoreSourceObservation{ProviderResourceID: d.ProviderResourceID, DataResourceID: d.DataResourceID,
+		Status: managedpostgres.ProviderStatusReady, RetentionSeconds: 3600, HistoryNotBefore: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}
+	for _, r := range p.restores {
+		if d.ProviderResourceID == "restore-"+r.ResourceID {
+			o.Lineage = &managedpostgres.RestoreLineage{SourceResourceID: r.SourceResourceID, PointInTime: r.PointInTime}
+		}
+	}
+	return o, nil
 }
 
 func (p *environmentClonePostgresProvider) Restore(_ context.Context, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {

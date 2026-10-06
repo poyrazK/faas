@@ -410,7 +410,7 @@ func TestUsageDiscoveryRecoversUncertainIdentityWithoutMutation(t *testing.T) {
 func TestUncertainRestoreRecoveryKeepsSharedRootAccounting(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
-			now := time.Date(2026, 10, 4, 12, 17, 0, 0, time.UTC)
+			now := time.Now().UTC().Truncate(time.Microsecond)
 			store, registry, provider, service := uncertainAccountingFixture(t, kind, &now)
 			provider.capabilities.RestoreUsageIncludedInSource = true
 			for id, backend := range registry.backends {
@@ -423,7 +423,26 @@ func TestUncertainRestoreRecoveryKeepsSharedRootAccounting(t *testing.T) {
 			}
 			input := postgresTestDatabase(provider.account, "source", now.Add(-3*time.Hour))
 			input.BackendID, input.BackendFingerprint = backend.ID, backend.Fingerprint
-			source := retirementReadyDatabase(t, store, input)
+			source, _, err := store.Reserve(t.Context(), input, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Data pin publication uses the server clock, so retain a live lease
+			// while keeping the original accounting source lifetime in the past.
+			claimed, err := store.Claim(t.Context(), source.AccountID, source.ID, uuid.NewString(), StateProvisioning, now, now.Add(10*time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := "provider-" + source.ID
+			if err := store.RecordProviderResource(t.Context(), source.ID, claimed.LeaseToken, id, input.CreatedAt.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			claimed.ProviderResourceID = id
+			source, err = store.(DataResourceProvisionStore).FinishProvisionWithDataResource(t.Context(), claimed,
+				ObservedDatabase{ProviderResourceID: id, DataResourceID: id, Spec: input.Spec, Status: ProviderStatusReady}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
 			_, err = service.Restore(context.Background(), RestoreDatabaseRequest{AccountID: provider.account, SourceDatabaseID: source.ID,
 				Name: "uncertain-restore", PointInTime: now.Add(-time.Hour)})
 			if !errors.Is(err, ErrUnavailable) {

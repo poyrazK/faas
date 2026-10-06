@@ -683,6 +683,7 @@ export type { ManagedPostgresDatabase } from './models/ManagedPostgresDatabase.j
 export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
+export type { ManagedPostgresRecoveryStatus } from './models/ManagedPostgresRecoveryStatus.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
 export type { ManagedPostgresUsageImportReading } from './models/ManagedPostgresUsageImportReading.js';
 export type { ManagedPostgresUsageImportRequest } from './models/ManagedPostgresUsageImportRequest.js';

@@ -18,7 +18,7 @@ func TestRestoreUsesCapturedSourceDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition := RestoreSourceDefinition{Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID}
+	definition := RestoreSourceDefinition{Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID}
 	store.mu.Lock()
 	edited := store.databases[source.ID]
 	edited.Spec.Class, edited.Spec.StorageLimitBytes = ClassBurstable, 20<<30
@@ -52,7 +52,7 @@ func TestRestoreCapturedDefinitionRejectsDriftBeforeProviderIO(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			definition := RestoreSourceDefinition{Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID}
+			definition := RestoreSourceDefinition{Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID}
 			request := RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "captured", PointInTime: time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC), SourceDefinition: &definition}
 			var target Database
 			if fault == "target_spec" || fault == "target_origin" {

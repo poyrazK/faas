@@ -2,15 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, ManagedPostgresService, type ManagedPostgresCapabilities, type ManagedPostgresResize, type ManagedPostgresComputePolicyChange } from '../src/index.js';
+import { FaaSClient, ManagedPostgresService, type ManagedPostgresRecoveryStatus, type ManagedPostgresCapabilities, type ManagedPostgresResize, type ManagedPostgresComputePolicyChange } from '../src/index.js';
 
 test('PostgreSQL capabilities preserve reader support with a closed rollout gate', async (t) => {
   const capabilities: ManagedPostgresCapabilities = {
-    contract_version: 3, region: 'eu-central-1', provisioning_enabled: false,
+    contract_version: 4, region: 'eu-central-1', provisioning_enabled: false,
     database_limit: 1, postgres_majors: [16, 17], service_classes: ['development', 'burstable'],
     availability: ['single_zone'], credential_access: ['read_only', 'read_write', 'migration'],
     scale_to_zero: true, always_on: false, pooled_connections: true,
-    point_in_time_restore: true, class_resize: true, scale_to_zero_update: true, storage_limit_bytes: 10737418240, restore_window_seconds: 604800,
+    point_in_time_restore: true, restore_preflight: true, class_resize: true, scale_to_zero_update: true, storage_limit_bytes: 10737418240, restore_window_seconds: 604800,
   };
   let requests = 0;
   const server = createServer((req, res) => {
@@ -113,4 +113,34 @@ test('compute policy preserves explicit false and the durable UUID across reques
   assert.deepEqual(await ManagedPostgresService.getManagedPostgresComputePolicyChange({ id: 'orders', changeId: id }), progress);
   assert.equal(posts, 2);
   assert.equal(gets, 1);
+});
+
+
+test('recovery status preserves uncertain history and does not reuse stale bounds', async (t) => {
+  const limits: ManagedPostgresRecoveryStatus = {
+    database_id: 'orders', status: 'limits_known', fresh: true,
+    history_bounds_known: false, retention_seconds: 300,
+    earliest_possible_time: '2026-10-06T10:00:00Z', latest_possible_time: '2026-10-06T10:05:00Z',
+  };
+  const unknown: ManagedPostgresRecoveryStatus = {
+    database_id: 'orders', status: 'unknown', fresh: false,
+    history_bounds_known: false, retention_seconds: 0, last_error_code: 'provider_unavailable',
+  };
+  let reads = 0;
+  const server = createServer((req, res) => {
+    assert.equal(req.method, 'GET');
+    assert.equal(req.url, '/v1/postgres/databases/orders/recovery');
+    assert.equal(req.headers.authorization, 'Bearer fixture');
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(reads++ === 0 ? limits : unknown));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'fixture', retry: { maxAttempts: 1, backoffMs: 0 } });
+  assert.deepEqual(await ManagedPostgresService.getManagedPostgresRecoveryStatus({ id: 'orders' }), limits);
+  assert.deepEqual(await ManagedPostgresService.getManagedPostgresRecoveryStatus({ id: 'orders' }), unknown);
+  assert.equal(reads, 2);
 });

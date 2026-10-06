@@ -16,6 +16,7 @@ type ManagedPostgresCapabilities struct {
 	AlwaysOn             bool     `json:"always_on"`
 	PooledConnections    bool     `json:"pooled_connections"`
 	PointInTimeRestore   bool     `json:"point_in_time_restore"`
+	RestorePreflight     bool     `json:"restore_preflight"`
 	ScaleToZeroUpdate    bool     `json:"scale_to_zero_update"`
 	ClassResize          bool     `json:"class_resize"`
 	StorageLimitBytes    int64    `json:"storage_limit_bytes"`

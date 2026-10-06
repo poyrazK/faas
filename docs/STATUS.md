@@ -31,6 +31,13 @@ historical.
   a gated operator preview. These landed after the older milestone prose below
   and should not be inferred from its historical PR list.
 
+Managed PostgreSQL recovery preflight (2026-10-06, ADR-625): new PITR requests
+validate the pinned source and current provider recovery limits before target
+reservation. The live recovery API, CLI and SDKs distinguish necessary limits
+from authoritative retained history; Neon reports uncertain full history.
+Durable matching restore retries bypass new expiry/metadata checks. Qualification
+v7 and a fresh live Neon run remain required before reopening admission.
+
 Managed PostgreSQL cutover safety update (2026-10-02): vmmd retains live and
 failed-boot ownership through confirmed teardown and serializes concurrent stops
 ([ADR-469](adr/469-managed-postgres-confirmed-teardown.md)). Scheduler fault,
