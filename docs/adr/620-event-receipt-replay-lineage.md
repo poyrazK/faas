@@ -1,11 +1,11 @@
-# ADR-608: Trusted handler replay lineage in event receipts
+# ADR-620: Trusted handler replay lineage in event receipts
 
 - **Status:** implemented; operational qualification remains pending
 - **Date:** 2026-10-05
 - **Decision:** Persist immediate-parent and root identity on new generic
   invocation replays, and expose retained replay outcomes alongside the original
   execution in event receipts. Add account-scoped paginated replay history.
-- **Why:** ADR-607 can show a failed original invocation after its separately
+- **Why:** ADR-619 can show a failed original invocation after its separately
   created replay succeeds. Operators need to verify each consumer's recovery
   from the same event identity without losing the original failure evidence.
 
@@ -44,7 +44,7 @@ exists; active and completed latest replays have no suggested action. Existing
 write authorization, idempotency and POST state checks remain authoritative.
 Routing replay and in-place dead-letter replay retain their existing semantics.
 This decision does not broaden generic replay eligibility for keyed/bound work.
-[ADR-609](598-safe-keyed-invocation-replay.md) subsequently adds a dedicated
+[ADR-621](621-safe-keyed-invocation-replay.md) subsequently adds a dedicated
 lane-preserving recovery path for failed unbound keyed work.
 
 `GET /v1/events/receipt/replays?source=SOURCE&id=ID&subscription_id=SUB` requires
@@ -65,7 +65,7 @@ execution outcomes and independent pruning between requests.
 Counts represent retained execution rows and can decrease. Surviving descendants
 remain visible after original/intermediate execution records expire. If all
 replays expire, missing recovery evidence cannot prove no replay ever occurred.
-This slice does not extend event or invocation retention or enable ADR-606's
+This slice does not extend event or invocation retention or enable ADR-618's
 recipient-routing adoption flag.
 
 ## Qualification

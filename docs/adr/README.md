@@ -593,10 +593,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Events and delivery
 
-- [ADR-606: Independent event recipient routing and recovery](606-independent-event-recipient-routing.md)
-- [ADR-607: Unified event receipt inspection](607-unified-event-receipts.md)
-- [ADR-608: Trusted handler replay lineage in event receipts](608-event-receipt-replay-lineage.md)
-- [ADR-609: Safe recovery for failed keyed invocations](609-safe-keyed-invocation-replay.md)
+- [ADR-618: Independent event recipient routing and recovery](618-independent-event-recipient-routing.md)
+- [ADR-619: Unified event receipt inspection](619-unified-event-receipts.md)
+- [ADR-620: Trusted handler replay lineage in event receipts](620-event-receipt-replay-lineage.md)
+- [ADR-621: Safe recovery for failed keyed invocations](621-safe-keyed-invocation-replay.md)
 - [ADR-610 · Keyed dead-letter replay respects running claims](610-keyed-dead-letter-replay-claim-exclusion.md)
 - [ADR-611 · Invocation-backed event delivery attempt history](611-invocation-backed-event-attempt-history.md)
 - [ADR-612: Durable deduplication for plain invocation replay](612-durable-plain-invocation-replay.md)

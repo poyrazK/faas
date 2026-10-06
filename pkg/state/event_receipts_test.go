@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-// ADR-607: pending recipients exist before invocations, summary counts cover
+// ADR-619: pending recipients exist before invocations, summary counts cover
 // the whole snapshot, and mutable routing progress cannot reorder pages.
 func TestEventReceiptRoutingPaginationAndRecovery(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
@@ -96,7 +96,7 @@ func TestEventReceiptRoutingPaginationAndRecovery(t *testing.T) {
 	})
 }
 
-// adr: 607
+// adr: 619
 // Recovery actions use the retained unified DLQ identity for original and
 // replayed executions; purged records must not advertise a broken action.
 func TestEventReceiptDeadLetterRecoveryIdentity(t *testing.T) {
@@ -146,7 +146,7 @@ func TestEventReceiptDeadLetterRecoveryIdentity(t *testing.T) {
 	}
 }
 
-// ADR-607: keyed work outcomes and cancellation receipts are actual delivery
+// ADR-619: keyed work outcomes and cancellation receipts are actual delivery
 // evidence; an enqueued route alone cannot assert a successful execution.
 func TestEventReceiptWorkOutcomesAndRetention(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
@@ -210,7 +210,7 @@ func TestEventReceiptWorkOutcomesAndRetention(t *testing.T) {
 	})
 }
 
-// ADR-607: a historical receipt cannot join current metadata across tenants,
+// ADR-619: a historical receipt cannot join current metadata across tenants,
 // and old NULL snapshots must not be presented as a known empty recipient set.
 func TestEventReceiptLegacyAndForeignTargetPostgres(t *testing.T) {
 	store, pool, _ := pgStoreWithPool(t)
@@ -244,7 +244,7 @@ func TestEventReceiptLegacyAndForeignTargetPostgres(t *testing.T) {
 	}
 }
 
-// ADR-607: active leases and filtered candidates remain inspectable; missing
+// ADR-619: active leases and filtered candidates remain inspectable; missing
 // original invocation evidence after a handled route is explicitly unavailable.
 func TestEventReceiptActiveFilteredAndMissingExecution(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {

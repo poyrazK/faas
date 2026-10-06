@@ -1,4 +1,4 @@
-# ADR-609: Safe recovery for failed keyed invocations
+# ADR-621: Safe recovery for failed keyed invocations
 
 - **Status:** accepted
 - **Date:** 2026-10-05
@@ -10,7 +10,7 @@
   Replaying a failed keyed event consumer through it could bypass the per-key
   claim fence, FIFO admission order and captured fairness cap.
 - **Consequences:** Recovery remains independent per consumer and observable
-  through ADR-607 receipts and ADR-608 replay lineage. Operators must publish
+  through ADR-619 receipts and ADR-620 replay lineage. Operators must publish
   new work when its original pending lifetime has expired.
 
 ## Admission and ordering

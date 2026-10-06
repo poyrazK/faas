@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 608
+// adr: 620
 func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	work := seedAPIReceipt(t, e)
@@ -112,7 +112,7 @@ func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	}
 }
 
-// adr: 608
+// adr: 620
 func TestEventReceiptReplayReadScope(t *testing.T) {
 	for _, test := range []struct {
 		scope  string
@@ -127,7 +127,7 @@ func TestEventReceiptReplayReadScope(t *testing.T) {
 	}
 }
 
-// adr: 608
+// adr: 620
 func TestEventReceiptReplayCursorIdentityAndRetention(t *testing.T) {
 	history := state.EventReceiptReplayHistory{OutboxID: 1, EventSource: strings.Repeat("&", 256), EventID: strings.Repeat("<", 256), SubscriptionID: strings.Repeat(">", 256), NextCursor: state.EventReceiptReplayCursor{OutboxID: 1, CreatedAt: time.Now(), InvocationID: "00000000-0000-0000-0000-000000000001"}}
 	raw := eventReceiptReplayResponse("account", history).NextAfter

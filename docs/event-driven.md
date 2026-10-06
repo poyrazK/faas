@@ -819,7 +819,7 @@ notification destinations keep their existing routing paths. See
 [ADR-613](adr/613-atomic-event-routing-handoff.md) for the transaction and upgrade
 boundary. Handler side effects still require application deduplication.
 
-When operators enable independent recipient routing (ADR-606), each captured
+When operators enable independent recipient routing (ADR-618), each captured
 candidate has its own five-minute lease and backoff from five seconds to five
 minutes. A terminal recipient can be replayed while its siblings are routing
 or waiting to retry. Each replay gets a fresh twelve-attempt routing budget;
@@ -827,7 +827,7 @@ the visible attempt count and history remain cumulative. Successful siblings
 are not rerun. The flag `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED=1` enables adoption
 on schedd after all API and scheduler binaries are compatible. It defaults off;
 disabling it stops adoption but continues draining already adopted receipts.
-See [ADR-606](adr/606-independent-event-recipient-routing.md) for rollout and
+See [ADR-618](adr/618-independent-event-recipient-routing.md) for rollout and
 rollback requirements.
 
 Run `make event-delivery-acceptance` to qualify two-consumer handler execution,
@@ -1014,7 +1014,7 @@ Repeated keyed recovery requests return the same child, even after it completes.
 To recover again, target that child after it fails. If the child has been pruned
 while the parent remains, the parent cannot create another execution; receipts
 suppress that action. Queue-bound dead letters retain their existing in-place
-replay path. See [ADR-609](adr/609-safe-keyed-invocation-replay.md) for ordering,
+replay path. See [ADR-621](adr/621-safe-keyed-invocation-replay.md) for ordering,
 expiry and retention behavior.
 
 Keyed dead-letter replay keeps the original receipt and sequence. It waits

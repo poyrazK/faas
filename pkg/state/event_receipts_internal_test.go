@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// ADR-607: receipts retain captured IDs but reveal no current-owner metadata
+// ADR-619: receipts retain captured IDs but reveal no current-owner metadata
 // when a target changes accounts. Pre-snapshot legacy data remains unknown.
 func TestEventReceiptHistoricalEvidencePrivacy(t *testing.T) {
 	ctx := context.Background()

@@ -1,4 +1,4 @@
-# ADR-606: Independent event recipient routing and recovery
+# ADR-618: Independent event recipient routing and recovery
 
 - **Status:** proposed; implemented behind an opt-in adoption flag
 - **Date:** 2026-10-04
@@ -46,7 +46,7 @@ retain their existing whole-event replay restrictions.
 
 - Publish acceptance acknowledges durable routing intent. `enqueued` means routing
   was handled, producing an invocation or a work-policy cancellation receipt
-  (see ADR-607); parent `delivered` means all routing candidates settled.
+  (see ADR-619); parent `delivered` means all routing candidates settled.
   Neither means the application handler completed.
 - Handler retries, dead letters, and invocation replay keep their existing
   lifecycle. Pre-invocation routing failures remain visible in event deliveries

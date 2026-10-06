@@ -17,7 +17,7 @@
 `PublishedEventRecipientAdmissionStore` accepts only outbox ID, subscription ID,
 claim token and generation. PostgreSQL derives the target, envelope, filter,
 delivery ID and captured work policy from durable acceptance metadata. Generation
-zero denotes the whole-event lease; positive generations denote ADR-606 recipient
+zero denotes the whole-event lease; positive generations denote ADR-618 recipient
 leases. Old snapshots without work-policy capture preserve live-binding lookup.
 
 Keyed invocation and cancellation use the existing shared lane transaction
@@ -67,7 +67,7 @@ cancel-pending work; it does not mean successful handler execution.
 ## Compatibility and scope
 
 Both whole-event snapshot routing and already-adopted independent recipients use
-the handoff. ADR-606 adoption still defaults off. Existing stores without the new
+the handoff. ADR-618 adoption still defaults off. Existing stores without the new
 capability retain their previous scheduler path. All scheduler writers must be
 upgraded before relying on the atomic guarantee; older binaries can still produce
 partial handoffs. Acceptance snapshots and the public receipt APIs do not change.

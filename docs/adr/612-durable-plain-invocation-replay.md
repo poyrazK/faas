@@ -49,14 +49,14 @@ return 409 `invocation_replay_unavailable`. Parent pruning removes its marker;
 surviving failed descendants can recover using their stored root identity.
 
 The additive migration adopts the latest retained direct child whose stored
-ADR-608 lineage, owner, customer and environment match its parent. Historical
+ADR-620 lineage, owner, customer and environment match its parent. Historical
 forks remain visible. It neither infers lineage from guest headers nor adopts
 legacy customer replays without stored parent/root identity. Reapplying the
 migration preserves an existing marker, including after child pruning.
 
 Receipts preserve the original failure and latest retained recovery history.
 They suppress `handler_replay` for a failed execution with an accepted child,
-even after that child is pruned. Keyed actions retain ADR-609 semantics.
+even after that child is pruned. Keyed actions retain ADR-621 semantics.
 Routing replay and in-place dead-letter generation replay remain separate
 operations with their existing contracts; this change deduplicates creation of
 plain recovery children through the invocation replay routes.

@@ -31,7 +31,7 @@ type recipientClaimTestStore interface {
 	state.WorkCancellationStore
 }
 
-// ADR-606: adopting a replayed legacy receipt starts a new routing budget;
+// ADR-618: adopting a replayed legacy receipt starts a new routing budget;
 // exhausted lifetime counters must not immediately exhaust that generation.
 func TestEventRecipientClaimsAdoptReplayedLegacyBudget(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
@@ -139,7 +139,7 @@ func finishRecipient(t *testing.T, store recipientClaimTestStore, work *state.Pu
 	}
 }
 
-// ADR-606: independent recipient leases and replay generations preserve siblings.
+// ADR-618: independent recipient leases and replay generations preserve siblings.
 func TestEventRecipientClaimsRecoverIndependently(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
 		ctx, accountID, appID, receipt := seedRecipientClaims(t, store)
@@ -214,7 +214,7 @@ func TestEventRecipientClaimsRecoverIndependently(t *testing.T) {
 	})
 }
 
-// ADR-606: account/app scope survives normalization, concurrent operators
+// ADR-618: account/app scope survives normalization, concurrent operators
 // cannot replay a consumer twice, and receipt settlement survives store restart.
 func TestEventRecipientClaimsConcurrentReplayIsScoped(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, pool *pgxpool.Pool) {
@@ -291,7 +291,7 @@ func TestEventRecipientClaimsConcurrentReplayIsScoped(t *testing.T) {
 	})
 }
 
-// ADR-606: expired claims are fenced and retention excludes unfinished routing.
+// ADR-618: expired claims are fenced and retention excludes unfinished routing.
 func TestEventRecipientClaimsFenceExpiredWorkersAndRetainActiveWork(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, pool *pgxpool.Pool) {
 		ctx, _, _, receipt := seedRecipientClaims(t, store)

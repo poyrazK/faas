@@ -1,4 +1,4 @@
-# ADR-607: Unified event receipt inspection
+# ADR-619: Unified event receipt inspection
 
 - **Status:** implemented; operational rollout qualification remains pending
 - **Date:** 2026-10-04
@@ -60,7 +60,7 @@ Routing recovery and in-place dead-letter replay therefore remain visible here.
 Generic invocation replay creates a new invocation without trusted parent
 lineage in the current Store model; those rows remain available in app delivery
 history. This change does not infer lineage from caller-controlled headers.
-[ADR-608](608-event-receipt-replay-lineage.md) subsequently adds trusted parent
+[ADR-620](620-event-receipt-replay-lineage.md) subsequently adds trusted parent
 and root lineage for new generic replays, including recovery summaries and
 paginated history on this receipt surface.
 
@@ -87,7 +87,7 @@ and text/JSON inspection. Existing fanout recovery tests protect invocation
 identity and independent routing behavior. Repository contract gates cover SQL
 regeneration, OpenAPI/DTO parity, embedded spec synchronization, and docs links.
 
-This slice does not enable the ADR-606 adoption flag. Staging qualification of
+This slice does not enable the ADR-618 adoption flag. Staging qualification of
 publish through actual handler execution, failure, dead-letter recovery, restart,
 and operator concurrency remains necessary before enabling adoption in production.
 

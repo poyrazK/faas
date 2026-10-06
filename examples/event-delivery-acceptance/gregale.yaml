@@ -1,3 +1,6 @@
+scaling:
+  min_instances: 1
+  max_instances: 1
 event_triggers:
   - source: acceptance.events.delivery
     type: delivery.recovery

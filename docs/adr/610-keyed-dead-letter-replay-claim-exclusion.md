@@ -59,7 +59,7 @@ lanes; consistent ordering prevents opposite lane acquisition. Jobs, workflows,
 webhooks and unkeyed work do not introduce work-lane locks or keyed source-row
 locks.
 
-The [ADR-609](598-safe-keyed-invocation-replay.md) child-based recovery route
+The [ADR-621](621-safe-keyed-invocation-replay.md) child-based recovery route
 continues to assign a new tail sequence to failed unbound keyed work. This
 decision covers existing in-place dead-letter recovery, which retains its
 original sequence. Queue binding ownership, scoped replay checks, retry

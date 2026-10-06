@@ -46,7 +46,7 @@ arrival*, not greatest application version. Customers needing version order
 must supply a monotonic version or check the authoritative version in their
 handler. A newly accepted row cannot replace one already dispatching.
 
-[ADR-609](609-safe-keyed-invocation-replay.md) defines explicit recovery of
+[ADR-621](621-safe-keyed-invocation-replay.md) defines explicit recovery of
 failed unbound keyed executions: a child joins the lane's next sequence without
 replacing existing pending work, and retains the original pending expiry.
 [ADR-610](610-keyed-dead-letter-replay-claim-exclusion.md) makes in-place

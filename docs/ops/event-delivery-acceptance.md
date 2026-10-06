@@ -49,16 +49,29 @@ do not change Gregale's at-least-once execution or non-FIFO contract.
 
 ## Staging gate
 
-Use a dedicated staging account and two fresh acceptance fixture apps. Build
-from the repository root using
-`examples/event-delivery-acceptance/Dockerfile` through Gregale's normal source
-deployment flow. Reconcile the
-`examples/event-delivery-acceptance/gregale.yaml` subscriptions into **both** apps.
-The manifest must be selected explicitly because it lives below the build root.
+Use a dedicated staging account and two fresh acceptance fixture apps. Prepare
+a source directory from the committed checkout, placing the fixture Dockerfile
+and manifest at its root so Gregale's source deployment selects them:
+
+```bash
+fixture_dir="$(mktemp -d)"
+git archive HEAD | tar -x -C "$fixture_dir"
+cp examples/event-delivery-acceptance/Dockerfile "$fixture_dir/Dockerfile"
+cp examples/event-delivery-acceptance/gregale.yaml "$fixture_dir/gregale.yaml"
+# fixture.env is a private dotenv file containing the fresh control-token secret.
+gregale deploy --path "$fixture_dir" --dockerfile --app --name delivery-good \
+  --source worktree --no-require-authn --healthcheck-path /healthz \
+  --secrets-file /private/path/fixture.env --wait
+gregale deploy --path "$fixture_dir" --dockerfile --app --name delivery-bad \
+  --source worktree --no-require-authn --healthcheck-path /healthz \
+  --secrets-file /private/path/fixture.env --wait
+```
+
+These commands use Gregale's normal builder and reconcile subscriptions into
+**both** apps. The fixture manifest pins its instance floor and ceiling to one.
 Require exactly these two enabled consumers for this source/type; the gate
 rejects unexpected captured recipients. The apps must allow the gate's HTTP
-requests and keep one fixture process alive throughout the run: set
-`min_instances=1`, `max_concurrency=1` and a long idle timeout, and avoid deploying
+requests and keep one fixture process alive throughout the run. Avoid deploying
 or restarting the fixture apps during a gate. The fixture ledger intentionally
 lives in memory; only the platform API and scheduler are restarted.
 
@@ -104,6 +117,6 @@ staging** and run with `--routing-mode recipient`. The process gate automaticall
 tests disabling adoption during recovery; repeat that operational step at the
 checkpoint if qualifying a staging rollback. Neither runner changes flags or
 deploys binaries. This is execution/recovery evidence for
-[ADR-606](../adr/606-independent-event-recipient-routing.md); staging retention,
+[ADR-618](../adr/618-independent-event-recipient-routing.md); staging retention,
 lease-expiry, concurrent operator and native runtime qualification remain
 separate gates before production enablement.

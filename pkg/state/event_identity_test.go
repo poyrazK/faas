@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// ADR-607: receipt reads and both scheduler routes must preserve the existing
+// ADR-619: receipt reads and both scheduler routes must preserve the existing
 // deterministic invocation identity across retries and code refactoring.
 func TestPublishedEventInvocationIDCompatibility(t *testing.T) {
 	const account = "00000000-0000-0000-0000-000000000001"

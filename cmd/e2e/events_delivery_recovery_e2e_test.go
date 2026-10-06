@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest/eventdelivery"
 )
 
+// adr: 618
 // Real APID, schedd, gateway and PostgreSQL deliver to two actual HTTP
 // applications. Only VMMD's VM transport is replaced; no invocation lifecycle
 // state is fabricated. The same gate and consumer run against staging below.
@@ -55,7 +56,7 @@ func runEventDeliveryRecovery(t *testing.T, independent bool) {
 	}
 	// Keep fixtures running throughout the restart and two real retry delays.
 	for _, slug := range []string{f.app.Slug, app.Slug} {
-		body, code := doReq(t, f.h, f.key, "PATCH", "/v1/apps/"+slug, map[string]any{"require_authn": false, "public_auth": map[string]any{"mode": "open"}, "idle_timeout_s": 3600})
+		body, code := doReq(t, f.h, f.key, "PATCH", "/v1/apps/"+slug, map[string]any{"require_authn": false, "public_auth": map[string]any{"mode": "open"}, "idle_timeout_s": 120})
 		if code != http.StatusOK {
 			t.Fatalf("configure fixture %s: %d %s", slug, code, body)
 		}
