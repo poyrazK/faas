@@ -216,27 +216,37 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
-	// MarkDeploymentLive also reads the later checked-rollback ledger. Its
-	// migration remains pending so the identity upgrade still runs in order.
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS deployment_rollback_operations (
-		id uuid PRIMARY KEY,
-		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-		scope text NOT NULL CHECK(scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'),
-		target_deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
-		current_deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
-		status text NOT NULL CHECK(status IN ('preparing','ready','blocked','routing','complete','failed')),
-		receipt jsonb NOT NULL CHECK(jsonb_typeof(receipt)='object' AND octet_length(receipt::text)<=16384),
-		updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-		CHECK(target_deployment_id<>current_deployment_id),
-		CHECK(receipt ?& ARRAY['id','app_id','scope','target_deployment_id','current_deployment_id','status'] AND receipt->>'id'=id::text AND receipt->>'app_id'=app_id::text AND receipt->>'scope'=scope
-			AND receipt->>'target_deployment_id'=target_deployment_id::text
-			AND receipt->>'current_deployment_id'=current_deployment_id::text AND receipt->>'status'=status)
-	)`); err != nil {
+	s := state.NewPgStore(pool)
+	ctx := context.Background()
+	account, err := s.CreateAccount(ctx, "operations@example.com", api.PlanPro)
+	if err != nil {
 		t.Fatal(err)
 	}
-	s := state.NewPgStore(pool)
-	ctx, account, _, def, tenant, _ := operationFixture(t, s)
-	admission := state.OperationAdmission{AccountID: account.ID, DefinitionID: def.ID,
+	app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "operations-test", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:operations", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This test covers the identity migration, not the later deployment-live
+	// transition. Seed only the status needed by admission so that transition's
+	// newer retention views do not become part of the pre-identity schema.
+	if _, err := pool.Exec(ctx, `UPDATE deployments SET status='live' WHERE id=$1`, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	definition, err := s.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: account.ID,
+		OperationDefinitionResponse: api.OperationDefinitionResponse{AppID: app.ID, Scope: deployment.Scope,
+			DeploymentID: deployment.ID, Spec: operationSpec()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := s.CreatePlatformTenant(ctx, account.ID, "alice", "Alice", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admission := state.OperationAdmission{AccountID: account.ID, DefinitionID: definition.ID,
 		PlatformTenantID: tenant.ID, IdempotencyKey: "populated-main-upgrade", Input: []byte(`{"count":1}`)}
 	op, _, err := s.AdmitOperation(ctx, admission)
 	if err != nil {
