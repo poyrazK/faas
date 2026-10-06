@@ -5,14 +5,19 @@ package migrations_test
 // adr: 595
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_StandardSnapshotConsumptionCapabilities(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name, input string
 		allowed     bool
@@ -30,7 +35,8 @@ func TestMigrations_StandardSnapshotConsumptionCapabilities(t *testing.T) {
 				}
 				return
 			}
-			if pgErr, ok := err.(*pgconn.PgError); !ok || pgErr.Code != "23514" || pgErr.ConstraintName != "application_standard_runtime_stale" {
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "application_standard_runtime_stale" {
 				t.Fatal("native capability downgrade accepted", err)
 			}
 		})

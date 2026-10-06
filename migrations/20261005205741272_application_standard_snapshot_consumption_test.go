@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"google.golang.org/protobuf/proto"
@@ -18,6 +19,9 @@ import (
 
 func TestMigrations_StandardSnapshotConsumptionWireAndRefusals(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
 	token, dep := uuid.NewString(), uuid.NewString()
 	prefix := "snap/" + dep + "/captures/" + token + "/v2/"
 	artifact := func(name string, size int64) runtimeadmission.CapturedArtifact {

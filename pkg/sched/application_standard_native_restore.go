@@ -33,8 +33,11 @@ func (e *Engine) prepareStandardSnapshotRestore(ctx context.Context, identity ru
 		return nil, applicationStandardRuntimeProblem(err)
 	}
 	evidence, err := state.StandardSnapshotRestoreEvidence(record)
-	if err != nil {
+	if errors.Is(err, state.ErrApplicationStandardRuntimeStale) || errors.Is(err, runtimeadmission.ErrInvalid) {
 		return req, nil
+	}
+	if err != nil {
+		return nil, applicationStandardRuntimeProblem(err)
 	}
 	binding.SnapshotCaptureToken = evidence.CaptureToken
 	binding.SnapshotEvidenceHash, err = evidence.Hash()

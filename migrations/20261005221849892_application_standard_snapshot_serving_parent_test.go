@@ -11,11 +11,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMigrations_StandardServingParentFreshNamespace(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
 	dep, inputToken := uuid.NewString(), uuid.NewString()
 	now := time.Now().UnixNano()
 	// The scalar function receives the already locked parent. Complete receipt,

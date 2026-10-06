@@ -6,6 +6,7 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -76,7 +77,8 @@ func TestPgStandardSnapshotConsumptionRawReceipt(t *testing.T) {
 				}
 				return
 			}
-			if pgErr, ok := err.(*pgconn.PgError); !ok || pgErr.Code != "23514" {
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
 				t.Fatal("raw substituted proof accepted", err)
 			}
 			var saved bool
