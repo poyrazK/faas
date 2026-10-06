@@ -506,7 +506,7 @@ func TestMemStore_WorkflowRunListFilters(t *testing.T) {
 		t.Fatalf("CreateWorkflowRun(other): %v", err)
 	}
 	time.Sleep(time.Millisecond)
-	last := &state.WorkflowRun{AppID: first.AppID, PlatformTenantID: "tenant-a", WorkflowName: first.WorkflowName, DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
+	last := &state.WorkflowRun{AppID: first.AppID, PlatformTenantID: tenantA, WorkflowName: first.WorkflowName, DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
 	if err := ms.CreateWorkflowRun(ctx, last); err != nil {
 		t.Fatalf("CreateWorkflowRun(last): %v", err)
 	}
