@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/releasebundle"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -614,6 +615,15 @@ func checkNodes(ctx context.Context, deps *doctorDeps) ([]doctorFinding, error) 
 	var findings []doctorFinding
 	for _, n := range nodes {
 		if deps.nodeFilter != "" && n.Name != deps.nodeFilter {
+			continue
+		}
+		// Migration 00024 seeds a synthetic default-local row in every
+		// database. On a multi-node fleet it stays inactive and is never
+		// released to, and apid refuses to retire it, so its empty
+		// release_id is not drift. production-us rc.239: fleet_verify's
+		// doctor run failed control-plane convergence on exactly this row.
+		// A single-box install's active default-local is still checked.
+		if deps.nodeFilter == "" && n.Name == state.DefaultLocalNodeName && !n.Active {
 			continue
 		}
 		// Validity runs BEFORE the --release filter: empty /
