@@ -1,9 +1,11 @@
 package fcvm
 
+// adr: 648
 import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -41,6 +43,10 @@ func (p nativeProcessProbe) processes(ctx context.Context) ([]nativeProcessIdent
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	root, err := os.Stat(p.root)
+	if err != nil {
+		return nil, fmt.Errorf("native recovery: inspect process root: %w", err)
+	}
 	entries, err := os.ReadDir(p.root)
 	if err != nil {
 		return nil, fmt.Errorf("native recovery: read process root: %w", err)
@@ -54,6 +60,9 @@ func (p nativeProcessProbe) processes(ctx context.Context) ([]nativeProcessIdent
 		if err != nil || pid <= 0 || !entry.IsDir() {
 			continue
 		}
+		if pid > math.MaxInt32 || strconv.Itoa(pid) != entry.Name() {
+			return nil, errors.New("native recovery: noncanonical process directory")
+		}
 		identity, found, err := p.process(pid)
 		if err != nil {
 			return nil, fmt.Errorf("native recovery: inspect process %d: %w", pid, err)
@@ -65,8 +74,9 @@ func (p nativeProcessProbe) processes(ctx context.Context) ([]nativeProcessIdent
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(p.root); err != nil {
-		return nil, fmt.Errorf("native recovery: process root disappeared during scan: %w", err)
+	currentRoot, err := os.Stat(p.root)
+	if err != nil || !os.SameFile(root, currentRoot) {
+		return nil, errors.Join(err, errors.New("native recovery: process root changed during scan"))
 	}
 	return processes, nil
 }

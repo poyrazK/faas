@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 641
+// adr: 641, 648
 import (
 	"context"
 	"errors"
@@ -49,6 +49,7 @@ type NativeRuntimeInventory struct {
 	Owners          []NativeRuntimeObservation
 	Cgroups         []NativeRuntimeCgroup
 	ManagedUIDTasks []NativeRuntimeTask
+	LaunchTasks     []NativeRuntimeLaunchTask
 	Unresolved      []string
 }
 
@@ -110,16 +111,21 @@ func (v *JailerVMM) withNativeRuntimeInventory(ctx context.Context, consume func
 		if err != nil {
 			return err
 		}
-		inventory := NativeRuntimeInventory{KernelBootID: boot, Leases: leases, Cgroups: groups, ManagedUIDTasks: tasks}
+		launchTasks, err := r.retirer.probe.launchTasks(ctx)
+		if err != nil {
+			return err
+		}
+		inventory := NativeRuntimeInventory{KernelBootID: boot, Leases: leases, Cgroups: groups, ManagedUIDTasks: tasks, LaunchTasks: launchTasks}
 		return v.withNativeRuntimeOwners(ctx, records, groups, &inventory, nil, func(sessions []nativeRuntimeObservedSession) error {
 			inventory.Unresolved = unresolvedNativeCgroups(groups, inventory.Owners)
-			if err := v.recheckNativeRuntimeInventory(ctx, records, groups, tasks, sessions); err != nil {
+			inventory.Unresolved = append(inventory.Unresolved, unresolvedNativeLaunchTasks(launchTasks, inventory.Owners)...)
+			if err := v.recheckNativeRuntimeInventory(ctx, records, groups, tasks, launchTasks, sessions); err != nil {
 				return err
 			}
 			if err := consume(ctx, cloneNativeRuntimeInventory(inventory)); err != nil {
 				return err
 			}
-			return v.recheckNativeRuntimeInventory(ctx, records, groups, tasks, sessions)
+			return v.recheckNativeRuntimeInventory(ctx, records, groups, tasks, launchTasks, sessions)
 		})
 	})
 }
@@ -190,7 +196,7 @@ func fillNativeRuntimeObservation(ctx context.Context, s *nativeMachineAPI, grou
 	return s.check(ctx, true)
 }
 
-func (v *JailerVMM) recheckNativeRuntimeInventory(ctx context.Context, records []nativeLaunchRecord, groups []NativeRuntimeCgroup, tasks []NativeRuntimeTask, sessions []nativeRuntimeObservedSession) error {
+func (v *JailerVMM) recheckNativeRuntimeInventory(ctx context.Context, records []nativeLaunchRecord, groups []NativeRuntimeCgroup, tasks []NativeRuntimeTask, launchTasks []NativeRuntimeLaunchTask, sessions []nativeRuntimeObservedSession) error {
 	for _, s := range sessions {
 		if err := s.api.check(ctx, s.measured); err != nil {
 			return err
@@ -214,6 +220,10 @@ func (v *JailerVMM) recheckNativeRuntimeInventory(ctx context.Context, records [
 	currentTasks, err := v.nativeRecovery.retirer.probe.managedUIDTasks(ctx)
 	if err != nil || !slices.Equal(tasks, currentTasks) {
 		return errors.Join(err, errors.New("native inventory: managed UID task set changed during observation"))
+	}
+	currentLaunchTasks, err := v.nativeRecovery.retirer.probe.launchTasks(ctx)
+	if err != nil || !slices.Equal(launchTasks, currentLaunchTasks) {
+		return errors.Join(err, errors.New("native inventory: launch task set changed during observation"))
 	}
 	return ctx.Err()
 }
@@ -243,6 +253,7 @@ func cloneNativeRuntimeInventory(source NativeRuntimeInventory) NativeRuntimeInv
 	copy := source
 	copy.Leases, copy.Unresolved = slices.Clone(source.Leases), slices.Clone(source.Unresolved)
 	copy.ManagedUIDTasks = slices.Clone(source.ManagedUIDTasks)
+	copy.LaunchTasks = slices.Clone(source.LaunchTasks)
 	copy.Cgroups = make([]NativeRuntimeCgroup, len(source.Cgroups))
 	for i, group := range source.Cgroups {
 		copy.Cgroups[i] = cloneNativeRuntimeCgroup(group)
