@@ -10,8 +10,10 @@ import (
 var _ ProjectEnvironmentQueueInvocationStore = (*MemStore)(nil)
 
 func (m *MemStore) InvocationEnvironmentQueueAdmission(_ context.Context, id string) (InvocationEnvironmentQueueAdmission, error) {
+	// No ledger row can carry a non-UUID identity (workflow-*, synthetic
+	// correlation IDs); report it as absent like the other owner readers.
 	if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil {
-		return InvocationEnvironmentQueueAdmission{}, ErrInvalidArgument
+		return InvocationEnvironmentQueueAdmission{}, ErrNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -14,7 +14,8 @@ var _ ProjectEnvironmentQueueInvocationStore = (*PgStore)(nil)
 
 func readInvocationEnvironmentQueueAdmissionDB(ctx context.Context, db sqlc.DBTX, id string) (InvocationEnvironmentQueueAdmission, error) {
 	if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil {
-		return InvocationEnvironmentQueueAdmission{}, ErrInvalidArgument
+		// No ledger row can carry a non-UUID identity; see InvocationEnvironmentID.
+		return InvocationEnvironmentQueueAdmission{}, ErrNotFound
 	}
 	row, err := sqlc.New().ReadInvocationEnvironmentQueueAdmission(ctx, db, mustPgUUID(id))
 	if err != nil {

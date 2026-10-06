@@ -112,9 +112,13 @@ func validateInvocationEnvironmentOwner(ctx context.Context, store invocationApp
 }
 
 func (s *PgStore) InvocationEnvironmentID(ctx context.Context, id string) (string, error) {
+	// A non-UUID identity (workflow-*, synthetic correlation IDs) cannot name
+	// a ledger row, so it has no stored owner. MemStore already reports
+	// ErrNotFound; returning ErrInvalidArgument here failed every workflow
+	// step on production-us rc.242/rc.243 ("synth invoke resolve version").
 	parsed, err := uuid.Parse(id)
 	if err != nil || parsed == uuid.Nil {
-		return "", ErrInvalidArgument
+		return "", ErrNotFound
 	}
 	row, err := sqlc.New().ReadInvocationEnvironmentOwner(ctx, s.pool, mustPgUUID(id))
 	return row.EnvironmentID, mapErr(err)
