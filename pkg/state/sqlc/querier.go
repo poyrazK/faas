@@ -129,6 +129,9 @@ type Querier interface {
 	CancelDeletedOwnerManagedPostgresCutovers(ctx context.Context, db DBTX, now pgtype.Timestamptz) error
 	CancelExpiredAppTasksForClaim(ctx context.Context, db DBTX, claimedAt pgtype.Timestamptz) error
 	CancelManagedPostgresCutover(ctx context.Context, db DBTX, arg CancelManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
+	CancelRuntimeUpgradeBuilds(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error)
+	CancelRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg CancelRuntimeUpgradeCandidateParams) error
+	CancelRuntimeUpgradeReleaseTasks(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
 	// Explicit cancel from DELETE /v1/uploads/{id}. The handler also
 	// removes the .part file via os.Remove AFTER the UPDATE commits —
 	// doing it before would leak a file if the UPDATE rolled back.
@@ -140,6 +143,7 @@ type Querier interface {
 	CaptureProjectEnvironmentCloneQueues(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneQueuesParams) (CaptureProjectEnvironmentCloneQueuesRow, error)
 	CaptureProjectEnvironmentCloneWorkPolicies(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneWorkPoliciesParams) (CaptureProjectEnvironmentCloneWorkPoliciesRow, error)
 	CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg CheckExclusiveWorkRuntimeParams) (string, error)
+	CheckpointRuntimeUpgradeOperationControl(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeOperationControlParams) (RuntimeUpgradeOperation, error)
 	ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error)
@@ -692,6 +696,7 @@ type Querier interface {
 	GetRuntimeRelease(ctx context.Context, db DBTX, id string) (RuntimeRelease, error)
 	GetRuntimeReleaseQualification(ctx context.Context, db DBTX, releaseID string) (RuntimeReleaseQualification, error)
 	GetRuntimeUpgradeOperation(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeOperation, error)
+	GetRuntimeUpgradeOperationForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (RuntimeUpgradeOperation, error)
 	// Primary-key lookup; called on every authenticated dashboard request.
 	// sql.ErrNoRows from pgx maps to state.ErrNotFound in pgstore.
 	GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetSessionRow, error)
@@ -1511,8 +1516,11 @@ type Querier interface {
 	LockRuntimeSecretSidecarSignals(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	LockRuntimeUpgradeAcceptanceServing(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
 	LockRuntimeUpgradeBaselineCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
+	LockRuntimeUpgradeCancelApp(ctx context.Context, db DBTX, arg LockRuntimeUpgradeCancelAppParams) (pgtype.UUID, error)
 	LockRuntimeUpgradeCutoverDeployments(ctx context.Context, db DBTX, appID pgtype.UUID) ([]pgtype.UUID, error)
 	LockRuntimeUpgradeOperation(ctx context.Context, db DBTX, arg LockRuntimeUpgradeOperationParams) (RuntimeUpgradeOperation, error)
+	// Private reservation and controls (ADR-606).
+	LockRuntimeUpgradeOperationControl(ctx context.Context, db DBTX, arg LockRuntimeUpgradeOperationControlParams) (RuntimeUpgradeOperation, error)
 	// Runtime update preparation: lock in the app -> deployment order used by
 	// queue admission, so pinning cannot race a claimed or queued build (ADR-597).
 	LockRuntimeUpgradeTargetApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
@@ -1639,6 +1647,8 @@ type Querier interface {
 	NotificationClaimAttempts(ctx context.Context, db DBTX, arg NotificationClaimAttemptsParams) (int32, error)
 	NotifyCustomerOperation(ctx context.Context, db DBTX, operationID string) error
 	NotifyRouteHealthRecovery(ctx context.Context, db DBTX, payload string) error
+	NotifyRuntimeUpgradeCancellation(ctx context.Context, db DBTX, arg NotifyRuntimeUpgradeCancellationParams) error
+	NotifyRuntimeUpgradeCandidateCancelled(ctx context.Context, db DBTX, arg NotifyRuntimeUpgradeCandidateCancelledParams) error
 	NotifyRuntimeUpgradeCutover(ctx context.Context, db DBTX, arg NotifyRuntimeUpgradeCutoverParams) error
 	NotifyRuntimeUpgradeOperationBuild(ctx context.Context, db DBTX, arg NotifyRuntimeUpgradeOperationBuildParams) error
 	ObjectAccountBucketCleanupList(ctx context.Context, db DBTX, arg ObjectAccountBucketCleanupListParams) ([]ObjectBucket, error)
@@ -2351,6 +2361,7 @@ type Querier interface {
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
 	ReserveEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
+	ReserveRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg ReserveRuntimeUpgradeCandidateParams) (pgtype.UUID, error)
 	ResetManagedPostgresCutoverVerification(ctx context.Context, db DBTX, id string) error
 	ResetManagedPostgresReconciliationCoverage(ctx context.Context, db DBTX, databaseID pgtype.UUID) error
 	ResetWorkflowResumeStep(ctx context.Context, db DBTX, arg ResetWorkflowResumeStepParams) error

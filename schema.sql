@@ -5393,15 +5393,17 @@ CREATE FUNCTION public.guard_runtime_upgrade_operation() RETURNS trigger
     AS $$
 BEGIN
  IF TG_OP='UPDATE' THEN
- IF (NEW.id,NEW.account_id,NEW.app_id,NEW.deployment_id,NEW.serving_deployment_id,NEW.target_release_id,
-     NEW.source_sha256,NEW.qualification_report_sha256,NEW.created_at,NEW.deadline_at)
-  IS DISTINCT FROM
-    (OLD.id,OLD.account_id,OLD.app_id,OLD.deployment_id,OLD.serving_deployment_id,OLD.target_release_id,
-     OLD.source_sha256,OLD.qualification_report_sha256,OLD.created_at,OLD.deadline_at)
-  OR OLD.phase IN ('complete','blocked')
-  OR (OLD.phase='waiting' AND NEW.phase='prepared') THEN
-  RAISE EXCEPTION 'immutable runtime upgrade intent or terminal operation' USING ERRCODE='23514';
- END IF;
+  IF (NEW.id,NEW.account_id,NEW.app_id,NEW.deployment_id,NEW.serving_deployment_id,NEW.target_release_id,
+      NEW.source_sha256,NEW.qualification_report_sha256,NEW.created_at,NEW.deadline_at,NEW.source_path)
+   IS DISTINCT FROM
+     (OLD.id,OLD.account_id,OLD.app_id,OLD.deployment_id,OLD.serving_deployment_id,OLD.target_release_id,
+      OLD.source_sha256,OLD.qualification_report_sha256,OLD.created_at,OLD.deadline_at,OLD.source_path)
+   OR OLD.phase IN ('complete','blocked','cancelled')
+   OR (OLD.phase='waiting' AND NEW.phase IN ('reserved','prepared'))
+   OR (OLD.phase='prepared' AND NEW.phase='reserved')
+   OR (OLD.phase='reserved' AND NEW.phase IN ('waiting','complete')) THEN
+   RAISE EXCEPTION 'immutable runtime upgrade intent or terminal operation' USING ERRCODE='23514';
+  END IF;
  END IF;
  IF NEW.phase='complete' AND NOT EXISTS (
   SELECT 1 FROM deployment_runtime_upgrade_cutovers c WHERE c.deployment_id=NEW.deployment_id
@@ -5409,6 +5411,25 @@ BEGIN
    AND c.qualification_report_sha256=NEW.qualification_report_sha256 AND c.wake_id=NEW.wake_id
  ) THEN
   RAISE EXCEPTION 'runtime upgrade completion requires retained cutover' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_operation_effect(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_operation_effect() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE operation_phase text;
+BEGIN
+ PERFORM 1 FROM apps a JOIN deployments d ON d.app_id=a.id WHERE d.id=NEW.deployment_id FOR UPDATE OF a;
+ SELECT phase INTO operation_phase FROM runtime_upgrade_operations WHERE deployment_id=NEW.deployment_id;
+ IF (TG_TABLE_NAME='builds' AND operation_phase IN ('reserved','blocked','cancelled','complete'))
+  OR (TG_TABLE_NAME='deployment_runtime_upgrade_cutovers' AND operation_phase IS NOT NULL AND operation_phase<>'waiting') THEN
+  RAISE EXCEPTION 'runtime upgrade operation cannot publish this effect' USING ERRCODE='23514';
  END IF;
  RETURN NEW;
 END $$;
@@ -19170,20 +19191,22 @@ CREATE TABLE public.runtime_upgrade_operations (
     lease_token uuid,
     lease_until timestamp with time zone,
     finished_at timestamp with time zone,
+    source_path text DEFAULT ''::text NOT NULL,
     CONSTRAINT runtime_upgrade_operations_blocker_check CHECK ((blocker = ANY (ARRAY[''::text, 'deadline_exceeded'::text, 'candidate_changed'::text, 'baseline_changed'::text, 'qualification_changed'::text, 'readiness_changed'::text, 'intent_changed'::text]))),
     CONSTRAINT runtime_upgrade_operations_check CHECK ((isfinite(deadline_at) AND (deadline_at > created_at))),
     CONSTRAINT runtime_upgrade_operations_check1 CHECK ((deployment_id <> serving_deployment_id)),
     CONSTRAINT runtime_upgrade_operations_check2 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
-    CONSTRAINT runtime_upgrade_operations_check3 CHECK ((((phase = ANY (ARRAY['prepared'::text, 'waiting'::text])) AND (blocker = ''::text) AND (wake_id IS NULL) AND (finished_at IS NULL)) OR ((phase = 'complete'::text) AND (blocker = ''::text) AND (wake_id IS NOT NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)) OR ((phase = 'blocked'::text) AND (blocker <> ''::text) AND (wake_id IS NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)))),
     CONSTRAINT runtime_upgrade_operations_created_at_check CHECK (isfinite(created_at)),
     CONSTRAINT runtime_upgrade_operations_finished_at_check CHECK (isfinite(finished_at)),
     CONSTRAINT runtime_upgrade_operations_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT runtime_upgrade_operations_lease_token_check CHECK ((lease_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT runtime_upgrade_operations_lease_until_check CHECK (isfinite(lease_until)),
     CONSTRAINT runtime_upgrade_operations_next_attempt_at_check CHECK (isfinite(next_attempt_at)),
-    CONSTRAINT runtime_upgrade_operations_phase_check CHECK ((phase = ANY (ARRAY['prepared'::text, 'waiting'::text, 'complete'::text, 'blocked'::text]))),
+    CONSTRAINT runtime_upgrade_operations_phase_check CHECK ((phase = ANY (ARRAY['reserved'::text, 'prepared'::text, 'waiting'::text, 'complete'::text, 'blocked'::text, 'cancelled'::text]))),
     CONSTRAINT runtime_upgrade_operations_qualification_report_sha256_check CHECK ((qualification_report_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_operations_reservation_path_check CHECK (((phase <> 'reserved'::text) OR ((source_path ~~ '/%'::text) AND (length(source_path) > 1)))),
     CONSTRAINT runtime_upgrade_operations_source_sha256_check CHECK ((source_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_operations_state_check CHECK ((((phase = ANY (ARRAY['reserved'::text, 'prepared'::text, 'waiting'::text])) AND (blocker = ''::text) AND (wake_id IS NULL) AND (finished_at IS NULL)) OR ((phase = 'complete'::text) AND (blocker = ''::text) AND (wake_id IS NOT NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)) OR ((phase = 'blocked'::text) AND (blocker <> ''::text) AND (wake_id IS NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)) OR ((phase = 'cancelled'::text) AND (blocker = ''::text) AND (wake_id IS NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)))),
     CONSTRAINT runtime_upgrade_operations_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
@@ -30189,14 +30212,14 @@ CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USI
 -- Name: runtime_upgrade_operations_active_app; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX runtime_upgrade_operations_active_app ON public.runtime_upgrade_operations USING btree (app_id) WHERE (phase = ANY (ARRAY['prepared'::text, 'waiting'::text]));
+CREATE UNIQUE INDEX runtime_upgrade_operations_active_app ON public.runtime_upgrade_operations USING btree (app_id) WHERE (phase = ANY (ARRAY['reserved'::text, 'prepared'::text, 'waiting'::text]));
 
 
 --
 -- Name: runtime_upgrade_operations_due; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations USING btree (next_attempt_at, created_at, id) WHERE (phase = ANY (ARRAY['prepared'::text, 'waiting'::text]));
+CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations USING btree (next_attempt_at, created_at, id) WHERE (phase = ANY (ARRAY['reserved'::text, 'prepared'::text, 'waiting'::text]));
 
 
 --
@@ -33217,10 +33240,24 @@ CREATE TRIGGER runtime_upgrade_baseline_immutable BEFORE DELETE OR UPDATE ON pub
 
 
 --
+-- Name: builds runtime_upgrade_build_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_build_admission_guard BEFORE INSERT ON public.builds FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_operation_effect();
+
+
+--
 -- Name: deployment_runtime_upgrade_cutovers runtime_upgrade_cutover_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER runtime_upgrade_cutover_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers runtime_upgrade_cutover_operation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_cutover_operation_guard BEFORE INSERT ON public.deployment_runtime_upgrade_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_operation_effect();
 
 
 --

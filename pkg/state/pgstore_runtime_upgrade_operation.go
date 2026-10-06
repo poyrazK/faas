@@ -37,11 +37,15 @@ func (s *PgStore) RegisterRuntimeUpgradeOperation(ctx context.Context, r Runtime
 }
 
 func registerRuntimeUpgradeOperationDB(ctx context.Context, tx pgx.Tx, r RuntimeUpgradeOperationRequest) (RuntimeUpgradeOperation, error) {
+	return registerRuntimeUpgradeOperationPhaseDB(ctx, tx, r, RuntimeUpgradePrepared, "")
+}
+
+func registerRuntimeUpgradeOperationPhaseDB(ctx context.Context, tx pgx.Tx, r RuntimeUpgradeOperationRequest, phase RuntimeUpgradeOperationPhase, sourcePath string) (RuntimeUpgradeOperation, error) {
 	q := sqlc.New()
 	old, err := q.GetRuntimeUpgradeOperation(ctx, tx, mustPgUUID(r.ID))
 	if err == nil {
 		op := runtimeUpgradeOperationFromRow(old)
-		if op.RuntimeUpgradeOperationRequest != r {
+		if op.RuntimeUpgradeOperationRequest != r || op.Phase == RuntimeUpgradeReserved {
 			return RuntimeUpgradeOperation{}, ErrConflict
 		}
 		return op, nil
@@ -78,7 +82,7 @@ func registerRuntimeUpgradeOperationDB(ctx context.Context, tx pgx.Tx, r Runtime
 	}); err != nil {
 		return RuntimeUpgradeOperation{}, err
 	}
-	row, err := q.InsertRuntimeUpgradeOperation(ctx, tx, sqlc.InsertRuntimeUpgradeOperationParams{ID: mustPgUUID(r.ID), AccountID: mustPgUUID(r.AccountID), AppID: mustPgUUID(r.AppID), DeploymentID: mustPgUUID(r.DeploymentID), ServingDeploymentID: mustPgUUID(r.ServingDeploymentID), TargetReleaseID: r.TargetReleaseID, SourceSha256: r.SourceSHA256, QualificationReportSha256: r.QualificationReportSHA256, DeadlineSeconds: int32(api.RuntimeUpgradeOperationMaxAge / time.Second)})
+	row, err := q.InsertRuntimeUpgradeOperation(ctx, tx, sqlc.InsertRuntimeUpgradeOperationParams{ID: mustPgUUID(r.ID), AccountID: mustPgUUID(r.AccountID), AppID: mustPgUUID(r.AppID), DeploymentID: mustPgUUID(r.DeploymentID), ServingDeploymentID: mustPgUUID(r.ServingDeploymentID), TargetReleaseID: r.TargetReleaseID, SourceSha256: r.SourceSHA256, QualificationReportSha256: r.QualificationReportSHA256, Phase: string(phase), SourcePath: sourcePath, DeadlineSeconds: int32(api.RuntimeUpgradeOperationMaxAge / time.Second)})
 	return runtimeUpgradeOperationFromRow(row), mapErr(err)
 }
 
@@ -191,7 +195,7 @@ func advanceRuntimeUpgradeOperationDB(ctx context.Context, tx pgx.Tx, op Runtime
 	if err != nil {
 		return "", "", "", err
 	}
-	if !runtimeUpgradeOperationCandidateRowMatches(d, r) || runtimeUpgradeOperationTerminal(Deployment{Status: DeploymentStatus(d.Status)}) {
+	if !runtimeUpgradeOperationCandidateRowMatches(d, r) || (op.SourcePath != "" && d.SourcePath != op.SourcePath) || runtimeUpgradeOperationTerminal(Deployment{Status: DeploymentStatus(d.Status)}) {
 		return blockedRuntimeUpgradeOperation("candidate_changed")
 	}
 	baseline, err := q.GetDeploymentRuntimeUpgradeBaseline(ctx, tx, mustPgUUID(r.DeploymentID))
@@ -217,9 +221,12 @@ func advanceRuntimeUpgradeOperationDB(ctx context.Context, tx pgx.Tx, op Runtime
 	if !op.DeadlineAt.After(time.Now().UTC()) {
 		return blockedRuntimeUpgradeOperation("deadline_exceeded")
 	}
-	if op.Phase == RuntimeUpgradePrepared {
+	if op.Phase == RuntimeUpgradePrepared || op.Phase == RuntimeUpgradeReserved {
 		if d.Status != string(DeployPending) || d.HasBuild || d.RootfsKey != "" || d.RootfsPath != "" || d.ImageDigest != "" {
 			return blockedRuntimeUpgradeOperation("candidate_changed")
+		}
+		if op.Phase == RuntimeUpgradeReserved {
+			return RuntimeUpgradePrepared, "", "", nil
 		}
 		if _, err := q.QueueRuntimeUpgradeOperationBuild(ctx, tx, sqlc.QueueRuntimeUpgradeOperationBuildParams{BuildID: mustPgUUID(r.ID), DeploymentID: mustPgUUID(r.DeploymentID)}); err != nil {
 			return "", "", "", err
@@ -265,5 +272,5 @@ func advanceRuntimeUpgradeOperationDB(ctx context.Context, tx pgx.Tx, op Runtime
 func runtimeUpgradeOperationFromRow(r sqlc.RuntimeUpgradeOperation) RuntimeUpgradeOperation {
 	return RuntimeUpgradeOperation{RuntimeUpgradeOperationRequest: RuntimeUpgradeOperationRequest{
 		ID: pgUUIDString(r.ID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), DeploymentID: pgUUIDString(r.DeploymentID), ServingDeploymentID: pgUUIDString(r.ServingDeploymentID), TargetReleaseID: r.TargetReleaseID, SourceSHA256: r.SourceSha256, QualificationReportSHA256: r.QualificationReportSha256},
-		Phase: RuntimeUpgradeOperationPhase(r.Phase), Blocker: r.Blocker, WakeID: pgUUIDString(r.WakeID), LeaseToken: pgUUIDString(r.LeaseToken), CreatedAt: r.CreatedAt.Time.UTC(), DeadlineAt: r.DeadlineAt.Time.UTC(), NextAttemptAt: r.NextAttemptAt.Time.UTC(), LeaseUntil: r.LeaseUntil.Time.UTC(), FinishedAt: r.FinishedAt.Time.UTC()}
+		Phase: RuntimeUpgradeOperationPhase(r.Phase), SourcePath: r.SourcePath, Blocker: r.Blocker, WakeID: pgUUIDString(r.WakeID), LeaseToken: pgUUIDString(r.LeaseToken), CreatedAt: r.CreatedAt.Time.UTC(), DeadlineAt: r.DeadlineAt.Time.UTC(), NextAttemptAt: r.NextAttemptAt.Time.UTC(), LeaseUntil: r.LeaseUntil.Time.UTC(), FinishedAt: r.FinishedAt.Time.UTC()}
 }

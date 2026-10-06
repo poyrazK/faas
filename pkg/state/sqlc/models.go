@@ -6013,6 +6013,7 @@ type RuntimeUpgradeOperation struct {
 	LeaseToken                pgtype.UUID
 	LeaseUntil                pgtype.Timestamptz
 	FinishedAt                pgtype.Timestamptz
+	SourcePath                string
 }
 
 type SafeReleaseWorkerLease struct {

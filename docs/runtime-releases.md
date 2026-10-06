@@ -141,8 +141,21 @@ source object before registration. Corruption or storage failures cannot fall
 back to mutable Git. Lost registration responses return the retained operation
 without republishing source. A separate opt-in `apid --runtime-upgrade-worker`
 mode supervises database polling with capped backoff and watchdog progress; no
-service unit or customer admission enables it. Candidate reservation/recovery,
-customer controls, handoff cleanup, gateway convergence/drain and dedicated
-native end-to-end acceptance remain outstanding. Public previews still report
+service unit or customer admission enables it. Public customer controls, handoff cleanup, gateway convergence/drain and
+dedicated native end-to-end acceptance remain outstanding; ADR-606 extends
+reservation and private recovery below. Public previews still report
 `execution_available=false`. See
 [ADR-605](adr/605-verified-runtime-upgrade-source-and-private-worker.md).
+
+Private admission can now atomically reserve its zero-weight candidate, target,
+reviewed baseline and non-executable operation before source I/O. Identical
+retries retain the same inputs; source verification promotes the reservation
+only after rechecking its original baseline and qualification. Failed uploads
+remain retryable; abandoned reservations expire at the original deadline.
+Private account-scoped status omits lease tokens, spool paths and values.
+Cancellation fences stale workers and fresh cutover attempts, cancels build and
+release-command work, and durably queues running-build cleanup through existing
+owners. A committed cutover remains historical completion; a live zero-traffic
+cancelled candidate remains retained pending owner-controlled cleanup. These
+seams have no public routes and leave `execution_available=false`. See
+[ADR-606](adr/606-atomic-runtime-upgrade-reservation-and-controls.md).

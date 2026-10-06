@@ -28,6 +28,10 @@ import (
 const stagingPayload = "synthetic retained archive bytes"
 
 func stagingFixture(t *testing.T, store state.Store) (Stager, state.RuntimeUpgradeOperationRequest, state.Deployment) {
+	return stagingCandidateFixture(t, store, true)
+}
+
+func stagingCandidateFixture(t *testing.T, store state.Store, createCandidate bool) (Stager, state.RuntimeUpgradeOperationRequest, state.Deployment) {
 	t.Helper()
 	root := t.TempDir()
 	backend, err := storage.NewLocalStorageBackend(t.TempDir())
@@ -45,6 +49,12 @@ func stagingFixture(t *testing.T, store state.Store) (Stager, state.RuntimeUpgra
 	}
 	sha := sha256.Sum256([]byte(stagingPayload))
 	input := state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, SourceSHA256: hex.EncodeToString(sha[:]), SourceBytes: int64(len(stagingPayload)), SourcePath: filepath.Join(root, "serving.tar.gz"), Handler: "index.handler"}
+	if !createCandidate {
+		input.OverrideEnv = []byte(`{"REVIEWED_INPUT":"retained-value"}`)
+		input.OverrideCmd = []string{"reviewed-command"}
+		input.DisableStartupCPUBoost = true
+		input.RollbackOn5xx = true
+	}
 	if err := os.WriteFile(input.SourcePath, []byte(stagingPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -97,9 +107,12 @@ func stagingFixture(t *testing.T, store state.Store) (Stager, state.RuntimeUpgra
 		t.Fatal(err)
 	}
 	input.TrafficPercentExplicit = true
-	candidate, err := store.CreateDeployment(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
+	candidate := state.Deployment{ID: uuid.NewString()}
+	if createCandidate {
+		candidate, err = store.CreateDeployment(t.Context(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	serving, err = store.DeploymentByID(t.Context(), serving.ID)
 	if err != nil {

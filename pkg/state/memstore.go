@@ -10392,6 +10392,11 @@ func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKin
 	if _, ok := m.deployments[deploymentID]; !ok {
 		return Build{}, 0, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
 	}
+	for _, op := range m.runtimeUpgradeOperations {
+		if op.DeploymentID == deploymentID && op.Phase != RuntimeUpgradePrepared && op.Phase != RuntimeUpgradeWaiting {
+			return Build{}, 0, ErrConflict
+		}
+	}
 	dep := m.deployments[deploymentID]
 	if dep.Status != DeployPending && dep.Status != DeployBuilding {
 		return Build{}, 0, ErrNotFound

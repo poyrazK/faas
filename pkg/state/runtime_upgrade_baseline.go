@@ -89,7 +89,8 @@ func runtimeUpgradeInputFence(dep Deployment, servingID string, snapshot Runtime
 		MinInstances, CanarySteps int
 		CanaryPreset              string
 		CanaryStages              json.RawMessage
-	}{intent, dep.MinInstances, dep.CanaryTotalSteps, dep.CanaryPreset, dep.CanaryStages})
+		RollbackOn5xx             bool
+	}{intent, dep.MinInstances, dep.CanaryTotalSteps, dep.CanaryPreset, dep.CanaryStages, dep.RollbackOn5xx})
 	if err != nil {
 		return RuntimeAppConfigFence{}, err
 	}

@@ -103,6 +103,13 @@ func runtimeUpgradeCutoverDB(ctx context.Context, tx pgx.Tx, r RuntimeUpgradeCut
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return RuntimeUpgradeCutover{}, err
 	}
+	operation, opErr := q.GetRuntimeUpgradeOperationForDeployment(ctx, tx, id)
+	if opErr == nil && operation.Phase != string(RuntimeUpgradeWaiting) {
+		return RuntimeUpgradeCutover{}, ErrConflict
+	}
+	if opErr != nil && !errors.Is(opErr, pgx.ErrNoRows) {
+		return RuntimeUpgradeCutover{}, opErr
+	}
 	a, baseline, candidate, err := validateRuntimeUpgradeAcceptanceDB(ctx, tx, r.DeploymentID, true)
 	if err != nil {
 		return RuntimeUpgradeCutover{}, err

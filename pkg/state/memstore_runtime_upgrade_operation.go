@@ -20,19 +20,23 @@ func (m *MemStore) RegisterRuntimeUpgradeOperation(ctx context.Context, r Runtim
 	if err := ctx.Err(); err != nil {
 		return RuntimeUpgradeOperation{}, err
 	}
+	return m.registerRuntimeUpgradeOperationLocked(r, RuntimeUpgradePrepared, "")
+}
+
+func (m *MemStore) registerRuntimeUpgradeOperationLocked(r RuntimeUpgradeOperationRequest, phase RuntimeUpgradeOperationPhase, sourcePath string) (RuntimeUpgradeOperation, error) {
 	d, exists := m.deployments[r.DeploymentID]
 	app := m.apps[d.AppID]
 	if !exists || d.AppID != r.AppID || app.AccountID != r.AccountID || app.Status != AppActive || app.DeletedAt != nil || d.DeletedAt != nil {
 		return RuntimeUpgradeOperation{}, ErrConflict
 	}
 	if old, ok := m.runtimeUpgradeOperations[r.ID]; ok {
-		if old.RuntimeUpgradeOperationRequest != r {
+		if old.RuntimeUpgradeOperationRequest != r || old.Phase == RuntimeUpgradeReserved {
 			return RuntimeUpgradeOperation{}, ErrConflict
 		}
 		return old, nil
 	}
 	for _, op := range m.runtimeUpgradeOperations {
-		if op.DeploymentID == d.ID || (op.AppID == app.ID && (op.Phase == RuntimeUpgradePrepared || op.Phase == RuntimeUpgradeWaiting)) {
+		if op.DeploymentID == d.ID || (op.AppID == app.ID && runtimeUpgradeActive(op.Phase)) {
 			return RuntimeUpgradeOperation{}, ErrConflict
 		}
 	}
@@ -75,7 +79,7 @@ func (m *MemStore) RegisterRuntimeUpgradeOperation(ctx context.Context, r Runtim
 	if m.runtimeUpgradeOperations == nil {
 		m.runtimeUpgradeOperations = make(map[string]RuntimeUpgradeOperation)
 	}
-	op := RuntimeUpgradeOperation{RuntimeUpgradeOperationRequest: r, Phase: RuntimeUpgradePrepared, CreatedAt: now, NextAttemptAt: now, DeadlineAt: now.Add(api.RuntimeUpgradeOperationMaxAge)}
+	op := RuntimeUpgradeOperation{RuntimeUpgradeOperationRequest: r, Phase: phase, SourcePath: sourcePath, CreatedAt: now, NextAttemptAt: now, DeadlineAt: now.Add(api.RuntimeUpgradeOperationMaxAge)}
 	m.runtimeUpgradeTargets[d.ID], m.runtimeUpgradeBaselines[d.ID], m.runtimeUpgradeOperations[r.ID] = pin, baseline, op
 	return op, nil
 }
@@ -102,7 +106,7 @@ func (m *MemStore) ClaimRuntimeUpgradeOperation(ctx context.Context) (RuntimeUpg
 	now := time.Now().UTC()
 	var ops []RuntimeUpgradeOperation
 	for _, op := range m.runtimeUpgradeOperations {
-		if (op.Phase == RuntimeUpgradePrepared || op.Phase == RuntimeUpgradeWaiting) && !op.NextAttemptAt.After(now) && !op.LeaseUntil.After(now) {
+		if (op.Phase == RuntimeUpgradePrepared || op.Phase == RuntimeUpgradeWaiting || (op.Phase == RuntimeUpgradeReserved && !op.DeadlineAt.After(now))) && !op.NextAttemptAt.After(now) && !op.LeaseUntil.After(now) {
 			ops = append(ops, op)
 		}
 	}
@@ -135,7 +139,7 @@ func (m *MemStore) AdvanceRuntimeUpgradeOperation(ctx context.Context, c Runtime
 	}
 	op, ok := m.runtimeUpgradeOperations[c.ID]
 	now := time.Now().UTC()
-	if !ok || op.LeaseToken != c.LeaseToken || !op.LeaseUntil.After(now) || (op.Phase != RuntimeUpgradePrepared && op.Phase != RuntimeUpgradeWaiting) {
+	if !ok || op.LeaseToken != c.LeaseToken || !op.LeaseUntil.After(now) || !runtimeUpgradeActive(op.Phase) {
 		return RuntimeUpgradeOperation{}, ErrConflict
 	}
 	phase, blocker, wake, err := m.advanceRuntimeUpgradeOperationLocked(ctx, op, now)
@@ -165,7 +169,7 @@ func (m *MemStore) advanceRuntimeUpgradeOperationLocked(ctx context.Context, op 
 	}
 	d, ok := m.deployments[r.DeploymentID]
 	app := m.apps[d.AppID]
-	if !ok || app.ID != r.AppID || app.AccountID != r.AccountID || app.Status != AppActive || app.DeletedAt != nil || app.Manifest.ExecutionMode == api.ExecutionModeJob || app.Manifest.ExecutionMode == api.ExecutionModeService || runtimeUpgradeOperationCandidate(d, r) != nil || runtimeUpgradeOperationTerminal(d) {
+	if !ok || app.ID != r.AppID || app.AccountID != r.AccountID || app.Status != AppActive || app.DeletedAt != nil || app.Manifest.ExecutionMode == api.ExecutionModeJob || app.Manifest.ExecutionMode == api.ExecutionModeService || runtimeUpgradeOperationCandidate(d, r) != nil || (op.SourcePath != "" && d.SourcePath != op.SourcePath) || runtimeUpgradeOperationTerminal(d) {
 		return blockedRuntimeUpgradeOperation("candidate_changed")
 	}
 	baseline := m.runtimeUpgradeBaselines[d.ID]
@@ -179,13 +183,13 @@ func (m *MemStore) advanceRuntimeUpgradeOperationLocked(ctx context.Context, op 
 	if qualification.ReportSHA256 != r.QualificationReportSHA256 || !validRuntimeReleaseQualification(target, qualification, now) {
 		return blockedRuntimeUpgradeOperation("qualification_changed")
 	}
-	if !op.LeaseUntil.After(time.Now().UTC()) {
+	if op.Phase != RuntimeUpgradeReserved && !op.LeaseUntil.After(time.Now().UTC()) {
 		return "", "", "", ErrConflict
 	}
 	if !op.DeadlineAt.After(time.Now().UTC()) {
 		return blockedRuntimeUpgradeOperation("deadline_exceeded")
 	}
-	if op.Phase == RuntimeUpgradePrepared {
+	if op.Phase == RuntimeUpgradePrepared || op.Phase == RuntimeUpgradeReserved {
 		if d.Status != DeployPending || d.RootfsKey != "" || d.RootfsPath != "" || d.ImageDigest != "" {
 			return blockedRuntimeUpgradeOperation("candidate_changed")
 		}
@@ -193,6 +197,9 @@ func (m *MemStore) advanceRuntimeUpgradeOperationLocked(ctx context.Context, op 
 			if b.DeploymentID == d.ID || b.ID == r.ID {
 				return blockedRuntimeUpgradeOperation("candidate_changed")
 			}
+		}
+		if op.Phase == RuntimeUpgradeReserved {
+			return RuntimeUpgradePrepared, "", "", nil
 		}
 		m.builds[r.ID] = Build{ID: r.ID, DeploymentID: d.ID, Kind: d.Kind, SourceBytes: d.SourceBytes, Status: BuildQueued, LogPath: d.LogPath, EnqueuedAt: now}
 		d.Status, d.BuildID = DeployBuilding, r.ID

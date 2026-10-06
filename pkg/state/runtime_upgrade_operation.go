@@ -2,12 +2,16 @@ package state
 
 import (
 	"context"
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"path/filepath"
 	"time"
 )
 
-// RuntimeUpgradeOperationRequest is private apid intent for a pre-uploaded,
-// pending, explicit zero-weight candidate. The caller retains ID across retries.
-// Registration atomically retains its target, reviewed baseline and journal.
+// RuntimeUpgradeOperationRequest is immutable private apid intent. Retain both
+// operation and candidate IDs across retries. Reservation creates the candidate,
+// pin, baseline and journal before I/O; legacy registration accepts a pre-uploaded
+// pending explicit zero-weight candidate.
 type RuntimeUpgradeOperationRequest struct {
 	ID, AccountID, AppID, DeploymentID, ServingDeploymentID  string
 	TargetReleaseID, SourceSHA256, QualificationReportSHA256 string
@@ -16,10 +20,12 @@ type RuntimeUpgradeOperationRequest struct {
 type RuntimeUpgradeOperationPhase string
 
 const (
-	RuntimeUpgradePrepared RuntimeUpgradeOperationPhase = "prepared"
-	RuntimeUpgradeWaiting  RuntimeUpgradeOperationPhase = "waiting"
-	RuntimeUpgradeComplete RuntimeUpgradeOperationPhase = "complete"
-	RuntimeUpgradeBlocked  RuntimeUpgradeOperationPhase = "blocked"
+	RuntimeUpgradeReserved  RuntimeUpgradeOperationPhase = "reserved"
+	RuntimeUpgradeCancelled RuntimeUpgradeOperationPhase = "cancelled"
+	RuntimeUpgradePrepared  RuntimeUpgradeOperationPhase = "prepared"
+	RuntimeUpgradeWaiting   RuntimeUpgradeOperationPhase = "waiting"
+	RuntimeUpgradeComplete  RuntimeUpgradeOperationPhase = "complete"
+	RuntimeUpgradeBlocked   RuntimeUpgradeOperationPhase = "blocked"
 )
 
 // Completion records historical activation, not gateway convergence or drain.
@@ -27,7 +33,7 @@ const (
 type RuntimeUpgradeOperation struct {
 	RuntimeUpgradeOperationRequest
 	Phase                                                        RuntimeUpgradeOperationPhase
-	Blocker, WakeID, LeaseToken                                  string
+	SourcePath, Blocker, WakeID, LeaseToken                      string
 	CreatedAt, DeadlineAt, NextAttemptAt, LeaseUntil, FinishedAt time.Time
 }
 
@@ -85,4 +91,30 @@ func runtimeUpgradeOperationTerminal(d Deployment) bool {
 // blocked checkpoint to commit; infrastructure failures are returned instead.
 func blockedRuntimeUpgradeOperation(code string) (RuntimeUpgradeOperationPhase, string, string, error) {
 	return RuntimeUpgradeBlocked, code, "", nil
+}
+
+// RuntimeUpgradeReservationStore is private apid admission. Reservation creates
+// the candidate, target, reviewed baseline and non-executable journal atomically.
+// Preparation is called only after the configured source handoffs verify.
+type RuntimeUpgradeReservationStore interface {
+	RuntimeUpgradeOperationStore
+	ReserveRuntimeUpgradeOperation(context.Context, RuntimeUpgradeOperationRequest, string) (RuntimeUpgradeOperation, error)
+	PrepareReservedRuntimeUpgradeOperation(context.Context, string, string) (RuntimeUpgradeOperation, error)
+	CancelRuntimeUpgradeOperation(context.Context, string, string) (RuntimeUpgradeOperation, error)
+}
+
+func runtimeUpgradeActive(phase RuntimeUpgradeOperationPhase) bool {
+	return phase == RuntimeUpgradeReserved || phase == RuntimeUpgradePrepared || phase == RuntimeUpgradeWaiting
+}
+
+func validateRuntimeUpgradeReservation(r RuntimeUpgradeOperationRequest, sourcePath string) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	id, err := uuid.Parse(r.ID)
+	if err != nil || id.String() != r.ID || !filepath.IsAbs(sourcePath) || filepath.Clean(sourcePath) != sourcePath ||
+		filepath.Base(sourcePath) != r.ID+".tar.gz" || len(sourcePath) > api.RuntimeUpgradeSourceFieldMaxBytes {
+		return ErrInvalidArgument
+	}
+	return nil
 }

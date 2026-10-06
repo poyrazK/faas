@@ -6773,6 +6773,7 @@
       "phase",
       "qualification_report_sha256",
       "serving_deployment_id",
+      "source_path",
       "source_sha256",
       "target_release_id",
       "wake_id"

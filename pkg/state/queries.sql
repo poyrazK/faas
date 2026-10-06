@@ -13956,7 +13956,7 @@ FOR UPDATE OF d;
 -- name: ReadRuntimeUpgradeBaselineDeployments :many
 SELECT d.id::text AS id, d.app_id::text AS app_id, COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
  d.status,d.source_bytes,COALESCE(d.source_root,'')::text AS source_root,d.traffic_percent,d.traffic_percent_explicit,
- d.min_instances,d.canary_total_steps,d.canary_preset,d.canary_stages,d.rollout_state,d.deleted_at,d.environment_workload_runtime,
+ d.min_instances,d.rollback_on_5xx,d.canary_total_steps,d.canary_preset,d.canary_stages,d.rollout_state,d.deleted_at,d.environment_workload_runtime,
  (to_jsonb(d)||jsonb_build_object('secret_reload_signal_known',d.secret_reload_signal IS NOT NULL))::jsonb AS artifact
 FROM deployments d JOIN deployments candidate ON candidate.app_id=d.app_id
 WHERE candidate.id=sqlc.arg(deployment_id)::uuid
@@ -14074,15 +14074,15 @@ WHERE d.id=$1 AND a.status<>'deleted' FOR UPDATE OF a;
 
 -- Private apid runtime upgrade executor (ADR-604).
 -- name: InsertRuntimeUpgradeOperation :one
-INSERT INTO runtime_upgrade_operations(id,account_id,app_id,deployment_id,serving_deployment_id,target_release_id,source_sha256,qualification_report_sha256,deadline_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+make_interval(secs=>sqlc.arg(deadline_seconds)::int)) RETURNING *;
+INSERT INTO runtime_upgrade_operations(id,account_id,app_id,deployment_id,serving_deployment_id,target_release_id,source_sha256,qualification_report_sha256,phase,source_path,deadline_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,sqlc.arg(phase)::text,sqlc.arg(source_path)::text,clock_timestamp()+make_interval(secs=>sqlc.arg(deadline_seconds)::int)) RETURNING *;
 
 -- name: GetRuntimeUpgradeOperation :one
 SELECT * FROM runtime_upgrade_operations WHERE id=$1;
 
 -- name: ClaimRuntimeUpgradeOperation :one
 WITH due AS (
- SELECT id FROM runtime_upgrade_operations WHERE phase IN ('prepared','waiting')
+ SELECT id FROM runtime_upgrade_operations WHERE (phase IN ('prepared','waiting') OR (phase='reserved' AND deadline_at<=clock_timestamp()))
  AND next_attempt_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<=clock_timestamp())
  ORDER BY next_attempt_at,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
 )
@@ -14091,7 +14091,7 @@ FROM due WHERE o.id=due.id RETURNING o.*;
 
 -- name: LockRuntimeUpgradeOperation :one
 SELECT * FROM runtime_upgrade_operations WHERE id=$1 AND lease_token=$2 AND lease_until>clock_timestamp()
- AND phase IN ('prepared','waiting') FOR UPDATE;
+ AND phase IN ('reserved','prepared','waiting') FOR UPDATE;
 
 -- name: AdvanceRuntimeUpgradeOperation :one
 UPDATE runtime_upgrade_operations SET phase=sqlc.arg(phase)::text,blocker=sqlc.arg(blocker)::text,wake_id=sqlc.narg(wake_id)::uuid,
@@ -14119,3 +14119,69 @@ UPDATE deployments SET status='building',build_id=sqlc.arg(build_id)::uuid WHERE
 
 -- name: NotifyRuntimeUpgradeOperationBuild :exec
 SELECT pg_notify('build_queued',json_build_object('build',sqlc.arg(build_id)::text,'deployment',d.id,'app',d.app_id,'kind',d.kind,'source',d.kind)::text) FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid;
+
+-- Private reservation and controls (ADR-606).
+-- name: LockRuntimeUpgradeOperationControl :one
+SELECT * FROM runtime_upgrade_operations WHERE id=$1 AND account_id=$2 FOR UPDATE;
+
+-- name: CheckpointRuntimeUpgradeOperationControl :one
+UPDATE runtime_upgrade_operations SET phase=sqlc.arg(phase)::text,blocker=sqlc.arg(blocker)::text,wake_id=sqlc.narg(wake_id)::uuid,
+ lease_token=NULL,lease_until=NULL,next_attempt_at=clock_timestamp(),
+ finished_at=CASE WHEN sqlc.arg(phase)::text IN ('complete','blocked','cancelled') THEN clock_timestamp() ELSE NULL END
+WHERE id=sqlc.arg(id)::uuid AND phase IN ('reserved','prepared','waiting') RETURNING *;
+
+-- name: ReserveRuntimeUpgradeCandidate :one
+INSERT INTO deployments(id,app_id,scope,kind,image_digest,status,source_path,source_bytes,source_root,source_sha256,handler,source_url,commit_sha,
+ override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,override_healthcheck,
+ override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
+ full_rootfs_allow_auto,full_rootfs_override,release_command,release_command_shell,disable_startup_cpu_boost,
+ min_instances,rollback_on_5xx,traffic_percent,traffic_percent_explicit,reason,deployed_via)
+SELECT sqlc.arg(deployment_id)::uuid,d.app_id,d.scope,d.kind,'','pending',sqlc.arg(source_path)::text,d.source_bytes,d.source_root,d.source_sha256,d.handler,d.source_url,d.commit_sha,
+ d.override_entrypoint,d.override_cmd,d.override_env,d.override_env_secrets,d.override_port,d.override_healthcheck,
+ d.override_liveness_probe,d.override_readiness_probe,d.override_main_depends_on,d.sidecars,d.workflows,
+ d.full_rootfs_allow_auto,d.full_rootfs_override,d.release_command,d.release_command_shell,d.disable_startup_cpu_boost,
+ d.min_instances,d.rollback_on_5xx,0,true,'runtime-upgrade:'||sqlc.arg(operation_id)::text,'api'
+FROM deployments d JOIN apps a ON a.id=d.app_id JOIN accounts ac ON ac.id=a.account_id
+WHERE d.id=sqlc.arg(serving_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+ AND a.status='active' AND a.deleted_at IS NULL AND a.type='function' AND COALESCE(a.manifest->>'build_dockerfile','')=''
+ AND COALESCE(a.manifest->>'execution_mode','') NOT IN ('job','service')
+ AND ac.status='active' AND ac.abuse_hold_at IS NULL
+ AND d.status='live' AND d.deleted_at IS NULL AND d.traffic_percent=100 AND d.source_sha256=sqlc.arg(source_sha256)::text
+ AND d.source_bytes>0 AND d.source_bytes<=sqlc.arg(source_max_bytes)::bigint AND d.kind IN ('tarball','github','preview')
+ AND d.canary_total_steps=0 AND d.rollout_state<>'rolling_out' AND COALESCE(d.environment_workload_runtime,'{}'::jsonb)='{}'::jsonb
+RETURNING id;
+
+-- name: CancelRuntimeUpgradeCandidate :exec
+UPDATE deployments SET status='cancelled',cancelled_at=clock_timestamp(),cancelled_by_principal=sqlc.arg(account_id)::text,cancel_reason='user'
+WHERE id=sqlc.arg(deployment_id)::uuid AND traffic_percent=0 AND traffic_percent_explicit AND status IN ('pending','building','imaging','snapshotting');
+
+-- name: CancelRuntimeUpgradeReleaseTasks :exec
+UPDATE app_tasks SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,
+ cancel_requested_at=CASE WHEN status IN ('restoring','running') THEN COALESCE(cancel_requested_at,clock_timestamp()) ELSE cancel_requested_at END,
+ finished_at=CASE WHEN status='queued' THEN clock_timestamp() ELSE finished_at END,updated_at=clock_timestamp()
+WHERE deployment_id=$1 AND kind='release' AND status IN ('queued','restoring','running');
+
+-- name: CancelRuntimeUpgradeBuilds :many
+WITH candidates AS (
+ SELECT b.id,b.status FROM builds b WHERE b.deployment_id=$1 AND b.status IN ('queued','running') ORDER BY b.id FOR UPDATE OF b
+), cancelled AS (
+ UPDATE builds b SET status='cancelled',cancelled_at=clock_timestamp(),cancelled_by_deployment_cascade=true
+ FROM candidates c WHERE b.id=c.id RETURNING b.id
+), cleanup AS (
+ INSERT INTO builder_vm_cleanup(build_id) SELECT c.id FROM cancelled c JOIN candidates old ON old.id=c.id WHERE old.status='running'
+ ON CONFLICT(build_id) DO NOTHING RETURNING build_id
+)
+SELECT c.id FROM cancelled c CROSS JOIN (SELECT count(*) FROM cleanup) ensured ORDER BY c.id;
+
+-- name: NotifyRuntimeUpgradeCancellation :exec
+SELECT pg_notify('build_changed',json_build_object('build_id',sqlc.arg(build_id)::text,'deployment_id',sqlc.arg(deployment_id)::text,
+ 'status','cancelled','reason','user','cascade',true)::text);
+
+-- name: NotifyRuntimeUpgradeCandidateCancelled :exec
+SELECT pg_notify('deployment_changed',json_build_object('kind','cancel','app_id',sqlc.arg(app_id)::text,'deployment_id',sqlc.arg(deployment_id)::text)::text);
+
+-- name: LockRuntimeUpgradeCancelApp :one
+SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: GetRuntimeUpgradeOperationForDeployment :one
+SELECT * FROM runtime_upgrade_operations WHERE deployment_id=$1;

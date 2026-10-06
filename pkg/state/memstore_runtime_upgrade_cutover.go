@@ -31,6 +31,11 @@ func (m *MemStore) cutoverRuntimeUpgradeLocked(ctx context.Context, r RuntimeUpg
 		}
 		return old, nil // historical confirmation; never move traffic again
 	}
+	for _, op := range m.runtimeUpgradeOperations {
+		if op.DeploymentID == d.ID && op.Phase != RuntimeUpgradeWaiting {
+			return RuntimeUpgradeCutover{}, ErrConflict
+		}
+	}
 	if d.Status != DeployLive || d.EnvironmentWorkloadHeld() {
 		return RuntimeUpgradeCutover{}, ErrConflict
 	}

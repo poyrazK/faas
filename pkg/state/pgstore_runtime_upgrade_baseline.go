@@ -154,6 +154,7 @@ func runtimeUpgradeDeploymentFromRow(row sqlc.ReadRuntimeUpgradeBaselineDeployme
 	dep.TrafficPercent, dep.TrafficPercentExplicit = int(row.TrafficPercent), row.TrafficPercentExplicit
 	dep.MinInstances, dep.CanaryTotalSteps, dep.CanaryPreset = int(row.MinInstances), int(row.CanaryTotalSteps), row.CanaryPreset
 	dep.CanaryStages, dep.RolloutState = row.CanaryStages, row.RolloutState
+	dep.RollbackOn5xx = row.RollbackOn5xx
 	dep.EnvironmentWorkloadRuntime = string(row.EnvironmentWorkloadRuntime)
 	if row.DeletedAt.Valid {
 		dep.DeletedAt = &row.DeletedAt.Time
