@@ -2,6 +2,8 @@
 package gateway_test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"net"
 	"net/http"
@@ -14,8 +16,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -45,8 +49,27 @@ func (s *forwardCorrelationReceiver) ForwardHTTPStream(stream grpc.BidiStreaming
 }
 
 func (s *forwardCorrelationReceiver) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.ForwardRawRequest, vmmdpb.ForwardRawResponse]) error {
-	if _, err := stream.Recv(); err != nil {
+	frame, err := stream.Recv()
+	if err != nil {
 		return err
+	}
+	init := frame.GetInit()
+	if init == nil || init.GetPort() != 8080 || init.GetMaxRequestBytes() != api.RawStreamMaxRequestBytes {
+		return status.Error(codes.InvalidArgument, "expected raw routing init")
+	}
+	// A guest refusal follows the HTTP request head, which is a separate
+	// frame from the routing init. Closing after init races the head Send.
+	frame, err = stream.Recv()
+	if err != nil {
+		return err
+	}
+	request, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(frame.GetBodyChunk())))
+	if err != nil {
+		return status.Error(codes.InvalidArgument, "expected raw HTTP request head")
+	}
+	defer request.Body.Close()
+	if request.Method != http.MethodGet || request.RequestURI != "/work" || request.Host != "guest.test" {
+		return status.Error(codes.InvalidArgument, "unexpected raw HTTP request head")
 	}
 	s.capture(stream.Context())
 	return stream.Send(&vmmdpb.ForwardRawResponse{Frame: &vmmdpb.ForwardRawResponse_Init{Init: &vmmdpb.ForwardRawResponseInit{Status: http.StatusForbidden}}})
