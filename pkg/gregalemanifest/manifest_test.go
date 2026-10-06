@@ -859,6 +859,16 @@ func TestValidate_Queue_BadMode(t *testing.T) {
 	}
 }
 
+func TestValidate_Queue_RejectsReservedBindingIdentity(t *testing.T) {
+	for _, value := range []any{nil, "00000000-0000-0000-0000-000000000001"} {
+		m := &Manifest{Triggers: []Trigger{{Kind: TriggerKindQueue, App: "my-api", Slug: "forged",
+			Config: map[string]any{"mode": "queue", "queue_binding_id": value}}}}
+		if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "queue_binding_id is reserved") {
+			t.Fatalf("reserved ownership marker admitted: %v", err)
+		}
+	}
+}
+
 func TestValidate_AMQP_Happy(t *testing.T) {
 	m := &Manifest{Triggers: []Trigger{{
 		Kind: TriggerKindRabbitMQ, App: "my-api", Slug: "rabbit-orders",
@@ -1262,6 +1272,13 @@ func TestValidate_DatabaseDependencyDefaults(t *testing.T) {
 	}
 	if dependency.EffectiveAccess() != "read_write" {
 		t.Fatalf("access = %q, want read_write", dependency.EffectiveAccess())
+	}
+}
+
+func TestValidate_DatabaseDependencyMigrationAccess(t *testing.T) {
+	m := &Manifest{Databases: []DatabaseDependency{{Database: "orders", Access: "migration", EnvironmentKey: "MIGRATION_DATABASE_URL"}}}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 

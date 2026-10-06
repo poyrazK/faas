@@ -10,11 +10,29 @@ import type { CreateObjectUploadRouteRequest } from '../models/CreateObjectUploa
 import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
+import type { ObjectBucketEncryption } from '../models/ObjectBucketEncryption.js';
+import type { ObjectBucketEncryptionRequest } from '../models/ObjectBucketEncryptionRequest.js';
+import type { ObjectBucketLifecycle } from '../models/ObjectBucketLifecycle.js';
+import type { ObjectBucketLifecycleRequest } from '../models/ObjectBucketLifecycleRequest.js';
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
+import type { ObjectBucketNotifications } from '../models/ObjectBucketNotifications.js';
+import type { ObjectBucketNotificationsRequest } from '../models/ObjectBucketNotificationsRequest.js';
+import type { ObjectBucketObjectLock } from '../models/ObjectBucketObjectLock.js';
+import type { ObjectBucketObjectLockRequest } from '../models/ObjectBucketObjectLockRequest.js';
+import type { ObjectBucketVersioning } from '../models/ObjectBucketVersioning.js';
+import type { ObjectBucketVersioningRequest } from '../models/ObjectBucketVersioningRequest.js';
+import type { ObjectCapacityReconciliation } from '../models/ObjectCapacityReconciliation.js';
+import type { ObjectDeletion } from '../models/ObjectDeletion.js';
+import type { ObjectDeletionRequest } from '../models/ObjectDeletionRequest.js';
+import type { ObjectEncryptionCapabilities } from '../models/ObjectEncryptionCapabilities.js';
+import type { ObjectLifecycleScan } from '../models/ObjectLifecycleScan.js';
+import type { ObjectLockCapabilities } from '../models/ObjectLockCapabilities.js';
 import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.js';
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
 import type { ObjectMultipartUpload } from '../models/ObjectMultipartUpload.js';
 import type { ObjectMultipartUploadList } from '../models/ObjectMultipartUploadList.js';
+import type { ObjectS3CopySource } from '../models/ObjectS3CopySource.js';
+import type { ObjectS3CopySourceList } from '../models/ObjectS3CopySourceList.js';
 import type { ObjectS3CredentialList } from '../models/ObjectS3CredentialList.js';
 import type { ObjectS3CredentialSecret } from '../models/ObjectS3CredentialSecret.js';
 import type { ObjectSignedRequest } from '../models/ObjectSignedRequest.js';
@@ -22,10 +40,21 @@ import type { ObjectSignRequest } from '../models/ObjectSignRequest.js';
 import type { ObjectStorageComputeBinding } from '../models/ObjectStorageComputeBinding.js';
 import type { ObjectStorageComputeBindingList } from '../models/ObjectStorageComputeBindingList.js';
 import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
+import type { ObjectTaggingRequest } from '../models/ObjectTaggingRequest.js';
+import type { ObjectTaggingResult } from '../models/ObjectTaggingResult.js';
 import type { ObjectUploadRoute } from '../models/ObjectUploadRoute.js';
 import type { ObjectUploadRouteList } from '../models/ObjectUploadRouteList.js';
+import type { ObjectVersionDeleteResult } from '../models/ObjectVersionDeleteResult.js';
+import type { ObjectVersionLegalHoldRequest } from '../models/ObjectVersionLegalHoldRequest.js';
+import type { ObjectVersionLegalHoldResult } from '../models/ObjectVersionLegalHoldResult.js';
+import type { ObjectVersionProtection } from '../models/ObjectVersionProtection.js';
+import type { ObjectVersionRetentionRequest } from '../models/ObjectVersionRetentionRequest.js';
+import type { ObjectVersionRetentionResult } from '../models/ObjectVersionRetentionResult.js';
+import type { ObjectWriteReceipt } from '../models/ObjectWriteReceipt.js';
+import type { ObjectWriteReceiptList } from '../models/ObjectWriteReceiptList.js';
 import type { Problem } from '../models/Problem.js';
 import type { SetObjectBucketAccessGrantRequest } from '../models/SetObjectBucketAccessGrantRequest.js';
+import type { SetObjectS3CopySourceRequest } from '../models/SetObjectS3CopySourceRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -403,6 +432,126 @@ export class StorageService {
     });
   }
   /**
+   * List copy-only source grants
+   * Requires storage:manage and destination write authority. Grants never permit ordinary source reads or listing with the destination S3 key. At most 32 source buckets may be granted per credential.
+   * @returns ObjectS3CopySourceList Owned source grants without private grant identities
+   * @returns Problem Copy source listing unavailable or access denied
+   * @throws ApiError
+   */
+  public static listObjectS3CopySources({
+    slug,
+    bucket,
+    credential,
+  }: {
+    /**
+     * Destination app slug.
+     */
+    slug: string,
+    /**
+     * Destination bucket UUID.
+     */
+    bucket: string,
+    /**
+     * Owned destination writer credential UUID.
+     */
+    credential: string,
+  }): CancelablePromise<ObjectS3CopySourceList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'credential': credential,
+      },
+    });
+  }
+  /**
+   * Grant an owned bucket as a copy source
+   * Requires storage:manage, destination write and source read authority. Both buckets must be ready on the same native S3 placement. The prefix is literal and at most 1024 UTF-8 bytes. Identical retries preserve authority; changing or recreating a grant invalidates prepared copies. Signed URL credentials and rotation stages cannot acquire grants. CopySource uses the source bucket UUID followed by the encoded object key.
+   * @returns ObjectS3CopySource Persisted copy source grant
+   * @returns Problem Copy source grant invalid, unsupported, at limit, or denied
+   * @throws ApiError
+   */
+  public static setObjectS3CopySource({
+    slug,
+    bucket,
+    credential,
+    source,
+    requestBody,
+  }: {
+    /**
+     * App containing the destination bucket.
+     */
+    slug: string,
+    /**
+     * Bucket receiving copied objects.
+     */
+    bucket: string,
+    /**
+     * Destination S3 credential receiving source authority.
+     */
+    credential: string,
+    /**
+     * Owned source bucket UUID, including across apps.
+     */
+    source: string,
+    requestBody: SetObjectS3CopySourceRequest,
+  }): CancelablePromise<ObjectS3CopySource | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'credential': credential,
+        'source': source,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Revoke a copy-only source grant
+   * Requires storage:manage and destination write authority. Prevents new copy dispatch while preserving already dispatched completion and recovery. Cleanup remains available for revoked destination credentials and disabled S3 ingress.
+   * @returns Problem Copy source revocation denied or grant missing
+   * @throws ApiError
+   */
+  public static deleteObjectS3CopySource({
+    slug,
+    bucket,
+    credential,
+    source,
+  }: {
+    /**
+     * App containing the destination bucket.
+     */
+    slug: string,
+    /**
+     * Bucket receiving copied objects.
+     */
+    bucket: string,
+    /**
+     * Destination S3 credential receiving source authority.
+     */
+    credential: string,
+    /**
+     * Owned source bucket UUID, including across apps.
+     */
+    source: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'credential': credential,
+        'source': source,
+      },
+    });
+  }
+  /**
    * List compute bindings for a bucket
    * Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
    * @returns ObjectStorageComputeBindingList Active compute bindings; Cache-Control no-store
@@ -591,7 +740,7 @@ export class StorageService {
   }
   /**
    * Delete one object by exact key
-   * Requires storage:write or admin. Non-admin keys also require a write or read_write grant on this bucket. With provider-side versioning this may create a delete marker; version management is not part of this preview.
+   * Requires storage:write or admin and a bucket write grant. Current-object deletion is declined when retained versions, native inventories or a versioning transition require marker admission. Use permanent immutable version deletion for retained data or markers.
    * @returns Problem Invalid request, access denied, or provider error
    * @throws ApiError
    */
@@ -622,6 +771,1167 @@ export class StorageService {
       },
       query: {
         'key': key,
+      },
+    });
+  }
+  /**
+   * Read the tags of a current or selected object
+   * Requires storage read scope and a bucket read grant. Public version IDs remain stable after restart. Native provider version IDs are never exposed.
+   * @returns ObjectTaggingResult Stored object tags and public version identity; response is never cached
+   * @returns Problem Tag read rejected for invalid ownership, permission, capability, input, budget or provider response
+   * @throws ApiError
+   */
+  public static getObjectBucketTags({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application containing the object whose tags are requested.
+     */
+    slug: string,
+    /**
+     * Logical bucket used for this object tag operation.
+     */
+    bucket: string,
+    /**
+     * Exact object key; URL-encode it.
+     */
+    key: string,
+    /**
+     * Omit for the current object; use null or an owned public version UUID for a selected version.
+     */
+    versionId?: string,
+  }): CancelablePromise<ObjectTaggingResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/tags',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Replace the complete tag set of a current or selected object
+   * Requires storage write scope and a bucket write grant. Tags change in place and preserve private write-completion metadata. S3 dispatches once per request; after an uncertain acknowledgment, read the selected version or explicitly retry the desired tag set. No data version or storage reservation is created.
+   * @returns ObjectTaggingResult Replacement tag set acknowledged by the provider; public identity is retained
+   * @returns Problem Tag replacement failed validation, authorization or admission, or has an uncertain provider acknowledgment
+   * @throws ApiError
+   */
+  public static putObjectBucketTags({
+    slug,
+    bucket,
+    key,
+    requestBody,
+    versionId,
+  }: {
+    /**
+     * Application containing the object whose tags are requested.
+     */
+    slug: string,
+    /**
+     * Logical bucket used for this object tag operation.
+     */
+    bucket: string,
+    /**
+     * Exact object key; URL-encode it.
+     */
+    key: string,
+    requestBody: ObjectTaggingRequest,
+    /**
+     * Omit for the current object; use null or an owned public version UUID for a selected version.
+     */
+    versionId?: string,
+  }): CancelablePromise<ObjectTaggingResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/tags',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Remove all tags from a current or selected object
+   * Requires storage write scope and a bucket write grant. Returns an empty tag set after acknowledgment. An uncertain response does not trigger automatic mutation replay. Tags change in place; storage capacity is unchanged.
+   * @returns ObjectTaggingResult Empty tag set after acknowledged removal; public version identity is retained
+   * @returns Problem Tag removal denied or unsupported, safety budget exhausted, or provider acknowledgment unavailable
+   * @throws ApiError
+   */
+  public static deleteObjectBucketTags({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application containing the object whose tags are requested.
+     */
+    slug: string,
+    /**
+     * Logical bucket used for this object tag operation.
+     */
+    bucket: string,
+    /**
+     * Exact object key; URL-encode it.
+     */
+    key: string,
+    /**
+     * Omit for the current object; use null or an owned public version UUID for a selected version.
+     */
+    versionId?: string,
+  }): CancelablePromise<ObjectTaggingResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/tags',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Permanently delete an immutable object version or delete marker
+   * Requires storage write scope and the bucket write grant. The public version ID must belong to this bucket and exact key. Retries address the same immutable version, including after restart or an uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion uses a durable single-attempt intent; retry with X-Gregale-Delete-Id or use the deletion receipt API. Quota is reclaimed only through verified capacity inventory.
+   * @returns ObjectVersionDeleteResult Deleted or already removed immutable version; Cache-Control no-store
+   * @returns Problem Invalid or unowned version, unsupported provider, access denied or uncertain provider response
+   * @throws ApiError
+   */
+  public static deleteObjectBucketVersion({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * App owning the logical bucket.
+     */
+    slug: string,
+    /**
+     * Logical bucket owning the selected version.
+     */
+    bucket: string,
+    /**
+     * Exact key owning the selected version.
+     */
+    key: string,
+    /**
+     * Owned public version UUID or the mutable null selector; native provider IDs are not accepted.
+     */
+    versionId: string,
+  }): CancelablePromise<ObjectVersionDeleteResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/versions',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Delete the current object or an owned version with a durable receipt
+   * Requires storage write scope and the bucket write grant. Reuse the request ID with the same key and selector for retries. Mutable intents dispatch at most once; recovery may retry only the exact owned immutable version. Ordinary deletes in Enabled buckets create an accounted marker. Pending attempts fence writes, configuration and inventories until positive acknowledgment or unique completion proof; elapsed time and absence never settle a dispatched mutation.
+   * @returns ObjectDeletion Completed or failed receipt replay
+   * @returns Problem Invalid request, access denied, unavailable accounting or conflicting mutation
+   * @throws ApiError
+   */
+  public static createObjectDeletion({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * Application whose object deletion will be journaled.
+     */
+    slug: string,
+    /**
+     * Logical bucket owning the deletion.
+     */
+    bucket: string,
+    requestBody: ObjectDeletionRequest,
+  }): CancelablePromise<ObjectDeletion | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/deletions',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a durable deletion receipt
+   * Requires storage write scope and the bucket write grant. Returns only the bucket-owned receipt and public identities. Cache-Control no-store.
+   * @returns ObjectDeletion Persisted deletion state
+   * @returns Problem Access denied or receipt does not belong to this bucket
+   * @throws ApiError
+   */
+  public static getObjectDeletion({
+    slug,
+    bucket,
+    deletion,
+  }: {
+    /**
+     * Application associated with the requested deletion receipt.
+     */
+    slug: string,
+    /**
+     * Bucket to which the durable deletion receipt belongs.
+     */
+    bucket: string,
+    /**
+     * Durable deletion request ID.
+     */
+    deletion: string,
+  }): CancelablePromise<ObjectDeletion | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/deletions/{deletion}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'deletion': deletion,
+      },
+    });
+  }
+  /**
+   * List enrolled encryption algorithms and owned key references
+   * Requires storage write scope and the bucket write grant. Returns only the bucket owner's enrolled Gregale key references for explicit S3 PUT, copy and multipart initialization. Discovery makes no provider requests and does not establish key health or effective native permissions. Cache-Control no-store. Available while new storage ingress is disabled.
+   * @returns ObjectEncryptionCapabilities Enrolled algorithms and owned key references
+   * @returns Problem Access denied or unavailable bucket placement
+   * @throws ApiError
+   */
+  public static getObjectBucketEncryptionCapabilities({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket encryption enrollment is being discovered.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose enrolled encryption options are listed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectEncryptionCapabilities | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/encryption-capabilities',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read bucket default encryption and reconciliation progress
+   * Requires storage manage scope and the bucket write grant. Returns owned desired and verified selections without native key identities. Native readback detects policy drift and schedules reconciliation. Available while new ingress is disabled. An absent owned policy allows the provider baseline encryption.
+   * @returns ObjectBucketEncryption Owned policy and durable progress
+   * @returns Problem Bucket default policy access denied or placement unavailable
+   * @throws ApiError
+   */
+  public static getObjectBucketEncryption({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket default encryption is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose default is configured.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketEncryption | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Request a verified bucket default encryption policy
+   * Requires storage manage scope and the bucket write grant. Supports enrolled S3 AES256 and owned KMS or DSSE keys, with supported bucket key settings. Per-object contexts are rejected. Each new implicit write captures the verified default atomically; explicit write and route selections override it. Accepted receipts, URLs and multipart sessions retain their snapshots through changes and restart. New implicit admissions wait while configuration is pending. Exact native readback is required; unrelated native blocking settings are preserved.
+   * @returns Problem Invalid selection, busy bucket or unsupported provider
+   * @returns ObjectBucketEncryption Durable configuration request accepted
+   * @throws ApiError
+   */
+  public static putObjectBucketEncryption({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose bucket default encryption is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose default is configured.
+     */
+    bucket: string,
+    requestBody: ObjectBucketEncryptionRequest,
+  }): CancelablePromise<Problem | ObjectBucketEncryption> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Clear the owned bucket default encryption policy
+   * Requires storage manage scope and the bucket write grant. Records durable removal and retains the policy revision. Available with ingress disabled. Accepted operations keep their captured encryption. Clearing permits the provider baseline encryption and retains unrelated native encryption blocking settings.
+   * @returns Problem Busy configuration or unsupported provider
+   * @returns ObjectBucketEncryption Durable clear request accepted
+   * @throws ApiError
+   */
+  public static deleteObjectBucketEncryption({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket default encryption is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose default is configured.
+     */
+    bucket: string,
+  }): CancelablePromise<Problem | ObjectBucketEncryption> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read exact version retention
+   * Read fresh native retention for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+   * @returns ObjectVersionRetentionResult Verified native version retention policy
+   * @returns Problem Retention read rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static getObjectVersionRetention({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application owning this retention target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for retention management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose retention is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for retention; current selection is unsupported.
+     */
+    versionId: string,
+  }): CancelablePromise<ObjectVersionRetentionResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/retention',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Request a durable exact version retention change
+   * Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Separately enrolled event holds support ON with one days or years duration and OFF without a duration. Releasing an active hold preserves its observed retention bound and verifies the provider-calculated final date. Governance bypass is unsupported.
+   * @returns ObjectVersionProtection Existing retention operation receipt
+   * @returns Problem Retention mutation rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static putObjectVersionRetention({
+    slug,
+    bucket,
+    key,
+    versionId,
+    requestBody,
+  }: {
+    /**
+     * Application owning this retention target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for retention management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose retention is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for retention; current selection is unsupported.
+     */
+    versionId: string,
+    requestBody: ObjectVersionRetentionRequest,
+  }): CancelablePromise<ObjectVersionProtection | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/retention',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read exact version legal hold
+   * Read fresh native legal hold for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+   * @returns ObjectVersionLegalHoldResult Verified native version legal hold policy
+   * @returns Problem Legal hold read rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static getObjectVersionLegalHold({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application owning this legal hold target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for legal hold management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose legal hold is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for legal hold; current selection is unsupported.
+     */
+    versionId: string,
+  }): CancelablePromise<ObjectVersionLegalHoldResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Request a durable exact version legal hold change
+   * Accept durable independent ON or OFF legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies exact-version readback without repeating a dispatched PUT. Retention and event hold policies remain independent.
+   * @returns ObjectVersionProtection Existing legal hold operation receipt
+   * @returns Problem Legal hold mutation rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static putObjectVersionLegalHold({
+    slug,
+    bucket,
+    key,
+    versionId,
+    requestBody,
+  }: {
+    /**
+     * Application owning this legal hold target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for legal hold management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose legal hold is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for legal hold; current selection is unsupported.
+     */
+    versionId: string,
+    requestBody: ObjectVersionLegalHoldRequest,
+  }): CancelablePromise<ObjectVersionProtection | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Inspect an owned version protection operation
+   * Requires storage manage scope and a bucket read grant. Available with ingress or enrollment disabled. Provider identities and worker leases are private.
+   * @returns ObjectVersionProtection Durable operation status and accepted policy
+   * @returns Problem Protection operation inspection rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static getObjectVersionProtection({
+    slug,
+    bucket,
+    operation,
+  }: {
+    /**
+     * Application owning this protection operation target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for protection operation management.
+     */
+    bucket: string,
+    /**
+     * Durable protection operation identity.
+     */
+    operation: string,
+  }): CancelablePromise<ObjectVersionProtection | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/protection-operations/{operation}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'operation': operation,
+      },
+    });
+  }
+  /**
+   * Discover enrolled bucket Object Lock capabilities
+   * Requires storage manage scope, MFA where required and the bucket write grant. Makes no native requests. Available while ingress is disabled. Capability enrollment does not verify native permissions or health.
+   * @returns ObjectLockCapabilities Enrolled bucket configuration and default event hold capabilities
+   * @returns Problem Access denied or placement unavailable
+   * @throws ApiError
+   */
+  public static getObjectBucketObjectLockCapabilities({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose enrolled Object Lock capabilities are being discovered.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose enrolled configuration and event hold capabilities are listed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectLockCapabilities | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/object-lock-capabilities',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read owned Object Lock intent and native observation
+   * Requires storage manage scope, MFA where required and the bucket write grant. Native readback detects drift and permanently records observed enablement. Unknown native settings fence new writes and never become a default clear. Available while ingress is disabled; disabled capability enrollment returns existing persisted progress without a native call. Cache-Control no-store.
+   * @returns ObjectBucketObjectLock Durable progress with separate desired and observed configurations
+   * @returns Problem Access denied, unsupported backend or unavailable native observation
+   * @throws ApiError
+   */
+  public static getObjectBucketObjectLock({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket Object Lock configuration is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose permanent enablement and retention defaults are managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketObjectLock | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/object-lock',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Request permanent Object Lock enablement or a default retention change
+   * Requires storage manage scope, MFA where required and the bucket write grant. Enabled must be true. Omit default_retention to clear defaults for future versions while retaining permanent enablement and existing protection. GOVERNANCE and COMPLIANCE support a fixed duration, an enrolled event hold duration or both. New writes remain fenced until accepted transfers drain, versioning is Enabled, propagation and a fresh all-version inventory finish, and native configuration is verified. Identical pending requests are idempotent; opposite pending requests conflict. Accepted recovery continues after ingress or capability enrollment is disabled. Per-version lock management is a separate capability.
+   * @returns Problem Invalid configuration, busy transition or unsupported capability
+   * @returns ObjectBucketObjectLock Durable request accepted; GET reports progress
+   * @throws ApiError
+   */
+  public static putObjectBucketObjectLock({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose bucket Object Lock configuration is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose permanent enablement and retention defaults are managed.
+     */
+    bucket: string,
+    requestBody: ObjectBucketObjectLockRequest,
+  }): CancelablePromise<Problem | ObjectBucketObjectLock> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/object-lock',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read bucket versioning configuration and cutover progress
+   * Requires storage manage scope and the bucket write grant. Observes provider truth; discovering native versioning fences writes until a propagated, verified inventory accounts for all versions. Cache-Control no-store.
+   * @returns ObjectBucketVersioning Observed configuration and persisted progress
+   * @returns Problem Access denied, unavailable bucket or unsupported provider
+   * @throws ApiError
+   */
+  public static getObjectBucketVersioning({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket configuration is being read or changed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose versioning is configured.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketVersioning | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/versioning',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Request durable bucket versioning configuration
+   * Requires storage manage scope and the bucket write grant. Enabled and Suspended are supported on capable S3 backends. Opposite targets conflict until the current transition is ready. New writes and bucket deletion remain fenced while existing work drains, configuration propagates for at least fifteen minutes and a complete all-version inventory commits. Unresolved legacy write grants reject the request. Cancellation cannot reopen writes. Suspension retains all-version accounting. MFA Delete changes are unsupported.
+   * @returns Problem Invalid status, busy bucket, unresolved legacy writes or unsupported provider
+   * @returns ObjectBucketVersioning Durable intent recorded; inspect GET for progress
+   * @throws ApiError
+   */
+  public static putObjectBucketVersioning({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose bucket configuration is being read or changed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose versioning is configured.
+     */
+    bucket: string,
+    requestBody: ObjectBucketVersioningRequest,
+  }): CancelablePromise<Problem | ObjectBucketVersioning> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/versioning',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read durable bucket notification rules
+   * Requires storage manage scope and bucket write access. Reads owned notification intent without a provider call, including when ingress is disabled. Initial configuration has revision zero and no notification rules.
+   * @returns ObjectBucketNotifications Persisted notification configuration; Cache-Control no-store
+   * @returns Problem Notification policy access denied or the owned bucket was not found
+   * @throws ApiError
+   */
+  public static getObjectBucketNotifications({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose notification policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose notification configuration is managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketNotifications | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/notifications',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Replace durable bucket notification rules
+   * Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
+   * @returns ObjectBucketNotifications Normalized notification destinations, filters and configuration revision
+   * @returns Problem Invalid rule replacement, unavailable destination or unsupported event
+   * @throws ApiError
+   */
+  public static putObjectBucketNotifications({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose notification policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose notification configuration is managed.
+     */
+    bucket: string,
+    requestBody: ObjectBucketNotificationsRequest,
+  }): CancelablePromise<ObjectBucketNotifications | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/notifications',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Remove bucket notification rules
+   * Requires storage manage scope and the bucket write grant. Clears future routing while accepted events retain captured destinations. Available while storage ingress is disabled.
+   * @returns ObjectBucketNotifications Cleared notification intent with its retained revision
+   * @returns Problem Policy removal denied or invalid ownership
+   * @throws ApiError
+   */
+  public static deleteObjectBucketNotifications({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose notification policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose notification configuration is managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketNotifications | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/notifications',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read durable bucket lifecycle rules
+   * Requires storage manage scope and the bucket write grant. Reads durable policy without contacting the provider; available while storage ingress is disabled. An absent policy has revision zero and empty rules.
+   * @returns ObjectBucketLifecycle Persisted lifecycle configuration; Cache-Control no-store
+   * @returns Problem Policy access denied or owned bucket missing
+   * @throws ApiError
+   */
+  public static getObjectBucketLifecycle({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose lifecycle policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose lifecycle configuration is managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketLifecycle | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Replace durable bucket lifecycle rules
+   * Requires storage manage scope and the bucket write grant. Replaces the entire policy with one to one thousand validated rules on a capable backend. Expiration, noncurrent expiration and abandoned multipart cleanup use Gregale journals and verified accounting. Transitions and object size predicates are unsupported. A live discovery lease returns conflict. New storage ingress must be enabled.
+   * @returns ObjectBucketLifecycle Normalized replacement rules and revision
+   * @returns Problem Invalid rule replacement, live scan conflict or unsupported backend
+   * @throws ApiError
+   */
+  public static putObjectBucketLifecycle({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose lifecycle policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose lifecycle configuration is managed.
+     */
+    bucket: string,
+    requestBody: ObjectBucketLifecycleRequest,
+  }): CancelablePromise<ObjectBucketLifecycle | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Remove bucket lifecycle rules
+   * Requires storage manage scope and the bucket write grant. Clears rules and cancels unclaimed discovery. Already admitted deletions and multipart aborts continue to verified completion. Available while ingress is disabled. A live discovery lease returns conflict.
+   * @returns ObjectBucketLifecycle Empty rules with retained policy revision
+   * @returns Problem Policy removal denied or blocked by a live scan lease
+   * @throws ApiError
+   */
+  public static deleteObjectBucketLifecycle({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose lifecycle policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose lifecycle configuration is managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketLifecycle | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Start or resume due lifecycle discovery
+   * Requires storage manage scope and the bucket write grant. Creates a due scan or returns existing active discovery. Requires ingress enabled and an enabled policy; the hourly scan interval still applies. Conflict means the next scan is not due. Completed discovery does not prove that admitted deletions or aborts have finished.
+   * @returns Problem Discovery disabled, active policy missing or next scan not due
+   * @returns ObjectLifecycleScan Accepted active discovery scan; inspect its progress
+   * @throws ApiError
+   */
+  public static createObjectLifecycleScan({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App requesting lifecycle discovery.
+     */
+    slug: string,
+    /**
+     * Bucket requesting due lifecycle discovery.
+     */
+    bucket: string,
+  }): CancelablePromise<Problem | ObjectLifecycleScan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle/scans',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read lifecycle discovery progress
+   * Requires storage manage scope and the bucket write grant. Returns owned persisted progress without provider credentials, native identifiers, cursors or lease tokens. Available while ingress is disabled.
+   * @returns ObjectLifecycleScan Recorded discovery phase and counters
+   * @returns Problem Scan access denied or owned scan not found
+   * @throws ApiError
+   */
+  public static getObjectLifecycleScan({
+    slug,
+    bucket,
+    scan,
+  }: {
+    /**
+     * App owning the recorded lifecycle scan.
+     */
+    slug: string,
+    /**
+     * Bucket associated with this lifecycle scan.
+     */
+    bucket: string,
+    /**
+     * Owned lifecycle discovery identifier.
+     */
+    scan: string,
+  }): CancelablePromise<ObjectLifecycleScan | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle/scans/{scan}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'scan': scan,
+      },
+    });
+  }
+  /**
+   * Request safe capacity reconciliation
+   * Requires storage write scope and the bucket write grant. Returns the existing active job on repeat requests. Pauses new bucket writes until cancellation or a terminal outcome. Pending or untracked writes cannot be force-refunded; only a complete fenced inventory can reclaim capacity. Available with storage disabled or spent budgets.
+   * @returns Problem Missing bucket, live multipart sessions, or access denied
+   * @returns ObjectCapacityReconciliation Durable reconciliation requested; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static createObjectCapacityReconciliation({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App requesting a fenced bucket inventory.
+     */
+    slug: string,
+    /**
+     * Bucket whose reserved capacity should be reconciled.
+     */
+    bucket: string,
+  }): CancelablePromise<Problem | ObjectCapacityReconciliation> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Inspect capacity reconciliation
+   * Returns progress, pending-write count and reclaimed capacity under storage write scope and the bucket write grant. Reads remain available with storage disabled or spent budgets. Billing and monthly authorization counts are unchanged.
+   * @returns ObjectCapacityReconciliation Reconciliation status; Cache-Control no-store
+   * @returns Problem Reconciliation missing or access denied
+   * @throws ApiError
+   */
+  public static getObjectCapacityReconciliation({
+    slug,
+    bucket,
+    reconciliation,
+  }: {
+    /**
+     * App owning the reconciliation job.
+     */
+    slug: string,
+    /**
+     * Bucket associated with the reconciliation.
+     */
+    bucket: string,
+    /**
+     * Durable capacity reconciliation identifier.
+     */
+    reconciliation: string,
+  }): CancelablePromise<ObjectCapacityReconciliation | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'reconciliation': reconciliation,
+      },
+    });
+  }
+  /**
+   * Cancel capacity reconciliation
+   * Requires storage write scope and the bucket write grant. Immediately releases the active job's write pause without changing reserved capacity. Returns the job, including an existing terminal outcome. Cleanup remains available with storage disabled or spent budgets.
+   * @returns ObjectCapacityReconciliation Cancelled or previously terminal reconciliation; Cache-Control no-store
+   * @returns Problem Reconciliation missing or cancellation denied
+   * @throws ApiError
+   */
+  public static cancelObjectCapacityReconciliation({
+    slug,
+    bucket,
+    reconciliation,
+  }: {
+    /**
+     * App owning the reconciliation job.
+     */
+    slug: string,
+    /**
+     * Bucket associated with the reconciliation.
+     */
+    bucket: string,
+    /**
+     * Durable capacity reconciliation identifier.
+     */
+    reconciliation: string,
+  }): CancelablePromise<ObjectCapacityReconciliation | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'reconciliation': reconciliation,
+      },
+    });
+  }
+  /**
+   * List tracked write receipts for a bucket
+   * Requires storage write scope and the bucket write grant. Defaults to pending writes, newest first; pages are live views and receipts settling between reads may disappear from the pending filter. Reads remain available while storage is disabled or budgets are spent, without provider calls or quota admission. Direct signed uploads, legacy writes and multipart sessions are outside this receipt list.
+   * @returns ObjectWriteReceiptList One page of tracked write receipts; Cache-Control no-store
+   * @returns Problem Invalid pagination, missing bucket, or access denied
+   * @throws ApiError
+   */
+  public static listObjectWriteReceipts({
+    slug,
+    bucket,
+    status = 'pending',
+    limit = 50,
+    cursor,
+  }: {
+    /**
+     * App owning the bucket.
+     */
+    slug: string,
+    /**
+     * Gregale bucket identifier.
+     */
+    bucket: string,
+    /**
+     * Receipt status to include.
+     */
+    status?: 'pending' | 'completed' | 'failed' | 'all',
+    /**
+     * Maximum receipts per page.
+     */
+    limit?: number,
+    /**
+     * Opaque next cursor from a page using the same bucket and status filter.
+     */
+    cursor?: string,
+  }): CancelablePromise<ObjectWriteReceiptList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/write-receipts',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'status': status,
+        'limit': limit,
+        'cursor': cursor,
+      },
+    });
+  }
+  /**
+   * Read a tracked write receipt
+   * Requires storage write scope and the bucket write grant. Completed proves this attempt committed, not that the object still has this value. Pending has no confirmed outcome; do not assume failure or refund capacity. Reads remain available with storage disabled or spent budgets.
+   * @returns ObjectWriteReceipt Receipt projection; Cache-Control no-store; pending responses include Retry-After
+   * @returns Problem Receipt or bucket missing, or access denied
+   * @throws ApiError
+   */
+  public static getObjectWriteReceipt({
+    slug,
+    bucket,
+    receipt,
+  }: {
+    /**
+     * App whose tracked write is being inspected.
+     */
+    slug: string,
+    /**
+     * Bucket containing the requested write receipt.
+     */
+    bucket: string,
+    /**
+     * Receipt ID returned as X-Gregale-Upload-ID.
+     */
+    receipt: string,
+  }): CancelablePromise<ObjectWriteReceipt | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/write-receipts/{receipt}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'receipt': receipt,
       },
     });
   }
@@ -865,11 +2175,14 @@ export class StorageService {
     });
   }
   /**
-   * Issue an exact-length direct upload URL for one part
+   * Issue a branded upload URL for one exact-length part
    * Requires storage:write or admin and a matching bucket grant. The URL
-   * binds the server-calculated byte length for this part and expires within
-   * 15 minutes. Upload it without Gregale credentials and retain the ETag
-   * response header for completion. Every issued part URL consumes the
+   * uses the branded S3 endpoint and binds the owned session, part and exact
+   * byte length. It expires within 15 minutes and before the session deadline.
+   * Upload without Gregale credentials and retain the ETag response header.
+   * Current issuer grants and the active session are checked at dispatch.
+   * Sequential retries may replace a settled part; overlapping or uncertain
+   * native attempts remain fenced. Issuance and redemption consume the
    * authorization safety budget.
    *
    * @returns ObjectSignedRequest Temporary provider capability; Cache-Control no-store

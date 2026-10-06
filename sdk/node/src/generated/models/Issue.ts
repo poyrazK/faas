@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { IssueImpactSummary } from './IssueImpactSummary.js';
 /**
  * Durable failure group across releases in one app and environment.
  */
@@ -18,6 +19,7 @@ export type Issue = {
   last_seen_at: string;
   event_count: number;
   regression_count: number;
+  impact_24h?: IssueImpactSummary;
   resolved_at?: string;
   fixed_deployment_id?: string;
   fixed_deployment_created_at?: string;

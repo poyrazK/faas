@@ -23,7 +23,7 @@ func (s *MemoryStore) ListUsageDatabases(_ context.Context, after UsageDatabaseC
 	defer s.mu.Unlock()
 	items := make([]Database, 0)
 	for _, database := range s.databases {
-		if database.State != StateReady || database.ProviderResourceID == "" {
+		if database.ProviderResourceID == "" && !database.AccountingRequired {
 			continue
 		}
 		if !after.isZero() && (database.UpdatedAt.Before(after.UpdatedAt) ||
@@ -44,22 +44,116 @@ func (s *MemoryStore) ListUsageDatabases(_ context.Context, after UsageDatabaseC
 	return items, nil
 }
 
-func (s *MemoryStore) RecordUsage(_ context.Context, records []UsageRecord) error {
-	if len(records) == 0 {
+func (s *MemoryStore) RecordDiscoveredResource(ctx context.Context, expected Database, providerResourceID string, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if expected.ID == "" || expected.AccountID == "" || providerResourceID == "" || now.IsZero() {
 		return ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, record := range records {
-		if err := record.Validate(); err != nil {
-			return err
-		}
-		database, ok := s.databases[record.DatabaseID]
-		if !ok || database.AccountID != record.AccountID || database.BackendID != record.BackendID || database.BackendFingerprint != record.BackendFingerprint {
+	database, ok := s.databases[expected.ID]
+	if !ok || database.AccountID != expected.AccountID || database.BackendID != expected.BackendID ||
+		database.BackendFingerprint != expected.BackendFingerprint || !database.AccountingRequired ||
+		database.State == StateDeleted || database.LeaseUntil.After(now) ||
+		(database.ProviderResourceID != "" && database.ProviderResourceID != providerResourceID) {
+		return ErrConflict
+	}
+	database.ProviderResourceID = providerResourceID
+	database.UpdatedAt = now
+	s.databases[database.ID] = database
+	return nil
+}
+
+func (s *MemoryStore) RecordUsage(_ context.Context, records []UsageRecord) error {
+	key, err := validateUsageRecords(records)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	first := records[0]
+	database, ok := s.databases[first.DatabaseID]
+	if !ok || database.AccountID != first.AccountID || database.BackendID != first.BackendID || database.BackendFingerprint != first.BackendFingerprint {
+		return ErrConflict
+	}
+	if err := validateUsageDatabaseWindow(database, first); err != nil {
+		return err
+	}
+	// Changing window size would overlap existing ledger periods and count
+	// the same consumption twice. Require an explicit accounting migration.
+	for existingKey := range s.usage {
+		if s.usageProgress[key].CollectedUntil.IsZero() && existingKey.databaseID == first.DatabaseID && existingKey.to.Sub(existingKey.from) != key.window {
 			return ErrConflict
 		}
-		s.usage[usageKey{databaseID: record.DatabaseID, from: record.WindowFrom, to: record.WindowTo, meter: record.Meter}] = record
 	}
+	progress, err := advanceUsageProgress(s.usageProgress[key], first, database.CreatedAt)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		recordKey := usageKey{databaseID: record.DatabaseID, from: record.WindowFrom.UTC(), to: record.WindowTo.UTC(), meter: record.Meter}
+		if previous, ok := s.usage[recordKey]; !ok || !record.ObservedAt.Before(previous.ObservedAt) {
+			s.usage[recordKey] = record
+		}
+	}
+	s.usageProgress[key] = progress
+	return nil
+}
+
+func (s *MemoryStore) UsageProgress(_ context.Context, accountID, databaseID string, window time.Duration) (UsageProgress, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	database, ok := s.databases[databaseID]
+	if !ok || database.AccountID != accountID {
+		return UsageProgress{}, ErrNotFound
+	}
+	return s.usageProgressLocked(databaseID, window), nil
+}
+
+func (s *MemoryStore) usageProgressLocked(databaseID string, window time.Duration) UsageProgress {
+	progress := s.usageProgress[usageProgressKey{databaseID, window}]
+	from := progress.CollectedUntil.Add(-recentUsageCorrectionWindows * window)
+	if from.Before(progress.CollectedFrom) {
+		from = progress.CollectedFrom
+	}
+	for _, record := range s.usage {
+		if record.DatabaseID == databaseID && !record.WindowFrom.Before(from) && !record.WindowTo.After(progress.CollectedUntil) &&
+			(progress.CorrectionObservedAt.IsZero() || record.ObservedAt.Before(progress.CorrectionObservedAt)) {
+			progress.CorrectionObservedAt = record.ObservedAt
+		}
+	}
+	return progress
+}
+
+func (s *MemoryStore) RecordSharedUsage(_ context.Context, accountID, databaseID, sourceID string, window time.Duration) error {
+	if !validUsageWindow(window) || databaseID == sourceID {
+		return ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	database, ok := s.databases[databaseID]
+	source, sourceOK := s.databases[sourceID]
+	if !ok || !sourceOK || database.AccountID != accountID || source.AccountID != accountID ||
+		database.ProviderResourceID == "" || source.ProviderResourceID == "" || database.RestoreSourceDatabaseID == "" ||
+		database.BackendID != source.BackendID || database.BackendFingerprint != source.BackendFingerprint {
+		return ErrConflict
+	}
+	ancestor := database.RestoreSourceDatabaseID
+	seen := map[string]bool{databaseID: true}
+	for ancestor != sourceID {
+		if ancestor == "" || seen[ancestor] {
+			return ErrConflict
+		}
+		seen[ancestor] = true
+		parent, exists := s.databases[ancestor]
+		if !exists || parent.AccountID != accountID {
+			return ErrConflict
+		}
+		ancestor = parent.RestoreSourceDatabaseID
+	}
+	s.usageProgress[usageProgressKey{databaseID, window}] = UsageProgress{Window: window, SourceDatabaseID: sourceID, UpdatedAt: time.Now().UTC()}
 	return nil
 }
 
@@ -74,16 +168,16 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 	var snapshot UsageSnapshot
 	snapshot.PeriodStart = periodStart
 	for _, database := range s.databases {
-		if database.AccountID == accountID && database.State == StateReady {
-			snapshot.ReadyDatabases++
+		if database.AccountID == accountID && (database.State == StateReady || database.ProviderResourceID != "" || database.AccountingRequired) {
+			if database.State == StateReady {
+				snapshot.ReadyDatabases++
+			}
+			progress := s.accountingCoverageLocked(database).Progress
+			snapshot.Databases = append(snapshot.Databases, progress)
 		}
 	}
 	for _, record := range s.usage {
 		if record.AccountID != accountID || record.WindowFrom.Before(periodStart) || !record.WindowFrom.Before(periodEnd) {
-			continue
-		}
-		database, ok := s.databases[record.DatabaseID]
-		if !ok || database.State == StateDeleted {
 			continue
 		}
 		var err error
@@ -104,8 +198,10 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 		if err != nil {
 			return UsageSnapshot{}, err
 		}
-		if record.ObservedAt.After(snapshot.LastObservedAt) {
-			snapshot.LastObservedAt = record.ObservedAt
+	}
+	for i, progress := range snapshot.Databases {
+		if i == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
+			snapshot.LastObservedAt = progress.ObservedAt
 		}
 	}
 	return snapshot, nil

@@ -23,12 +23,16 @@ type fakeGCSStore struct {
 	createdSpec                                               gcsBucketSpec
 	bucketState                                               gcsBucketState
 	objects                                                   []gcsObjectState
+	versions                                                  []gcsObjectState
 	prefixes                                                  []string
 	next                                                      string
 	object                                                    gcsObjectState
 	copyObjectErr                                             error
 	copySourceBucket, copyDestinationBucket                   string
+	copyGeneration                                            int64
+	copyMetaVersion                                           int64
 	readBody                                                  string
+	versionBody                                               string
 	readErr                                                   error
 	reconciled                                                bool
 }
@@ -54,6 +58,10 @@ func (s *fakeGCSStore) ListObjects(context.Context, string, string, string, stri
 	return s.objects, s.prefixes, s.next, nil
 }
 
+func (s *fakeGCSStore) ListObjectVersions(context.Context, string, string, int32) ([]gcsObjectState, string, error) {
+	return s.versions, s.next, nil
+}
+
 func (s *fakeGCSStore) DeleteObject(context.Context, string, string) error {
 	return s.deleteObjectErr
 }
@@ -63,6 +71,10 @@ func (s *fakeGCSStore) ReadObject(context.Context, string, string) (io.ReadClose
 		return nil, s.readErr
 	}
 	return io.NopCloser(strings.NewReader(s.readBody)), nil
+}
+
+func (s *fakeGCSStore) ReadObjectVersion(context.Context, string, string, int64) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader(s.versionBody)), nil
 }
 
 func (s *fakeGCSStore) ObjectState(context.Context, string, string) (gcsObjectState, error) {
@@ -76,6 +88,11 @@ func (s *fakeGCSStore) UpdateObjectMetadata(_ context.Context, _, _ string, meta
 
 func (s *fakeGCSStore) CopyObject(_ context.Context, sourceBucket, destinationBucket, _, _ string, _ ObjectMetadata, _ string) (gcsObjectState, error) {
 	s.copySourceBucket, s.copyDestinationBucket = sourceBucket, destinationBucket
+	return s.object, s.copyObjectErr
+}
+
+func (s *fakeGCSStore) CopyObjectVersion(_ context.Context, sourceBucket, destinationBucket, _, _ string, generation, metaVersion int64) (gcsObjectState, error) {
+	s.copySourceBucket, s.copyDestinationBucket, s.copyGeneration, s.copyMetaVersion = sourceBucket, destinationBucket, generation, metaVersion
 	return s.object, s.copyObjectErr
 }
 
@@ -128,6 +145,15 @@ func TestGCSCopyObjectBetweenBuckets(t *testing.T) {
 	})
 	if err != nil || result.ETag != "copied" || store.copySourceBucket != "source" || store.copyDestinationBucket != "destination" {
 		t.Fatalf("cross-bucket copy result=%+v err=%v source=%q destination=%q", result, err, store.copySourceBucket, store.copyDestinationBucket)
+	}
+}
+
+func TestGCSCopyRejectsVersionSelector(t *testing.T) {
+	store := &fakeGCSStore{}
+	provider := testGCS(gcsDefaultEndpoint, store)
+	_, err := provider.CopyObject(context.Background(), "bucket", CopyObjectRequest{SourceKey: "source", DestinationKey: "destination", SourceProviderVersionID: "native"})
+	if !errors.Is(err, ErrUnsupported) || store.copySourceBucket != "" {
+		t.Fatal("GCS ignored native version selection", err, store.copySourceBucket)
 	}
 }
 
@@ -318,7 +344,7 @@ func TestGCSMultipartOAuthProtocolAndCompletionRecovery(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	store := &fakeGCSStore{object: gcsObjectState{Size: 10, Metadata: map[string]string{ReservedMultipartSessionMetadataKey: "session-1"}}}
+	store := &fakeGCSStore{object: gcsObjectState{Size: 10, ETag: `"actual"`, Metadata: map[string]string{ReservedMultipartSessionMetadataKey: "session-1"}}}
 	p := testGCS(upstream.URL, store)
 	p.httpClient = upstream.Client()
 
@@ -430,5 +456,30 @@ func TestGCSRegistryValidationAndFingerprint(t *testing.T) {
 	config = Config{DefaultRegion: s3.Region, Defaults: map[string]string{s3.Region: s3.ID}, Backends: []BackendConfig{s3}}
 	if _, err := NewRegistry(config, func(string) string { return "" }, map[string]Factory{"s3": factory}); err == nil {
 		t.Fatal("accepted GCS impersonation on an S3 backend")
+	}
+}
+
+func TestGCSVersionedEnvironmentSnapshot(t *testing.T) {
+	cutoff := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeGCSStore{
+		bucketState: gcsBucketState{VersioningEnabled: true},
+		versions: []gcsObjectState{
+			{Key: "data.json", Version: 41, MetaVersion: 3, Size: 4, LastModified: cutoff.Add(-time.Minute), ValidUntil: cutoff.Add(time.Minute)},
+			{Key: "data.json", Version: 42, MetaVersion: 1, Size: 5, LastModified: cutoff.Add(time.Minute)},
+		},
+		object: gcsObjectState{ETag: "copied"}, readBody: "data", versionBody: "data",
+	}
+	provider := testGCS(gcsDefaultEndpoint, store)
+	manifest, err := CaptureObjectManifest(context.Background(), provider, "source", cutoff, 1)
+	if err != nil || len(manifest) != 1 || manifest[0].VersionID != "41" {
+		t.Fatalf("GCS manifest = %+v, %v", manifest, err)
+	}
+	result, err := CopyAndVerifyObjectVersion(context.Background(), provider, "source", "destination", manifest[0])
+	if err != nil || result.ETag != "copied" || store.copyGeneration != 41 || store.copyMetaVersion != 3 {
+		t.Fatalf("versioned copy = %+v, %v, generation %d/%d", result, err, store.copyGeneration, store.copyMetaVersion)
+	}
+	store.bucketState.VersioningEnabled = false
+	if _, err := CaptureObjectManifest(context.Background(), provider, "source", cutoff, 1); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unversioned GCS source = %v", err)
 	}
 }

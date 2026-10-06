@@ -1,0 +1,983 @@
+=== RUN   TestRunCapacityPublish_RoundTripThreeReports
+=== PAUSE TestRunCapacityPublish_RoundTripThreeReports
+=== RUN   TestRunCapacityPublish_BackoffResetsAfterCleanDrain
+=== PAUSE TestRunCapacityPublish_BackoffResetsAfterCleanDrain
+=== RUN   TestRunCapacityPublish_ServerErrorReconnects
+=== PAUSE TestRunCapacityPublish_ServerErrorReconnects
+=== RUN   TestDrainCapacityPublish_PropagatesDialError
+=== PAUSE TestDrainCapacityPublish_PropagatesDialError
+=== RUN   TestRunCapacityPublish_SignedReportAccepted
+=== PAUSE TestRunCapacityPublish_SignedReportAccepted
+=== RUN   TestBuildCapacityReport_SignedStampsSignature
+=== PAUSE TestBuildCapacityReport_SignedStampsSignature
+=== RUN   TestBuildCapacityReport_NodeIDPropagated
+=== PAUSE TestBuildCapacityReport_NodeIDPropagated
+=== RUN   TestBuildCapacityReport_BatchesLocalTelemetry
+--- PASS: TestBuildCapacityReport_BatchesLocalTelemetry (0.00s)
+=== RUN   TestCapacityTelemetryGuardSignalsEmptyLiveBatchOnceAndRecovers
+--- PASS: TestCapacityTelemetryGuardSignalsEmptyLiveBatchOnceAndRecovers (0.11s)
+=== RUN   TestBuildCapacityReport_ResidentBytesSummed
+=== PAUSE TestBuildCapacityReport_ResidentBytesSummed
+=== RUN   TestBuildCapacityReport_NonLinuxHostEmitsZero
+=== PAUSE TestBuildCapacityReport_NonLinuxHostEmitsZero
+=== RUN   TestBuildCapacityReport_OverCommitClampsAtZero
+=== PAUSE TestBuildCapacityReport_OverCommitClampsAtZero
+=== RUN   TestBuildCapacityReport_VCPUScaledByLiveCount
+=== PAUSE TestBuildCapacityReport_VCPUScaledByLiveCount
+=== RUN   TestBuildCapacityReport_TimeStampMonotonic
+=== PAUSE TestBuildCapacityReport_TimeStampMonotonic
+=== RUN   TestRunCapacityPublish_EmptyTargetReturnsImmediately
+=== PAUSE TestRunCapacityPublish_EmptyTargetReturnsImmediately
+=== RUN   TestRunCapacityPublish_CtxCancelExitsPromptly
+=== PAUSE TestRunCapacityPublish_CtxCancelExitsPromptly
+=== RUN   TestCapabilityDeclarationMatchesSystemdBoundingSet
+--- PASS: TestCapabilityDeclarationMatchesSystemdBoundingSet (0.00s)
+=== RUN   TestLoadConfig_ComputeNodeNodeNameEnvOverlay
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_ComputeNodeNodeNameEnvOverlay (0.00s)
+=== RUN   TestLoadConfigPublicIfaceEnvConfiguresRuntimePolicy
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfigPublicIfaceEnvConfiguresRuntimePolicy (0.00s)
+=== RUN   TestLoadConfigTenantEgressIfaceConfiguresRuntimePolicy
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfigTenantEgressIfaceConfiguresRuntimePolicy (0.00s)
+=== RUN   TestLoadConfigRejectsInvalidPublicIface
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfigRejectsInvalidPublicIface (0.00s)
+=== RUN   TestLoadConfigPrivateNetworkTransportEnvOverlay
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfigPrivateNetworkTransportEnvOverlay (0.00s)
+=== RUN   TestLoadConfigRejectsInvalidPrivateNetworkTransportEnabled
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfigRejectsInvalidPrivateNetworkTransportEnabled (0.00s)
+=== RUN   TestLoadConfig_MissingFileReturnsDefaults
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_MissingFileReturnsDefaults (0.00s)
+=== RUN   TestLoadConfig_RestoreConcurrencyOverrides
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_RestoreConcurrencyOverrides (0.00s)
+=== RUN   TestLoadConfig_RejectsInvalidRestoreConcurrency
+=== RUN   TestLoadConfig_RejectsInvalidRestoreConcurrency/env_0
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RejectsInvalidRestoreConcurrency/env_65
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RejectsInvalidRestoreConcurrency/env_bad
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RejectsInvalidRestoreConcurrency/toml_0
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RejectsInvalidRestoreConcurrency/toml_65
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_RejectsInvalidRestoreConcurrency (0.00s)
+    --- PASS: TestLoadConfig_RejectsInvalidRestoreConcurrency/env_0 (0.00s)
+    --- PASS: TestLoadConfig_RejectsInvalidRestoreConcurrency/env_65 (0.00s)
+    --- PASS: TestLoadConfig_RejectsInvalidRestoreConcurrency/env_bad (0.00s)
+    --- PASS: TestLoadConfig_RejectsInvalidRestoreConcurrency/toml_0 (0.00s)
+    --- PASS: TestLoadConfig_RejectsInvalidRestoreConcurrency/toml_65 (0.00s)
+=== RUN   TestLoadConfig_OverridesFromTOML
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_OverridesFromTOML (0.00s)
+=== RUN   TestLoadConfig_RoutingEnvironmentOverlay
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_RoutingEnvironmentOverlay (0.00s)
+=== RUN   TestLoadConfig_NodeKeyPathOverride
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_NodeKeyPathOverride (0.00s)
+=== RUN   TestLoadConfig_PartialTOMLKeepsDefaults
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_PartialTOMLKeepsDefaults (0.00s)
+=== RUN   TestLoadConfig_DefaultNodeSizing
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_DefaultNodeSizing (0.00s)
+=== RUN   TestLoadConfig_VCPUBudgetOverride
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_VCPUBudgetOverride (0.00s)
+=== RUN   TestLoadConfig_RejectsNonPositiveVCPUBudget
+=== RUN   TestLoadConfig_RejectsNonPositiveVCPUBudget/zero
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RejectsNonPositiveVCPUBudget/negative
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_RejectsNonPositiveVCPUBudget (0.00s)
+    --- PASS: TestLoadConfig_RejectsNonPositiveVCPUBudget/zero (0.00s)
+    --- PASS: TestLoadConfig_RejectsNonPositiveVCPUBudget/negative (0.00s)
+=== RUN   TestLoadConfig_FAASVCPUBudgetOverride
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_FAASVCPUBudgetOverride (0.00s)
+=== RUN   TestLoadConfig_ComputeCapacityEnvOverrides
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_ComputeCapacityEnvOverrides (0.00s)
+=== RUN   TestLoadConfig_ComputeCapacityEnvRejectsNonPositive
+=== RUN   TestLoadConfig_ComputeCapacityEnvRejectsNonPositive/FAAS_COMPUTE_VCPUS
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_ComputeCapacityEnvRejectsNonPositive/FAAS_COMPUTE_MEM_MB
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_ComputeCapacityEnvRejectsNonPositive/FAAS_COMPUTE_MAX_CONCURRENCY
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_ComputeCapacityEnvRejectsNonPositive/FAAS_COMPUTE_ADMISSION_CEILING_MB
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_ComputeCapacityEnvRejectsNonPositive (0.01s)
+    --- PASS: TestLoadConfig_ComputeCapacityEnvRejectsNonPositive/FAAS_COMPUTE_VCPUS (0.00s)
+    --- PASS: TestLoadConfig_ComputeCapacityEnvRejectsNonPositive/FAAS_COMPUTE_MEM_MB (0.00s)
+    --- PASS: TestLoadConfig_ComputeCapacityEnvRejectsNonPositive/FAAS_COMPUTE_MAX_CONCURRENCY (0.00s)
+    --- PASS: TestLoadConfig_ComputeCapacityEnvRejectsNonPositive/FAAS_COMPUTE_ADMISSION_CEILING_MB (0.00s)
+=== RUN   TestLoadConfig_FAASVCPUBudgetRejectsNonPositive
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_FAASVCPUBudgetRejectsNonPositive (0.00s)
+=== RUN   TestLoadConfig_BadTOMLErrors
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_BadTOMLErrors (0.00s)
+=== RUN   TestLoadConfig_ReadErrorOther
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_ReadErrorOther (0.00s)
+=== RUN   TestLoadConfig_RejectsOverlayCIDRInsideDenySet
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_RejectsOverlayCIDRInsideDenySet (0.00s)
+=== RUN   TestLoadConfig_AcceptsOverlayCIDROutsideDenySet
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_AcceptsOverlayCIDROutsideDenySet (0.00s)
+=== RUN   TestConfig_ResolveListenTarget
+--- PASS: TestConfig_ResolveListenTarget (0.00s)
+=== RUN   TestConfig_LoadServerTLS
+--- PASS: TestConfig_LoadServerTLS (0.00s)
+=== RUN   TestValidateHostBridgeCIDR
+=== RUN   TestValidateHostBridgeCIDR/canonical_RFC1918_default_passes
+=== RUN   TestValidateHostBridgeCIDR/operator-chosen_10.42.0.0/16_passes
+=== RUN   TestValidateHostBridgeCIDR/172.16.0.0/16_passes
+=== RUN   TestValidateHostBridgeCIDR/192.168.0.0/16_passes
+=== RUN   TestValidateHostBridgeCIDR/100.64.0.0/16_(CGN)_passes
+=== RUN   TestValidateHostBridgeCIDR/non-/16_rejected
+=== RUN   TestValidateHostBridgeCIDR/non-network-form_rejected_(host_bits_set)
+=== RUN   TestValidateHostBridgeCIDR/non-network-form_rejected_(host_bits_set,_different_position)
+=== RUN   TestValidateHostBridgeCIDR/unparseable_CIDR_rejected
+--- PASS: TestValidateHostBridgeCIDR (0.00s)
+    --- PASS: TestValidateHostBridgeCIDR/canonical_RFC1918_default_passes (0.00s)
+    --- PASS: TestValidateHostBridgeCIDR/operator-chosen_10.42.0.0/16_passes (0.00s)
+    --- PASS: TestValidateHostBridgeCIDR/172.16.0.0/16_passes (0.00s)
+    --- PASS: TestValidateHostBridgeCIDR/192.168.0.0/16_passes (0.00s)
+    --- PASS: TestValidateHostBridgeCIDR/100.64.0.0/16_(CGN)_passes (0.00s)
+    --- PASS: TestValidateHostBridgeCIDR/non-/16_rejected (0.00s)
+    --- PASS: TestValidateHostBridgeCIDR/non-network-form_rejected_(host_bits_set) (0.00s)
+    --- PASS: TestValidateHostBridgeCIDR/non-network-form_rejected_(host_bits_set,_different_position) (0.00s)
+    --- PASS: TestValidateHostBridgeCIDR/unparseable_CIDR_rejected (0.00s)
+=== RUN   TestTargetURLIsWildcardDial
+=== RUN   TestTargetURLIsWildcardDial/ipv4-0.0.0.0_wildcard
+=== RUN   TestTargetURLIsWildcardDial/ipv6-::_wildcard
+=== RUN   TestTargetURLIsWildcardDial/ipv4-routable_accepted
+=== RUN   TestTargetURLIsWildcardDial/ipv4-routable-192.168_accepted
+=== RUN   TestTargetURLIsWildcardDial/fqdn_accepted
+=== RUN   TestTargetURLIsWildcardDial/fqdn-with-dots_accepted
+=== RUN   TestTargetURLIsWildcardDial/unix-scheme_accepted
+=== RUN   TestTargetURLIsWildcardDial/dns-scheme_accepted
+=== RUN   TestTargetURLIsWildcardDial/bogus-scheme_parse_error
+=== RUN   TestTargetURLIsWildcardDial/empty-host-parse_error
+=== RUN   TestTargetURLIsWildcardDial/missing-port-parse_error
+--- PASS: TestTargetURLIsWildcardDial (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/ipv4-0.0.0.0_wildcard (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/ipv6-::_wildcard (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/ipv4-routable_accepted (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/ipv4-routable-192.168_accepted (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/fqdn_accepted (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/fqdn-with-dots_accepted (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/unix-scheme_accepted (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/dns-scheme_accepted (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/bogus-scheme_parse_error (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/empty-host-parse_error (0.00s)
+    --- PASS: TestTargetURLIsWildcardDial/missing-port-parse_error (0.00s)
+=== RUN   TestLoadConfig_RejectsWildcardTargetURL
+=== RUN   TestLoadConfig_RejectsWildcardTargetURL/ipv4_wildcard
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RejectsWildcardTargetURL/ipv6_wildcard
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RejectsWildcardTargetURL/ipv4_wildcard_even_with_overlay_ip_set
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RejectsWildcardTargetURL/ipv6_wildcard_even_with_overlay_ip_set
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_RejectsWildcardTargetURL (0.00s)
+    --- PASS: TestLoadConfig_RejectsWildcardTargetURL/ipv4_wildcard (0.00s)
+    --- PASS: TestLoadConfig_RejectsWildcardTargetURL/ipv6_wildcard (0.00s)
+    --- PASS: TestLoadConfig_RejectsWildcardTargetURL/ipv4_wildcard_even_with_overlay_ip_set (0.00s)
+    --- PASS: TestLoadConfig_RejectsWildcardTargetURL/ipv6_wildcard_even_with_overlay_ip_set (0.00s)
+=== RUN   TestLoadConfig_AcceptsRoutableTargetURL
+=== RUN   TestLoadConfig_AcceptsRoutableTargetURL/fqdn
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_AcceptsRoutableTargetURL/routable_ipv4
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_AcceptsRoutableTargetURL/unix-scheme
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_AcceptsRoutableTargetURL/dns-scheme
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_AcceptsRoutableTargetURL (0.00s)
+    --- PASS: TestLoadConfig_AcceptsRoutableTargetURL/fqdn (0.00s)
+    --- PASS: TestLoadConfig_AcceptsRoutableTargetURL/routable_ipv4 (0.00s)
+    --- PASS: TestLoadConfig_AcceptsRoutableTargetURL/unix-scheme (0.00s)
+    --- PASS: TestLoadConfig_AcceptsRoutableTargetURL/dns-scheme (0.00s)
+=== RUN   TestConfig_MetricsListener_Defaults
+--- PASS: TestConfig_MetricsListener_Defaults (0.00s)
+=== RUN   TestConfig_MetricsListener_OverridesRespected
+--- PASS: TestConfig_MetricsListener_OverridesRespected (0.00s)
+=== RUN   TestLoadConfig_RestorePrefetchSwitch
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RestorePrefetchSwitch/env=
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RestorePrefetchSwitch/env=1
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RestorePrefetchSwitch/env=true
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RestorePrefetchSwitch/env=0
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestLoadConfig_RestorePrefetchSwitch/env=false
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/03 13:11:15 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfig_RestorePrefetchSwitch (0.01s)
+    --- PASS: TestLoadConfig_RestorePrefetchSwitch/env= (0.00s)
+    --- PASS: TestLoadConfig_RestorePrefetchSwitch/env=1 (0.00s)
+    --- PASS: TestLoadConfig_RestorePrefetchSwitch/env=true (0.00s)
+    --- PASS: TestLoadConfig_RestorePrefetchSwitch/env=0 (0.00s)
+    --- PASS: TestLoadConfig_RestorePrefetchSwitch/env=false (0.00s)
+=== RUN   TestWatchEgressBundleReload_HupAppliesNewBundle
+--- PASS: TestWatchEgressBundleReload_HupAppliesNewBundle (0.03s)
+=== RUN   TestWatchEgressBundleReload_StartupLoadWithoutSighup
+--- PASS: TestWatchEgressBundleReload_StartupLoadWithoutSighup (0.01s)
+=== RUN   TestWatchEgressBundleReload_MultipleHups
+--- PASS: TestWatchEgressBundleReload_MultipleHups (0.03s)
+=== RUN   TestWatchEgressBundleReload_EmptyPathDisablesGoroutine
+--- PASS: TestWatchEgressBundleReload_EmptyPathDisablesGoroutine (0.10s)
+=== RUN   TestWatchEgressBundleReload_MalformedTomlKeepsPriorBundle
+--- PASS: TestWatchEgressBundleReload_MalformedTomlKeepsPriorBundle (0.21s)
+=== RUN   TestWatchEgressBundleReload_StartupMalformedTomlKeepsEmpty
+--- PASS: TestWatchEgressBundleReload_StartupMalformedTomlKeepsEmpty (0.20s)
+=== RUN   TestWatchEgressBundleReload_ContextCancelExits
+--- PASS: TestWatchEgressBundleReload_ContextCancelExits (0.00s)
+=== RUN   TestLoadEgressBundle_Valid
+--- PASS: TestLoadEgressBundle_Valid (0.00s)
+=== RUN   TestLoadEgressBundle_MissingFileIsEmpty
+--- PASS: TestLoadEgressBundle_MissingFileIsEmpty (0.00s)
+=== RUN   TestLoadEgressBundle_EmptyFileIsEmpty
+--- PASS: TestLoadEgressBundle_EmptyFileIsEmpty (0.00s)
+=== RUN   TestLoadEgressBundle_MalformedTomlReturnsError
+--- PASS: TestLoadEgressBundle_MalformedTomlReturnsError (0.00s)
+=== RUN   TestLoadEgressBundle_PerEntryParseErrorDrops
+--- PASS: TestLoadEgressBundle_PerEntryParseErrorDrops (0.00s)
+=== RUN   TestLoadEgressBundle_RejectsZeroMask
+--- PASS: TestLoadEgressBundle_RejectsZeroMask (0.00s)
+=== RUN   TestLoadEgressBundle_Dedupes
+--- PASS: TestLoadEgressBundle_Dedupes (0.00s)
+=== RUN   TestLoadEgressBundle_AllRejectsGivesEmpty
+--- PASS: TestLoadEgressBundle_AllRejectsGivesEmpty (0.00s)
+=== RUN   TestEgressNetnsPollerFanoutAndClasses
+--- PASS: TestEgressNetnsPollerFanoutAndClasses (0.03s)
+=== RUN   TestEgressNetnsPollerFloodWindow
+--- PASS: TestEgressNetnsPollerFloodWindow (0.03s)
+=== RUN   TestEgressFlowLoggerWritesNewPairsOnce
+2026/10/03 13:11:15 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+2026/10/03 13:11:15 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+2026/10/03 13:11:15 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+2026/10/03 13:11:15 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+2026/10/03 13:11:15 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+--- PASS: TestEgressFlowLoggerWritesNewPairsOnce (0.03s)
+=== RUN   TestLoadStaticEgressIPBundle_Valid
+--- PASS: TestLoadStaticEgressIPBundle_Valid (0.00s)
+=== RUN   TestLoadStaticEgressIPBundle_MissingFile
+--- PASS: TestLoadStaticEgressIPBundle_MissingFile (0.00s)
+=== RUN   TestLoadStaticEgressIPBundle_DropsReservedRanges
+=== RUN   TestLoadStaticEgressIPBundle_DropsReservedRanges/RFC1918
+=== RUN   TestLoadStaticEgressIPBundle_DropsReservedRanges/CGN
+=== RUN   TestLoadStaticEgressIPBundle_DropsReservedRanges/loopback
+=== RUN   TestLoadStaticEgressIPBundle_DropsReservedRanges/link-local
+=== RUN   TestLoadStaticEgressIPBundle_DropsReservedRanges/multicast
+=== RUN   TestLoadStaticEgressIPBundle_DropsReservedRanges/TEST-NET-1
+=== RUN   TestLoadStaticEgressIPBundle_DropsReservedRanges/public
+=== RUN   TestLoadStaticEgressIPBundle_DropsReservedRanges/public-alt
+--- PASS: TestLoadStaticEgressIPBundle_DropsReservedRanges (0.01s)
+    --- PASS: TestLoadStaticEgressIPBundle_DropsReservedRanges/RFC1918 (0.00s)
+    --- PASS: TestLoadStaticEgressIPBundle_DropsReservedRanges/CGN (0.00s)
+    --- PASS: TestLoadStaticEgressIPBundle_DropsReservedRanges/loopback (0.00s)
+    --- PASS: TestLoadStaticEgressIPBundle_DropsReservedRanges/link-local (0.00s)
+    --- PASS: TestLoadStaticEgressIPBundle_DropsReservedRanges/multicast (0.00s)
+    --- PASS: TestLoadStaticEgressIPBundle_DropsReservedRanges/TEST-NET-1 (0.00s)
+    --- PASS: TestLoadStaticEgressIPBundle_DropsReservedRanges/public (0.00s)
+    --- PASS: TestLoadStaticEgressIPBundle_DropsReservedRanges/public-alt (0.00s)
+=== RUN   TestLoadStaticEgressIPBundle_DropsIPv6
+--- PASS: TestLoadStaticEgressIPBundle_DropsIPv6 (0.00s)
+=== RUN   TestLoadStaticEgressIPBundle_DropsMalformed
+--- PASS: TestLoadStaticEgressIPBundle_DropsMalformed (0.00s)
+=== RUN   TestLoadStaticEgressIPBundle_LastWinsPerApp
+--- PASS: TestLoadStaticEgressIPBundle_LastWinsPerApp (0.00s)
+=== RUN   TestLoadStaticEgressIPBundle_DropsEmptyRows
+--- PASS: TestLoadStaticEgressIPBundle_DropsEmptyRows (0.00s)
+=== RUN   TestLoadStaticEgressIPBundle_MalformedToml
+--- PASS: TestLoadStaticEgressIPBundle_MalformedToml (0.00s)
+=== RUN   TestWatchStaticEgressIPBundleReload_StartupLoad
+--- PASS: TestWatchStaticEgressIPBundleReload_StartupLoad (5.00s)
+=== RUN   TestWatchStaticEgressIPBundleReload_EmptyPathSkipsWatch
+--- PASS: TestWatchStaticEgressIPBundleReload_EmptyPathSkipsWatch (0.00s)
+=== RUN   TestEgressWatcherConditionalPolicyFields
+=== RUN   TestEgressWatcherConditionalPolicyFields/smtp-add
+=== RUN   TestEgressWatcherConditionalPolicyFields/smtp-source
+=== RUN   TestEgressWatcherConditionalPolicyFields/smtp-remove
+=== RUN   TestEgressWatcherConditionalPolicyFields/private-input
+=== RUN   TestEgressWatcherConditionalPolicyFields/public-interface
+--- PASS: TestEgressWatcherConditionalPolicyFields (0.00s)
+    --- PASS: TestEgressWatcherConditionalPolicyFields/smtp-add (0.00s)
+    --- PASS: TestEgressWatcherConditionalPolicyFields/smtp-source (0.00s)
+    --- PASS: TestEgressWatcherConditionalPolicyFields/smtp-remove (0.00s)
+    --- PASS: TestEgressWatcherConditionalPolicyFields/private-input (0.00s)
+    --- PASS: TestEgressWatcherConditionalPolicyFields/public-interface (0.00s)
+=== RUN   TestEgressWatcherConditional
+--- PASS: TestEgressWatcherConditional (0.00s)
+=== RUN   TestEgressWatcherConditionalFailureInvalidates
+=== RUN   TestEgressWatcherConditionalFailureInvalidates/mkdir
+=== RUN   TestEgressWatcherConditionalFailureInvalidates/write
+=== RUN   TestEgressWatcherConditionalFailureInvalidates/syntax
+=== RUN   TestEgressWatcherConditionalFailureInvalidates/replace
+=== RUN   TestEgressWatcherConditionalFailureInvalidates/load
+--- PASS: TestEgressWatcherConditionalFailureInvalidates (0.00s)
+    --- PASS: TestEgressWatcherConditionalFailureInvalidates/mkdir (0.00s)
+    --- PASS: TestEgressWatcherConditionalFailureInvalidates/write (0.00s)
+    --- PASS: TestEgressWatcherConditionalFailureInvalidates/syntax (0.00s)
+    --- PASS: TestEgressWatcherConditionalFailureInvalidates/replace (0.00s)
+    --- PASS: TestEgressWatcherConditionalFailureInvalidates/load (0.00s)
+=== RUN   TestEgressWatcherConditionalFailedForcedRepair
+--- PASS: TestEgressWatcherConditionalFailedForcedRepair (0.00s)
+=== RUN   TestEgressWatcherConditionalConcurrent
+--- PASS: TestEgressWatcherConditionalConcurrent (0.00s)
+=== RUN   TestEgressWatcherConditionalCanceled
+--- PASS: TestEgressWatcherConditionalCanceled (0.00s)
+=== RUN   TestEgressWatcher_Reload_HappyPath
+--- PASS: TestEgressWatcher_Reload_HappyPath (0.00s)
+=== RUN   TestApplyStartupEgressPolicy_MultiHostReloadsImmediately
+--- PASS: TestApplyStartupEgressPolicy_MultiHostReloadsImmediately (0.00s)
+=== RUN   TestApplyStartupEgressPolicy_SingleBoxKeepsBootPolicy
+--- PASS: TestApplyStartupEgressPolicy_SingleBoxKeepsBootPolicy (0.00s)
+=== RUN   TestEgressWatcher_Reload_CreatesMissingStagingDirectory
+--- PASS: TestEgressWatcher_Reload_CreatesMissingStagingDirectory (0.00s)
+=== RUN   TestEgressWatcher_Reload_SyntaxCheckFailureLeavesStagingOnDisk
+--- PASS: TestEgressWatcher_Reload_SyntaxCheckFailureLeavesStagingOnDisk (0.00s)
+=== RUN   TestEgressWatcher_Reload_AtomicReplaceFailureDoesNotCallReload
+--- PASS: TestEgressWatcher_Reload_AtomicReplaceFailureDoesNotCallReload (0.00s)
+=== RUN   TestAtomicReplace_HappyPath
+--- PASS: TestAtomicReplace_HappyPath (0.00s)
+=== RUN   TestAtomicReplace_DestinationIsDirectory
+--- PASS: TestAtomicReplace_DestinationIsDirectory (0.00s)
+=== RUN   TestEgressWatcher_Reload_ReloadFailureKeepsStagingAlive
+--- PASS: TestEgressWatcher_Reload_ReloadFailureKeepsStagingAlive (0.00s)
+=== RUN   TestEgressWatcher_Reload_PayloadFieldsAreLogged
+--- PASS: TestEgressWatcher_Reload_PayloadFieldsAreLogged (0.00s)
+=== RUN   TestFailureReportSenderRequiresAffirmativeAck
+2026/10/03 13:11:20 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/03 13:11:20 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/03 13:11:20 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/03 13:11:20 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/03 13:11:20 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/03 13:11:20 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+--- PASS: TestFailureReportSenderRequiresAffirmativeAck (0.03s)
+=== RUN   TestFailureReportWiringPersistsCanceledProducerContexts
+--- PASS: TestFailureReportWiringPersistsCanceledProducerContexts (0.00s)
+=== RUN   TestRecoveredFailureReportRequiresManagerOwnership
+2026/10/03 13:11:20 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+--- PASS: TestRecoveredFailureReportRequiresManagerOwnership (0.01s)
+=== RUN   TestParseDiskTelemetryDatagram
+--- PASS: TestParseDiskTelemetryDatagram (0.00s)
+=== RUN   TestParseDiskTelemetryDatagramRejectsInvalidSample
+--- PASS: TestParseDiskTelemetryDatagramRejectsInvalidSample (0.00s)
+=== RUN   TestParseFrameworkReadyEventPublish
+--- PASS: TestParseFrameworkReadyEventPublish (0.00s)
+=== RUN   TestFrameworkReadyDispatchesEventPublish
+--- PASS: TestFrameworkReadyDispatchesEventPublish (0.00s)
+=== RUN   TestParseFrameworkReadyDatagram
+=== RUN   TestParseFrameworkReadyDatagram/empty_body
+=== RUN   TestParseFrameworkReadyDatagram/unknown_type_byte_(closed-set_guard)
+=== RUN   TestParseFrameworkReadyDatagram/type-only,_no_warmup,_no_runtime
+=== RUN   TestParseFrameworkReadyDatagram/type_+_warmup,_no_NUL,_no_runtime
+=== RUN   TestParseFrameworkReadyDatagram/type_+_warmup_+_empty_runtime
+=== RUN   TestParseFrameworkReadyDatagram/type_+_warmup_+_node22_runtime
+=== RUN   TestParseFrameworkReadyDatagram/type_+_warmup_+_python312_runtime
+=== RUN   TestParseFrameworkReadyDatagram/type_+_warmup,_no_NUL_separator_at_all
+=== RUN   TestParseFrameworkReadyDatagram/type_byte_alone,_payload_mid-bytes_are_ignored
+=== RUN   TestParseFrameworkReadyDatagram/max-length_runtime_stays_within_64-byte_DGRAM_cap
+--- PASS: TestParseFrameworkReadyDatagram (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/empty_body (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/unknown_type_byte_(closed-set_guard) (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/type-only,_no_warmup,_no_runtime (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/type_+_warmup,_no_NUL,_no_runtime (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/type_+_warmup_+_empty_runtime (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/type_+_warmup_+_node22_runtime (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/type_+_warmup_+_python312_runtime (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/type_+_warmup,_no_NUL_separator_at_all (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/type_byte_alone,_payload_mid-bytes_are_ignored (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram/max-length_runtime_stays_within_64-byte_DGRAM_cap (0.00s)
+=== RUN   TestParseFrameworkReadyDatagram_NotExportedErrorErr
+--- PASS: TestParseFrameworkReadyDatagram_NotExportedErrorErr (0.00s)
+=== RUN   TestParseFrameworkReadySidecarHealth
+--- PASS: TestParseFrameworkReadySidecarHealth (0.00s)
+=== RUN   TestParseFrameworkReadySidecarHealthRejectsOversize
+--- PASS: TestParseFrameworkReadySidecarHealthRejectsOversize (0.00s)
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON
+=== RUN   TestParseFrameworkReadyDatagram_TypeClosedSet
+=== PAUSE TestParseFrameworkReadyDatagram_TypeClosedSet
+=== RUN   TestTypeLabel_WorkloadOOM
+=== PAUSE TestTypeLabel_WorkloadOOM
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap
+=== RUN   TestGuestVsockReceiverHealthReadinessAndBoundedMetrics
+--- PASS: TestGuestVsockReceiverHealthReadinessAndBoundedMetrics (0.00s)
+=== RUN   TestGuestEventStreamDispatchesClosedEventSet
+--- PASS: TestGuestEventStreamDispatchesClosedEventSet (0.00s)
+=== RUN   TestWorkloadIdentityUsesInstanceBoundUnixStream
+--- PASS: TestWorkloadIdentityUsesInstanceBoundUnixStream (0.27s)
+=== RUN   TestGuestReceiverStartupDoesNotBindHostCID
+2026/10/03 13:11:21 INFO framework_ready receiver registered vsock_host_port=1027 transport=firecracker_uds
+2026/10/03 13:11:21 INFO workload identity receiver registered vsock_host_port=1030 transport=firecracker_uds enabled=false
+--- PASS: TestGuestReceiverStartupDoesNotBindHostCID (0.00s)
+=== RUN   TestHostJournalMetricsCountsAllocatedSparseBytes
+--- PASS: TestHostJournalMetricsCountsAllocatedSparseBytes (0.00s)
+=== RUN   TestHostJournalMetricsSample
+--- PASS: TestHostJournalMetricsSample (0.00s)
+=== RUN   TestHostJournalMetricsReachCanonicalVMMDMetricsEndpoint
+--- PASS: TestHostJournalMetricsReachCanonicalVMMDMetricsEndpoint (0.17s)
+=== RUN   TestHostJournalMetricsPartialFailureKeepsLastGoodValues
+--- PASS: TestHostJournalMetricsPartialFailureKeepsLastGoodValues (0.00s)
+=== RUN   TestHostJournalMetricsTreatsNoGrepMatchesAsZero
+--- PASS: TestHostJournalMetricsTreatsNoGrepMatchesAsZero (0.00s)
+=== RUN   TestExecHostJournalCommandDoesNotInheritSystemdNotifyEnvironment
+--- PASS: TestExecHostJournalCommandDoesNotInheritSystemdNotifyEnvironment (0.00s)
+=== RUN   TestJournalNoMatchesRejectsRealFailures
+=== RUN   TestJournalNoMatchesRejectsRealFailures/empty_exit_one
+=== RUN   TestJournalNoMatchesRejectsRealFailures/diagnostic_exit_one
+=== RUN   TestJournalNoMatchesRejectsRealFailures/empty_exit_two
+=== RUN   TestJournalNoMatchesRejectsRealFailures/successful_empty_read
+--- PASS: TestJournalNoMatchesRejectsRealFailures (0.00s)
+    --- PASS: TestJournalNoMatchesRejectsRealFailures/empty_exit_one (0.00s)
+    --- PASS: TestJournalNoMatchesRejectsRealFailures/diagnostic_exit_one (0.00s)
+    --- PASS: TestJournalNoMatchesRejectsRealFailures/empty_exit_two (0.00s)
+    --- PASS: TestJournalNoMatchesRejectsRealFailures/successful_empty_read (0.00s)
+=== RUN   TestNetworkdDispatcherFilterIsNarrow
+--- PASS: TestNetworkdDispatcherFilterIsNarrow (0.00s)
+=== RUN   TestJournalPolicyHasFiniteBounds
+--- PASS: TestJournalPolicyHasFiniteBounds (0.00s)
+=== RUN   TestLivenessRecv_CounterSurvivesIntermittentSuccess
+--- PASS: TestLivenessRecv_CounterSurvivesIntermittentSuccess (0.00s)
+=== RUN   TestLivenessRecv_ThreeConsecFires
+--- PASS: TestLivenessRecv_ThreeConsecFires (0.00s)
+=== RUN   TestLivenessRecv_LoopStopsAfterThreshold
+--- PASS: TestLivenessRecv_LoopStopsAfterThreshold (2.10s)
+=== RUN   TestLivenessRecv_CancellationDuringProbeDoesNotReport
+--- PASS: TestLivenessRecv_CancellationDuringProbeDoesNotReport (0.00s)
+=== RUN   TestLivenessRecv_TimeoutCountedClassifies
+--- PASS: TestLivenessRecv_TimeoutCountedClassifies (0.00s)
+=== RUN   TestLivenessRecv_LoadCorrelatedTransportMissGetsBoundedGrace
+--- PASS: TestLivenessRecv_LoadCorrelatedTransportMissGetsBoundedGrace (0.00s)
+=== RUN   TestLivenessRecv_LoadCorrelatedProcessExitRemainsParkable
+--- PASS: TestLivenessRecv_LoadCorrelatedProcessExitRemainsParkable (0.00s)
+=== RUN   TestLivenessRecv_ConnRefusedCounted
+--- PASS: TestLivenessRecv_ConnRefusedCounted (0.00s)
+=== RUN   TestLivenessRecv_CooldownGateShortCircuits
+--- PASS: TestLivenessRecv_CooldownGateShortCircuits (0.00s)
+=== RUN   TestLivenessRecv_CooldownGateExpires
+--- PASS: TestLivenessRecv_CooldownGateExpires (0.00s)
+=== RUN   TestLivenessRecv_CooldownGateZeroCooldownBypasses
+--- PASS: TestLivenessRecv_CooldownGateZeroCooldownBypasses (0.00s)
+=== RUN   TestLivenessRecv_CooldownGateStampSurvivesInstanceReplacement
+--- PASS: TestLivenessRecv_CooldownGateStampSurvivesInstanceReplacement (0.00s)
+=== RUN   TestLivenessRecv_CooldownGateIsolatesDeployments
+--- PASS: TestLivenessRecv_CooldownGateIsolatesDeployments (0.00s)
+=== RUN   TestLivenessRecv_CooldownGateEmptyDeploymentIDBypasses
+--- PASS: TestLivenessRecv_CooldownGateEmptyDeploymentIDBypasses (0.00s)
+=== RUN   TestLivenessRecv_UnauthorizedCountedClassifies
+--- PASS: TestLivenessRecv_UnauthorizedCountedClassifies (0.00s)
+=== RUN   TestLivenessRecv_UnauthorizedResetsOnSuccess
+--- PASS: TestLivenessRecv_UnauthorizedResetsOnSuccess (0.00s)
+=== RUN   TestLivenessRecv_ForbiddenCountedClassifies
+--- PASS: TestLivenessRecv_ForbiddenCountedClassifies (0.00s)
+=== RUN   TestLivenessRecv_FirecrackerVsockHandshake
+--- PASS: TestLivenessRecv_FirecrackerVsockHandshake (0.00s)
+=== RUN   TestVMMDLogArchiveSink_EnqueueDrainsToSpool
+--- PASS: TestVMMDLogArchiveSink_EnqueueDrainsToSpool (0.00s)
+=== RUN   TestRun_BadConfigPath
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestRun_BadConfigPath (0.04s)
+=== RUN   TestRun_DrainsOnCancel
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestRun_DrainsOnCancel (0.05s)
+=== RUN   TestRun_ListenFailurePropagates
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestRun_ListenFailurePropagates (0.06s)
+=== RUN   TestRun_PrepareJailHelperFailurePropagates
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestRun_PrepareJailHelperFailurePropagates (0.04s)
+=== RUN   TestRun_FCDetectFailureIsWarning
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestRun_FCDetectFailureIsWarning (0.07s)
+=== RUN   TestDefaultDeps
+--- PASS: TestDefaultDeps (0.00s)
+=== RUN   TestLoadOrGenerateHostIdentity_FirstBoot
+--- PASS: TestLoadOrGenerateHostIdentity_FirstBoot (0.00s)
+=== RUN   TestLoadOrGenerateHostIdentity_Restart
+--- PASS: TestLoadOrGenerateHostIdentity_Restart (0.00s)
+=== RUN   TestLoadOrGenerateHostIdentity_WriteRecipientFailure
+--- PASS: TestLoadOrGenerateHostIdentity_WriteRecipientFailure (0.00s)
+=== RUN   TestLoadOrGenerateHostIdentity_RejectsInsecureHostKeyPerms
+--- PASS: TestLoadOrGenerateHostIdentity_RejectsInsecureHostKeyPerms (0.00s)
+=== RUN   TestRun_RestartInventoryCancellation
+=== RUN   TestRun_RestartInventoryCancellation/parent_cancellation
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestRun_RestartInventoryCancellation/inventory_cancellation_without_parent
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestRun_RestartInventoryCancellation/independent_failure_during_stop
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestRun_RestartInventoryCancellation (0.15s)
+    --- PASS: TestRun_RestartInventoryCancellation/parent_cancellation (0.05s)
+    --- PASS: TestRun_RestartInventoryCancellation/inventory_cancellation_without_parent (0.06s)
+    --- PASS: TestRun_RestartInventoryCancellation/independent_failure_during_stop (0.05s)
+=== RUN   TestManagedPostgresAdmissionGuard
+=== RUN   TestManagedPostgresAdmissionGuard/unfenced
+=== RUN   TestManagedPostgresAdmissionGuard/fenced
+=== RUN   TestManagedPostgresAdmissionGuard/read_error
+=== RUN   TestManagedPostgresAdmissionGuard/unsupported_store
+--- PASS: TestManagedPostgresAdmissionGuard (0.00s)
+    --- PASS: TestManagedPostgresAdmissionGuard/unfenced (0.00s)
+    --- PASS: TestManagedPostgresAdmissionGuard/fenced (0.00s)
+    --- PASS: TestManagedPostgresAdmissionGuard/read_error (0.00s)
+    --- PASS: TestManagedPostgresAdmissionGuard/unsupported_store (0.00s)
+=== RUN   TestManagedPostgresAdmissionGuardPreservesCancellation
+--- PASS: TestManagedPostgresAdmissionGuardPreservesCancellation (0.00s)
+=== RUN   TestRunDefaultLocalOpensConfiguredAdmissionDatabase
+=== RUN   TestRunDefaultLocalOpensConfiguredAdmissionDatabase/toml
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+=== RUN   TestRunDefaultLocalOpensConfiguredAdmissionDatabase/env
+2026/10/03 13:11:23 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestRunDefaultLocalOpensConfiguredAdmissionDatabase (0.09s)
+    --- PASS: TestRunDefaultLocalOpensConfiguredAdmissionDatabase/toml (0.05s)
+    --- PASS: TestRunDefaultLocalOpensConfiguredAdmissionDatabase/env (0.04s)
+=== RUN   TestMetricsMuxCombinesWakeExecutionAndEventWrites
+--- PASS: TestMetricsMuxCombinesWakeExecutionAndEventWrites (0.35s)
+=== RUN   TestCapacityPublishesSignedInventoryWhenMetricsFail
+--- PASS: TestCapacityPublishesSignedInventoryWhenMetricsFail (0.00s)
+=== RUN   TestLoadNodeSigningKey_HappyPath
+--- PASS: TestLoadNodeSigningKey_HappyPath (0.00s)
+=== RUN   TestLoadNodeSigningKey_MissingFile
+--- PASS: TestLoadNodeSigningKey_MissingFile (0.00s)
+=== RUN   TestLoadNodeSigningKey_RejectsLooseMode
+=== RUN   TestLoadNodeSigningKey_RejectsLooseMode/group-read_0o440
+=== RUN   TestLoadNodeSigningKey_RejectsLooseMode/world-read_0o444
+=== RUN   TestLoadNodeSigningKey_RejectsLooseMode/group-write_0o460
+    node_signing_key_test.go:148: platform dropped high bits: got mode 0440, want 0460
+=== RUN   TestLoadNodeSigningKey_RejectsLooseMode/owner-write_0o600
+=== RUN   TestLoadNodeSigningKey_RejectsLooseMode/owner-rwx_0o700
+=== RUN   TestLoadNodeSigningKey_RejectsLooseMode/sticky_0o1400
+    node_signing_key_test.go:148: platform dropped high bits: got mode 0400, want 01400
+=== RUN   TestLoadNodeSigningKey_RejectsLooseMode/setuid_0o4600
+    node_signing_key_test.go:148: platform dropped high bits: got mode 0600, want 04600
+--- PASS: TestLoadNodeSigningKey_RejectsLooseMode (0.01s)
+    --- PASS: TestLoadNodeSigningKey_RejectsLooseMode/group-read_0o440 (0.00s)
+    --- PASS: TestLoadNodeSigningKey_RejectsLooseMode/world-read_0o444 (0.00s)
+    --- SKIP: TestLoadNodeSigningKey_RejectsLooseMode/group-write_0o460 (0.00s)
+    --- PASS: TestLoadNodeSigningKey_RejectsLooseMode/owner-write_0o600 (0.00s)
+    --- PASS: TestLoadNodeSigningKey_RejectsLooseMode/owner-rwx_0o700 (0.00s)
+    --- SKIP: TestLoadNodeSigningKey_RejectsLooseMode/sticky_0o1400 (0.00s)
+    --- SKIP: TestLoadNodeSigningKey_RejectsLooseMode/setuid_0o4600 (0.00s)
+=== RUN   TestLoadNodeSigningKey_Accepts0400
+--- PASS: TestLoadNodeSigningKey_Accepts0400 (0.00s)
+=== RUN   TestLoadNodeSigningKey_RejectsNonPEM
+--- PASS: TestLoadNodeSigningKey_RejectsNonPEM (0.00s)
+=== RUN   TestLoadNodeSigningKey_RejectsWrongPEMType
+--- PASS: TestLoadNodeSigningKey_RejectsWrongPEMType (0.00s)
+=== RUN   TestLoadNodeSigningKey_RejectsNonP256Curve
+--- PASS: TestLoadNodeSigningKey_RejectsNonP256Curve (0.04s)
+=== RUN   TestLoadNodeSigningKey_RejectsSetuidStickySetgid
+=== RUN   TestLoadNodeSigningKey_RejectsSetuidStickySetgid/setuid_0o4600
+    node_signing_key_test.go:306: platform dropped high bits: got mode 0600, want 04600 (e.g. macOS HFS+ doesn't preserve sticky/setgid on regular files)
+=== RUN   TestLoadNodeSigningKey_RejectsSetuidStickySetgid/setgid_0o2400
+    node_signing_key_test.go:306: platform dropped high bits: got mode 0400, want 02400 (e.g. macOS HFS+ doesn't preserve sticky/setgid on regular files)
+=== RUN   TestLoadNodeSigningKey_RejectsSetuidStickySetgid/sticky_0o1400
+    node_signing_key_test.go:306: platform dropped high bits: got mode 0400, want 01400 (e.g. macOS HFS+ doesn't preserve sticky/setgid on regular files)
+=== RUN   TestLoadNodeSigningKey_RejectsSetuidStickySetgid/setuid+sticky_0o5600
+    node_signing_key_test.go:306: platform dropped high bits: got mode 0600, want 05600 (e.g. macOS HFS+ doesn't preserve sticky/setgid on regular files)
+--- PASS: TestLoadNodeSigningKey_RejectsSetuidStickySetgid (0.00s)
+    --- SKIP: TestLoadNodeSigningKey_RejectsSetuidStickySetgid/setuid_0o4600 (0.00s)
+    --- SKIP: TestLoadNodeSigningKey_RejectsSetuidStickySetgid/setgid_0o2400 (0.00s)
+    --- SKIP: TestLoadNodeSigningKey_RejectsSetuidStickySetgid/sticky_0o1400 (0.00s)
+    --- SKIP: TestLoadNodeSigningKey_RejectsSetuidStickySetgid/setuid+sticky_0o5600 (0.00s)
+=== RUN   TestLoadNodeSigningKey_OpenFDBindsModeAndBody
+    node_signing_key_test.go:344: open-fd TOCTOU posture is a structural pin, not an observable behaviour
+--- SKIP: TestLoadNodeSigningKey_OpenFDBindsModeAndBody (0.00s)
+=== RUN   TestLoadNodeSigningKey_PathOverrideWinsOverEnv
+--- PASS: TestLoadNodeSigningKey_PathOverrideWinsOverEnv (0.00s)
+=== RUN   TestDetectOverlayIP_PinnedInterfaceWinsOverCIDRScoring
+--- PASS: TestDetectOverlayIP_PinnedInterfaceWinsOverCIDRScoring (0.00s)
+=== RUN   TestDetectOverlayIP_PinnedInterfaceMissingNICFallsBackToScoring
+--- PASS: TestDetectOverlayIP_PinnedInterfaceMissingNICFallsBackToScoring (0.00s)
+=== RUN   TestDefaultDetectOverlayIP_HonorsOverlayInterfaceFromConfig
+--- PASS: TestDefaultDetectOverlayIP_HonorsOverlayInterfaceFromConfig (0.00s)
+=== RUN   TestParseIPAddrShowLine_Valid
+=== RUN   TestParseIPAddrShowLine_Valid/single_line_with_/24_mask
+=== RUN   TestParseIPAddrShowLine_Valid/single_line_with_/32_mask
+=== RUN   TestParseIPAddrShowLine_Valid/single_line_with_/16_mask
+=== RUN   TestParseIPAddrShowLine_Valid/v6-only_line_is_skipped,_returns_false
+=== RUN   TestParseIPAddrShowLine_Valid/no_inet_field_at_all
+=== RUN   TestParseIPAddrShowLine_Valid/malformed_inet_value
+=== RUN   TestParseIPAddrShowLine_Valid/empty_line
+=== RUN   TestParseIPAddrShowLine_Valid/inet6_+_inet_on_separate_fields_—_first_hit_wins
+--- PASS: TestParseIPAddrShowLine_Valid (0.00s)
+    --- PASS: TestParseIPAddrShowLine_Valid/single_line_with_/24_mask (0.00s)
+    --- PASS: TestParseIPAddrShowLine_Valid/single_line_with_/32_mask (0.00s)
+    --- PASS: TestParseIPAddrShowLine_Valid/single_line_with_/16_mask (0.00s)
+    --- PASS: TestParseIPAddrShowLine_Valid/v6-only_line_is_skipped,_returns_false (0.00s)
+    --- PASS: TestParseIPAddrShowLine_Valid/no_inet_field_at_all (0.00s)
+    --- PASS: TestParseIPAddrShowLine_Valid/malformed_inet_value (0.00s)
+    --- PASS: TestParseIPAddrShowLine_Valid/empty_line (0.00s)
+    --- PASS: TestParseIPAddrShowLine_Valid/inet6_+_inet_on_separate_fields_—_first_hit_wins (0.00s)
+=== RUN   TestWarnIfPkiCNMismatch_EmptyNameSilent
+--- PASS: TestWarnIfPkiCNMismatch_EmptyNameSilent (0.00s)
+=== RUN   TestWarnIfPkiCNMismatch_NilServerTLSSilent
+--- PASS: TestWarnIfPkiCNMismatch_NilServerTLSSilent (0.00s)
+=== RUN   TestWarnIfPkiCNMismatch_EmptyCertSilent
+--- PASS: TestWarnIfPkiCNMismatch_EmptyCertSilent (0.00s)
+=== RUN   TestWarnIfPkiCNMismatch_Match
+--- PASS: TestWarnIfPkiCNMismatch_Match (0.00s)
+=== RUN   TestWarnIfPkiCNMismatch_MatchWithSuffix
+--- PASS: TestWarnIfPkiCNMismatch_MatchWithSuffix (0.00s)
+=== RUN   TestWarnIfPkiCNMismatch_Mismatch
+--- PASS: TestWarnIfPkiCNMismatch_Mismatch (0.00s)
+=== RUN   TestLeafCNFromTLSConfig
+=== RUN   TestLeafCNFromTLSConfig/nil_cfg
+=== RUN   TestLeafCNFromTLSConfig/no_certificates
+=== RUN   TestLeafCNFromTLSConfig/empty_der_blob
+=== RUN   TestLeafCNFromTLSConfig/valid_cert
+--- PASS: TestLeafCNFromTLSConfig (0.00s)
+    --- PASS: TestLeafCNFromTLSConfig/nil_cfg (0.00s)
+    --- PASS: TestLeafCNFromTLSConfig/no_certificates (0.00s)
+    --- PASS: TestLeafCNFromTLSConfig/empty_der_blob (0.00s)
+    --- PASS: TestLeafCNFromTLSConfig/valid_cert (0.00s)
+=== RUN   TestRunEgressPoll_PrimedOnFirstTick
+--- PASS: TestRunEgressPoll_PrimedOnFirstTick (1.60s)
+=== RUN   TestRunEgressPoll_DeltaOnSecondTick
+--- PASS: TestRunEgressPoll_DeltaOnSecondTick (1.09s)
+=== RUN   TestRunEgressPoll_CounterReset
+--- PASS: TestRunEgressPoll_CounterReset (1.06s)
+=== RUN   TestRunEgressPoll_PopCountersError
+--- PASS: TestRunEgressPoll_PopCountersError (0.92s)
+=== RUN   TestAppReadinessProbeTransitionsAreReversible
+--- PASS: TestAppReadinessProbeTransitionsAreReversible (0.00s)
+=== RUN   TestBuildReadinessProbe_HappyPath
+--- PASS: TestBuildReadinessProbe_HappyPath (0.00s)
+=== RUN   TestBuildReadinessProbe_ProbeEndToEnd
+--- PASS: TestBuildReadinessProbe_ProbeEndToEnd (0.00s)
+=== RUN   TestGrpcBoundSignal_MarkBoundIdempotent
+--- PASS: TestGrpcBoundSignal_MarkBoundIdempotent (0.00s)
+=== RUN   TestNextBackoff_Ladder
+=== PAUSE TestNextBackoff_Ladder
+=== RUN   TestNextBackoff_Capped
+=== PAUSE TestNextBackoff_Capped
+=== RUN   TestBackoffLadder_Pinned
+=== PAUSE TestBackoffLadder_Pinned
+=== RUN   TestSleepCtx_JitterWithinBounds
+--- PASS: TestSleepCtx_JitterWithinBounds (0.00s)
+=== RUN   TestSleepCtx_CtxCancelReturnsFalse
+=== PAUSE TestSleepCtx_CtxCancelReturnsFalse
+=== RUN   TestSleepCtx_TimerFiresReturnsTrue
+=== PAUSE TestSleepCtx_TimerFiresReturnsTrue
+=== RUN   TestSetRngForTest_RestoresOnDefer
+--- PASS: TestSetRngForTest_RestoresOnDefer (0.00s)
+=== RUN   TestRegisterComputeNode_HappyPath
+--- PASS: TestRegisterComputeNode_HappyPath (0.00s)
+=== RUN   TestRegisterComputeNode_Idempotent
+--- PASS: TestRegisterComputeNode_Idempotent (0.00s)
+=== RUN   TestRegisterComputeNode_EmptyNameSkips
+--- PASS: TestRegisterComputeNode_EmptyNameSkips (0.00s)
+=== RUN   TestRegisterComputeNode_RejectsZeroFields
+--- PASS: TestRegisterComputeNode_RejectsZeroFields (0.00s)
+=== RUN   TestRegisterComputeNode_RejectsNegativeVCPUBudget
+--- PASS: TestRegisterComputeNode_RejectsNegativeVCPUBudget (0.00s)
+=== RUN   TestRegisterComputeNode_DefaultsVCPUBudgetFromAPI
+--- PASS: TestRegisterComputeNode_DefaultsVCPUBudgetFromAPI (0.00s)
+=== RUN   TestRegisterComputeNode_HonorsExplicitVCPUBudget
+--- PASS: TestRegisterComputeNode_HonorsExplicitVCPUBudget (0.00s)
+=== RUN   TestRegisterComputeNode_OverlayDetectionErrorContinues
+--- PASS: TestRegisterComputeNode_OverlayDetectionErrorContinues (0.00s)
+=== RUN   TestRegisterComputeNode_TargetURLPreservesOperatorValue
+--- PASS: TestRegisterComputeNode_TargetURLPreservesOperatorValue (0.00s)
+=== RUN   TestRegisterComputeNode_TargetURLFromConfig
+--- PASS: TestRegisterComputeNode_TargetURLFromConfig (0.00s)
+=== RUN   TestRegisterComputeNode_AppendsFaasSuffix
+--- PASS: TestRegisterComputeNode_AppendsFaasSuffix (0.00s)
+=== RUN   TestRegisterComputeNode_PreservesExistingFaasSuffix
+--- PASS: TestRegisterComputeNode_PreservesExistingFaasSuffix (0.00s)
+=== RUN   TestRegisterComputeNode_TrimmedNameAppendsSuffix
+--- PASS: TestRegisterComputeNode_TrimmedNameAppendsSuffix (0.00s)
+=== RUN   TestResolveTargetURL_ConfigResolution
+=== RUN   TestResolveTargetURL_ConfigResolution/explicit_target_url_wins
+=== RUN   TestResolveTargetURL_ConfigResolution/overlay_ip_fallback
+=== RUN   TestResolveTargetURL_ConfigResolution/single-box_unix_fallback
+=== RUN   TestResolveTargetURL_ConfigResolution/whitespace_target_url_treated_as_empty
+--- PASS: TestResolveTargetURL_ConfigResolution (0.00s)
+    --- PASS: TestResolveTargetURL_ConfigResolution/explicit_target_url_wins (0.00s)
+    --- PASS: TestResolveTargetURL_ConfigResolution/overlay_ip_fallback (0.00s)
+    --- PASS: TestResolveTargetURL_ConfigResolution/single-box_unix_fallback (0.00s)
+    --- PASS: TestResolveTargetURL_ConfigResolution/whitespace_target_url_treated_as_empty (0.00s)
+=== RUN   TestRegisterComputeNodeKey_HappyPath
+--- PASS: TestRegisterComputeNodeKey_HappyPath (0.00s)
+=== RUN   TestRegisterComputeNodeKey_NilKeySkips
+--- PASS: TestRegisterComputeNodeKey_NilKeySkips (0.00s)
+=== RUN   TestRegisterComputeNodeKey_EmptyNodeIDSkips
+--- PASS: TestRegisterComputeNodeKey_EmptyNodeIDSkips (0.00s)
+=== RUN   TestRegisterComputeNodeKey_Idempotent
+--- PASS: TestRegisterComputeNodeKey_Idempotent (0.00s)
+=== RUN   TestPublicKeyPEM_NilKey
+--- PASS: TestPublicKeyPEM_NilKey (0.00s)
+=== RUN   TestDetectOverlayIP_PrefersCIDRMatch
+--- PASS: TestDetectOverlayIP_PrefersCIDRMatch (0.00s)
+=== RUN   TestDetectOverlayIP_FirstLineWhenNoCIDRMatch
+--- PASS: TestDetectOverlayIP_FirstLineWhenNoCIDRMatch (0.00s)
+=== RUN   TestDetectOverlayIP_FirstLineWhenNoPreferCIDR
+--- PASS: TestDetectOverlayIP_FirstLineWhenNoPreferCIDR (0.00s)
+=== RUN   TestDetectOverlayIP_ErrorsOnEmptyOutput
+--- PASS: TestDetectOverlayIP_ErrorsOnEmptyOutput (0.00s)
+=== RUN   TestParseTailscaleIPLines
+=== RUN   TestParseTailscaleIPLines/ipv4-only
+=== RUN   TestParseTailscaleIPLines/ipv4-with-ipv6
+=== RUN   TestParseTailscaleIPLines/trailing-whitespace
+=== RUN   TestParseTailscaleIPLines/blank-lines
+=== RUN   TestParseTailscaleIPLines/garbage-line
+=== RUN   TestParseTailscaleIPLines/empty-after-trim
+--- PASS: TestParseTailscaleIPLines (0.00s)
+    --- PASS: TestParseTailscaleIPLines/ipv4-only (0.00s)
+    --- PASS: TestParseTailscaleIPLines/ipv4-with-ipv6 (0.00s)
+    --- PASS: TestParseTailscaleIPLines/trailing-whitespace (0.00s)
+    --- PASS: TestParseTailscaleIPLines/blank-lines (0.00s)
+    --- PASS: TestParseTailscaleIPLines/garbage-line (0.00s)
+    --- PASS: TestParseTailscaleIPLines/empty-after-trim (0.00s)
+=== RUN   TestScoreByCIDR
+=== RUN   TestScoreByCIDR/empty-prefer
+=== RUN   TestScoreByCIDR/single-match
+=== RUN   TestScoreByCIDR/tie-stable-order
+=== RUN   TestScoreByCIDR/no-match
+=== RUN   TestScoreByCIDR/empty-list
+--- PASS: TestScoreByCIDR (0.00s)
+    --- PASS: TestScoreByCIDR/empty-prefer (0.00s)
+    --- PASS: TestScoreByCIDR/single-match (0.00s)
+    --- PASS: TestScoreByCIDR/tie-stable-order (0.00s)
+    --- PASS: TestScoreByCIDR/no-match (0.00s)
+    --- PASS: TestScoreByCIDR/empty-list (0.00s)
+=== RUN   TestRegisterComputeNode_StampsFingerprintOnFreshRow
+--- PASS: TestRegisterComputeNode_StampsFingerprintOnFreshRow (0.00s)
+=== RUN   TestRegisterComputeNode_AcceptsMatchingFingerprint
+--- PASS: TestRegisterComputeNode_AcceptsMatchingFingerprint (0.00s)
+=== RUN   TestRegisterComputeNode_RefusesFingerprintDrift
+--- PASS: TestRegisterComputeNode_RefusesFingerprintDrift (0.00s)
+=== RUN   TestLoadConfigResourceJournal
+2026/10/03 13:11:29 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/03 13:11:29 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfigResourceJournal (0.00s)
+=== RUN   TestConfiguredRuntimeBaseGenerations
+--- PASS: TestConfiguredRuntimeBaseGenerations (0.00s)
+=== RUN   TestConfiguredRuntimeBaseGenerations_NamedNodeRequiresPinnedRefs
+--- PASS: TestConfiguredRuntimeBaseGenerations_NamedNodeRequiresPinnedRefs (0.00s)
+=== RUN   TestRuntimeSecretReloadStatusIsVersionFenced
+--- PASS: TestRuntimeSecretReloadStatusIsVersionFenced (0.00s)
+=== RUN   TestRuntimeSecretApplicationAckIsVersionFenced
+--- PASS: TestRuntimeSecretApplicationAckIsVersionFenced (0.00s)
+=== RUN   TestLoadRuntimeConfigReturnsDefaultScopeAndRevision
+--- PASS: TestLoadRuntimeConfigReturnsDefaultScopeAndRevision (0.00s)
+=== RUN   TestLoadRuntimeConfigReturnsEmptyMapWithoutRows
+--- PASS: TestLoadRuntimeConfigReturnsEmptyMapWithoutRows (0.00s)
+=== RUN   TestRuntimeConfigCacheExpiresAndCopies
+--- PASS: TestRuntimeConfigCacheExpiresAndCopies (0.00s)
+=== RUN   TestRuntimeConfigCacheInvalidatesByIdentity
+--- PASS: TestRuntimeConfigCacheInvalidatesByIdentity (0.00s)
+=== RUN   TestLoadRuntimeSecretsHonorsDeploymentScopeAndAllowlist
+--- PASS: TestLoadRuntimeSecretsHonorsDeploymentScopeAndAllowlist (0.01s)
+=== RUN   TestLoadRuntimeSecretsRejectsSidecarDeployment
+--- PASS: TestLoadRuntimeSecretsRejectsSidecarDeployment (0.00s)
+=== RUN   TestLoadRuntimeSecretsForWorkloadUsesOnlySidecarGrant
+--- PASS: TestLoadRuntimeSecretsForWorkloadUsesOnlySidecarGrant (0.02s)
+=== RUN   TestRuntimeSidecarSecretDeletionProducesEmptyProjection
+--- PASS: TestRuntimeSidecarSecretDeletionProducesEmptyProjection (0.00s)
+=== RUN   TestRuntimeSidecarSecretDeletionRequiresReloadOptIn
+--- PASS: TestRuntimeSidecarSecretDeletionRequiresReloadOptIn (0.00s)
+=== RUN   TestRuntimeMainSecretDeletionProducesEmptyProjectionWhenOptedIn
+--- PASS: TestRuntimeMainSecretDeletionProducesEmptyProjectionWhenOptedIn (0.00s)
+=== RUN   TestRuntimeSecretReloadStatusAndAckKeepSidecarIdentity
+--- PASS: TestRuntimeSecretReloadStatusAndAckKeepSidecarIdentity (0.00s)
+=== RUN   TestLoadRuntimeSecretsRepresentsEmptyPayload
+--- PASS: TestLoadRuntimeSecretsRepresentsEmptyPayload (0.00s)
+=== RUN   TestLoadRuntimeSecretsFailsLoudForMissingAllowlistedKey
+--- PASS: TestLoadRuntimeSecretsFailsLoudForMissingAllowlistedKey (0.00s)
+=== RUN   TestRuntimeSecretRefreshExcludesMigrationBindings
+--- PASS: TestRuntimeSecretRefreshExcludesMigrationBindings (0.00s)
+=== RUN   TestLoadServiceProxyCA
+=== RUN   TestLoadServiceProxyCA/valid_constrained_CA
+=== RUN   TestLoadServiceProxyCA/unconstrained_CA
+=== RUN   TestLoadServiceProxyCA/leaf
+=== RUN   TestLoadServiceProxyCA/private_key
+=== RUN   TestLoadServiceProxyCA/empty
+--- PASS: TestLoadServiceProxyCA (0.01s)
+    --- PASS: TestLoadServiceProxyCA/valid_constrained_CA (0.00s)
+    --- PASS: TestLoadServiceProxyCA/unconstrained_CA (0.00s)
+    --- PASS: TestLoadServiceProxyCA/leaf (0.00s)
+    --- PASS: TestLoadServiceProxyCA/private_key (0.00s)
+    --- PASS: TestLoadServiceProxyCA/empty (0.00s)
+=== RUN   TestSidecarFailureClassUserError_Pinned
+--- PASS: TestSidecarFailureClassUserError_Pinned (0.00s)
+=== RUN   TestSidecarInitFailedAuditPayload_FailureClass
+--- PASS: TestSidecarInitFailedAuditPayload_FailureClass (0.00s)
+=== RUN   TestSidecarWireMirror_InitExit
+--- PASS: TestSidecarWireMirror_InitExit (0.00s)
+=== RUN   TestSidecarWireMirror_Restart
+--- PASS: TestSidecarWireMirror_Restart (0.00s)
+=== RUN   TestSidecarInitFailed_FlipsDeploymentRow
+--- PASS: TestSidecarInitFailed_FlipsDeploymentRow (0.00s)
+=== RUN   TestSidecarInitOK_DoesNotFlipDeploymentRow
+--- PASS: TestSidecarInitOK_DoesNotFlipDeploymentRow (0.00s)
+=== RUN   TestSidecarInitFailed_EmptyDeploymentIDSkipsFlip
+--- PASS: TestSidecarInitFailed_EmptyDeploymentIDSkipsFlip (0.00s)
+=== RUN   TestSidecarInitFailed_NilFailerDoesNotPanic
+--- PASS: TestSidecarInitFailed_NilFailerDoesNotPanic (0.00s)
+=== RUN   TestSidecarInitFailed_FailerErrorLoggedAndDropped
+--- PASS: TestSidecarInitFailed_FailerErrorLoggedAndDropped (0.00s)
+=== RUN   TestParseFrameworkReadyDatagram_TailEvent
+=== RUN   TestParseFrameworkReadyDatagram_TailEvent/tail_completed_(outcome=1,_elapsed=0)
+=== RUN   TestParseFrameworkReadyDatagram_TailEvent/tail_completed_(outcome=1,_elapsed=3500ms)
+=== RUN   TestParseFrameworkReadyDatagram_TailEvent/tail_failed_(outcome=2,_elapsed=42ms)
+=== RUN   TestParseFrameworkReadyDatagram_TailEvent/tail_timeout_(outcome=3,_elapsed=30000ms_=_Pro_plan_cap)
+=== RUN   TestParseFrameworkReadyDatagram_TailEvent/tail_timeout_(outcome=3,_elapsed=60000ms_=_Scale_plan_cap)
+=== RUN   TestParseFrameworkReadyDatagram_TailEvent/short_read_—_type_only,_missing_outcome_byte
+=== RUN   TestParseFrameworkReadyDatagram_TailEvent/short_read_—_type+outcome,_missing_elapsed_ms
+=== RUN   TestParseFrameworkReadyDatagram_TailEvent/type_byte_+_outcome_+_reserved_(no_elapsed_ms)
+--- PASS: TestParseFrameworkReadyDatagram_TailEvent (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TailEvent/tail_completed_(outcome=1,_elapsed=0) (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TailEvent/tail_completed_(outcome=1,_elapsed=3500ms) (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TailEvent/tail_failed_(outcome=2,_elapsed=42ms) (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TailEvent/tail_timeout_(outcome=3,_elapsed=30000ms_=_Pro_plan_cap) (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TailEvent/tail_timeout_(outcome=3,_elapsed=60000ms_=_Scale_plan_cap) (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TailEvent/short_read_—_type_only,_missing_outcome_byte (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TailEvent/short_read_—_type+outcome,_missing_elapsed_ms (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TailEvent/type_byte_+_outcome_+_reserved_(no_elapsed_ms) (0.00s)
+=== RUN   TestParseFWReadyMsg_TypeLabel_Tail
+--- PASS: TestParseFWReadyMsg_TypeLabel_Tail (0.00s)
+=== RUN   TestTailEventOutcome_ClosedSet
+--- PASS: TestTailEventOutcome_ClosedSet (0.00s)
+=== RUN   TestVmmdTLSReload_SIGHUPRotatesLiveConfig
+--- PASS: TestVmmdTLSReload_SIGHUPRotatesLiveConfig (0.00s)
+=== RUN   TestVmmdTLSReload_MalformedReloadKeepsPrior
+--- PASS: TestVmmdTLSReload_MalformedReloadKeepsPrior (0.10s)
+=== RUN   TestLoadWorkloadIdentitySigner
+--- PASS: TestLoadWorkloadIdentitySigner (0.13s)
+=== RUN   TestLoadWorkloadIdentitySignerDisabled
+--- PASS: TestLoadWorkloadIdentitySignerDisabled (0.00s)
+=== CONT  TestRunCapacityPublish_RoundTripThreeReports
+--- PASS: TestRunCapacityPublish_RoundTripThreeReports (0.13s)
+=== CONT  TestSleepCtx_CtxCancelReturnsFalse
+--- PASS: TestSleepCtx_CtxCancelReturnsFalse (0.00s)
+=== CONT  TestSleepCtx_TimerFiresReturnsTrue
+--- PASS: TestSleepCtx_TimerFiresReturnsTrue (0.03s)
+=== CONT  TestBackoffLadder_Pinned
+--- PASS: TestBackoffLadder_Pinned (0.00s)
+=== CONT  TestNextBackoff_Ladder
+--- PASS: TestNextBackoff_Ladder (0.00s)
+=== CONT  TestNextBackoff_Capped
+--- PASS: TestNextBackoff_Capped (0.00s)
+=== CONT  TestTypeLabel_WorkloadOOM
+--- PASS: TestTypeLabel_WorkloadOOM (0.00s)
+=== CONT  TestParseFrameworkReadyDatagram_TypeClosedSet
+=== RUN   TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x00
+=== PAUSE TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x00
+=== RUN   TestParseFrameworkReadyDatagram_TypeClosedSet/type_0xFF
+=== PAUSE TestParseFrameworkReadyDatagram_TypeClosedSet/type_0xFF
+=== RUN   TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x09_then_payload
+=== PAUSE TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x09_then_payload
+=== RUN   TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x10_then_long_payload
+=== PAUSE TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x10_then_long_payload
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap_minus_one
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap_minus_one
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap_plus_one
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap_plus_one
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/double_cap
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/double_cap
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/read_buffer_max
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/read_buffer_max
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/hobby_plan_over
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/hobby_plan_over
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/pro_plan_under
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/pro_plan_under
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/free_plan_zero_peak
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/free_plan_zero_peak
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/non_json_payload
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/non_json_payload
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/json_missing_closing_brace
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/json_missing_closing_brace
+=== RUN   TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/empty_body_after_type
+=== PAUSE TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/empty_body_after_type
+=== CONT  TestRunCapacityPublish_EmptyTargetReturnsImmediately
+--- PASS: TestRunCapacityPublish_EmptyTargetReturnsImmediately (0.00s)
+=== CONT  TestBuildCapacityReport_TimeStampMonotonic
+--- PASS: TestBuildCapacityReport_TimeStampMonotonic (0.00s)
+=== CONT  TestBuildCapacityReport_VCPUScaledByLiveCount
+--- PASS: TestBuildCapacityReport_VCPUScaledByLiveCount (0.00s)
+=== CONT  TestBuildCapacityReport_OverCommitClampsAtZero
+--- PASS: TestBuildCapacityReport_OverCommitClampsAtZero (0.00s)
+=== CONT  TestBuildCapacityReport_NonLinuxHostEmitsZero
+--- PASS: TestBuildCapacityReport_NonLinuxHostEmitsZero (0.00s)
+=== CONT  TestBuildCapacityReport_ResidentBytesSummed
+--- PASS: TestBuildCapacityReport_ResidentBytesSummed (0.00s)
+=== CONT  TestRunCapacityPublish_CtxCancelExitsPromptly
+--- PASS: TestRunCapacityPublish_CtxCancelExitsPromptly (0.05s)
+=== CONT  TestBuildCapacityReport_SignedStampsSignature
+--- PASS: TestBuildCapacityReport_SignedStampsSignature (0.00s)
+=== CONT  TestBuildCapacityReport_NodeIDPropagated
+--- PASS: TestBuildCapacityReport_NodeIDPropagated (0.00s)
+=== CONT  TestDrainCapacityPublish_PropagatesDialError
+--- PASS: TestDrainCapacityPublish_PropagatesDialError (0.00s)
+=== CONT  TestRunCapacityPublish_ServerErrorReconnects
+--- PASS: TestRunCapacityPublish_ServerErrorReconnects (0.10s)
+=== CONT  TestRunCapacityPublish_SignedReportAccepted
+--- PASS: TestRunCapacityPublish_SignedReportAccepted (0.11s)
+=== CONT  TestRunCapacityPublish_BackoffResetsAfterCleanDrain
+--- PASS: TestRunCapacityPublish_BackoffResetsAfterCleanDrain (0.09s)
+=== CONT  TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x00
+=== CONT  TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x09_then_payload
+=== CONT  TestParseFrameworkReadyDatagram_TypeClosedSet/type_0xFF
+=== CONT  TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x10_then_long_payload
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/read_buffer_max
+--- PASS: TestParseFrameworkReadyDatagram_TypeClosedSet (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x00 (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x09_then_payload (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TypeClosedSet/type_0xFF (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_TypeClosedSet/type_0x10_then_long_payload (0.00s)
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/double_cap
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap_plus_one
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap_minus_one
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/hobby_plan_over
+--- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/read_buffer_max (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/double_cap (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap_plus_one (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_BodyCap/at_cap_minus_one (0.00s)
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/free_plan_zero_peak
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/pro_plan_under
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/empty_body_after_type
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/json_missing_closing_brace
+--- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/hobby_plan_over (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/free_plan_zero_peak (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_ValidBody/pro_plan_under (0.00s)
+=== CONT  TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/non_json_payload
+--- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/empty_body_after_type (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/json_missing_closing_brace (0.00s)
+    --- PASS: TestParseFrameworkReadyDatagram_WorkloadOOM_MalformedJSON/non_json_payload (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/vmmd	16.060s

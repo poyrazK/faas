@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/jobresult"
 )
 
 const (
@@ -115,6 +117,7 @@ type Result struct {
 	Status          Status `json:"status"`
 	OutputTruncated bool   `json:"output_truncated"`
 	ExitCode        *int   `json:"exit_code,omitempty"`
+	OutcomeCode     string `json:"outcome_code,omitempty"`
 	FailureCode     string `json:"failure_code,omitempty"`
 	FailureMessage  string `json:"failure_message,omitempty"`
 	Stdout          []byte `json:"-"`
@@ -127,6 +130,9 @@ func (r Result) Validate(maxOutput int) error {
 	}
 	if len(r.FailureCode) > MaxFailureMessageBytes || len(r.FailureMessage) > MaxFailureMessageBytes {
 		return fmt.Errorf("%w: failure detail is too long", ErrInvalidResult)
+	}
+	if err := jobresult.ValidateOutcomeCode(r.OutcomeCode); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidResult, err)
 	}
 	if maxOutput < 0 || len(r.Stdout)+len(r.Stderr) > maxOutput {
 		return ErrOutputLimitExceeded

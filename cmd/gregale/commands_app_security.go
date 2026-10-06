@@ -86,7 +86,7 @@ func cmdAppSecurity(slug string, args []string) int {
 	// would silently drop --require-signed=false if we parsed args
 	// directly. The reorder helper pulls the flag to the front so
 	// the parser sees it. Mirrors cmdDelayedTaskAdd (commands_delayed_task.go:118).
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "posture")
 	fs := newFlagSet("app security", flag.ContinueOnError)
 	requireSigned := fs.String("require-signed", "", "require signed images on deploy (true|false)")
 	securityPolicy := fs.String("security-policy", "", "deploy posture policy (off|warn|enforce)")

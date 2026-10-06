@@ -141,6 +141,13 @@ func (s *server) reconcileObjectInventories(ctx context.Context, observe func(st
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		native, err := s.queueNativeObjectInventory(ctx, st, b)
+		if err != nil {
+			return err
+		}
+		if native {
+			continue
+		}
 		token := uuid.NewString()
 		if err := st.ClaimObjectInventory(ctx, b.ID, token); err != nil {
 			if errors.Is(err, state.ErrConflict) {
@@ -148,7 +155,7 @@ func (s *server) reconcileObjectInventories(ctx context.Context, observe func(st
 			}
 			return err
 		}
-		err := s.scanObjectInventory(ctx, st, b, token)
+		err = s.scanObjectInventory(ctx, st, b, token)
 		outcome := "success"
 		if err != nil {
 			outcome = "failed"
@@ -168,34 +175,11 @@ func (s *server) scanObjectInventory(ctx context.Context, st state.ObjectStorage
 	if err != nil {
 		return err
 	}
-	var bytes, objects int64
-	cursor := ""
-	seen := map[string]bool{}
-	for range api.ObjectStorageInventoryMaxPages {
-		page, err := backend.Provider.ListObjects(ctx, b.PhysicalName, "", cursor, 1000)
-		if err != nil {
-			return err
-		}
-		if len(page.Items) > 1000 {
-			return objectstorage.ErrInvalid
-		}
-		for _, o := range page.Items {
-			if o.Size < 0 || o.Size > api.MaxObjectStoragePolicyValue-bytes {
-				return objectstorage.ErrInvalid
-			}
-			bytes += o.Size
-			objects++
-		}
-		if page.NextCursor == "" {
-			return st.FinishObjectInventory(ctx, b.ID, token, bytes, objects)
-		}
-		if seen[page.NextCursor] || len(page.NextCursor) > 8192 {
-			return objectstorage.ErrInvalid
-		}
-		seen[page.NextCursor] = true
-		cursor = page.NextCursor
+	bytes, objects, err := completeObjectInventory(ctx, backend.Provider, b.PhysicalName)
+	if err != nil {
+		return err
 	}
-	return objectstorage.ErrUnavailable
+	return st.FinishObjectInventory(ctx, b.ID, token, bytes, objects)
 }
 
 func (s *server) runObjectStorageAccounting(ctx context.Context) {

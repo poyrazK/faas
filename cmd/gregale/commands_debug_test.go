@@ -385,3 +385,25 @@ func TestRenderDebugReplayComparison(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderDebugRequestsTableOmitsEmptyRequestIDColumn — list rows are
+// collapsed telemetry buckets with no public request ID, so production
+// printed "—" in REQUEST_ID on every row. The column now appears only when
+// a row carries an ID, and the output says how to look one up.
+func TestRenderDebugRequestsTableOmitsEmptyRequestIDColumn(t *testing.T) {
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	row := api.DebugTelemetryRequestItem{ID: "ffdcde5a-d69e-4067-ae36-d3c0458f0e7f", TraceID: &traceID, Route: "GET /", Method: "GET", Status: 200, Count: 1}
+	var out strings.Builder
+	renderDebugRequestsTable(&out, api.DebugTelemetryListResponse{Requests: []api.DebugTelemetryRequestItem{row}})
+	got := out.String()
+	if strings.Contains(got, "REQUEST_ID") || strings.Contains(got, "—  "+traceID) || !strings.Contains(got, traceID) ||
+		!strings.Contains(got, "gregale debug requests get <slug> <request-id>") {
+		t.Fatalf("list without request IDs:\n%s", got)
+	}
+	row.RequestID = "req-42"
+	out.Reset()
+	renderDebugRequestsTable(&out, api.DebugTelemetryListResponse{Requests: []api.DebugTelemetryRequestItem{row}})
+	if got := out.String(); !strings.Contains(got, "REQUEST_ID") || !strings.Contains(got, "req-42") || strings.Contains(got, "debug requests get") {
+		t.Fatalf("list with a request ID:\n%s", got)
+	}
+}

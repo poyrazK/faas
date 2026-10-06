@@ -386,6 +386,14 @@ func TestServiceProxyMetricsPreInstantiatesOutcomes(t *testing.T) {
 			t.Errorf("%s = %v, want 0", outcome, got)
 		}
 	}
+	if got := testutil.CollectAndCount(m.serviceChaosInjected); got != 2 {
+		t.Errorf("pre-instantiated chaos kind series = %d, want 2", got)
+	}
+	for _, kind := range []string{"latency", "http_status"} {
+		if got := testutil.ToFloat64(m.serviceChaosInjected.WithLabelValues(kind)); got != 0 {
+			t.Errorf("chaos kind %s = %v, want 0", kind, got)
+		}
+	}
 }
 
 // A nil Metrics must stay a no-op: the pre-metrics test corpus and single-box

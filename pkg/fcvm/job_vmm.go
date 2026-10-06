@@ -250,6 +250,9 @@ func EffectiveDestroyWait(taskTimeoutSec int) time.Duration {
 // Implemented on JailerVMM only. Tests that drive Boot directly
 // with a fully-resolved VMConfig don't go through this entry.
 func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobColdBootSpec) (err error) {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: job cold boot: %w", err)
 	}
@@ -308,6 +311,16 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 // boot fails, the guest never sees /etc/faas/job.json, vsock
 // never gets a job_exit frame. Fix: stat the canonical name.
 func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
+	return v.stageJobManifestForOwner(ctx, owner, instance, m)
+}
+
+func (v *JailerVMM) stageJobManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance string, m JobManifest) (retErr error) {
 	if v.chrootBase == "" {
 		return fmt.Errorf("vmm: stageJobManifest: chrootBase not configured")
 	}
@@ -315,6 +328,11 @@ func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr err
 	drive1Img := filepath.Join(root, layerImageName)
 	if _, err := os.Stat(drive1Img); err != nil {
 		return fmt.Errorf("vmm: stageJobManifest: %s missing at %s: %w", layerImageName, drive1Img, err)
+	}
+	if v.nativeRecovery != nil {
+		return v.driveStagingSession(ctx, owner, instance, drive1Img, "faas-job-manifest-", func(mnt string) error {
+			return writeJobManifest(mnt, m)
+		})
 	}
 	mnt, err := os.MkdirTemp("", "faas-job-manifest-*")
 	if err != nil {
@@ -347,6 +365,10 @@ func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr err
 		}
 	}()
 
+	return writeJobManifest(mnt, m)
+}
+
+func writeJobManifest(mnt string, m JobManifest) error {
 	manifestRoot, err := jobManifestStorageRoot(mnt)
 	if err != nil {
 		return fmt.Errorf("vmm: stageJobManifest: resolve artifact layout: %w", err)
@@ -663,11 +685,12 @@ func readJobExitEnvelope(conn io.Reader) (JobExitPayload, error) {
 
 func validateJobExitPayload(payload JobExitPayload) error {
 	if len(payload.OutputManifest) > 0 {
-		if payload.ErrorClass != "succeeded" {
-			return fmt.Errorf("output manifest requires successful exit")
-		}
-		if _, err := jobresult.Validate(payload.OutputManifest); err != nil {
+		manifest, err := jobresult.Validate(payload.OutputManifest)
+		if err != nil {
 			return err
+		}
+		if payload.ErrorClass != "succeeded" && len(manifest.Artifacts) > 0 {
+			return fmt.Errorf("failed job result cannot declare artifacts")
 		}
 	}
 	if payload.ExitCode < 0 || payload.ExitCode > 255 {

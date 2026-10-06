@@ -109,6 +109,11 @@ type Poller struct {
 	EgressAbuseHandler EgressAbuseHandler
 	egressAbuseMu      sync.Mutex
 	egressAbuseActed   map[string]struct{}
+	// sidecarMBs caches each live deployment's sidecar RAM slice (nil means
+	// no sidecars). A deployment's sidecars are written once at creation and
+	// never updated, so an entry stays valid until the deployment leaves the
+	// instance list, when it is dropped. Only Tick touches it.
+	sidecarMBs map[string][]int
 }
 
 // WithTelemetry switches the poller to the persistent node telemetry stream.
@@ -268,33 +273,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		}
 		byNode[in.NodeID] = append(byNode[in.NodeID], in)
 	}
-	// Issue #463 / ADR-070 / PR-C: pre-load the per-deployment
-	// sidecar RAM slice ONCE per Tick (rather than once per
-	// instance) so a 100-instance fleet with 5 deployments is
-	// 5 DB reads per minute, not 100. The map is dense on
-	// deploymentID; an instance whose deployment_id is absent
-	// (= legacy no-sidecars deploy or a transient cache miss)
-	// falls back to nil, which the sampler collapses to the
-	// legacy single-arg admission form.
-	sidecarByDeploy := make(map[string][]int, len(byNode))
-	for _, in := range instances {
-		if in.DeploymentID == "" {
-			continue
-		}
-		if _, seen := sidecarByDeploy[in.DeploymentID]; seen {
-			continue
-		}
-		mbs, err := p.Store.DeploymentSidecarRAMs(ctx, in.DeploymentID)
-		if err != nil {
-			// Fail-closed: leave the deployment entry absent;
-			// downstream admission reverts to the no-sidecar
-			// form. The next tick retries.
-			p.Log.Warn("instance stats: deployment sidecar RAM lookup failed",
-				"deployment_id", in.DeploymentID, "err", err)
-			continue
-		}
-		sidecarByDeploy[in.DeploymentID] = mbs
-	}
+	sidecarByDeploy := p.deploymentSidecarMBs(ctx, instances)
 	if p.FleetStats != nil {
 		rows, rolled := p.tickFleet(ctx, nodes, byNode, sidecarByDeploy)
 		p.Reader.Replace(rows)
@@ -600,6 +579,38 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		return nil, nil
 	}
 	return p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
+}
+
+// deploymentSidecarMBs returns the sidecar RAM slice for every deployment in
+// instances (issue #463 / ADR-070 / PR-C), reading Postgres only for a
+// deployment this poller has not seen. Tick runs every 200 ms; re-reading
+// each deployment on every tick was schedd's most frequent idle query on
+// production-us (≥10/s). A failed lookup leaves the deployment absent, so
+// admission falls back to the no-sidecar form and the next tick retries.
+// Deployments that left the instance list are evicted.
+func (p *Poller) deploymentSidecarMBs(ctx context.Context, instances []state.Instance) map[string][]int {
+	out := make(map[string][]int)
+	for _, in := range instances {
+		if in.DeploymentID == "" {
+			continue
+		}
+		if _, seen := out[in.DeploymentID]; seen {
+			continue
+		}
+		if mbs, cached := p.sidecarMBs[in.DeploymentID]; cached {
+			out[in.DeploymentID] = mbs
+			continue
+		}
+		mbs, err := p.Store.DeploymentSidecarRAMs(ctx, in.DeploymentID)
+		if err != nil {
+			p.Log.Warn("instance stats: deployment sidecar RAM lookup failed",
+				"deployment_id", in.DeploymentID, "err", err)
+			continue
+		}
+		out[in.DeploymentID] = mbs
+	}
+	p.sidecarMBs = out
+	return out
 }
 
 // tickFleet reads the physical nodes that currently host instances belonging

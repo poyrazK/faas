@@ -229,8 +229,11 @@ export const getResponseHeader = (response: Response, responseHeader?: string): 
   return undefined;
 };
 
-export const getResponseBody = async (response: Response): Promise<any> => {
+export const getResponseBody = async (response: Response, responseType?: 'blob'): Promise<any> => {
   if (response.status !== 204) {
+    if (response.ok && responseType === 'blob') {
+      return await response.blob();
+    }
     try {
       const contentType = response.headers.get('Content-Type');
       if (contentType) {
@@ -300,7 +303,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions): C
 
       if (!onCancel.isCancelled) {
         const response = await sendRequest(config, options, url, body, formData, headers, onCancel);
-        const responseBody = await getResponseBody(response);
+        const responseBody = await getResponseBody(response, options.responseType);
         const responseHeader = getResponseHeader(response, options.responseHeader);
 
         const result: ApiResult = {

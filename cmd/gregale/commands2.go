@@ -208,11 +208,13 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
 	fs := newFlagSet("app", flag.ContinueOnError)
+	environment := fs.String("environment", "", "read or edit this project environment's workload settings")
+	workloadRevision := int64(-1)
 	visibility := fs.String("visibility", "", "set public edge exposure: public|internal (Pro/Scale only for internal)")
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
@@ -257,7 +259,7 @@ func cmdApp(args []string) int {
 	// (`faas apps info --concurrency`); we wire it as a flag on the
 	// existing `gregale app <slug>` command so a customer doesn't
 	// need a second command tree for a one-line query.
-	concurrencyOnly := fs.Bool("concurrency", false, "print only the per-VM concurrency bound for the app's plan (issue #559)")
+	concurrencyOnly := fs.Bool("concurrency", false, "print only the per-VM concurrency bound for the app's plan")
 	// Issue #475: per-app eviction tier. The CLI uses a single
 	// string flag rather than the warm-snapshot's boolean pair
 	// because the closed enum has only two values
@@ -388,7 +390,7 @@ func cmdApp(args []string) int {
 		// allow-list to keep in sync.
 		var conflict string
 		fs.Visit(func(f *flag.Flag) {
-			if f.Name != "concurrency" && conflict == "" {
+			if f.Name != "concurrency" && f.Name != "environment" && conflict == "" {
 				conflict = f.Name
 			}
 		})
@@ -404,7 +406,7 @@ func cmdApp(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		a, err := client.GetApp(context.Background(), slug)
+		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(context.Background(), slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
 		}
@@ -451,7 +453,7 @@ func cmdApp(args []string) int {
 		req.MaxConcurrency = &v
 	}
 	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
-		policy, err := cliScalingPolicyPatchWithQueues(ctx, client, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
+		policy, err := cliScalingPolicyPatchWithQueues(ctx, environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
 		}
@@ -708,7 +710,7 @@ func cmdApp(args []string) int {
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
 		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil && req.PlatformTenantRequired == nil &&
 		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
-		a, err := client.GetApp(ctx, slug)
+		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
 		}
@@ -744,7 +746,13 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %d\n", "concurrency per vm:", a.ConcurrencyPerVMBound)
 		}
-		fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
+		// An unset idle timeout is stored as NULL and the plan default
+		// applies (600 s on Scale); printing "0s" read as "parks at once".
+		if a.IdleTimeoutS == 0 {
+			fmt.Printf("%-30s %s\n", "idle timeout:", "plan default")
+		} else {
+			fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
+		}
 		if a.RequestTimeoutS == 0 {
 			fmt.Printf("%-30s %s\n", "request timeout:", "plan default")
 		} else {
@@ -883,11 +891,13 @@ func cmdApp(args []string) int {
 		// Issue #1395 / A4: show a best-effort wake-tier recommendation
 		// only for apps with enough recent wake history. JSON output stays
 		// a stable AppResponse payload, so this is text-mode only.
-		renderWakeRecommendation(ctx, client, slug, a)
+		if *environment == "" {
+			renderWakeRecommendation(ctx, client, slug, a)
+		}
 		return 0
 	}
 
-	updated, err := client.UpdateApp(ctx, slug, req)
+	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
 		return printErr("Update failed", err)
 	}
@@ -1063,7 +1073,6 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	var unsupported []string
 	for _, name := range []string{
 		"function", "app", "runtime", "handler", "dockerfile", "vcpu",
-		"app-protocol",
 		"execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		"doctor-strict", "no-doctor", "secret-scan",
 	} {
@@ -1082,7 +1091,7 @@ func validateSourceRefPreviewFlags(explicit map[string]bool, sourceBranch string
 	for _, name := range []string{
 		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
-		"wait", "no-wait", "timeout",
+		"wait", "no-wait", "timeout", "app-protocol",
 	} {
 		if explicit[name] {
 			unsupported = append(unsupported, "--"+name)
@@ -2000,6 +2009,9 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 	}
 	existingByName := make(map[string]api.QueueBindingResponse, len(existing))
 	for _, row := range existing {
+		if row.Environment != "" {
+			continue
+		}
 		existingByName[row.Name] = row
 	}
 	desired := make(map[string]gregalemanifest.QueueBinding, len(m.QueueBindings))
@@ -2007,6 +2019,9 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 		desired[binding.Name] = binding
 	}
 	for _, row := range existing {
+		if row.Environment != "" {
+			continue
+		}
 		if _, keep := desired[row.Name]; !keep {
 			if err := client.DeleteQueueBinding(ctx, slug, row.ID); err != nil {
 				return fmt.Errorf("delete stale queue binding %s: %w", row.Name, err)
@@ -2255,6 +2270,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// Empty value = no change (the Set bit in UpdateAppParams
 	// is unset, so the SQL keeps the existing value).
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
+	healthcheckPath := fs.String("healthcheck-path", "", "startup readiness HTTP path (for example /readyz)")
+	healthcheckGRPC := fs.Bool("healthcheck-grpc", false, "use standard gRPC health for startup readiness")
+	healthcheckGRPCService := fs.String("healthcheck-grpc-service", "", "service name for --healthcheck-grpc; empty checks the overall server")
 	// Issue #556 PR-A: per-deployment traffic-split weight. Sentinel
 	// value -1 = "unset" — `fs.Int` doesn't have a
 	// pointer type, so the explicit `fs.Visit` check below
@@ -2539,6 +2557,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *vcpu < 0 {
 		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
 	}
+	healthcheck, healthErr := resolveDeployHealthcheck(*healthcheckPath, *healthcheckGRPC, *healthcheckGRPCService, explicit)
+	if healthErr != nil {
+		return printErr("Invalid startup healthcheck", healthErr)
+	}
+	if healthcheck != nil && (*diff || *dryRun || *simplePlan || projectRequested || *githubSnippet || *createOnly) {
+		return printErr("Invalid flags", errors.New("startup healthcheck flags require a single-app deployment; they cannot be combined with preview, --github, --project, or --create-only"))
+	}
 	if explicit["app-protocol"] && !api.IsValidAppProtocol(*appProtocol) {
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeAppProtocolInvalid,
 			"Invalid app protocol", "app_protocol must be one of: http1, http2, grpc")
@@ -2552,7 +2577,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	canarySpec, canaryErr := buildCanarySpec(*canaryPreset, *canaryStages)
 	if canaryErr != nil {
-		return printErr("Invalid canary rollout", &api.APIError{Problem: *api.ErrInvalidCanaryPreset(canaryErr.Error())})
+		// The flag validation message is the detail. ErrInvalidCanaryPreset
+		// takes a preset name, so passing the message printed
+		// `canary preset "--canary-stages requires …" is not in the
+		// closed-set catalog`.
+		problem := api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidCanaryPreset, "Invalid canary rollout", canaryErr.Error()).
+			WithDocs("https://gregale.dev/docs/deployments#canary-presets")
+		return printErr("Invalid canary rollout", &api.APIError{Problem: *problem})
 	}
 	if explicit["traffic-percent"] && canarySpec != nil {
 		return printErr("Invalid rollout policy", &api.APIError{Problem: *api.ErrValidation("traffic_percent and canary are mutually exclusive rollout policies")})
@@ -2841,10 +2872,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}, *diffJSON, !*diffLenient, *noTriggers)
 		}
 		refIntent := deployIdempotencyIntent{
-			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag,
+			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -2877,9 +2908,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
 			Canary:                 canarySpec,
 			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
-			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr})
+			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
 	}
 
@@ -3466,6 +3497,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			SimpleAppPlan:   resolvedSimplePlan,
 			ResourceProfile: *profile,
 			ExecutionMode:   *executionMode,
+			Healthcheck:     healthcheck,
 			Release: deployPreflightRelease(
 				*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
 			),
@@ -3523,7 +3555,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, NoTriggers: *noTriggers,
+		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
@@ -3863,9 +3895,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
 			Canary:                 canarySpec,
 			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-			NoTriggers:             *noTriggers,
-			Companions:             sidecarDefs,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			NoTriggers: *noTriggers,
+			Companions: sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3892,7 +3924,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
-				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
+				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost, Healthcheck: ann.Healthcheck,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
@@ -4022,6 +4054,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:            *environment,
 		RollbackOn5xx:          rollbackOn5xxPtr,
 		DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+		Overrides:              deployHealthcheckOverrides(healthcheck),
 		Workflows:              workflowDefs,
 		Companions:             sidecarDefs,
 		TrafficPercent:         optTrafficPercent(*trafficPercent),
@@ -4102,7 +4135,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4114,6 +4147,10 @@ const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] 
 // superseded deployment. --json (top-level) emits the
 // DeploymentResponse on stdout for SDK / e2e consumers.
 func cmdRollback(args []string) int {
+	if len(args) > 0 && args[0] == "status" {
+		return cmdRollbackStatus(args[1:])
+	}
+
 	if hasHelpFlag(args) {
 		PrintUsage(osStdout, rollbackUsage, "rollback")
 		return 0
@@ -4123,7 +4160,11 @@ func cmdRollback(args []string) int {
 		return 1
 	}
 	slug := args[0]
-	var to string
+	var to, current, reason string
+	checked := false
+	var err error
+	wait := false
+	timeout, interval := 10*time.Minute, 2*time.Second
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
@@ -4136,6 +4177,42 @@ func cmdRollback(args []string) int {
 			to = rest[i] //nolint:gosec // G602: bounds checked immediately above
 		case strings.HasPrefix(a, "--to="):
 			to = a[len("--to="):]
+		case a == "--wait":
+			wait = true
+		case a == "--expected-current" || a == "--reason" || a == "--timeout" || a == "--poll-interval":
+			i++
+			if i >= len(rest) {
+				return printErr("Missing value", fmt.Errorf("%s requires a value", a))
+			}
+			switch a {
+			case "--expected-current":
+				checked = true
+				current = rest[i]
+			case "--reason":
+				reason = rest[i]
+			case "--timeout":
+				timeout, err = time.ParseDuration(rest[i])
+			case "--poll-interval":
+				interval, err = time.ParseDuration(rest[i])
+			}
+			if err != nil {
+				return printErr("Invalid duration", err)
+			}
+		case strings.HasPrefix(a, "--expected-current="):
+			checked = true
+			current = strings.TrimPrefix(a, "--expected-current=")
+		case strings.HasPrefix(a, "--reason="):
+			reason = strings.TrimPrefix(a, "--reason=")
+		case strings.HasPrefix(a, "--timeout=") || strings.HasPrefix(a, "--poll-interval="):
+			key, value, _ := strings.Cut(a, "=")
+			if key == "--timeout" {
+				timeout, err = time.ParseDuration(value)
+			} else {
+				interval, err = time.ParseDuration(value)
+			}
+			if err != nil {
+				return printErr("Invalid duration", err)
+			}
 		case a == "--yes" || a == "-y":
 			// Rollback never prompts. Accept the flag deploy uses so shared
 			// scripts do not fail here (issue #3362).
@@ -4144,6 +4221,12 @@ func cmdRollback(args []string) int {
 		default:
 			return printErr("Unexpected argument", fmt.Errorf("%q (rollback takes one <slug>; pass the target with --to)", a))
 		}
+	}
+	if checked && current == "" || timeout <= 0 || interval <= 0 || current == "" && (wait || reason != "") || current != "" && to == "" {
+		return printErr("Invalid rollback", fmt.Errorf("checked rollback requires --to and --expected-current; wait durations must be positive"))
+	}
+	if current != "" {
+		return cmdCheckedRollback(slug, to, current, reason, wait, timeout, interval)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -4203,11 +4286,21 @@ func cmdWake(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *waitTimeout <= 0 || *pollInterval < 100*time.Millisecond {
+	// Accept flags after the slug too (`gregale wake my-api --wait`), as the
+	// help synopsis shows; the flag package stops at the first positional.
+	slug := fs.Arg(0)
+	if fs.NArg() > 1 {
+		if err := fs.Parse(fs.Args()[1:]); err != nil {
+			return 1
+		}
+		if fs.NArg() != 0 {
+			slug = ""
+		}
+	}
+	if slug == "" || *waitTimeout <= 0 || *pollInterval < 100*time.Millisecond {
 		PrintUsage(os.Stderr, "usage: gregale wake [--wait] [--timeout D] [--poll-interval D] <slug>", "park-wake")
 		return 1
 	}
-	slug := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -4215,6 +4308,18 @@ func cmdWake(args []string) int {
 	response, err := client.Wake(context.Background(), slug)
 	if err != nil {
 		return printErr("Wake failed", err)
+	}
+	if response.AlreadyRunning {
+		// No wake was queued: the app was already serving. --wait is
+		// satisfied immediately instead of polling for an instance that
+		// schedd will never create.
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]string{
+				"slug": slug, "status": "running", "wake_id": response.WakeID, "instance_id": response.InstanceID,
+			}))
+		}
+		PrintOK(osStdout, "Already running (instance %s)", response.InstanceID)
+		return 0
 	}
 	if strings.TrimSpace(response.WakeID) == "" {
 		return printErr("Wake failed", errors.New("server accepted the wake without returning a wake_id"))
@@ -4259,7 +4364,12 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 	for {
 		instances, err := client.ListInstancesWithHistory(waitCtx, slug, true)
 		if err != nil {
-			lastReadErr = err
+			// The poll in flight when the wait deadline fires fails with the
+			// wait's own context error. Recording it made the timeout read as
+			// "Could not reach Gregale … check your network connection".
+			if waitCtx.Err() == nil {
+				lastReadErr = err
+			}
 		} else {
 			for _, instance := range instances {
 				if instance.WakeID != wakeID {
@@ -4343,10 +4453,11 @@ func cmdTrafficSet(args []string) int {
 // row after the atomic sibling rebalance; the transition fields let automation
 // distinguish a real promotion from an idempotent retry.
 type TrafficPromotionReceipt struct {
-	Deployment      api.DeploymentResponse `json:"deployment"`
-	FromPercent     int                    `json:"from_percent"`
-	ToPercent       int                    `json:"to_percent"`
-	AlreadyPromoted bool                   `json:"already_promoted"`
+	Deployment      api.DeploymentResponse  `json:"deployment"`
+	FromPercent     int                     `json:"from_percent"`
+	ToPercent       int                     `json:"to_percent"`
+	AlreadyPromoted bool                    `json:"already_promoted"`
+	BindingsCheck   *api.BindingCheckReport `json:"bindings_check,omitempty"`
 }
 
 // cmdTrafficPromote is the intent-level counterpart to traffic set. It keeps
@@ -4358,6 +4469,10 @@ func cmdTrafficPromote(args []string) int {
 	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	deployment := fs.String("deployment", "", "deployment id or vN revision to promote to 100% production traffic")
 	ifServing := fs.String("if-serving", "", "promote only if this deployment id or vN revision still serves 100% of production traffic")
+	requireBindings := fs.Bool("require-bindings", false, "require the server to enforce a fresh bindings check before promoting")
+	maxAge := fs.Duration("max-verification-age", api.DefaultBindingVerificationAge, "maximum binding verification age (requires --require-bindings)")
+	allowUnsupported := fs.Bool("allow-unsupported", false, "waive unsupported queue/outbound probes (requires --require-bindings)")
+	requireAck := fs.Bool("require-application-ack", false, "require current PostgreSQL/object-storage application acknowledgements (requires --require-bindings)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -4368,8 +4483,14 @@ func cmdTrafficPromote(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale traffic promote [--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
 		return 1
 	}
-	var ifServingSet bool
-	fs.Visit(func(f *flag.Flag) { ifServingSet = ifServingSet || f.Name == "if-serving" })
+	var ifServingSet, policySet bool
+	fs.Visit(func(f *flag.Flag) {
+		ifServingSet = ifServingSet || f.Name == "if-serving"
+		policySet = policySet || f.Name == "max-verification-age" || f.Name == "allow-unsupported" || f.Name == "require-application-ack"
+	})
+	if policySet && !*requireBindings || *maxAge <= 0 {
+		return printErr("Traffic promote failed", fmt.Errorf("--max-verification-age must be positive; binding policy flags require --require-bindings"))
+	}
 	if ifServingSet && !validDeploymentRef(*ifServing) {
 		return printErr("Traffic promote failed", fmt.Errorf("--if-serving requires a deployment id or vN revision"))
 	}
@@ -4403,6 +4524,9 @@ func cmdTrafficPromote(args []string) int {
 	}
 	if current.Status != statusLive {
 		return printErr("Traffic promote failed", fmt.Errorf("deployment %s is %s; only live deployments can be promoted", deploymentLabel(current), current.Status))
+	}
+	if *requireBindings {
+		return promoteTrafficWithBindings(ctx, client, current, servingID, *maxAge, *allowUnsupported, *requireAck)
 	}
 
 	receipt := TrafficPromotionReceipt{
@@ -4549,18 +4673,28 @@ func cmdDomains(args []string) int {
 		}
 		return 0
 	case subAdd:
-		fs := newFlagSet("domains-add", flag.ContinueOnError)
-		domain := fs.String("domain", "", "domain to attach (required)")
+		fs := newFlagSet("domains add", flag.ContinueOnError)
+		domain := fs.String("domain", "", "domain to attach (or pass it as the first argument)")
 		slug := fs.String("app", "", "app slug to attach to (required)")
 		environment := fs.String("environment", "", "project environment to route this domain to")
-		if err := fs.Parse(args[1:]); err != nil {
+		// Every other domains subcommand takes <domain> positionally, so
+		// accept `domains add <domain> --app <slug>` too, with flags before
+		// or after it.
+		if err := parseInterspersed(fs, args[1:]); err != nil {
 			return 1
 		}
-		if rejectUnexpectedFlagArgs(fs) {
+		if fs.NArg() == 1 {
+			if *domain != "" && *domain != fs.Arg(0) {
+				PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
+				return 1
+			}
+			*domain = fs.Arg(0)
+		} else if fs.NArg() != 0 {
+			PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
 			return 1
 		}
 		if *domain == "" || *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale domains add --domain <d> --app <slug> [--environment <environment>]", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -4571,8 +4705,9 @@ func cmdDomains(args []string) int {
 		if err != nil {
 			return printErr("Could not add domain", err)
 		}
-		fmt.Printf("Add this TXT record to your DNS:\n\n")
-		fmt.Printf("  _faas-verify.%s  TXT  %s\n\n", d.Domain, d.ChallengeToken)
+		fmt.Printf("Add these records to your DNS:\n\n")
+		printDomainDNSRecords(osStdout, d)
+		fmt.Printf("\nKeep them in place: the certificate is issued and renewed automatically.\n")
 		fmt.Printf("Then run 'gregale domains list' to see when verification completes.\n")
 		return 0
 	case subRm:
@@ -4616,7 +4751,7 @@ func cmdDomains(args []string) int {
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown domains subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown domains subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -4626,7 +4761,7 @@ func cmdDomains(args []string) int {
 func cmdCrons(args []string) int {
 	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|cancel> [args]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
@@ -4683,6 +4818,8 @@ func cmdCrons(args []string) int {
 		maxOutputBytes := fs.Int("max-output-bytes", 0, "maximum captured output bytes (default: 1048576; command crons only)")
 		timezone := fs.String("timezone", "", "IANA timezone (defaults to UTC)")
 		skipIfRunning := fs.Bool("skip-if-running", false, "skip a scheduled fire while the previous cron run is active")
+		schedulePolicyJSON := fs.String("schedule-policy", "", "versioned schedule policy as JSON")
+		failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 		retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
 		retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -4733,6 +4870,20 @@ func cmdCrons(args []string) int {
 			AppID: *slug, Schedule: *schedule, Enabled: boolPtr(true),
 			Timezone: *timezone, SkipIfRunning: boolPtr(*skipIfRunning),
 		}
+		if *schedulePolicyJSON != "" {
+			policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+			if err != nil {
+				return printErr("Invalid schedule policy", err)
+			}
+			req.SchedulePolicy = policy
+		}
+		if *failureRulesJSON != "" {
+			rules, err := parseFailureRulesJSON(*failureRulesJSON)
+			if err != nil {
+				return printErr("Invalid failure rules", err)
+			}
+			req.FailureRules = rules
+		}
 		if *command == "" {
 			req.Path = *path
 			if req.Path == "" {
@@ -4758,6 +4909,9 @@ func cmdCrons(args []string) int {
 			target = "command " + formatCronCommand(c)
 		}
 		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
+		// The id is what every other crons verb takes; without it the
+		// next step was `crons list` to find it.
+		_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
 		return 0
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
@@ -4765,6 +4919,8 @@ func cmdCrons(args []string) int {
 		return cmdCronsInfo(args[1:])
 	case subRuns:
 		return cmdCronsRuns(args[1:])
+	case "occurrences":
+		return cmdCronsOccurrences(args[1:])
 	case "cancel":
 		return cmdCronsCancel(args[1:])
 	case subRm:
@@ -4799,7 +4955,7 @@ func cmdCrons(args []string) int {
 		// commands_crons_fire_now.go (cmdCronsFireNowGet).
 		return cmdCronsFireNowGet(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown crons subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown crons subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -4859,15 +5015,6 @@ func formatCronCommand(c api.CronResponse) string {
 // --schedule is locally shape-checked (5 whitespace tokens) to match
 // the server's validCron so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
-		return 1
-	}
-	id := args[0]
-	if !cronIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id>   (id is 32 hex chars)", "crons")
-		return 1
-	}
 	fs := newFlagSet("crons-update", flag.ContinueOnError)
 	schedule := fs.String("schedule", "", "cron expression (5 fields)")
 	path := fs.String("path", "", "request path")
@@ -4878,11 +5025,18 @@ func cmdCronsUpdate(args []string) int {
 	allowOverlap := fs.Bool("allow-overlap", false, "allow scheduled fires to overlap")
 	retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
 	retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
-	if err := fs.Parse(args[1:]); err != nil {
+	schedulePolicyJSON := fs.String("schedule-policy", "", "replace versioned schedule policy JSON")
+	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
+	if fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
+		return 1
+	}
+	id := fs.Arg(0)
+	if !cronIDPattern.MatchString(id) {
+		PrintUsage(os.Stderr, "usage: gregale crons update <id>   (id is 32 hex chars)", "crons")
 		return 1
 	}
 	if *enable && *disable {
@@ -4898,7 +5052,7 @@ func cmdCronsUpdate(args []string) int {
 	// catch at the CLI before a pointless network round-trip.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] {
+	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] {
 		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
@@ -4958,6 +5112,20 @@ func cmdCronsUpdate(args []string) int {
 		v := *retryBackoff
 		req.RetryBackoffSeconds = &v
 	}
+	if explicit["schedule-policy"] {
+		policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+		if err != nil {
+			return printErr("Invalid schedule policy", err)
+		}
+		req.SchedulePolicy = policy
+	}
+	if explicit["failure-rules"] {
+		rules, err := parseFailureRulesJSON(*failureRulesJSON)
+		if err != nil {
+			return printErr("Invalid failure rules", err)
+		}
+		req.FailureRules = rules
+	}
 	updated, err := client.UpdateCron(context.Background(), id, req)
 	if err != nil {
 		return printErr("Update failed", err)
@@ -4995,23 +5163,54 @@ func cmdKeys(args []string) int {
 			return jsonOut(writeNDJSON(out))
 		}
 		for _, k := range out {
+			// Revoked and grace-period keys looked identical to live ones,
+			// so a customer could not see which listed keys still work.
+			// Active rows keep their two-column shape for existing scripts.
+			if k.Status != "" && k.Status != "active" {
+				fmt.Printf("%-30s %-22s %s\n", k.Label, k.Prefix, k.Status)
+				continue
+			}
 			fmt.Printf("%-30s %s\n", k.Label, k.Prefix)
 		}
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale keys add <label>", "keys")
+			PrintUsage(osStdout, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
 			return 0
 		}
-		if len(args) < 2 {
-			PrintUsage(os.Stderr, "usage: gregale keys add <label>", "keys")
+		flags, positional := splitArgsForFlags(args[1:])
+		fs := newFlagSet("keys add", flag.ContinueOnError)
+		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
+		if err := fs.Parse(flags); err != nil {
 			return 1
+		}
+		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
+			PrintUsage(os.Stderr, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
+			return 1
+		}
+		var scopes []string
+		if flagWasSet(fs, "scopes") {
+			if strings.TrimSpace(*scopesCSV) == "" {
+				return printErr("Invalid scopes", errors.New("--scopes must contain at least one scope"))
+			}
+			for _, scope := range strings.Split(*scopesCSV, ",") {
+				scope = strings.TrimSpace(scope)
+				if scope == "" {
+					return printErr("Invalid scopes", errors.New("--scopes cannot contain an empty scope"))
+				}
+				scopes = append(scopes, scope)
+			}
+			var err error
+			scopes, err = api.NormalizeCreateKeyScopes(scopes)
+			if err != nil {
+				return printErr("Invalid scopes", err)
+			}
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		k, err := client.CreateKey(context.Background(), args[1], nil)
+		k, err := client.CreateKey(context.Background(), positional[0], scopes)
 		if err != nil {
 			return printErr("Create failed", err)
 		}
@@ -5042,7 +5241,7 @@ func cmdKeys(args []string) int {
 	case "grace-window":
 		return cmdKeysGraceWindow(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown keys subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown keys subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5179,7 +5378,7 @@ func cmdUsage(args []string) int {
 		return cmdUsageStorage(args[1:])
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
-	fmt.Fprintf(os.Stderr, "unknown usage subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5519,7 +5718,15 @@ func cmdOpen(args []string) int {
 	if *dash {
 		// Dashboard page is always served; skip the cold-wake probe.
 		target = dashboardAppURL(apiBase(), slug)
-	} else {
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			Slug      string `json:"slug"`
+			URL       string `json:"url"`
+			Dashboard bool   `json:"dashboard"`
+		}{slug, target, *dash}))
+	}
+	if !*dash {
 		// Cold-wake transparency (UX §6.4, issue #65 D1). Probe with
 		// a 2 s deadline; if the response carries the cold-wake header
 		// (see pkg/wire.WakeHeader), print the cold-start line
@@ -5904,6 +6111,11 @@ func cmdLogs(args []string) int {
 			return printErr("Could not resolve deployment", resolveErr)
 		}
 		deploymentRef = resolved
+		if logSource != logsSourceHTTP && !archiveRequested {
+			if code, handled := buildLogsForUnrunDeployment(context.Background(), logsClient, deploymentRef, *follow); handled {
+				return code
+			}
+		}
 	}
 	if logSource == logsSourceHTTP {
 		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
@@ -6057,7 +6269,11 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			return true, 0
 		}
 		if e.Data != "" {
-			_, _ = fmt.Fprintln(osStdout, e.Data)
+			line := e.Data
+			if !jsonOutput {
+				line = formatRuntimeLogLine(e.Data)
+			}
+			_, _ = fmt.Fprintln(osStdout, line)
 			if collector != nil {
 				collector.observe(e.Data)
 			}
@@ -7027,6 +7243,10 @@ func cmdUsageDaily(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
+	}
 	resp, err := client.UsageDaily(context.Background(), *day)
 	if err != nil {
 		return printErr("Could not fetch daily usage", err)
@@ -7035,7 +7255,7 @@ func cmdUsageDaily(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	if len(resp.Items) == 0 {
-		_, _ = fmt.Fprintf(os.Stdout, "No daily usage recorded for %s.\n", *day)
+		_, _ = fmt.Fprintf(osStdout, "No daily usage recorded for %s.\n", *day)
 		return 0
 	}
 	for _, u := range resp.Items {
@@ -7043,11 +7263,11 @@ func cmdUsageDaily(args []string) int {
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
 			txGB := float64(u.TXBytes) / (1024 * 1024 * 1024)
 			netGB := float64(u.NetTxBytes) / (1024 * 1024 * 1024)
-			fmt.Printf("%-36s %s %8d  %7.3f GB-h  egress %.3f GB (tx %.2f / net %.2f)\n",
-				u.AppID, u.Day, u.Requests, gbh, netGB, txGB, netGB)
+			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  egress %.3f GB (tx %.2f / net %.2f)\n",
+				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, netGB, txGB, netGB)
 			continue
 		}
-		fmt.Printf("%-36s %s %8d  %7.3f GB-h\n", u.AppID, u.Day, u.Requests, gbh)
+		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)
 	}
 	return 0
 }
@@ -7072,6 +7292,10 @@ func cmdUsageStorage(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
+	}
 	resp, err := client.StorageUsage(context.Background(), *day)
 	if err != nil {
 		return printErr("Could not fetch storage usage", err)
@@ -7080,12 +7304,12 @@ func cmdUsageStorage(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	if len(resp.Items) == 0 {
-		_, _ = fmt.Fprintf(os.Stdout, "No storage rollup recorded for %s.\n", *day)
+		_, _ = fmt.Fprintf(osStdout, "No storage rollup recorded for %s.\n", *day)
 		return 0
 	}
 	for _, u := range resp.Items {
-		fmt.Printf("%-36s %s snapshot=%6d MB  layer=%6d MB  total=%6d MB\n",
-			u.AppID, u.Day,
+		_, _ = fmt.Fprintf(osStdout, "%-36s %s snapshot=%6d MB  layer=%6d MB  total=%6d MB\n",
+			appLabel(slugs, u.AppID), u.Day,
 			u.SnapshotBytes/(1024*1024),
 			u.LayerBytes/(1024*1024),
 			(u.SnapshotBytes+u.LayerBytes)/(1024*1024))

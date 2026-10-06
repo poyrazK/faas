@@ -26,6 +26,7 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 	if slug == "production" {
 		return ErrConflict
 	}
+
 	for _, app := range m.apps {
 		if app.ProjectID != projectID {
 			continue
@@ -43,6 +44,12 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 		}
 	}
 
+	if err := m.validateEnvironmentInvocationCleanupLocked(environmentID); err != nil {
+		return err
+	}
+
+	m.deleteEnvironmentInvocationsLocked(environmentID)
+
 	for key, env := range m.envs {
 		if env.Scope == slug {
 			if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
@@ -53,10 +60,14 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 	for key, secret := range m.secrets {
 		if secret.Scope == slug {
 			if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
-				delete(m.secrets, key)
+				m.deleteRuntimeAppSecretLocked(key)
 			}
 		}
 	}
+	m.deleteEnvironmentWorkloadSpecsLocked(environmentID)
+	m.deleteRuntimeScalingEnvironmentLocked(environmentID)
+	delete(m.featureFlagVersions, environmentID)
+	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
 	for key, policy := range m.projectEnvironmentRoutePolicies {

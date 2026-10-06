@@ -1,0 +1,16 @@
+{
+  "name": "gregale-mcp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node server.js", "test": "node --test test/*.test.js" },
+  "dependencies": {
+    "@modelcontextprotocol/express": "2.0.1",
+    "@modelcontextprotocol/node": "2.1.0",
+    "@modelcontextprotocol/server": "2.2.0",
+    "express": "5.2.1",
+    "jose": "6.2.12",
+    "zod": "4.6.5"
+  }
+}

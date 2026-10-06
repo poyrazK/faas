@@ -2,9 +2,11 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -13,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 )
 
 type cronResource struct {
@@ -20,16 +23,30 @@ type cronResource struct {
 }
 
 type cronModel struct {
-	CronID          types.String `tfsdk:"cron_id"`
-	AppID           types.String `tfsdk:"app_id"`
-	Schedule        types.String `tfsdk:"schedule"`
-	Path            types.String `tfsdk:"path"`
-	Enabled         types.Bool   `tfsdk:"enabled"`
-	Timezone        types.String `tfsdk:"timezone"`
-	SkipIfRunning   types.Bool   `tfsdk:"skip_if_running"`
-	SuspendedReason types.String `tfsdk:"suspended_reason"`
-	CreatedAt       types.String `tfsdk:"created_at"`
-	LastFiredAt     types.String `tfsdk:"last_fired_at"`
+	CronID           types.String `tfsdk:"cron_id"`
+	AppID            types.String `tfsdk:"app_id"`
+	Schedule         types.String `tfsdk:"schedule"`
+	Path             types.String `tfsdk:"path"`
+	Enabled          types.Bool   `tfsdk:"enabled"`
+	Timezone         types.String `tfsdk:"timezone"`
+	SkipIfRunning    types.Bool   `tfsdk:"skip_if_running"`
+	SchedulePolicy   types.Object `tfsdk:"schedule_policy"`
+	FailureRulesJSON types.String `tfsdk:"failure_rules_json"`
+	SuspendedReason  types.String `tfsdk:"suspended_reason"`
+	CreatedAt        types.String `tfsdk:"created_at"`
+	LastFiredAt      types.String `tfsdk:"last_fired_at"`
+}
+
+type cronSchedulePolicyModel struct {
+	Overlap              types.String `tfsdk:"overlap"`
+	StartDeadlineSeconds types.Int64  `tfsdk:"start_deadline_seconds"`
+	MissedRuns           types.String `tfsdk:"missed_runs"`
+}
+
+var cronSchedulePolicyAttrTypes = map[string]attr.Type{
+	"overlap":                types.StringType,
+	"start_deadline_seconds": types.Int64Type,
+	"missed_runs":            types.StringType,
 }
 
 func newCronResource() resource.Resource {
@@ -84,6 +101,35 @@ func (r *cronResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Computed:            true,
 				Description:         "Whether to skip a fire while the previous invocation is still running.",
 				MarkdownDescription: "Whether to skip a fire while the previous invocation is still running.",
+			},
+			"schedule_policy": schema.SingleNestedAttribute{
+				Optional:            true,
+				Computed:            true,
+				Description:         "Policy for overlap, first-start deadlines, and recovery of missed schedule times.",
+				MarkdownDescription: "Policy for overlap, first-start deadlines, and recovery of missed schedule times.",
+				Attributes: map[string]schema.Attribute{
+					"overlap": schema.StringAttribute{
+						Required:            true,
+						Description:         "Whether to allow, skip, or replace overlapping occurrences.",
+						MarkdownDescription: "Whether to `allow`, `skip`, or `replace` overlapping occurrences.",
+					},
+					"start_deadline_seconds": schema.Int64Attribute{
+						Optional:            true,
+						Description:         "Maximum delay from the scheduled time to first start; zero disables the deadline.",
+						MarkdownDescription: "Maximum delay from the scheduled time to first start; zero disables the deadline. Maximum is 30 days.",
+					},
+					"missed_runs": schema.StringAttribute{
+						Required:            true,
+						Description:         "Whether to skip stale occurrences or coalesce them into the latest due time.",
+						MarkdownDescription: "Whether to `skip` stale occurrences or `coalesce_latest` into the latest due time.",
+					},
+				},
+			},
+			"failure_rules_json": schema.StringAttribute{
+				Optional:            true,
+				Computed:            true,
+				Description:         "Versioned HTTP Cron outcome-code classification rules as JSON.",
+				MarkdownDescription: "Versioned HTTP Cron outcome-code classification rules as JSON. Matchers use `outcome_codes`; HTTP status and exit-code matchers are not supported for HTTP Crons.",
 			},
 			"suspended_reason": schema.StringAttribute{
 				Computed:            true,
@@ -141,13 +187,25 @@ func (r *cronResource) Create(ctx context.Context, req resource.CreateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	schedulePolicy, policyDiags := cronSchedulePolicyFromModel(ctx, plan.SchedulePolicy)
+	resp.Diagnostics.Append(policyDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	failureRules, rulesDiags := cronFailureRulesFromModel(plan.FailureRulesJSON)
+	resp.Diagnostics.Append(rulesDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	out, err := r.client.createCron(ctx, cronRequest{
-		AppID:         plan.AppID.ValueString(),
-		Schedule:      plan.Schedule.ValueString(),
-		Path:          stringValue(plan.Path),
-		Enabled:       boolPointer(plan.Enabled),
-		Timezone:      stringValue(plan.Timezone),
-		SkipIfRunning: boolPointer(plan.SkipIfRunning),
+		AppID:          plan.AppID.ValueString(),
+		Schedule:       plan.Schedule.ValueString(),
+		Path:           stringValue(plan.Path),
+		Enabled:        boolPointer(plan.Enabled),
+		Timezone:       stringValue(plan.Timezone),
+		SkipIfRunning:  boolPointer(plan.SkipIfRunning),
+		SchedulePolicy: schedulePolicy,
+		FailureRules:   failureRules,
 	})
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not create Gregale cron", err)
@@ -188,12 +246,24 @@ func (r *cronResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	schedulePolicy, policyDiags := cronSchedulePolicyFromModel(ctx, plan.SchedulePolicy)
+	resp.Diagnostics.Append(policyDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	failureRules, rulesDiags := cronFailureRulesFromModel(plan.FailureRulesJSON)
+	resp.Diagnostics.Append(rulesDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	out, err := r.client.updateCron(ctx, plan.CronID.ValueString(), cronPatch{
-		Schedule:      stringPointer(plan.Schedule),
-		Path:          stringPointer(plan.Path),
-		Enabled:       boolPointer(plan.Enabled),
-		Timezone:      stringPointer(plan.Timezone),
-		SkipIfRunning: boolPointer(plan.SkipIfRunning),
+		Schedule:       stringPointer(plan.Schedule),
+		Path:           stringPointer(plan.Path),
+		Enabled:        boolPointer(plan.Enabled),
+		Timezone:       stringPointer(plan.Timezone),
+		SkipIfRunning:  boolPointer(plan.SkipIfRunning),
+		SchedulePolicy: schedulePolicy,
+		FailureRules:   failureRules,
 	})
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not update Gregale cron", err)
@@ -222,17 +292,91 @@ func setCronModel(ctx context.Context, state *tfsdk.State, out cronResponse, fal
 	if cronID == "" {
 		cronID = fallback.CronID.ValueString()
 	}
+	schedulePolicy, policyDiags := cronSchedulePolicyValue(out.SchedulePolicy)
+	var diags diag.Diagnostics
+	diags.Append(policyDiags...)
 	model := cronModel{
-		CronID:          types.StringValue(cronID),
-		AppID:           remoteString(out.AppID, fallback.AppID),
-		Schedule:        remoteString(out.Schedule, fallback.Schedule),
-		Path:            remoteString(out.Path, fallback.Path),
-		Enabled:         types.BoolValue(out.Enabled),
-		Timezone:        remoteString(out.Timezone, fallback.Timezone),
-		SkipIfRunning:   types.BoolValue(out.SkipIfRunning),
-		SuspendedReason: types.StringValue(out.SuspendedReason),
-		CreatedAt:       types.StringValue(out.CreatedAt),
-		LastFiredAt:     types.StringValue(out.LastFiredAt),
+		CronID:           types.StringValue(cronID),
+		AppID:            remoteString(out.AppID, fallback.AppID),
+		Schedule:         remoteString(out.Schedule, fallback.Schedule),
+		Path:             remoteString(out.Path, fallback.Path),
+		Enabled:          types.BoolValue(out.Enabled),
+		Timezone:         remoteString(out.Timezone, fallback.Timezone),
+		SkipIfRunning:    types.BoolValue(out.SkipIfRunning),
+		SchedulePolicy:   schedulePolicy,
+		FailureRulesJSON: cronFailureRulesValue(out.FailureRules),
+		SuspendedReason:  types.StringValue(out.SuspendedReason),
+		CreatedAt:        types.StringValue(out.CreatedAt),
+		LastFiredAt:      types.StringValue(out.LastFiredAt),
 	}
-	return state.Set(ctx, &model)
+	diags.Append(state.Set(ctx, &model)...)
+	return diags
+}
+
+func cronFailureRulesFromModel(value types.String) (json.RawMessage, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if value.IsNull() || value.IsUnknown() || value.ValueString() == "" {
+		return nil, diags
+	}
+	canonical, err := canonicalJSONObject([]byte(value.ValueString()))
+	if err != nil {
+		diags.AddError("Invalid cron failure rules JSON", err.Error())
+		return nil, diags
+	}
+	return json.RawMessage(canonical), diags
+}
+
+func cronFailureRulesValue(raw json.RawMessage) types.String {
+	if len(raw) == 0 || string(raw) == "null" {
+		return types.StringNull()
+	}
+	canonical, err := canonicalJSONObject(raw)
+	if err != nil {
+		return types.StringValue(string(raw))
+	}
+	return types.StringValue(string(canonical))
+}
+
+func canonicalJSONObject(raw []byte) ([]byte, error) {
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("must be one valid JSON object: %w", err)
+	}
+	if value == nil {
+		return nil, fmt.Errorf("must be a JSON object")
+	}
+	return json.Marshal(value)
+}
+
+func cronSchedulePolicyFromModel(ctx context.Context, value types.Object) (*cronSchedulePolicy, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if value.IsNull() || value.IsUnknown() {
+		return nil, diags
+	}
+	var model cronSchedulePolicyModel
+	diags.Append(value.As(ctx, &model, basetypes.ObjectAsOptions{})...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	policy := &cronSchedulePolicy{
+		Version: 1, Overlap: model.Overlap.ValueString(),
+		StartDeadlineSeconds: int(model.StartDeadlineSeconds.ValueInt64()),
+		MissedRuns:           model.MissedRuns.ValueString(),
+	}
+	if err := policy.validate(); err != nil {
+		diags.AddError("Invalid cron schedule policy", err.Error())
+		return nil, diags
+	}
+	return policy, diags
+}
+
+func cronSchedulePolicyValue(policy *cronSchedulePolicy) (types.Object, diag.Diagnostics) {
+	if policy == nil {
+		return types.ObjectNull(cronSchedulePolicyAttrTypes), nil
+	}
+	return types.ObjectValue(cronSchedulePolicyAttrTypes, map[string]attr.Value{
+		"overlap":                types.StringValue(policy.Overlap),
+		"start_deadline_seconds": types.Int64Value(int64(policy.StartDeadlineSeconds)),
+		"missed_runs":            types.StringValue(policy.MissedRuns),
+	})
 }

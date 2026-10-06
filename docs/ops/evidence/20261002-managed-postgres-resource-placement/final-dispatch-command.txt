@@ -1,0 +1,28 @@
+set -eu
+test "$(sudo systemctl show gregale-managed-pg-resource-placement-ca1230ac -p ActiveState --value)" = inactive
+printf %s 'bd0ca02fb236201bac8ac3a9b6eba671342be4989478814e54615cfe3ef3d141  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/final-source.tar.gz
+92149ba9ed773acc43f999dce48c9e8706853201d5c9a45ed85090f8eb1758a5  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/final-runner.sh
+b3e293ccc960268fd948d5d4daf71b5ffd85d057e44824cd7284d8f82876e64e  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/final-change.patch
+c0dc5bfc04adc303a03902d3ffda5d19d5058c3e3f409a4ffa76a12840595be2  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/final-source-hashes.sha256
+' | sha256sum -c -
+sudo mkdir /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source.tar.gz /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/source.tar.gz
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/runner.sh /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/runner.sh
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/change.patch /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/change.patch
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source-hashes.sha256 /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/source-hashes.sha256
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/results.tar.gz /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/results.tar.gz
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/run.log /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/run.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/portable-linux.log /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/portable-linux.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/portable-linux.exit /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/portable-linux.exit
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/metal.log /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/metal.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/metal.exit /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/metal.exit
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/linux-lint.log /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/linux-lint.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/linux-lint.exit /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/linux-lint.exit
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/unit-final.txt /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/unit-final.txt
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source-runtime-match.log /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/initial/source-runtime-match.log
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/final-source.tar.gz /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source.tar.gz
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/final-runner.sh /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/runner.sh
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/final-change.patch /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/change.patch
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/final-source-hashes.sha256 /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source-hashes.sha256
+sudo systemd-run --unit=gregale-managed-pg-resource-placement-ca1230ac-final '--property=TemporaryFileSystem=/run/mpp-ca1230ac-final:rw,size=4G,mode=1777 /srv/fc/jail:rw,size=1G,mode=0755' --property=MemoryMax=10G /usr/bin/bash -c 'exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/run.log 2>&1'
+sudo systemctl show gregale-managed-pg-resource-placement-ca1230ac-final -p InvocationID -p ActiveState -p SubState -p MemoryMax

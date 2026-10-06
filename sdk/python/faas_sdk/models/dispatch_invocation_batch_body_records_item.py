@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -24,6 +25,10 @@ T = TypeVar("T", bound="DispatchInvocationBatchBodyRecordsItem")
 class DispatchInvocationBatchBodyRecordsItem:
     item_identifier: str
     payload_b64: str
+    invocation_id: UUID | Unset = UNSET
+    """Internal durable queue invocation ID; must equal item_identifier and have a current claimed lease."""
+    invocation_attempt: int | Unset = UNSET
+    """Required with invocation_id; fences delivery to the current durable queue claim attempt."""
     headers: DispatchInvocationBatchBodyRecordsItemHeaders | Unset = UNSET
     metadata: DispatchInvocationBatchBodyRecordsItemMetadata | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -32,6 +37,12 @@ class DispatchInvocationBatchBodyRecordsItem:
         item_identifier = self.item_identifier
 
         payload_b64 = self.payload_b64
+
+        invocation_id: str | Unset = UNSET
+        if not isinstance(self.invocation_id, Unset):
+            invocation_id = str(self.invocation_id)
+
+        invocation_attempt = self.invocation_attempt
 
         headers: dict[str, Any] | Unset = UNSET
         if not isinstance(self.headers, Unset):
@@ -49,6 +60,10 @@ class DispatchInvocationBatchBodyRecordsItem:
                 "payload_b64": payload_b64,
             }
         )
+        if invocation_id is not UNSET:
+            field_dict["invocation_id"] = invocation_id
+        if invocation_attempt is not UNSET:
+            field_dict["invocation_attempt"] = invocation_attempt
         if headers is not UNSET:
             field_dict["headers"] = headers
         if metadata is not UNSET:
@@ -70,6 +85,15 @@ class DispatchInvocationBatchBodyRecordsItem:
 
         payload_b64 = d.pop("payload_b64")
 
+        _invocation_id = d.pop("invocation_id", UNSET)
+        invocation_id: UUID | Unset
+        if isinstance(_invocation_id, Unset):
+            invocation_id = UNSET
+        else:
+            invocation_id = UUID(_invocation_id)
+
+        invocation_attempt = d.pop("invocation_attempt", UNSET)
+
         _headers = d.pop("headers", UNSET)
         headers: DispatchInvocationBatchBodyRecordsItemHeaders | Unset
         if isinstance(_headers, Unset):
@@ -87,6 +111,8 @@ class DispatchInvocationBatchBodyRecordsItem:
         dispatch_invocation_batch_body_records_item = cls(
             item_identifier=item_identifier,
             payload_b64=payload_b64,
+            invocation_id=invocation_id,
+            invocation_attempt=invocation_attempt,
             headers=headers,
             metadata=metadata,
         )

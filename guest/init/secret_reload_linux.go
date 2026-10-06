@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -22,12 +21,53 @@ import (
 const runtimeSecretPollInterval = 10 * time.Second
 
 type runtimeSecretsState struct {
-	mu      sync.RWMutex
-	secrets map[string]string
+	mu         sync.RWMutex
+	secrets    map[string]string
+	revision   string
+	projection *runtimeSecretProjection
+	process    runtimeSecretProcessState
+}
+
+// Projection identity is resolved once against the workload's image, before
+// either its supervisor or reload worker starts.
+type runtimeSecretProjection struct {
+	secretsPath, revisionPath string
+	uid, dirUID, dirGID       int
+}
+
+func newProjectedRuntimeSecretsState(initial map[string]string, projection runtimeSecretProjection) (*runtimeSecretsState, error) {
+	s := newRuntimeSecretsState(initial)
+	s.projection = &projection
+	if err := s.publishProjection(initial, ""); err != nil {
+		return nil, fmt.Errorf("prepare runtime secret projection: %w", err)
+	}
+	return s, nil
+}
+
+func (s *runtimeSecretsState) publishProjection(secrets map[string]string, revision string) error {
+	if s == nil || s.projection == nil {
+		return errors.New("runtime secret projection is unavailable")
+	}
+	p := s.projection
+	return s.publishForOwner(p.secretsPath, p.revisionPath, p.uid, p.dirUID, p.dirGID, secrets, revision)
+}
+
+func (s *runtimeSecretsState) publishRevision(revision string) error {
+	if s == nil || s.projection == nil {
+		return errors.New("runtime secret projection is unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projection
+	if err := p.publish(s.secrets, revision); err != nil {
+		return err
+	}
+	s.revision = revision
+	return nil
 }
 
 func newRuntimeSecretsState(initial map[string]string) *runtimeSecretsState {
-	return &runtimeSecretsState{secrets: cloneRuntimeSecrets(initial)}
+	return &runtimeSecretsState{secrets: cloneRuntimeSecrets(initial), process: runtimeSecretProcessState{transport: sendRuntimeSecretProcessRequest, startBudget: 30 * time.Second}}
 }
 
 func (s *runtimeSecretsState) snapshot() map[string]string {
@@ -39,26 +79,26 @@ func (s *runtimeSecretsState) snapshot() map[string]string {
 	return cloneRuntimeSecrets(s.secrets)
 }
 
-// publish couples the guest-local projection with the in-memory snapshot used
-// by future supervisor starts. Holding the lock across the atomic file publish
-// prevents a crash/restart from snapshotting stale env after the file changed.
-func (s *runtimeSecretsState) publish(path, revisionPath string, uid int, secrets map[string]string, revision string) error {
-	return s.publishForOwner(path, revisionPath, uid, 0, 0, secrets, revision)
+func (s *runtimeSecretsState) startupSnapshot() runtimeSecretSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return runtimeSecretSnapshot{Revision: s.revision, Secrets: cloneRuntimeSecrets(s.secrets)}
 }
 
+// Publish a complete generation before changing the restart snapshot. Readers
+// of snapshot.json get the values and revision from the same immutable file.
 func (s *runtimeSecretsState) publishForOwner(path, revisionPath string, uid, dirUID, dirGID int, secrets map[string]string, revision string) error {
 	if s == nil {
 		return errors.New("runtime secrets state is unavailable")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := writeRuntimeSecretsProjectionForOwner(path, uid, dirUID, dirGID, secrets); err != nil {
-		return err
-	}
-	if err := writeRuntimeSecretRevisionProjectionForOwner(revisionPath, uid, dirUID, dirGID, revision); err != nil {
+	p := runtimeSecretProjection{secretsPath: path, revisionPath: revisionPath, uid: uid, dirUID: dirUID, dirGID: dirGID}
+	if err := p.publish(secrets, revision); err != nil {
 		return err
 	}
 	s.secrets = cloneRuntimeSecrets(secrets)
+	s.revision = revision
 	return nil
 }
 
@@ -83,101 +123,137 @@ func runtimeSecretsEqual(a, b map[string]string) bool {
 }
 
 func startRuntimeSecretReloader(ctx context.Context, manifest api.AppManifest, secrets *runtimeSecretsState, sup *Supervisor, log *slog.Logger) {
-	startRuntimeSecretReloaderForWorkload(ctx, manifest, secrets, sup, log, "", secretReloadFilePath, secretReloadRevisionFilePath)
+	startRuntimeSecretReloaderForWorkload(ctx, manifest, secrets, sup, log, "")
 }
 
-func startRuntimeSecretReloaderForWorkload(ctx context.Context, manifest api.AppManifest, secrets *runtimeSecretsState, sup *Supervisor, log *slog.Logger, workloadName, projectionPath, revisionPath string) {
-	if ctx == nil || secrets == nil || sup == nil || manifest.SecretReloadSignal == "" {
-		return
+func startRuntimeSecretReloaderForWorkload(ctx context.Context, manifest api.AppManifest, secrets *runtimeSecretsState, sup *Supervisor, log *slog.Logger, workloadName string) <-chan struct{} {
+	if ctx == nil || secrets == nil || secrets.projection == nil || sup == nil || manifest.SecretReloadSignal == "" {
+		return nil
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	signal := secretReloadSyscall(manifest.SecretReloadSignal)
+	done := make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(runtimeSecretPollInterval)
-		defer ticker.Stop()
-		lastRevision := ""
-		var pendingReport *runtimeSecretReloadReport
-		reportPending := func() {
-			if pendingReport == nil {
-				return
+		defer close(done)
+		runRuntimeSecretReloadWorker(ctx, secrets, sup, log, workloadName, secretReloadSyscall(manifest.SecretReloadSignal), runtimeSecretReloadIO{
+			fetch: fetchRuntimeSecretsForWorkload, report: sendRuntimeSecretReloadReport,
+			send: sendRuntimeSecretSignal, pollInterval: runtimeSecretPollInterval, tickInterval: time.Second,
+		})
+	}()
+	return done
+}
+
+type runtimeSecretReloadIO struct {
+	fetch                      func(string, string) (runtimeConfigResponse, error)
+	report                     func(runtimeSecretReloadReport) (bool, bool, error)
+	send                       func(*os.Process, syscall.Signal) error
+	pollInterval, tickInterval time.Duration
+}
+
+// The worker owns one pending notification, fenced to the latest published
+// revision. Fetch, delivery and observation retries are independent.
+func runRuntimeSecretReloadWorker(ctx context.Context, secrets *runtimeSecretsState, sup *Supervisor, log *slog.Logger, workloadName string, signal syscall.Signal, transport runtimeSecretReloadIO) {
+	ticker := time.NewTicker(transport.tickInterval)
+	defer ticker.Stop()
+	lastRevision := ""
+	var nextFetch time.Time
+	var notification *runtimeSecretNotification
+	needsNotification := false
+	var nextProcessSync time.Time
+	var pendingReport, lastReport *runtimeSecretReloadReport
+	setReport := func(report runtimeSecretReloadReport) {
+		if lastReport == nil || *lastReport != report {
+			lastReport = &report
+			pendingReport = &report
+		}
+	}
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		now := time.Now()
+		if !now.Before(nextFetch) {
+			nextFetch = now.Add(transport.pollInterval)
+			response, err := transport.fetch(workloadName, lastRevision)
+			switch {
+			case err != nil:
+				log.Debug("guest-init: runtime secret refresh unavailable", "err_kind", "fetch_failed")
+			case response.Error != "":
+				log.Debug("guest-init: runtime secret refresh rejected", "reason", response.Error)
+			case !validGuestRuntimeSecretRevision(response.Revision):
+				lastRevision = ""
+				log.Debug("guest-init: runtime secret revision was invalid", "err_kind", "invalid_response")
+			case response.Unchanged:
+				if response.Revision != lastRevision {
+					lastRevision = ""
+				}
+			case response.Secrets == nil:
+				lastRevision = ""
+				log.Debug("guest-init: runtime secret response omitted its payload", "err_kind", "invalid_response")
+			default:
+				fresh := cloneRuntimeSecrets(*response.Secrets)
+				changed := !runtimeSecretsEqual(secrets.snapshot(), fresh)
+				if changed {
+					err = secrets.publishProjection(fresh, response.Revision)
+				} else {
+					err = secrets.publishRevision(response.Revision)
+				}
+				if err != nil {
+					// Never notify an older revision after a known newer fetch failed to
+					// publish, nor let a failed write advance the restart snapshot.
+					notification = nil
+					lastRevision = ""
+					setReport(runtimeSecretReloadReport{Revision: response.Revision, WorkloadName: workloadName, Projection: "failed", Signal: "not_attempted", ErrorCode: "projection_failed"})
+					log.Warn("guest-init: runtime secret projection update failed", "err_kind", "write_failed")
+				} else {
+					lastRevision = response.Revision
+					if changed || needsNotification {
+						needsNotification = true
+						if notification == nil || notification.revision != response.Revision {
+							notification = &runtimeSecretNotification{revision: response.Revision, values: fresh}
+						}
+					} else {
+						setReport(runtimeSecretReloadReport{Revision: response.Revision, WorkloadName: workloadName, Projection: "unchanged", Signal: "not_attempted"})
+					}
+				}
 			}
-			accepted, stale, err := sendRuntimeSecretReloadReport(*pendingReport)
-			if err != nil {
-				log.Debug("guest-init: runtime secret reload status unavailable", "err_kind", "report_failed")
-				return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if notification != nil {
+			// A fetch may block for several seconds. Backoff starts at the
+			// delivery attempt, rather than the beginning of that fetch.
+			status, attempted := notification.attempt(time.Now(), sup, signal, transport.send)
+			if attempted {
+				report := runtimeSecretReloadReport{Revision: notification.revision, WorkloadName: workloadName, Projection: "updated", Signal: status}
+				if status == "failed" {
+					report.ErrorCode = "signal_failed"
+				}
+				setReport(report)
+				if status == "sent" || status == "not_attempted" {
+					notification = nil
+					needsNotification = false
+				}
 			}
-			if stale {
-				log.Debug("guest-init: runtime secret reload status became stale", "err_kind", "stale_report")
-			}
-			if accepted || stale {
+		}
+		if pendingReport != nil {
+			accepted, stale, err := transport.report(*pendingReport)
+			if err == nil && (accepted || stale) {
 				pendingReport = nil
 			}
 		}
-		for {
-			response, err := fetchRuntimeSecretsForWorkload(workloadName, lastRevision)
-			if err != nil {
-				log.Debug("guest-init: runtime secret refresh unavailable", "err_kind", "fetch_failed")
-			} else if response.Error != "" {
-				log.Debug("guest-init: runtime secret refresh rejected", "reason", response.Error)
-			} else if !validGuestRuntimeSecretRevision(response.Revision) {
-				lastRevision = ""
-				log.Debug("guest-init: runtime secret revision was invalid", "err_kind", "invalid_response")
-			} else if response.Unchanged {
-				if response.Revision == lastRevision {
-					lastRevision = response.Revision
-				} else {
-					lastRevision = ""
-					log.Debug("guest-init: runtime secret revision response was inconsistent", "err_kind", "invalid_response")
-				}
-			} else if response.Secrets == nil {
-				lastRevision = ""
-				log.Debug("guest-init: runtime secret response omitted its payload", "err_kind", "invalid_response")
-			} else {
-				current := secrets.snapshot()
-				fresh := *response.Secrets
-				if fresh == nil {
-					fresh = map[string]string{}
-				}
-				if runtimeSecretsEqual(current, fresh) {
-					if err := writeRuntimeSecretRevisionProjection(revisionPath, lookupUID(manifest.EffectiveUser()), response.Revision); err != nil {
-						lastRevision = ""
-						log.Warn("guest-init: runtime secret revision projection update failed", "err_kind", "write_failed")
-					} else {
-						lastRevision = response.Revision
-						pendingReport = &runtimeSecretReloadReport{
-							Revision: response.Revision, Projection: "unchanged", Signal: "not_attempted", WorkloadName: workloadName,
-						}
-					}
-				} else if err := secrets.publish(projectionPath, revisionPath, lookupUID(manifest.EffectiveUser()), fresh, response.Revision); err != nil {
-					log.Warn("guest-init: runtime secret projection update failed", "err_kind", "write_failed")
-					pendingReport = &runtimeSecretReloadReport{
-						Revision: response.Revision, Projection: "failed", Signal: "not_attempted", ErrorCode: "projection_failed", WorkloadName: workloadName,
-					}
-				} else {
-					lastRevision = response.Revision
-					report := &runtimeSecretReloadReport{Revision: response.Revision, Projection: "updated", Signal: "sent", WorkloadName: workloadName}
-					queued, err := sup.ForwardSignalOnStartWithStatus(signal)
-					if err != nil {
-						report.Signal = "failed"
-						report.ErrorCode = "signal_failed"
-						log.Debug("guest-init: secret reload signal could not be forwarded", "signal", signal.String(), "err_kind", "signal_failed")
-					} else if queued {
-						report.Signal = "queued"
-					}
-					pendingReport = report
-					log.Info("guest-init: runtime secrets updated", "count", len(fresh), "revision", lastRevision)
-				}
-			}
-			reportPending()
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
+		if time.Now().After(nextProcessSync) {
+			secrets.process.reconcile(workloadName)
+			nextProcessSync = time.Now().Add(runtimeSecretPollInterval)
 		}
-	}()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 type runtimeSecretReloadReport struct {
@@ -266,118 +342,17 @@ func secretReloadSyscall(name string) syscall.Signal {
 	}
 }
 
-func writeRuntimeSecretsProjection(path string, uid int, secrets map[string]string) error {
-	return writeRuntimeSecretsProjectionForOwner(path, uid, 0, 0, secrets)
-}
-
-func writeRuntimeSecretRevisionProjection(path string, uid int, revision string) error {
-	return writeRuntimeSecretRevisionProjectionForOwner(path, uid, 0, 0, revision)
-}
-
 func writeRuntimeSecretRevisionProjectionForOwner(path string, uid, dirUID, dirGID int, revision string) error {
 	if revision != "" && !validGuestRuntimeSecretRevision(revision) {
 		return errors.New("invalid runtime secret revision")
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o711); err != nil {
-		return fmt.Errorf("create secret revision directory: %w", err)
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return fmt.Errorf("inspect secret revision directory: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("secret revision path is not a directory")
-	}
-	if err := os.Chown(dir, dirUID, dirGID); err != nil {
-		return fmt.Errorf("secure secret revision directory owner: %w", err)
-	}
-	if err := os.Chmod(dir, 0o711); err != nil {
-		return fmt.Errorf("secure secret revision directory mode: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".revision-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create secret revision temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chown(uid, dirGID); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("set secret revision owner: %w", err)
-	}
-	if err := tmp.Chmod(0o400); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("set secret revision mode: %w", err)
-	}
-	if _, err := tmp.WriteString(revision); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write secret revision: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync secret revision: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close secret revision: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("publish secret revision: %w", err)
-	}
-	return nil
+	return writePrivateRuntimeSecretFile(path, uid, dirUID, dirGID, []byte(revision))
 }
 
 func writeRuntimeSecretsProjectionForOwner(path string, uid, dirUID, dirGID int, secrets map[string]string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o711); err != nil {
-		return fmt.Errorf("create secret projection directory: %w", err)
-	}
-	info, err := os.Lstat(dir)
+	body, err := json.Marshal(cloneRuntimeSecrets(secrets))
 	if err != nil {
-		return fmt.Errorf("inspect secret projection directory: %w", err)
+		return fmt.Errorf("encode runtime secret projection: %w", err)
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("secret projection path is not a directory")
-	}
-	if err := os.Chown(dir, dirUID, dirGID); err != nil {
-		return fmt.Errorf("secure secret projection directory owner: %w", err)
-	}
-	if err := os.Chmod(dir, 0o711); err != nil {
-		return fmt.Errorf("secure secret projection directory mode: %w", err)
-	}
-	if secrets == nil {
-		secrets = map[string]string{}
-	}
-	body, err := json.Marshal(secrets)
-	if err != nil {
-		return fmt.Errorf("encode secret projection: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".secrets-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create secret projection temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chown(uid, dirGID); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("set secret projection owner: %w", err)
-	}
-	if err := tmp.Chmod(0o400); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("set secret projection mode: %w", err)
-	}
-	if _, err := tmp.Write(body); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write secret projection: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync secret projection: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close secret projection: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("publish secret projection: %w", err)
-	}
-	return nil
+	return writePrivateRuntimeSecretFile(path, uid, dirUID, dirGID, body)
 }

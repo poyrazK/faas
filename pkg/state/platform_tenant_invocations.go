@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -15,7 +16,7 @@ func (m *MemStore) platformTenantInvocationAllowedLocked(inv Invocation) error {
 	tenant, ok := m.platformTenants[inv.PlatformTenantID]
 	app := m.apps[inv.AppID]
 	if !ok || tenant.AccountID != inv.AccountID || app.AccountID != inv.AccountID ||
-		(inv.Source != InvocationAsyncInvoke && inv.Source != InvocationReplay) {
+		(inv.Source != InvocationAsyncInvoke && inv.Source != InvocationReplay && inv.Source != InvocationQueue) {
 		return ErrInvalidArgument
 	}
 	if tenant.Status != PlatformTenantActive {
@@ -42,12 +43,24 @@ func AdmitPlatformTenantInvocation(ctx context.Context, store interface {
 	}
 	stored, err := store.InvocationByID(ctx, inv.ID)
 	if err != nil {
-		if inv.PlatformTenantID == "" && errors.Is(err, ErrNotFound) {
+		if inv.PlatformTenantID == "" && inv.Source != InvocationSource("esm") && errors.Is(err, ErrNotFound) {
 			return inv, nil
 		}
 		return inv, err
 	}
 	if stored.PlatformTenantID == "" && inv.PlatformTenantID == "" {
+		if stored.AppID != appID || inv.DeploymentScope != "" && inv.DeploymentScope != stored.DeploymentScope {
+			return inv, fmt.Errorf("%w: invocation deployment scope admission", ErrConflict)
+		}
+		if inv.Source == InvocationSource("esm") && ((stored.Source != InvocationQueue && stored.Source != InvocationDelayedTask) ||
+			stored.State != InvocationDispatching || inv.Attempts <= 0 || inv.Attempts != stored.Attempts ||
+			inv.ReplayGeneration != stored.ReplayGeneration ||
+			stored.LeaseExpiresAt == nil || !stored.LeaseExpiresAt.After(time.Now())) {
+			return inv, fmt.Errorf("%w: durable queue invocation claim admission", ErrConflict)
+		}
+		// DeploymentScope is internal and is omitted from the HTTP envelope.
+		// Recover it from durable admission before resolving a wake or target.
+		inv.DeploymentScope = stored.DeploymentScope
 		return inv, nil
 	}
 	if stored.PlatformTenantID == "" || stored.PlatformTenantID != inv.PlatformTenantID ||
@@ -59,5 +72,5 @@ func AdmitPlatformTenantInvocation(ctx context.Context, store interface {
 		return inv, ErrNotFound
 	}
 	// Use the persisted request, including its method, path, body and version pin.
-	return stored, nil
+	return admitOperationDispatch(ctx, store, stored, inv)
 }

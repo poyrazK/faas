@@ -40,7 +40,7 @@ func setupWithScopes(t *testing.T, scopes []string) testEnv {
 	}
 	ops := wire.NewOpsMetrics("apid_scopes_test")
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
-	return testEnv{h: srv.handler(), store: store, key: pt, acct: acct, ops: ops}
+	return testEnv{h: srv.handler(), s: srv, store: store, key: pt, acct: acct, ops: ops}
 }
 
 // setupWithSession is the session-cookie twin of setupWithScopes. It

@@ -32,12 +32,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -105,6 +107,12 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(req.Healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -117,7 +125,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
-	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
 		return
@@ -280,20 +288,22 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		sourceInstallationID = installID
 	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		Activity:             s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
-		AppID:                app.ID,
-		Kind:                 state.DeploymentKindGitHub,
-		SourcePath:           spoolPath,
-		SourceBytes:          spoolBytes,
-		SourceRoot:           app.RootDir,
-		SourceURL:            fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
-		CommitSHA:            resolvedSHA,
-		GitHubSourceRef:      branchRef,
-		GitHubInstallationID: sourceInstallationID,
-		Scope:                rollout.Scope,
-		FunctionRuntime:      functionRuntimeForApp(app),
-		LogSpool:             spoolRoot(),
-		Log:                  s.log,
+		OperationDefinitions:      sourceOperationSpecs(manifest),
+		OperationAdmissionEnabled: s.operationDefinitionAdmission(app.AccountID, app.ID, rollout.Scope),
+		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
+		AppID:                     app.ID,
+		Kind:                      state.DeploymentKindGitHub,
+		SourcePath:                spoolPath,
+		SourceBytes:               spoolBytes,
+		SourceRoot:                app.RootDir,
+		SourceURL:                 fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
+		CommitSHA:                 resolvedSHA,
+		GitHubSourceRef:           branchRef,
+		GitHubInstallationID:      sourceInstallationID,
+		Scope:                     rollout.Scope,
+		FunctionRuntime:           functionRuntimeForApp(app),
+		LogSpool:                  spoolRoot(),
+		Log:                       s.log,
 		// Issue #606 / SAFE-RELEASES-E.1: server-stamped actor
 		// attribution. The source-ref path is the dashboard +
 		// CLI flow that streams a GH repo through the apid
@@ -326,6 +336,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		ReleaseCommandShell:    releaseCommand.shell,
 		Workflows:              marshalWorkflowDefinitions(workflowDefs),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
@@ -542,12 +553,12 @@ func (s *server) auditSourceRefDeploy(r *http.Request, acct state.Account, app s
 	s.log.Info("source-ref deployment enqueued",
 		"deployment", res.DeploymentID,
 		"app", app.ID,
-		"repo", req.Repo,
-		"ref", req.Ref,
-		"source_sha", resolvedSHA,
-		"deployed_by", ann.DeployedBy,
-		"pr_number", ann.PRNumber,
-		"tag", ann.Tag,
+		"repo", logsanitize.Field(req.Repo),
+		"ref", logsanitize.Field(req.Ref),
+		"source_sha", logsanitize.Field(resolvedSHA),
+		"deployed_by", logsanitize.Field(ann.DeployedBy),
+		slog.Int("pr_number", ann.PRNumber),
+		"tag", logsanitize.Field(ann.Tag),
 	)
 	// Re-read the just-written deployment row to pick up the
 	// actor columns (apidsource.Enqueue stamped them in its tx).

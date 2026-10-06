@@ -13,6 +13,23 @@ faas_tcpd_schedd_target: ''
 faas_tcpd_schedd_tls_ca_path: ''
 faas_tcpd_schedd_tls_cert_path: ''
 faas_tcpd_schedd_tls_key_path: ''
+faas_tcpd_tls_cert_dir: ''
 faas_tcpd_vmmd_tls_ca_path: ''
 faas_tcpd_vmmd_tls_cert_path: ''
 faas_tcpd_vmmd_tls_key_path: ''
+
+# UDP ingress remains off until native acceptance and explicit source policy.
+faas_udpd_enabled: false
+faas_udpd_bind_host: 0.0.0.0
+faas_udpd_allowed_cidrs: []
+faas_udpd_schedd_target: ''
+faas_udpd_schedd_tls_ca_path: ''
+faas_udpd_schedd_tls_cert_path: ''
+faas_udpd_schedd_tls_key_path: ''
+faas_udpd_vmmd_tls_ca_path: ''
+faas_udpd_vmmd_tls_cert_path: ''
+faas_udpd_vmmd_tls_key_path: ''
+
+# ADR-520: on-demand customer-domain certificates at the public edge.
+# Rendered from the manifest's public_edge.custom_domains.
+faas_custom_domain_tls: false

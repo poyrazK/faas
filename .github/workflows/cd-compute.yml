@@ -718,6 +718,50 @@ jobs:
           token_format: access_token
           access_token_scopes: https://www.googleapis.com/auth/devstorage.read_only
 
+      - name: Install pinned Ansible toolchain
+        # The fleet runner's apt ansible-core (2.16) and collections are not
+        # what CI lints and tests. Use the same ansible-core pin as ci.yml and
+        # cd-controlplane, in a per-job venv (the runner's interpreter is
+        # externally managed, PEP 668), and only the collection versions
+        # deploy/ansible/requirements.yml pins.
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/ansible-venv"
+          "$RUNNER_TEMP/ansible-venv/bin/python" -m pip install --quiet 'ansible-core==2.21.2'
+          collections="$RUNNER_TEMP/ansible-collections"
+          installed=0
+          for attempt in 1 2 3; do
+            if "$RUNNER_TEMP/ansible-venv/bin/ansible-galaxy" collection install \
+              --no-cache --timeout 30 \
+              --collections-path "$collections" \
+              -r deploy/ansible/requirements.yml; then
+              installed=1
+              break
+            fi
+            if [[ $attempt != 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ $installed != 1 ]]; then
+            # Galaxy outage: clone the same pinned versions from the
+            # collections' source repositories, as ci.yml does.
+            echo "::warning::Ansible Galaxy unavailable; cloning the pinned collection tags"
+            rm -rf -- "$collections/ansible_collections"
+            # Captured first: set -e cannot see a failure inside < <(...).
+            pins="$(awk '/^[[:space:]]*#/ {next} /- name:/ {n=$3} /version:/ {gsub(/"/, "", $2); print n, $2}' deploy/ansible/requirements.yml)"
+            [[ -n $pins ]]
+            while read -r name version; do
+              mkdir -p "$collections/ansible_collections/${name%%.*}"
+              git clone --quiet --depth 1 --branch "$version" --single-branch \
+                "https://github.com/ansible-collections/${name}.git" \
+                "$collections/ansible_collections/${name%%.*}/${name#*.}"
+            done <<<"$pins"
+          fi
+          test -d "$collections/ansible_collections/ansible/posix"
+          test -d "$collections/ansible_collections/community/postgresql"
+          echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
+          echo "ANSIBLE_COLLECTIONS_PATH=$collections" >> "$GITHUB_ENV"
+
       - name: Check fleet runner prerequisites
         run: |
           set -euo pipefail
@@ -1289,6 +1333,7 @@ jobs:
           grep -Eq '^service_proxy_listen[[:space:]]*=[[:space:]]*"10\.100\.0\.1:10080"$' \
             /etc/faas/gatewayd-internal.toml
           ss -ltnH | awk '$4 == "10.100.0.1:10080" { found=1 } END { exit !found }'
+          ss -ltnH | awk '$4 == "10.100.0.1:10081" { found=1 } END { exit !found }'
           ss -ltnH | awk '$4 == "10.100.0.1:53" { found=1 } END { exit !found }'
           ss -lunH | awk '$4 == "10.100.0.1:53" { found=1 } END { exit !found }'
           REMOTE

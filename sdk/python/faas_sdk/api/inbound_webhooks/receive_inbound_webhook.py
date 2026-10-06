@@ -9,18 +9,36 @@ from ...client import AuthenticatedClient, Client
 from ...models.inbound_webhook_receipt_response import InboundWebhookReceiptResponse
 from ...models.problem import Problem
 from ...models.receive_inbound_webhook_body import ReceiveInboundWebhookBody
+from ...models.webhook_automation_receipt_response import WebhookAutomationReceiptResponse
 from ...models.workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     token: str,
     *,
     body: ReceiveInboundWebhookBody,
-    stripe_signature: str,
+    stripe_signature: str | Unset = UNSET,
+    x_gregale_event_id: str | Unset = UNSET,
+    x_gregale_event_type: str | Unset = UNSET,
+    x_gregale_timestamp: str | Unset = UNSET,
+    x_gregale_signature: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Stripe-Signature"] = stripe_signature
+    if not isinstance(stripe_signature, Unset):
+        headers["Stripe-Signature"] = stripe_signature
+
+    if not isinstance(x_gregale_event_id, Unset):
+        headers["X-Gregale-Event-ID"] = x_gregale_event_id
+
+    if not isinstance(x_gregale_event_type, Unset):
+        headers["X-Gregale-Event-Type"] = x_gregale_event_type
+
+    if not isinstance(x_gregale_timestamp, Unset):
+        headers["X-Gregale-Timestamp"] = x_gregale_timestamp
+
+    if not isinstance(x_gregale_signature, Unset):
+        headers["X-Gregale-Signature"] = x_gregale_signature
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -39,23 +57,39 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem | None:
+) -> (
+    InboundWebhookReceiptResponse
+    | WebhookAutomationReceiptResponse
+    | WorkflowCallbackWebhookReceiptResponse
+    | Problem
+    | None
+):
     if response.status_code == 202:
 
-        def _parse_response_202(data: object) -> InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse:
+        def _parse_response_202(
+            data: object,
+        ) -> InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                response_202_type_0 = InboundWebhookReceiptResponse.from_dict(data)
+                response_202_type_0 = WebhookAutomationReceiptResponse.from_dict(data)
 
                 return response_202_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                response_202_type_1 = WorkflowCallbackWebhookReceiptResponse.from_dict(data)
+
+                return response_202_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
             if not isinstance(data, dict):
                 raise TypeError()
-            response_202_type_1 = WorkflowCallbackWebhookReceiptResponse.from_dict(data)
+            response_202_type_2 = InboundWebhookReceiptResponse.from_dict(data)
 
-            return response_202_type_1
+            return response_202_type_2
 
         response_202 = _parse_response_202(response.json())
 
@@ -70,6 +104,11 @@ def _parse_response(
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
 
     if response.status_code == 413:
         response_413 = Problem.from_dict(response.json())
@@ -89,7 +128,9 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]:
+) -> Response[
+    InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -103,20 +144,38 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ReceiveInboundWebhookBody,
-    stripe_signature: str,
-) -> Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]:
-    """Verify and durably accept a provider webhook.
+    stripe_signature: str | Unset = UNSET,
+    x_gregale_event_id: str | Unset = UNSET,
+    x_gregale_event_type: str | Unset = UNSET,
+    x_gregale_timestamp: str | Unset = UNSET,
+    x_gregale_signature: str | Unset = UNSET,
+) -> Response[
+    InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+]:
+    """Verify and durably accept a Stripe or generic signed webhook.
 
      This route does not use a Gregale bearer key. The opaque URL and the
     provider signature are the trust boundary. For Stripe, the exact raw
-    body is verified against Stripe-Signature. An exact workflow callback
-    binding completes its callback durably instead of enqueuing an app
-    invocation. Unmatched events keep the ordinary invocation path.
+    body is verified against Stripe-Signature. Generic endpoints require
+    X-Gregale-Event-ID, X-Gregale-Event-Type, X-Gregale-Timestamp and
+    X-Gregale-Signature. The HMAC-SHA256 covers the timestamp, event ID,
+    event type and exact raw body; timestamps must be within five minutes.
+    An exact Stripe workflow callback binding completes its callback
+    durably instead of enqueuing an app invocation. Unmatched events keep
+    the ordinary invocation path.
     Terminal callbacks are acknowledged as ignored after verification.
+    An automation-bound endpoint captures its published definition in durable
+    fanout work. Paused, unpublished or type-unmatched events are durably ignored;
+    content filters are evaluated by the scheduler. Provider retries return the
+    original receipt; changed content for the same event ID returns 409.
 
     Args:
         token (str):
-        stripe_signature (str):
+        stripe_signature (str | Unset):
+        x_gregale_event_id (str | Unset):
+        x_gregale_event_type (str | Unset):
+        x_gregale_timestamp (str | Unset):
+        x_gregale_signature (str | Unset):
         body (ReceiveInboundWebhookBody):
 
     Raises:
@@ -124,13 +183,17 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
+        Response[InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
     """
 
     kwargs = _get_kwargs(
         token=token,
         body=body,
         stripe_signature=stripe_signature,
+        x_gregale_event_id=x_gregale_event_id,
+        x_gregale_event_type=x_gregale_event_type,
+        x_gregale_timestamp=x_gregale_timestamp,
+        x_gregale_signature=x_gregale_signature,
     )
 
     response = client.get_httpx_client().request(
@@ -145,20 +208,42 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ReceiveInboundWebhookBody,
-    stripe_signature: str,
-) -> InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem | None:
-    """Verify and durably accept a provider webhook.
+    stripe_signature: str | Unset = UNSET,
+    x_gregale_event_id: str | Unset = UNSET,
+    x_gregale_event_type: str | Unset = UNSET,
+    x_gregale_timestamp: str | Unset = UNSET,
+    x_gregale_signature: str | Unset = UNSET,
+) -> (
+    InboundWebhookReceiptResponse
+    | WebhookAutomationReceiptResponse
+    | WorkflowCallbackWebhookReceiptResponse
+    | Problem
+    | None
+):
+    """Verify and durably accept a Stripe or generic signed webhook.
 
      This route does not use a Gregale bearer key. The opaque URL and the
     provider signature are the trust boundary. For Stripe, the exact raw
-    body is verified against Stripe-Signature. An exact workflow callback
-    binding completes its callback durably instead of enqueuing an app
-    invocation. Unmatched events keep the ordinary invocation path.
+    body is verified against Stripe-Signature. Generic endpoints require
+    X-Gregale-Event-ID, X-Gregale-Event-Type, X-Gregale-Timestamp and
+    X-Gregale-Signature. The HMAC-SHA256 covers the timestamp, event ID,
+    event type and exact raw body; timestamps must be within five minutes.
+    An exact Stripe workflow callback binding completes its callback
+    durably instead of enqueuing an app invocation. Unmatched events keep
+    the ordinary invocation path.
     Terminal callbacks are acknowledged as ignored after verification.
+    An automation-bound endpoint captures its published definition in durable
+    fanout work. Paused, unpublished or type-unmatched events are durably ignored;
+    content filters are evaluated by the scheduler. Provider retries return the
+    original receipt; changed content for the same event ID returns 409.
 
     Args:
         token (str):
-        stripe_signature (str):
+        stripe_signature (str | Unset):
+        x_gregale_event_id (str | Unset):
+        x_gregale_event_type (str | Unset):
+        x_gregale_timestamp (str | Unset):
+        x_gregale_signature (str | Unset):
         body (ReceiveInboundWebhookBody):
 
     Raises:
@@ -166,7 +251,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+        InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
     """
 
     return sync_detailed(
@@ -174,6 +259,10 @@ def sync(
         client=client,
         body=body,
         stripe_signature=stripe_signature,
+        x_gregale_event_id=x_gregale_event_id,
+        x_gregale_event_type=x_gregale_event_type,
+        x_gregale_timestamp=x_gregale_timestamp,
+        x_gregale_signature=x_gregale_signature,
     ).parsed
 
 
@@ -182,20 +271,38 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ReceiveInboundWebhookBody,
-    stripe_signature: str,
-) -> Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]:
-    """Verify and durably accept a provider webhook.
+    stripe_signature: str | Unset = UNSET,
+    x_gregale_event_id: str | Unset = UNSET,
+    x_gregale_event_type: str | Unset = UNSET,
+    x_gregale_timestamp: str | Unset = UNSET,
+    x_gregale_signature: str | Unset = UNSET,
+) -> Response[
+    InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+]:
+    """Verify and durably accept a Stripe or generic signed webhook.
 
      This route does not use a Gregale bearer key. The opaque URL and the
     provider signature are the trust boundary. For Stripe, the exact raw
-    body is verified against Stripe-Signature. An exact workflow callback
-    binding completes its callback durably instead of enqueuing an app
-    invocation. Unmatched events keep the ordinary invocation path.
+    body is verified against Stripe-Signature. Generic endpoints require
+    X-Gregale-Event-ID, X-Gregale-Event-Type, X-Gregale-Timestamp and
+    X-Gregale-Signature. The HMAC-SHA256 covers the timestamp, event ID,
+    event type and exact raw body; timestamps must be within five minutes.
+    An exact Stripe workflow callback binding completes its callback
+    durably instead of enqueuing an app invocation. Unmatched events keep
+    the ordinary invocation path.
     Terminal callbacks are acknowledged as ignored after verification.
+    An automation-bound endpoint captures its published definition in durable
+    fanout work. Paused, unpublished or type-unmatched events are durably ignored;
+    content filters are evaluated by the scheduler. Provider retries return the
+    original receipt; changed content for the same event ID returns 409.
 
     Args:
         token (str):
-        stripe_signature (str):
+        stripe_signature (str | Unset):
+        x_gregale_event_id (str | Unset):
+        x_gregale_event_type (str | Unset):
+        x_gregale_timestamp (str | Unset):
+        x_gregale_signature (str | Unset):
         body (ReceiveInboundWebhookBody):
 
     Raises:
@@ -203,13 +310,17 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
+        Response[InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
     """
 
     kwargs = _get_kwargs(
         token=token,
         body=body,
         stripe_signature=stripe_signature,
+        x_gregale_event_id=x_gregale_event_id,
+        x_gregale_event_type=x_gregale_event_type,
+        x_gregale_timestamp=x_gregale_timestamp,
+        x_gregale_signature=x_gregale_signature,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -222,20 +333,42 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ReceiveInboundWebhookBody,
-    stripe_signature: str,
-) -> InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem | None:
-    """Verify and durably accept a provider webhook.
+    stripe_signature: str | Unset = UNSET,
+    x_gregale_event_id: str | Unset = UNSET,
+    x_gregale_event_type: str | Unset = UNSET,
+    x_gregale_timestamp: str | Unset = UNSET,
+    x_gregale_signature: str | Unset = UNSET,
+) -> (
+    InboundWebhookReceiptResponse
+    | WebhookAutomationReceiptResponse
+    | WorkflowCallbackWebhookReceiptResponse
+    | Problem
+    | None
+):
+    """Verify and durably accept a Stripe or generic signed webhook.
 
      This route does not use a Gregale bearer key. The opaque URL and the
     provider signature are the trust boundary. For Stripe, the exact raw
-    body is verified against Stripe-Signature. An exact workflow callback
-    binding completes its callback durably instead of enqueuing an app
-    invocation. Unmatched events keep the ordinary invocation path.
+    body is verified against Stripe-Signature. Generic endpoints require
+    X-Gregale-Event-ID, X-Gregale-Event-Type, X-Gregale-Timestamp and
+    X-Gregale-Signature. The HMAC-SHA256 covers the timestamp, event ID,
+    event type and exact raw body; timestamps must be within five minutes.
+    An exact Stripe workflow callback binding completes its callback
+    durably instead of enqueuing an app invocation. Unmatched events keep
+    the ordinary invocation path.
     Terminal callbacks are acknowledged as ignored after verification.
+    An automation-bound endpoint captures its published definition in durable
+    fanout work. Paused, unpublished or type-unmatched events are durably ignored;
+    content filters are evaluated by the scheduler. Provider retries return the
+    original receipt; changed content for the same event ID returns 409.
 
     Args:
         token (str):
-        stripe_signature (str):
+        stripe_signature (str | Unset):
+        x_gregale_event_id (str | Unset):
+        x_gregale_event_type (str | Unset):
+        x_gregale_timestamp (str | Unset):
+        x_gregale_signature (str | Unset):
         body (ReceiveInboundWebhookBody):
 
     Raises:
@@ -243,7 +376,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+        InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
     """
 
     return (
@@ -252,5 +385,9 @@ async def asyncio(
             client=client,
             body=body,
             stripe_signature=stripe_signature,
+            x_gregale_event_id=x_gregale_event_id,
+            x_gregale_event_type=x_gregale_event_type,
+            x_gregale_timestamp=x_gregale_timestamp,
+            x_gregale_signature=x_gregale_signature,
         )
     ).parsed

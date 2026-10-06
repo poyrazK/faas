@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -773,13 +774,76 @@ func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t 
 	}
 }
 
+// adr: 590
 func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
+	testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t, false)
+}
+
+// adr: 590
+func TestProjectEnvironmentPromotionSyncsFlagsWithReleaseGraph(t *testing.T) {
+	testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t, true)
+}
+
+// adr: 590
+func TestProjectEnvironmentPromotionSyncsFlagsWithUnchangedArtifact(t *testing.T) {
+	testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t, true, true)
+}
+
+// adr: 590
+func TestProjectEnvironmentPromotionRejectsFlagEditDuringCreation(t *testing.T) {
+	testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t, true, true, true)
+}
+
+type flagDriftDuringPromotionCreationStore struct {
+	*state.MemStore
+	scope state.FeatureFlagScope
+}
+
+func (s *flagDriftDuringPromotionCreationStore) CreateProjectEnvironmentPromotion(ctx context.Context, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload) (state.ProjectEnvironmentPromotion, []state.ProjectEnvironmentPromotionWorkload, error) {
+	current, err := s.GetFeatureFlags(ctx, s.scope, 0)
+	if err != nil {
+		return state.ProjectEnvironmentPromotion{}, nil, err
+	}
+	if _, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: s.scope, ExpectedVersion: current.Version, Config: current.Config, Actor: "external"}); err != nil {
+		return state.ProjectEnvironmentPromotion{}, nil, err
+	}
+	return s.MemStore.CreateProjectEnvironmentPromotion(ctx, promotion, workloads)
+}
+
+func testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T, withFlags bool, flagsOnly ...bool) {
+	t.Helper()
+	onlyFlags := len(flagsOnly) != 0 && flagsOnly[0]
 	srv, store, acct, project, app := newProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
 	}
-	sourceConfigValues, sourceConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"eu","replicas":3}`))
+	var sourceFlags, previousTargetFlags state.FeatureFlagVersion
+	var targetFlagScope state.FeatureFlagScope
+	if withFlags {
+		for _, environment := range []string{"staging", "production"} {
+			env, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, environment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scope := state.FeatureFlagScope{AccountID: acct.ID, ProjectID: project.ID, EnvironmentID: env.ID}
+			version, err := store.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: scope,
+				Config: flags.Config{Flags: []flags.Flag{{Key: environment + "_only", Enabled: true, Default: true}}}, Actor: "developer"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if environment == "staging" {
+				sourceFlags = version
+			} else {
+				targetFlagScope, previousTargetFlags = scope, version
+			}
+		}
+	}
+	sourceConfigJSON := []byte(`{"region":"eu","replicas":3}`)
+	if onlyFlags {
+		sourceConfigJSON = []byte(`{"region":"us","replicas":2}`)
+	}
+	sourceConfigValues, sourceConfigHash, err := api.NormalizeProjectEnvironmentConfig(sourceConfigJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -802,7 +866,20 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	}
 	manifest := app.Manifest
 	manifest.RevisionPinTTLSeconds = 3600
-	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+	app, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousRAM := app.RAMMB
+	settings, err := state.WorkloadSettingsFromApp(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !onlyFlags {
+		settings.RAMMB, settings.StartCommand = 512, "serve stage tested"
+	}
+	stageSpec, err := store.PutProjectEnvironmentWorkloadSpec(ctx, acct.ID, project.ID, "staging", app.ID, 0, settings)
+	if err != nil {
 		t.Fatal(err)
 	}
 	createLive := func(environment, image, rootfs string) state.Deployment {
@@ -822,7 +899,7 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 		return deployment
 	}
 	sourceGraphDeployment := createLive("staging", "sha256:source-graph", "source-graph")
-	previousTarget := createLive("production", "sha256:production-old", "production-old")
+	previousTarget := createLive("production", "sha256:source-graph", "production-old")
 	sourceGraph, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "staging", 1800,
 		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: sourceGraphDeployment.ID}})
 	if err != nil {
@@ -854,6 +931,33 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 		preview.Changes[0].SourceDeploymentID != sourceGraphDeployment.ID || preview.Changes[0].TargetDeploymentID != previousTarget.ID {
 		t.Fatalf("preview did not preserve graph members: %+v", preview)
 	}
+	expectedKind := "update"
+	if onlyFlags {
+		expectedKind = "unchanged"
+		if len(preview.ConfigDiff.Changes) != 0 {
+			t.Fatal("flag-only fixture changed project configuration")
+		}
+	}
+	if preview.Changes[0].Kind != expectedKind || preview.Changes[0].SourceWorkloadConfigHash != stageSpec.Hash ||
+		preview.Changes[0].SourceRevision != preview.Changes[0].TargetRevision {
+		t.Fatalf("configuration-only change was missed: %+v", preview.Changes[0])
+	}
+	if withFlags {
+		oldHash := preview.PromotionHash
+		previousTargetFlags, err = store.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: targetFlagScope,
+			ExpectedVersion: previousTargetFlags.Version, Config: previousTargetFlags.Config, Actor: "external"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken); problem == nil {
+			t.Fatal("approval accepted a target flag revision changed after preview")
+		}
+		fresh, problem := srv.buildProjectEnvironmentPromotionPlan(ctx, acct, project.Slug, "staging", "production", true)
+		if problem != nil || fresh.Preview.PromotionHash == oldHash || !fresh.Preview.CanPromote {
+			t.Fatalf("flag revision did not change preview identity: %v", problem)
+		}
+		preview = fresh.Preview
+	}
 	wire, err := decodeProjectEnvironmentPromotionToken(preview.PromotionToken)
 	if err != nil || !wire.SyncConfig {
 		t.Fatalf("promotion token sync_config=%t err=%v", wire.SyncConfig, err)
@@ -871,7 +975,24 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
 	req.SetPathValue("environment", "production")
 	req.Header.Set("Idempotency-Key", "promotion-graph-atomic")
+	creationRace := len(flagsOnly) > 1 && flagsOnly[1]
+	if creationRace {
+		srv.store = &flagDriftDuringPromotionCreationStore{MemStore: store, scope: targetFlagScope}
+	}
 	srv.promoteProjectEnvironment(rec, req, acct)
+	if creationRace {
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "feature flags changed") {
+			t.Fatalf("flag drift during creation returned status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		active, err := store.ActiveProjectReleaseSet(ctx, acct.ID, project.ID, "production")
+		if err != nil || active.ID != previousTargetGraph.ID {
+			t.Fatalf("rejected creation changed target graph: %v", err)
+		}
+		if _, _, err := store.ProjectEnvironmentPromotionByIdempotencyKey(ctx, acct.ID, project.Slug, "promotion-graph-atomic"); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("rejected creation retained a promotion: %v", err)
+		}
+		return
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("promotion status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -893,12 +1014,33 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	if err != nil || activeConfig.ConfigHash != sourceConfigHash || string(activeConfig.Values) != string(sourceConfigValues) {
 		t.Fatalf("synced target config=%+v err=%v; want source hash %s", activeConfig, err, sourceConfigHash)
 	}
+	if withFlags {
+		current, err := store.GetFeatureFlags(ctx, targetFlagScope, 0)
+		if err != nil || current.Version != previousTargetFlags.Version+1 || len(current.Flags) != 1 || current.Flags[0].Seed != sourceFlags.Flags[0].Seed || current.Flags[0].Key != sourceFlags.Flags[0].Key {
+			t.Fatalf("API cutover did not activate tested flags: version %d, %v", current.Version, err)
+		}
+	}
 	active, err := store.ActiveProjectReleaseSet(ctx, acct.ID, project.ID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if active.ID != promotion.TargetReleaseSetID || len(active.Members) != 1 || active.Members[0].DeploymentID != workloads[0].TargetDeploymentID {
 		t.Fatalf("atomic target graph=%+v promotion=%+v workload=%+v", active, promotion, workloads[0])
+	}
+	production, err := store.AppByID(ctx, app.ID)
+	if err != nil || production.RAMMB != settings.RAMMB || production.StartCommand != settings.StartCommand {
+		t.Fatalf("promoted workload configuration=%+v, %v", production, err)
+	}
+	previousRuntime, err := state.AppForDeployment(ctx, store, previousTarget)
+	if err != nil || previousRuntime.RAMMB != previousRAM || previousRuntime.StartCommand == "serve stage tested" {
+		t.Fatalf("retained graph configuration changed: %+v, %v", previousRuntime, err)
+	}
+	resumePlan, resumeProblem := srv.buildProjectEnvironmentPromotionResumePlan(ctx, acct, promotion, workloads)
+	if resumeProblem != nil {
+		t.Fatalf("configuration cutover cannot resume: %v", resumeProblem)
+	}
+	if problem := validateProjectEnvironmentPromotionResume(wire, promotion, workloads, resumePlan); problem != nil {
+		t.Fatalf("captured configuration identity changed after cutover: %v", problem)
 	}
 
 	rollbackReq, rollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
@@ -926,9 +1068,19 @@ func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	if err != nil || rolledBackConfig.ConfigHash != previousConfigHash || string(rolledBackConfig.Values) != string(previousConfigValues) {
 		t.Fatalf("rollback config=%+v err=%v; want previous hash %s", rolledBackConfig, err, previousConfigHash)
 	}
+	if withFlags {
+		current, err := store.GetFeatureFlags(ctx, targetFlagScope, 0)
+		if err != nil || current.Version != previousTargetFlags.Version+2 || current.RestoredFrom != previousTargetFlags.Version || len(current.Flags) != 1 || current.Flags[0].Seed != previousTargetFlags.Flags[0].Seed {
+			t.Fatalf("API rollback did not restore previous flags: version %d, %v", current.Version, err)
+		}
+	}
 	releaseID, deploymentID, err := store.ResolveProjectRelease(ctx, app.ID, "production", "")
 	if err != nil || releaseID != active.ID || deploymentID != previousTarget.ID {
 		t.Fatalf("default production release after rollback=%q/%q err=%v", releaseID, deploymentID, err)
+	}
+	production, err = store.AppByID(ctx, app.ID)
+	if err != nil || production.RAMMB != previousRAM || production.StartCommand == "serve stage tested" {
+		t.Fatalf("workload configuration was not rolled back: %+v, %v", production, err)
 	}
 }
 
@@ -1092,12 +1244,16 @@ func createProjectEnvironmentQualificationForTest(t *testing.T, store *state.Mem
 		}
 		secretRevisionHashes[app.Slug] = hash
 	}
+	workloadHashes, _, err := store.ProjectEnvironmentWorkloadConfigHashes(ctx, acct.ID, project.ID, environment, releaseSetID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	qualification, err := store.CreateProjectEnvironmentQualification(context.Background(), acct.ID, project.ID, environment, releaseSetID, configurationVersion, configurationHash,
 		secretRevisionHashes,
 		[]state.ProjectEnvironmentQualificationCheck{
 			{Name: "health", Status: health, Results: resultsForStatus(health)},
 			{Name: "smoke", Status: smoke, Results: resultsForStatus(smoke)},
-		})
+		}, workloadHashes)
 	if err != nil {
 		t.Fatal(err)
 	}

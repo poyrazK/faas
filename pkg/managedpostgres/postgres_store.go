@@ -13,15 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
-
-const postgresDatabaseColumns = `id::text, account_id::text, name, region,
-postgres_major, service_class, availability, scale_to_zero,
-storage_limit_bytes, restore_window_seconds, backend_id,
-backend_fingerprint, provider_resource_id, restore_source_database_id::text,
-restore_source_resource_id, restore_point_in_time, state, desired_generation,
-observed_generation, last_error_code, lease_token, lease_until,
-attempt_count, retry_at, created_at, updated_at, deleted_at`
 
 // PostgresStore is the production catalog adapter for managed PostgreSQL.
 // The pool remains owned by the daemon and may be shared with other stores.
@@ -38,6 +31,10 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 
 var _ Store = (*PostgresStore)(nil)
 
+type databaseQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit int) (Database, bool, error) {
 	if err := validateReservation(database, limit); err != nil {
 		return Database{}, false, err
@@ -53,90 +50,73 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 	if database.RetryAt.IsZero() {
 		database.RetryAt = database.CreatedAt
 	}
-
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Database{}, false, fmt.Errorf("managed postgres: begin reservation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-
-	// The account row is the per-tenant serialization point. It makes the
-	// quota check atomic across replicas and races safely with account deletion.
-	var locked string
-	if err := tx.QueryRow(ctx,
-		`SELECT id::text FROM accounts WHERE id = $1 AND status <> 'deleted_pending' FOR UPDATE`,
-		accountID,
-	).Scan(&locked); err != nil {
+	q := new(sqlc.Queries)
+	// Serialize tenant quotas and race safely with account deletion.
+	if _, err := q.LockManagedPostgresLifecycleAccount(ctx, tx, accountID); err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
-
-	existing, err := queryDatabase(ctx, tx,
-		`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
-		 WHERE account_id = $1 AND name = $2 AND state <> 'deleted'`,
-		accountID, database.Name,
-	)
+	row, err := q.FindManagedPostgresLifecycleDatabase(ctx, tx, sqlc.FindManagedPostgresLifecycleDatabaseParams{AccountID: accountID, Name: database.Name})
 	if err == nil {
+		existing := databaseFromSQL(row)
+		if existing.EnvironmentCloneOperationID != "" {
+			return Database{}, false, ErrConflict
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return Database{}, false, mapPostgresError(err)
 		}
 		return existing, false, nil
 	}
-	if !errors.Is(err, ErrNotFound) {
-		return Database{}, false, err
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Database{}, false, mapPostgresError(err)
 	}
 	if database.RestoreSourceDatabaseID != "" {
-		var sourceAccountID, sourceState, sourceProviderResourceID string
-		if err := tx.QueryRow(ctx,
-			`SELECT account_id::text, state, COALESCE(provider_resource_id, '')
-			 FROM managed_postgres_databases WHERE id = $1 FOR KEY SHARE`,
-			nullableUUID(database.RestoreSourceDatabaseID),
-		).Scan(&sourceAccountID, &sourceState, &sourceProviderResourceID); err != nil {
+		sourceID, err := postgresUUID(database.RestoreSourceDatabaseID)
+		if err != nil {
+			return Database{}, false, err
+		}
+		if _, err := q.LockManagedPostgresCustomerDatabase(ctx, tx, sqlc.LockManagedPostgresCustomerDatabaseParams{AccountID: accountID, ID: sourceID}); err != nil {
 			return Database{}, false, mapPostgresError(err)
 		}
-		if sourceAccountID != database.AccountID {
+		sourceRow, err := q.ReadManagedPostgresLifecycleRestoreSource(ctx, tx, sourceID)
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+		source := databaseFromSQL(sourceRow)
+		if source.AccountID != database.AccountID {
 			return Database{}, false, ErrNotFound
 		}
-		if State(sourceState) != StateReady || sourceProviderResourceID == "" ||
-			sourceProviderResourceID != database.RestoreSourceResourceID {
+		if source.State != StateReady || source.ProviderResourceID == "" || databaseDataResource(source) != database.RestoreSourceResourceID {
 			return Database{}, false, ErrConflict
 		}
 	}
-
-	var active int
-	if err := tx.QueryRow(ctx,
-		`SELECT count(*) FROM managed_postgres_databases WHERE account_id = $1 AND state <> 'deleted'`,
-		accountID,
-	).Scan(&active); err != nil {
+	active, err := q.CountManagedPostgresLifecycleDatabases(ctx, tx, accountID)
+	if err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
-	if active >= limit {
+	if active >= int64(limit) {
 		return Database{}, false, ErrQuotaExceeded
 	}
-
-	created, err := queryDatabase(ctx, tx,
-		`INSERT INTO managed_postgres_databases (
-			id, account_id, name, region, postgres_major, service_class,
-			availability, scale_to_zero, storage_limit_bytes,
-			restore_window_seconds, backend_id, backend_fingerprint,
-			restore_source_database_id, restore_source_resource_id, restore_point_in_time, state,
-			desired_generation, observed_generation, retry_at, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-		RETURNING `+postgresDatabaseColumns,
-		databaseID, accountID, database.Name, database.Spec.Region,
-		database.Spec.PostgresMajor, string(database.Spec.Class), string(database.Spec.Availability),
-		database.Spec.ScaleToZero, database.Spec.StorageLimitBytes,
-		database.Spec.RestoreWindowSeconds, database.BackendID,
-		database.BackendFingerprint, nullableUUID(database.RestoreSourceDatabaseID), nullableText(database.RestoreSourceResourceID), nullableTime(database.RestorePointInTime),
-		string(database.State), database.DesiredGeneration,
-		database.ObservedGeneration, database.RetryAt, database.CreatedAt, database.UpdatedAt,
-	)
+	row, err = q.InsertManagedPostgresLifecycleDatabase(ctx, tx, sqlc.InsertManagedPostgresLifecycleDatabaseParams{
+		ID: databaseID, AccountID: accountID, Name: database.Name, Region: database.Spec.Region,
+		PostgresMajor: int16(database.Spec.PostgresMajor), ServiceClass: string(database.Spec.Class), Availability: string(database.Spec.Availability),
+		ScaleToZero: database.Spec.ScaleToZero, StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
+		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, RestoreSourceDatabaseID: databaseNullableUUID(database.RestoreSourceDatabaseID),
+		RestoreSourceResourceID: databaseNullableText(database.RestoreSourceResourceID), RestorePointInTime: databaseNullableTime(database.RestorePointInTime),
+		State: string(database.State), DesiredGeneration: database.DesiredGeneration, ObservedGeneration: database.ObservedGeneration,
+		RetryAt: databaseNullableTime(database.RetryAt), CreatedAt: databaseNullableTime(database.CreatedAt), UpdatedAt: databaseNullableTime(database.UpdatedAt),
+	})
 	if err != nil {
-		return Database{}, false, err
+		return Database{}, false, mapPostgresError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
-	return created, true, nil
+	return databaseFromSQL(row), true, nil
 }
 
 func (s *PostgresStore) FindByName(ctx context.Context, accountID, name string) (Database, error) {
@@ -144,11 +124,8 @@ func (s *PostgresStore) FindByName(ctx context.Context, accountID, name string) 
 	if err != nil || !ValidName(name) {
 		return Database{}, ErrInvalid
 	}
-	return queryDatabase(ctx, s.pool,
-		`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
-		 WHERE account_id = $1 AND name = $2 AND state <> 'deleted'`,
-		account, name,
-	)
+	row, err := new(sqlc.Queries).FindManagedPostgresLifecycleDatabase(ctx, s.pool, sqlc.FindManagedPostgresLifecycleDatabaseParams{AccountID: account, Name: name})
+	return databaseFromSQL(row), mapPostgresError(err)
 }
 
 func (s *PostgresStore) Get(ctx context.Context, accountID, databaseID string) (Database, error) {
@@ -160,11 +137,8 @@ func (s *PostgresStore) Get(ctx context.Context, accountID, databaseID string) (
 	if err != nil {
 		return Database{}, err
 	}
-	return queryDatabase(ctx, s.pool,
-		`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
-		 WHERE account_id = $1 AND id = $2`,
-		account, id,
-	)
+	row, err := new(sqlc.Queries).GetManagedPostgresLifecycleDatabase(ctx, s.pool, sqlc.GetManagedPostgresLifecycleDatabaseParams{AccountID: account, ID: id})
+	return databaseFromSQL(row), mapPostgresError(err)
 }
 
 func (s *PostgresStore) List(ctx context.Context, accountID string) ([]Database, error) {
@@ -172,56 +146,17 @@ func (s *PostgresStore) List(ctx context.Context, accountID string) ([]Database,
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
-		 WHERE account_id = $1 AND state <> 'deleted' ORDER BY created_at, id`,
-		account,
-	)
-	if err != nil {
-		return nil, mapPostgresError(err)
-	}
-	defer rows.Close()
-	items := make([]Database, 0)
-	for rows.Next() {
-		database, scanErr := scanDatabase(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		items = append(items, database)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, mapPostgresError(err)
-	}
-	return items, nil
+	rows, err := new(sqlc.Queries).ListManagedPostgresLifecycleDatabases(ctx, s.pool, account)
+	return databasesFromSQL(rows), mapPostgresError(err)
 }
 
 func (s *PostgresStore) Due(ctx context.Context, includeProvisioning bool, limit int, now time.Time) ([]Database, error) {
 	if limit < 1 || limit > 100 || now.IsZero() {
 		return nil, ErrInvalid
 	}
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
-		 WHERE (state = 'deleting' OR ($1 AND state IN ('provisioning','failed')))
-		   AND retry_at <= $2 AND (lease_until IS NULL OR lease_until <= $2)
-		 ORDER BY retry_at, id LIMIT $3`,
-		includeProvisioning, now, limit,
-	)
-	if err != nil {
-		return nil, mapPostgresError(err)
-	}
-	defer rows.Close()
-	items := make([]Database, 0)
-	for rows.Next() {
-		database, scanErr := scanDatabase(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		items = append(items, database)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, mapPostgresError(err)
-	}
-	return items, nil
+	rows, err := new(sqlc.Queries).DueManagedPostgresLifecycleDatabases(ctx, s.pool, sqlc.DueManagedPostgresLifecycleDatabasesParams{
+		IncludeProvisioning: includeProvisioning, At: databaseNullableTime(now), RowLimit: int32(limit)})
+	return databasesFromSQL(rows), mapPostgresError(err)
 }
 
 func (s *PostgresStore) Claim(ctx context.Context, accountID, databaseID, leaseToken string, operation State, now, leaseUntil time.Time) (Database, error) {
@@ -239,27 +174,15 @@ func (s *PostgresStore) Claim(ctx context.Context, accountID, databaseID, leaseT
 	if err != nil {
 		return Database{}, err
 	}
-	database, err := queryDatabase(ctx, s.pool,
-		`UPDATE managed_postgres_databases SET
-			state = $1, lease_token = $2, lease_until = $3, updated_at = $4,
-			attempt_count = least(attempt_count + 1, 30),
-			last_error_code = CASE WHEN state <> $1 THEN NULL ELSE last_error_code END,
-			retry_at = $4
-		 WHERE account_id = $5 AND id = $6 AND state <> 'deleted'
-		   AND (lease_until IS NULL OR lease_until <= $4)
-		   AND state IN ('provisioning','failed') AND retry_at <= $4
-		 RETURNING `+postgresDatabaseColumns,
-		string(operation), leaseToken, leaseUntil, now, account, id,
-	)
-	if !errors.Is(err, ErrNotFound) {
-		return database, err
+	q := new(sqlc.Queries)
+	row, err := q.ClaimManagedPostgresLifecycleProvision(ctx, s.pool, sqlc.ClaimManagedPostgresLifecycleProvisionParams{
+		AccountID: account, DatabaseID: id, LeaseToken: leaseToken, LeaseUntil: databaseNullableTime(leaseUntil), At: databaseNullableTime(now)})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return databaseFromSQL(row), mapPostgresError(err)
 	}
-	var exists bool
-	if existsErr := s.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM managed_postgres_databases WHERE account_id = $1 AND id = $2)`,
-		account, id,
-	).Scan(&exists); existsErr != nil {
-		return Database{}, mapPostgresError(existsErr)
+	exists, err := q.ExistsManagedPostgresLifecycleDatabase(ctx, s.pool, sqlc.ExistsManagedPostgresLifecycleDatabaseParams{AccountID: account, ID: id})
+	if err != nil {
+		return Database{}, mapPostgresError(err)
 	}
 	if !exists {
 		return Database{}, ErrNotFound
@@ -289,48 +212,31 @@ func (s *PostgresStore) ClaimDelete(ctx context.Context, accountID, databaseID, 
 		return Database{}, fmt.Errorf("managed postgres: begin delete claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-
-	current, err := queryDatabase(ctx, tx,
-		`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
-		 WHERE account_id = $1 AND id = $2 FOR UPDATE`,
-		account, id,
-	)
+	q := new(sqlc.Queries)
+	row, err := q.LockManagedPostgresLifecycleDatabase(ctx, tx, sqlc.LockManagedPostgresLifecycleDatabaseParams{AccountID: account, ID: id})
 	if err != nil {
-		return Database{}, err
+		return Database{}, mapPostgresError(err)
 	}
+	current := databaseFromSQL(row)
 	if current.State == StateDeleted || (!current.LeaseUntil.IsZero() && current.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
-	var hasBindings, hasRestoreDescendants bool
-	if err := tx.QueryRow(ctx,
-		`SELECT
-			EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id = $1 AND state <> 'deleted'),
-			EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id = $1 AND state <> 'deleted')`,
-		id,
-	).Scan(&hasBindings, &hasRestoreDescendants); err != nil {
+	dependants, err := q.ReadManagedPostgresLifecycleDependants(ctx, tx, id)
+	if err != nil {
 		return Database{}, mapPostgresError(err)
 	}
-	if hasBindings || hasRestoreDescendants {
+	if dependants.HasBindings || dependants.HasRestoreDescendants || dependants.HasCloneSnapshotHolds || dependants.HasCloneWriteFenceHolds {
 		return Database{}, ErrConflict
 	}
-
-	database, err := queryDatabase(ctx, tx,
-		`UPDATE managed_postgres_databases SET
-			state = 'deleting', lease_token = $1, lease_until = $2, updated_at = $3,
-			attempt_count = CASE WHEN state <> 'deleting' THEN 1 ELSE least(attempt_count + 1, 30) END,
-			last_error_code = CASE WHEN state <> 'deleting' THEN NULL ELSE last_error_code END,
-			retry_at = $3
-		 WHERE account_id = $4 AND id = $5
-		 RETURNING `+postgresDatabaseColumns,
-		leaseToken, leaseUntil, now, account, id,
-	)
+	row, err = q.ClaimManagedPostgresLifecycleDelete(ctx, tx, sqlc.ClaimManagedPostgresLifecycleDeleteParams{
+		AccountID: account, DatabaseID: id, LeaseToken: leaseToken, LeaseUntil: databaseNullableTime(leaseUntil), At: databaseNullableTime(now)})
 	if err != nil {
-		return Database{}, err
+		return Database{}, mapPostgresError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Database{}, mapPostgresError(err)
 	}
-	return database, nil
+	return databaseFromSQL(row), nil
 }
 
 func (s *PostgresStore) RecordProviderResource(ctx context.Context, databaseID, leaseToken, providerResourceID string, now time.Time) error {
@@ -341,17 +247,12 @@ func (s *PostgresStore) RecordProviderResource(ctx context.Context, databaseID, 
 	if err != nil {
 		return err
 	}
-	command, err := s.pool.Exec(ctx,
-		`UPDATE managed_postgres_databases SET provider_resource_id = $1, updated_at = $2
-		 WHERE id = $3 AND state = 'provisioning' AND lease_token = $4
-		   AND lease_until > $2
-		   AND (provider_resource_id IS NULL OR provider_resource_id = $1)`,
-		providerResourceID, now, id, leaseToken,
-	)
+	affected, err := new(sqlc.Queries).RecordManagedPostgresLifecycleResource(ctx, s.pool, sqlc.RecordManagedPostgresLifecycleResourceParams{
+		DatabaseID: id, LeaseToken: leaseToken, ProviderResourceID: providerResourceID, At: databaseNullableTime(now)})
 	if err != nil {
 		return mapPostgresError(err)
 	}
-	if command.RowsAffected() != 1 {
+	if affected != 1 {
 		return ErrConflict
 	}
 	return nil
@@ -365,21 +266,12 @@ func (s *PostgresStore) FinishProvision(ctx context.Context, databaseID, leaseTo
 	if err != nil {
 		return Database{}, err
 	}
-	database, err := queryDatabase(ctx, s.pool,
-		`UPDATE managed_postgres_databases SET state = 'ready',
-			observed_generation = desired_generation, last_error_code = NULL,
-			lease_token = NULL, lease_until = NULL, attempt_count = 0,
-			retry_at = $1, updated_at = $1
-		 WHERE id = $2 AND state = 'provisioning' AND lease_token = $3
-		   AND lease_until > $1
-		   AND provider_resource_id IS NOT NULL
-		 RETURNING `+postgresDatabaseColumns,
-		now, id, leaseToken,
-	)
-	if errors.Is(err, ErrNotFound) {
+	row, err := new(sqlc.Queries).FinishManagedPostgresLifecycleProvision(ctx, s.pool, sqlc.FinishManagedPostgresLifecycleProvisionParams{
+		DatabaseID: id, LeaseToken: leaseToken, At: databaseNullableTime(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Database{}, ErrConflict
 	}
-	return database, err
+	return databaseFromSQL(row), mapPostgresError(err)
 }
 
 func (s *PostgresStore) Release(ctx context.Context, databaseID, leaseToken string, next State, errorCode string, now, retryAt time.Time) error {
@@ -390,16 +282,12 @@ func (s *PostgresStore) Release(ctx context.Context, databaseID, leaseToken stri
 	if err != nil {
 		return err
 	}
-	command, err := s.pool.Exec(ctx,
-		`UPDATE managed_postgres_databases SET state = $1, last_error_code = NULLIF($2, ''),
-			lease_token = NULL, lease_until = NULL, retry_at = $3, updated_at = $4
-		 WHERE id = $5 AND lease_token = $6 AND lease_until > $4`,
-		string(next), errorCode, retryAt, now, id, leaseToken,
-	)
+	affected, err := new(sqlc.Queries).ReleaseManagedPostgresLifecycleLease(ctx, s.pool, sqlc.ReleaseManagedPostgresLifecycleLeaseParams{
+		DatabaseID: id, LeaseToken: leaseToken, NextState: string(next), ErrorCode: errorCode, RetryAt: databaseNullableTime(retryAt), At: databaseNullableTime(now)})
 	if err != nil {
 		return mapPostgresError(err)
 	}
-	if command.RowsAffected() != 1 {
+	if affected != 1 {
 		return ErrConflict
 	}
 	return nil
@@ -413,102 +301,34 @@ func (s *PostgresStore) FinishDelete(ctx context.Context, databaseID, leaseToken
 	if err != nil {
 		return Database{}, err
 	}
-	database, err := queryDatabase(ctx, s.pool,
-		`UPDATE managed_postgres_databases SET state = 'deleted',
-			last_error_code = NULL, lease_token = NULL, lease_until = NULL,
-			attempt_count = 0, retry_at = $1, updated_at = $1, deleted_at = $1
-		 WHERE id = $2 AND state = 'deleting' AND lease_token = $3
-		   AND lease_until > $1
-		 RETURNING `+postgresDatabaseColumns,
-		now, id, leaseToken,
-	)
-	if errors.Is(err, ErrNotFound) {
+	row, err := new(sqlc.Queries).FinishManagedPostgresLifecycleDelete(ctx, s.pool, sqlc.FinishManagedPostgresLifecycleDeleteParams{
+		DatabaseID: id, LeaseToken: leaseToken, At: databaseNullableTime(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Database{}, ErrConflict
 	}
-	return database, err
+	return databaseFromSQL(row), mapPostgresError(err)
 }
 
-type databaseScanner interface {
-	Scan(...any) error
+func databasesFromSQL(rows []sqlc.ManagedPostgresDatabase) []Database {
+	items := make([]Database, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, databaseFromSQL(row))
+	}
+	return items
 }
 
-type databaseQueryer interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
+func databaseNullableTime(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: !value.IsZero()}
 }
-
-func queryDatabase(ctx context.Context, queryer databaseQueryer, query string, arguments ...any) (Database, error) {
-	return scanDatabase(queryer.QueryRow(ctx, query, arguments...))
+func databaseNullableText(value string) pgtype.Text {
+	return pgtype.Text{String: value, Valid: value != ""}
 }
-
-func scanDatabase(row databaseScanner) (Database, error) {
-	var database Database
-	var providerResourceID, lastErrorCode, leaseToken pgtype.Text
-	var restoreSourceDatabaseID, restoreSourceResourceID pgtype.Text
-	var restorePointInTime pgtype.Timestamptz
-	var leaseUntil, deletedAt pgtype.Timestamptz
-	if err := row.Scan(
-		&database.ID, &database.AccountID, &database.Name, &database.Spec.Region,
-		&database.Spec.PostgresMajor, &database.Spec.Class, &database.Spec.Availability,
-		&database.Spec.ScaleToZero, &database.Spec.StorageLimitBytes,
-		&database.Spec.RestoreWindowSeconds, &database.BackendID,
-		&database.BackendFingerprint, &providerResourceID, &restoreSourceDatabaseID,
-		&restoreSourceResourceID, &restorePointInTime, &database.State,
-		&database.DesiredGeneration, &database.ObservedGeneration, &lastErrorCode,
-		&leaseToken, &leaseUntil, &database.AttemptCount, &database.RetryAt,
-		&database.CreatedAt, &database.UpdatedAt, &deletedAt,
-	); err != nil {
-		return Database{}, mapPostgresError(err)
-	}
-	if providerResourceID.Valid {
-		database.ProviderResourceID = providerResourceID.String
-	}
-	if restoreSourceDatabaseID.Valid {
-		database.RestoreSourceDatabaseID = restoreSourceDatabaseID.String
-	}
-	if restoreSourceResourceID.Valid {
-		database.RestoreSourceResourceID = restoreSourceResourceID.String
-	}
-	if restorePointInTime.Valid {
-		database.RestorePointInTime = restorePointInTime.Time
-	}
-	if lastErrorCode.Valid {
-		database.LastErrorCode = lastErrorCode.String
-	}
-	if leaseToken.Valid {
-		database.LeaseToken = leaseToken.String
-	}
-	if leaseUntil.Valid {
-		database.LeaseUntil = leaseUntil.Time
-	}
-	if deletedAt.Valid {
-		database.DeletedAt = &deletedAt.Time
-	}
-	return database, nil
-}
-
-func nullableUUID(value string) any {
+func databaseNullableUUID(value string) pgtype.UUID {
 	if value == "" {
-		return nil
+		return pgtype.UUID{}
 	}
-	parsed, err := postgresUUID(value)
-	if err != nil {
-		return nil
-	}
-	return parsed
-}
-
-func nullableText(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
-}
-
-func nullableTime(value time.Time) any {
-	if value.IsZero() {
-		return nil
-	}
-	return value
+	id, _ := postgresUUID(value)
+	return id
 }
 
 func validateReservation(database Database, limit int) error {
@@ -519,7 +339,7 @@ func validateReservation(database Database, limit int) error {
 		!validFingerprint.MatchString(database.BackendFingerprint) ||
 		database.DesiredGeneration < 1 || database.ObservedGeneration != 0 ||
 		database.CreatedAt.IsZero() || database.UpdatedAt.IsZero() ||
-		database.ProviderResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil {
+		database.ProviderResourceID != "" || database.DataResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil || database.EnvironmentCloneOperationID != "" || database.AccountingRequired {
 		return ErrInvalid
 	}
 	if database.RestoreSourceDatabaseID == "" && database.RestoreSourceResourceID == "" && database.RestorePointInTime.IsZero() {
@@ -554,12 +374,14 @@ func mapPostgresError(err error) error {
 		return err
 	}
 	switch postgresError.Code {
+	case pgerrcode.DeadlockDetected, pgerrcode.SerializationFailure:
+		return ErrConflict
 	case pgerrcode.UniqueViolation:
 		return fmt.Errorf("%w: %s", ErrConflict, postgresError.ConstraintName)
 	case pgerrcode.ForeignKeyViolation:
 		return ErrNotFound
 	case pgerrcode.CheckViolation:
-		if postgresError.ConstraintName == "managed_postgres_database_has_bindings" || postgresError.ConstraintName == "managed_postgres_database_has_restore_descendants" {
+		if postgresError.ConstraintName == "managed_postgres_cutover_conflict" || postgresError.ConstraintName == "managed_postgres_database_has_bindings" || postgresError.ConstraintName == "managed_postgres_database_has_restore_descendants" {
 			return ErrConflict
 		}
 		return fmt.Errorf("%w: %s", ErrInvalid, postgresError.ConstraintName)

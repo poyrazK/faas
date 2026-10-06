@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -27,6 +28,132 @@ import (
 type serviceProxyProvider struct {
 	snapshot ServiceEndpointsSnapshot
 	calls    atomic.Int32
+}
+
+func TestServiceProxyInjectsChaosOnlyForRegisteredScenarioTarget(t *testing.T) {
+	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-inventory", Endpoints: []ServiceEndpoint{{
+		InstanceID: "instance-inventory", NodeID: "node-a", Port: 8080,
+	}}}}
+	metrics := NewMetrics()
+	var forwards atomic.Int32
+	var policies atomic.Int32
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-inventory", ScenarioTestRunID: "run-1"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: "app-worker"}, nil
+		},
+		ResolveChaos: func(_ context.Context, runID, callerAppID, target string) (chaos.Lease, error) {
+			policies.Add(1)
+			if runID != "run-1" || callerAppID != "app-worker" || target != "inventory" {
+				t.Fatalf("chaos lookup scope = (%q, %q, %q)", runID, callerAppID, target)
+			}
+			return chaos.Lease{ExpiresAt: time.Now().Add(time.Minute), Rules: []chaos.Rule{{
+				From: "worker", To: "inventory", Kind: chaos.KindHTTPStatus,
+				Percent: 100, StatusCode: http.StatusServiceUnavailable, Seed: 3,
+			}}}, nil
+		},
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				forwards.Add(1)
+				w.WriteHeader(http.StatusOK)
+			})
+		},
+		Metrics: metrics,
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/inventory/stock", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, "app-worker")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("X-Gregale-Chaos-Injected") != chaos.KindHTTPStatus {
+		t.Fatalf("injected response = %d, header %q, body %q", rec.Code, rec.Header().Get("X-Gregale-Chaos-Injected"), rec.Body.String())
+	}
+	if policies.Load() != 1 || forwards.Load() != 0 || provider.calls.Load() != 0 {
+		t.Fatalf("chaos calls=%d forwards=%d endpoint lookups=%d", policies.Load(), forwards.Load(), provider.calls.Load())
+	}
+	if got := labelledCounterValue(t, metrics.Registry(), "gateway_service_chaos_injected_total", "kind", chaos.KindHTTPStatus); got != 1 {
+		t.Fatalf("chaos metric = %v, want 1", got)
+	}
+}
+
+func TestServiceProxyDoesNotResolveChaosForProductionTarget(t *testing.T) {
+	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-inventory", Endpoints: []ServiceEndpoint{{
+		InstanceID: "instance-inventory", NodeID: "node-a", Port: 8080,
+	}}}}
+	var policies atomic.Int32
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-inventory"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: "app-worker"}, nil
+		},
+		ResolveChaos: func(context.Context, string, string, string) (chaos.Lease, error) {
+			policies.Add(1)
+			return chaos.Lease{}, nil
+		},
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/inventory/stock", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, "app-worker")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || policies.Load() != 0 {
+		t.Fatalf("production call status=%d chaos lookups=%d, want 200 and no lookup", rec.Code, policies.Load())
+	}
+}
+
+func TestServiceProxyInjectsLatencyAndThenForwards(t *testing.T) {
+	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-payment", Endpoints: []ServiceEndpoint{{
+		InstanceID: "instance-payment", NodeID: "node-a", Port: 8080,
+	}}}}
+	metrics := NewMetrics()
+	var forwards atomic.Int32
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-payment", ScenarioTestRunID: "run-2"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: "app-worker"}, nil
+		},
+		ResolveChaos: func(context.Context, string, string, string) (chaos.Lease, error) {
+			return chaos.Lease{ExpiresAt: time.Now().Add(time.Minute), Rules: []chaos.Rule{{
+				From: "worker", To: "payment", Kind: chaos.KindLatency,
+				Percent: 100, LatencyMS: 10, Seed: 8,
+			}}}, nil
+		},
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				forwards.Add(1)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("ok"))
+			})
+		},
+		Metrics: metrics,
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/payment/charge", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, "app-worker")
+	started := time.Now()
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" || rec.Header().Get("X-Gregale-Chaos-Injected") != chaos.KindLatency {
+		t.Fatalf("delayed response = %d, header %q, body %q", rec.Code, rec.Header().Get("X-Gregale-Chaos-Injected"), rec.Body.String())
+	}
+	if elapsed := time.Since(started); elapsed < 10*time.Millisecond {
+		t.Fatalf("forwarded after %s, want at least 10ms injected delay", elapsed)
+	}
+	if forwards.Load() != 1 {
+		t.Fatalf("forward calls = %d, want 1", forwards.Load())
+	}
+	if got := labelledCounterValue(t, metrics.Registry(), "gateway_service_chaos_injected_total", "kind", chaos.KindLatency); got != 1 {
+		t.Fatalf("latency injection metric = %v, want 1", got)
+	}
 }
 
 func (p *serviceProxyProvider) ServiceEndpoints(context.Context, string) (ServiceEndpointsSnapshot, error) {

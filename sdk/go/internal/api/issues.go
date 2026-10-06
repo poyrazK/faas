@@ -85,6 +85,27 @@ type IssueImpact struct {
 	Coverage            string    `json:"coverage"`
 }
 
+type IssueImpactAlertPolicy struct {
+	Enabled          bool  `json:"enabled"`
+	MinimumCustomers int64 `json:"minimum_customers"`
+	WindowSeconds    int64 `json:"window_seconds"`
+}
+
+type UpdateIssueImpactAlertPolicyRequest struct {
+	MinimumCustomers int64 `json:"minimum_customers"`
+}
+
+type IssueOwnershipRule struct {
+	ExceptionType     string `json:"exception_type,omitempty"`
+	SourceKind        string `json:"source_kind,omitempty"`
+	RoutePrefix       string `json:"route_prefix,omitempty"`
+	AssigneeAccountID string `json:"assignee_account_id"`
+}
+
+type IssueOwnershipRules struct {
+	Rules []IssueOwnershipRule `json:"rules"`
+}
+
 type IssueDetail struct {
 	Issue              Issue             `json:"issue"`
 	Events             []IssueOccurrence `json:"events"`

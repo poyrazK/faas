@@ -31,6 +31,7 @@ var (
 // Tenant source, input, credentials, environment, and mutable app state are
 // intentionally absent.
 type RuntimeSnapshotIdentity struct {
+	Profile             api.ExecutionProfile
 	Runtime             api.ExecutionRuntime
 	Architecture        string
 	KernelDigest        string
@@ -43,6 +44,9 @@ type RuntimeSnapshotIdentity struct {
 
 // Validate rejects ambiguous identities before they can become lookup keys.
 func (i RuntimeSnapshotIdentity) Validate() error {
+	if err := i.Profile.Validate(i.Runtime); err != nil {
+		return fmt.Errorf("%w: %w", ErrRuntimeSnapshotInvalid, err)
+	}
 	if !i.Runtime.Valid() {
 		return fmt.Errorf("%w: unsupported runtime %q", ErrRuntimeSnapshotInvalid, i.Runtime)
 	}
@@ -77,14 +81,19 @@ func (i RuntimeSnapshotIdentity) Key() (string, error) {
 	if err := i.Validate(); err != nil {
 		return "", err
 	}
+	profilePath := ""
+	if i.Profile.Normalized() != api.ExecutionProfileStandard {
+		profilePath = "/profile-" + string(i.Profile)
+	}
 	return fmt.Sprintf(
-		"execution-snapshots/v%d/%s/%s/memory-%d/disk-%d/kernel-%s/executor-%s/base-%s",
-		i.FormatVersion, i.Runtime, i.Architecture, i.MemoryMB, i.EphemeralDiskMB,
+		"execution-snapshots/v%d/%s%s/%s/memory-%d/disk-%d/kernel-%s/executor-%s/base-%s",
+		i.FormatVersion, i.Runtime, profilePath, i.Architecture, i.MemoryMB, i.EphemeralDiskMB,
 		i.KernelDigest, i.GuestExecutorDigest, i.BaseImageDigest,
 	), nil
 }
 
 func (i RuntimeSnapshotIdentity) equal(other RuntimeSnapshotIdentity) bool {
+	i.Profile, other.Profile = i.Profile.Normalized(), other.Profile.Normalized()
 	return i == other
 }
 
@@ -181,7 +190,12 @@ type RuntimeSnapshotRequest struct {
 }
 
 func (r RuntimeSnapshotRequest) Identity() RuntimeSnapshotIdentity {
+	profile := r.Shape.Profile
+	if profile.Normalized() == api.ExecutionProfileStandard {
+		profile = ""
+	}
 	return RuntimeSnapshotIdentity{
+		Profile:             profile,
 		Runtime:             r.Shape.Runtime,
 		Architecture:        r.Architecture,
 		KernelDigest:        r.KernelDigest,

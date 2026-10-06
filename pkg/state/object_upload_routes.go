@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // ObjectUploadRoute is the durable policy for an application-owned upload
@@ -19,6 +21,7 @@ type ObjectUploadRoute struct {
 	MaxBytes            int64
 	AllowedContentTypes []string
 	Enabled             bool
+	Encryption          ObjectEncryptionSnapshot `json:"-"`
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }
@@ -45,6 +48,29 @@ type ObjectUploadCompletion struct {
 	IdempotencyKey     string
 	RequestFingerprint string
 	CreatedAt          time.Time
+	// Provider dispatch and recovery fields are internal; uploadResponse projects only the receipt.
+	Origin                   string
+	SourceKey                string
+	SourceETag               string
+	SourceBucketID           string `json:"-"`
+	SourceCopyGrantID        string `json:"-"`
+	WritePhase               string
+	RecoveryToken            string
+	RecoveryLeaseUntil       time.Time
+	RecoveryRetryAt          time.Time
+	RecoveryCursor           string `json:"-"`
+	RecoveryVersionsObserved bool   `json:"-"`
+	VersionID                string `json:"-"`
+	// ProviderVersionID is transient completion input, never a public payload.
+	ProviderVersionID         string                        `json:"-"`
+	Protection                ObjectWriteProtectionSnapshot `json:"-"`
+	VerifiedProtection        string                        `json:"-"`
+	Encryption                ObjectEncryptionSnapshot      `json:"-"`
+	EncryptionDefaultRevision int64                         `json:"-"`
+	// RuntimeSinglePutLimit is an admission input, never persisted or exposed.
+	RuntimeSinglePutLimit int64 `json:"-"`
+	// VerifiedEncryption is transient provider proof; snapshots alone cannot settle a write.
+	VerifiedEncryption api.ObjectEncryption `json:"-"`
 }
 
 type ObjectUploadRouteStore interface {

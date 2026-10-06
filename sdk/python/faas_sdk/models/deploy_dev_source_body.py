@@ -27,6 +27,9 @@ class DeployDevSourceBody:
     dockerfile: bool | Unset = UNSET
     runtime: DeployDevSourceBodyRuntime | Unset = UNSET
     handler: str | Unset = UNSET
+    healthcheck: str | Unset = UNSET
+    """Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC
+    health selector."""
     source_root: str | Unset = UNSET
     scope: str | Unset = UNSET
     """Named environment scope read by the deployment; omitted uses default."""
@@ -50,6 +53,8 @@ class DeployDevSourceBody:
             runtime = self.runtime
 
         handler = self.handler
+
+        healthcheck = self.healthcheck
 
         source_root = self.source_root
 
@@ -75,6 +80,8 @@ class DeployDevSourceBody:
             field_dict["runtime"] = runtime
         if handler is not UNSET:
             field_dict["handler"] = handler
+        if healthcheck is not UNSET:
+            field_dict["healthcheck"] = healthcheck
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
         if scope is not UNSET:
@@ -105,6 +112,9 @@ class DeployDevSourceBody:
 
         if not isinstance(self.handler, Unset):
             files.append(("handler", (None, str(self.handler).encode(), "text/plain")))
+
+        if not isinstance(self.healthcheck, Unset):
+            files.append(("healthcheck", (None, str(self.healthcheck).encode(), "text/plain")))
 
         if not isinstance(self.source_root, Unset):
             files.append(("source_root", (None, str(self.source_root).encode(), "text/plain")))
@@ -142,6 +152,8 @@ class DeployDevSourceBody:
 
         handler = d.pop("handler", UNSET)
 
+        healthcheck = d.pop("healthcheck", UNSET)
+
         source_root = d.pop("source_root", UNSET)
 
         scope = d.pop("scope", UNSET)
@@ -156,6 +168,7 @@ class DeployDevSourceBody:
             dockerfile=dockerfile,
             runtime=runtime,
             handler=handler,
+            healthcheck=healthcheck,
             source_root=source_root,
             scope=scope,
             workflows=workflows,

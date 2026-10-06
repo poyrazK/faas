@@ -4,6 +4,7 @@ import hashlib
 import hmac
 from datetime import datetime, timedelta, timezone
 from time import time
+from uuid import UUID
 
 import pytest
 
@@ -15,6 +16,7 @@ from faas_sdk import (
     WebhookVerificationError,
     verify_webhook,
 )
+from faas_sdk.models import CreateAppWebhookRequest, WorkflowFinishedWebhookPayload
 
 SECRET = "whsec_test_123"
 TIMESTAMP = 1_712_345_678
@@ -116,3 +118,28 @@ def test_rejects_empty_secret_negative_tolerance_and_naive_clock() -> None:
         verify_webhook(SECRET, _headers(), BODY, now=datetime(2026, 1, 1))
     with pytest.raises(WebhookVerificationError, match="invalid_body"):
         verify_webhook(SECRET, _headers(), "body", now=NOW)  # type: ignore[arg-type]
+
+
+def test_generated_sdk_supports_workflow_finished_subscription_and_payload() -> None:
+    subscription = CreateAppWebhookRequest.from_dict(
+        {
+            "target_url": "https://example.com/gregale",
+            "webhook_secret": "test-secret",
+            "event_filter": ["workflow.finished"],
+        }
+    )
+    assert subscription.event_filter == ["workflow.finished"]
+
+    payload = WorkflowFinishedWebhookPayload.from_dict(
+        {
+            "app_id": "00000000-0000-0000-0000-000000000001",
+            "run_id": "00000000-0000-0000-0000-000000000002",
+            "workflow_name": "invoice-receipt",
+            "status": "succeeded",
+            "finished_at": "2026-10-05T12:30:00+00:00",
+            "resume_count": 0,
+        }
+    )
+    assert payload.app_id == UUID("00000000-0000-0000-0000-000000000001")
+    assert payload.status == "succeeded"
+    assert payload.to_dict()["resume_count"] == 0

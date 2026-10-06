@@ -7,6 +7,7 @@ import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 import type { LogExcerpt } from './LogExcerpt.js';
+import type { RollbackOperation } from './RollbackOperation.js';
 import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
 import type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
@@ -17,7 +18,7 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  */
 export type DeploymentResponse = {
   /**
-   * Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt.
+   * Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code, retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482). last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
    */
   stage_state?: Record<string, any>;
   id: string;
@@ -142,7 +143,7 @@ export type DeploymentResponse = {
    */
   traffic_percent?: number;
   /**
-   * Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`.
+   * Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`.
    */
   scope?: string | null;
   /**
@@ -243,6 +244,7 @@ export type DeploymentResponse = {
    * Operator or orchestrator reason recorded when the rollout is aborted.
    */
   rollout_aborted_reason?: string;
+  rollback_operation?: RollbackOperation;
   service_rollout_handoff?: ServiceRolloutHandoffResponse;
 };
 
