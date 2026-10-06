@@ -1831,6 +1831,21 @@ type DeploymentRuntimeEnvironmentOwner struct {
 	EnvironmentID pgtype.UUID
 }
 
+type DeploymentRuntimeUpgradeAcceptance struct {
+	DeploymentID              pgtype.UUID
+	TargetReleaseID           string
+	RootfsKey                 string
+	InstanceID                pgtype.UUID
+	NodeID                    pgtype.UUID
+	WakeID                    pgtype.UUID
+	Profile                   string
+	ConfigurationFingerprint  string
+	SecretFingerprint         string
+	QualificationReportSha256 string
+	StartedAt                 pgtype.Timestamptz
+	ReadyAt                   pgtype.Timestamptz
+}
+
 type DeploymentRuntimeUpgradeBaseline struct {
 	DeploymentID             pgtype.UUID
 	ServingDeploymentID      pgtype.UUID

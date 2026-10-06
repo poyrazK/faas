@@ -98,12 +98,16 @@ func RequireRuntimeReleaseQualification(ctx context.Context, store any, target R
 	if err != nil {
 		return fmt.Errorf("read runtime update qualification: %w", err)
 	}
-	if target.Validate() != nil || q.validateEvidence(time.Now().UTC()) != nil || q.ReleaseID != target.ID ||
-		q.Architecture != target.Architecture || q.RecordedAt.IsZero() || q.RecordedAt.Before(q.CompletedAt) ||
-		q.RecordedAt.After(time.Now().UTC()) || !q.RevokedAt.IsZero() || q.RevocationSHA256 != "" {
+	if !validRuntimeReleaseQualification(target, q, time.Now().UTC()) {
 		return fmt.Errorf("runtime update native qualification is incompatible or revoked: %w", ErrConflict)
 	}
 	return nil
+}
+
+func validRuntimeReleaseQualification(target RuntimeRelease, q RuntimeReleaseQualification, now time.Time) bool {
+	return target.Validate() == nil && q.validateEvidence(now) == nil && q.ReleaseID == target.ID &&
+		q.Architecture == target.Architecture && !q.RecordedAt.IsZero() && !q.RecordedAt.Before(q.CompletedAt) &&
+		!q.RecordedAt.After(now) && q.RevokedAt.IsZero() && q.RevocationSHA256 == ""
 }
 
 var _ RuntimeReleaseQualificationStore = (*MemStore)(nil)

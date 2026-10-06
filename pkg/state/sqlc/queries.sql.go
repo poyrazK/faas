@@ -13431,6 +13431,30 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 	return i, err
 }
 
+const getDeploymentRuntimeUpgradeAcceptance = `-- name: GetDeploymentRuntimeUpgradeAcceptance :one
+SELECT deployment_id, target_release_id, rootfs_key, instance_id, node_id, wake_id, profile, configuration_fingerprint, secret_fingerprint, qualification_report_sha256, started_at, ready_at FROM deployment_runtime_upgrade_acceptances WHERE deployment_id=$1
+`
+
+func (q *Queries) GetDeploymentRuntimeUpgradeAcceptance(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentRuntimeUpgradeAcceptance, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeUpgradeAcceptance, deploymentID)
+	var i DeploymentRuntimeUpgradeAcceptance
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.TargetReleaseID,
+		&i.RootfsKey,
+		&i.InstanceID,
+		&i.NodeID,
+		&i.WakeID,
+		&i.Profile,
+		&i.ConfigurationFingerprint,
+		&i.SecretFingerprint,
+		&i.QualificationReportSha256,
+		&i.StartedAt,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
 const getDeploymentRuntimeUpgradeBaseline = `-- name: GetDeploymentRuntimeUpgradeBaseline :one
 SELECT deployment_id, serving_deployment_id, serving_rootfs_key, serving_runtime_release_id, target_release_id, configuration_fingerprint, secret_fingerprint, input_fingerprint, input_secret_fingerprint, captured_at FROM deployment_runtime_upgrade_baselines WHERE deployment_id=$1
 `
@@ -15582,6 +15606,62 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 		arg.ProbeNode,
 	)
 	return err
+}
+
+const insertDeploymentRuntimeUpgradeAcceptance = `-- name: InsertDeploymentRuntimeUpgradeAcceptance :one
+INSERT INTO deployment_runtime_upgrade_acceptances(deployment_id,target_release_id,rootfs_key,instance_id,node_id,wake_id,
+ profile,configuration_fingerprint,secret_fingerprint,qualification_report_sha256,started_at,ready_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ON CONFLICT (deployment_id) DO NOTHING
+RETURNING deployment_id, target_release_id, rootfs_key, instance_id, node_id, wake_id, profile, configuration_fingerprint, secret_fingerprint, qualification_report_sha256, started_at, ready_at
+`
+
+type InsertDeploymentRuntimeUpgradeAcceptanceParams struct {
+	DeploymentID              pgtype.UUID
+	TargetReleaseID           string
+	RootfsKey                 string
+	InstanceID                pgtype.UUID
+	NodeID                    pgtype.UUID
+	WakeID                    pgtype.UUID
+	Profile                   string
+	ConfigurationFingerprint  string
+	SecretFingerprint         string
+	QualificationReportSha256 string
+	StartedAt                 pgtype.Timestamptz
+	ReadyAt                   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertDeploymentRuntimeUpgradeAcceptance(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeUpgradeAcceptanceParams) (DeploymentRuntimeUpgradeAcceptance, error) {
+	row := db.QueryRow(ctx, insertDeploymentRuntimeUpgradeAcceptance,
+		arg.DeploymentID,
+		arg.TargetReleaseID,
+		arg.RootfsKey,
+		arg.InstanceID,
+		arg.NodeID,
+		arg.WakeID,
+		arg.Profile,
+		arg.ConfigurationFingerprint,
+		arg.SecretFingerprint,
+		arg.QualificationReportSha256,
+		arg.StartedAt,
+		arg.ReadyAt,
+	)
+	var i DeploymentRuntimeUpgradeAcceptance
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.TargetReleaseID,
+		&i.RootfsKey,
+		&i.InstanceID,
+		&i.NodeID,
+		&i.WakeID,
+		&i.Profile,
+		&i.ConfigurationFingerprint,
+		&i.SecretFingerprint,
+		&i.QualificationReportSha256,
+		&i.StartedAt,
+		&i.ReadyAt,
+	)
+	return i, err
 }
 
 const insertDeploymentRuntimeUpgradeBaseline = `-- name: InsertDeploymentRuntimeUpgradeBaseline :one
@@ -29966,6 +30046,34 @@ func (q *Queries) LockRuntimeConfigWorkloadSpec(ctx context.Context, db DBTX, de
 	return items, nil
 }
 
+const lockRuntimeReleaseQualification = `-- name: LockRuntimeReleaseQualification :one
+SELECT release_id, profile, architecture, host_id, kernel_boot_id, source_commit, kernel_sha256, firecracker_sha256, report_sha256, test_metal_sha256, leakcheck_sha256, started_at, completed_at, recorded_at, revoked_at, revocation_sha256 FROM runtime_release_qualifications WHERE release_id=$1 FOR SHARE
+`
+
+func (q *Queries) LockRuntimeReleaseQualification(ctx context.Context, db DBTX, releaseID string) (RuntimeReleaseQualification, error) {
+	row := db.QueryRow(ctx, lockRuntimeReleaseQualification, releaseID)
+	var i RuntimeReleaseQualification
+	err := row.Scan(
+		&i.ReleaseID,
+		&i.Profile,
+		&i.Architecture,
+		&i.HostID,
+		&i.KernelBootID,
+		&i.SourceCommit,
+		&i.KernelSha256,
+		&i.FirecrackerSha256,
+		&i.ReportSha256,
+		&i.TestMetalSha256,
+		&i.LeakcheckSha256,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.RecordedAt,
+		&i.RevokedAt,
+		&i.RevocationSha256,
+	)
+	return i, err
+}
+
 const lockRuntimeSecretApp = `-- name: LockRuntimeSecretApp :one
 SELECT id FROM apps WHERE account_id=$1::uuid AND id=$2::uuid AND status<>'deleted'
 FOR SHARE
@@ -30158,6 +30266,19 @@ func (q *Queries) LockRuntimeSecretSidecarSignals(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockRuntimeUpgradeAcceptanceServing = `-- name: LockRuntimeUpgradeAcceptanceServing :one
+SELECT d.id FROM deployments d
+JOIN deployment_runtime_upgrade_baselines b ON b.serving_deployment_id=d.id
+WHERE b.deployment_id=$1 FOR SHARE OF d
+`
+
+func (q *Queries) LockRuntimeUpgradeAcceptanceServing(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeAcceptanceServing, deploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockRuntimeUpgradeBaselineCandidate = `-- name: LockRuntimeUpgradeBaselineCandidate :one

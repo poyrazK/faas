@@ -14010,6 +14010,24 @@ RETURNING *;
 -- name: GetRuntimeReleaseQualification :one
 SELECT * FROM runtime_release_qualifications WHERE release_id=$1;
 
+-- name: LockRuntimeReleaseQualification :one
+SELECT * FROM runtime_release_qualifications WHERE release_id=$1 FOR SHARE;
+
+-- name: LockRuntimeUpgradeAcceptanceServing :one
+SELECT d.id FROM deployments d
+JOIN deployment_runtime_upgrade_baselines b ON b.serving_deployment_id=d.id
+WHERE b.deployment_id=$1 FOR SHARE OF d;
+
+-- name: InsertDeploymentRuntimeUpgradeAcceptance :one
+INSERT INTO deployment_runtime_upgrade_acceptances(deployment_id,target_release_id,rootfs_key,instance_id,node_id,wake_id,
+ profile,configuration_fingerprint,secret_fingerprint,qualification_report_sha256,started_at,ready_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ON CONFLICT (deployment_id) DO NOTHING
+RETURNING *;
+
+-- name: GetDeploymentRuntimeUpgradeAcceptance :one
+SELECT * FROM deployment_runtime_upgrade_acceptances WHERE deployment_id=$1;
+
 -- name: RevokeRuntimeReleaseQualification :one
 UPDATE runtime_release_qualifications SET revoked_at=COALESCE(revoked_at,clock_timestamp()),revocation_sha256=sqlc.arg(reason)::text
 WHERE release_id=sqlc.arg(release_id)::text AND report_sha256=sqlc.arg(expected_report)::text

@@ -100,3 +100,13 @@ archive, with a 15-minute exclusive lock wait, 100 ms lock polling, 10-minute
 source/build preparation budgets, 3-minute test budget, 2-minute cleanup budget
 and 5-second command pipe wait delay. Failed cleanup or restoration retains
 staging for operator recovery and blocks another collector attempt.
+
+Internal candidate prime now retains a fresh cold-boot/readiness receipt for
+the exact rebuilt layer, runtime release, admitted instance/node/wake and guest
+configuration/secret fingerprints. Publication rejects a changed baseline or
+revoked runtime qualification. A read-only validator checks those fences again
+and limits evidence to 15 minutes from cold-boot dispatch. Retries require new
+acceptance; restore and historical health evidence cannot supply it. This proves
+readiness at publication, before subsequent snapshot/hosting/rollout gates.
+It enables no customer apply or traffic change. Atomic cutover enforcement
+remains the next step. See [ADR-602](adr/602-runtime-upgrade-candidate-acceptance.md).

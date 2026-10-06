@@ -1954,6 +1954,24 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_runtime_upgrade_acceptances",
+    "columns": [
+      "configuration_fingerprint",
+      "deployment_id",
+      "instance_id",
+      "node_id",
+      "profile",
+      "qualification_report_sha256",
+      "ready_at",
+      "rootfs_key",
+      "secret_fingerprint",
+      "started_at",
+      "target_release_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_runtime_upgrade_baselines",
     "columns": [
       "captured_at",

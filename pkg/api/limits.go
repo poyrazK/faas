@@ -8725,7 +8725,8 @@ const (
 	RuntimeReleaseArtifactKeyMaxBytes  = 1024
 	RuntimeReleaseLayoutMaxBytes       = 64
 	RuntimeReleaseSidecarMaxBytes      = 4096
-	RuntimeUpgradeSourceFieldMaxBytes  = 4096 // frozen build root or function handler
+	RuntimeUpgradeSourceFieldMaxBytes  = 4096             // frozen build root or function handler
+	RuntimeUpgradeAcceptanceMaxAge     = 15 * time.Minute // starts at candidate cold-boot dispatch
 	RuntimeQualificationReportMaxBytes = 64 * 1024
 	RuntimeQualificationLogMaxBytes    = 64 * 1024 * 1024
 	RuntimeQualificationEventMaxBytes  = 256 * 1024

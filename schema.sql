@@ -5311,6 +5311,77 @@ $$;
 
 
 --
+-- Name: guard_runtime_release_qualification(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_release_qualification() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP = 'INSERT' THEN
+  IF NOT EXISTS (SELECT 1 FROM runtime_releases WHERE id=NEW.release_id AND architecture=NEW.architecture) THEN
+   RAISE EXCEPTION 'runtime qualification architecture differs from release' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP = 'DELETE' THEN
+  RAISE EXCEPTION 'runtime qualification evidence is retained' USING ERRCODE = '23514';
+ END IF;
+ IF ROW(NEW.release_id,NEW.profile,NEW.architecture,NEW.host_id,NEW.kernel_boot_id,NEW.source_commit,
+  NEW.kernel_sha256,NEW.firecracker_sha256,NEW.report_sha256,NEW.test_metal_sha256,NEW.leakcheck_sha256,
+  NEW.started_at,NEW.completed_at,NEW.recorded_at) IS DISTINCT FROM
+  ROW(OLD.release_id,OLD.profile,OLD.architecture,OLD.host_id,OLD.kernel_boot_id,OLD.source_commit,
+  OLD.kernel_sha256,OLD.firecracker_sha256,OLD.report_sha256,OLD.test_metal_sha256,OLD.leakcheck_sha256,
+  OLD.started_at,OLD.completed_at,OLD.recorded_at) OR
+  (OLD.revoked_at IS NOT NULL AND ROW(NEW.revoked_at,NEW.revocation_sha256) IS DISTINCT FROM ROW(OLD.revoked_at,OLD.revocation_sha256)) THEN
+  RAISE EXCEPTION 'runtime qualification evidence and revocation are immutable' USING ERRCODE = '23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_runtime_upgrade_source(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_source() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets WHERE deployment_id = OLD.id) AND
+  ROW(NEW.app_id, NEW.source_sha256, NEW.source_root, NEW.source_bytes, NEW.kind, NEW.handler)
+  IS DISTINCT FROM ROW(OLD.app_id, OLD.source_sha256, OLD.source_root, OLD.source_bytes, OLD.kind, OLD.handler) THEN
+  RAISE EXCEPTION 'runtime upgrade source is immutable' USING ERRCODE = '23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_runtime_upgrade_target(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_target() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP = 'DELETE' THEN
+  IF EXISTS(SELECT 1 FROM deployments WHERE id = OLD.deployment_id) THEN
+   RAISE EXCEPTION 'runtime upgrade target is immutable' USING ERRCODE = '23514';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW IS DISTINCT FROM OLD THEN
+  RAISE EXCEPTION 'runtime upgrade target is immutable' USING ERRCODE = '23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_scoped_queue_binding_work(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9272,6 +9343,51 @@ CREATE TABLE public.app_errors (
 
 
 --
+-- Name: app_health_collection_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_health_collection_state (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    next_check_at timestamp with time zone NOT NULL,
+    lease_token text,
+    lease_started_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    checked_at timestamp with time zone,
+    assessment_key text,
+    assessment jsonb,
+    notification_state jsonb,
+    CONSTRAINT app_health_collection_state_assessment_key_check CHECK ((assessment_key ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT app_health_collection_state_check CHECK (((jsonb_typeof(assessment) = 'object'::text) AND ((assessment ->> 'app_id'::text) = (app_id)::text) AND ((assessment ->> 'scope'::text) = 'default'::text) AND (octet_length((assessment)::text) <= 131072))),
+    CONSTRAINT app_health_collection_state_check1 CHECK ((((lease_token IS NULL) = (lease_until IS NULL)) AND ((lease_token IS NULL) = (lease_started_at IS NULL)))),
+    CONSTRAINT app_health_collection_state_check2 CHECK (((lease_token IS NULL) OR ((length(lease_token) > 0) AND isfinite(lease_started_at) AND isfinite(lease_until) AND (lease_until > lease_started_at)))),
+    CONSTRAINT app_health_collection_state_check3 CHECK ((((checked_at IS NULL) = (assessment IS NULL)) AND ((assessment_key IS NULL) = (assessment IS NULL)))),
+    CONSTRAINT app_health_collection_state_checked_at_check CHECK (((checked_at IS NULL) OR isfinite(checked_at))),
+    CONSTRAINT app_health_collection_state_next_check_at_check CHECK (isfinite(next_check_at)),
+    CONSTRAINT app_health_collection_state_notification_state_check CHECK (((jsonb_typeof(notification_state) = 'object'::text) AND (octet_length((notification_state)::text) <= 8192)))
+);
+
+
+--
+-- Name: app_health_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_health_history (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    kind text NOT NULL,
+    encoded_bytes integer NOT NULL,
+    entry jsonb NOT NULL,
+    CONSTRAINT app_health_history_check CHECK (((jsonb_typeof(entry) = 'object'::text) AND ((entry ->> 'id'::text) = (id)::text) AND ((entry ->> 'kind'::text) = kind) AND (((entry -> 'assessment'::text) ->> 'app_id'::text) = (app_id)::text) AND (((entry -> 'assessment'::text) ->> 'scope'::text) = 'default'::text) AND (octet_length((entry)::text) <= 131072))),
+    CONSTRAINT app_health_history_encoded_bytes_check CHECK (((encoded_bytes >= 1) AND (encoded_bytes <= 65536))),
+    CONSTRAINT app_health_history_kind_check CHECK ((kind = ANY (ARRAY['baseline'::text, 'transition'::text, 'gap'::text]))),
+    CONSTRAINT app_health_history_observed_at_check CHECK (isfinite(observed_at))
+);
+
+
+--
 -- Name: app_issue_impact_alert_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9544,7 +9660,7 @@ CREATE TABLE public.app_runtime_config_scope_changes (
     app_id uuid NOT NULL,
     scope text NOT NULL,
     changed_at timestamp with time zone NOT NULL,
-    CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT app_runtime_config_scope_changes_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64)))
 );
 
@@ -11611,6 +11727,80 @@ CREATE TABLE public.deployment_runtime_environment_owners (
 
 
 --
+-- Name: deployment_runtime_upgrade_acceptances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_upgrade_acceptances (
+    deployment_id uuid NOT NULL,
+    target_release_id text NOT NULL,
+    rootfs_key text NOT NULL,
+    instance_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    profile text NOT NULL,
+    configuration_fingerprint text NOT NULL,
+    secret_fingerprint text NOT NULL,
+    qualification_report_sha256 text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ready_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_runtime_upgrade_ac_qualification_report_sha256_check CHECK ((qualification_report_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_acce_configuration_fingerprint_check CHECK ((configuration_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_check CHECK ((isfinite(ready_at) AND (ready_at >= started_at))),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_instance_id_check CHECK ((instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_node_id_check CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_profile_check CHECK ((profile = 'runtime-upgrade-prime-v1'::text)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_rootfs_key_check CHECK (((octet_length(rootfs_key) >= 1) AND (octet_length(rootfs_key) <= 1024))),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_started_at_check CHECK (isfinite(started_at)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_upgrade_baselines (
+    deployment_id uuid NOT NULL,
+    serving_deployment_id uuid NOT NULL,
+    serving_rootfs_key text NOT NULL,
+    serving_runtime_release_id text NOT NULL,
+    target_release_id text NOT NULL,
+    configuration_fingerprint text NOT NULL,
+    secret_fingerprint text NOT NULL,
+    input_fingerprint text NOT NULL,
+    input_secret_fingerprint text NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_runtime_upgrade_base_configuration_fingerprint_check CHECK ((configuration_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_basel_input_secret_fingerprint_check CHECK ((input_secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_baselines_check CHECK ((deployment_id <> serving_deployment_id)),
+    CONSTRAINT deployment_runtime_upgrade_baselines_input_fingerprint_check CHECK ((input_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_baselines_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_baselines_serving_rootfs_key_check CHECK (((octet_length(serving_rootfs_key) >= 1) AND (octet_length(serving_rootfs_key) <= 1024)))
+);
+
+
+--
+-- Name: deployment_runtime_upgrade_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_upgrade_targets (
+    deployment_id uuid NOT NULL,
+    release_id text NOT NULL,
+    source_sha256 text NOT NULL,
+    source_root text NOT NULL,
+    source_bytes bigint NOT NULL,
+    kind text NOT NULL,
+    handler text NOT NULL,
+    CONSTRAINT deployment_runtime_upgrade_targets_handler_check CHECK ((octet_length(handler) <= 4096)),
+    CONSTRAINT deployment_runtime_upgrade_targets_kind_check CHECK ((kind = ANY (ARRAY['tarball'::text, 'github'::text, 'preview'::text]))),
+    CONSTRAINT deployment_runtime_upgrade_targets_source_bytes_check CHECK ((source_bytes > 0)),
+    CONSTRAINT deployment_runtime_upgrade_targets_source_root_check CHECK ((octet_length(source_root) <= 4096)),
+    CONSTRAINT deployment_runtime_upgrade_targets_source_sha256_check CHECK ((source_sha256 ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
 -- Name: deployment_scope_exclusions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12085,7 +12275,7 @@ CREATE TABLE public.environment_gitops_runtime_effects (
     CONSTRAINT environment_gitops_runtime_effects_generation_check CHECK ((generation > 0)),
     CONSTRAINT environment_gitops_runtime_effects_intent_version_check CHECK ((intent_version >= 0)),
     CONSTRAINT environment_gitops_runtime_effects_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT environment_gitops_runtime_effects_required_at_check CHECK ((required_at >= '1970-01-01 00:00:00+00'::timestamp with time zone))
+    CONSTRAINT environment_gitops_runtime_effects_required_at_check CHECK ((required_at >= '1970-01-01 02:00:00+02'::timestamp with time zone))
 );
 
 
@@ -12125,7 +12315,7 @@ CREATE TABLE public.instance_runtime_config_receipts (
     acknowledged_at timestamp with time zone DEFAULT now() NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT instance_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT instance_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT instance_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
@@ -12163,7 +12353,7 @@ CREATE TABLE public.snapshot_runtime_config_receipts (
     all_secrets boolean NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT snapshot_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT snapshot_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT snapshot_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
@@ -12236,14 +12426,14 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
             t.environment_slug,
             GREATEST(COALESCE(( SELECT c.changed_at
                    FROM public.app_runtime_config_changes c
-                  WHERE (c.app_id = t.app_id)), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(c.changed_at) AS max
+                  WHERE (c.app_id = t.app_id)), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(c.changed_at) AS max
                    FROM public.app_runtime_config_scope_changes c
-                  WHERE ((c.app_id = t.app_id) AND (c.scope = ANY (ARRAY['default'::text, t.environment_slug])))), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
+                  WHERE ((c.app_id = t.app_id) AND (c.scope = ANY (ARRAY['default'::text, t.environment_slug])))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
                    FROM (public.app_envs v
                      JOIN public.environment_managed_fields f ON (((f.source_id = t.source_id) AND (f.resource = t.resource) AND (f.field_path = ('variables/'::text || v.key)))))
-                  WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
+                  WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
                    FROM public.environment_gitops_runtime_effects x
-                  WHERE ((x.source_id = t.source_id) AND (x.app_id = t.app_id) AND (x.completed_at IS NULL))), '1970-01-01 00:00:00+00'::timestamp with time zone)) AS required_at
+                  WHERE ((x.source_id = t.source_id) AND (x.app_id = t.app_id) AND (x.completed_at IS NULL))), '1970-01-01 02:00:00+02'::timestamp with time zone)) AS required_at
            FROM targets t
         )
  SELECT source_id,
@@ -18609,6 +18799,18 @@ CREATE TABLE public.route_policy_receipts (
 
 
 --
+-- Name: runtime_artifact_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_artifact_bindings (
+    account_id uuid NOT NULL,
+    rootfs_key text NOT NULL,
+    release_id text NOT NULL,
+    CONSTRAINT runtime_artifact_bindings_rootfs_key_check CHECK (((length(rootfs_key) >= 1) AND (length(rootfs_key) <= 1024)))
+);
+
+
+--
 -- Name: runtime_config_entries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18745,6 +18947,69 @@ CREATE TABLE public.runtime_instance_config_proofs (
     CONSTRAINT runtime_instance_config_proofs_scope_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))),
     CONSTRAINT runtime_instance_config_proofs_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT runtime_instance_config_proofs_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_release_qualifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_release_qualifications (
+    release_id text NOT NULL,
+    profile text NOT NULL,
+    architecture text NOT NULL,
+    host_id uuid NOT NULL,
+    kernel_boot_id uuid NOT NULL,
+    source_commit text NOT NULL,
+    kernel_sha256 text NOT NULL,
+    firecracker_sha256 text NOT NULL,
+    report_sha256 text NOT NULL,
+    test_metal_sha256 text NOT NULL,
+    leakcheck_sha256 text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    revocation_sha256 text,
+    CONSTRAINT runtime_release_qualifications_architecture_check CHECK ((architecture = ANY (ARRAY['amd64'::text, 'arm64'::text]))),
+    CONSTRAINT runtime_release_qualifications_check CHECK ((isfinite(completed_at) AND (completed_at > started_at))),
+    CONSTRAINT runtime_release_qualifications_check1 CHECK ((isfinite(recorded_at) AND (recorded_at >= completed_at))),
+    CONSTRAINT runtime_release_qualifications_check2 CHECK (((revoked_at IS NULL) OR (isfinite(revoked_at) AND (revoked_at >= recorded_at)))),
+    CONSTRAINT runtime_release_qualifications_check3 CHECK (((revoked_at IS NULL) = (revocation_sha256 IS NULL))),
+    CONSTRAINT runtime_release_qualifications_firecracker_sha256_check CHECK ((firecracker_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_release_qualifications_host_id_check CHECK ((host_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_release_qualifications_kernel_boot_id_check CHECK ((kernel_boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_release_qualifications_kernel_sha256_check CHECK ((kernel_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_release_qualifications_leakcheck_sha256_check CHECK ((leakcheck_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_release_qualifications_profile_check CHECK ((profile = 'runtime-upgrade-native-v1'::text)),
+    CONSTRAINT runtime_release_qualifications_report_sha256_check CHECK ((report_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_release_qualifications_revocation_sha256_check CHECK (((revocation_sha256 IS NULL) OR (revocation_sha256 ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT runtime_release_qualifications_source_commit_check CHECK ((source_commit ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text)),
+    CONSTRAINT runtime_release_qualifications_started_at_check CHECK (isfinite(started_at)),
+    CONSTRAINT runtime_release_qualifications_test_metal_sha256_check CHECK ((test_metal_sha256 ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: runtime_releases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_releases (
+    id text NOT NULL,
+    runtime text NOT NULL,
+    architecture text NOT NULL,
+    source_ref text NOT NULL,
+    guest_init_sha256 text NOT NULL,
+    layout_version text NOT NULL,
+    base_sha256 text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_releases_architecture_check CHECK ((architecture = ANY (ARRAY['amd64'::text, 'arm64'::text]))),
+    CONSTRAINT runtime_releases_base_sha256_check CHECK ((base_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_releases_guest_init_sha256_check CHECK ((guest_init_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_releases_id_check CHECK ((id ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_releases_layout_version_check CHECK (((length(layout_version) >= 1) AND (length(layout_version) <= 64))),
+    CONSTRAINT runtime_releases_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'go124-alpine'::text]))),
+    CONSTRAINT runtime_releases_source_ref_check CHECK ((source_ref ~ '@sha256:[a-f0-9]{64}$'::text))
 );
 
 
@@ -18939,7 +19204,7 @@ CREATE TABLE public.service_recovery (
     app_id uuid NOT NULL,
     revision text NOT NULL,
     claim_token uuid,
-    lease_until timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    lease_until timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
     status text NOT NULL,
     failures integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone NOT NULL,
@@ -19879,14 +20144,14 @@ ALTER TABLE ONLY public.data_upstream_probes ATTACH PARTITION public.data_upstre
 -- Name: log_events_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 03:00:00+03') TO ('2026-11-01 03:00:00+03');
 
 
 --
 -- Name: log_events_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 03:00:00+03') TO ('2026-12-01 03:00:00+03');
 
 
 --
@@ -19900,21 +20165,21 @@ ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_default DE
 -- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+03') TO ('2026-11-01 00:00:00+03');
 
 
 --
 -- Name: request_telemetry_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+03') TO ('2026-12-01 00:00:00+03');
 
 
 --
 -- Name: request_telemetry_202612; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+03') TO ('2027-01-01 00:00:00+03');
 
 
 --
@@ -20275,6 +20540,22 @@ ALTER TABLE ONLY public.app_error_requests
 
 ALTER TABLE ONLY public.app_errors
     ADD CONSTRAINT app_errors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_health_collection_state app_health_collection_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_collection_state
+    ADD CONSTRAINT app_health_collection_state_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_health_history app_health_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_history
+    ADD CONSTRAINT app_health_history_pkey PRIMARY KEY (id);
 
 
 --
@@ -21147,6 +21428,30 @@ ALTER TABLE ONLY public.deployment_route_policy_snapshots
 
 ALTER TABLE ONLY public.deployment_runtime_environment_owners
     ADD CONSTRAINT deployment_runtime_environment_owners_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_upgrade_acceptances deployment_runtime_upgrade_acceptances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_acceptances
+    ADD CONSTRAINT deployment_runtime_upgrade_acceptances_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_baselines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_baselines_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_upgrade_targets deployment_runtime_upgrade_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_targets
+    ADD CONSTRAINT deployment_runtime_upgrade_targets_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -24334,6 +24639,14 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 
 --
+-- Name: runtime_artifact_bindings runtime_artifact_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_artifact_bindings
+    ADD CONSTRAINT runtime_artifact_bindings_pkey PRIMARY KEY (account_id, rootfs_key);
+
+
+--
 -- Name: runtime_config_entries runtime_config_entries_config_key_scope_scope_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24387,6 +24700,30 @@ ALTER TABLE ONLY public.runtime_environment_scaling_states
 
 ALTER TABLE ONLY public.runtime_instance_config_proofs
     ADD CONSTRAINT runtime_instance_config_proofs_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: runtime_release_qualifications runtime_release_qualifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_release_qualifications
+    ADD CONSTRAINT runtime_release_qualifications_pkey PRIMARY KEY (release_id);
+
+
+--
+-- Name: runtime_releases runtime_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_releases
+    ADD CONSTRAINT runtime_releases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_releases runtime_releases_runtime_architecture_source_ref_guest_init_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_releases
+    ADD CONSTRAINT runtime_releases_runtime_architecture_source_ref_guest_init_key UNIQUE (runtime, architecture, source_ref, guest_init_sha256, layout_version);
 
 
 --
@@ -25169,6 +25506,27 @@ CREATE INDEX app_errors_account_app_last_seen_idx ON public.app_errors USING btr
 --
 
 CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (account_id, app_id, fingerprint);
+
+
+--
+-- Name: app_health_collection_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_health_collection_due_idx ON public.app_health_collection_state USING btree (next_check_at, app_id);
+
+
+--
+-- Name: app_health_history_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_health_history_app_idx ON public.app_health_history USING btree (app_id, observed_at DESC, id DESC);
+
+
+--
+-- Name: app_health_history_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_health_history_retention_idx ON public.app_health_history USING btree (observed_at, id);
 
 
 --
@@ -29659,6 +30017,13 @@ CREATE INDEX runtime_config_revisions_lookup_idx ON public.runtime_config_revisi
 
 
 --
+-- Name: runtime_releases_catalog_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_releases_catalog_idx ON public.runtime_releases USING btree (runtime, architecture, created_at DESC, id);
+
+
+--
 -- Name: runtime_snapshots_state_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -32634,6 +32999,13 @@ CREATE TRIGGER runtime_environment_owners_configuration_fence BEFORE INSERT OR D
 
 
 --
+-- Name: runtime_release_qualifications runtime_release_qualification_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_release_qualification_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_release_qualifications FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_release_qualification();
+
+
+--
 -- Name: deployment_sidecar_layers runtime_sidecar_layers_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -32652,6 +33024,34 @@ CREATE TRIGGER runtime_sidecar_signals_configuration_fence BEFORE INSERT OR DELE
 --
 
 CREATE TRIGGER runtime_snapshots_profile_identity BEFORE UPDATE ON public.runtime_snapshots FOR EACH ROW EXECUTE FUNCTION public.enforce_execution_profile_identity();
+
+
+--
+-- Name: deployment_runtime_upgrade_acceptances runtime_upgrade_acceptance_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_acceptance_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_acceptances FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines runtime_upgrade_baseline_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_baseline_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_baselines FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: deployments runtime_upgrade_source_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_source_immutable BEFORE UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_source();
+
+
+--
+-- Name: deployment_runtime_upgrade_targets runtime_upgrade_target_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_target_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_targets FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
 
 
 --
@@ -33468,6 +33868,38 @@ ALTER TABLE ONLY public.app_errors
 
 ALTER TABLE ONLY public.app_errors
     ADD CONSTRAINT app_errors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_health_collection_state app_health_collection_state_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_collection_state
+    ADD CONSTRAINT app_health_collection_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_health_collection_state app_health_collection_state_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_collection_state
+    ADD CONSTRAINT app_health_collection_state_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_health_history app_health_history_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_history
+    ADD CONSTRAINT app_health_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_health_history app_health_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_history
+    ADD CONSTRAINT app_health_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -34668,6 +35100,70 @@ ALTER TABLE ONLY public.deployment_route_policy_snapshots
 
 ALTER TABLE ONLY public.deployment_runtime_environment_owners
     ADD CONSTRAINT deployment_runtime_environment_owners_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_acceptances deployment_runtime_upgrade_acceptances_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_acceptances
+    ADD CONSTRAINT deployment_runtime_upgrade_acceptances_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_baselines(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_acceptances deployment_runtime_upgrade_acceptances_target_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_acceptances
+    ADD CONSTRAINT deployment_runtime_upgrade_acceptances_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_base_serving_runtime_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_base_serving_runtime_release_id_fkey FOREIGN KEY (serving_runtime_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_baselines_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_baselines_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_targets(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_baselines_serving_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_baselines_serving_deployment_id_fkey FOREIGN KEY (serving_deployment_id) REFERENCES public.deployments(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_baselines_target_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_baselines_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: deployment_runtime_upgrade_targets deployment_runtime_upgrade_targets_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_targets
+    ADD CONSTRAINT deployment_runtime_upgrade_targets_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_targets deployment_runtime_upgrade_targets_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_targets
+    ADD CONSTRAINT deployment_runtime_upgrade_targets_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
 
 
 --
@@ -38703,6 +39199,22 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 
 --
+-- Name: runtime_artifact_bindings runtime_artifact_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_artifact_bindings
+    ADD CONSTRAINT runtime_artifact_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_artifact_bindings runtime_artifact_bindings_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_artifact_bindings
+    ADD CONSTRAINT runtime_artifact_bindings_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
+
+
+--
 -- Name: runtime_config_revisions runtime_config_revisions_entry_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38740,6 +39252,14 @@ ALTER TABLE ONLY public.runtime_instance_config_proofs
 
 ALTER TABLE ONLY public.runtime_instance_config_proofs
     ADD CONSTRAINT runtime_instance_config_proofs_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_release_qualifications runtime_release_qualifications_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_release_qualifications
+    ADD CONSTRAINT runtime_release_qualifications_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
 
 
 --
@@ -39248,309 +39768,3 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
-
-
-
---
--- Name: app_health_collection_state; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_health_collection_state (
-    app_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    next_check_at timestamp with time zone NOT NULL,
-    lease_token text,
-    lease_started_at timestamp with time zone,
-    lease_until timestamp with time zone,
-    checked_at timestamp with time zone,
-    assessment_key text,
-    assessment jsonb,
-    notification_state jsonb,
-    CONSTRAINT app_health_collection_state_assessment_key_check CHECK ((assessment_key ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT app_health_collection_state_check CHECK (((jsonb_typeof(assessment) = 'object'::text) AND ((assessment ->> 'app_id'::text) = (app_id)::text) AND ((assessment ->> 'scope'::text) = 'default'::text) AND (octet_length((assessment)::text) <= 131072))),
-    CONSTRAINT app_health_collection_state_check1 CHECK ((((lease_token IS NULL) = (lease_until IS NULL)) AND ((lease_token IS NULL) = (lease_started_at IS NULL)))),
-    CONSTRAINT app_health_collection_state_check2 CHECK (((lease_token IS NULL) OR ((length(lease_token) > 0) AND isfinite(lease_started_at) AND isfinite(lease_until) AND (lease_until > lease_started_at)))),
-    CONSTRAINT app_health_collection_state_check3 CHECK ((((checked_at IS NULL) = (assessment IS NULL)) AND ((assessment_key IS NULL) = (assessment IS NULL)))),
-    CONSTRAINT app_health_collection_state_checked_at_check CHECK (((checked_at IS NULL) OR isfinite(checked_at))),
-    CONSTRAINT app_health_collection_state_next_check_at_check CHECK (isfinite(next_check_at)),
-    CONSTRAINT app_health_collection_state_notification_state_check CHECK (((jsonb_typeof(notification_state) = 'object'::text) AND (octet_length((notification_state)::text) <= 8192)))
-);
-
-
---
--- Name: app_health_history; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_health_history (
-    id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    observed_at timestamp with time zone NOT NULL,
-    kind text NOT NULL,
-    encoded_bytes integer NOT NULL,
-    entry jsonb NOT NULL,
-    CONSTRAINT app_health_history_check CHECK (((jsonb_typeof(entry) = 'object'::text) AND ((entry ->> 'id'::text) = (id)::text) AND ((entry ->> 'kind'::text) = kind) AND (((entry -> 'assessment'::text) ->> 'app_id'::text) = (app_id)::text) AND (((entry -> 'assessment'::text) ->> 'scope'::text) = 'default'::text) AND (octet_length((entry)::text) <= 131072))),
-    CONSTRAINT app_health_history_encoded_bytes_check CHECK (((encoded_bytes >= 1) AND (encoded_bytes <= 65536))),
-    CONSTRAINT app_health_history_kind_check CHECK ((kind = ANY (ARRAY['baseline'::text, 'transition'::text, 'gap'::text]))),
-    CONSTRAINT app_health_history_observed_at_check CHECK (isfinite(observed_at))
-);
-
-
---
--- Name: app_health_collection_state app_health_collection_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_health_collection_state
-    ADD CONSTRAINT app_health_collection_state_pkey PRIMARY KEY (app_id);
-
-
---
--- Name: app_health_history app_health_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_health_history
-    ADD CONSTRAINT app_health_history_pkey PRIMARY KEY (id);
-
-
---
--- Name: app_health_collection_due_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX app_health_collection_due_idx ON public.app_health_collection_state USING btree (next_check_at, app_id);
-
-
---
--- Name: app_health_history_app_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX app_health_history_app_idx ON public.app_health_history USING btree (app_id, observed_at DESC, id DESC);
-
-
---
--- Name: app_health_history_retention_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX app_health_history_retention_idx ON public.app_health_history USING btree (observed_at, id);
-
-
---
--- Name: app_health_collection_state app_health_collection_state_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_health_collection_state
-    ADD CONSTRAINT app_health_collection_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_health_collection_state app_health_collection_state_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_health_collection_state
-    ADD CONSTRAINT app_health_collection_state_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: app_health_history app_health_history_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_health_history
-    ADD CONSTRAINT app_health_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_health_history app_health_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_health_history
-    ADD CONSTRAINT app_health_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
-
---
--- Name: runtime_artifact_bindings; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.runtime_artifact_bindings (
-    account_id uuid NOT NULL,
-    rootfs_key text NOT NULL,
-    release_id text NOT NULL,
-    CONSTRAINT runtime_artifact_bindings_rootfs_key_check CHECK (((length(rootfs_key) >= 1) AND (length(rootfs_key) <= 1024)))
-);
-
-
---
--- Name: runtime_releases; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.runtime_releases (
-    id text NOT NULL,
-    runtime text NOT NULL,
-    architecture text NOT NULL,
-    source_ref text NOT NULL,
-    guest_init_sha256 text NOT NULL,
-    layout_version text NOT NULL,
-    base_sha256 text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT runtime_releases_architecture_check CHECK ((architecture = ANY (ARRAY['amd64'::text, 'arm64'::text]))),
-    CONSTRAINT runtime_releases_base_sha256_check CHECK ((base_sha256 ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT runtime_releases_guest_init_sha256_check CHECK ((guest_init_sha256 ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT runtime_releases_id_check CHECK ((id ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT runtime_releases_layout_version_check CHECK (((length(layout_version) >= 1) AND (length(layout_version) <= 64))),
-    CONSTRAINT runtime_releases_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'go124-alpine'::text]))),
-    CONSTRAINT runtime_releases_source_ref_check CHECK ((source_ref ~ '@sha256:[a-f0-9]{64}$'::text))
-);
-
-
---
--- Name: runtime_artifact_bindings runtime_artifact_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.runtime_artifact_bindings
-    ADD CONSTRAINT runtime_artifact_bindings_pkey PRIMARY KEY (account_id, rootfs_key);
-
-
---
--- Name: runtime_releases runtime_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.runtime_releases
-    ADD CONSTRAINT runtime_releases_pkey PRIMARY KEY (id);
-
-
---
--- Name: runtime_releases runtime_releases_runtime_architecture_source_ref_guest_init_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.runtime_releases
-    ADD CONSTRAINT runtime_releases_runtime_architecture_source_ref_guest_init_key UNIQUE (runtime, architecture, source_ref, guest_init_sha256, layout_version);
-
-
---
--- Name: runtime_releases_catalog_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX runtime_releases_catalog_idx ON public.runtime_releases USING btree (runtime, architecture, created_at DESC, id);
-
-
---
--- Name: runtime_artifact_bindings runtime_artifact_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.runtime_artifact_bindings
-    ADD CONSTRAINT runtime_artifact_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: runtime_artifact_bindings runtime_artifact_bindings_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.runtime_artifact_bindings
-    ADD CONSTRAINT runtime_artifact_bindings_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
-
-
-
--- ADR-597: immutable runtime upgrade build targets.
-CREATE TABLE deployment_runtime_upgrade_targets (
- deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
- release_id text NOT NULL REFERENCES runtime_releases(id),
- source_sha256 text NOT NULL CHECK (source_sha256 ~ '^[a-f0-9]{64}$'),
- source_root text NOT NULL CHECK (octet_length(source_root) <= 4096),
- source_bytes bigint NOT NULL CHECK (source_bytes > 0),
- kind text NOT NULL CHECK (kind IN ('tarball','github','preview')),
- handler text NOT NULL CHECK (octet_length(handler) <= 4096)
-);
-
-CREATE FUNCTION guard_runtime_upgrade_target() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
- IF TG_OP = 'DELETE' THEN
-  IF EXISTS(SELECT 1 FROM deployments WHERE id = OLD.deployment_id) THEN
-   RAISE EXCEPTION 'runtime upgrade target is immutable' USING ERRCODE = '23514';
-  END IF;
-  RETURN OLD;
- END IF;
- IF NEW IS DISTINCT FROM OLD THEN
-  RAISE EXCEPTION 'runtime upgrade target is immutable' USING ERRCODE = '23514';
- END IF;
- RETURN NEW;
-END;
-$$;
-CREATE TRIGGER runtime_upgrade_target_immutable BEFORE UPDATE OR DELETE ON deployment_runtime_upgrade_targets
-FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_target();
-
-CREATE FUNCTION guard_runtime_upgrade_source() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
- IF EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets WHERE deployment_id = OLD.id) AND
-  ROW(NEW.app_id, NEW.source_sha256, NEW.source_root, NEW.source_bytes, NEW.kind, NEW.handler)
-  IS DISTINCT FROM ROW(OLD.app_id, OLD.source_sha256, OLD.source_root, OLD.source_bytes, OLD.kind, OLD.handler) THEN
-  RAISE EXCEPTION 'runtime upgrade source is immutable' USING ERRCODE = '23514';
- END IF;
- RETURN NEW;
-END;
-$$;
-CREATE TRIGGER runtime_upgrade_source_immutable BEFORE UPDATE ON deployments
-FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_source();
-
-
-CREATE TABLE deployment_runtime_upgrade_baselines (
- deployment_id uuid PRIMARY KEY REFERENCES deployment_runtime_upgrade_targets(deployment_id) ON DELETE CASCADE,
- serving_deployment_id uuid NOT NULL REFERENCES deployments(id) DEFERRABLE INITIALLY DEFERRED,
- serving_rootfs_key text NOT NULL CHECK (octet_length(serving_rootfs_key) BETWEEN 1 AND 1024),
- serving_runtime_release_id text NOT NULL REFERENCES runtime_releases(id),
- target_release_id text NOT NULL REFERENCES runtime_releases(id),
- configuration_fingerprint text NOT NULL CHECK (configuration_fingerprint ~ '^[a-f0-9]{64}$'),
- secret_fingerprint text NOT NULL CHECK (secret_fingerprint ~ '^[a-f0-9]{64}$'),
- input_fingerprint text NOT NULL CHECK (input_fingerprint ~ '^[a-f0-9]{64}$'),
- input_secret_fingerprint text NOT NULL CHECK (input_secret_fingerprint ~ '^[a-f0-9]{64}$'),
- captured_at timestamptz NOT NULL DEFAULT now(),
- CHECK (deployment_id <> serving_deployment_id)
-);
-CREATE TRIGGER runtime_upgrade_baseline_immutable BEFORE UPDATE OR DELETE ON deployment_runtime_upgrade_baselines
-FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_target();
-
-
--- ADR-599: operator-owned native runtime qualification.
-CREATE TABLE runtime_release_qualifications (
- release_id text PRIMARY KEY REFERENCES runtime_releases(id),
- profile text NOT NULL CHECK (profile = 'runtime-upgrade-native-v1'),
- architecture text NOT NULL CHECK (architecture IN ('amd64','arm64')),
- host_id uuid NOT NULL CHECK (host_id <> '00000000-0000-0000-0000-000000000000'),
- kernel_boot_id uuid NOT NULL CHECK (kernel_boot_id <> '00000000-0000-0000-0000-000000000000'),
- source_commit text NOT NULL CHECK (source_commit ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'),
- kernel_sha256 text NOT NULL CHECK (kernel_sha256 ~ '^[a-f0-9]{64}$'),
- firecracker_sha256 text NOT NULL CHECK (firecracker_sha256 ~ '^[a-f0-9]{64}$'),
- report_sha256 text NOT NULL CHECK (report_sha256 ~ '^[a-f0-9]{64}$'),
- test_metal_sha256 text NOT NULL CHECK (test_metal_sha256 ~ '^[a-f0-9]{64}$'),
- leakcheck_sha256 text NOT NULL CHECK (leakcheck_sha256 ~ '^[a-f0-9]{64}$'),
- started_at timestamptz NOT NULL CHECK (isfinite(started_at)),
- completed_at timestamptz NOT NULL CHECK (isfinite(completed_at) AND completed_at > started_at),
- recorded_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(recorded_at) AND recorded_at >= completed_at),
- revoked_at timestamptz CHECK (revoked_at IS NULL OR (isfinite(revoked_at) AND revoked_at >= recorded_at)),
- revocation_sha256 text CHECK (revocation_sha256 IS NULL OR revocation_sha256 ~ '^[a-f0-9]{64}$'),
- CHECK ((revoked_at IS NULL) = (revocation_sha256 IS NULL))
-);
-
-CREATE FUNCTION guard_runtime_release_qualification() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
- IF TG_OP = 'INSERT' THEN
-  IF NOT EXISTS (SELECT 1 FROM runtime_releases WHERE id=NEW.release_id AND architecture=NEW.architecture) THEN
-   RAISE EXCEPTION 'runtime qualification architecture differs from release' USING ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
- END IF;
- IF TG_OP = 'DELETE' THEN
-  RAISE EXCEPTION 'runtime qualification evidence is retained' USING ERRCODE = '23514';
- END IF;
- IF ROW(NEW.release_id,NEW.profile,NEW.architecture,NEW.host_id,NEW.kernel_boot_id,NEW.source_commit,
-  NEW.kernel_sha256,NEW.firecracker_sha256,NEW.report_sha256,NEW.test_metal_sha256,NEW.leakcheck_sha256,
-  NEW.started_at,NEW.completed_at,NEW.recorded_at) IS DISTINCT FROM
-  ROW(OLD.release_id,OLD.profile,OLD.architecture,OLD.host_id,OLD.kernel_boot_id,OLD.source_commit,
-  OLD.kernel_sha256,OLD.firecracker_sha256,OLD.report_sha256,OLD.test_metal_sha256,OLD.leakcheck_sha256,
-  OLD.started_at,OLD.completed_at,OLD.recorded_at) OR
-  (OLD.revoked_at IS NOT NULL AND ROW(NEW.revoked_at,NEW.revocation_sha256) IS DISTINCT FROM ROW(OLD.revoked_at,OLD.revocation_sha256)) THEN
-  RAISE EXCEPTION 'runtime qualification evidence and revocation are immutable' USING ERRCODE = '23514';
- END IF;
- RETURN NEW;
-END;
-$$;
-CREATE TRIGGER runtime_release_qualification_immutable BEFORE INSERT OR UPDATE OR DELETE ON runtime_release_qualifications
-FOR EACH ROW EXECUTE FUNCTION guard_runtime_release_qualification();

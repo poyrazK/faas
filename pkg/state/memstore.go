@@ -142,6 +142,7 @@ type MemStore struct {
 	runtimeArtifactBindings      map[string]string
 	runtimeUpgradeTargets        map[string]runtimeUpgradeTarget
 	runtimeUpgradeBaselines      map[string]RuntimeUpgradeBaseline
+	runtimeUpgradeAcceptances    map[string]RuntimeUpgradeAcceptance
 	operationData                *operationMemory
 	operationCodePins            map[string]time.Time
 	qualificationExecutions      map[string]EnvironmentQualificationExecutionStatus
