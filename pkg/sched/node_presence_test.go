@@ -84,6 +84,7 @@ type inventoryFixture struct {
 	now      time.Time
 	clock    atomic.Int64
 	instance state.Instance
+	drain    func()
 }
 
 func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
@@ -104,7 +105,8 @@ func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
 		// Use the production submission path and finish bootstrap notifications
 		// before advancing fake time; no recovery callback may escape the fixture.
 		loop := NewLoop(nil, engine, testLog()).WithClock(engine.now)
-		t.Cleanup(loop.workPool().drain)
+		f.drain = loop.workPool().drain
+		t.Cleanup(f.drain)
 		manifest := state.AppManifest{ExecutionMode: api.ExecutionModeService, ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 1, Desired: 1}}
 		if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
 			t.Fatal(err)
@@ -263,6 +265,9 @@ func TestNodeInventoryServiceRecoversWithoutTrafficAndNotifiesRouting(t *testing
 	if replacement.ID == "" {
 		t.Fatal("service was not replaced without a customer request")
 	}
+	// RUNNING is committed before its notification. Join the recovery work
+	// before checking both route invalidations instead of racing its tail.
+	f.drain()
 	for i := 0; i < 3; i++ {
 		f.report(true, replacement.ID)
 	}

@@ -71,17 +71,17 @@ func runEventDeliveryRecovery(t *testing.T, independent bool) {
 	cfg := eventdelivery.Config{APIURL: f.h.APIDURL, APIToken: f.key, ControlToken: "event-gate-test-token", HealthyApp: f.app.Slug, FailingApp: app.Slug,
 		HealthyURL: healthyURL, FailingURL: failingURL, Source: source, EventID: eventID, EventType: eventType, RoutingMode: mode, ExpectedAttempts: api.MustLimitsFor(api.PlanHobby).MaxQueueAttempts}
 	report, err := eventdelivery.Run(ctx, cfg, eventdelivery.Hooks{
-		Accepted: func(context.Context) error {
-			assertEventGatePendingBacklog(t, f, source, eventID)
-			return f.h.RestartSchedd()
+		Accepted: func(ctx context.Context) error {
+			assertEventGatePendingBacklog(ctx, t, f, source, eventID)
+			return f.h.RestartScheddContext(ctx)
 		},
-		RetryPending: func(context.Context) error {
+		RetryPending: func(ctx context.Context) error {
 			// Disabling adoption must preserve existing recipient ownership.
 			// The handler's retry schedule also survives an actual SIGKILL.
 			if err := f.h.SetScheddEnv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED", "0"); err != nil {
 				return err
 			}
-			return f.h.RestartSchedd()
+			return f.h.RestartScheddContext(ctx)
 		},
 		DeadLetter: func(context.Context) error { return f.h.RestartAPID() },
 	})
@@ -133,15 +133,11 @@ func startEventGateConsumer(t *testing.T, f *normalPathFixture, appID, slug stri
 	return server.URL
 }
 
-func assertEventGatePendingBacklog(t *testing.T, f *normalPathFixture, source, eventID string) {
+func assertEventGatePendingBacklog(ctx context.Context, t *testing.T, f *normalPathFixture, source, eventID string) {
 	t.Helper()
-	body, code := doReq(t, f.h, f.key, "GET", "/v1/events/backlog", nil)
-	if code != http.StatusOK {
-		t.Fatalf("pending backlog: %d %s", code, body)
-	}
-	var backlog api.EventBacklogResponse
-	if err := json.Unmarshal(body, &backlog); err != nil {
-		t.Fatal(err)
+	backlog, err := api.NewClient(f.h.APIDURL, f.key).GetEventBacklog(ctx, api.EventBacklogOptions{})
+	if err != nil {
+		t.Fatalf("pending backlog: %v", err)
 	}
 	if len(backlog.Recipients) != 2 || len(backlog.Consumers) != 2 || backlog.UnattributedReceipts != 0 {
 		t.Fatalf("accepted event must expose both waiting consumers: %+v", backlog)
