@@ -71,6 +71,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
 	"github.com/onebox-faas/faas/pkg/gatewayconfirmation"
 	"github.com/onebox-faas/faas/pkg/geoip"
@@ -916,10 +917,12 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
-	listen       func(network, addr string) (net.Listener, error)
-	listenPacket func(network, addr string) (net.PacketConn, error)
-	newSrv       func(addr string, handler http.Handler) *http.Server
-	backend      gateway.Backend
+	// Private identity is built only with the process-wide drain tracker.
+	runtimeIngressIdentity http.Handler
+	listen                 func(network, addr string) (net.Listener, error)
+	listenPacket           func(network, addr string) (net.PacketConn, error)
+	newSrv                 func(addr string, handler http.Handler) *http.Server
+	backend                gateway.Backend
 	// drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker the graceful-shutdown path waits on. ONE
 	// tracker per daemon, shared by Handler + InternalReverseProxy +
@@ -1418,6 +1421,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("private runtime gateway activity configuration: %w", err)
 		}
 		log.Info("gatewayd: private runtime routing confirmation enabled", "gateway_session_id", runtimeGatewaySession, "gateway_slot_id", runtimeGatewaySlot)
+	}
+	deps.runtimeIngressIdentity, err = privateRuntimeIngressIdentity(osGetenv, runtimeGatewaySlot, runtimeGatewaySession)
+	if err != nil {
+		return err
 	}
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
@@ -3752,6 +3759,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		mux.Handle("/", publicHandler)
 		mux.Handle("/v1/internal/realtime/", realtimeControlProxy)
 		publicListenerHandler = mux
+	}
+	if deps.runtimeIngressIdentity != nil {
+		publicListenerHandler = ingress.Wrap(publicListenerHandler, deps.runtimeIngressIdentity)
+		if deps.synth != nil {
+			deps.synth.SetHandler(publicListenerHandler)
+		}
 	}
 	// addSrv is the closure for the public :8080 + control listeners
 	// below; declared above so the unified-mux block above can run

@@ -387,6 +387,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			transport.DisableKeepAlives = true
 		}
 	}
+	if err := configureRuntimeIngressProxy(proxy, pgStore, os.Getenv); err != nil {
+		return err
+	}
 	// Issue #587 / PR-A: per-request drain tracker shared between
 	// the InternalReverseProxy and the control mux so every
 	// ServeHTTP surface contributes to the same in-flight count.
