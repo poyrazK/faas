@@ -110,16 +110,21 @@ type ReapReport struct {
 	ProcessOnly int
 }
 
-// LayerCloneReapOptions configures the startup sweep for writable layer
-// clones left behind when vmmd exits before Kill can drain materialisedTmp.
-// Root is the node-local storage cache. IsLive is the same durable-state gate
-// used by ReapOrphanedJails.
+// LayerCloneReapOptions configures the sweep for writable layer clones left
+// behind when vmmd exits before Kill can drain materialisedTmp, or when a
+// teardown never completes. Root is the node-local storage cache, scanned by
+// its two-hex buckets. FlatDirs are plain directories scanned directly: a
+// clone is created beside its source, so a host-path drive in /srv/fc/base
+// leaves its clone there (ADR-631). IsLive is the durable-state gate used by
+// ReapOrphanedJails; under journal-backed recovery it must also report every
+// journal-owned instance as live.
 type LayerCloneReapOptions struct {
-	Root   string
-	IsLive LiveInstanceFunc
-	Log    *slog.Logger
-	MinAge time.Duration
-	now    func() time.Time
+	Root     string
+	FlatDirs []string
+	IsLive   LiveInstanceFunc
+	Log      *slog.Logger
+	MinAge   time.Duration
+	now      func() time.Time
 }
 
 // LayerCloneReapReport records the bounded startup cleanup outcome.
@@ -152,24 +157,26 @@ func ReapOrphanedLayerClones(ctx context.Context, opts LayerCloneReapOptions) (L
 		opts.now = time.Now
 	}
 
+	dirs := make([]string, 0, len(opts.FlatDirs)+16)
 	buckets, err := os.ReadDir(opts.Root)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return rep, nil
-		}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return rep, fmt.Errorf("fcvm: reap layer clones: read root %q: %w", opts.Root, err)
 	}
 	for _, bucket := range buckets {
+		if bucket.IsDir() && looksLikeCacheBucket(bucket.Name()) {
+			dirs = append(dirs, filepath.Join(opts.Root, bucket.Name()))
+		}
+	}
+	dirs = append(dirs, opts.FlatDirs...)
+	for _, bucketPath := range dirs {
 		if err := ctx.Err(); err != nil {
 			return rep, err
 		}
-		if !bucket.IsDir() || !looksLikeCacheBucket(bucket.Name()) {
-			continue
-		}
-		bucketPath := filepath.Join(opts.Root, bucket.Name())
 		entries, err := os.ReadDir(bucketPath)
 		if err != nil {
-			logWarn(opts.Log, "vmmd: reap layer clones: read bucket", "path", bucketPath, "err", err)
+			if !errors.Is(err, os.ErrNotExist) {
+				logWarn(opts.Log, "vmmd: reap layer clones: read directory", "path", bucketPath, "err", err)
+			}
 			continue
 		}
 		for _, entry := range entries {
