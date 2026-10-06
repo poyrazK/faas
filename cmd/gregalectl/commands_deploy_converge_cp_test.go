@@ -228,6 +228,9 @@ func TestConvergeControlPlaneRunsLimitedVerifiedPlaybook(t *testing.T) {
 	if convergeVars["faas_cp_bootstrap_contract_sha256"] != report.Contract {
 		t.Errorf("converge vars contract = %v, want %s", convergeVars["faas_cp_bootstrap_contract_sha256"], report.Contract)
 	}
+	if convergeVars["faas_verify_run_doctor"] != false {
+		t.Errorf("converge must not run the outgoing release's doctor before activation; vars = %v", convergeVars)
+	}
 	if convergeVars["faas_join_defer_service_handlers"] != true {
 		t.Errorf("converge must defer FaaS daemon restarts to release activation; vars = %v", convergeVars)
 	}

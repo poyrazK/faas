@@ -65,7 +65,15 @@ func (s *server) collectBindingInventory(parent context.Context, r *http.Request
 		RequestedDeploymentID: r.URL.Query().Get("deployment_id"),
 		Bindings:              serviceBindingInventory(app),
 	}
-	revisions := serviceBindingRevisions(app)
+	ctx, cancel := context.WithTimeout(parent, bindingInventoryReadTimeout)
+	revisions, err := s.serviceBindingRevisions(ctx, app)
+	cancel()
+	if err != nil {
+		revisions = map[string]string{}
+		issue := api.BindingInventoryIssue{Type: api.BindingTypeService, Code: "query_failed", Severity: "error", Message: "Service dependency metadata could not be read."}
+		inventory.Issues = append(inventory.Issues, issue)
+		inventory.Warnings = append(inventory.Warnings, issue.Message)
+	}
 	refreshWakeIDs := make(map[string]string)
 	adoptionSelectors := make(map[string]state.BindingAdoptionSelector)
 	privateBindingIDs := make(map[string]string)
@@ -90,7 +98,8 @@ func (s *server) collectBindingInventory(parent context.Context, r *http.Request
 	sections := make([]bindingInventorySection, len(readers))
 	var wg sync.WaitGroup
 	for index, reader := range readers {
-		if !middleware.HasScope(r, reader.scopes...) {
+		workerRead, _ := r.Context().Value(bindingReleaseWorkerReadsKey{}).(bool)
+		if !workerRead && !middleware.HasScope(r, reader.scopes...) {
 			sections[index] = bindingInventoryUnavailable(reader.kind, "forbidden", "error", fmt.Sprintf("%s binding metadata requires one of: %s.", reader.kind, strings.Join(reader.scopes, ", ")))
 			continue
 		}

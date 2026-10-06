@@ -764,6 +764,39 @@ $$;
 
 
 --
+-- Name: authorize_binding_release_traffic(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.authorize_binding_release_traffic(fences jsonb) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f jsonb; observed text; d deployments%ROWTYPE; p app_binding_release_policies%ROWTYPE;
+BEGIN
+ FOR f IN SELECT value FROM jsonb_array_elements(fences) LOOP
+  SELECT r.epoch::text||':'||r.revision::text INTO observed FROM app_binding_promotion_revisions r
+  JOIN apps a ON a.id=r.app_id WHERE r.app_id=(f->>'app_id')::uuid AND a.account_id=(f->>'account_id')::uuid AND a.status<>'deleted'
+  FOR UPDATE OF r;
+  IF observed IS NULL OR observed<>f->>'revision' THEN
+   RAISE EXCEPTION 'binding facts changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+  SELECT * INTO d FROM deployments WHERE id=(f->>'deployment_id')::uuid AND app_id=(f->>'app_id')::uuid;
+  IF d.id IS NULL OR d.status<>'live' OR d.scope<>f->>'scope' OR coalesce(d.rootfs_key,'')='' OR coalesce(d.image_digest,'')='' THEN
+   RAISE EXCEPTION 'binding deployment changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+  IF NULLIF(f->>'valid_until','')::timestamptz <= clock_timestamp() THEN
+   RAISE EXCEPTION 'binding evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
+  END IF;
+  SELECT * INTO p FROM app_binding_release_policies WHERE app_id=d.app_id AND scope=d.scope;
+  IF p.mode='enforce' AND NOT coalesce((f->>'policy_revision')::bigint=p.revision AND (f->>'max_age_seconds')::numeric>0 AND (f->>'max_age_seconds')::numeric<=p.max_age_seconds AND NOT (f->>'allow_unsupported')::boolean AND (NOT p.require_application_ack OR (f->>'require_application_ack')::boolean),false) THEN
+   RAISE EXCEPTION 'binding release policy changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+ END LOOP;
+ PERFORM set_config('gregale.binding_release_fences',fences::text,true);
+ RETURN true;
+END $$;
+
+
+--
 -- Name: automatic_route_check_capture_changed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -935,6 +968,50 @@ END $$;
 
 
 --
+-- Name: capture_binding_release_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_binding_release_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND (NEW.app_id<>OLD.app_id OR NEW.scope<>OLD.scope OR NEW.revision<>OLD.revision+1) THEN
+  RAISE EXCEPTION 'release policy revision changed' USING ERRCODE='23514',CONSTRAINT='binding_release_policy_revision';
+ END IF;
+ IF NEW.mode='off' AND btrim(NEW.reason)='' THEN
+  RAISE EXCEPTION 'disabling enforcement requires a reason' USING ERRCODE='23514',CONSTRAINT='binding_release_policy_reason';
+ END IF;
+ PERFORM bump_binding_promotion_revision(NEW.app_id);
+ INSERT INTO app_binding_release_policy_history(app_id,scope,revision,policy)
+ VALUES(NEW.app_id,NEW.scope,NEW.revision,to_jsonb(NEW));
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: capture_deployment_recovery_lineage(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_deployment_recovery_lineage() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE predecessor uuid;
+BEGIN
+ PERFORM id FROM apps WHERE id=NEW.app_id FOR UPDATE;
+ IF (SELECT count(*) FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND d.id<>NEW.id
+  AND d.status='live' AND d.traffic_percent>0 AND d.deleted_at IS NULL)=1 THEN
+  SELECT id INTO predecessor FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND d.id<>NEW.id
+   AND d.status='live' AND d.traffic_percent=100 AND d.rollout_state='complete' AND d.deleted_at IS NULL
+   AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps);
+  IF predecessor IS NOT NULL THEN
+   INSERT INTO deployment_recovery_lineage(deployment_id,predecessor_deployment_id) VALUES(NEW.id,predecessor);
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: capture_environment_qualification_execution(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1015,6 +1092,39 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: capture_service_binding_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_service_binding_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ old_row jsonb := CASE WHEN TG_OP='INSERT' THEN '{}'::jsonb ELSE to_jsonb(OLD) END;
+ new_row jsonb := CASE WHEN TG_OP='DELETE' THEN '{}'::jsonb ELSE to_jsonb(NEW) END;
+ old_facts jsonb;
+ new_facts jsonb;
+ target uuid;
+ watched text[] := string_to_array(TG_ARGV[0],',');
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  SELECT jsonb_object_agg(key,value) INTO old_facts FROM jsonb_each(old_row) WHERE key=ANY(watched);
+  SELECT jsonb_object_agg(key,value) INTO new_facts FROM jsonb_each(new_row) WHERE key=ANY(watched);
+  IF old_facts IS NOT DISTINCT FROM new_facts THEN RETURN NEW; END IF;
+ END IF;
+ FOR target IN SELECT a.id FROM apps a
+  WHERE a.account_id IN (NULLIF(old_row->>'account_id','')::uuid,NULLIF(new_row->>'account_id','')::uuid)
+   AND a.status<>'deleted' AND COALESCE(a.manifest->'service_bindings','[]'::jsonb)<>'[]'::jsonb
+  ORDER BY a.id LOOP
+  INSERT INTO app_binding_promotion_revisions(app_id,service_revision) VALUES(target,2)
+  ON CONFLICT(app_id) DO UPDATE SET
+   revision=app_binding_promotion_revisions.revision+1,
+   service_revision=app_binding_promotion_revisions.service_revision+1;
+ END LOOP;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
+END $$;
 
 
 --
@@ -1512,6 +1622,55 @@ BEGIN
     RETURN NEW;
 END
 $$;
+
+
+--
+-- Name: enforce_binding_release_graph(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_binding_release_graph() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app uuid;
+BEGIN
+ IF (TG_OP='UPDATE' AND NEW.active=OLD.active) OR (TG_OP='INSERT' AND NOT NEW.active) THEN RETURN NEW; END IF;
+ FOR app IN SELECT id FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' ORDER BY id LOOP
+  PERFORM 1 FROM app_binding_promotion_revisions WHERE app_id=app FOR UPDATE;
+  IF EXISTS(SELECT 1 FROM app_binding_release_policies WHERE app_id=app AND scope=NEW.environment_slug AND mode='enforce') THEN
+   RAISE EXCEPTION 'project release switching requires a binding release gate' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: enforce_binding_release_traffic(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_binding_release_traffic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE prior_percent integer:=0; p app_binding_release_policies%ROWTYPE; f jsonb; granted boolean:=false;
+BEGIN
+ IF TG_OP='UPDATE' AND OLD.status='live' AND OLD.app_id=NEW.app_id AND OLD.scope=NEW.scope THEN prior_percent:=OLD.traffic_percent; END IF;
+ -- Admission with positive intended traffic is also gated, so unguarded
+ -- automatic activation cannot fail only after a build has run.
+ IF NEW.traffic_percent<=prior_percent OR NEW.traffic_percent=0 OR (TG_OP='UPDATE' AND NEW.status<>'live') THEN RETURN NEW; END IF;
+ -- Even a missing policy must serialize with concurrent enabling.
+ PERFORM 1 FROM app_binding_promotion_revisions WHERE app_id=NEW.app_id FOR UPDATE;
+ SELECT * INTO p FROM app_binding_release_policies WHERE app_id=NEW.app_id AND scope=NEW.scope;
+ IF p.mode IS DISTINCT FROM 'enforce' THEN RETURN NEW; END IF;
+ FOR f IN SELECT value FROM jsonb_array_elements(coalesce(NULLIF(current_setting('gregale.binding_release_fences',true),''),'[]')::jsonb) LOOP
+  IF f->>'deployment_id'=NEW.id::text AND f->>'app_id'=NEW.app_id::text AND f->>'scope'=NEW.scope
+    AND (f->>'policy_revision')::bigint=p.revision
+    AND (NULLIF(f->>'valid_until','') IS NULL OR (f->>'valid_until')::timestamptz>clock_timestamp()) THEN granted:=true; EXIT; END IF;
+ END LOOP;
+ IF NOT granted THEN
+  RAISE EXCEPTION 'binding release requires fresh checked evidence' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -3750,6 +3909,23 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_checked_rollback_traffic(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_checked_rollback_traffic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status='live' AND NEW.traffic_percent>(CASE WHEN OLD.status='live' THEN OLD.traffic_percent ELSE 0 END)
+ AND EXISTS(SELECT 1 FROM deployment_rollback_operations r WHERE r.target_deployment_id=NEW.id AND r.status NOT IN ('complete','failed')
+   AND (r.status NOT IN ('ready','blocked') OR r.id::text IS DISTINCT FROM current_setting('faas.checked_rollback_request',true))) THEN
+  RAISE EXCEPTION 'checked rollback operation required' USING ERRCODE='23514',CONSTRAINT='checked_rollback_required';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -8968,6 +9144,16 @@ CREATE TABLE public.alert_deliveries (
 
 
 --
+-- Name: alert_historical_rollback_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_historical_rollback_claims (
+    deployment_id uuid NOT NULL,
+    fire_id uuid NOT NULL
+);
+
+
+--
 -- Name: alert_presets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8999,6 +9185,22 @@ CREATE TABLE public.alert_presets (
 
 
 --
+-- Name: alert_rollback_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_rollback_actions (
+    fire_id uuid NOT NULL,
+    app_id uuid,
+    status text NOT NULL,
+    receipt jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT alert_rollback_actions_check CHECK (((receipt ?& ARRAY['id'::text, 'rule_id'::text, 'account_id'::text, 'app_id'::text, 'status'::text, 'fired_at'::text, 'updated_at'::text]) AND ((receipt ->> 'id'::text) = (fire_id)::text) AND ((receipt ->> 'status'::text) = status) AND (COALESCE((NULLIF((receipt ->> 'app_id'::text), ''::text))::uuid, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid)))),
+    CONSTRAINT alert_rollback_actions_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 16384))),
+    CONSTRAINT alert_rollback_actions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'blocked'::text, 'complete'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: alert_rules; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9023,13 +9225,16 @@ CREATE TABLE public.alert_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
     action text DEFAULT 'webhook'::text NOT NULL,
+    post_deploy_rollback_window_seconds integer DEFAULT 0 NOT NULL,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
+    CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
     CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
+    CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text, 'degraded'::text, 'unknown'::text]))),
     CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -9229,7 +9434,46 @@ CREATE TABLE public.app_binding_promotion_revisions (
     app_id uuid NOT NULL,
     epoch uuid DEFAULT gen_random_uuid() NOT NULL,
     revision bigint DEFAULT 1 NOT NULL,
-    CONSTRAINT app_binding_promotion_revisions_revision_check CHECK ((revision > 0))
+    service_revision bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT app_binding_promotion_revisions_revision_check CHECK ((revision > 0)),
+    CONSTRAINT app_binding_promotion_revisions_service_revision_check CHECK ((service_revision > 0))
+);
+
+
+--
+-- Name: app_binding_release_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_binding_release_policies (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    mode text NOT NULL,
+    revision bigint NOT NULL,
+    max_age_seconds bigint NOT NULL,
+    require_application_ack boolean DEFAULT false NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_binding_release_policies_max_age_seconds_check CHECK (((max_age_seconds >= 1) AND (max_age_seconds <= 86400))),
+    CONSTRAINT app_binding_release_policies_mode_check CHECK ((mode = ANY (ARRAY['off'::text, 'enforce'::text]))),
+    CONSTRAINT app_binding_release_policies_reason_check CHECK (((octet_length(reason) <= 256) AND (reason !~ '[[:cntrl:]]'::text))),
+    CONSTRAINT app_binding_release_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT app_binding_release_policies_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: app_binding_release_policy_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_binding_release_policy_history (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    revision bigint NOT NULL,
+    policy jsonb NOT NULL,
+    changed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_binding_release_policy_history_policy_check CHECK ((jsonb_typeof(policy) = 'object'::text)),
+    CONSTRAINT app_binding_release_policy_history_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT app_binding_release_policy_history_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))
 );
 
 
@@ -11758,6 +12002,38 @@ CREATE TABLE public.deployment_openapi_snapshots (
     CONSTRAINT deployment_openapi_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
     CONSTRAINT deployment_openapi_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_openapi_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: deployment_recovery_lineage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_recovery_lineage (
+    deployment_id uuid NOT NULL,
+    predecessor_deployment_id uuid,
+    CONSTRAINT deployment_recovery_lineage_check CHECK ((deployment_id <> predecessor_deployment_id))
+);
+
+
+--
+-- Name: deployment_rollback_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_rollback_operations (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    target_deployment_id uuid NOT NULL,
+    current_deployment_id uuid NOT NULL,
+    status text NOT NULL,
+    receipt jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT deployment_rollback_operations_check CHECK ((target_deployment_id <> current_deployment_id)),
+    CONSTRAINT deployment_rollback_operations_check1 CHECK (((receipt ?& ARRAY['id'::text, 'app_id'::text, 'scope'::text, 'target_deployment_id'::text, 'current_deployment_id'::text, 'status'::text]) AND ((receipt ->> 'id'::text) = (id)::text) AND ((receipt ->> 'app_id'::text) = (app_id)::text) AND ((receipt ->> 'scope'::text) = scope) AND ((receipt ->> 'target_deployment_id'::text) = (target_deployment_id)::text) AND ((receipt ->> 'current_deployment_id'::text) = (current_deployment_id)::text) AND ((receipt ->> 'status'::text) = status))),
+    CONSTRAINT deployment_rollback_operations_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 16384))),
+    CONSTRAINT deployment_rollback_operations_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT deployment_rollback_operations_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'ready'::text, 'blocked'::text, 'routing'::text, 'complete'::text, 'failed'::text])))
 );
 
 
@@ -20349,6 +20625,14 @@ ALTER TABLE ONLY public.alert_deliveries
 
 
 --
+-- Name: alert_historical_rollback_claims alert_historical_rollback_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_historical_rollback_claims
+    ADD CONSTRAINT alert_historical_rollback_claims_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: alert_presets alert_presets_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20362,6 +20646,14 @@ ALTER TABLE ONLY public.alert_presets
 
 ALTER TABLE ONLY public.alert_presets
     ADD CONSTRAINT alert_presets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: alert_rollback_actions alert_rollback_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rollback_actions
+    ADD CONSTRAINT alert_rollback_actions_pkey PRIMARY KEY (fire_id);
 
 
 --
@@ -20490,6 +20782,22 @@ ALTER TABLE ONLY public.app_api_routes
 
 ALTER TABLE ONLY public.app_binding_promotion_revisions
     ADD CONSTRAINT app_binding_promotion_revisions_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_binding_release_policies app_binding_release_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_binding_release_policies
+    ADD CONSTRAINT app_binding_release_policies_pkey PRIMARY KEY (app_id, scope);
+
+
+--
+-- Name: app_binding_release_policy_history app_binding_release_policy_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_binding_release_policy_history
+    ADD CONSTRAINT app_binding_release_policy_history_pkey PRIMARY KEY (app_id, scope, revision);
 
 
 --
@@ -21437,11 +21745,27 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
+-- Name: deployment_recovery_lineage deployment_recovery_lineage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_recovery_lineage
+    ADD CONSTRAINT deployment_recovery_lineage_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_revision_pins deployment_revision_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_rollback_operations deployment_rollback_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollback_operations
+    ADD CONSTRAINT deployment_rollback_operations_pkey PRIMARY KEY (id);
 
 
 --
@@ -25334,6 +25658,20 @@ CREATE INDEX alert_presets_enabled_idx ON public.alert_presets USING btree (enab
 
 
 --
+-- Name: alert_rollback_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rollback_app ON public.alert_rollback_actions USING btree (app_id, updated_at DESC, fire_id);
+
+
+--
+-- Name: alert_rollback_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rollback_pending ON public.alert_rollback_actions USING btree (updated_at, fire_id) WHERE (status = ANY (ARRAY['pending'::text, 'blocked'::text]));
+
+
+--
 -- Name: alert_rules_account_name_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -26822,6 +27160,20 @@ CREATE INDEX deployment_revision_pins_app_idx ON public.deployment_revision_pins
 --
 
 CREATE INDEX deployment_revision_pins_expiry_idx ON public.deployment_revision_pins USING btree (expires_at);
+
+
+--
+-- Name: deployment_rollback_active_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployment_rollback_active_scope ON public.deployment_rollback_operations USING btree (app_id, scope) WHERE (status <> ALL (ARRAY['complete'::text, 'failed'::text]));
+
+
+--
+-- Name: deployment_rollback_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_rollback_pending ON public.deployment_rollback_operations USING btree (updated_at, id) WHERE (status <> ALL (ARRAY['complete'::text, 'failed'::text]));
 
 
 --
@@ -31417,6 +31769,27 @@ CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON pu
 
 
 --
+-- Name: project_release_sets binding_release_graph; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_release_graph BEFORE INSERT OR UPDATE OF active ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.enforce_binding_release_graph();
+
+
+--
+-- Name: app_binding_release_policies binding_release_policy_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_release_policy_changed AFTER INSERT OR UPDATE ON public.app_binding_release_policies FOR EACH ROW EXECUTE FUNCTION public.capture_binding_release_policy();
+
+
+--
+-- Name: deployments binding_release_traffic; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_release_traffic BEFORE INSERT OR UPDATE OF traffic_percent, status, scope, app_id ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_binding_release_traffic();
+
+
+--
 -- Name: instances capture_environment_qualification_execution; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31428,6 +31801,13 @@ CREATE TRIGGER capture_environment_qualification_execution AFTER INSERT ON publi
 --
 
 CREATE TRIGGER capture_instance_capacity BEFORE INSERT OR UPDATE OF capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_instance_capacity();
+
+
+--
+-- Name: deployments checked_rollback_traffic; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER checked_rollback_traffic BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_checked_rollback_traffic();
 
 
 --
@@ -31575,6 +31955,13 @@ CREATE TRIGGER deployment_failed_rollback_keeps_target BEFORE UPDATE OF status O
 --
 
 CREATE TRIGGER deployment_openapi_docs_set_updated_at_trg BEFORE UPDATE ON public.deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.deployment_openapi_docs_set_updated_at();
+
+
+--
+-- Name: deployments deployment_recovery_lineage_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_recovery_lineage_capture AFTER INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.capture_deployment_recovery_lineage();
 
 
 --
@@ -33062,6 +33449,27 @@ CREATE TRIGGER runtime_snapshots_profile_identity BEFORE UPDATE ON public.runtim
 
 
 --
+-- Name: apps service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('id,account_id,slug,status,manifest,project_id,preview_of_slug,preview_pr_number,preview_pr_state,preview_expires_at,app_protocol,websocket_enabled');
+
+
+--
+-- Name: github_deploy_policies service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.github_deploy_policies FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('project_id,account_id,preview_service_policy');
+
+
+--
+-- Name: scenario_test_members service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.scenario_test_members FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('account_id,run_id,workload_name,app_id');
+
+
+--
 -- Name: apps service_capacity_after; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -33462,6 +33870,30 @@ ALTER TABLE ONLY public.alert_deliveries
 
 
 --
+-- Name: alert_historical_rollback_claims alert_historical_rollback_claims_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_historical_rollback_claims
+    ADD CONSTRAINT alert_historical_rollback_claims_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rollback_actions alert_rollback_actions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rollback_actions
+    ADD CONSTRAINT alert_rollback_actions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rollback_actions alert_rollback_actions_fire_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rollback_actions
+    ADD CONSTRAINT alert_rollback_actions_fire_id_fkey FOREIGN KEY (fire_id) REFERENCES public.alert_deliveries(id) ON DELETE CASCADE;
+
+
+--
 -- Name: alert_rules alert_rules_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33667,6 +34099,22 @@ ALTER TABLE ONLY public.app_api_routes
 
 ALTER TABLE ONLY public.app_binding_promotion_revisions
     ADD CONSTRAINT app_binding_promotion_revisions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_binding_release_policies app_binding_release_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_binding_release_policies
+    ADD CONSTRAINT app_binding_release_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_binding_release_policy_history app_binding_release_policy_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_binding_release_policy_history
+    ADD CONSTRAINT app_binding_release_policy_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -35054,6 +35502,22 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
+-- Name: deployment_recovery_lineage deployment_recovery_lineage_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_recovery_lineage
+    ADD CONSTRAINT deployment_recovery_lineage_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_recovery_lineage deployment_recovery_lineage_predecessor_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_recovery_lineage
+    ADD CONSTRAINT deployment_recovery_lineage_predecessor_deployment_id_fkey FOREIGN KEY (predecessor_deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
 -- Name: deployment_revision_pins deployment_revision_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -35067,6 +35531,30 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_rollback_operations deployment_rollback_operations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollback_operations
+    ADD CONSTRAINT deployment_rollback_operations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_rollback_operations deployment_rollback_operations_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollback_operations
+    ADD CONSTRAINT deployment_rollback_operations_current_deployment_id_fkey FOREIGN KEY (current_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_rollback_operations deployment_rollback_operations_target_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollback_operations
+    ADD CONSTRAINT deployment_rollback_operations_target_deployment_id_fkey FOREIGN KEY (target_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

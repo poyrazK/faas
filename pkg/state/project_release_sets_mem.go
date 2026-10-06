@@ -76,6 +76,9 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 	if count != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
 	}
+	if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	key := releaseKey(projectID, environment)
 	previousID := m.activeProjectReleaseSets[key]
 	if expectedActiveID != nil && previousID != *expectedActiveID {
@@ -128,6 +131,9 @@ func (m *MemStore) DeactivateProjectReleaseSetIfActive(_ context.Context, accoun
 		return ErrConflict
 	}
 	if err := m.validateProjectReleaseFallbackLocked(projectID, environment, expectedFallback); err != nil {
+		return err
+	}
+	if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
@@ -245,6 +251,9 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 	}
 	if count != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
+	}
+	if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	key := releaseKey(projectID, environment)
 	if previousID := m.activeProjectReleaseSets[key]; previousID != "" {

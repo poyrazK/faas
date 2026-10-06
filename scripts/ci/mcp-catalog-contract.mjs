@@ -124,8 +124,8 @@ try {
   }
   await symlink(baselineDir, join(work, 'caller-baseline', 'outside'));
   await assert.rejects(workflowGate(normal, 'reader', false, 'outside/reader.lock.json', 0), 'baseline symlinks must not escape the checkout');
-  assert.ok(methods.includes('tools/list') && methods.includes('initialize'));
-  assert.ok(methods.every(method => ['initialize', 'notifications/initialized', 'tools/list'].includes(method)), `unexpected methods: ${methods}`);
+  assert.ok(methods.includes('server/discover') && methods.includes('tools/list') && methods.includes('initialize'));
+  assert.ok(methods.every(method => ['server/discover', 'initialize', 'notifications/initialized', 'tools/list'].includes(method)), `unexpected methods: ${methods}`);
   assert.equal(calls.length, 0, 'catalog gates must never execute a tool callback');
   console.log('PASS: reader/writer baselines, modern/legacy capture, strict expansion and removal gates; zero tool calls');
 } finally {

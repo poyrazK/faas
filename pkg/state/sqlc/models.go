@@ -193,6 +193,11 @@ type AlertDelivery struct {
 	IsTest         bool
 }
 
+type AlertHistoricalRollbackClaim struct {
+	DeploymentID pgtype.UUID
+	FireID       pgtype.UUID
+}
+
 type AlertPreset struct {
 	ID                     pgtype.UUID
 	Name                   string
@@ -210,27 +215,36 @@ type AlertPreset struct {
 	UpdatedAt              pgtype.Timestamptz
 }
 
+type AlertRollbackAction struct {
+	FireID    pgtype.UUID
+	AppID     pgtype.UUID
+	Status    string
+	Receipt   []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AlertRule struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	Name                string
-	Enabled             bool
-	Metric              string
-	Comparison          string
-	Threshold           float64
-	WindowSpec          string
-	FailureSource       pgtype.Text
-	WebhookUrl          string
-	WebhookSecretSealed []byte
-	CooldownMinutes     int32
-	State               string
-	LastFiredAt         pgtype.Timestamptz
-	LastEvaluatedAt     pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	OrgID               pgtype.UUID
-	Action              string
+	ID                              pgtype.UUID
+	AccountID                       pgtype.UUID
+	AppID                           pgtype.UUID
+	Name                            string
+	Enabled                         bool
+	Metric                          string
+	Comparison                      string
+	Threshold                       float64
+	WindowSpec                      string
+	FailureSource                   pgtype.Text
+	WebhookUrl                      string
+	WebhookSecretSealed             []byte
+	CooldownMinutes                 int32
+	State                           string
+	LastFiredAt                     pgtype.Timestamptz
+	LastEvaluatedAt                 pgtype.Timestamptz
+	CreatedAt                       pgtype.Timestamptz
+	UpdatedAt                       pgtype.Timestamptz
+	OrgID                           pgtype.UUID
+	Action                          string
+	PostDeployRollbackWindowSeconds int32
 }
 
 type ApiConsumer struct {
@@ -439,9 +453,29 @@ type AppApiRoute struct {
 }
 
 type AppBindingPromotionRevision struct {
-	AppID    pgtype.UUID
-	Epoch    pgtype.UUID
-	Revision int64
+	AppID           pgtype.UUID
+	Epoch           pgtype.UUID
+	Revision        int64
+	ServiceRevision int64
+}
+
+type AppBindingReleasePolicy struct {
+	AppID                 pgtype.UUID
+	Scope                 string
+	Mode                  string
+	Revision              int64
+	MaxAgeSeconds         int64
+	RequireApplicationAck bool
+	Reason                string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type AppBindingReleasePolicyHistory struct {
+	AppID     pgtype.UUID
+	Scope     string
+	Revision  int64
+	Policy    []byte
+	ChangedAt pgtype.Timestamptz
 }
 
 type AppCpuPolicyNodeStatus struct {
@@ -1802,11 +1836,27 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentRecoveryLineage struct {
+	DeploymentID            pgtype.UUID
+	PredecessorDeploymentID pgtype.UUID
+}
+
 type DeploymentRevisionPin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	ExpiresAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
+}
+
+type DeploymentRollbackOperation struct {
+	ID                  pgtype.UUID
+	AppID               pgtype.UUID
+	Scope               string
+	TargetDeploymentID  pgtype.UUID
+	CurrentDeploymentID pgtype.UUID
+	Status              string
+	Receipt             []byte
+	UpdatedAt           pgtype.Timestamptz
 }
 
 type DeploymentRoutePolicySnapshot struct {

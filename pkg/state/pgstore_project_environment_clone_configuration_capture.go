@@ -255,3 +255,75 @@ func (s *PgStore) ProjectEnvironmentCloneConfigurationForLease(ctx context.Conte
 	}
 	return capture, tx.Commit(ctx)
 }
+
+func (s *PgStore) ValidateProjectEnvironmentCloneSourceConfigurationForLease(ctx context.Context, lease ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneConfigurationCapture, error) {
+	var zero ProjectEnvironmentCloneConfigurationCapture
+	if !validCloneLeaseIdentity(lease) {
+		return zero, ErrInvalidArgument
+	}
+	ctx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
+	defer cancel()
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return zero, mapProjectCloneSnapshotErr(err)
+	}
+	// pgx discards a connection if bounded rollback cannot finish.
+	defer func() { _ = tx.Rollback(ctx) }()
+	op, err := lockCloneWorkloadOperationTx(ctx, tx, lease.Operation.AccountID, lease.Operation.ProjectID, lease.Operation.ID)
+	if err != nil {
+		return zero, mapProjectCloneSnapshotErr(err)
+	}
+	if op.Status != CloneOperationCapturing {
+		return zero, ErrConflict
+	}
+	if err := authorizeCloneObjectMutationTx(ctx, tx, op, &lease); err != nil {
+		return zero, err
+	}
+	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
+	if err != nil {
+		return zero, err
+	}
+	capture, err := verifyCloneConfigurationCaptureDB(ctx, tx, op.AccountID, op.ProjectID, op.ID, records)
+	if err != nil {
+		return zero, err
+	}
+	if capture.Version != 1 {
+		return zero, ErrProjectEnvironmentCloneBindingCaptureUnavailable
+	}
+	coverage, err := readCloneSchemaCoverageDB(ctx, tx)
+	if err != nil {
+		return zero, err
+	}
+	if err := requireKnownCloneSchema(coverage); err != nil {
+		return zero, err
+	}
+	// Select the live release, rather than reading the retained release again.
+	// The capture readers below also include values, secrets, flags, settings,
+	// policies, bindings, artifacts and the complete live workload roster.
+	op.SourceReleaseSetID, err = sqlc.New().ReadProjectEnvironmentCloneSourceRelease(ctx, tx, sqlc.ReadProjectEnvironmentCloneSourceReleaseParams{
+		ProjectID: mustPgUUID(op.ProjectID), Environment: op.SourceEnvironment})
+	if err != nil {
+		return zero, mapErr(err)
+	}
+	liveRecords, err := captureCloneConfigurationWorkloadsTx(ctx, tx, op)
+	if err != nil {
+		return zero, mapProjectCloneSnapshotErr(err)
+	}
+	live, _, err := cloneConfigurationRoot(op, liveRecords)
+	if err != nil {
+		return zero, err
+	}
+	if live != capture {
+		return zero, ErrConflict
+	}
+	if err := authorizeCloneObjectMutationTx(ctx, tx, op, &lease); err != nil {
+		return zero, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return zero, mapProjectCloneSnapshotErr(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
+	return capture, nil
+}

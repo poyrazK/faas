@@ -2185,10 +2185,19 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	}
 	prev := d.TrafficPercent
 	var updated state.Deployment
-	if req.ExpectedServingDeploymentID != nil {
-		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
-	} else {
-		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent)
+	var gateProblem *api.Problem
+	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
+		var writeErr error
+		if req.ExpectedServingDeploymentID != nil {
+			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
+		} else {
+			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent)
+		}
+		return writeErr
+	})
+	if gateProblem != nil {
+		api.WriteProblem(w, gateProblem)
+		return
 	}
 	if err != nil {
 		switch {
@@ -2287,6 +2296,15 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
+	if req.ExpectedCurrentDeploymentID != nil {
+		s.startCheckedRollback(w, r, acct, app, req)
+		return
+	}
+	if req.Reason != "" {
+		api.WriteProblem(w, bindingPromotionValidation("reason requires an exact checked rollback"))
+		return
+	}
+
 	target, problem := s.rollbackAppCore(r, acct, app, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2379,6 +2397,16 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
+	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
+		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
+		if err != nil {
+			return state.Deployment{}, api.ErrCapacity("could not read rollback release policy")
+		}
+		if policy.Mode == "enforce" {
+			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
+		}
+	}
+
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return state.Deployment{}, problem
 	}
@@ -5705,6 +5733,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	if d.ServiceRolloutHandoff.Action != "" {
 		h := d.ServiceRolloutHandoff
 		resp.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{
+			BindingsCheck:           h.BindingsCheck,
 			Action:                  h.Action,
 			Phase:                   h.Phase,
 			PredecessorDeploymentID: h.PredecessorDeploymentID,

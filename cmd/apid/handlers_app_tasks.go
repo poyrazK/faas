@@ -112,6 +112,9 @@ func (s *server) createAppTask(w http.ResponseWriter, r *http.Request, acct stat
 }
 
 func (s *server) admitAppTask(r *http.Request, acct state.Account, app state.App, resolved api.ResolvedCreateAppTaskRequest) (state.AppTask, *api.Problem) {
+	if api.IsServiceBindingSmokeCommand(resolved.Command, resolved.CommandShell) && !declaresSmokeService(app, resolved.Command[1]) {
+		return state.AppTask{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Service binding unavailable", "The selected service is not declared for this app.")
+	}
 	deployment, problem := s.selectAppTaskDeployment(r.Context(), app, resolved)
 	if problem != nil {
 		return state.AppTask{}, problem
@@ -128,7 +131,7 @@ func (s *server) admitAppTask(r *http.Request, acct state.Account, app state.App
 		return state.AppTask{}, api.ErrInternal("could not encode outbound probe")
 	}
 	row, err := s.store.CreateAppTask(r.Context(), state.CreateAppTaskParams{
-		RequireLiveDeployment: resolved.VerificationDeploymentID != "",
+		RequireLiveDeployment: resolved.VerificationDeploymentID != "" || resolved.SmokeDeploymentID != "",
 		BindingVerification:   pin,
 		AccountID:             acct.ID,
 		AppID:                 app.ID,
@@ -150,6 +153,15 @@ func (s *server) admitAppTask(r *http.Request, acct state.Account, app state.App
 		return state.AppTask{}, api.ErrInternal("could not persist app task admission")
 	}
 	return row, nil
+}
+
+func declaresSmokeService(app state.App, service string) bool {
+	for _, item := range serviceBindingInventory(app) {
+		if item.Name == service {
+			return true
+		}
+	}
+	return false
 }
 
 func writeAppTaskDeploymentUnavailable(w http.ResponseWriter) {

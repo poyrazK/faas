@@ -52,6 +52,8 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 	}
 	for _, want := range []state.ProjectEnvironmentCloneCoverageBlocker{
 		{Table: "app_egress_circuits", Code: "isolated_strategy_unavailable"},
+		{Table: "app_binding_release_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "app_binding_release_policy_history", Code: "isolated_strategy_unavailable"},
 		{Table: "environment_external_field_owners", Code: "isolated_strategy_unavailable"},
 		{Table: "queue_bindings", Code: "isolated_strategy_unavailable"},
 		{Table: "financial_budget_policies", Code: "isolated_strategy_unavailable"},

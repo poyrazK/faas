@@ -570,6 +570,62 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/bindings/release-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: scope
+        in: query
+        description: Exact deployment scope. Omit to select default.
+        schema: { type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
+    get:
+      tags: [apps]
+      operationId: getBindingReleasePolicy
+      summary: Read a scope's stored binding release policy.
+      description: Requires apps:read or admin and completed MFA. Defaults to off with revision 0. No probes or provider calls occur.
+      responses:
+        '200':
+          description: Stored policy, or the disabled default.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setBindingReleasePolicy
+      summary: Replace a binding release policy using its current revision.
+      description: |
+        Requires deploy:write or admin and completed MFA. expected_revision is
+        mandatory (0 initially); each accepted write increments it. Enforcement
+        requires complete fresh verification on every deployment gaining traffic,
+        including through redistribution. Promotion, direct traffic PATCH and
+        canary advance evaluate the policy; request flags may only strengthen it.
+        New candidates must be admitted with explicit zero traffic. Automatic
+        cutovers, legacy recovery and project release graph switches fail closed
+        until they support binding fences. To recover without evidence, explicitly
+        set off with the current revision and a reason, then retry. Every update
+        has durable policy history. Existing traffic is not changed by this call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetBindingReleasePolicyRequest' }
+      responses:
+        '200':
+          description: Saved policy with incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/bindings:
     get:
       tags: [apps]
@@ -12132,11 +12188,19 @@ paths:
 
         With `target_deployment_id` in the body, rolls back to the
         named deployment. The id must belong to this app and the row
-        must have `status='superseded'`. Rolling back to the
+        must be superseded or live with zero traffic. Rolling back to the
         already-current live deployment is rejected (409
         `rollback_target_already_live`). A target whose snapshot has
         been garbage-collected is rejected (409
         `rollback_target_snapshot_expired`).
+        With both `target_deployment_id` and `expected_current_deployment_id`,
+        starts an exact checked rollback. The expected deployment must still
+        serve all traffic with no active rollout in this scope. A 202 response
+        includes `rollback_operation`, confirming durable intent. Readiness,
+        artifact and API contract checks precede a zero-traffic activation;
+        fresh binding evidence is checked at the traffic transaction. Service
+        completion also waits for the existing gateway ACK and drain handoff.
+        Stored binding enforcement requires this exact workflow.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -12148,7 +12212,7 @@ paths:
             example: {"target_deployment_id":"0123456789abcdef0123456789abcdef"}
       responses:
         '202':
-          description: The deployment that was created by rolling back to the previous version.
+          description: The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
           content:
             application/json:
               schema:
@@ -12159,8 +12223,83 @@ paths:
         '404': { $ref: '#/components/responses/RollbackTargetNotFound' }
         '409':
           $ref: '#/components/responses/RollbackConflict'
-          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired'
+          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required'
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/alert-rollbacks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [alert_rules]
+      operationId: listAlertRollbacks
+      summary: List recent automatic canary rollbacks.
+      description: Read-only, bounded to the 32 most recently updated production alert rollback actions for this owned app. Alert fires pin the exact active canary and serving predecessor. Binding blockers retry fresh evidence after APID restarts; deployment changes fail without retargeting.
+      responses:
+        '200':
+          description: Recent alert rollback receipts, newest update first.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 32
+                items: { $ref: '#/components/schemas/AlertRollback' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/alert-rollbacks/{fire}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: fire
+        in: path
+        required: true
+        description: UUID of the production alert delivery that captured this rollback.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [alert_rules]
+      operationId: getAlertRollback
+      summary: Read one automatic canary rollback.
+      description: Read-only status for an immutable alert fire and deployment pair. Complete includes the audit committed with traffic restoration; blocked is pending recovery rather than completion. A failed target selection has no eligible pair and never selects one later.
+      responses:
+        '200':
+          description: Durable alert rollback receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertRollback' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/rollbacks/{operation}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: operation
+        in: path
+        required: true
+        description: UUID of the accepted historical rollback operation.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getRollbackOperation
+      summary: Read an exact historical rollback operation.
+      description: Read-only progress for a pinned deployment pair. Complete includes a committed routing audit; service completion also requires the matching handoff to finish. Blocked operations retry fresh evidence without choosing another deployment.
+      responses:
+        '200':
+          description: Durable rollback progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/rollouts/recover:
     parameters:
@@ -12199,6 +12338,23 @@ paths:
         so the operator's terminal can echo `audit_id=…`. Plan-tier
         gated to Pro+ (Hobby / Free get 403
         `plan_traffic_split_not_allowed`).
+
+        For an exact canary abort, supply both `deployment_id` and
+        `expected_predecessor_deployment_id`. The older predecessor must
+        remain live and serving in the same app/scope. If its stored binding
+        release policy enforces verification, recovery checks that exact
+        recipient's fresh evidence and rechecks policy revisions and expiry
+        inside the recovery transaction. Missing or changed evidence leaves
+        traffic unchanged. Success restores the predecessor to 100 percent,
+        aborts the selected canary, and includes an exact recovery receipt.
+        For an exact service abort, the pinned predecessor may remain live
+        at zero weight after cutover. The response is 202 with a
+        `service_recovery` receipt confirming the durable request only.
+        APID checks that recipient and ready service capacity before publishing
+        routes; schedd then completes gateway acknowledgement and request drain.
+        GET the exact deployment to observe `service_rollout_handoff` progress
+        and bounded `bindings_check` blockers. Restarted workers resume the same
+        request and never substitute a different predecessor.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -32178,9 +32334,33 @@ components:
         path: { type: string, minLength: 1, maxLength: 512 }
         expected_status: { type: integer, minimum: 200, maximum: 299 }
 
+    BindingReleasePolicy:
+      type: object
+      description: Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes default to off.
+      required: [app_id, scope, mode, revision, max_verification_age, require_application_ack]
+      properties:
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        mode: { type: string, enum: [off, enforce] }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        max_verification_age: { type: string, description: 'Canonical Go duration between 1s and 24h; default 10m0s.' }
+        require_application_ack: { type: boolean }
+        updated_at: { type: string, format: date-time }
+        reason: { type: string, description: 'Recorded single-line change reason, at most 256 UTF-8 bytes.' }
+    SetBindingReleasePolicyRequest:
+      type: object
+      description: Compare-and-set binding release enforcement for one deployment scope, including evidence age, application acknowledgements and an explicit change reason.
+      required: [mode, expected_revision]
+      properties:
+        mode: { type: string, enum: [off, enforce] }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        max_verification_age: { type: string, default: 10m, description: 'Whole-second Go duration between 1s and 24h.' }
+        require_application_ack: { type: boolean, default: false }
+        reason: { type: string, description: 'Required for off mode; single line, at most 256 UTF-8 bytes.' }
+
     BindingPromotionRequest:
       type: object
-      description: Policy for a server-enforced bindings promotion; the gate is always required on this route.
+      description: Policy for a server-enforced bindings promotion; the gate is always required on this route. Stored scope policy may require a shorter age or application ACKs and disallow unsupported waivers. The response reports the effective policy.
       properties:
         expected_serving_deployment_id: { type: string, format: uuid }
         max_verification_age: { type: string, default: 10m, description: 'Positive Go duration; maximum age of passed verification evidence.' }
@@ -35869,7 +36049,7 @@ components:
           pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           x-since: "2026-08"
-          x-issue: "adr-092"
+          x-issue: "adr-92"
         ciphertext: { type: string, description: 'base64-encoded age-sealed envelope' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -40093,14 +40273,36 @@ components:
         rollout_aborted_reason:
           type: string
           description: "Operator or orchestrator reason recorded when the rollout is aborted."
+        rollback_operation:
+          $ref: '#/components/schemas/RollbackOperation'
         service_rollout_handoff:
           $ref: '#/components/schemas/ServiceRolloutHandoffResponse'
+
+    ServiceRolloutBindingGate:
+      type: object
+      description: "Bounded progress of an exact binding check at the service routing boundary. Passed confirms the routing transaction; scheduler ACK and drain completion are reported by the enclosing handoff phase."
+      required: [request_id, action, deployment_id, status]
+      properties:
+        request_id: { type: string, format: uuid }
+        action: { type: string, enum: [promote, abort] }
+        deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, blocked, passed] }
+        code: { type: string }
+        blockers:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/BindingCheckFinding' }
+        checked_at: { type: [string, "null"], format: date-time }
+        policy_revision: { type: integer, format: int64, minimum: 0 }
+        audit_id: { type: string }
 
     ServiceRolloutHandoffResponse:
       description: Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff.
       type: object
       required: [action, phase, retry_count]
       properties:
+        bindings_check:
+          $ref: '#/components/schemas/ServiceRolloutBindingGate'
         action:
           type: string
           enum: [promote, abort]
@@ -40299,6 +40501,86 @@ components:
           description: "The deployment_audit row id, stringified for SDK portability."
           example: "42"
 
+    AlertRollback:
+      type: object
+      description: Durable exact canary, active service, or opt-in completed-release rollback captured atomically with one production alert fire. Historical actions link one checked rollback operation and complete only after readiness, checked routing and service handoff barriers. Service actions pin the retained predecessor and complete only after the matching abort handoff finishes. Binding evidence is never reusable. Unavailable or ambiguous selections fail closed. Deleting the alert rule deletes its delivery and action ledger.
+      required: [id, rule_id, account_id, app_id, scope, status, reason, observed_value, fired_at, updated_at]
+      properties:
+        deployment_evidence: { $ref: '#/components/schemas/AlertRollbackDeploymentEvidence' }
+        historical: { type: boolean }
+        rollback_operation_id: { type: string, format: uuid }
+        rollback_phase: { type: string, enum: [preparing, ready, blocked, routing, complete, failed] }
+        rollback_routing_audit_id: { type: string }
+        id: { type: string, format: uuid }
+        rule_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        candidate_deployment_id: { type: string, format: uuid }
+        predecessor_deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, blocked, complete, failed] }
+        reason: { type: string }
+        code: { type: string }
+        blockers:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/BindingCheckFinding' }
+        observed_value: { type: number, format: double }
+        fired_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        audit_id: { type: string }
+        service: { type: boolean }
+        service_request_id: { type: string, format: uuid }
+        service_phase: { type: string, enum: [pending, routing, draining, complete] }
+        service_routing_audit_id: { type: string }
+
+    AlertRollbackDeploymentEvidence:
+      type: object
+      description: Exact deployment request evidence for post-deploy rollback. Windows contain only complete minutes after cutover and before the fire with 30 seconds of ingestion lag. Requests counts only 2xx and 5xx responses, weighted by telemetry publisher counts. At least 20 requests, one server error, and a sample within two minutes of the window end are required. Only error_rate_pct with gt or gte comparisons qualifies. Unaccepted fires expire after two minutes. Accepted evidence is immutable and included in intent and completion audits; existing accepted operations continue without requalification.
+      required: [version, deployment_id, metric, comparison, threshold, window_spec, cutover_at, window_start, window_end, requests, server_errors, minimum_requests, error_rate_pct, status]
+      properties:
+        version: { type: integer, enum: [1] }
+        deployment_id: { type: string, format: uuid }
+        metric: { type: string }
+        comparison: { type: string }
+        threshold: { type: number, format: double }
+        window_spec: { type: string }
+        cutover_at: { type: string, format: date-time }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        checked_at: { type: string, format: date-time }
+        last_sample_at: { type: string, format: date-time }
+        requests: { type: integer, format: int64, minimum: 0 }
+        server_errors: { type: integer, format: int64, minimum: 0 }
+        minimum_requests: { type: integer, format: int64, minimum: 20 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        status: { type: string, enum: [pending, breached, healthy, insufficient, unavailable, unsupported, stale, expired] }
+        code: { type: string }
+
+    RollbackOperation:
+      type: object
+      description: Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
+      required: [id, app_id, scope, target_deployment_id, current_deployment_id, status, service, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        target_deployment_id: { type: string, format: uuid }
+        current_deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [preparing, ready, blocked, routing, complete, failed] }
+        service: { type: boolean }
+        reason: { type: string, maxLength: 256 }
+        code: { type: string }
+        blockers:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/BindingCheckFinding' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        audit_id: { type: string }
+
     RollbackRequest:
       description: "Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G, issue #976). All fields optional. Without a body the handler falls back to rolling back to the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler validates that the named deployment belongs to this app and is superseded or live with zero traffic."
       type: object
@@ -40306,13 +40588,23 @@ components:
         target_deployment_id:
           type: string
           format: uuid
-          description: "The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."
+          description: "The UUID or vN of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."
           example: "0123456789abcdef0123456789abcdef"
         alert_rule_id:
           type: string
           format: uuid
           description: "SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): when set, the handler stamps the deployment_audit row's alert_rule_id column with this UUID so an operator can cross-link the audit timeline back to /dashboard/alerts/{id}. Wire-additive per ADR-016; the field is ignored when nil/empty. Only privileged in-process callers (meterd ActionDispatcher) set this; the API does not enforce role because the endpoint already requires MFA + ScopesDeployWrite."
           example: "abcdef0123456789abcdef0123456789"
+        expected_current_deployment_id:
+          type: string
+          format: uuid
+          description: Exact current deployment UUID or vN. Together with an explicit target starts the checked asynchronous workflow and returns rollback_operation. Rejects a changed current deployment instead of selecting another one.
+        reason:
+          type: string
+          maxLength: 256
+          description: One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id.
+
+
 
     RecoverRolloutRequest:
       description: "Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort}; `reason` is the operator-supplied free-text captured into the deployment_audit row's data payload."
@@ -40328,6 +40620,14 @@ components:
           type: string
           description: "Operator-supplied reason (≤1024 chars). Lands verbatim in the deployment_audit row's data payload under the `reason` key."
           example: "manual-test"
+        deployment_id:
+          type: string
+          format: uuid
+          description: "Exact active canary or service rollout to abort. Requires action abort and expected_predecessor_deployment_id; both are checked in the recovery transaction."
+        expected_predecessor_deployment_id:
+          type: string
+          format: uuid
+          description: "Exact older live predecessor in the candidate scope. Canary recovery requires positive serving weight; a service handoff also accepts its retained zero-weight predecessor. Required with deployment_id. Enforced binding policies check this exact recipient before routing can change."
 
     RolloutTransitionResponse:
       description: "POST /v1/apps/{slug}/rollouts/recover response. The post-recovery Deployment + the audit row id (so the operator's terminal can echo audit_id=…)."
@@ -40340,6 +40640,39 @@ components:
           type: string
           description: "The deployment_audit row id (stringified so JSON-number → int64 → BigInt drift doesn't poison SDK callers)."
           example: "42"
+        recovery:
+          $ref: '#/components/schemas/RolloutRecoveryReceipt'
+        service_recovery:
+          $ref: '#/components/schemas/ServiceRolloutRecoveryReceipt'
+
+    ServiceRolloutRecoveryReceipt:
+      type: object
+      description: "Durable exact service abort request. Acceptance does not confirm traffic restoration, gateway acknowledgement or request drain. Poll the exact deployment's service_rollout_handoff."
+      required: [deployment_id, predecessor_deployment_id, request_id, status]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        predecessor_deployment_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        status: { type: string, enum: [accepted] }
+
+    RolloutRecoveryReceipt:
+      type: object
+      description: "Committed exact canary abort, including the restored traffic recipient and any binding reports required by its stored release policy."
+      required: [deployment_id, predecessor_deployment_id, restored_traffic_percent]
+      properties:
+        deployment_id:
+          type: string
+          format: uuid
+        predecessor_deployment_id:
+          type: string
+          format: uuid
+        restored_traffic_percent:
+          type: integer
+          enum: [100]
+        bindings_checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/BindingCheckReport'
 
     DeploymentListResponse:
       description: "Paginated deployment list with a `next_before` cursor for backward pagination."
@@ -46016,6 +46349,11 @@ components:
         - created_at
         - updated_at
       properties:
+        post_deploy_rollback_window_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage.
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id:
           type: string
@@ -46087,6 +46425,11 @@ components:
       type: object
       required: [name, metric, comparison, threshold, window_spec, webhook_url, webhook_secret]
       properties:
+        post_deploy_rollback_window_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify.
         name: { type: string, example: "p99 > 500ms" }
         enabled: { type: boolean, example: true }
         metric:
@@ -46121,6 +46464,11 @@ components:
       description: 'Partial update — every field is optional. Omitted means leave alone.'
       type: object
       properties:
+        post_deploy_rollback_window_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry qualifies.
         name: { type: string }
         enabled: { type: boolean }
         metric:
@@ -49928,7 +50276,7 @@ components:
           pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           x-since: "2026-08"
-          x-issue: "adr-092"
+          x-issue: "adr-92"
         secret_class:
           type: string
           enum: [persistent, ephemeral]
@@ -51761,11 +52109,15 @@ components:
         One manual command to execute against the app's live deployment.
         verification_deployment_id optionally selects an exact app-owned,
         materialized live deployment for the reserved service, PostgreSQL,
-        object-storage or configured outbound verification probes only. Generic and smoke commands
-        cannot select a deployment. An explicit probe requires authorized,
-        managed binding metadata and remains live at atomic task admission.
-        The selector is supported only on direct POST /v1/apps/{slug}/tasks;
-        exclusive-operation task admission rejects it.
+        object-storage or configured outbound verification probes only.
+        smoke_deployment_id selects an exact app-owned, materialized live caller
+        deployment for the reserved service smoke GET command. The service must
+        be declared on the caller; target authorization remains enforced by the gateway.
+        Generic commands cannot select a deployment. The selectors are mutually
+        exclusive and require the selected deployment to remain live at atomic
+        task admission. An explicit verification probe also requires authorized,
+        managed binding metadata. Both selectors are supported only on direct
+        POST /v1/apps/{slug}/tasks; exclusive-operation task admission rejects them.
         `command_shell=false` executes argv directly. Shell mode requires one
         command string and is explicit so clients preserve quoting semantics.
         `__gregale_service_binding_probe_v1__ <service>` is reserved for the
@@ -51777,6 +52129,7 @@ components:
       additionalProperties: false
       properties:
         verification_deployment_id: { type: string, format: uuid, description: "Exact source deployment for a reserved binding verification probe; omit for the current manual-task selection." }
+        smoke_deployment_id: { type: string, format: uuid, description: "Exact caller deployment for a reserved service smoke GET; mutually exclusive with verification_deployment_id. Omit for automatic caller selection." }
         command:
           type: array
           minItems: 1

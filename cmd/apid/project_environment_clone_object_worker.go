@@ -13,8 +13,8 @@ import (
 )
 
 type capturedProjectEnvironmentObjectPlan struct {
-	appID  string
-	source state.ProjectEnvironmentCloneObjectBucket
+	appID, sourceScope string
+	source             state.ProjectEnvironmentCloneObjectBucket
 }
 
 type cloneObjectWorkerStore interface {
@@ -76,7 +76,7 @@ func buildCapturedProjectEnvironmentObjectPlans(op state.ProjectEnvironmentClone
 				return nil, state.ErrProjectEnvironmentCloneBindingCapture
 			}
 			seen[bucket.ID] = true
-			plans = append(plans, capturedProjectEnvironmentObjectPlan{appID: view.AppID, source: bucket})
+			plans = append(plans, capturedProjectEnvironmentObjectPlan{appID: view.AppID, sourceScope: view.SourceScope, source: bucket})
 		}
 	}
 	sort.Slice(plans, func(i, j int) bool { return plans[i].source.ID < plans[j].source.ID })

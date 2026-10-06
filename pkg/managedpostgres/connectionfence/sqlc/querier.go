@@ -12,6 +12,13 @@ import (
 
 type Querier interface {
 	AbandonConnections(ctx context.Context, db DBTX, arg AbandonConnectionsParams) (bool, error)
+	// Inventory the entire source, including templates, databases which refuse
+	// connections, and databases owned by another role. Filtering those out would
+	// silently omit writers. Only the authenticated private maintenance DB is exempt.
+	CheckpointDatabaseNames(ctx context.Context, db DBTX, arg CheckpointDatabaseNamesParams) ([]string, error)
+	// Recheck the entire native catalogue against the original OIDs. A database
+	// created after selection cannot disappear behind a drained selected subset.
+	CheckpointUnselectedDatabaseCount(ctx context.Context, db DBTX, arg CheckpointUnselectedDatabaseCountParams) (int64, error)
 	CloseConnections(ctx context.Context, db DBTX, arg CloseConnectionsParams) (bool, error)
 	CreateMaintenanceDatabase(ctx context.Context, db DBTX) error
 	FenceInstallationVersion(ctx context.Context, db DBTX) (int32, error)

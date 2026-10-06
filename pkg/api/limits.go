@@ -46,6 +46,25 @@ const (
 	TrafficBridgeFenceDialTimeout     = 100 * time.Millisecond
 )
 
+// Service checks use bounded rotating batches so unavailable bindings cannot
+// monopolize the control-plane worker.
+// Alert rollback sweeps and status lists are bounded independently of rule quotas.
+// Post-deploy rollback is opt-in; zero disables it.
+const AlertRollbackMaxWindowSeconds = 3600
+
+const AlertRollbackBatchSize = 32
+const AlertRollbackCheckIntervalSeconds = 2
+
+// Production telemetry collapses timestamps to minutes. Only complete minutes
+// after cutover qualify, with time for the asynchronous publisher to ingest them.
+const AlertRollbackEvidenceMinRequests int64 = 20
+const AlertRollbackEvidenceIngestionLag = 30 * time.Second
+const AlertRollbackEvidenceMaxSampleAge = 2 * time.Minute
+const AlertRollbackEvidenceMaxCheckDelay = 2 * time.Minute
+
+const ServiceBindingCheckBatchSize = 32
+const ServiceBindingCheckIntervalSeconds = 2
+
 // Queue binding intent ceilings are shared by the API and GitOps compiler.
 const QueueBindingMaxConcurrency = 10000
 const QueueBindingRetryMaxBaseSeconds = 3600
@@ -6597,22 +6616,25 @@ const RouteMetricsPerAppCap = 50
 const (
 	RouteRequirementsMaxBytes = 1 << 20
 	// Keep revision counters exactly representable by JSON/JavaScript clients.
-	RouteRequirementsMaxRevision      int64 = 1<<53 - 1
-	RouteRequirementsMaxRoutes              = 500
-	RouteCoverageMaxGroups                  = 100
-	RouteCoverageMaxInventoryRoutes         = 2000
-	RouteCoverageMaxRules                   = 1000
-	RouteCoverageMaxFindings                = 10000
-	RouteCoverageMaxNodes                   = 1000000
-	RouteCoverageMaxSegments                = 64
-	RouteCoverageMaxPathBytes               = 2048
-	RouteCoverageMaxNameBytes               = 128
-	RouteCoverageMaxReasonBytes             = 1024
-	RouteCoverageMaxMetadataBytes           = 4096
-	RouteCoverageMaxWorkBytes               = 16 << 20
-	RoutePolicyRequestMaxBytes              = 2 << 20
-	RoutePolicyArtifactMaxBytes             = 16 << 20
-	RoutePolicyIdempotencyKeyMaxBytes       = 200
+	RouteRequirementsMaxRevision       int64 = 1<<53 - 1
+	RouteRequirementsMaxRoutes               = 500
+	RouteCoverageMaxGroups                   = 100
+	RouteCoverageMaxInventoryRoutes          = 2000
+	RouteCoverageMaxRules                    = 1000
+	RouteCoverageMaxFindings                 = 10000
+	RouteCoverageMaxNodes                    = 1000000
+	RouteCoverageMaxSegments                 = 64
+	RouteCoverageMaxPathBytes                = 2048
+	RouteCoverageMaxNameBytes                = 128
+	RouteCoverageMaxReasonBytes              = 1024
+	RouteCoverageMaxMetadataBytes            = 4096
+	RouteCoverageMaxWorkBytes                = 16 << 20
+	RoutePolicyRequestMaxBytes               = 2 << 20
+	BindingReleasePolicyMaxRevision    int64 = 1<<53 - 1
+	BindingReleasePolicyMaxAge               = 24 * time.Hour
+	BindingReleasePolicyReasonMaxBytes       = 256
+	RoutePolicyArtifactMaxBytes              = 16 << 20
+	RoutePolicyIdempotencyKeyMaxBytes        = 200
 	// Automatic checks retain a bounded latest result and history (ADR-449/405).
 	RouteCheckMaxResultBytes = 16 << 20
 	RouteCheckBatchSize      = 4
