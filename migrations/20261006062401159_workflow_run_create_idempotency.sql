@@ -4,7 +4,6 @@ ALTER TABLE workflow_runs
     ADD COLUMN IF NOT EXISTS create_request_fingerprint bytea;
 
 -- +goose StatementBegin
--- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -25,7 +24,6 @@ BEGIN
     END IF;
 END;
 $$;
--- +goose StatementEnd
 -- +goose StatementEnd
 
 CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_create_idempotency_idx
