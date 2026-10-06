@@ -7,7 +7,7 @@ from faas_sdk.models.managed_postgres_capabilities import ManagedPostgresCapabil
 
 def test_capabilities_keep_reader_support_separate_from_rollout() -> None:
     capabilities = {
-        "contract_version": 2,
+        "contract_version": 3,
         "region": "eu-central-1",
         "provisioning_enabled": False,
         "database_limit": 1,
@@ -20,6 +20,7 @@ def test_capabilities_keep_reader_support_separate_from_rollout() -> None:
         "pooled_connections": True,
         "point_in_time_restore": True,
         "class_resize": True,
+        "scale_to_zero_update": True,
         "storage_limit_bytes": 10737418240,
         "restore_window_seconds": 604800,
     }

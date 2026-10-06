@@ -1661,7 +1661,8 @@
       "release_id",
       "revision",
       "scope",
-      "spec"
+      "spec",
+      "workflow_snapshot"
     ],
     "kind": "configuration"
   },
@@ -4087,7 +4088,8 @@
       "provider_resource_id",
       "source_spec",
       "state",
-      "target_class"
+      "target_class",
+      "target_scale_to_zero"
     ],
     "kind": "operational"
   },

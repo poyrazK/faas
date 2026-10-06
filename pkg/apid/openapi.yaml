@@ -1353,6 +1353,59 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/databases/{id}/compute-policy:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: changeManagedPostgresComputePolicy
+      summary: Change managed PostgreSQL scale-to-zero policy
+      description: Durably reserves a scale-to-zero policy change on the pinned dataset. Clients may disconnect during the policy change. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute idle policy changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeManagedPostgresComputePolicyRequest' }
+      responses:
+        '202':
+          description: Accepted policy change or current progress for an existing request
+          headers:
+            Location:
+              description: Progress URL for the compute policy request
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresComputePolicyChange' }
+        default:
+          description: Compute policy validation, concurrency, entitlement or provider admission failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/databases/{id}/compute-policy-changes/{change_id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: change_id
+        in: path
+        required: true
+        description: Canonical UUID supplied as request_id when reserving this policy change.
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getManagedPostgresComputePolicyChange
+      summary: Get managed PostgreSQL compute policy progress
+      description: Reads a durable compute policy request for the authenticated account and database. Responses are not cached and omit private provider identity.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Account and database scoped compute policy progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresComputePolicyChange' }
+        default:
+          description: Authentication or policy lookup error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/resize:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -34232,7 +34285,7 @@ components:
     ManagedPostgresCapabilities:
       description: Versioned PostgreSQL support for the default backend in a region, intersected with customer plan limits. Provider identities, costs, endpoints and credentials are excluded. Capabilities remain visible while the rollout gate is closed.
       type: object
-      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, storage_limit_bytes, restore_window_seconds]
+      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, scale_to_zero_update, storage_limit_bytes, restore_window_seconds]
       properties:
         contract_version: { type: integer, minimum: 1 }
         region: { type: string }
@@ -34246,9 +34299,33 @@ components:
         always_on: { type: boolean }
         pooled_connections: { type: boolean }
         point_in_time_restore: { type: boolean }
+        scale_to_zero_update: { type: boolean, description: "Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires always_on plan entitlement; reservations require the pinned backend and admission." }
         class_resize: { type: boolean, description: "Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
+    ChangeManagedPostgresComputePolicyRequest:
+      description: Canonical UUID request for a scale-to-zero change on an existing managed PostgreSQL database.
+      type: object
+      additionalProperties: false
+      required: [request_id, scale_to_zero]
+      properties:
+        request_id: { type: string, format: uuid, description: "Canonical nonzero UUID for this policy intent; replay with the same database and scale-to-zero setting after uncertain responses." }
+        scale_to_zero: { type: boolean }
+    ManagedPostgresComputePolicyChange:
+      description: Durable compute policy change progress. Provider identity and credentials are never returned; existing connections may be interrupted.
+      type: object
+      required: [id, database_id, from_scale_to_zero, target_scale_to_zero, generation, state, connection_interruption_expected, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        database_id: { type: string }
+        from_scale_to_zero: { type: boolean }
+        target_scale_to_zero: { type: boolean }
+        generation: { type: integer, format: int64, minimum: 2 }
+        state: { type: string, enum: [pending, succeeded] }
+        connection_interruption_expected: { type: boolean }
+        last_error_code: { type: string, description: "Safe policy-change diagnostic; an uncertain outcome keeps the accepted intent pending for recovery." }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
     ResizeManagedPostgresDatabaseRequest:
       description: Canonical UUID request for a compute-class change on an existing managed PostgreSQL database.
       type: object

@@ -385,6 +385,7 @@ from .capability_status import CapabilityStatus
 from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
+from .change_managed_postgres_compute_policy_request import ChangeManagedPostgresComputePolicyRequest
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
@@ -1309,6 +1310,8 @@ from .managed_postgres_capabilities import ManagedPostgresCapabilities
 from .managed_postgres_capabilities_availability_item import ManagedPostgresCapabilitiesAvailabilityItem
 from .managed_postgres_capabilities_credential_access_item import ManagedPostgresCapabilitiesCredentialAccessItem
 from .managed_postgres_capabilities_service_classes_item import ManagedPostgresCapabilitiesServiceClassesItem
+from .managed_postgres_compute_policy_change import ManagedPostgresComputePolicyChange
+from .managed_postgres_compute_policy_change_state import ManagedPostgresComputePolicyChangeState
 from .managed_postgres_cutover import ManagedPostgresCutover
 from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
 from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
@@ -3081,6 +3084,7 @@ __all__ = (
     "CapabilityStatusMaturity",
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
+    "ChangeManagedPostgresComputePolicyRequest",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
@@ -3985,6 +3989,8 @@ __all__ = (
     "ManagedPostgresCapabilitiesAvailabilityItem",
     "ManagedPostgresCapabilitiesCredentialAccessItem",
     "ManagedPostgresCapabilitiesServiceClassesItem",
+    "ManagedPostgresComputePolicyChange",
+    "ManagedPostgresComputePolicyChangeState",
     "ManagedPostgresCutover",
     "ManagedPostgresCutoverMember",
     "ManagedPostgresCutoverMemberAccess",

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -15,6 +16,7 @@ var _ ResizeStore = (*PostgresStore)(nil)
 func resizeFromSQL(row sqlc.ManagedPostgresResize) (ResizeOperation, error) {
 	operation := ResizeOperation{ID: cutoverUUID(row.ID), AccountID: cutoverUUID(row.AccountID), DatabaseID: cutoverUUID(row.DatabaseID),
 		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID,
+		PolicyChange: row.TargetScaleToZero.Valid, TargetScaleToZero: row.TargetScaleToZero.Bool,
 		DataResourceID: row.DataResourceID, TargetClass: ServiceClass(row.TargetClass), Generation: row.Generation, State: ResizeState(row.State),
 		CreatedAt: bindingDeliveryTime(row.CreatedAt), CompletedAt: bindingDeliveryTime(row.CompletedAt)}
 	if json.Unmarshal(row.SourceSpec, &operation.SourceSpec) != nil || operation.SourceSpec.Validate() != nil || operation.TargetSpec().Validate() != nil {
@@ -94,7 +96,7 @@ func (s *PostgresStore) ReserveResize(ctx context.Context, expected Database, op
 		if err != nil {
 			return ResizeOperation{}, err
 		}
-		if existing.DatabaseID != operation.DatabaseID || existing.TargetClass != operation.TargetClass {
+		if !sameComputeChangeRequest(existing, operation) {
 			return ResizeOperation{}, ErrConflict
 		}
 		return existing, mapPostgresError(tx.Commit(ctx))
@@ -133,7 +135,7 @@ func (s *PostgresStore) ReserveResize(ctx context.Context, expected Database, op
 	source, _ := json.Marshal(operation.SourceSpec)
 	row, err = q.InsertManagedPostgresResize(ctx, tx, sqlc.InsertManagedPostgresResizeParams{ID: requestID, AccountID: account, DatabaseID: id,
 		BackendID: operation.BackendID, BackendFingerprint: operation.BackendFingerprint, ProviderResourceID: operation.ProviderResourceID,
-		DataResourceID: operation.DataResourceID, SourceSpec: source, TargetClass: string(operation.TargetClass), Generation: operation.Generation, CreatedAt: clock})
+		DataResourceID: operation.DataResourceID, SourceSpec: source, TargetClass: string(operation.TargetClass), TargetScaleToZero: pgtype.Bool{Bool: operation.TargetScaleToZero, Valid: operation.PolicyChange}, Generation: operation.Generation, CreatedAt: clock})
 	if err != nil {
 		return ResizeOperation{}, mapPostgresError(err)
 	}
@@ -223,7 +225,7 @@ func (s *PostgresStore) FinishResize(ctx context.Context, expected Database, ope
 		return Database{}, err
 	}
 	database := databaseFromSQL(row)
-	if validateResizeObservation(actual, observed) != nil || actual.ID != operation.ID || actual.Generation != operation.Generation || actual.TargetSpec() != operation.TargetSpec() ||
+	if validateResizeObservation(actual, observed) != nil || actual.ID != operation.ID || !sameComputeChangeRequest(actual, operation) || actual.Generation != operation.Generation || actual.TargetSpec() != operation.TargetSpec() ||
 		!resizeSourceMatches(database, actual) || !resizeSourceMatches(expected, actual) || database.State != StateUpdating ||
 		database.DesiredGeneration != actual.Generation || expected.DesiredGeneration != actual.Generation || database.ObservedGeneration != actual.Generation-1 ||
 		database.LeaseToken != expected.LeaseToken || !database.LeaseUntil.After(clock.Time) {
@@ -236,7 +238,7 @@ func (s *PostgresStore) FinishResize(ctx context.Context, expected Database, ope
 	if changed != 1 {
 		return Database{}, ErrConflict
 	}
-	row, err = q.FinishManagedPostgresResizeDatabase(ctx, tx, sqlc.FinishManagedPostgresResizeDatabaseParams{ID: id, Account: account, Token: expected.LeaseToken, Generation: actual.Generation, TargetClass: string(actual.TargetClass), At: clock})
+	row, err = q.FinishManagedPostgresResizeDatabase(ctx, tx, sqlc.FinishManagedPostgresResizeDatabaseParams{ID: id, Account: account, Token: expected.LeaseToken, Generation: actual.Generation, TargetClass: string(actual.TargetClass), TargetScaleToZero: actual.TargetSpec().ScaleToZero, At: clock})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Database{}, ErrConflict
 	}
