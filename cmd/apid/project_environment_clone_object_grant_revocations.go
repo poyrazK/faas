@@ -16,16 +16,29 @@ type cloneObjectGrantRevocationWorkerStore interface {
 }
 
 func cloneObjectGrantRevocationMatches(l state.ProjectEnvironmentCloneLease, plan capturedProjectEnvironmentObjectPlan, r state.ProjectEnvironmentCloneObjectGrantRevocation) bool {
-	scope, op, source := r.Plan.Scope, l.Operation, plan.source
-	return r.Plan.Validate() == nil && scope.OperationID == op.ID && scope.AccountID == op.AccountID && scope.ProjectID == op.ProjectID &&
-		scope.SourceRevisionHash == op.SourceRevisionHash && scope.BucketID == source.ID && scope.AppID == plan.appID && scope.SourceScope == plan.sourceScope &&
-		scope.BackendID == source.BackendID && scope.BackendFingerprint == source.BackendFingerprint && scope.PhysicalName == source.PhysicalName
+	return cloneObjectRetirementMatches(cloneObjectGrantRevocationScope(l, plan), r)
 }
 
-// This driver is private and deliberately not wired into capture dispatch.
-// Retiring the original tracked grants supplies neither complete object writer
-// coverage nor a common checkpoint. Built-in providers fail closed here.
+func cloneObjectGrantRevocationScope(l state.ProjectEnvironmentCloneLease, plan capturedProjectEnvironmentObjectPlan) grantrevocation.Scope {
+	op, source := l.Operation, plan.source
+	return grantrevocation.Scope{OperationID: op.ID, AccountID: op.AccountID, ProjectID: op.ProjectID,
+		SourceRevisionHash: op.SourceRevisionHash, BucketID: source.ID, AppID: plan.appID, SourceScope: plan.sourceScope,
+		BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, PhysicalName: source.PhysicalName}
+}
+
+func cloneObjectRetirementMatches(scope grantrevocation.Scope, r state.ProjectEnvironmentCloneObjectGrantRevocation) bool {
+	return r.Plan.Validate() == nil && r.Plan.Scope == scope
+}
+
+// The private barrier driver uses this protocol without opening capture dispatch.
+// Retiring tracked grants does not establish complete writers or a common point.
 func (s *server) revokeProjectEnvironmentCloneObjectNativeGrants(ctx context.Context, l state.ProjectEnvironmentCloneLease, plan capturedProjectEnvironmentObjectPlan) (state.ProjectEnvironmentCloneLease, grantrevocation.Observation, error) {
+	return s.resumeProjectEnvironmentCloneObjectGrantRetirement(ctx, l, cloneObjectGrantRevocationScope(l, plan))
+}
+
+// Compensation receives only an original scope read under the owned source hold.
+// It cannot select a replacement roster or initiate an undispatched retirement.
+func (s *server) resumeProjectEnvironmentCloneObjectGrantRetirement(ctx context.Context, l state.ProjectEnvironmentCloneLease, scope grantrevocation.Scope) (state.ProjectEnvironmentCloneLease, grantrevocation.Observation, error) {
 	var zero grantrevocation.Observation
 	phase := l.Operation.Status
 	if phase != state.CloneOperationCapturing && phase != state.CloneOperationCompensating {
@@ -34,11 +47,15 @@ func (s *server) revokeProjectEnvironmentCloneObjectNativeGrants(ctx context.Con
 	if phase == state.CloneOperationCapturing && len(l.Operation.Resources) != 0 {
 		return l, zero, state.ErrConflict
 	}
+	op := l.Operation
+	if scope.OperationID != op.ID || scope.AccountID != op.AccountID || scope.ProjectID != op.ProjectID || scope.SourceRevisionHash != op.SourceRevisionHash {
+		return l, zero, state.ErrConflict
+	}
 	store, ok := s.store.(cloneObjectGrantRevocationWorkerStore)
 	if !ok || s.objectStorage == nil || s.cloneWorkerAdmission == nil {
 		return l, zero, objectstorage.ErrUnsupported
 	}
-	backend, err := s.objectStorage.Resolve(plan.source.BackendID, plan.source.BackendFingerprint)
+	backend, err := s.objectStorage.Resolve(scope.BackendID, scope.BackendFingerprint)
 	if err != nil {
 		return l, zero, err
 	}
@@ -62,16 +79,16 @@ func (s *server) revokeProjectEnvironmentCloneObjectNativeGrants(ctx context.Con
 	}
 	var r state.ProjectEnvironmentCloneObjectGrantRevocation
 	if phase == state.CloneOperationCapturing {
-		r, err = store.ReserveProjectEnvironmentCloneObjectGrantRevocation(ctx, l, plan.source.ID)
+		r, err = store.ReserveProjectEnvironmentCloneObjectGrantRevocation(ctx, l, scope.BucketID)
 	} else {
 		// Compensation may resume a dispatched retirement, never start a new
 		// one or change its original roster after source configuration edits.
-		r, err = store.ProjectEnvironmentCloneObjectGrantRevocationForLease(ctx, l, plan.source.ID)
+		r, err = store.ProjectEnvironmentCloneObjectGrantRevocationForLease(ctx, l, scope.BucketID)
 	}
 	if err != nil {
 		return l, zero, err
 	}
-	if !cloneObjectGrantRevocationMatches(l, plan, r) {
+	if !cloneObjectRetirementMatches(scope, r) {
 		return l, zero, state.ErrConflict
 	}
 	if r.State != "drained" {
@@ -82,7 +99,7 @@ func (s *server) revokeProjectEnvironmentCloneObjectNativeGrants(ctx context.Con
 		if err != nil {
 			return l, zero, err
 		}
-		if !cloneObjectGrantRevocationMatches(l, plan, r) {
+		if !cloneObjectRetirementMatches(scope, r) {
 			return l, zero, state.ErrConflict
 		}
 		if err := s.cloneWorkerAdmission(ctx); err != nil {
@@ -100,13 +117,13 @@ func (s *server) revokeProjectEnvironmentCloneObjectNativeGrants(ctx context.Con
 	}
 	// A revoke reply is not accepted as observation. Recheck current authority
 	// before the independent provider read, including after a long remote call.
-	current, err := store.ProjectEnvironmentCloneObjectGrantRevocationForLease(ctx, l, plan.source.ID)
+	current, err := store.ProjectEnvironmentCloneObjectGrantRevocationForLease(ctx, l, scope.BucketID)
 	if err != nil {
 		return l, zero, err
 	}
 	hash, _ := r.Plan.SHA256()
 	currentHash, _ := current.Plan.SHA256()
-	if !cloneObjectGrantRevocationMatches(l, plan, current) || hash != currentHash {
+	if !cloneObjectRetirementMatches(scope, current) || hash != currentHash {
 		return l, zero, state.ErrConflict
 	}
 	observation, err := provider.ObserveNativeWriteGrantRevocation(ctx, r.Plan.Clone())
