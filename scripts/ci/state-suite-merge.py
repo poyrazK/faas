@@ -19,6 +19,13 @@ suite = module("state_suite", "state-suite.py")
 checks = module("traffic_checks", "traffic-platform-checks.py")
 
 
+def verify_remaining_command(command, packages, profile):
+    expected = ["go", "test", "-v", "-race", "-count=1", "-p=4", "-timeout=30m", "-covermode=atomic",
+                suite.parity_coverage_arg(packages), "-coverprofile=" + str(profile), *packages]
+    if command != expected:
+        raise ValueError("remaining package scope or flags changed")
+
+
 def verify_inventory(receipts, count=8):
     if len(receipts) != count or sorted(item["partition"] for item in receipts) != list(range(count)):
         raise ValueError("state partition receipts are missing or duplicated")
@@ -80,9 +87,10 @@ def main():
             profiles.append(root / "state.out")
             if item["partition"] == 0:
                 others = [pkg for pkg in item["packages"] if pkg != "github.com/onebox-faas/faas/pkg/state"]
-                if commands[2]["args"][:8] != ["go", "test", "-race", "-count=1", "-p=4", "-timeout=30m", "-covermode=atomic", suite.parity_coverage_arg(others)] or commands[2]["args"][9:] != others:
-                    raise ValueError("remaining package scope or flags changed")
                 other = root / "others.out"
+                # The profile path is absolute in the producer's retained command.
+                producer_profile = pathlib.Path(commands[1]["args"][5].removeprefix("-test.coverprofile="))
+                verify_remaining_command(commands[2]["args"], others, producer_profile.with_name("others.out"))
         args.coverage.write_text(suite.merged_coverage(profiles, other))
         verdict.update(result="passed", roots=sum(map(len, groups)), partitions=8,
                        coverage_sha256=hashlib.sha256(args.coverage.read_bytes()).hexdigest(),
