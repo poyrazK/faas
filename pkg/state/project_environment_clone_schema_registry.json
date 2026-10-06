@@ -4493,7 +4493,8 @@
       "created_at",
       "id",
       "kind",
-      "physical_name"
+      "physical_name",
+      "upload_id"
     ],
     "kind": "operational"
   },

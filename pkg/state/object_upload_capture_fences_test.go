@@ -55,8 +55,15 @@ func uploadCaptureContract(t *testing.T, st accountingStore, retainRequest bool,
 	if err != nil || !created {
 		t.Fatal(c, created, err)
 	}
+	receipt, err := st.(state.ObjectTrackedUploadMutationStore).ReadTrackedObjectUploadMutation(ctx, c)
+	if err != nil || receipt.UploadID != c.ID || receipt.Bucket.PhysicalName != b.PhysicalName {
+		t.Fatal("upload lost original placement", receipt, err)
+	}
+	if err := fences.FinishObjectBucketMutation(ctx, receipt); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("generic finish erased bound upload", err)
+	}
 	f, err := fences.AcquireObjectBucketWriteFence(ctx, b, uuid.NewString())
-	if err != nil || f.Uploads != 1 || f.Multipart != 0 || f.Requests != requests {
+	if err != nil || f.Uploads != 1 || f.Multipart != 0 || f.Requests != requests+1 {
 		t.Fatal("prepared upload missing", f, err)
 	}
 	if replay, created, err := uploads.BeginTrackedObjectUpload(ctx, c, accountingPolicy()); err != nil || created || replay.ID != c.ID {
@@ -77,6 +84,14 @@ func uploadCaptureContract(t *testing.T, st accountingStore, retainRequest bool,
 	c, err = uploads.ClaimTrackedObjectUploadRecovery(ctx, b.AccountID, b.ID, c.ID, "recovery")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if resumed, err := st.(state.ObjectTrackedUploadMutationStore).ReadTrackedObjectUploadMutation(ctx, c); err != nil || resumed.ID != receipt.ID {
+		t.Fatal("held recovery lost bound receipt", resumed, err)
+	}
+	stale := c
+	stale.RecoveryToken = "stale"
+	if _, err := st.(state.ObjectTrackedUploadMutationStore).ReadTrackedObjectUploadMutation(ctx, stale); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("stale worker reached original provider", err)
 	}
 	if err := uploads.RetryTrackedObjectUploadRecovery(ctx, c, "provider_write_uncertain"); err != nil {
 		t.Fatal(err)

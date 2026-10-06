@@ -3944,6 +3944,7 @@ type ObjectBucketMutation struct {
 	BackendFingerprint string
 	PhysicalName       string
 	CreatedAt          pgtype.Timestamptz
+	UploadID           pgtype.UUID
 }
 
 type ObjectBucketNotification struct {

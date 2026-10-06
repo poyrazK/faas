@@ -54,3 +54,23 @@ func Run(ctx context.Context, store any, bucket state.ObjectBucket, call func(co
 	_, err := Execute(ctx, store, bucket, func(callCtx context.Context) (struct{}, error) { return struct{}{}, call(callCtx) })
 	return err
 }
+
+// ExecuteUpload reuses an original journal's pinned receipt. Journal settlement,
+// rather than provider acknowledgement, retires it atomically. It never admits
+// a new write or adopts an unbound legacy request while capture is held.
+func ExecuteUpload[T any](ctx context.Context, store any, bucket state.ObjectBucket, c state.ObjectUploadCompletion, call func(context.Context) (T, error)) (T, error) {
+	var zero T
+	st, ok := store.(state.ObjectTrackedUploadMutationStore)
+	if !ok {
+		return zero, objectstorage.ErrUnavailable
+	}
+	receipt, err := st.ReadTrackedObjectUploadMutation(ctx, c)
+	if err != nil {
+		return zero, err
+	}
+	b := receipt.Bucket
+	if b.ID != bucket.ID || b.AccountID != bucket.AccountID || b.AppID != bucket.AppID || b.BackendID != bucket.BackendID || b.BackendFingerprint != bucket.BackendFingerprint || b.PhysicalName != bucket.PhysicalName {
+		return zero, objectstorage.ErrConfiguration
+	}
+	return call(ctx)
+}

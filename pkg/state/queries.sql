@@ -10763,7 +10763,7 @@ RETURNING *;
 
 -- name: ObjectBucketMutationFinish :execrows
 DELETE FROM object_bucket_mutations
-WHERE id=sqlc.arg(id) AND bucket_id=sqlc.arg(bucket_id) AND kind='request'
+WHERE id=sqlc.arg(id) AND bucket_id=sqlc.arg(bucket_id) AND kind='request' AND upload_id IS NULL
 AND backend_id=sqlc.arg(backend_id) AND backend_fingerprint=sqlc.arg(backend_fingerprint)
 AND physical_name=sqlc.arg(physical_name);
 
@@ -14487,3 +14487,6 @@ INSERT INTO customer_operation_executions(operation_id,generation,job_run_id)
 SELECT o.id,sqlc.arg(generation)::integer,j.id FROM customer_operations o
 JOIN job_runs j ON j.id=sqlc.arg(run_id)::uuid AND j.account_id=o.account_id AND j.operation_id=o.id
 WHERE o.id=sqlc.arg(operation_id)::uuid AND o.execution_kind='job';
+
+-- name: ObjectTrackedUploadMutationRead :one
+SELECT * FROM object_bucket_mutations WHERE upload_id=sqlc.arg(upload_id);

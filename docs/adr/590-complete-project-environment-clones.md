@@ -7250,3 +7250,44 @@ Pinned golangci-lint v2.4.0 reports zero issues across the four affected package
 groups. SQLC v1.31.1 parity, migration-ID and repository policy checks pass;
 optional Packer and live nft checks remain skipped. These local checks do not
 qualify a live provider or a complete common point.
+
+### 2026-10-06: Bind new tracked uploads to their original provider receipt
+
+Each new tracked route upload, gateway PUT and tracked copy now creates one
+request receipt atomically with its prepared journal. The receipt binds the
+upload identity to the original backend, fingerprint and physical bucket.
+The provider paths reuse that receipt instead of admitting a second unrelated
+writer. A provider ACK leaves the receipt in place until the original journal
+settles. Terminal settlement removes it in the same transaction; rollback
+retains both the journal and its receipt. Prepared expiry uses the existing
+non-dispatch settlement path. Generic completion cannot retire a bound receipt.
+
+An append-only migration composes the two records for older replicas too.
+Database guards prohibit changing a binding or its placement, deleting an
+unsettled receipt, creating a binding under a capture hold, and downgrading
+while bindings or bucket holds exist. The memory store preserves the same
+creation/settlement ownership. Recovery reads require the original journal
+scope and current recovery token/lease, reject changed placement, and never
+create a receipt. Positive exact-receipt recovery can therefore settle an
+original upload under a retained source hold without reopening admission or
+erasing an unrelated provider request.
+
+This increment does not adopt existing unbound receipts. Older unbound journals
+may still be probed through their existing path, but successful recovery cannot
+remove an unrelated unknown writer. Binding and provider recovery composition
+for multipart initiation, parts, completion and verified abort remain the next
+bounded increment. Full public capture remains gated pending that work, other
+writer coverage, live provider qualification and a qualified common point.
+
+Qualification passed on task-owned PostgreSQL 16.15: memory/PostgreSQL upload
+capture, recovery, schema-registry, URL-capability and bucket-fence contracts;
+binding guards, settlement rollback, migration round trip and downgrade refusal;
+and route/gateway/provider regressions ran under the race detector. The normal
+APID upload, gateway PUT/copy/historical recovery and capture/coordinator suite
+passed, including positive recovery under a retained hold with an unrelated
+request still outstanding. The affected gateway and SDK lost-ACK checks passed
+after the final context-wiring correction. Pinned golangci-lint v2.4.0 reports
+zero issues across state, object storage, activity wrappers, S3 gateway and
+APID. SQLC v1.31.1 parity, migration-ID and repository policy checks pass.
+Optional Packer and live nft checks remain skipped; these checks do not qualify
+a live provider, a complete common point or native KVM restoration.

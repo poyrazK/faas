@@ -20,6 +20,7 @@ const (
 // signing completion do not prove that the provider has drained their writes.
 type ObjectBucketMutation struct {
 	ID        string
+	UploadID  string
 	Bucket    ObjectBucket
 	Kind      string
 	CreatedAt time.Time
@@ -76,4 +77,10 @@ func validObjectMutationKind(kind string) bool {
 func validObjectMutationToken(token string) bool {
 	id, err := uuid.Parse(token)
 	return err == nil && id != uuid.Nil && id.String() == token
+}
+
+// Original upload receipts pin provider placement until journal settlement.
+// Reads never create a receipt or adopt an unbound legacy writer.
+type ObjectTrackedUploadMutationStore interface {
+	ReadTrackedObjectUploadMutation(context.Context, ObjectUploadCompletion) (ObjectBucketMutation, error)
 }

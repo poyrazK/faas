@@ -1919,6 +1919,7 @@ type Querier interface {
 	ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg ObjectTrackedUploadFinishParams) (ObjectUploadCompletion, error)
 	ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg ObjectTrackedUploadGetParams) (ObjectUploadCompletion, error)
 	ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg ObjectTrackedUploadInsertParams) (ObjectUploadCompletion, error)
+	ObjectTrackedUploadMutationRead(ctx context.Context, db DBTX, uploadID pgtype.UUID) (ObjectBucketMutation, error)
 	ObjectTrackedUploadReplay(ctx context.Context, db DBTX, arg ObjectTrackedUploadReplayParams) (ObjectUploadCompletion, error)
 	ObjectTrackedUploadRetry(ctx context.Context, db DBTX, arg ObjectTrackedUploadRetryParams) error
 	ObjectURLCredentialCleanup(ctx context.Context, db DBTX, arg ObjectURLCredentialCleanupParams) error
