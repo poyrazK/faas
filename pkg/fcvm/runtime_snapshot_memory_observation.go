@@ -20,7 +20,11 @@ type RuntimeSnapshotHandoffObservation struct {
 }
 
 func (v *JailerVMM) observeVerifiedSnapshotMemory(ctx context.Context, lease Lease, spec RestoreSpec) error {
-	if err := v.checkVerifiedSnapshotLoad(ctx, lease, spec); err != nil {
+	return v.observeVerifiedSnapshotMemoryAt(ctx, lease, spec, time.Now())
+}
+
+func (v *JailerVMM) observeVerifiedSnapshotMemoryAt(ctx context.Context, lease Lease, spec RestoreSpec, clock time.Time) error {
+	if err := v.checkVerifiedSnapshotLoadAt(ctx, lease, spec, clock); err != nil {
 		return err
 	}
 	plan := spec.verifiedSnapshot
@@ -52,7 +56,7 @@ func (v *JailerVMM) observeVerifiedSnapshotMemory(ctx context.Context, lease Lea
 	if err != nil || checkedStart != start || !slices.Equal(checkedRanges, ranges) {
 		return errors.Join(runtimeadmission.ErrStale, err)
 	}
-	if err := checkVerifiedSnapshotLoadRequest(lease, plan.request); err != nil {
+	if err := checkVerifiedSnapshotLoadRequestAt(lease, plan.request, clock); err != nil {
 		return err
 	}
 	current, err := v.currentRuntimeDriveProcess(lease)
@@ -69,7 +73,11 @@ func (v *JailerVMM) observeVerifiedSnapshotMemory(ctx context.Context, lease Lea
 // ObservedRuntimeSnapshotConsumption returns a coupled drive/memory witness.
 // Manager admission and advertised restore capability remain independently gated.
 func (v *JailerVMM) ObservedRuntimeSnapshotConsumption(ctx context.Context, lease Lease) (runtimeadmission.ArtifactConsumption, runtimeadmission.SnapshotConsumption, error) {
-	observed, err := v.ObservedRuntimeSnapshot(ctx, lease)
+	return v.observedRuntimeSnapshotConsumptionAt(ctx, lease, time.Now())
+}
+
+func (v *JailerVMM) observedRuntimeSnapshotConsumptionAt(ctx context.Context, lease Lease, clock time.Time) (runtimeadmission.ArtifactConsumption, runtimeadmission.SnapshotConsumption, error) {
+	observed, err := v.observedRuntimeSnapshotAt(ctx, lease, clock)
 	if err != nil {
 		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, err
 	}
@@ -91,7 +99,7 @@ func (v *JailerVMM) ObservedRuntimeSnapshotConsumption(ctx context.Context, leas
 	proof := runtimeadmission.SnapshotConsumption{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: observed.CaptureToken,
 		EvidenceHash: observed.EvidenceHash, Memory: observed.Memory, VMState: observed.VMState, PrivateDrive: observed.PrivateDrive, MappedMemoryBytes: observed.Memory.Bytes}
 	evidence := runtimeadmission.SnapshotRestoreEvidence{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: plan.request.Binding.SnapshotCaptureToken, FCVersion: plan.request.Snapshot.FCVersion, Capture: plan.request.Capture}
-	if err := proof.CheckEvidence(plan.request.Binding, drives, plan.keepPaused, evidence, time.Now()); err != nil || ctx.Err() != nil {
+	if err := proof.CheckEvidence(plan.request.Binding, drives, plan.keepPaused, evidence, clock); err != nil || ctx.Err() != nil {
 		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, errors.Join(err, ctx.Err())
 	}
 	return drives, proof, nil
@@ -100,6 +108,10 @@ func (v *JailerVMM) ObservedRuntimeSnapshotConsumption(ctx context.Context, leas
 // ObservedRuntimeSnapshot refreshes actual drive and memory-file consumption.
 // It is neither a guest-readiness acknowledgment nor a durable restore receipt.
 func (v *JailerVMM) ObservedRuntimeSnapshot(ctx context.Context, lease Lease) (RuntimeSnapshotHandoffObservation, error) {
+	return v.observedRuntimeSnapshotAt(ctx, lease, time.Now())
+}
+
+func (v *JailerVMM) observedRuntimeSnapshotAt(ctx context.Context, lease Lease, clock time.Time) (RuntimeSnapshotHandoffObservation, error) {
 	handoff, err := v.runtimeDriveHandoff(lease)
 	if err != nil || handoff == nil {
 		return RuntimeSnapshotHandoffObservation{}, errors.Join(runtimeadmission.ErrUnavailable, err)
@@ -112,7 +124,7 @@ func (v *JailerVMM) ObservedRuntimeSnapshot(ctx context.Context, lease Lease) (R
 	}
 	spec := snapshotRestoreSpec(lease, plan.request, plan.keepPaused)
 	spec.verifiedSnapshot = plan
-	if err := v.observeVerifiedSnapshotDrives(ctx, lease, spec); err != nil {
+	if err := v.observeVerifiedSnapshotDrivesAt(ctx, lease, spec, clock); err != nil {
 		return RuntimeSnapshotHandoffObservation{}, err
 	}
 	handoff.mu.Lock()

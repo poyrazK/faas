@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
@@ -133,14 +134,18 @@ func verifiedSnapshotLoadCommand(spec RestoreSpec, body map[string]any) ([]byte,
 }
 
 func (v *JailerVMM) observeVerifiedSnapshotDrives(ctx context.Context, lease Lease, spec RestoreSpec) error {
+	return v.observeVerifiedSnapshotDrivesAt(ctx, lease, spec, time.Now())
+}
+
+func (v *JailerVMM) observeVerifiedSnapshotDrivesAt(ctx context.Context, lease Lease, spec RestoreSpec, clock time.Time) error {
 	if spec.verifiedSnapshot == nil {
 		return nil
 	}
-	if err := v.checkVerifiedSnapshotLoad(ctx, lease, spec); err != nil {
+	if err := v.checkVerifiedSnapshotLoadAt(ctx, lease, spec, clock); err != nil {
 		return err
 	}
 	if err := v.observeApprovedRuntimeDrives(ctx, lease); err != nil {
 		return err
 	}
-	return v.observeVerifiedSnapshotMemory(ctx, lease, spec)
+	return v.observeVerifiedSnapshotMemoryAt(ctx, lease, spec, clock)
 }

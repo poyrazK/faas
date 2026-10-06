@@ -48,6 +48,10 @@ func (p Promotion) Validate(now time.Time) error {
 	if !p.Parent.Paused || p.Parent.Check(p.Parent.Binding, time.Unix(0, p.Parent.CompletedAtUnixNano)) != nil || p.Parent.CompletedAtUnixNano > now.Add(api.ApplicationStandardRuntimeAdmissionClockSkew).UnixNano() {
 		return ErrInvalid
 	}
+	return p.checkFreshPromotionBinding()
+}
+
+func (p Promotion) checkFreshPromotionBinding() error {
 	old, fresh := p.Parent.Binding, p.Binding
 	if fresh.Token == old.Token {
 		return ErrReplay

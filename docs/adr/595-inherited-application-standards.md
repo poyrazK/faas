@@ -2751,3 +2751,34 @@ retain the original load-command hash, and bind fresh durable promotion authorit
 through Manager, RPC, protobuf and both stores. Protocol 2 paused restore remains
 unavailable, production restore advertisement remains zero and the complete
 native acceptance and release checklist above is unchanged.
+
+## Owned paused-load resume observation (2026-10-06)
+
+The private native resume operation now couples a fresh promotion request to
+the retained, acknowledged paused load. It checks the historical grant at its
+saved completion clock while validating the new grant against the current
+clock and deadline. The process, UID, descriptor access modes, immutable
+backing and complete private memory mappings must match the original parent
+before any resume command and again after the acknowledged guest hook.
+
+The same owned load can attempt resume only once. Source preparation, resume
+and snapshot capture cannot share a native flight; retirement cancels and
+joins that flight before closing its pins. Refusal before an attempt preserves
+the owner, while an attempted resume that fails or loses current identity
+returns no partial observation and retires the lease. The original paused
+load-command hash is retained alongside separate hashes and clocks for the
+actual acknowledged resume command and hook frame.
+
+Portable tests refuse API-only load acknowledgments, substituted owners,
+replay, cancellation and concurrent capture/preparation. A Linux unit fixture
+uses actual child-process descriptors and private memory mappings with simulated
+Firecracker and guest peers to exercise the complete observation and its failure
+boundaries. It does not certify Firecracker CPU state, guest readiness or KVM
+acceptance. Its process fixture requires an unprivileged positive UID; root
+acceptance remains in the dedicated native lane.
+
+This operation returns native facts, not a publishable receipt. Manager, RPC,
+protobuf, durable promotion authority and both stores still need the full
+measured promotion contract. Protocol 2 paused publication remains refused,
+production restore advertisement stays zero, public activation remains disabled
+and every outstanding release item remains open.

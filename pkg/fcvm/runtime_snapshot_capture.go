@@ -140,7 +140,7 @@ func (v *JailerVMM) beginNativeSnapshot(ctx context.Context, lease Lease, spec S
 		return nil, errors.Join(runtimeadmission.ErrUnavailable, err)
 	}
 	handoff.mu.Lock()
-	if handoff.closed || handoff.snapshot != nil {
+	if handoff.closed || handoff.snapshot != nil || handoff.restorePreparation != nil {
 		handoff.mu.Unlock()
 		return nil, runtimeadmission.ErrReplay
 	}

@@ -81,13 +81,17 @@ func (v *JailerVMM) PrepareSnapshotRestoreInputs(ctx context.Context, lease Leas
 }
 
 func checkSnapshotRestoreInputLayout(lease Lease, req SnapshotRestoreInputs) error {
+	return checkSnapshotRestoreInputLayoutAt(lease, req, time.Now())
+}
+
+func checkSnapshotRestoreInputLayoutAt(lease Lease, req SnapshotRestoreInputs, clock time.Time) error {
 	if lease.Instance != req.Binding.InstanceID || req.Snapshot.DeploymentID != req.Binding.DeploymentID || req.Snapshot.Stale || req.Snapshot.Networkless || req.Runtime.Networkless || req.Snapshot.FCVersion == "" || req.Snapshot.MemBytes != req.Capture.Memory.Bytes || checkColdBootArtifactSources(req.Runtime, req.Sources) != nil {
 		return runtimeadmission.ErrInvalid
 	}
 	if req.Runtime.MemSizeMiB <= 0 || int64(req.Runtime.MemSizeMiB) > api.ApplicationStandardSnapshotMaxArtifactBytes>>20 {
 		return runtimeadmission.ErrInvalid
 	}
-	if err := req.Capture.CheckRestoreInputs(req.Binding, req.Sources, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, int64(req.Runtime.MemSizeMiB)<<20, time.Now()); err != nil {
+	if err := req.Capture.CheckRestoreInputs(req.Binding, req.Sources, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, int64(req.Runtime.MemSizeMiB)<<20, clock); err != nil {
 		return err
 	}
 	config := BuildColdBootConfig(req.Runtime, lease.Slot)
@@ -115,7 +119,7 @@ func (v *JailerVMM) beginSnapshotSourceFlight(ctx context.Context, lease Lease) 
 	}
 	handoff.mu.Lock()
 	defer handoff.mu.Unlock()
-	if handoff.closed || handoff.restorePreparation != nil {
+	if handoff.closed || handoff.restorePreparation != nil || handoff.snapshot != nil {
 		return nil, nil, runtimeadmission.ErrReplay
 	}
 	ctx, cancel := context.WithCancel(ctx)

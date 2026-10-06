@@ -130,6 +130,13 @@ type Receipt struct {
 }
 
 func (r Receipt) Check(binding Binding, now time.Time) error {
+	if err := r.checkRuntimeIdentity(binding, now); err != nil {
+		return err
+	}
+	return r.checkArtifactProtocol()
+}
+
+func (r Receipt) checkRuntimeIdentity(binding Binding, now time.Time) error {
 	if err := binding.Validate(now); err != nil {
 		return err
 	}
@@ -144,7 +151,7 @@ func (r Receipt) Check(binding Binding, now time.Time) error {
 	if completed.Before(time.Unix(0, binding.IssuedAtUnixNano).Add(-api.ApplicationStandardRuntimeAdmissionClockSkew)) || completed.After(now.Add(api.ApplicationStandardRuntimeAdmissionClockSkew)) || r.CompletedAtUnixNano >= binding.ExpiresAtUnixNano {
 		return ErrInvalid
 	}
-	return r.checkArtifactProtocol()
+	return nil
 }
 
 func (r Receipt) checkArtifactProtocol() error {

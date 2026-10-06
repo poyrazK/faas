@@ -21,6 +21,7 @@ type verifiedSnapshotRestore struct {
 	observation        *RuntimeSnapshotHandoffObservation
 	keepPaused         bool
 	started, attempted bool
+	resumeAttempted    bool
 }
 
 // RestoreSnapshotVerified uses retained catalog bytes through the native load
@@ -69,14 +70,18 @@ func (v *JailerVMM) prepareVerifiedSnapshotLoad(ctx context.Context, lease Lease
 }
 
 func checkVerifiedSnapshotLoadRequest(lease Lease, req SnapshotRestoreInputs) error {
+	return checkVerifiedSnapshotLoadRequestAt(lease, req, time.Now())
+}
+
+func checkVerifiedSnapshotLoadRequestAt(lease Lease, req SnapshotRestoreInputs, clock time.Time) error {
 	if lease.IsBuilder || req.Runtime.SkipReady || req.Runtime.AppTask || req.Binding.SnapshotCaptureToken == "" {
 		return runtimeadmission.ErrInvalid
 	}
-	if err := checkSnapshotRestoreInputLayout(lease, req); err != nil {
+	if err := checkSnapshotRestoreInputLayoutAt(lease, req, clock); err != nil {
 		return err
 	}
 	evidence := runtimeadmission.SnapshotRestoreEvidence{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: req.Binding.SnapshotCaptureToken, FCVersion: req.Snapshot.FCVersion, Capture: req.Capture}
-	if err := evidence.Check(req.Binding, req.Sources, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, req.Snapshot.FCVersion, int64(req.Runtime.MemSizeMiB)<<20, time.Now()); err != nil {
+	if err := evidence.Check(req.Binding, req.Sources, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, req.Snapshot.FCVersion, int64(req.Runtime.MemSizeMiB)<<20, clock); err != nil {
 		return err
 	}
 	for i, workload := range req.Runtime.Workloads {
@@ -103,6 +108,10 @@ func snapshotRestoreSpec(lease Lease, req SnapshotRestoreInputs, keepPaused bool
 }
 
 func (v *JailerVMM) checkVerifiedSnapshotLoad(ctx context.Context, lease Lease, spec RestoreSpec) error {
+	return v.checkVerifiedSnapshotLoadAt(ctx, lease, spec, time.Now())
+}
+
+func (v *JailerVMM) checkVerifiedSnapshotLoadAt(ctx context.Context, lease Lease, spec RestoreSpec, clock time.Time) error {
 	plan := spec.verifiedSnapshot
 	if plan == nil {
 		handoff, err := v.runtimeDriveHandoff(lease)
@@ -135,7 +144,7 @@ func (v *JailerVMM) checkVerifiedSnapshotLoad(ctx context.Context, lease Lease, 
 	if !reflect.DeepEqual(spec, expected) {
 		return runtimeadmission.ErrStale
 	}
-	return errors.Join(checkVerifiedSnapshotLoadRequest(lease, plan.request), ctx.Err())
+	return errors.Join(checkVerifiedSnapshotLoadRequestAt(lease, plan.request, clock), ctx.Err())
 }
 
 func (v *JailerVMM) cancelSnapshotRestoreLoad(lease Lease) error {
