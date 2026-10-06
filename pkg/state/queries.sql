@@ -14444,3 +14444,21 @@ INSERT INTO customer_operation_executions(operation_id,generation,job_run_id)
 SELECT o.id,sqlc.arg(generation)::integer,j.id FROM customer_operations o
 JOIN job_runs j ON j.id=sqlc.arg(run_id)::uuid AND j.account_id=o.account_id AND j.operation_id=o.id
 WHERE o.id=sqlc.arg(operation_id)::uuid AND o.execution_kind='job';
+
+-- name: ListRollbackOn5xxCandidates :many
+-- ADR-625: completed live releases that opted into first-wake 5xx
+-- auto-rollback and have not rolled back. A NULL window means apid has not
+-- observed traffic for the release yet; an open window, plus a grace for
+-- late telemetry, is still evaluated. Canary rollouts in flight belong to the
+-- meterd circuit breaker, so only 100% complete releases qualify.
+SELECT d.id, d.app_id, d.scope, d.created_at, d.first_wake_at, d.first_5xx_window_ends_at
+  FROM deployments AS d
+ WHERE d.status = 'live'
+   AND d.rollback_on_5xx
+   AND d.last_auto_rollback_reason IS NULL
+   AND d.traffic_percent = 100
+   AND d.rollout_state = 'complete'
+   AND (d.first_5xx_window_ends_at IS NULL
+        OR d.first_5xx_window_ends_at > now() - make_interval(secs => sqlc.arg('grace_seconds')::int))
+ ORDER BY d.created_at, d.id
+ LIMIT sqlc.arg('row_limit')::int;
