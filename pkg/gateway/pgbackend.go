@@ -2159,17 +2159,32 @@ func (b *PGBackend) quarantineTargetLocked(target Target, now time.Time) {
 // replacement admission, and a bounded lifecycle context prevents a broken
 // schedd from leaving a goroutine behind indefinitely.
 func (b *PGBackend) RecoverStaleTarget(ctx context.Context, appID, scope string, maxConcurrency int) {
-	if b == nil || appID == "" || maxConcurrency <= 0 || b.HealthyCount(appID) > 0 {
+	if b == nil || appID == "" || maxConcurrency <= 0 {
+		return
+	}
+	deploymentID := ""
+	healthy := func() int { return b.HealthyCount(appID) }
+	if routing, ok := publicRoutingSnapshot(ctx); ok {
+		if routing.AppID != appID || routing.SelectedDeploymentID == "" {
+			return
+		}
+		// Fresh public policy bypasses picker weights. Recovery must reuse a
+		// healthy sibling in this captured cohort, or restore this same cohort
+		// and scope without consulting a later traffic policy.
+		deploymentID, scope = routing.SelectedDeploymentID, routing.Scope
+		healthy = func() int { return b.HealthyCountForDeployments(appID, []string{deploymentID}) }
+	}
+	if healthy() > 0 {
 		return
 	}
 	go func() {
 		_, err, _ := b.staleTargetRecovery.Do(appID, func() (any, error) {
-			if b.HealthyCount(appID) > 0 {
+			if healthy() > 0 {
 				return nil, nil
 			}
 			lifecycleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admissionLifecycleTimeout)
 			defer cancel()
-			_, _, atCapacity, err := b.admitSynchronous(lifecycleCtx, appID, "", scope, "stale_target_recovery", maxConcurrency)
+			_, _, atCapacity, err := b.admitSynchronous(lifecycleCtx, appID, deploymentID, scope, "stale_target_recovery", maxConcurrency)
 			if err != nil {
 				return nil, err
 			}
