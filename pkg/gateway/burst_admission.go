@@ -245,6 +245,14 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 
 		waited = true
 		select {
+		case <-h.routableTargetSignal(ctx, app.ID, generation.done):
+			// The first routable target serves this request; the worker
+			// keeps reconciling extra replicas in the background.
+			// production-us hunt #4: callers that arrived with nothing
+			// healthy waited for the whole generation, so a 200-request
+			// cold burst served ~40 requests and held the rest for the
+			// full 30 s budget while an instance was already routable.
+			return waited, nil
 		case <-generation.done:
 			if err := ctx.Err(); err != nil {
 				return waited, err
@@ -273,6 +281,31 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 			return waited, ctx.Err()
 		}
 	}
+}
+
+// routableTargetSignal closes once the app has a routable target. It stops
+// polling when ctx or done ends, so a waiter released by either never leaks
+// the goroutine.
+func (h *Handler) routableTargetSignal(ctx context.Context, appID string, done <-chan struct{}) <-chan struct{} {
+	ready := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(routableTargetPollInterval)
+		defer ticker.Stop()
+		for {
+			if h.backend.HealthyCount(appID) > 0 {
+				close(ready)
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return ready
 }
 
 // awaitRoutableTarget waits, within the caller's admission budget, for the

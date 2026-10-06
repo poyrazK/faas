@@ -494,3 +494,42 @@ func TestBurstCapacityClampsAppCeilingToPlan(t *testing.T) {
 		})
 	}
 }
+
+// slowExpansionBurstBackend makes one instance routable on the first burst
+// admission, then holds every later admission the way schedd does while the
+// app's other slots are still booting.
+type slowExpansionBurstBackend struct {
+	*fakeBackend
+	calls atomic.Int32
+}
+
+func (b *slowExpansionBurstBackend) AdmitBurst(ctx context.Context, _, _, _ string, _, _ int) (int, error) {
+	if b.calls.Add(1) == 1 {
+		time.Sleep(200 * time.Millisecond)
+		b.AddTarget(Target{NodeID: "node-1", InstanceID: "first"})
+		return 1, nil
+	}
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
+
+// production-us hunt #4 (H4-60): a 200-request cold burst against a parked
+// app served ~40 requests and held the rest for the full 30 s budget although
+// an instance was routable within a second. Callers that arrived with no
+// healthy target waited for the burst worker's whole generation, which kept
+// chasing extra replicas; nothing woke them when the first one became
+// routable. Extra replicas are not a prerequisite for serving a request.
+func TestBurstCapacityReturnsWhenFirstTargetBecomesRoutable(t *testing.T) {
+	b := &slowExpansionBurstBackend{fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale}}}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.burstPressure.state(b.app.ID).inflight.Store(200)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	if _, err := h.maybeBurstCapacity(ctx, b.app, 4, 80); err != nil {
+		t.Fatalf("maybeBurstCapacity = %v, want the routable target to serve the request", err)
+	}
+	if waited := time.Since(started); waited > 2*time.Second {
+		t.Fatalf("caller waited %s for the burst generation; want it released once a target is routable", waited)
+	}
+}
