@@ -10816,7 +10816,8 @@ ON CONFLICT (bucket_id) DO NOTHING;
 -- name: ObjectBucketWriteFenceRead :one
 SELECT f.*,
  (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='request') AS requests,
- (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='native_grant') AS native_grants
+ (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='native_grant') AS native_grants,
+ (SELECT count(*) FROM object_deletions d WHERE d.bucket_id=f.bucket_id AND d.state IN ('prepared','dispatched')) AS deletions
 FROM object_bucket_write_fences f WHERE f.bucket_id=sqlc.arg(bucket_id);
 
 -- name: ObjectBucketWriteFenceDelete :execrows

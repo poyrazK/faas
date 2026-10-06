@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
-	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -76,13 +75,13 @@ func (s *server) getObjectDeletion(w http.ResponseWriter, r *http.Request, acct 
 	writeJSON(w, http.StatusOK, j.ObjectDeletion)
 }
 func (s *server) deleteMutableBucketObject(ctx context.Context, b state.ObjectBucket, p objectstorage.Provider, key, selector, id string) (state.ObjectDeletion, error) {
-	return objectstorageactivity.Execute(ctx, s.store, b, func(mutationCtx context.Context) (state.ObjectDeletion, error) {
-		j, err := s.deletionService(b, p).Start(mutationCtx, b, key, selector, id, s.objectStorage.Accounting)
-		if err == nil && j.State != "completed" {
-			err = objectstorage.ErrUnavailable
-		}
-		return j, err
-	})
+	// The deletion journal owns admission and recovery drainage. A second
+	// generic request receipt cannot be settled by original deletion recovery.
+	j, err := s.deletionService(b, p).Start(ctx, b, key, selector, id, s.objectStorage.Accounting)
+	if err == nil && j.State != "completed" {
+		err = objectstorage.ErrUnavailable
+	}
+	return j, err
 }
 
 func decodeObjectDeletion(w http.ResponseWriter, r *http.Request, out *api.ObjectDeletionRequest) bool {

@@ -30,6 +30,9 @@ type ObjectBucketWriteFence struct {
 	BucketID, Token        string
 	CloneOperationID       string
 	Requests, NativeGrants int64
+	// Prepared and dispatched deletion intents retain their own recovery
+	// journal. They drain only through an authenticated terminal transition.
+	Deletions int64
 }
 
 // This is a private data-plane seam. A zero count covers only instrumented

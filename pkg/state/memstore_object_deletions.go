@@ -56,6 +56,9 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 		}
 		return cloneDeletion(old), false, nil
 	}
+	if _, fenced := m.objectWriteFences[j.BucketID]; fenced {
+		return ObjectDeletion{}, false, ErrObjectBucketWriteFenced
+	}
 	if m.activeVersionProtectionLocked(b.ID) {
 		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectVersionProtectionPending)
 	}

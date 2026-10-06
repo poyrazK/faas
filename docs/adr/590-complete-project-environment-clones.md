@@ -7070,3 +7070,82 @@ state, APID and managed PostgreSQL. SQLC v1.31.1 parity, repository policy,
 ADR-number uniqueness, formatting and whitespace checks pass. The policy
 scripts retain their existing optional skips for unavailable Packer and nft;
 no VM lifecycle or native KVM acceptance is claimed by those checks.
+
+### 2026-10-06: Include lifecycle deletion journals in source capture drainage
+
+The lifecycle/customer deletion path now participates in the existing object
+source admission barrier. `BeginObjectDeletion` checks the bucket's retained
+write fence after acquiring its source row lock and reading an existing retry
+identity. Exact retries observe the original deletion journal; new IDs fail
+before preparation or provider mutation. MemStore preserves the same contract.
+An admitted prepared intent can still dispatch, and original dispatch/recovery
+can still settle while capture holds admission closed.
+
+The append-only migration
+`20261006161300941_object_deletion_capture_admission.sql` also enforces this
+boundary before insertion into `object_deletions`. It locks the source bucket,
+requires ready placement, and checks the committed capture hold with a fresh
+READ COMMITTED snapshot after any lock wait. Older replicas cannot bypass the
+boundary by omitting the new Go-side check. Admission from REPEATABLE READ or
+SERIALIZABLE is rejected because an old snapshot could hide a committed hold;
+the production deletion store uses READ COMMITTED. Updates to original intent
+and recovery journals retain their existing authorization and immutability
+rules. Downgrade refuses to remove admission enforcement while any object
+capture hold remains. No existing migration, journal identity or column changes.
+The schema snapshot contains the two objects read from migrated PostgreSQL;
+SQLC output is regenerated.
+
+Owned object-fence observations expose a separate `Deletions` count of every
+prepared/dispatched intent for that bucket. This uses the original journal and
+its existing active-bucket index, without a second synthetic mutation receipt.
+The private stable capture driver requires request, native-grant and deletion
+counts all to be zero, and rejects negative counts in owned roster validation.
+S3 and control-plane deletion ingress now use that journal directly instead of
+wrapping it in a generic request receipt. Otherwise original deletion recovery
+could settle the journal while leaving an unrelated request receipt permanently
+outstanding, and a newly denied deletion could strand a receipt without any
+provider mutation. Existing unmapped request receipts remain retained; this
+increment supplies no authority to erase legacy uncertain activity.
+Terminal preparation cancellation, original provider rejection, or authenticated
+completion drains the deletion count. Lease expiry, caller cancellation, retry
+delay and a rejection of a recovery request do not settle an earlier uncertain
+dispatch. Immutable selected-version recovery and versioned marker proof retain
+their existing semantics; mutable absence supplies no completion proof.
+
+Worker handoff keeps the same source hold and original deletion evidence.
+Abandoning capture resumes admission and preserves unresolved deletion intents;
+another capture observes them again. The capture coordinator does not claim
+responsibility for completing the deletion worker's original provider request,
+erase its evidence, or infer completion from zero synchronous request receipts.
+The active public full-clone gate remains deferred, and even zero instrumented
+writers selects no common point or stage publication.
+
+The remaining writer inventory includes version-retention/legal-hold operations,
+multipart/upload recovery, recursive bucket cleanup and external/native writers.
+In particular, `VersionProtectionService` dispatches native protection PUTs
+through `object_version_protection`, whose active intents are absent from the
+capture counters. The current configuration guard also fences changes to that
+table; admitting and settling an original protection intent must be considered
+together when closing that path. Source version/retention qualification on OVH,
+a qualified common configuration/PostgreSQL/object point, retained recovery
+material, authenticated successful source release, isolated restoration and
+readiness, and exact-revision promotion remain outstanding. R2 still requires
+a different snapshot strategy. No live provider secrets or native KVM
+qualification were available for this increment.
+
+Qualification on task-owned migrated PostgreSQL 16.15 passed 48 state contracts
+(137 including subtests), 20 object-storage contracts (167 including subtests),
+and 12 S3 gateway contracts (32 including subtests), all under the race detector.
+The normal APID suite passed 47 selected contracts (123 including subtests).
+All 459 selected cases passed without failure or skip. Coverage includes
+admission/acquisition lock waits in both directions, older-replica insertion,
+old transaction snapshots, migration replay/round trip/downgrade refusal,
+lifecycle discovery interrupted by capture, source pause/resume, retained
+uncertain originals, immutable recovery, mutable marker/absence distinctions,
+worker handoff, abandonment/reacquisition, independent capture counts and
+retained legacy request evidence. Normal production and test packages compile
+without source overlays. Pinned golangci-lint v2.4.0 reports zero issues across
+state, object storage, S3 gateway and APID. SQLC v1.31.1 parity, migration-ID
+checks, repository policy, formatting and whitespace checks pass. Existing
+optional policy skips for unavailable Packer and nft remain. These local
+contracts do not qualify live OVH/R2 storage or native KVM full cloning.

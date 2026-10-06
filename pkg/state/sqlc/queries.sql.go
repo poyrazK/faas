@@ -34728,7 +34728,8 @@ func (q *Queries) ObjectBucketWriteFenceInsert(ctx context.Context, db DBTX, arg
 const objectBucketWriteFenceRead = `-- name: ObjectBucketWriteFenceRead :one
 SELECT f.bucket_id, f.token, f.backend_id, f.backend_fingerprint, f.physical_name, f.created_at, f.clone_operation_id,
  (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='request') AS requests,
- (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='native_grant') AS native_grants
+ (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='native_grant') AS native_grants,
+ (SELECT count(*) FROM object_deletions d WHERE d.bucket_id=f.bucket_id AND d.state IN ('prepared','dispatched')) AS deletions
 FROM object_bucket_write_fences f WHERE f.bucket_id=$1
 `
 
@@ -34742,6 +34743,7 @@ type ObjectBucketWriteFenceReadRow struct {
 	CloneOperationID   pgtype.UUID
 	Requests           int64
 	NativeGrants       int64
+	Deletions          int64
 }
 
 func (q *Queries) ObjectBucketWriteFenceRead(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketWriteFenceReadRow, error) {
@@ -34757,6 +34759,7 @@ func (q *Queries) ObjectBucketWriteFenceRead(ctx context.Context, db DBTX, bucke
 		&i.CloneOperationID,
 		&i.Requests,
 		&i.NativeGrants,
+		&i.Deletions,
 	)
 	return i, err
 }

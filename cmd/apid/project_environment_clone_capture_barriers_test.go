@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -47,6 +48,8 @@ func (s *cloneCaptureBarrierFailureStore) ProjectEnvironmentCloneObjectWriteFenc
 			fences[0].CloneOperationID = uuid.NewString()
 		case "negative":
 			fences[0].NativeGrants = -1
+		case "negative_deletions":
+			fences[0].Deletions = -1
 		}
 	}
 	return fences, err
@@ -140,16 +143,21 @@ func cloneCaptureBarrierFixture(t *testing.T) (cloneCoordinatorFixture, *cloneCa
 
 func assertCloneCaptureHasNoPoint(t *testing.T, f cloneCoordinatorFixture) {
 	t.Helper()
+	assertCloneCaptureHasNoPointForContext(t.Context(), t, f)
+}
+
+func assertCloneCaptureHasNoPointForContext(ctx context.Context, t *testing.T, f cloneCoordinatorFixture) {
+	t.Helper()
 	l := f.lease
-	op, err := f.store.ProjectEnvironmentCloneOperationByID(t.Context(), l.Operation.AccountID, l.Operation.ProjectID, l.Operation.ID)
+	op, err := f.store.ProjectEnvironmentCloneOperationByID(ctx, l.Operation.AccountID, l.Operation.ProjectID, l.Operation.ID)
 	if err != nil || op.Status != state.CloneOperationCapturing || op.Revision != l.Operation.Revision || len(op.Resources) != 0 || op.SourceRevisionHash != l.Operation.SourceRevisionHash || op.TargetReleaseSetID != "" {
 		t.Fatalf("barriers supplied capture or publication: %+v %v", op, err)
 	}
-	if _, err := f.store.ProjectEnvironmentBySlug(t.Context(), op.AccountID, op.ProjectID, "barriers"); !errors.Is(err, state.ErrNotFound) {
+	if _, err := f.store.ProjectEnvironmentBySlug(ctx, op.AccountID, op.ProjectID, "barriers"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("barriers created a stage")
 	}
 	var targets int
-	if err := f.pool.QueryRow(t.Context(), "select count(*) from project_environment_clone_workloads where operation_id=$1 and target_deployment_id is not null", op.ID).Scan(&targets); err != nil || targets != 0 {
+	if err := f.pool.QueryRow(ctx, "select count(*) from project_environment_clone_workloads where operation_id=$1 and target_deployment_id is not null", op.ID).Scan(&targets); err != nil || targets != 0 {
 		t.Fatalf("barriers created target artifacts: %d %v", targets, err)
 	}
 }
@@ -269,7 +277,7 @@ func TestPGCloneCaptureBarriersZeroTrackedWritersDoNotSelectCheckpoint(t *testin
 }
 
 func TestPGCloneCaptureBarriersRejectIncompleteOwnedRostersBeforeProviderIO(t *testing.T) {
-	for _, fault := range []string{"object_omit", "object_duplicate", "object_placement", "object_owner", "object_negative", "postgres_omit", "postgres_placement"} {
+	for _, fault := range []string{"object_omit", "object_duplicate", "object_placement", "object_owner", "object_negative", "object_negative_deletions", "postgres_omit", "postgres_placement"} {
 		t.Run(fault, func(t *testing.T) {
 			f, store, provider, _ := cloneCaptureBarrierFixture(t)
 			if strings.HasPrefix(fault, "object_") {
@@ -290,6 +298,118 @@ func TestPGCloneCaptureBarriersRejectIncompleteOwnedRostersBeforeProviderIO(t *t
 			assertCloneCaptureHasNoPoint(t, f)
 		})
 	}
+}
+
+func TestPGCloneStableCaptureBarriersWaitForOriginalDeletionRecovery(t *testing.T) {
+	f, store, provider, buckets := cloneCaptureBarrierFixture(t)
+	ctx := t.Context()
+	provider.drained = true
+	b := buckets[0]
+	input := state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: uuid.NewString(), BucketID: b.ID, Key: "key"},
+		AccountID: b.AccountID, AppID: b.AppID, Token: uuid.NewString()}
+	j, created, err := store.BeginObjectDeletion(ctx, input, api.ObjectStoragePolicy{})
+	if err != nil || !created {
+		t.Fatalf("admitted deletion fixture: %+v %v", j, err)
+	}
+	observeBusy := func() {
+		t.Helper()
+		var result cloneCaptureBarrierObservation
+		var err error
+		f.lease, result, err = f.srv.prepareProjectEnvironmentCloneStableCaptureBarriers(ctx, f.lease)
+		if err != nil || result.instrumentedWritersDrained || len(result.objects) != 2 || result.objects[0].Deletions != 1 ||
+			result.objects[0].Requests != 0 || result.objects[0].NativeGrants != 0 || result.objects[1].Deletions != 0 ||
+			!cloneConfigurationFenceMatches(f.lease.Operation, result.configurationFence) {
+			t.Fatalf("unsettled deletion supplied drained capture: %+v %v", result, err)
+		}
+		assertCloneCaptureHasNoPointForContext(ctx, t, f)
+	}
+	observeBusy()
+	if replay, created, err := store.BeginObjectDeletion(ctx, input, api.ObjectStoragePolicy{}); err != nil || created || replay.ID != j.ID {
+		t.Fatalf("capture hold replaced original deletion journal: %+v %v", replay, err)
+	}
+	other := input
+	other.ID = uuid.NewString()
+	if _, _, err := store.BeginObjectDeletion(ctx, other, api.ObjectStoragePolicy{}); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
+		t.Fatalf("held source admitted new deletion: %v", err)
+	}
+	j, err = store.DispatchObjectDeletion(ctx, j.ID, j.Token, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RetryObjectDeletion(ctx, j.ID, j.Token, "provider_uncertain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
+		t.Fatal(err)
+	}
+	f.lease, err = store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observeBusy()
+	if _, err := f.pool.Exec(ctx, `update object_deletions set retry_at=clock_timestamp()-interval '1 second' where id=$1`, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	j, err = store.ClaimObjectDeletion(ctx, j.ID, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := j
+	rejected.State, rejected.LastErrorCode = "failed", "provider_rejected"
+	if _, err := store.FinishObjectDeletion(ctx, rejected); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("recovery rejection erased original dispatched outcome: %v", err)
+	}
+	observeBusy()
+	j.State, j.LastErrorCode = "completed", ""
+	if _, err := store.FinishObjectDeletion(ctx, j); err != nil {
+		t.Fatal(err)
+	}
+	var result cloneCaptureBarrierObservation
+	f.lease, result, err = f.srv.prepareProjectEnvironmentCloneStableCaptureBarriers(ctx, f.lease)
+	if err != nil || !result.instrumentedWritersDrained || result.objects[0].Deletions != 0 {
+		t.Fatalf("settled original deletion did not drain: %+v %v", result, err)
+	}
+	assertCloneCaptureHasNoPoint(t, f)
+}
+
+type cloneDeletionRecoveryWriterProvider struct {
+	objectstorage.Provider
+	calls int
+}
+
+func (p *cloneDeletionRecoveryWriterProvider) DeleteObject(context.Context, string, string) error {
+	p.calls++
+	return objectstorage.ErrUnavailable
+}
+
+func TestPGCloneStableCaptureBarriersCountControlDeletionJournalOnce(t *testing.T) {
+	f, store, provider, buckets := cloneCaptureBarrierFixture(t)
+	ctx := t.Context()
+	provider.drained = true
+	b := buckets[0]
+	deletes := &cloneDeletionRecoveryWriterProvider{}
+	j, err := f.srv.deleteMutableBucketObject(ctx, b, deletes, "key", "", uuid.NewString())
+	if !errors.Is(err, objectstorage.ErrUnavailable) || j.State != "dispatched" || deletes.calls != 1 {
+		t.Fatalf("uncertain control deletion fixture: %+v %v", j, err)
+	}
+	var result cloneCaptureBarrierObservation
+	f.lease, result, err = f.srv.prepareProjectEnvironmentCloneStableCaptureBarriers(ctx, f.lease)
+	if err != nil || result.instrumentedWritersDrained || result.objects[0].Deletions != 1 || result.objects[0].Requests != 0 {
+		t.Fatalf("control deletion duplicated or lost writer evidence: %+v %v", result, err)
+	}
+	// Unversioned mutable absence cannot settle the original provider request.
+	if _, err := f.pool.Exec(ctx, `update object_deletions set retry_at=clock_timestamp()-interval '1 second' where id=$1`, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	j, err = (objectstorage.DeletionService{Store: store, Provider: deletes}).Recover(ctx, b, j.ID)
+	if err == nil || j.State != "dispatched" || deletes.calls != 1 {
+		t.Fatalf("mutable recovery inferred completion or redispatched: %+v %v", j, err)
+	}
+	f.lease, result, err = f.srv.prepareProjectEnvironmentCloneStableCaptureBarriers(ctx, f.lease)
+	if err != nil || result.instrumentedWritersDrained || result.objects[0].Deletions != 1 || result.objects[0].Requests != 0 {
+		t.Fatalf("original uncertain control deletion disappeared: %+v %v", result, err)
+	}
+	assertCloneCaptureHasNoPoint(t, f)
 }
 
 func TestPGCloneCaptureBarriersRejectConfigurationDriftAndLostAuthority(t *testing.T) {

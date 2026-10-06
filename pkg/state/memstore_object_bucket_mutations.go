@@ -61,7 +61,7 @@ func (m *MemStore) ownedObjectWriteFenceLocked(b ObjectBucket, token, operationI
 	if !exists || fence.Token != token || fence.CloneOperationID != operationID || !sameObjectMutationBucket(b, fence.Bucket) {
 		return ObjectBucketWriteFence{}, ErrConflict
 	}
-	fence.Requests, fence.NativeGrants = 0, 0
+	fence.Requests, fence.NativeGrants, fence.Deletions = 0, 0, 0
 	for _, receipt := range m.objectMutations {
 		if receipt.Bucket.ID != b.ID {
 			continue
@@ -70,6 +70,11 @@ func (m *MemStore) ownedObjectWriteFenceLocked(b ObjectBucket, token, operationI
 			fence.NativeGrants++
 		} else {
 			fence.Requests++
+		}
+	}
+	for _, deletion := range m.objectDeletions {
+		if deletion.BucketID == b.ID && deletionActive(deletion) {
+			fence.Deletions++
 		}
 	}
 	return fence, nil

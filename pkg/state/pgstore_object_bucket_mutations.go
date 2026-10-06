@@ -91,7 +91,7 @@ func readOwnedObjectWriteFenceTx(ctx context.Context, tx pgx.Tx, b ObjectBucket,
 	if pgUUIDString(row.Token) != token || pgUUIDString(row.CloneOperationID) != operationID || row.BackendID != b.BackendID || row.BackendFingerprint != b.BackendFingerprint || row.PhysicalName != b.PhysicalName {
 		return ObjectBucketWriteFence{}, ErrConflict
 	}
-	return ObjectBucketWriteFence{Bucket: b, BucketID: b.ID, Token: token, CloneOperationID: operationID, Requests: row.Requests, NativeGrants: row.NativeGrants}, nil
+	return ObjectBucketWriteFence{Bucket: b, BucketID: b.ID, Token: token, CloneOperationID: operationID, Requests: row.Requests, NativeGrants: row.NativeGrants, Deletions: row.Deletions}, nil
 }
 
 func (s *PgStore) objectBucketWriteFence(ctx context.Context, b ObjectBucket, token string, acquire bool) (ObjectBucketWriteFence, error) {
