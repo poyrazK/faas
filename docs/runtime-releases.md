@@ -75,3 +75,18 @@ publication requires a shared artifact backend.
 Internal upgrade build pins limit each captured source root and function
 handler to 4,096 bytes. Pinning is unavailable after a build is queued or an
 artifact is materialized; selecting another runtime requires a fresh attempt.
+
+Explicit upgrade preparation now also requires an unrevoked native qualification
+receipt for the exact target. Publication and scans alone cannot authorize a
+build. The private operator importer verifies a separately trusted signature,
+exact native metal coverage, published artifact binding/bytes and retained
+readback evidence before recording a receipt. It provides no customer apply or
+scheduling operation. See [ADR-599](adr/599-native-runtime-release-qualification.md),
+[ADR-600](adr/600-trusted-runtime-qualification-import.md) and the
+[native qualification runbook](ops/runtime-release-qualification.md).
+
+Qualification evidence bounds are 64 KiB per report/envelope/fixture JSON,
+64 MiB per captured log, 256 KiB per log event/line and 16 JSON nesting levels.
+The profile currently requires dedicated native Linux amd64 KVM. The automated
+collector/signing runner and actual native acceptance remain outstanding;
+macOS unit fixtures never qualify a release.

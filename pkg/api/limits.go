@@ -8721,9 +8721,13 @@ const (
 
 // Runtime release catalogue and metadata bounds (ADR-596).
 const (
-	RuntimeReleaseCatalogLimit        = 50
-	RuntimeReleaseArtifactKeyMaxBytes = 1024
-	RuntimeReleaseLayoutMaxBytes      = 64
-	RuntimeReleaseSidecarMaxBytes     = 4096
-	RuntimeUpgradeSourceFieldMaxBytes = 4096 // frozen build root or function handler
+	RuntimeReleaseCatalogLimit         = 50
+	RuntimeReleaseArtifactKeyMaxBytes  = 1024
+	RuntimeReleaseLayoutMaxBytes       = 64
+	RuntimeReleaseSidecarMaxBytes      = 4096
+	RuntimeUpgradeSourceFieldMaxBytes  = 4096 // frozen build root or function handler
+	RuntimeQualificationReportMaxBytes = 64 * 1024
+	RuntimeQualificationLogMaxBytes    = 64 * 1024 * 1024
+	RuntimeQualificationEventMaxBytes  = 256 * 1024
+	RuntimeQualificationJSONMaxDepth   = 16
 )
