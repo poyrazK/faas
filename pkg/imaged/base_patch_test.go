@@ -263,3 +263,74 @@ func TestParseBaseDigestSidecarFields(t *testing.T) {
 		})
 	}
 }
+
+// sequencedValidator fails the base artifact validation calls listed in fail
+// (1-based) and accepts the rest.
+func sequencedValidator(fail ...int) (func(context.Context, string, []string) error, *int) {
+	calls := 0
+	return func(context.Context, string, []string) error {
+		calls++
+		for _, n := range fail {
+			if calls == n {
+				return errors.New("required path /sbin/init missing")
+			}
+		}
+		return nil
+	}, &calls
+}
+
+func TestEnsureBaseExt4_RebuildsWhenTheStagedOrPatchedBaseIsInvalid(t *testing.T) {
+	for name, tc := range map[string]struct {
+		fail        []int
+		wantPatches int
+	}{
+		// Call 1 checks the staged artifact before patching.
+		"staged base invalid": {fail: []int{1}, wantPatches: 0},
+		// Call 2 checks the patched artifact; the rebuild's check is call 3.
+		"patched base invalid": {fail: []int{2}, wantPatches: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ph := newPatchHarness(t)
+			validator, calls := sequencedValidator(tc.fail...)
+			ph.h.baseArtifactValidator = validator
+			ph.writeGuestInit(t, "guest-init-v2")
+			res, err := ph.stage()
+			if err != nil {
+				t.Fatalf("EnsureBaseExt4: %v", err)
+			}
+			if res.Skipped || len(ph.b.patches) != tc.wantPatches || ph.b.calls != 2 {
+				t.Fatalf("skipped:%v patches:%d builds:%d (validations %d), want %d patches then a rebuild",
+					res.Skipped, len(ph.b.patches), ph.b.calls, *calls, tc.wantPatches)
+			}
+			if got := ph.read(t, patchBaseKey); got != "fake ext4" {
+				t.Fatalf("published base = %q, want the rebuilt artifact", got)
+			}
+		})
+	}
+}
+
+// remoteOnly hides LocalPath: there is no local file for debugfs to patch.
+type remoteOnly struct{ storage.StorageBackend }
+
+func TestEnsureBaseExt4_DoesNotPatchWithoutLocalStorage(t *testing.T) {
+	ph := newPatchHarness(t)
+	ph.h.storage = remoteOnly{ph.be}
+	ph.writeGuestInit(t, "guest-init-v2")
+	if _, err := ph.stage(); err != nil {
+		t.Fatalf("EnsureBaseExt4: %v", err)
+	}
+	if len(ph.b.patches) != 0 || ph.b.calls != 2 {
+		t.Fatalf("patches:%d builds:%d, want a rebuild", len(ph.b.patches), ph.b.calls)
+	}
+}
+
+func TestEnsureBaseExt4_DoesNotPatchWithoutAGuestInitPath(t *testing.T) {
+	ph := newPatchHarness(t)
+	ph.h.guestInitPath = ""
+	if _, err := ph.stage(); err != nil {
+		t.Fatalf("EnsureBaseExt4: %v", err)
+	}
+	if len(ph.b.patches) != 0 {
+		t.Fatalf("patched %d times without a guest-init to install", len(ph.b.patches))
+	}
+}
