@@ -1,6 +1,7 @@
 package gateway_test
 
 // adr: 126 — gRPC messages traverse both HTTP hops before request EOF.
+// adr: 610
 
 import (
 	"context"
@@ -12,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"google.golang.org/grpc"
 )
 
@@ -78,8 +81,15 @@ func (s *duplexHTTPStream) Recv() (*vmmdpb.ForwardHTTPStreamResponse, error) {
 func TestGRPCDuplexThroughPublicAndForwarderHTTPHops(t *testing.T) {
 	stream := &duplexHTTPStream{received: make(chan struct{}), ended: make(chan struct{})}
 	client := &duplexHTTPClient{fakeVmmdClient: &fakeVmmdClient{}, stream: stream}
-	forwarder := gateway.ForwardingReverseProxy(&fakeNodeLookup{cli: client}, nil)(gateway.Target{NodeID: "node-1", InstanceID: "i-test"})
+	tracker, err := activity.New(uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := gateway.Target{NodeID: "node-1", InstanceID: "i-test", AppID: uuid.NewString(), DeploymentID: uuid.NewString()}
+	forwarder := gateway.WithDeploymentActivity(gateway.ForwardingReverseProxy(&fakeNodeLookup{cli: client}, nil), tracker)(target)
+	finished := make(chan struct{})
 	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(finished)
 		r.Header.Set("x-faas-instance", "i-test")
 		r.Header.Set("x-faas-protocol", "grpc")
 		forwarder.ServeHTTP(w, r)
@@ -112,6 +122,9 @@ func TestGRPCDuplexThroughPublicAndForwarderHTTPHops(t *testing.T) {
 	if err := <-sent; err != nil {
 		t.Fatal(err)
 	}
+	if got := tracker.Observe(target.AppID, target.DeploymentID); !got.CoverageKnown || got.ActiveForwards != 1 {
+		t.Fatalf("duplex response before request EOF dropped activity: %+v", got)
+	}
 	if err := upload.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -120,5 +133,13 @@ func TestGRPCDuplexThroughPublicAndForwarderHTTPHops(t *testing.T) {
 	}
 	if response.Trailer.Get("Grpc-Status") != "0" {
 		t.Fatalf("trailers=%v", response.Trailer)
+	}
+	select {
+	case <-finished:
+	case <-ctx.Done():
+		t.Fatal("duplex forwarder did not return")
+	}
+	if got := tracker.Observe(target.AppID, target.DeploymentID); !got.CoverageKnown || got.ActiveForwards != 0 || got.ActivityVersion != 3 {
+		t.Fatalf("duplex EOF retained activity: %+v", got)
 	}
 }

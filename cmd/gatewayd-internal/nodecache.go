@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/overlay"
@@ -125,6 +126,15 @@ type nodeCache struct {
 	// conn on TimeoutStopSec=30s. nil = drain disabled (tests +
 	// pre-PR-A behaviour).
 	drain *drain.Tracker
+	// activity covers the shared VM forwarding seam, separately from daemon
+	// shutdown tracking. Private runtime confirmation enables it before any
+	// forwarding factory is exposed (ADR-610).
+	activity *activity.Tracker
+}
+
+func (n *nodeCache) WithActivityTracker(tracker *activity.Tracker) *nodeCache {
+	n.activity = tracker
+	return n
 }
 
 // WithDrainTracker (issue #587 / PR-A) installs the per-request
@@ -230,7 +240,7 @@ func nodeAllowsForwarding(node state.ComputeNode) bool {
 // forwarder emits wake.proxy_first_byte on the first downstream
 // byte. nil opts out.
 func (n *nodeCache) Forwarding() func(gateway.Target) http.Handler {
-	return gateway.ForwardingReverseProxyWithEvents(n.cache, n.log, n.events)
+	return gateway.WithDeploymentActivity(gateway.ForwardingReverseProxyWithEvents(n.cache, n.log, n.events), n.activity)
 }
 
 // RawForwarding (issue #676 / ADR-080) is the raw-bytes Upgrade
@@ -241,7 +251,7 @@ func (n *nodeCache) Forwarding() func(gateway.Target) http.Handler {
 // handler's three-input gate routes Connection: Upgrade requests
 // here BEFORE falling through to Forwarding.
 func (n *nodeCache) RawForwarding() func(gateway.Target) http.Handler {
-	return gateway.ForwardingRawReverseProxyWithEventsAndDrain(n.cache, n.log, n.events, n.egressSink, n.drain)
+	return gateway.WithDeploymentActivity(gateway.ForwardingRawReverseProxyWithEventsAndDrain(n.cache, n.log, n.events, n.egressSink, n.drain), n.activity)
 }
 
 // Close shuts down every cached *grpc.ClientConn. Called once at

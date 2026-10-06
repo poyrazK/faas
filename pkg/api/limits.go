@@ -8747,6 +8747,8 @@ const (
 	RuntimeUpgradeGatewayRepairTimeout   = 10 * time.Second
 	RuntimeUpgradeGatewayRepairBatch     = 32
 	RuntimeUpgradeGatewaySessionLimit    = 64
+	RuntimeUpgradeActivityKeyLimit       = 4096  // active app/deployment pairs per gateway process (ADR-610)
+	RuntimeUpgradeActivityForwardLimit   = 65536 // tracked concurrent forwards per process (ADR-610)
 )
 
 // Private runtime qualification collector budgets (ADR-601).

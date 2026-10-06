@@ -67,6 +67,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
@@ -1398,11 +1399,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
 	runtimeGatewaySession, runtimeGatewaySlot := "", ""
+	var runtimeActivity *activity.Tracker
 	if osGetenv("FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION") == "1" {
 		runtimeGatewaySession = uuid.NewString()
 		runtimeGatewaySlot = strings.TrimSpace(osGetenv("FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID"))
 		if err := gatewayconfirmation.ValidateIdentity(runtimeGatewaySlot, runtimeGatewaySession); err != nil {
 			return fmt.Errorf("private runtime gateway slot configuration: %w", err)
+		}
+		runtimeActivity, err = activity.New(runtimeGatewaySession)
+		if err != nil {
+			return fmt.Errorf("private runtime gateway activity configuration: %w", err)
 		}
 		log.Info("gatewayd: private runtime routing confirmation enabled", "gateway_session_id", runtimeGatewaySession, "gateway_slot_id", runtimeGatewaySlot)
 	}
@@ -2020,7 +2026,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(gatewayOps, pool)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
-	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).WithEvents(eventsPlatform)
+	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).
+		WithEvents(eventsPlatform).WithActivityTracker(runtimeActivity)
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as
 	// public requests. This assignment happens after nodeCache creation so
 	// the cache has its production mTLS/overlay wiring before schedd can

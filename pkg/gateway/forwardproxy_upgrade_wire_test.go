@@ -1,4 +1,5 @@
 // adr: 386
+// adr: 610
 package gateway
 
 import (
@@ -13,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"google.golang.org/grpc"
 )
@@ -21,6 +24,16 @@ import (
 func TestRawUpgradeRealSocketCarriesBothDirections(t *testing.T) {
 	for _, early := range []bool{false, true} {
 		t.Run(map[bool]string{false: "after handshake", true: "buffered with handshake"}[early], func(t *testing.T) {
+			tracker, err := activity.New(uuid.NewString())
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := Target{Port: 3000, AppID: uuid.NewString(), DeploymentID: uuid.NewString()}
+			forward := WithDeploymentActivity(func(target Target) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					rawStreamOnceWithEvents(w, r, &upgradeWireClient{}, slog.Default(), target, nil, nil)
+				})
+			}, tracker)(target)
 			finished := make(chan struct{})
 			observed := make(chan struct {
 				status int
@@ -35,7 +48,7 @@ func TestRawUpgradeRealSocketCarriesBothDirections(t *testing.T) {
 				r = r.WithContext(ctx)
 				r.Header.Set("x-faas-instance", "wire-instance")
 				recorder := &statusRecorder{ResponseWriter: w, status: 200}
-				rawStreamOnceWithEvents(recorder, r, &upgradeWireClient{}, slog.Default(), Target{Port: 3000}, nil, nil)
+				forward.ServeHTTP(recorder, r)
 				observed <- struct {
 					status int
 					bytes  int64
@@ -68,6 +81,9 @@ func TestRawUpgradeRealSocketCarriesBothDirections(t *testing.T) {
 			if response.StatusCode != 101 || response.Header.Get("Upgrade") != "websocket" {
 				t.Fatalf("upgrade response: %d %v", response.StatusCode, response.Header)
 			}
+			if got := tracker.Observe(target.AppID, target.DeploymentID); !got.CoverageKnown || got.ActiveForwards != 1 {
+				t.Fatalf("101 handshake ended activity before socket close: %+v", got)
+			}
 			if !early {
 				time.Sleep(150 * time.Millisecond)
 				if _, err := conn.Write(payload); err != nil {
@@ -81,6 +97,9 @@ func TestRawUpgradeRealSocketCarriesBothDirections(t *testing.T) {
 			if !bytes.Equal(got, payload) {
 				t.Fatal("upgraded binary bytes changed")
 			}
+			if got := tracker.Observe(target.AppID, target.DeploymentID); !got.CoverageKnown || got.ActiveForwards != 1 {
+				t.Fatalf("long-lived raw pump dropped activity: %+v", got)
+			}
 			_ = conn.Close()
 			select {
 			case <-finished:
@@ -89,6 +108,9 @@ func TestRawUpgradeRealSocketCarriesBothDirections(t *testing.T) {
 			}
 			if got := <-observed; got.status != 101 || got.bytes != int64(len(payload)) {
 				t.Fatalf("recorded upgrade status/bytes = %+v", got)
+			}
+			if got := tracker.Observe(target.AppID, target.DeploymentID); !got.CoverageKnown || got.ActiveForwards != 0 || got.ActivityVersion != 3 {
+				t.Fatalf("socket disconnect retained activity: %+v", got)
 			}
 		})
 	}
