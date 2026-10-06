@@ -42,14 +42,18 @@ func TestRestoreValidatesProviderLineageOnCreateAndRecovery(t *testing.T) {
 				var provider *Provider
 				posts := 0
 				provider = testProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					target := branch{ID: "br-stage-123", ProjectID: "quiet-river-12345678", Name: provider.restoreBranchName(request.ResourceID), ParentID: "br-source-123",
+						ParentTimestamp: point.Format(time.RFC3339Nano), InitSource: "parent-data", CurrentState: "init"}
+					fault.edit(&target)
+					if r.Method == http.MethodGet && r.URL.Path == "/api/v2/projects/quiet-river-12345678/branches/br-stage-123" {
+						writeResponse(t, w, http.StatusOK, map[string]any{"branch": target})
+						return
+					}
 					if r.URL.Path != "/api/v2/projects/quiet-river-12345678/branches" {
 						t.Errorf("unexpected path: %s", r.URL.Path)
 						w.WriteHeader(http.StatusNotFound)
 						return
 					}
-					target := branch{ID: "br-stage-123", ProjectID: "quiet-river-12345678", Name: provider.restoreBranchName(request.ResourceID), ParentID: "br-source-123",
-						ParentTimestamp: point.Format(time.RFC3339Nano), InitSource: "parent-data", CurrentState: "init"}
-					fault.edit(&target)
 					switch r.Method {
 					case http.MethodGet:
 						branches := []branch{}
@@ -77,7 +81,9 @@ func TestRestoreValidatesProviderLineageOnCreateAndRecovery(t *testing.T) {
 						w.WriteHeader(http.StatusMethodNotAllowed)
 					}
 				}))
-				observed, err := provider.Restore(t.Context(), request)
+				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+				defer cancel()
+				observed, err := provider.Restore(ctx, request)
 				if !errors.Is(err, fault.want) {
 					t.Fatalf("restore error = %v, want %v", err, fault.want)
 				}
@@ -162,6 +168,8 @@ func TestDeleteRecoveryRequiresVerifiedRestoreLineage(t *testing.T) {
 						branches = nil
 					}
 					writeResponse(t, w, http.StatusOK, map[string]any{"branches": branches})
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v2/projects/quiet-river-12345678/branches/br-stage" && fault == "missing_point":
+					writeResponse(t, w, http.StatusOK, map[string]any{"branch": branch{ID: "br-stage", Name: provider.restoreBranchName("logical-target")}})
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v2/projects/quiet-river-12345678/branches/br-stage" && deletes == 1:
 					// Empty delete responses require an independently observed absence.
 					w.WriteHeader(http.StatusNotFound)
@@ -177,7 +185,9 @@ func TestDeleteRecoveryRequiresVerifiedRestoreLineage(t *testing.T) {
 			if fault == "missing_request_point" {
 				request.RestorePointInTime = time.Time{}
 			}
-			result, err := provider.Delete(t.Context(), request)
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer cancel()
+			result, err := provider.Delete(ctx, request)
 			if fault == "valid" || fault == "absent" {
 				if err != nil || !result.Done || deletes != map[string]int{"valid": 1, "absent": 0}[fault] {
 					t.Fatalf("verified cleanup = %+v, %v, deletes=%d", result, err, deletes)

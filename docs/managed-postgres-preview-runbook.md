@@ -38,6 +38,23 @@ operator-owned path. The output includes a versioned approval envelope and the
 exact `approval_env` values for the staging gate. Verify the saved artifact
 before applying those values:
 
+A newly created provider project may have no usage in the previous completed
+hour. To continue independent credential, compute, restore and deletion tests,
+set `FAAS_MANAGED_POSTGRES_QUALIFY_CONTINUE_AFTER_USAGE_FAILURE=true` for that
+isolated run. The usage failure remains in the report, the command exits
+non-zero, and it emits no approval or provisioning gate values. This option
+does not relax any other prerequisite. A complete settled usage window is
+still required for qualification and rollout. Cleanup failures are reported
+alongside the original failure so operators can recover every leaked resource.
+
+The Neon restore fixture chooses a whole-second database clock boundary after
+the first committed marker and waits for that boundary before writing the
+second marker. It never rounds a customer restore request. Incomplete branch
+creation acknowledgements are resolved by bounded reads of the acknowledged
+branch identity, with exact source and timestamp validation before adoption
+or cleanup. Fractional timestamps that Neon cannot report exactly remain
+unqualified; timestamp tolerance is not a lineage proof.
+
 ```sh
 FAAS_ENVIRONMENT=staging \
 FAAS_MANAGED_POSTGRES_CONFIG=/etc/faas/managed-postgres.json \

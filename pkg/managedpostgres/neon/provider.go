@@ -255,7 +255,7 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 		return managedpostgres.ObservedDatabase{}, err
 	}
 	if existing.ID != "" {
-		return restoredBranchObservation(source.projectID, parentID, branchName, existing, request)
+		return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, existing, request)
 	}
 	payload := createBranchRequest{}
 	payload.Branch.Name = branchName
@@ -274,12 +274,12 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 				return managedpostgres.ObservedDatabase{}, recoveryErr
 			}
 			if recovered.ID != "" {
-				return restoredBranchObservation(source.projectID, parentID, branchName, recovered, request)
+				return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, recovered, request)
 			}
 		}
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	return restoredBranchObservation(source.projectID, parentID, branchName, created.Branch, request)
+	return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, created.Branch, request)
 }
 
 func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
@@ -463,7 +463,7 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 					return managedpostgres.DeleteResult{}, sourceErr
 				}
 			}
-			observed, lineageErr := restoredBranchObservation(source.projectID, parentID, p.restoreBranchName(request.ResourceID), candidate,
+			observed, lineageErr := p.awaitRestoredBranch(ctx, source.projectID, parentID, p.restoreBranchName(request.ResourceID), candidate,
 				managedpostgres.RestoreRequest{PointInTime: request.RestorePointInTime})
 			if lineageErr != nil {
 				return managedpostgres.DeleteResult{}, lineageErr
