@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/objectstorage/grantrevocation"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -14,6 +15,7 @@ type cloneCaptureBarrierStore interface {
 	state.ProjectEnvironmentCloneBindingCaptureStore
 	state.ProjectEnvironmentClonePostgresWriteFenceStore
 	state.ProjectEnvironmentCloneObjectWriteFenceStore
+	state.ProjectEnvironmentCloneObjectGrantRevocationStore
 }
 
 // Transient observations, never durable checkpoint or release authority.
@@ -23,6 +25,7 @@ type cloneCaptureBarrierObservation struct {
 	configuration              state.ProjectEnvironmentCloneConfigurationCapture
 	postgres                   []managedpostgres.CheckpointConnectionClosure
 	objects                    []state.ObjectBucketWriteFence
+	objectRetirements          []grantrevocation.Observation
 	instrumentedWritersDrained bool
 }
 
@@ -105,7 +108,12 @@ func (s *server) prepareProjectEnvironmentCloneCaptureBarriers(ctx context.Conte
 		}
 	}
 	// Independently verify complete owned rosters before touching providers.
-	if _, err := readCloneCaptureBarrierRosters(ctx, store, lease, databases, objects); err != nil {
+	fences, err := readCloneCaptureBarrierRosters(ctx, store, lease, databases, objects)
+	if err != nil {
+		return lease, zero, err
+	}
+	retirements, err := s.cloneCaptureObjectGrantRetirementPlans(ctx, store, lease, objects, fences)
+	if err != nil {
 		return lease, zero, err
 	}
 	out := cloneCaptureBarrierObservation{configuration: capture, instrumentedWritersDrained: true}
@@ -127,6 +135,18 @@ func (s *server) prepareProjectEnvironmentCloneCaptureBarriers(ctx context.Conte
 		}
 		out.postgres = append(out.postgres, closure)
 		out.instrumentedWritersDrained = out.instrumentedWritersDrained && closure.Drained
+	}
+	for _, plan := range retirements {
+		if _, err := readCloneCaptureBarrierRosters(ctx, store, lease, databases, objects); err != nil {
+			return lease, zero, err
+		}
+		var observation grantrevocation.Observation
+		lease, observation, err = s.revokeProjectEnvironmentCloneObjectNativeGrants(ctx, lease, plan)
+		if err != nil {
+			return lease, zero, err
+		}
+		out.objectRetirements = append(out.objectRetirements, observation)
+		out.instrumentedWritersDrained = out.instrumentedWritersDrained && observation.Drained()
 	}
 	out.objects, err = readCloneCaptureBarrierRosters(ctx, store, lease, databases, objects)
 	if err != nil {

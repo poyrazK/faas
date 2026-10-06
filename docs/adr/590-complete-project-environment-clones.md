@@ -6899,3 +6899,69 @@ compiled without source overlays. Pinned golangci-lint v2.4.0 built with Go
 1.25.13 reports zero affected-package issues; SQLC v1.31.1 parity, formatting
 and whitespace checks pass. These contracts do not qualify a live native
 provider or native x86_64 KVM full clone.
+
+### Compose original object-grant retirement into source barriers (2026-10-06)
+
+The private composed barrier driver now resumes native object-grant retirement
+for every frozen source bucket that has outstanding grants or retained retirement
+intent. It acquires and independently checks the complete PostgreSQL/object hold
+rosters, then preflights every required native capability before any provider IO.
+An unsupported backend retains the committed source holds without dispatching
+PostgreSQL closure or creating a native retirement intent. Each retirement uses
+the original durable request, source placement and sorted grant roster; partial
+multi-bucket retirement and replacement workers recover that same selection.
+
+A locally drained retirement still requires a fresh independent provider
+observation. Zero local grants cannot hide a missing journal, changed retirement
+identity, changed plan hash, renewed write activity or incomplete revocation.
+Only original native grants are consumed on valid drainage; synchronous request
+receipts require their own acknowledged completion. The driver's observations
+remain transient and return no usable evidence on uncertainty.
+
+Active compensation now resumes already-dispatched original retirements before
+abandoning object admission holds. It derives their scope from retained intent
+under the owned holds, so source configuration edits do not replace the original
+selection. Unknown or busy retirement prevents release of every remaining object
+hold. Reserved or absent intent initiates no provider calls and consumes no
+writers. Once all dispatched retirements have independent drain evidence, the
+existing lease-authorized transaction releases the operation's object holds
+together, retaining unresolved synchronous receipts. Recovery after a lost
+release acknowledgement does not initiate further native calls for sources
+whose holds were already released. This abandonment resumes admission after
+aborted capture; it is not successful capture-barrier release or complete
+resource compensation.
+
+R2 is the first requested provider target, with OVH also acceptable. Cloudflare's
+[temporary credential documentation](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/)
+states that revoking a parent token invalidates every credential derived from
+it. That statement does not establish drainage of already-admitted writes, an
+immutable authenticated retirement journal or a mapping from historical local
+grant receipts to the originally issued native capabilities. Shared-parent
+revocation also cannot satisfy the contract by invalidating unrelated sources.
+No live provider identity or credentials were available for qualification.
+Built-in S3 adapters used for R2/OVH remain unsupported for native retirement;
+the shared orchestration does not claim a qualified R2 or OVH adapter. Provider
+responses in local contracts are synthetic.
+
+The composed capture driver remains outside active capture dispatch and public
+full-clone admission. This increment selects no common capture timestamp,
+retains no completed PostgreSQL/object recovery point, creates no isolated stage
+and releases no successful-capture source hold. Complete provider, external and
+background writer coverage; stable configuration through a common capture point;
+immutable recovery retention; successful source release; independent restore
+and credential remapping; readiness and publication; and qualified promotion
+preserving production data remain required.
+
+Qualification uses task-owned migrated PostgreSQL 16.15 with UTF-8 encoding,
+`max_prepared_transactions=32` and the official template-database harness.
+Nineteen focused normal APID contracts passed (73 including subtests), and eight
+state-store contracts passed under the race detector (29 including subtests).
+Neither run had failures or skips. Coverage includes all-source preflight,
+partial multi-bucket retirement, original-intent handoff, independent observation
+after local drainage, unsupported native capabilities, busy compensation after
+configuration edits, reserved-intent abandonment and lost release replies.
+Pinned golangci-lint v2.4.0 built with Go 1.25.13 reports zero affected-package
+issues. SQLC v1.31.1 parity, ADR-number uniqueness, formatting and whitespace
+checks pass.
+Normal production and test packages compile without source overlays. These
+contracts do not qualify a live native provider or native KVM full clone.

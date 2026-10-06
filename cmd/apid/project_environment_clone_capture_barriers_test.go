@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -73,9 +74,13 @@ func cloneCaptureBarrierFixture(t *testing.T) (cloneCoordinatorFixture, *cloneCa
 		t.Fatal(err)
 	}
 	// A second owned bucket makes omissions and duplicate roster replies real.
+	backend, err := f.srv.objectStorage.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	id := uuid.NewString()
 	b, err := f.store.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: op.AccountID, AppID: f.apps[1].ID, Name: "second", Scope: "production",
-		Region: "us-east-1", BackendID: "storage", BackendFingerprint: strings.Repeat("a", 64), PhysicalName: "gregale-" + strings.ReplaceAll(id, "-", "")}, 10)
+		Region: "us-east-1", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "gregale-" + strings.ReplaceAll(id, "-", "")}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,6 +156,7 @@ func assertCloneCaptureHasNoPoint(t *testing.T, f cloneCoordinatorFixture) {
 
 func TestPGCloneCaptureBarriersRecoverAllSourcesAndOutstandingWriters(t *testing.T) {
 	f, store, provider, buckets := cloneCaptureBarrierFixture(t)
+	configureCloneGrantProvider(t, f.srv, &cloneGrantRevocationProvider{Provider: f.objects})
 	ctx := t.Context()
 	request, err := store.BeginObjectBucketMutation(ctx, buckets[0], state.ObjectBucketMutationRequest)
 	if err != nil {
@@ -235,6 +241,19 @@ func TestPGCloneCaptureBarriersRecoverAllSourcesAndOutstandingWriters(t *testing
 		t.Fatalf("retry replaced original source selection: %v", err)
 	}
 	assertCloneCaptureHasNoPoint(t, f)
+}
+
+func configureCloneGrantProvider(t *testing.T, srv *server, provider objectstorage.Provider) {
+	t.Helper()
+	config := objectstorage.BackendConfig{ID: "storage", Driver: "fixture", Region: "us-east-1", Namespace: "coordinator", Endpoint: "https://storage.example.test", S3Region: "us-east-1"}
+	registry, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: config.Region, Defaults: map[string]string{config.Region: config.ID}, Backends: []objectstorage.BackendConfig{config}},
+		func(string) string { return "" }, map[string]objectstorage.Factory{"fixture": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
+			return provider, nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.WithObjectStorage(registry)
 }
 
 func TestPGCloneCaptureBarriersZeroTrackedWritersDoNotSelectCheckpoint(t *testing.T) {
