@@ -45,7 +45,7 @@ func (f *copyCleanupFixture) serveCleanupHTTP(w http.ResponseWriter, r *http.Req
 			return
 		case "pagination":
 			if r.URL.Query().Get("cursor") == "" {
-				rows = []project{}
+				rows = []project{{ID: "project-unrelated", Name: "unrelated"}}
 				cursor = "next-page"
 			}
 		case "duplicate":

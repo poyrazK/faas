@@ -291,9 +291,6 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if metadata.operations.Pagination.Cursor != "" {
-		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
-	}
 	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
 	status := operationStatus(metadata.operations.Operations, resourcesReady)
 	observedComputeState := computeState(primaryEndpoint.CurrentState)
@@ -588,6 +585,7 @@ func (p *Provider) findBranch(ctx context.Context, projectID, name string) (bran
 func (p *Provider) findProject(ctx context.Context, name string) (string, error) {
 	cursor := ""
 	match := ""
+	seenCursors := map[string]bool{}
 	for page := 0; page < maximumProjectSearchPages; page++ {
 		query := url.Values{"limit": {"400"}, "search": {name}, "org_id": {p.organizationID}}
 		if cursor != "" {
@@ -596,6 +594,9 @@ func (p *Provider) findProject(ctx context.Context, name string) (string, error)
 		var response projectsResponse
 		if err := p.doJSON(ctx, http.MethodGet, "/projects", query, nil, &response, http.StatusOK); err != nil {
 			return "", err
+		}
+		if response.Projects == nil || len(response.UnavailableProjectIDs) > 0 {
+			return "", managedpostgres.ErrUnavailable
 		}
 		for _, candidate := range response.Projects {
 			if candidate.Name != name {
@@ -606,13 +607,14 @@ func (p *Provider) findProject(ctx context.Context, name string) (string, error)
 			}
 			match = candidate.ID
 		}
-		if response.Pagination.Cursor == "" {
+		if len(response.Projects) == 0 || response.Pagination.Cursor == "" {
 			return match, nil
 		}
-		if response.Pagination.Cursor == cursor {
+		if seenCursors[response.Pagination.Cursor] {
 			return "", managedpostgres.ErrUnavailable
 		}
 		cursor = response.Pagination.Cursor
+		seenCursors[cursor] = true
 	}
 	return "", managedpostgres.ErrUnavailable
 }
