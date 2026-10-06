@@ -1651,7 +1651,8 @@
       "release_id",
       "revision",
       "scope",
-      "spec"
+      "spec",
+      "workflow_snapshot"
     ],
     "kind": "configuration"
   },

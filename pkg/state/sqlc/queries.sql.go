@@ -7601,6 +7601,30 @@ func (q *Queries) CustomerOperationDefinitionNameExists(ctx context.Context, db 
 	return exists, err
 }
 
+const customerOperationDeploymentDefinition = `-- name: CustomerOperationDeploymentDefinition :one
+SELECT d.scope,d.workflows FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = $1::uuid AND a.id = $2::uuid
+AND a.account_id = $3::uuid AND a.status <> 'deleted'
+`
+
+type CustomerOperationDeploymentDefinitionParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+type CustomerOperationDeploymentDefinitionRow struct {
+	Scope     string
+	Workflows []byte
+}
+
+func (q *Queries) CustomerOperationDeploymentDefinition(ctx context.Context, db DBTX, arg CustomerOperationDeploymentDefinitionParams) (CustomerOperationDeploymentDefinitionRow, error) {
+	row := db.QueryRow(ctx, customerOperationDeploymentDefinition, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var i CustomerOperationDeploymentDefinitionRow
+	err := row.Scan(&i.Scope, &i.Workflows)
+	return i, err
+}
+
 const customerOperationDeploymentScope = `-- name: CustomerOperationDeploymentScope :one
 SELECT d.scope FROM deployments d JOIN apps a ON a.id = d.app_id
 WHERE d.id = $1::uuid AND a.id = $2::uuid
@@ -13688,7 +13712,7 @@ func (q *Queries) GetCustomerOperation(ctx context.Context, db DBTX, arg GetCust
 }
 
 const getCustomerOperationDefinition = `-- name: GetCustomerOperationDefinition :one
-SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,workflow_snapshot,created_at
 FROM customer_operation_definitions WHERE id=$1::uuid AND account_id=$2::uuid
 `
 
@@ -13698,16 +13722,17 @@ type GetCustomerOperationDefinitionParams struct {
 }
 
 type GetCustomerOperationDefinitionRow struct {
-	ID           string
-	AccountID    string
-	AppID        string
-	Scope        string
-	Name         string
-	Revision     string
-	DeploymentID string
-	ReleaseID    string
-	Spec         []byte
-	CreatedAt    pgtype.Timestamptz
+	ID               string
+	AccountID        string
+	AppID            string
+	Scope            string
+	Name             string
+	Revision         string
+	DeploymentID     string
+	ReleaseID        string
+	Spec             []byte
+	WorkflowSnapshot []byte
+	CreatedAt        pgtype.Timestamptz
 }
 
 func (q *Queries) GetCustomerOperationDefinition(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionParams) (GetCustomerOperationDefinitionRow, error) {
@@ -13723,13 +13748,14 @@ func (q *Queries) GetCustomerOperationDefinition(ctx context.Context, db DBTX, a
 		&i.DeploymentID,
 		&i.ReleaseID,
 		&i.Spec,
+		&i.WorkflowSnapshot,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getCustomerOperationDefinitionForDeployment = `-- name: GetCustomerOperationDefinitionForDeployment :one
-SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,workflow_snapshot,created_at
 FROM customer_operation_definitions WHERE app_id=$1::uuid AND account_id=$2::uuid
 AND deployment_id=$3::uuid AND name=$4::text
 `
@@ -13742,16 +13768,17 @@ type GetCustomerOperationDefinitionForDeploymentParams struct {
 }
 
 type GetCustomerOperationDefinitionForDeploymentRow struct {
-	ID           string
-	AccountID    string
-	AppID        string
-	Scope        string
-	Name         string
-	Revision     string
-	DeploymentID string
-	ReleaseID    string
-	Spec         []byte
-	CreatedAt    pgtype.Timestamptz
+	ID               string
+	AccountID        string
+	AppID            string
+	Scope            string
+	Name             string
+	Revision         string
+	DeploymentID     string
+	ReleaseID        string
+	Spec             []byte
+	WorkflowSnapshot []byte
+	CreatedAt        pgtype.Timestamptz
 }
 
 func (q *Queries) GetCustomerOperationDefinitionForDeployment(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionForDeploymentParams) (GetCustomerOperationDefinitionForDeploymentRow, error) {
@@ -13772,13 +13799,14 @@ func (q *Queries) GetCustomerOperationDefinitionForDeployment(ctx context.Contex
 		&i.DeploymentID,
 		&i.ReleaseID,
 		&i.Spec,
+		&i.WorkflowSnapshot,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getCustomerOperationDefinitionForRoute = `-- name: GetCustomerOperationDefinitionForRoute :one
-SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,workflow_snapshot,created_at
 FROM customer_operation_definitions WHERE account_id=$1::uuid AND app_id=$2::uuid
 AND deployment_id=$3::uuid AND spec->>'method'=$4::text AND spec->>'path'=$5::text
 `
@@ -13792,16 +13820,17 @@ type GetCustomerOperationDefinitionForRouteParams struct {
 }
 
 type GetCustomerOperationDefinitionForRouteRow struct {
-	ID           string
-	AccountID    string
-	AppID        string
-	Scope        string
-	Name         string
-	Revision     string
-	DeploymentID string
-	ReleaseID    string
-	Spec         []byte
-	CreatedAt    pgtype.Timestamptz
+	ID               string
+	AccountID        string
+	AppID            string
+	Scope            string
+	Name             string
+	Revision         string
+	DeploymentID     string
+	ReleaseID        string
+	Spec             []byte
+	WorkflowSnapshot []byte
+	CreatedAt        pgtype.Timestamptz
 }
 
 func (q *Queries) GetCustomerOperationDefinitionForRoute(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionForRouteParams) (GetCustomerOperationDefinitionForRouteRow, error) {
@@ -13823,6 +13852,7 @@ func (q *Queries) GetCustomerOperationDefinitionForRoute(ctx context.Context, db
 		&i.DeploymentID,
 		&i.ReleaseID,
 		&i.Spec,
+		&i.WorkflowSnapshot,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -15997,35 +16027,37 @@ func (q *Queries) InsertCustomerOperationCompletionDelivery(ctx context.Context,
 }
 
 const insertCustomerOperationDefinition = `-- name: InsertCustomerOperationDefinition :one
-INSERT INTO customer_operation_definitions(id, account_id, app_id, scope, name, revision, deployment_id, release_id, spec)
+INSERT INTO customer_operation_definitions(id, account_id, app_id, scope, name, revision, deployment_id, release_id, spec, workflow_snapshot)
 VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,
-       $5::text,$6::text,$7::uuid,$8::text,$9::jsonb)
-RETURNING id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+       $5::text,$6::text,$7::uuid,$8::text,$9::jsonb,$10::jsonb)
+RETURNING id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,workflow_snapshot,created_at
 `
 
 type InsertCustomerOperationDefinitionParams struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	Scope        string
-	Name         string
-	Revision     string
-	DeploymentID pgtype.UUID
-	ReleaseID    string
-	Spec         []byte
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Name             string
+	Revision         string
+	DeploymentID     pgtype.UUID
+	ReleaseID        string
+	Spec             []byte
+	WorkflowSnapshot []byte
 }
 
 type InsertCustomerOperationDefinitionRow struct {
-	ID           string
-	AccountID    string
-	AppID        string
-	Scope        string
-	Name         string
-	Revision     string
-	DeploymentID string
-	ReleaseID    string
-	Spec         []byte
-	CreatedAt    pgtype.Timestamptz
+	ID               string
+	AccountID        string
+	AppID            string
+	Scope            string
+	Name             string
+	Revision         string
+	DeploymentID     string
+	ReleaseID        string
+	Spec             []byte
+	WorkflowSnapshot []byte
+	CreatedAt        pgtype.Timestamptz
 }
 
 func (q *Queries) InsertCustomerOperationDefinition(ctx context.Context, db DBTX, arg InsertCustomerOperationDefinitionParams) (InsertCustomerOperationDefinitionRow, error) {
@@ -16039,6 +16071,7 @@ func (q *Queries) InsertCustomerOperationDefinition(ctx context.Context, db DBTX
 		arg.DeploymentID,
 		arg.ReleaseID,
 		arg.Spec,
+		arg.WorkflowSnapshot,
 	)
 	var i InsertCustomerOperationDefinitionRow
 	err := row.Scan(
@@ -16051,6 +16084,7 @@ func (q *Queries) InsertCustomerOperationDefinition(ctx context.Context, db DBTX
 		&i.DeploymentID,
 		&i.ReleaseID,
 		&i.Spec,
+		&i.WorkflowSnapshot,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -23195,7 +23229,7 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 }
 
 const listCustomerOperationDefinitionsForDeployment = `-- name: ListCustomerOperationDefinitionsForDeployment :many
-SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,workflow_snapshot,created_at
 FROM customer_operation_definitions WHERE account_id=$1::uuid AND app_id=$2::uuid
 AND deployment_id=$3::uuid ORDER BY name
 `
@@ -23207,16 +23241,17 @@ type ListCustomerOperationDefinitionsForDeploymentParams struct {
 }
 
 type ListCustomerOperationDefinitionsForDeploymentRow struct {
-	ID           string
-	AccountID    string
-	AppID        string
-	Scope        string
-	Name         string
-	Revision     string
-	DeploymentID string
-	ReleaseID    string
-	Spec         []byte
-	CreatedAt    pgtype.Timestamptz
+	ID               string
+	AccountID        string
+	AppID            string
+	Scope            string
+	Name             string
+	Revision         string
+	DeploymentID     string
+	ReleaseID        string
+	Spec             []byte
+	WorkflowSnapshot []byte
+	CreatedAt        pgtype.Timestamptz
 }
 
 func (q *Queries) ListCustomerOperationDefinitionsForDeployment(ctx context.Context, db DBTX, arg ListCustomerOperationDefinitionsForDeploymentParams) ([]ListCustomerOperationDefinitionsForDeploymentRow, error) {
@@ -23238,6 +23273,7 @@ func (q *Queries) ListCustomerOperationDefinitionsForDeployment(ctx context.Cont
 			&i.DeploymentID,
 			&i.ReleaseID,
 			&i.Spec,
+			&i.WorkflowSnapshot,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
