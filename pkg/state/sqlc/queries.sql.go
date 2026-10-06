@@ -31708,7 +31708,7 @@ func (q *Queries) LockWorkflowRunAdmission(ctx context.Context, db DBTX, appKey 
 }
 
 const lockWorkflowRunForManualRetry = `-- name: LockWorkflowRunForManualRetry :one
-SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, create_idempotency_key, create_request_fingerprint, lease_until, resume_count, cancelled_at, platform_tenant_id FROM workflow_runs
+SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint FROM workflow_runs
 WHERE id=$1::text::uuid
 FOR UPDATE
 `
@@ -31731,12 +31731,12 @@ func (q *Queries) LockWorkflowRunForManualRetry(ctx context.Context, db DBTX, ru
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.CreateIdempotencyKey,
-		&i.CreateRequestFingerprint,
 		&i.LeaseUntil,
 		&i.ResumeCount,
 		&i.CancelledAt,
 		&i.PlatformTenantID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestFingerprint,
 	)
 	return i, err
 }
@@ -52441,7 +52441,7 @@ SET status='pending',current_step=$1::text,
     lease_until=NULL,updated_at=clock_timestamp()
 WHERE id=$2::text::uuid
   AND status IN ('failed','dead')
-RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, create_idempotency_key, create_request_fingerprint, lease_until, resume_count, cancelled_at, platform_tenant_id
+RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint
 `
 
 type RequeueWorkflowRunForRetryParams struct {
@@ -52467,12 +52467,12 @@ func (q *Queries) RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg R
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.CreateIdempotencyKey,
-		&i.CreateRequestFingerprint,
 		&i.LeaseUntil,
 		&i.ResumeCount,
 		&i.CancelledAt,
 		&i.PlatformTenantID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestFingerprint,
 	)
 	return i, err
 }

@@ -6605,12 +6605,12 @@ type WorkflowRun struct {
 	LastError                pgtype.Text
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
-	CreateIdempotencyKey     pgtype.Text
-	CreateRequestFingerprint []byte
 	LeaseUntil               pgtype.Timestamptz
 	ResumeCount              int32
 	CancelledAt              pgtype.Timestamptz
 	PlatformTenantID         pgtype.UUID
+	CreateIdempotencyKey     pgtype.Text
+	CreateRequestFingerprint []byte
 }
 
 type WorkflowRunResume struct {
