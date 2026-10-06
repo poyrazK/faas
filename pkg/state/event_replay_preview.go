@@ -68,8 +68,8 @@ func validateEventReplayPreviewQuery(accountID string, q *EventReplayPreviewQuer
 	}
 	q.AppID, q.SubscriptionID = canonicalMemUUID(q.AppID), canonicalMemUUID(q.SubscriptionID)
 	q.From, q.Until = q.From.UTC(), q.Until.UTC()
-	if err := q.EventReplayPreviewOptions.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrEventReplayPreviewQuery, err)
+	if err := q.Validate(); err != nil {
+		return fmt.Errorf("%w: %w", ErrEventReplayPreviewQuery, err)
 	}
 	if q.Limit == 0 {
 		q.Limit = api.EventReplayPreviewPageDefault
