@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -132,13 +133,8 @@ func (s *PgStore) applyRegionalRuntimeQuota(ctx context.Context, m regionalRunti
 		return RegionalRuntimeQuotaReceipt{}, err
 	}
 	if fresh && m.retirement == nil {
-		if _, err = q.LockRegionalRuntimeQuotaApp(ctx, tx, sqlc.LockRegionalRuntimeQuotaAppParams{AppID: uuidToPgtype(b.RegionalAppID), AccountID: uuidToPgtype(b.RegionalAccountID), OrgID: uuidToPgtype(b.RegionalOrgID), Slug: b.RegionalAppSlug}); err != nil {
+		if err = lockCurrentRegionalQuotaApp(ctx, tx, q, b); err != nil {
 			return RegionalRuntimeQuotaReceipt{}, regionalQuotaError(err)
-		}
-		if b.RegionalOrgID != "" {
-			if _, err = q.LockRegionalRuntimeQuotaTenant(ctx, tx, uuidToPgtype(b.RegionalOrgID)); err != nil {
-				return RegionalRuntimeQuotaReceipt{}, regionalQuotaError(err)
-			}
 		}
 	}
 	if fresh || (old.Retirement == nil && receipt.Retirement != nil) {
@@ -161,4 +157,15 @@ func (s *PgStore) applyRegionalRuntimeQuota(ctx context.Context, m regionalRunti
 		}
 	}
 	return receipt, regionalQuotaError(tx.Commit(ctx))
+}
+
+// The signed personal proof omits org scope. Lock the actual tenant rather than
+// inferring a new wire identity, and recheck it after concurrent tenant changes.
+func lockCurrentRegionalQuotaApp(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, b runtimequota.Binding) error {
+	app, err := q.LockRegionalRuntimeQuotaApp(ctx, tx, sqlc.LockRegionalRuntimeQuotaAppParams{AppID: uuidToPgtype(b.RegionalAppID), AccountID: uuidToPgtype(b.RegionalAccountID), OrgID: uuidToPgtype(b.RegionalOrgID), Slug: b.RegionalAppSlug})
+	if err != nil || !app.OrgID.Valid {
+		return err
+	}
+	_, err = q.LockRegionalRuntimeQuotaTenant(ctx, tx, sqlc.LockRegionalRuntimeQuotaTenantParams{OrgID: app.OrgID, AccountID: uuidToPgtype(b.RegionalAccountID), PersonalOnly: b.RegionalOrgID == ""})
+	return err
 }

@@ -69,6 +69,74 @@ func (f regionalQuotaFixture) retirement(t *testing.T, grant runtimequota.Grant)
 func runRegionalRuntimeQuotaContract(t *testing.T, s Store, quota RegionalRuntimeQuotaStore, account Account, cell string) {
 	t.Helper()
 	fixture := func(t *testing.T) regionalQuotaFixture { return newRegionalQuotaFixture(t, s, quota, account, cell) }
+	t.Run("personal-proof-omits-org", func(t *testing.T) {
+		for _, kind := range []string{"active", "suspended", "foreign-personal-owner", "shared"} {
+			t.Run(kind, func(t *testing.T) {
+				owner, err := s.CreateAccountWithPersonalOrg(t.Context(), CreateAccountWithPersonalOrgParams{Email: uuid.NewString() + "@quota.example", Plan: api.PlanPro})
+				if err != nil {
+					t.Fatal(err)
+				}
+				f := newRegionalQuotaFixture(t, s, quota, owner.Account, cell)
+				app, err := s.AppByID(t.Context(), f.grant.Binding.RegionalAppID)
+				if err != nil || app.OrgID != owner.PersonalOrg.ID {
+					t.Fatal("personal fixture has no original tenant", err)
+				}
+				switch kind {
+				case "suspended":
+					if err := s.UpdateOrgStatus(t.Context(), app.OrgID, OrgStatusSuspended); err != nil {
+						t.Fatal(err)
+					}
+				case "foreign-personal-owner":
+					app, err = s.CreateApp(t.Context(), App{ID: uuid.NewString(), AccountID: account.ID, OrgID: owner.PersonalOrg.ID,
+						Slug: "foreign-quota-" + uuid.NewString()[:8], Type: AppTypeApp, Status: AppActive, Runtime: "node22", RAMMB: 128, MaxConcurrency: 1, IdleTimeoutS: 60})
+					if err != nil {
+						t.Fatal(err)
+					}
+				case "shared":
+					app, _, _ = quotaSharedApp(t, s, owner.Account, cell)
+				}
+				f.grant.Binding.RegionalAccountID = regionalQuotaCanonicalID(app.AccountID)
+				f.grant.Binding.RegionalAppID, f.grant.Binding.RegionalAppSlug = app.ID, app.Slug
+				f.grant.Binding.RegionalOrgID = ""
+				f.authority.Binding = f.grant.Binding
+				envelope := f.grantEnvelope(t, f.grant)
+				receipt, err := f.authority.AcceptGrant(t.Context(), envelope)
+				if kind == "active" {
+					if err != nil || receipt.Grant != f.grant || receipt.GrantEnvelope == nil || *receipt.GrantEnvelope != envelope {
+						t.Fatalf("personal proof changed or refused: %+v %v", receipt, err)
+					}
+					capacity := regionalCapacityFixture{quota: f, ledger: s.(RegionalRuntimeCapacityLedger)}
+					permit := capacity.permit(runtimequota.CapacityServing)
+					capacity.reserve(t, permit)
+					capacity.issue(t, permit)
+					seat := capacity.seat(t, permit, false)
+					capacity.issueSeat(t, seat)
+					waiting := capacity.permit(runtimequota.CapacityServing)
+					capacity.reserve(t, waiting)
+					if err := s.UpdateOrgStatus(t.Context(), app.OrgID, OrgStatusSuspended); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := capacity.ledger.IssueRegionalRuntimeCapacity(t.Context(), app.ID, waiting.ID); !errors.Is(err, ErrNotFound) {
+						t.Fatalf("personal capacity ignored tenant suspension: %v", err)
+					}
+					if _, err := capacity.ledger.ReserveRegionalRuntimeServingSeat(t.Context(), runtimequota.ServingSeat{Permit: waiting, ID: uuid.NewString()}); !errors.Is(err, ErrNotFound) {
+						t.Fatalf("personal seat ignored tenant suspension: %v", err)
+					}
+					stored, err := capacity.ledger.RegionalRuntimeCapacity(t.Context(), app.ID, waiting.ID)
+					if err != nil || stored.IssuedAt != nil {
+						t.Fatal("suspended tenant issued physical capacity", err)
+					}
+					return
+				}
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("invalid personal scope accepted: %v", err)
+				}
+				if _, err := quota.RegionalRuntimeQuotaHead(t.Context(), app.ID); !errors.Is(err, ErrNotFound) {
+					t.Fatalf("invalid personal scope wrote head: %v", err)
+				}
+			})
+		}
+	})
 	t.Run("lost-response-and-copied-snapshots", func(t *testing.T) {
 		f := fixture(t)
 		envelope := f.grantEnvelope(t, f.grant)

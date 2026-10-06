@@ -9454,11 +9454,15 @@ WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(all
 SELECT pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:' || sqlc.arg(app_id)::uuid::text, 0));
 
 -- name: LockRegionalRuntimeQuotaApp :one
-SELECT a.id FROM apps a
+-- ADR-644: blank wire org scope means the creator's personal tenant, including
+-- legacy null-org apps. Return the actual tenant so it is locked and rechecked.
+SELECT a.id, a.org_id FROM apps a
 WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid
-  AND a.org_id IS NOT DISTINCT FROM sqlc.narg(org_id)::uuid
   AND a.slug = sqlc.arg(slug)::text AND a.status IN ('active', 'evicted_cold')
-  AND (a.org_id IS NULL OR EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.status = 'active' AND NOT o.deleted_pending))
+  AND ((a.org_id IS NULL AND sqlc.narg(org_id)::uuid IS NULL) OR EXISTS (
+    SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.status = 'active' AND NOT o.deleted_pending
+    AND (o.id = sqlc.narg(org_id)::uuid OR (sqlc.narg(org_id)::uuid IS NULL
+      AND o.personal_org AND o.personal_owner_account_id = a.account_id))))
 FOR UPDATE OF a;
 
 -- name: RegionalRuntimeQuotaReceipt :one
@@ -9482,7 +9486,9 @@ WHERE app_id = sqlc.arg(app_id)::uuid AND allocation_id = sqlc.arg(allocation_id
 RETURNING *;
 
 -- name: LockRegionalRuntimeQuotaTenant :one
-SELECT id FROM orgs WHERE id = sqlc.arg(org_id)::uuid AND status = 'active' AND NOT deleted_pending FOR SHARE;
+SELECT id FROM orgs WHERE id = sqlc.arg(org_id)::uuid AND status = 'active' AND NOT deleted_pending
+AND (NOT sqlc.arg(personal_only)::boolean OR (personal_org AND personal_owner_account_id = sqlc.arg(account_id)::uuid))
+FOR SHARE;
 
 -- ADR-617: frozen quota streams remain queued; independent tasks can still
 -- claim in the same sweep. The row trigger rechecks after the journal lock.
@@ -11208,3 +11214,10 @@ WHERE c.issued_at IS NOT NULL AND c.released_at IS NULL
   AND (sqlc.arg(cell_id)::text='' OR c.permit_claims->'Grant'->'Binding'->>'CellID'=sqlc.arg(cell_id)::text)
   AND (sqlc.arg(first_page)::boolean OR (c.app_id,c.permit_id)>(sqlc.arg(after_app)::uuid,sqlc.arg(after_permit)::uuid))
 ORDER BY c.app_id,c.permit_id LIMIT sqlc.arg(batch_limit)::int;
+
+-- ADR-644: durable directory issuer, independent of regional cell identity.
+-- name: InsertGlobalRuntimeQuotaIssuer :exec
+INSERT INTO global_runtime_quota_issuer(issuer_id) VALUES ($1::uuid) ON CONFLICT DO NOTHING;
+
+-- name: ReadGlobalRuntimeQuotaIssuer :one
+SELECT issuer_id::text FROM global_runtime_quota_issuer WHERE singleton;

@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/migrations"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 )
 
 func regionalQuotaMigration(t *testing.T) (string, string) {
@@ -133,15 +136,20 @@ func TestPGRegionalRuntimeQuotaRollback(t *testing.T) {
 	}
 }
 
-func TestPGRegionalRuntimeQuotaEmptyMigrationRoundTrip(t *testing.T) {
+func TestPGRegionalRuntimeQuotaRetainedDependenciesPreventDowngrade(t *testing.T) {
 	_, pool, _, _ := releasePGFixture(t)
-	up, down := regionalQuotaMigration(t)
-	capacityUp, capacityDown := regionalCapacityMigration(t)
-	resumeUp, resumeDown := regionalServingResumeMigration(t)
-	for _, sql := range []string{resumeDown, capacityDown, down, up, capacityUp, resumeUp} {
-		if _, err := pool.Exec(t.Context(), sql); err != nil {
-			t.Fatalf("empty quota migration round trip: %v", err)
-		}
+	_, down := regionalQuotaMigration(t)
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	// ADR-633 retains launch sources on rollback. Their capacity/quota foreign
+	// keys must survive too, even when the receipt tables are currently empty.
+	_, err = tx.Exec(t.Context(), down)
+	var dependency *pgconn.PgError
+	if !errors.As(err, &dependency) || dependency.Code != "2BP01" || !strings.Contains(dependency.Detail, "regional_runtime_capacity_receipts") {
+		t.Fatalf("retained capacity dependency allowed quota downgrade: %v", err)
 	}
 }
 
@@ -185,11 +193,74 @@ func TestPGRegionalRuntimeQuotaOwnerLockWait(t *testing.T) {
 }
 
 func TestPGRegionalRuntimeQuotaTenantLockWait(t *testing.T) {
+	runPGRegionalRuntimeQuotaTenantLockWait(t, false)
+}
+
+func TestPGRegionalRuntimeQuotaPersonalTenantLockWait(t *testing.T) {
+	runPGRegionalRuntimeQuotaTenantLockWait(t, true)
+}
+
+func TestPGRegionalRuntimeQuotaPersonalGuardRollback(t *testing.T) {
+	s, _, cell, _ := releasePGFixture(t)
+	owner, err := s.CreateAccountWithPersonalOrg(t.Context(), CreateAccountWithPersonalOrgParams{Email: uuid.NewString() + "@quota.example", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newRegionalQuotaFixture(t, s, s, owner.Account, cell)
+	f.grant.Binding.RegionalOrgID = ""
+	f.authority.Binding = f.grant.Binding
+	if _, err := f.authority.AcceptGrant(t.Context(), f.grantEnvelope(t, f.grant)); err != nil {
+		t.Fatal(err)
+	}
+	capacity := regionalCapacityFixture{quota: f, ledger: s}
+	capacity.reserve(t, capacity.permit(runtimequota.CapacityServing))
+	m, err := migrations.FS.ReadFile("20261006152814585_regional_runtime_personal_binding_guards.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, down, ok := strings.Cut(string(m), "-- +goose Down")
+	if !ok {
+		t.Fatal("missing personal binding rollback")
+	}
+	for _, sql := range []string{down, up} {
+		if _, err := s.pool.Exec(t.Context(), sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	permit := capacity.permit(runtimequota.CapacityServing)
+	capacity.reserve(t, permit)
+	capacity.issue(t, permit)
+	seat := capacity.seat(t, permit, false)
+	capacity.issueSeat(t, seat)
+	head, err := s.RegionalRuntimeQuotaHead(t.Context(), capacity.app())
+	if err != nil || head.AdmissionEnabled {
+		t.Fatal("rollback activated personal quota", err)
+	}
+}
+
+func runPGRegionalRuntimeQuotaTenantLockWait(t *testing.T, personal bool) {
+	t.Helper()
 	s, pool, cell, account := releasePGFixture(t)
-	app, org, _ := quotaSharedApp(t, s, account, cell)
 	f := newRegionalQuotaFixture(t, s, s, account, cell)
-	f.grant.Binding.RegionalOrgID = org.ID
-	f.grant.Binding.RegionalAppID, f.grant.Binding.RegionalAppSlug = app.ID, app.Slug
+	var app App
+	var org Org
+	if personal {
+		owner, err := s.CreateAccountWithPersonalOrg(t.Context(), CreateAccountWithPersonalOrgParams{Email: uuid.NewString() + "@quota.example", Plan: api.PlanPro})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f = newRegionalQuotaFixture(t, s, s, owner.Account, cell)
+		app, err = s.AppByID(t.Context(), f.grant.Binding.RegionalAppID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		org = owner.PersonalOrg
+		f.grant.Binding.RegionalOrgID = ""
+	} else {
+		app, org, _ = quotaSharedApp(t, s, account, cell)
+		f.grant.Binding.RegionalOrgID = org.ID
+		f.grant.Binding.RegionalAppID, f.grant.Binding.RegionalAppSlug = app.ID, app.Slug
+	}
 	f.authority.Binding = f.grant.Binding
 	tx, err := pool.Begin(t.Context())
 	if err != nil {

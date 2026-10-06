@@ -13,9 +13,10 @@ import (
 // bookkeeping commits before a signed grant can leave this component. Trusted
 // cell receipt keys are supplied by operator configuration, never customers.
 type RuntimeQuotaAuthority struct {
-	Store  RuntimeQuotaStore
-	Signer runtimequota.Signer
-	Cells  runtimequota.Trust
+	Store       RuntimeQuotaStore
+	Signer      runtimequota.Signer
+	Cells       runtimequota.Trust
+	Directories runtimequota.Trust
 }
 
 func quotaWireGrant(issuer string, a RuntimeQuotaAllocation, t RuntimeQuotaTarget) (runtimequota.Grant, error) {

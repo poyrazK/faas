@@ -13291,6 +13291,16 @@ func (q *Queries) InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const insertGlobalRuntimeQuotaIssuer = `-- name: InsertGlobalRuntimeQuotaIssuer :exec
+INSERT INTO global_runtime_quota_issuer(issuer_id) VALUES ($1::uuid) ON CONFLICT DO NOTHING
+`
+
+// ADR-644: durable directory issuer, independent of regional cell identity.
+func (q *Queries) InsertGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) error {
+	_, err := db.Exec(ctx, insertGlobalRuntimeQuotaIssuer, dollar_1)
+	return err
+}
+
 const insertInvoiceHistorySnapshot = `-- name: InsertInvoiceHistorySnapshot :one
 INSERT INTO invoices (
   account_id, provider, provider_invoice_id, provider_charge_id, number, status,
@@ -24255,31 +24265,40 @@ func (q *Queries) LockRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg L
 }
 
 const lockRegionalRuntimeQuotaApp = `-- name: LockRegionalRuntimeQuotaApp :one
-SELECT a.id FROM apps a
+SELECT a.id, a.org_id FROM apps a
 WHERE a.id = $1::uuid AND a.account_id = $2::uuid
-  AND a.org_id IS NOT DISTINCT FROM $3::uuid
-  AND a.slug = $4::text AND a.status IN ('active', 'evicted_cold')
-  AND (a.org_id IS NULL OR EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.status = 'active' AND NOT o.deleted_pending))
+  AND a.slug = $3::text AND a.status IN ('active', 'evicted_cold')
+  AND ((a.org_id IS NULL AND $4::uuid IS NULL) OR EXISTS (
+    SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.status = 'active' AND NOT o.deleted_pending
+    AND (o.id = $4::uuid OR ($4::uuid IS NULL
+      AND o.personal_org AND o.personal_owner_account_id = a.account_id))))
 FOR UPDATE OF a
 `
 
 type LockRegionalRuntimeQuotaAppParams struct {
 	AppID     pgtype.UUID
 	AccountID pgtype.UUID
-	OrgID     pgtype.UUID
 	Slug      string
+	OrgID     pgtype.UUID
 }
 
-func (q *Queries) LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (pgtype.UUID, error) {
+type LockRegionalRuntimeQuotaAppRow struct {
+	ID    pgtype.UUID
+	OrgID pgtype.UUID
+}
+
+// ADR-644: blank wire org scope means the creator's personal tenant, including
+// legacy null-org apps. Return the actual tenant so it is locked and rechecked.
+func (q *Queries) LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (LockRegionalRuntimeQuotaAppRow, error) {
 	row := db.QueryRow(ctx, lockRegionalRuntimeQuotaApp,
 		arg.AppID,
 		arg.AccountID,
-		arg.OrgID,
 		arg.Slug,
+		arg.OrgID,
 	)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
+	var i LockRegionalRuntimeQuotaAppRow
+	err := row.Scan(&i.ID, &i.OrgID)
+	return i, err
 }
 
 const lockRegionalRuntimeQuotaJournal = `-- name: LockRegionalRuntimeQuotaJournal :exec
@@ -24293,11 +24312,19 @@ func (q *Queries) LockRegionalRuntimeQuotaJournal(ctx context.Context, db DBTX, 
 }
 
 const lockRegionalRuntimeQuotaTenant = `-- name: LockRegionalRuntimeQuotaTenant :one
-SELECT id FROM orgs WHERE id = $1::uuid AND status = 'active' AND NOT deleted_pending FOR SHARE
+SELECT id FROM orgs WHERE id = $1::uuid AND status = 'active' AND NOT deleted_pending
+AND (NOT $2::boolean OR (personal_org AND personal_owner_account_id = $3::uuid))
+FOR SHARE
 `
 
-func (q *Queries) LockRegionalRuntimeQuotaTenant(ctx context.Context, db DBTX, orgID pgtype.UUID) (pgtype.UUID, error) {
-	row := db.QueryRow(ctx, lockRegionalRuntimeQuotaTenant, orgID)
+type LockRegionalRuntimeQuotaTenantParams struct {
+	OrgID        pgtype.UUID
+	PersonalOnly bool
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) LockRegionalRuntimeQuotaTenant(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaTenantParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRegionalRuntimeQuotaTenant, arg.OrgID, arg.PersonalOnly, arg.AccountID)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -35957,6 +35984,17 @@ func (q *Queries) ReadGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX,
 		&i.RetiredAt,
 	)
 	return i, err
+}
+
+const readGlobalRuntimeQuotaIssuer = `-- name: ReadGlobalRuntimeQuotaIssuer :one
+SELECT issuer_id::text FROM global_runtime_quota_issuer WHERE singleton
+`
+
+func (q *Queries) ReadGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX) (string, error) {
+	row := db.QueryRow(ctx, readGlobalRuntimeQuotaIssuer)
+	var issuer_id string
+	err := row.Scan(&issuer_id)
+	return issuer_id, err
 }
 
 const readGlobalRuntimeQuotaPolicy = `-- name: ReadGlobalRuntimeQuotaPolicy :one

@@ -68,14 +68,18 @@ func (s *MemStore) applyRegionalRuntimeQuota(_ context.Context, m regionalRuntim
 
 func (s *MemStore) currentRegionalQuotaApp(b runtimequota.Binding) bool {
 	app, ok := s.apps[b.RegionalAppID]
-	if !ok || regionalQuotaCanonicalID(app.AccountID) != b.RegionalAccountID || regionalQuotaCanonicalID(app.OrgID) != b.RegionalOrgID || app.Slug != b.RegionalAppSlug || (app.Status != AppActive && app.Status != AppEvictedCold) {
+	if !ok || regionalQuotaCanonicalID(app.AccountID) != b.RegionalAccountID || app.Slug != b.RegionalAppSlug || (app.Status != AppActive && app.Status != AppEvictedCold) {
 		return false
 	}
-	if b.RegionalOrgID == "" {
-		return true
+	if app.OrgID == "" {
+		return b.RegionalOrgID == ""
+	}
+	if b.RegionalOrgID != "" && regionalQuotaCanonicalID(app.OrgID) != b.RegionalOrgID {
+		return false
 	}
 	org, ok := s.orgs[app.OrgID]
-	return ok && org.Status == OrgStatusActive && !org.DeletedPending
+	return ok && org.Status == OrgStatusActive && !org.DeletedPending &&
+		(b.RegionalOrgID != "" || (org.Personal && org.PersonalOwnerAccountID != nil && regionalQuotaCanonicalID(*org.PersonalOwnerAccountID) == b.RegionalAccountID))
 }
 
 func regionalQuotaCanonicalID(id string) string {

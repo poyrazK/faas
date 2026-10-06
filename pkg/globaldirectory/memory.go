@@ -13,19 +13,20 @@ import (
 // MemoryStore is the same contract as PostgreSQL, with one critical section
 // covering registry generation, account mapping and target uniqueness.
 type MemoryStore struct {
-	mu                sync.Mutex
-	owners            map[string]Owner
-	orgAuthority      OrgAuthority
-	cells             map[string]Cell
-	apps              map[string]App
-	accountBindings   map[string]string
-	targets           map[string]map[string]Target
-	releases          map[string]map[string]Release
-	releaseHeads      map[string]int64
-	delegations       map[string]Delegation
-	recovery          map[string]memoryRecovery
-	runtimeQuotas     map[string]map[string]RuntimeQuotaAllocation
-	runtimeQuotaHeads map[string]int64
+	mu                 sync.Mutex
+	owners             map[string]Owner
+	orgAuthority       OrgAuthority
+	cells              map[string]Cell
+	apps               map[string]App
+	accountBindings    map[string]string
+	targets            map[string]map[string]Target
+	releases           map[string]map[string]Release
+	releaseHeads       map[string]int64
+	delegations        map[string]Delegation
+	recovery           map[string]memoryRecovery
+	runtimeQuotas      map[string]map[string]RuntimeQuotaAllocation
+	runtimeQuotaHeads  map[string]int64
+	runtimeQuotaIssuer string
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -40,6 +41,9 @@ func (s *MemoryStore) PutCell(_ context.Context, c Cell) (Cell, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if c.ID == s.runtimeQuotaIssuer {
+		return Cell{}, ErrConflict
+	}
 	for _, old := range s.cells {
 		if old.ID == c.ID && old.Region != c.Region || old.Region == c.Region && old.ID != c.ID {
 			return Cell{}, ErrConflict

@@ -1419,6 +1419,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureGlobalDirectory(ctx, cfg.GlobalAppDirectoryEnabled, deps.pool); err != nil {
 		return err
 	}
+	if err := srv.configureRuntimeQuotaTransport(ctx, cfg.RuntimeQuotaTransport, deps.pool); err != nil {
+		return err
+	}
 	if cfg.OutboundProbeGatewayURL != "" && !api.ValidOutboundProbeGateway(cfg.OutboundProbeGatewayURL) {
 		return fmt.Errorf("apid: outbound_probe_gateway_url must be an HTTPS origin")
 	}

@@ -8677,3 +8677,7 @@ const (
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
+
+// RegionalRuntimeQuotaDeliveryMaxBytes bounds a binding and up to two signed
+// envelopes (grant and retirement) in the quota delivery transport (ADR-644).
+const RegionalRuntimeQuotaDeliveryMaxBytes = 2*RegionalRuntimeQuotaEnvelopeMaxBytes + GlobalDirectoryProofMaxBytes

@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
@@ -58,6 +59,9 @@ type server struct {
 	featureFlagsEnabled    bool
 	regionalComputeEnabled bool
 	globalDirectory        globaldirectory.Store
+	globalQuotaAuthority   *globaldirectory.RuntimeQuotaAuthority
+	regionalQuotaTrust     runtimequota.Trust
+	regionalQuotaAPIBase   string
 	globalVerifier         globaldirectory.Verifier
 	globalDelegationKeys   globaldirectory.DelegationKeys
 	controlPlaneCell       db.CellIdentity

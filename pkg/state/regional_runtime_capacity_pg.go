@@ -109,14 +109,7 @@ func checkCurrentRegionalCapacity(ctx context.Context, tx pgx.Tx, q *sqlc.Querie
 	if err = reserveRegionalCapacityCheck(p, receipt, head); err != nil {
 		return err
 	}
-	b := p.Grant.Binding
-	if _, err = q.LockRegionalRuntimeQuotaApp(ctx, tx, sqlc.LockRegionalRuntimeQuotaAppParams{AppID: uuidToPgtype(b.RegionalAppID), AccountID: uuidToPgtype(b.RegionalAccountID), OrgID: uuidToPgtype(b.RegionalOrgID), Slug: b.RegionalAppSlug}); err != nil {
-		return regionalCapacityError(err)
-	}
-	if b.RegionalOrgID != "" {
-		_, err = q.LockRegionalRuntimeQuotaTenant(ctx, tx, uuidToPgtype(b.RegionalOrgID))
-	}
-	return regionalCapacityError(err)
+	return regionalCapacityError(lockCurrentRegionalQuotaApp(ctx, tx, q, p.Grant.Binding))
 }
 
 func regionalCapacityRow(row sqlc.RegionalRuntimeCapacityReceipt) (RegionalRuntimeCapacityReceipt, error) {

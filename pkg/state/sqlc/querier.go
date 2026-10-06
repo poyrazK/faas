@@ -752,6 +752,8 @@ type Querier interface {
 	// ADR-608: immutable sealed authority and restart-safe recovery claims.
 	InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error)
 	InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg InsertGlobalOwnerCellBindingParams) error
+	// ADR-644: durable directory issuer, independent of regional cell identity.
+	InsertGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
 	InsertManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverCredentialParams) (int64, error)
@@ -1337,10 +1339,12 @@ type Querier interface {
 	// ADR-633: immutable original launch identity, independent of current rows.
 	// ADR-634: a terminal row does not release physical capacity or host ports.
 	LockRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg LockRegionalRuntimeAttemptParams) (bool, error)
-	LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (pgtype.UUID, error)
+	// ADR-644: blank wire org scope means the creator's personal tenant, including
+	// legacy null-org apps. Return the actual tenant so it is locked and rechecked.
+	LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (LockRegionalRuntimeQuotaAppRow, error)
 	// ADR-614: operator-authenticated regional quota receipt journal.
 	LockRegionalRuntimeQuotaJournal(ctx context.Context, db DBTX, appID pgtype.UUID) error
-	LockRegionalRuntimeQuotaTenant(ctx context.Context, db DBTX, orgID pgtype.UUID) (pgtype.UUID, error)
+	LockRegionalRuntimeQuotaTenant(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaTenantParams) (pgtype.UUID, error)
 	LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error)
 	// Parent locks serialize configuration edits while remaining compatible with
 	// the FK key-share locks taken by captures, rules and webhook event inserts.
@@ -1797,6 +1801,7 @@ type Querier interface {
 	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
 	ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (ReadGlobalOwnerCellBindingRow, error)
 	ReadGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaAllocationParams) (ReadGlobalRuntimeQuotaAllocationRow, error)
+	ReadGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX) (string, error)
 	ReadGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaPolicyParams) (ReadGlobalRuntimeQuotaPolicyRow, error)
 	ReadManagedPostgresHealthSnapshots(ctx context.Context, db DBTX, arg ReadManagedPostgresHealthSnapshotsParams) ([]ReadManagedPostgresHealthSnapshotsRow, error)
 	// A single statement reads the pointer and its complete membership together.

@@ -5326,6 +5326,25 @@ END $$;
 
 
 --
+-- Name: guard_global_runtime_quota_issuer_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_global_runtime_quota_issuer_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_TABLE_NAME='global_directory_cells' THEN
+        PERFORM assert_global_directory_scope();
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('gregale.global-runtime-quota-issuer', 0));
+    IF EXISTS (SELECT 1 FROM global_runtime_quota_issuer WHERE TG_TABLE_NAME='control_plane_cells' OR issuer_id=NEW.id) THEN
+        RAISE EXCEPTION 'retained directory issuer conflicts with regional cell identity' USING ERRCODE='23514', CONSTRAINT='global_runtime_quota_identity';
+    END IF;
+    RETURN NEW;
+END; $$;
+
+
+--
 -- Name: guard_held_queue_consumer_receipt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6004,21 +6023,7 @@ BEGIN
             RAISE EXCEPTION 'regional capacity grant is retired or superseded'
                 USING ERRCODE='23514',CONSTRAINT='regional_capacity_frozen';
         END IF;
-        PERFORM 1 FROM apps a WHERE a.id=NEW.app_id AND a.status IN ('active','evicted_cold')
-            AND a.account_id::text=r.grant_claims->'Binding'->>'RegionalAccountID'
-            AND coalesce(a.org_id::text,'')=r.grant_claims->'Binding'->>'RegionalOrgID'
-            AND a.slug=r.grant_claims->'Binding'->>'RegionalAppSlug' FOR SHARE;
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'regional capacity app binding is inactive'
-                USING ERRCODE='23514',CONSTRAINT='regional_capacity_frozen';
-        END IF;
-        IF coalesce(r.grant_claims->'Binding'->>'RegionalOrgID','')<>'' THEN
-            PERFORM 1 FROM orgs WHERE id=(r.grant_claims->'Binding'->>'RegionalOrgID')::uuid AND status='active' AND NOT deleted_pending FOR SHARE;
-            IF NOT FOUND THEN
-                RAISE EXCEPTION 'regional capacity tenant is inactive'
-                    USING ERRCODE='23514',CONSTRAINT='regional_capacity_frozen';
-            END IF;
-        END IF;
+        PERFORM lock_regional_runtime_quota_app_binding(r.grant_claims->'Binding');
     END IF;
     RETURN NEW;
 END;
@@ -6171,19 +6176,7 @@ BEGIN
             OR r.grant_envelope IS NULL OR r.retirement IS NOT NULL OR p.fence_id IS NOT NULL OR p.released_at IS NOT NULL THEN
             RAISE EXCEPTION 'serving seat grant or physical permit is fenced' USING ERRCODE='23514',CONSTRAINT='regional_capacity_frozen';
         END IF;
-        PERFORM 1 FROM apps a WHERE a.id=NEW.app_id AND a.status IN ('active','evicted_cold')
-            AND a.account_id::text=r.grant_claims->'Binding'->>'RegionalAccountID'
-            AND coalesce(a.org_id::text,'')=r.grant_claims->'Binding'->>'RegionalOrgID'
-            AND a.slug=r.grant_claims->'Binding'->>'RegionalAppSlug' FOR SHARE;
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'serving seat app binding is inactive' USING ERRCODE='23514',CONSTRAINT='regional_capacity_frozen';
-        END IF;
-        IF coalesce(r.grant_claims->'Binding'->>'RegionalOrgID','')<>'' THEN
-            PERFORM 1 FROM orgs WHERE id=(r.grant_claims->'Binding'->>'RegionalOrgID')::uuid AND status='active' AND NOT deleted_pending FOR SHARE;
-            IF NOT FOUND THEN
-                RAISE EXCEPTION 'serving seat tenant is inactive' USING ERRCODE='23514',CONSTRAINT='regional_capacity_frozen';
-            END IF;
-        END IF;
+        PERFORM lock_regional_runtime_quota_app_binding(r.grant_claims->'Binding');
     END IF;
     IF TG_OP='INSERT' THEN
         IF EXISTS (SELECT 1 FROM regional_runtime_serving_seats WHERE app_id=NEW.app_id AND permit_id=NEW.permit_id AND released_at IS NULL) THEN
@@ -6639,6 +6632,36 @@ BEGIN
     RETURN org;
 END;
 $$;
+
+
+--
+-- Name: lock_regional_runtime_quota_app_binding(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_regional_runtime_quota_app_binding(binding jsonb) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_org uuid; expected_org uuid := NULLIF(binding->>'RegionalOrgID','')::uuid;
+    expected_account uuid := (binding->>'RegionalAccountID')::uuid;
+BEGIN
+    SELECT a.org_id INTO app_org FROM apps a
+    WHERE a.id=(binding->>'RegionalAppID')::uuid AND a.account_id=expected_account
+      AND a.slug=binding->>'RegionalAppSlug' AND a.status IN ('active','evicted_cold')
+    FOR UPDATE OF a;
+    IF NOT FOUND OR (expected_org IS NOT NULL AND app_org IS DISTINCT FROM expected_org) THEN
+        RAISE EXCEPTION 'regional quota app binding is inactive'
+            USING ERRCODE='23514',CONSTRAINT='regional_capacity_frozen';
+    END IF;
+    IF app_org IS NOT NULL THEN
+        PERFORM 1 FROM orgs o WHERE o.id=app_org AND o.status='active' AND NOT o.deleted_pending
+          AND (expected_org IS NOT NULL OR (o.personal_org AND o.personal_owner_account_id=expected_account))
+        FOR SHARE OF o;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'regional quota tenant binding is inactive'
+                USING ERRCODE='23514',CONSTRAINT='regional_capacity_frozen';
+        END IF;
+    END IF;
+END; $$;
 
 
 --
@@ -7856,6 +7879,26 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: protect_global_runtime_quota_issuer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_runtime_quota_issuer() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM assert_global_directory_scope();
+    PERFORM pg_advisory_xact_lock(hashtextextended('gregale.global-runtime-quota-issuer', 0));
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'global runtime quota issuer is immutable' USING ERRCODE='23514', CONSTRAINT='global_runtime_quota_identity';
+    END IF;
+    IF EXISTS (SELECT 1 FROM global_directory_cells WHERE id=NEW.issuer_id) THEN
+        RAISE EXCEPTION 'directory issuer cannot identify a regional cell' USING ERRCODE='23514', CONSTRAINT='global_runtime_quota_identity';
+    END IF;
+    RETURN NEW;
+END; $$;
 
 
 --
@@ -15462,6 +15505,18 @@ CREATE TABLE public.global_runtime_quota_allocations (
     CONSTRAINT global_runtime_quota_allocations_retirement_id_check CHECK ((retirement_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_runtime_quota_allocations_rollout_region_check CHECK ((rollout_region ~ '^[a-z][a-z0-9-]+$'::text)),
     CONSTRAINT global_runtime_quota_allocations_shares_check CHECK (((jsonb_typeof(shares) = 'array'::text) AND (jsonb_array_length(shares) > 0)))
+);
+
+
+--
+-- Name: global_runtime_quota_issuer; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_quota_issuer (
+    singleton boolean DEFAULT true NOT NULL,
+    issuer_id uuid NOT NULL,
+    CONSTRAINT global_runtime_quota_issuer_issuer_id_check CHECK ((issuer_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_quota_issuer_singleton_check CHECK (singleton)
 );
 
 
@@ -23125,6 +23180,22 @@ ALTER TABLE ONLY public.global_runtime_quota_allocations
 
 ALTER TABLE ONLY public.global_runtime_quota_allocations
     ADD CONSTRAINT global_runtime_quota_allocations_pkey PRIMARY KEY (global_app_id, allocation_id);
+
+
+--
+-- Name: global_runtime_quota_issuer global_runtime_quota_issuer_issuer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_issuer
+    ADD CONSTRAINT global_runtime_quota_issuer_issuer_id_key UNIQUE (issuer_id);
+
+
+--
+-- Name: global_runtime_quota_issuer global_runtime_quota_issuer_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_issuer
+    ADD CONSTRAINT global_runtime_quota_issuer_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -32392,6 +32463,34 @@ CREATE TRIGGER global_runtime_quota_allocation_truncate BEFORE TRUNCATE ON publi
 --
 
 CREATE TRIGGER global_runtime_quota_head BEFORE INSERT OR UPDATE ON public.global_apps FOR EACH ROW EXECUTE FUNCTION public.protect_global_runtime_quota_head();
+
+
+--
+-- Name: control_plane_cells global_runtime_quota_issuer_cell_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_issuer_cell_scope BEFORE INSERT ON public.control_plane_cells FOR EACH ROW EXECUTE FUNCTION public.guard_global_runtime_quota_issuer_scope();
+
+
+--
+-- Name: global_runtime_quota_issuer global_runtime_quota_issuer_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_issuer_identity BEFORE INSERT OR DELETE OR UPDATE ON public.global_runtime_quota_issuer FOR EACH ROW EXECUTE FUNCTION public.protect_global_runtime_quota_issuer();
+
+
+--
+-- Name: global_directory_cells global_runtime_quota_issuer_registry_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_issuer_registry_scope BEFORE INSERT OR UPDATE ON public.global_directory_cells FOR EACH ROW EXECUTE FUNCTION public.guard_global_runtime_quota_issuer_scope();
+
+
+--
+-- Name: global_runtime_quota_issuer global_runtime_quota_issuer_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_issuer_truncate BEFORE TRUNCATE ON public.global_runtime_quota_issuer FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_runtime_quota_issuer();
 
 
 --

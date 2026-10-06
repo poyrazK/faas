@@ -2763,6 +2763,11 @@ type GlobalRuntimeQuotaAllocation struct {
 	RetiredAt          pgtype.Timestamptz
 }
 
+type GlobalRuntimeQuotaIssuer struct {
+	Singleton bool
+	IssuerID  pgtype.UUID
+}
+
 type GlobalRuntimeQuotaPolicy struct {
 	PolicyID           string
 	Plan               string
