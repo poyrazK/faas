@@ -58,6 +58,7 @@ func (*nativeRestoreReadTrap) Delete(context.Context, string) error {
 }
 
 type nativeRestoreInputFixture struct {
+	capture   nativeCaptureOutputFixture
 	journal   *linuxNativeSnapshotPublicationJournal
 	cohort    nativeSnapshotRestoreCohort
 	completed nativeQualificationCaptureRecord
@@ -68,7 +69,7 @@ type nativeRestoreInputFixture struct {
 
 func nativeRestoreInputsFixture(t *testing.T, sidecar []byte) nativeRestoreInputFixture {
 	t.Helper()
-	_, j, intent := nativePublicationDiskFixture(t)
+	original, j, intent := nativePublicationDiskFixture(t)
 	intent, err := j.Begin(t.Context(), intent)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +88,7 @@ func nativeRestoreInputsFixture(t *testing.T, sidecar []byte) nativeRestoreInput
 	if err := os.Chmod(canonical.Root(), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	f := nativeRestoreInputFixture{journal: j, backend: &nativeRestoreReadTrap{LocalStorageBackend: canonical}, root: t.TempDir(),
+	f := nativeRestoreInputFixture{capture: original, journal: j, backend: &nativeRestoreReadTrap{LocalStorageBackend: canonical}, root: t.TempDir(),
 		bodies: [4][]byte{append([]byte("original-memory"), make([]byte, 32<<10)...), []byte("original-vmstate"), []byte("original-drive"), sidecar}}
 	if err := os.Chmod(f.root, 0o700); err != nil {
 		t.Fatal(err)

@@ -3182,3 +3182,66 @@ jails, cgroups, processes, mounts or native loops. All 8,307 Go source
 fingerprints matched the validated upload. These checks preserve the ordinary
 VM regression and capture protocol; native qualification restore/load remains
 unimplemented and production gates stay closed.
+
+### Separate native restore incoming authority
+
+The target reservation now has an internal native incoming profile distinct
+from the unchanged v2 capture journal. It retains the exact restore frame,
+original capture namespace/completion and a target-specific cleanup token,
+bounded deadline and incoming generation. Creation requires the original
+source frame, same attempt, RAM and node, a completed capture and fully retired
+source physical record. Wake and cleanup identities must differ even under
+alternate UUID spellings. Cross-node capture adoption and restore-of-restore
+remain unsupported. The profile is not yet exposed through scheduler dispatch
+or the private RPC transport.
+
+Capture, restore and ordinary UUID producers acquire the same canonical incoming
+lock before any physical publication. Each target receives its own durable
+physical generation before launch preparation; it cannot adopt prior capture
+or ordinary physical ownership. The producer rechecks original capture evidence
+before binding and launch. A lost acknowledgement cannot replay admission or
+physical preparation. Recovery retains an uncertain planned target lease,
+validates source and target identities, and grants no runtime/producer/readiness
+authority. The qualification binding still forbids generic generation
+replacement and cold fallback.
+
+The Linux staging operation holds that target incoming lock through the original
+receipt reads, descriptor verification and image epoch preparation. It imposes
+the target's original dispatch deadline, requires its live registered daemon
+and prepared physical owner, and compares publication intent with the exact
+retired source incoming frame and original jail base. Memory/device-state
+remain read-only clones and the private drive remains independently writable.
+This joins the existing anonymous input and native staging primitives without
+ordinary storage lookup, path fallback or artifact deletion authority.
+
+Target revocation joins the launch gate before fencing its own physical record.
+Only that target's confirmed process exit and complete resource removal supply
+its retirement receipt. A missing physical record or incoming tombstone cannot
+release the target. Once admitted, cleanup does not depend on re-reading source
+capture evidence, so damage there cannot transfer or remove target cleanup
+authority. Production capture, qualification polling, activation and enforcement
+remain gated. Snapshot format/backing validation, dedicated load/resume,
+isolated smoke/fresh readiness, artifact retirement, scoped binding delivery
+and graph/serving evidence remain outstanding; the combined PR remains deferred.
+
+The dedicated restore admission/binding/staging and existing capture/input
+race selection passed on the approved nested Linux node with Go 1.25.13
+(17.006 s). Broader native/qualification/restore regressions passed for fcvm
+(55.354 s), qualification wire (0.048 s), vmmd RPC (0.103 s) and scheduler
+(24.046 s). Full normal Linux fcvm lint and changed-code metal lint reported
+zero issues. The local Darwin native qualification race selection also passed
+(17.176 s); full Darwin lint was not rerun. The previous platform-specific
+unused findings and unrelated full-metal lint findings remain unchanged.
+
+`make test-metal` passed the native ownership, publication, receipt inputs,
+staging and actual VM regression selection (58.322 s), and `make leakcheck`
+reported no leaked resources. Actual source capture/resume/retirement and
+receipt-verified ordinary restore passed (14.49 s child / 15.58 s parent),
+with 134,217,728 logical / 64,339,968 allocated memory bytes, 13,696 logical /
+16,384 allocated device-state bytes, 67,108,864 logical / 86,016 allocated
+drive bytes and 64,442,368 stored bytes. The 177-byte backing sidecar remains
+excluded from that stored total. The new restore profile's ownership/staging
+tests use modeled source evidence and its guest load/resume is not implemented.
+The VM regression's scan sidecar remains modeled. Exact inventory and hashes
+matched all 8,312 Go files; no Go source changed after those checks. No production
+gate or PR was opened by this checkpoint.

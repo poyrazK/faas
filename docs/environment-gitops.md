@@ -226,9 +226,18 @@ the current reviewed attempt and fresh captured inputs; replay, generic capture
 dispatch and borrowing the producer's retirement are refused. Unretired restore
 targets block attempt replacement and remain recoverable after parent purge.
 The existing capture wire and native incoming journal reject restore frames.
-The dedicated native restore operation must still join this reservation to
-staging, validate format/backing at load, and prove isolated smoke and fresh
-readiness. The internal producer begins
+A separate internal native restore profile now joins the immutable target frame
+to the original completed capture after complete producer retirement. Both
+profiles and generic UUID callers share the same admission lock. A lost physical
+publication retains the target's planned lease across restart; duplicate delivery,
+profile substitution, changed capture evidence and generic cold fallback are
+refused. The target owns a distinct native generation and retirement receipt.
+Its first live producer can read the four original receipts and stage private
+image epochs while holding target authority through the complete operation.
+Recovered records grant cleanup and allocation evidence only. This profile and
+staging path are internal and do not yet have a scheduler dispatch or RPC/load
+entry point. The dedicated native restore operation must still validate
+format/backing at load and prove isolated smoke and fresh readiness. The internal producer begins
 intent before output preparation and publishes memory, device state, the frozen
 private drive and backing identity. Actual buffered snapshot writes require the
 existing temporary snapshot headroom policy. The producer pins and journals the
