@@ -16840,6 +16840,39 @@ CREATE TABLE public.project_environment_clone_object_entries (
 
 
 --
+-- Name: project_environment_clone_object_grant_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_grant_revocations (
+    operation_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    plan jsonb NOT NULL,
+    plan_sha256 text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    revocation_id text DEFAULT ''::text NOT NULL,
+    retained_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    request_started_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    drained_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_object_grant_r_source_bucket_id_check CHECK ((source_bucket_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT project_environment_clone_object_grant_revo_revocation_id_check CHECK ((length(revocation_id) <= 512)),
+    CONSTRAINT project_environment_clone_object_grant_revoca_plan_sha256_check CHECK ((plan_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_object_grant_revocat_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check CHECK (((state = 'reserved'::text) = (request_started_at IS NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check1 CHECK (((state = 'drained'::text) = (drained_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check2 CHECK (((observed_at IS NULL) = (revocation_id = ''::text))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check3 CHECK (((state <> 'drained'::text) OR (observed_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check4 CHECK (((observed_at IS NULL) OR (request_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check5 CHECK (((request_started_at IS NULL) OR (request_started_at >= retained_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check6 CHECK (((observed_at IS NULL) OR (observed_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check7 CHECK (((drained_at IS NULL) OR (drained_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_plan_check CHECK ((jsonb_typeof(plan) = 'object'::text)),
+    CONSTRAINT project_environment_clone_object_grant_revocations_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'dispatched'::text, 'drained'::text])))
+);
+
+
+--
 -- Name: project_environment_clone_object_manifests; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23523,6 +23556,22 @@ ALTER TABLE ONLY public.project_environment_clone_object_credentials
 
 ALTER TABLE ONLY public.project_environment_clone_object_entries
     ADD CONSTRAINT project_environment_clone_object_entries_pkey PRIMARY KEY (operation_id, source_bucket_id, object_key);
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revocatio_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revocatio_request_id_key UNIQUE (request_id);
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revocations_pkey PRIMARY KEY (operation_id, source_bucket_id);
 
 
 --
@@ -37442,6 +37491,14 @@ ALTER TABLE ONLY public.project_environment_clone_object_credentials
 
 ALTER TABLE ONLY public.project_environment_clone_object_credentials
     ADD CONSTRAINT project_environment_clone_object_credentials_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revoca_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revoca_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
 
 
 --

@@ -3970,6 +3970,193 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const cloneObjectGrantRevocationDispatch = `-- name: CloneObjectGrantRevocationDispatch :one
+UPDATE project_environment_clone_object_grant_revocations
+SET state=CASE WHEN state='reserved' THEN 'dispatched' ELSE state END,
+request_started_at=COALESCE(request_started_at,clock_timestamp())
+WHERE operation_id=$1 AND source_bucket_id=$2
+AND request_id=$3 AND plan_sha256=$4
+RETURNING operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at
+`
+
+type CloneObjectGrantRevocationDispatchParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	RequestID      pgtype.UUID
+	PlanSha256     string
+}
+
+func (q *Queries) CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationDispatch,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.RequestID,
+		arg.PlanSha256,
+	)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectGrantRevocationInsert = `-- name: CloneObjectGrantRevocationInsert :one
+INSERT INTO project_environment_clone_object_grant_revocations
+(operation_id, source_bucket_id, request_id, plan, plan_sha256)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at
+`
+
+type CloneObjectGrantRevocationInsertParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	RequestID      pgtype.UUID
+	Plan           []byte
+	PlanSha256     string
+}
+
+func (q *Queries) CloneObjectGrantRevocationInsert(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationInsertParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationInsert,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.RequestID,
+		arg.Plan,
+		arg.PlanSha256,
+	)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectGrantRevocationObserve = `-- name: CloneObjectGrantRevocationObserve :one
+UPDATE project_environment_clone_object_grant_revocations
+SET revocation_id=$1, observed_at=clock_timestamp(),
+state=CASE WHEN $2::boolean THEN 'drained' ELSE state END,
+drained_at=CASE WHEN $2::boolean THEN COALESCE(drained_at,clock_timestamp()) ELSE drained_at END
+WHERE operation_id=$3 AND source_bucket_id=$4
+AND request_id=$5 AND plan_sha256=$6 AND state<>'reserved'
+AND (revocation_id='' OR revocation_id=$1)
+AND (state<>'drained' OR $2::boolean)
+RETURNING operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at
+`
+
+type CloneObjectGrantRevocationObserveParams struct {
+	RevocationID   string
+	Drained        bool
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	RequestID      pgtype.UUID
+	PlanSha256     string
+}
+
+func (q *Queries) CloneObjectGrantRevocationObserve(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationObserveParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationObserve,
+		arg.RevocationID,
+		arg.Drained,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.RequestID,
+		arg.PlanSha256,
+	)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectGrantRevocationRead = `-- name: CloneObjectGrantRevocationRead :one
+SELECT operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at FROM project_environment_clone_object_grant_revocations
+WHERE operation_id=$1 AND source_bucket_id=$2
+`
+
+type CloneObjectGrantRevocationReadParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) CloneObjectGrantRevocationRead(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationReadParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationRead, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectNativeGrantsFinish = `-- name: CloneObjectNativeGrantsFinish :execrows
+DELETE FROM object_bucket_mutations
+WHERE bucket_id=$1 AND id=ANY($2::uuid[]) AND kind='native_grant'
+AND backend_id=$3 AND backend_fingerprint=$4
+AND physical_name=$5
+`
+
+type CloneObjectNativeGrantsFinishParams struct {
+	BucketID           pgtype.UUID
+	GrantIds           []pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+// Only an independently authenticated provider retirement observation may
+// consume this private statement. Request completion cannot call it.
+func (q *Queries) CloneObjectNativeGrantsFinish(ctx context.Context, db DBTX, arg CloneObjectNativeGrantsFinishParams) (int64, error) {
+	result, err := db.Exec(ctx, cloneObjectNativeGrantsFinish,
+		arg.BucketID,
+		arg.GrantIds,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cloneObjectWriteFenceBuckets = `-- name: CloneObjectWriteFenceBuckets :many
 SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id FROM object_buckets b JOIN object_bucket_write_fences f ON f.bucket_id=b.id
 WHERE f.clone_operation_id=$1 ORDER BY b.id
@@ -4025,6 +4212,8 @@ AND f.physical_name=$4
 AND op.id=$5 AND op.status='compensating'
 AND op.revision=$6 AND op.lease_token=$7::uuid
 AND op.lease_until > clock_timestamp()
+AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations r
+ WHERE r.operation_id=op.id AND r.source_bucket_id=f.bucket_id AND r.request_started_at IS NOT NULL AND r.state<>'drained')
 `
 
 type CloneObjectWriteFenceDeleteParams struct {
@@ -32514,6 +32703,39 @@ func (q *Queries) ObjectBucketMutationLock(ctx context.Context, db DBTX, arg Obj
 		&i.EnvironmentCloneOperationID,
 	)
 	return i, err
+}
+
+const objectBucketNativeGrants = `-- name: ObjectBucketNativeGrants :many
+SELECT id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at FROM object_bucket_mutations
+WHERE bucket_id=$1 AND kind='native_grant' ORDER BY id
+`
+
+func (q *Queries) ObjectBucketNativeGrants(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]ObjectBucketMutation, error) {
+	rows, err := db.Query(ctx, objectBucketNativeGrants, bucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucketMutation{}
+	for rows.Next() {
+		var i ObjectBucketMutation
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketID,
+			&i.Kind,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectBucketObjectLockDue = `-- name: ObjectBucketObjectLockDue :many

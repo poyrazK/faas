@@ -178,6 +178,13 @@ type Querier interface {
 	// required so an out-of-order cleanup call cannot hide the path of
 	// an open session that a concurrent PATCH still needs.
 	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
+	CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
+	CloneObjectGrantRevocationInsert(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationInsertParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
+	CloneObjectGrantRevocationObserve(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationObserveParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
+	CloneObjectGrantRevocationRead(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationReadParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
+	// Only an independently authenticated provider retirement observation may
+	// consume this private statement. Request completion cannot call it.
+	CloneObjectNativeGrantsFinish(ctx context.Context, db DBTX, arg CloneObjectNativeGrantsFinishParams) (int64, error)
 	CloneObjectWriteFenceBuckets(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]ObjectBucket, error)
 	CloneObjectWriteFenceDelete(ctx context.Context, db DBTX, arg CloneObjectWriteFenceDeleteParams) (int64, error)
 	CloneObjectWriteFenceInsert(ctx context.Context, db DBTX, arg CloneObjectWriteFenceInsertParams) (int64, error)
@@ -1642,6 +1649,7 @@ type Querier interface {
 	// transaction. Separate statements are necessary for a fresh READ COMMITTED
 	// snapshot after waiting for a concurrent source writer or lifecycle change.
 	ObjectBucketMutationLock(ctx context.Context, db DBTX, arg ObjectBucketMutationLockParams) (ObjectBucket, error)
+	ObjectBucketNativeGrants(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]ObjectBucketMutation, error)
 	ObjectBucketObjectLockDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)
 	ObjectBucketObjectLockGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketObjectLock, error)
 	ObjectBucketObjectLockInsert(ctx context.Context, db DBTX, arg ObjectBucketObjectLockInsertParams) error
