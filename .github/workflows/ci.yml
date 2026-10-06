@@ -1180,16 +1180,50 @@ jobs:
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Allow the complete contract and infrastructure gates on a cold cache.
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
       GOVULNCHECK_VERSION: "1.7.0"
+      # The API and CLI test binaries compile the large state package.
+      # Serialize package builds and bound each compiler on hosted runners.
+      GOFLAGS: "-p=1"
+      GOMAXPROCS: "2"
+      GOGC: "50"
+      GOMEMLIMIT: 2GiB
     steps:
       - uses: actions/checkout@v7
         with:
           # PR-4b compares changed core-path tests against the event base SHA.
           fetch-depth: 0
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; each ref saves at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-
+      # Restore the module cache before setup-go downloads the requested
+      # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
+      # a cache hit untar over the toolchain's existing files and can hang the
+      # runner with "Cannot open: File exists". Earlier checker gates can invoke
+      # Go too, so finish cache restore and setup before running any gate.
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false  # managed by the restore/save steps below
       # S4 PR-4b: tests in scheduler, gateway, meter, billing, and Firecracker
       # paths must name the spec section or ADR that defines their behavior.
       - name: spec-cited core-path tests
@@ -1220,32 +1254,6 @@ jobs:
       - name: synthetic-canary alert payload tests
         run: make canary-alert-test
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
-      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
-      # whole workflow and saves only on a miss, so the first (smallest) job
-      # to finish after a go.sum bump wins and every later job restores its
-      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
-      # family restores the newest snapshot for today, then for this go.sum,
-      # then anything; pushes to main save at most one snapshot per day.
-      - id: cache-date
-        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
-          restore-keys: |
-            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-checks-${{ runner.os }}-
-      # Restore the module cache before setup-go downloads the requested
-      # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
-      # a cache hit untar over the toolchain's existing files and can hang the
-      # runner with "Cannot open: File exists".
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false  # managed by the restore/save steps below
       - name: complete E2E shard inventory
         run: go run ./scripts/ci/e2eshard -check -shards=4
       - name: generate Gregale workflow lint fixtures
@@ -1649,7 +1657,7 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && !cancelled()
         uses: actions/cache/save@v4
         with:
           path: |
