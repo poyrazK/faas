@@ -295,8 +295,18 @@ from .automatic_route_check_freshness import AutomaticRouteCheckFreshness
 from .automatic_route_check_last_error_code import AutomaticRouteCheckLastErrorCode
 from .automatic_route_check_stale_reasons_item import AutomaticRouteCheckStaleReasonsItem
 from .automatic_route_check_state import AutomaticRouteCheckState
+from .automation_health_response import AutomationHealthResponse
+from .automation_health_response_status_counts import AutomationHealthResponseStatusCounts
+from .automation_health_run import AutomationHealthRun
+from .automation_health_run_status import AutomationHealthRunStatus
+from .automation_health_step_failure import AutomationHealthStepFailure
 from .automation_response import AutomationResponse
 from .automation_response_source import AutomationResponseSource
+from .automation_revision_response import AutomationRevisionResponse
+from .automation_simulation_attempt import AutomationSimulationAttempt
+from .automation_simulation_attempt_outcome import AutomationSimulationAttemptOutcome
+from .automation_simulation_mock_attempt import AutomationSimulationMockAttempt
+from .automation_simulation_mock_attempt_outcome import AutomationSimulationMockAttemptOutcome
 from .automation_simulation_step import AutomationSimulationStep
 from .automation_simulation_step_kind import AutomationSimulationStepKind
 from .automation_simulation_step_state import AutomationSimulationStepState
@@ -1230,6 +1240,7 @@ from .list_account_operations_state import ListAccountOperationsState
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_automation_revisions_response import ListAutomationRevisionsResponse
 from .list_automations_response import ListAutomationsResponse
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
@@ -2078,6 +2089,7 @@ from .resize_managed_postgres_database_request import ResizeManagedPostgresDatab
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
+from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
@@ -2423,6 +2435,7 @@ from .sidecar_timeline_status import SidecarTimelineStatus
 from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
 from .sidecar_type import SidecarType
 from .simulate_automation_request import SimulateAutomationRequest
+from .simulate_automation_request_mock_attempts import SimulateAutomationRequestMockAttempts
 from .simulate_automation_request_mock_item_outputs import SimulateAutomationRequestMockItemOutputs
 from .simulate_automation_request_mock_outputs import SimulateAutomationRequestMockOutputs
 from .simulate_automation_response import SimulateAutomationResponse
@@ -2637,15 +2650,19 @@ from .workflow_callback_webhook_binding_response import WorkflowCallbackWebhookB
 from .workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 from .workflow_callback_webhook_receipt_response_status import WorkflowCallbackWebhookReceiptResponseStatus
 from .workflow_condition_spec import WorkflowConditionSpec
+from .workflow_finished_webhook_payload import WorkflowFinishedWebhookPayload
+from .workflow_finished_webhook_payload_status import WorkflowFinishedWebhookPayloadStatus
 from .workflow_for_each_action_spec import WorkflowForEachActionSpec
 from .workflow_for_each_action_spec_input_type_0 import WorkflowForEachActionSpecInputType0
 from .workflow_for_each_action_spec_method import WorkflowForEachActionSpecMethod
 from .workflow_for_each_spec import WorkflowForEachSpec
+from .workflow_for_each_spec_on_item_failure import WorkflowForEachSpecOnItemFailure
 from .workflow_guard_spec import WorkflowGuardSpec
 from .workflow_guard_spec_op import WorkflowGuardSpecOp
 from .workflow_join_spec import WorkflowJoinSpec
 from .workflow_outbound_spec import WorkflowOutboundSpec
 from .workflow_outbound_spec_method import WorkflowOutboundSpecMethod
+from .workflow_outbound_spec_query import WorkflowOutboundSpecQuery
 from .workflow_resume_response import WorkflowResumeResponse
 from .workflow_resume_response_previous_status import WorkflowResumeResponsePreviousStatus
 from .workflow_retry_spec import WorkflowRetrySpec
@@ -2967,8 +2984,18 @@ __all__ = (
     "AutomaticRouteCheckLastErrorCode",
     "AutomaticRouteCheckStaleReasonsItem",
     "AutomaticRouteCheckState",
+    "AutomationHealthResponse",
+    "AutomationHealthResponseStatusCounts",
+    "AutomationHealthRun",
+    "AutomationHealthRunStatus",
+    "AutomationHealthStepFailure",
     "AutomationResponse",
     "AutomationResponseSource",
+    "AutomationRevisionResponse",
+    "AutomationSimulationAttempt",
+    "AutomationSimulationAttemptOutcome",
+    "AutomationSimulationMockAttempt",
+    "AutomationSimulationMockAttemptOutcome",
     "AutomationSimulationStep",
     "AutomationSimulationStepKind",
     "AutomationSimulationStepState",
@@ -3882,6 +3909,7 @@ __all__ = (
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListAutomationRevisionsResponse",
     "ListAutomationsResponse",
     "ListBucketObjectsResponse200",
     "ListBucketObjectsResponse200ItemsItem",
@@ -4682,6 +4710,7 @@ __all__ = (
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
+    "RestoreAutomationRevisionRequest",
     "RestoreManagedPostgresDatabaseRequest",
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
@@ -5019,6 +5048,7 @@ __all__ = (
     "SidecarTimelineStatusStatus",
     "SidecarType",
     "SimulateAutomationRequest",
+    "SimulateAutomationRequestMockAttempts",
     "SimulateAutomationRequestMockItemOutputs",
     "SimulateAutomationRequestMockOutputs",
     "SimulateAutomationResponse",
@@ -5217,15 +5247,19 @@ __all__ = (
     "WorkflowCallbackWebhookReceiptResponse",
     "WorkflowCallbackWebhookReceiptResponseStatus",
     "WorkflowConditionSpec",
+    "WorkflowFinishedWebhookPayload",
+    "WorkflowFinishedWebhookPayloadStatus",
     "WorkflowForEachActionSpec",
     "WorkflowForEachActionSpecInputType0",
     "WorkflowForEachActionSpecMethod",
     "WorkflowForEachSpec",
+    "WorkflowForEachSpecOnItemFailure",
     "WorkflowGuardSpec",
     "WorkflowGuardSpecOp",
     "WorkflowJoinSpec",
     "WorkflowOutboundSpec",
     "WorkflowOutboundSpecMethod",
+    "WorkflowOutboundSpecQuery",
     "WorkflowResumeResponse",
     "WorkflowResumeResponsePreviousStatus",
     "WorkflowRetrySpec",

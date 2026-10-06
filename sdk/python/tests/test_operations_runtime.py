@@ -6,9 +6,9 @@ from dataclasses import asdict
 
 import httpx
 import pytest
-from faas_sdk.operations_runtime import GregaleOperations, OperationHTTPError
 
 from faas_sdk.models.operation_report_request import OperationReportRequest
+from faas_sdk.operations_runtime import GregaleOperations, OperationHTTPError
 
 OP = "11111111-1111-4111-8111-111111111111"
 INV = "22222222-2222-4222-8222-222222222222"

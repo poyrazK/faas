@@ -21,7 +21,8 @@ class SimulateAutomationResponse:
     definition_hash: str
     """SHA-256 of the JSON-serialized submitted definition, independent of samples; not a publication revision."""
     complete: bool
-    """All roots resolved or skipped under these mocks; false for missing results, waits or evaluation errors."""
+    """Every root reached a known terminal outcome under these mocks; false for missing results, unresolved
+    retries, waits or evaluation errors."""
     issues: list[str]
     warnings: list[str]
     step_order: list[str]

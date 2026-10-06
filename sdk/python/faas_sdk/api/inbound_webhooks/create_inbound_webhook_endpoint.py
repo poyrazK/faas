@@ -109,13 +109,16 @@ def sync_detailed(
 
      Returns the public endpoint_url once. Gregale stores only a SHA-256
     digest of its opaque token and an age/X25519-sealed provider signing
-    secret. Hobby, Pro, and Scale plans are supported.
+    secret. Providers are Stripe and generic timestamped HMAC-SHA256 senders.
+    Generic secrets must contain at least 32 bytes of random material.
+    Hobby, Pro, and Scale plans are supported.
 
     Args:
         slug (str):
-        body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint whose
-            accepted events become durable app invocations. Example: {'name': 'stripe-primary',
-            'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
+        body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint for Stripe
+            or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events
+            become durable app invocations or automation starts when bound. Example: {'name': 'stripe-
+            primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
             '/internal/stripe'}.
 
     Raises:
@@ -148,13 +151,16 @@ def sync(
 
      Returns the public endpoint_url once. Gregale stores only a SHA-256
     digest of its opaque token and an age/X25519-sealed provider signing
-    secret. Hobby, Pro, and Scale plans are supported.
+    secret. Providers are Stripe and generic timestamped HMAC-SHA256 senders.
+    Generic secrets must contain at least 32 bytes of random material.
+    Hobby, Pro, and Scale plans are supported.
 
     Args:
         slug (str):
-        body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint whose
-            accepted events become durable app invocations. Example: {'name': 'stripe-primary',
-            'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
+        body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint for Stripe
+            or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events
+            become durable app invocations or automation starts when bound. Example: {'name': 'stripe-
+            primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
             '/internal/stripe'}.
 
     Raises:
@@ -182,13 +188,16 @@ async def asyncio_detailed(
 
      Returns the public endpoint_url once. Gregale stores only a SHA-256
     digest of its opaque token and an age/X25519-sealed provider signing
-    secret. Hobby, Pro, and Scale plans are supported.
+    secret. Providers are Stripe and generic timestamped HMAC-SHA256 senders.
+    Generic secrets must contain at least 32 bytes of random material.
+    Hobby, Pro, and Scale plans are supported.
 
     Args:
         slug (str):
-        body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint whose
-            accepted events become durable app invocations. Example: {'name': 'stripe-primary',
-            'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
+        body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint for Stripe
+            or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events
+            become durable app invocations or automation starts when bound. Example: {'name': 'stripe-
+            primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
             '/internal/stripe'}.
 
     Raises:
@@ -219,13 +228,16 @@ async def asyncio(
 
      Returns the public endpoint_url once. Gregale stores only a SHA-256
     digest of its opaque token and an age/X25519-sealed provider signing
-    secret. Hobby, Pro, and Scale plans are supported.
+    secret. Providers are Stripe and generic timestamped HMAC-SHA256 senders.
+    Generic secrets must contain at least 32 bytes of random material.
+    Hobby, Pro, and Scale plans are supported.
 
     Args:
         slug (str):
-        body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint whose
-            accepted events become durable app invocations. Example: {'name': 'stripe-primary',
-            'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
+        body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint for Stripe
+            or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events
+            become durable app invocations or automation starts when bound. Example: {'name': 'stripe-
+            primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
             '/internal/stripe'}.
 
     Raises:

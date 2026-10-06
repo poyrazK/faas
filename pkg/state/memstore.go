@@ -399,9 +399,11 @@ type MemStore struct {
 	// timestamped workflow schema migration).
 	workflowResumes          map[string][]WorkflowResume
 	workflowRuns             map[string]WorkflowRun
+	workflowRunCreateKeys    map[workflowRunCreateKey]workflowRunCreateKeyEntry
 	workflowSchedules        map[string]WorkflowScheduleCursor
 	automationVersion        int64
 	automations              map[string]Automation
+	automationRevisions      map[string][]AutomationRevision
 	workflowSteps            map[string]map[string]WorkflowStep // run_id → step_name → step
 	workflowStepAttempts     map[workflowStepAttemptKey]WorkflowStepAttempt
 	workflowOperationEffects map[workflowStepAttemptKey][]workflowOperationStoredEffect
@@ -1240,6 +1242,7 @@ func NewMemStore() *MemStore {
 		jobRegistryCredentials:          map[jobRegistryCredentialKey]JobRegistryCredential{},
 		migrationLeases:                 map[string]MigrationLease{},
 		workflowRuns:                    map[string]WorkflowRun{},
+		workflowRunCreateKeys:           map[workflowRunCreateKey]workflowRunCreateKeyEntry{},
 		workflowSteps:                   map[string]map[string]WorkflowStep{},
 		workflowStepAttempts:            map[workflowStepAttemptKey]WorkflowStepAttempt{},
 		workflowOperationEffects:        map[workflowStepAttemptKey][]workflowOperationStoredEffect{},
