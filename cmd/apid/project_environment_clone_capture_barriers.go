@@ -154,7 +154,7 @@ func (s *server) prepareProjectEnvironmentCloneCaptureBarriers(ctx context.Conte
 		return lease, zero, err
 	}
 	for _, fence := range out.objects {
-		out.instrumentedWritersDrained = out.instrumentedWritersDrained && fence.Requests == 0 && fence.NativeGrants == 0 && fence.Deletions == 0
+		out.instrumentedWritersDrained = out.instrumentedWritersDrained && fence.Requests == 0 && fence.NativeGrants == 0 && fence.Deletions == 0 && fence.Protections == 0
 	}
 	// Detect config edits during remote IO without replacing the original root.
 	// This snapshot does not fence edits after it or attest a common data point.
@@ -232,7 +232,7 @@ func cloneCapturePostgresFenceMatches(op state.ProjectEnvironmentCloneOperation,
 
 func cloneCaptureObjectFenceMatches(op state.ProjectEnvironmentCloneOperation, plan capturedProjectEnvironmentObjectPlan, f state.ObjectBucketWriteFence) bool {
 	b, source := f.Bucket, plan.source
-	return f.BucketID == source.ID && f.Token == op.ID && f.CloneOperationID == op.ID && f.Requests >= 0 && f.NativeGrants >= 0 && f.Deletions >= 0 &&
+	return f.BucketID == source.ID && f.Token == op.ID && f.CloneOperationID == op.ID && f.Requests >= 0 && f.NativeGrants >= 0 && f.Deletions >= 0 && f.Protections >= 0 &&
 		b.ID == source.ID && b.AccountID == op.AccountID && b.AppID == plan.appID && b.State == "ready" &&
 		b.Scope == plan.sourceScope && b.Name == source.Name && b.Region == source.Region && b.BackendID == source.BackendID &&
 		b.BackendFingerprint == source.BackendFingerprint && b.PhysicalName == source.PhysicalName &&

@@ -41435,6 +41435,22 @@ DECLARE
     after_id uuid := nullif(after_row ->> TG_ARGV[1], '')::uuid;
     project uuid;
 BEGIN
+    -- Protection intents are frozen customer configuration. Only the original
+    -- journal's operational progress may change during a capture hold.
+    IF TG_TABLE_NAME = 'object_version_protection' AND TG_OP = 'UPDATE' THEN
+        IF (before_row - ARRAY['state','lease_token','lease_until','retry_at','dispatched','last_error_code','updated_at','event_hold_baseline'])
+            IS DISTINCT FROM (after_row - ARRAY['state','lease_token','lease_until','retry_at','dispatched','last_error_code','updated_at','event_hold_baseline'])
+            OR ((before_row ->> 'dispatched')::boolean AND NOT (after_row ->> 'dispatched')::boolean)
+            OR ((before_row ->> 'state') IN ('ready','failed') AND before_row IS DISTINCT FROM after_row)
+            OR (nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS NOT NULL AND nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS DISTINCT FROM nullif(after_row -> 'event_hold_baseline', 'null'::jsonb))
+            OR ((before_row ->> 'dispatched')::boolean AND nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS DISTINCT FROM nullif(after_row -> 'event_hold_baseline', 'null'::jsonb))
+            OR ((after_row ->> 'state') = 'failed' AND (after_row ->> 'last_error_code') NOT IN ('preparation_failed','provider_rejected'))
+            OR ((after_row ->> 'state') = 'failed' AND (after_row ->> 'dispatched')::boolean AND (after_row ->> 'last_error_code') <> 'provider_rejected') THEN
+            RAISE EXCEPTION 'original protection intent and settled evidence are immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'object_protection_original_immutable';
+        END IF;
+        RETURN NEW;
+    END IF;
     PERFORM generation FROM project_environment_clone_configuration_clock WHERE singleton FOR SHARE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'configuration synchronization clock is missing'
@@ -41826,3 +41842,34 @@ END $$;
 --
 
 CREATE TRIGGER object_deletion_capture_admission BEFORE INSERT ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion_capture_admission();
+
+
+--
+-- Name: fence_object_protection_capture_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_protection_capture_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bucket_state text;
+BEGIN
+ -- Fence queries need a fresh snapshot after waiting for the source lock.
+ -- Reject old transaction snapshots rather than hiding a committed hold.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_protection_admission_isolation',MESSAGE='Protection admission requires READ COMMITTED';
+ END IF;
+ SELECT state INTO bucket_state FROM object_buckets WHERE id=NEW.bucket_id FOR UPDATE;
+ IF bucket_state IS DISTINCT FROM 'ready' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_protection_bucket_not_ready',MESSAGE='Bucket cleanup fences protection admission';
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=NEW.bucket_id) THEN
+  RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_protection_capture_fenced',MESSAGE='Checkpoint capture fences new protection admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+--
+-- Name: object_version_protection object_protection_capture_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_protection_capture_admission BEFORE INSERT ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.fence_object_protection_capture_admission();

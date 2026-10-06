@@ -48,6 +48,8 @@ func (s *cloneCaptureBarrierFailureStore) ProjectEnvironmentCloneObjectWriteFenc
 			fences[0].CloneOperationID = uuid.NewString()
 		case "negative":
 			fences[0].NativeGrants = -1
+		case "negative_protections":
+			fences[0].Protections = -1
 		case "negative_deletions":
 			fences[0].Deletions = -1
 		}
@@ -277,7 +279,7 @@ func TestPGCloneCaptureBarriersZeroTrackedWritersDoNotSelectCheckpoint(t *testin
 }
 
 func TestPGCloneCaptureBarriersRejectIncompleteOwnedRostersBeforeProviderIO(t *testing.T) {
-	for _, fault := range []string{"object_omit", "object_duplicate", "object_placement", "object_owner", "object_negative", "object_negative_deletions", "postgres_omit", "postgres_placement"} {
+	for _, fault := range []string{"object_omit", "object_duplicate", "object_placement", "object_owner", "object_negative", "object_negative_deletions", "object_negative_protections", "postgres_omit", "postgres_placement"} {
 		t.Run(fault, func(t *testing.T) {
 			f, store, provider, _ := cloneCaptureBarrierFixture(t)
 			if strings.HasPrefix(fault, "object_") {

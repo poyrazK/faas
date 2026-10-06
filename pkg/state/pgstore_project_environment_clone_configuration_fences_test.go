@@ -542,6 +542,16 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(parts) != 2 {
 		t.Fatal("missing configuration guard downgrade")
 	}
+	// ADR-590's protection successor refines this function. Exercise the
+	// actual ordered downgrade/upgrade chain and compare the final schema.
+	successorRaw, err := migrations.FS.ReadFile("20261006170801000_object_protection_capture_admission.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor := strings.SplitN(string(successorRaw), "-- +goose Down", 2)
+	if len(successor) != 2 {
+		t.Fatal("missing protection successor downgrade")
+	}
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)
 	if err != nil {
@@ -566,10 +576,16 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if err := tx.QueryRow(f.ctx, shape).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tx.Exec(f.ctx, successor[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(f.ctx, parts[1]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(f.ctx, parts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, successor[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(f.ctx, shape).Scan(&after); err != nil || before != after {

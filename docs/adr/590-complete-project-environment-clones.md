@@ -7149,3 +7149,70 @@ state, object storage, S3 gateway and APID. SQLC v1.31.1 parity, migration-ID
 checks, repository policy, formatting and whitespace checks pass. Existing
 optional policy skips for unavailable Packer and nft remain. These local
 contracts do not qualify live OVH/R2 storage or native KVM full cloning.
+
+### 2026-10-06: Drain original retention and legal-hold mutation journals
+
+The private capture barrier now observes `object_version_protection` alongside
+request receipts, native grants and deletion journals. Every original
+`waiting` or `applying` protection intent keeps its bucket busy, including
+undispatched work, expired leases and uncertain provider acknowledgements.
+Terminal settlement removes only that journal from the drainage count; it does
+not release the source hold. Negative protection counts invalidate the owned
+source roster before provider work. This closes the counter omission identified
+in the preceding increment without asserting complete writer coverage.
+
+New retention/legal-hold admission checks the retained bucket write fence
+under the same source-row lock used by acquisition. Exact-ID retries continue
+to return their original journal. The append-only admission migration also
+protects older replicas and direct SQL inserts, using a fresh READ COMMITTED
+snapshot after a source-lock wait. Higher-isolation admission is rejected.
+Removing enforcement refuses both bucket and configuration holds.
+
+The project configuration guard permits only operational UPDATE progress on
+an original protection journal. Its immutable intent, account/App/bucket scope,
+key, public/native version identity and creation time remain unchanged. Existing
+journal triggers still enforce worker leases, monotonic dispatch, terminal
+state and retained event-hold baseline evidence. The additional guard rejects
+rewriting an established baseline or settled record. INSERT and DELETE remain
+configuration mutations. Original workers can therefore claim, dispatch once,
+retain uncertainty, and settle while customer configuration is held; this
+exception does not allow editing the requested policy or other configuration.
+The registry still classifies protection configuration as requiring an isolated
+strategy. Recovery of a mutation does not establish a clone policy mapping or
+prove that the resulting provider retention qualifies an immutable capture.
+
+The memory/PostgreSQL protection contract exercises preparation, exact retry,
+new admission rejection, retained dispatch after expiry, process restart,
+stale-worker rejection, uncertain-dispatch preservation, terminal drainage,
+continued admission closure and explicit release. PostgreSQL recovery runs
+with a retained project configuration hold, and unrelated configuration stays
+fenced afterward. Migration tests compare the actual ordered predecessor and
+successor downgrade/upgrade chain and refuse downgrade under a bucket hold.
+An older-replica source-lock wait must see the newly committed hold, and old
+transaction snapshots cannot bypass admission. HTTP event-hold cases cover
+immutable and null versions, enable/change/release intents, lost PUT ACKs,
+incomplete readback, recovery without repeated PUTs and independent counters.
+The S3 SDK admission check requires a paused-write response, zero native PUTs,
+zero new journals/request receipts and no header advertising an uncreated
+protection journal. Only a durably created original can expose a recovery ID.
+Terminal journal state is an instrumented observation. Independently qualified
+provider drain and retention evidence remain necessary before selecting a
+common point or successful source release.
+
+Full public stage capture remains deferred. Multipart/upload journals,
+recursive cleanup, application/PostgreSQL and external/native writer coverage,
+a qualified common point, retained recovery material, successful source
+release, isolated restoration/readiness and exact-revision promotion remain
+outstanding. OVH live retention qualification remains unavailable; R2 needs a
+different snapshot strategy. This increment installs no customer retention and
+makes no live-provider or native-KVM qualification claim.
+
+Qualification on task-owned migrated PostgreSQL 16.15 passed the selected
+state, object-storage HTTP and S3 SDK contracts under the race detector. The
+normal APID capture, configuration/grant barrier, coordinator, deletion,
+lifecycle and protection integration suite passed. Production and test packages
+compile without source overlays. Pinned golangci-lint v2.4.0 reports zero issues
+across state, object storage, S3 gateway and APID. SQLC v1.31.1 parity,
+migration-ID checks, repository policy, formatting and whitespace checks pass.
+The existing optional Packer and live nft skips remain; these local checks do
+not qualify a live provider, a complete common point or native KVM restoration.
