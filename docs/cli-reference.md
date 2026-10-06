@@ -5061,21 +5061,23 @@ Read evidence and release history
 
 Assign an issue to an account
 
-`gregale issues assign --app <SLUG> <issue-id>`
+`gregale issues assign --app <SLUG> [--assignee <UUID>] <issue-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--assignee <UUID>` | owner account UUID (empty unassigns) |  |
 
 ### issues resolve
 
 Resolve in a deployment
 
-`gregale issues resolve --app <SLUG> <issue-id>`
+`gregale issues resolve --app <SLUG> --deployment <UUID> <issue-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--deployment <UUID>` | deployment UUID that fixed the issue | required |
 
 ### issues reopen
 
@@ -5091,11 +5093,12 @@ Reopen an issue
 
 Ignore until a timestamp
 
-`gregale issues ignore --app <SLUG> <issue-id>`
+`gregale issues ignore --app <SLUG> --until <RFC3339> <issue-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--until <RFC3339>` | ignore until (RFC3339) | required |
 
 ### issues impact-alert
 
@@ -5131,11 +5134,12 @@ List ingest credentials
 
 Create a deployment-bound ingest credential
 
-`gregale issues create-token --app <SLUG>`
+`gregale issues create-token --app <SLUG> --deployment <UUID>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--deployment <UUID>` | deployment UUID the credential is bound to | required |
 
 ### issues revoke-token
 

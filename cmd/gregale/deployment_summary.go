@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // cmdDeploymentSummary renders the app-scoped release cockpit. The endpoint
@@ -28,25 +30,11 @@ func cmdDeploymentSummary(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if *app == "" {
-		if linked, linkErr := resolveAppFlagOrContext(""); linkErr == nil && linked != "" {
-			*app = linked
-		}
+	slug, err := deploymentAppSlug(client, *app, pos[0])
+	if err != nil {
+		return printErr("Could not resolve deployment", err)
 	}
-	if *app == "" {
-		if _, isRevision := parseRevisionRef(pos[0]); isRevision {
-			return printErr("Could not resolve deployment", fmt.Errorf("revision %s needs --app <slug> or a linked project", pos[0]))
-		}
-		dep, err := client.GetDeployment(context.Background(), pos[0])
-		if err != nil {
-			return printErr("Could not resolve deployment", err)
-		}
-		slug, ok := appSlugsByID(client)[dep.AppID]
-		if !ok {
-			return printErr("Could not resolve deployment", fmt.Errorf("could not find the app for deployment %s; pass --app <slug>", pos[0]))
-		}
-		*app = slug
-	}
+	*app = slug
 	// ADR-198 — --app is already required here, so a vN handle is
 	// unambiguous without consulting the linked project.
 	deploymentID, err := resolveDeploymentRef(context.Background(), client, *app, pos[0])
@@ -93,4 +81,30 @@ func formatSummaryValue(value any) string {
 		return fmt.Sprintf("%v", value)
 	}
 	return string(encoded)
+}
+
+// deploymentAppSlug finds the app an app-scoped deployment command addresses:
+// the explicit --app, else the linked project, else (for a deployment UUID)
+// the deployment's own app. production-us hunt #4: `deployment summary`,
+// `deploys cancel` and `deploys clear` demanded --app for a UUID that already
+// names its app.
+func deploymentAppSlug(client *api.Client, explicit, ref string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	if linked, err := resolveAppFlagOrContext(""); err == nil && linked != "" {
+		return linked, nil
+	}
+	if _, isRevision := parseRevisionRef(ref); isRevision {
+		return "", fmt.Errorf("revision %s needs --app <slug> or a linked project", ref)
+	}
+	dep, err := client.GetDeployment(context.Background(), ref)
+	if err != nil {
+		return "", err
+	}
+	slug, ok := appSlugsByID(client)[dep.AppID]
+	if !ok {
+		return "", fmt.Errorf("could not find the app for deployment %s; pass --app <slug>", ref)
+	}
+	return slug, nil
 }

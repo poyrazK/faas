@@ -356,3 +356,63 @@ func TestCorsRmAcceptsSlugAndValidatesID(t *testing.T) {
 		t.Fatalf("cors rm <slug> exit=%d request=%s, want a local rejection", code, f.sawMethod)
 	}
 }
+
+// production-us hunt #4 (H4-55): `deploys cancel|clear <uuid>` demanded --app
+// although the UUID names its app, and `deploys reorder <id> --priority 10`
+// stopped parsing at the id and called a valid priority out of range.
+func TestDeploysQueueVerbsResolveAppAndParseFlagsAfterID(t *testing.T) {
+	resetJSONOut(t)
+	t.Chdir(t.TempDir())
+	const depID = "0123456789abcdef0123456789abcdef"
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/"+depID:
+			_, _ = w.Write([]byte(`{"id":"` + depID + `","app_id":"app-uuid-1","status":"pending"}`))
+		case r.URL.Path == "/v1/apps":
+			_, _ = w.Write([]byte(`[{"id":"app-uuid-1","slug":"billing-api"}]`))
+		default:
+			_, _ = w.Write([]byte(`{"id":"` + depID + `","status":"cancelled","priority":10}`))
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	_, restore := captureStdout(t)
+	defer restore()
+	for name, args := range map[string][]string{
+		"cancel":  {"cancel", depID},
+		"clear":   {"clear", depID, "--force"},
+		"reorder": {"reorder", depID, "--priority", "10"},
+	} {
+		seen = nil
+		if code := cmdDeploys(args); code != 0 {
+			t.Fatalf("deploys %s exit = %d (requests %q), want 0", name, code, seen)
+		}
+		joined := strings.Join(seen, "\n")
+		switch name {
+		case "cancel":
+			if !strings.Contains(joined, "POST /v1/apps/billing-api/deployments/"+depID+"/cancel") {
+				t.Fatalf("deploys cancel requests %q, want the app resolved from the deployment", seen)
+			}
+		case "clear":
+			if !strings.Contains(joined, "DELETE /v1/deployments/"+depID) {
+				t.Fatalf("deploys clear requests %q, want the delete without an --app", seen)
+			}
+		}
+	}
+}
+
+// production-us hunt #4 (H4-54): `issues resolve <id>` reached the server and
+// failed on "fixed_deployment_id"; the CLI names --deployment first.
+func TestIssuesResolveRequiresDeploymentLocally(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{}`, http.StatusOK)
+	stderr, restore := captureStderr(t)
+	code := cmdIssues([]string{"resolve", "--app", "demo", "cdb54d72-348d-4112-9e4b-2a9ec68befff"})
+	restore()
+	if code == 0 || f.sawMethod != "" || !strings.Contains(stderr.String(), "--deployment <uuid> is required") {
+		t.Fatalf("exit=%d request=%s stderr=%q, want a local --deployment error", code, f.sawMethod, stderr.String())
+	}
+}
