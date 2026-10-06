@@ -19,10 +19,6 @@ type RuntimeSnapshotHandoffObservation struct {
 	Ranges                                               []RuntimeSnapshotMemoryRange
 }
 
-func (v *JailerVMM) observeVerifiedSnapshotMemory(ctx context.Context, lease Lease, spec RestoreSpec) error {
-	return v.observeVerifiedSnapshotMemoryAt(ctx, lease, spec, time.Now())
-}
-
 func (v *JailerVMM) observeVerifiedSnapshotMemoryAt(ctx context.Context, lease Lease, spec RestoreSpec, clock time.Time) error {
 	if err := v.checkVerifiedSnapshotLoadAt(ctx, lease, spec, clock); err != nil {
 		return err

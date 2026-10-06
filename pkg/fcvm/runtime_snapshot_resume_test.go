@@ -62,6 +62,41 @@ func bindSnapshotResumePromotion(t *testing.T, p *runtimeadmission.Promotion) {
 	}
 }
 
+func expireSnapshotResumeLoadFixture(t *testing.T, f protectedRestoreFixture, clock time.Time) time.Time {
+	t.Helper()
+	plan := f.spec.verifiedSnapshot
+	plan.request.Binding.IssuedAtUnixNano -= int64(2 * time.Hour)
+	plan.request.Binding.ExpiresAtUnixNano -= int64(2 * time.Hour)
+	plan.request.Capture.Parent.Binding.IssuedAtUnixNano -= int64(2 * time.Hour)
+	plan.request.Capture.Parent.Binding.ExpiresAtUnixNano -= int64(2 * time.Hour)
+	plan.request.Capture.Parent.CompletedAtUnixNano -= int64(2 * time.Hour)
+	plan.request.Capture.CapturedAtUnixNano -= int64(2 * time.Hour)
+	e := runtimeadmission.SnapshotRestoreEvidence{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: plan.request.Binding.SnapshotCaptureToken, FCVersion: plan.request.Snapshot.FCVersion, Capture: plan.request.Capture}
+	var err error
+	plan.request.Binding.SnapshotEvidenceHash, err = e.Hash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return clock.Add(-2 * time.Hour)
+}
+
+func TestSnapshotResumeHistoricalClockCannotRenewOrdinaryObservation(t *testing.T) {
+	f, _ := newSnapshotResumeFixture(t)
+	historical := expireSnapshotResumeLoadFixture(t, f, time.Now())
+	drives, snapshot, err := f.vmm.ObservedRuntimeSnapshotConsumption(t.Context(), f.lease)
+	if !errors.Is(err, runtimeadmission.ErrExpired) || !drives.IsZero() || !snapshot.IsZero() {
+		t.Fatal("ordinary observation renewed historical authority", err)
+	}
+	drives, snapshot, err = f.vmm.observedRuntimeSnapshotConsumptionAt(t.Context(), f.lease, historical)
+	if !errors.Is(err, runtimeadmission.ErrUnavailable) || !drives.IsZero() || !snapshot.IsZero() {
+		t.Fatal("historical observation lost its native ownership fence", err)
+	}
+	plan := f.spec.verifiedSnapshot
+	if plan.resumeAttempted || plan.inputs.owner.closed {
+		t.Fatal("observation attempted resume or retired the retained paused load")
+	}
+}
+
 func simulatedPausedSnapshotConsumption(f protectedRestoreFixture) (runtimeadmission.ArtifactConsumption, runtimeadmission.SnapshotConsumption) {
 	plan := f.spec.verifiedSnapshot
 	observed := plan.inputs.owner.observation

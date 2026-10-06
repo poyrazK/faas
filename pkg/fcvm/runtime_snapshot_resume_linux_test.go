@@ -6,6 +6,7 @@ package fcvm
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -147,19 +148,11 @@ func TestSnapshotResumeCouplesActualProcessAndAcknowledgments(t *testing.T) {
 			if fault == "expired historical load" {
 				// Simulate elapsed grant history, without simulating any process,
 				// mapping, descriptor, backing bytes or resume acknowledgment.
-				plan.request.Binding.IssuedAtUnixNano -= int64(2 * time.Hour)
-				plan.request.Binding.ExpiresAtUnixNano -= int64(2 * time.Hour)
-				plan.request.Capture.Parent.Binding.IssuedAtUnixNano -= int64(2 * time.Hour)
-				plan.request.Capture.Parent.Binding.ExpiresAtUnixNano -= int64(2 * time.Hour)
-				plan.request.Capture.Parent.CompletedAtUnixNano -= int64(2 * time.Hour)
-				plan.request.Capture.CapturedAtUnixNano -= int64(2 * time.Hour)
-				e := runtimeadmission.SnapshotRestoreEvidence{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: plan.request.Binding.SnapshotCaptureToken, FCVersion: plan.request.Snapshot.FCVersion, Capture: plan.request.Capture}
-				var err error
-				plan.request.Binding.SnapshotEvidenceHash, err = e.Hash()
-				if err != nil {
-					t.Fatal(err)
+				clock = expireSnapshotResumeLoadFixture(t, f, clock)
+				currentDrives, currentSnapshot, err := f.vmm.ObservedRuntimeSnapshotConsumption(t.Context(), f.lease)
+				if !errors.Is(err, runtimeadmission.ErrExpired) || !currentDrives.IsZero() || !currentSnapshot.IsZero() || plan.resumeAttempted {
+					t.Fatal("ordinary observation renewed historical load authority", err)
 				}
-				clock = clock.Add(-2 * time.Hour)
 			}
 			drives, snapshot, err := f.vmm.observedRuntimeSnapshotConsumptionAt(t.Context(), f.lease, clock)
 			if err != nil || drives.ProcessPID != uint32(cmd.Process.Pid) || snapshot.MappedMemoryBytes != 1<<20 {

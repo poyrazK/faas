@@ -2798,7 +2798,7 @@ refused. Returned observations own their request and drive copies.
 The standalone protobuf message preserves this complete contract and refuses
 unknown fields, unsupported versions and missing bindings. It is deliberately
 separate from boot receipts and promotion responses: no historical receipt wire
-encoding or SQL migration changes. Native production validates the complete
+encoding or SQL migration changes. Native observation validates the complete
 object before returning it; an attempted resume that fails validation follows
 the same joined retirement path as a failed command or hook.
 
@@ -2811,3 +2811,9 @@ publication through Manager, RPC and both stores remains implementation work.
 Production restore advertisement and public activation stay disabled, and all
 release checklist items remain open. The user confirmed that no alternative
 dedicated native acceptance host is currently available.
+
+Ordinary snapshot observation continues to validate against the current clock.
+Only the bound resume path rechecks historical load identity at its saved clock;
+it separately requires fresh promotion authority. Portable refusal tests and
+the Linux process fixture ensure that an expired original grant cannot produce
+an ordinary consumption observation or replace actual process ownership.
