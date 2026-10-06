@@ -28,6 +28,7 @@ AppWebhookResponseEventFilterItem = Literal[
     "routes.requirements.recovered",
     "routes.requirements.violated",
     "usage_statement.finalized",
+    "workflow.finished",
 ]
 
 APP_WEBHOOK_RESPONSE_EVENT_FILTER_ITEM_VALUES: set[AppWebhookResponseEventFilterItem] = {
@@ -58,6 +59,7 @@ APP_WEBHOOK_RESPONSE_EVENT_FILTER_ITEM_VALUES: set[AppWebhookResponseEventFilter
     "routes.requirements.recovered",
     "routes.requirements.violated",
     "usage_statement.finalized",
+    "workflow.finished",
 }
 
 

@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -198,6 +203,57 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+
+	keyHeader := r.Header.Get("Idempotency-Key")
+	idempotencyKey := strings.TrimSpace(keyHeader)
+	if keyHeader != "" && (idempotencyKey == "" || len(idempotencyKey) > state.WorkflowRunIdempotencyKeyMaxBytes || strings.IndexFunc(idempotencyKey, unicode.IsControl) >= 0) {
+		api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("Idempotency-Key must contain 1 to %d non-control bytes", state.WorkflowRunIdempotencyKeyMaxBytes)))
+		return
+	}
+
+	// Read and validate the request before resolving the current definition so
+	// an idempotent retry can return its original run after a publish or deploy.
+	r.Body = http.MaxBytesReader(w, r.Body, api.WorkflowRunInputMaxBytes)
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			api.WriteProblem(w, api.ErrRequestBodyTooLarge(api.WorkflowRunInputMaxBytes, api.WorkflowRunInputMaxBytes+1))
+			return
+		}
+		api.WriteProblem(w, api.ErrValidation("failed to read request body"))
+		return
+	}
+	inputRaw := json.RawMessage(`{}`)
+	if len(bodyBytes) > 0 {
+		if !json.Valid(bodyBytes) {
+			api.WriteProblem(w, api.ErrValidation("request body must be valid JSON"))
+			return
+		}
+		inputRaw = bodyBytes
+	}
+
+	var requestFingerprint []byte
+	if idempotencyKey != "" {
+		requestFingerprint = workflowRunCreateRequestFingerprint(inputRaw)
+		original, err := s.store.GetWorkflowRunByIdempotencyKey(r.Context(), app.ID, workflowName, idempotencyKey, requestFingerprint)
+		if err == nil {
+			w.Header().Set("Idempotent-Replayed", "true")
+			writeJSON(w, http.StatusCreated, workflowRunResponse(original))
+			return
+		}
+		if errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Idempotency key already used", "use a new Idempotency-Key when starting a run with different input"))
+			return
+		}
+		if !errors.Is(err, state.ErrWorkflowRunNotFound) {
+			s.log.Error("look up idempotent workflow run failed", "app_id", app.ID, "err", err)
+			api.WriteProblem(w, api.ErrCapacity("failed to look up workflow run idempotency key"))
+			return
+		}
+	}
+
 	// Gating: check plan allows workflows
 	if !acct.Plan.WorkflowsAllowed() {
 		api.WriteProblem(w, api.ErrPlanWorkflowsNotAllowed(acct.Plan))
@@ -270,28 +326,6 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 
 	maxConcurrent := acct.Plan.WorkflowMaxConcurrentRuns()
 
-	// Read input payload
-	r.Body = http.MaxBytesReader(w, r.Body, api.WorkflowRunInputMaxBytes)
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			api.WriteProblem(w, api.ErrRequestBodyTooLarge(api.WorkflowRunInputMaxBytes, api.WorkflowRunInputMaxBytes+1))
-			return
-		}
-		api.WriteProblem(w, api.ErrValidation("failed to read request body"))
-		return
-	}
-
-	inputRaw := json.RawMessage(`{}`)
-	if len(bodyBytes) > 0 {
-		if !json.Valid(bodyBytes) {
-			api.WriteProblem(w, api.ErrValidation("request body must be valid JSON"))
-			return
-		}
-		inputRaw = bodyBytes
-	}
-
 	run := &state.WorkflowRun{
 		AppID:              app.ID,
 		PlatformTenantID:   tenantID,
@@ -302,9 +336,20 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		ScheduledFor:       time.Now().UTC(),
 	}
 
-	activeRuns, err := s.store.CreateWorkflowRunAdmitted(r.Context(), run, maxConcurrent)
+	var activeRuns int
+	var replayed bool
+	if idempotencyKey != "" {
+		activeRuns, replayed, err = s.store.CreateWorkflowRunAdmittedWithIdempotencyKey(r.Context(), run, maxConcurrent, idempotencyKey, requestFingerprint)
+	} else {
+		activeRuns, err = s.store.CreateWorkflowRunAdmitted(r.Context(), run, maxConcurrent)
+	}
 	if errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 		api.WriteProblem(w, api.ErrPlanWorkflowsQuota(acct.Plan, maxConcurrent, activeRuns))
+		return
+	}
+	if errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Idempotency key already used", "use a new Idempotency-Key when starting a run with different input"))
 		return
 	}
 	if err != nil {
@@ -313,7 +358,26 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if replayed {
+		w.Header().Set("Idempotent-Replayed", "true")
+	}
 	writeJSON(w, http.StatusCreated, workflowRunResponse(run))
+}
+
+func workflowRunCreateRequestFingerprint(input json.RawMessage) []byte {
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(input))
+	decoder.UseNumber()
+	canonical := input
+	if err := decoder.Decode(&value); err == nil {
+		if encoded, err := json.Marshal(value); err == nil {
+			canonical = encoded
+		}
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("gregale.workflow-run.create:v1\x00"))
+	_, _ = hash.Write(canonical)
+	return hash.Sum(nil)
 }
 
 // listWorkflowRuns handles GET /v1/apps/{slug}/workflows/runs
@@ -324,14 +388,35 @@ func (s *server) listWorkflowRuns(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
+	query := r.URL.Query()
 	opts := state.ListWorkflowRunsOpts{
 		Limit:  50,
 		Offset: 0,
-		Status: r.URL.Query().Get("status"),
+		Status: query.Get("status"),
 	}
 	if !api.ValidWorkflowRunStatus(opts.Status) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid workflow status", "status must be pending, running, awaiting_event, succeeded, failed, or dead"))
+		return
+	}
+	if query.Has("workflow_name") {
+		opts.WorkflowName = query.Get("workflow_name")
+		if opts.WorkflowName == "" || len(opts.WorkflowName) > api.WorkflowWebhookNameMaxBytes {
+			api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("workflow_name must contain 1 to %d bytes", api.WorkflowWebhookNameMaxBytes)))
+			return
+		}
+	}
+	var err error
+	if opts.CreatedAfter, err = parseWorkflowRunTimeFilter(query, "created_after"); err != nil {
+		api.WriteProblem(w, api.ErrValidation("created_after must be an RFC3339 timestamp"))
+		return
+	}
+	if opts.CreatedBefore, err = parseWorkflowRunTimeFilter(query, "created_before"); err != nil {
+		api.WriteProblem(w, api.ErrValidation("created_before must be an RFC3339 timestamp"))
+		return
+	}
+	if opts.CreatedAfter != nil && opts.CreatedBefore != nil && opts.CreatedAfter.After(*opts.CreatedBefore) {
+		api.WriteProblem(w, api.ErrValidation("created_after must be earlier than or equal to created_before"))
 		return
 	}
 
@@ -366,6 +451,22 @@ func (s *server) listWorkflowRuns(w http.ResponseWriter, r *http.Request, acct s
 		Runs:  res,
 		Total: total,
 	})
+}
+
+func parseWorkflowRunTimeFilter(query map[string][]string, name string) (*time.Time, error) {
+	values, ok := query[name]
+	if !ok {
+		return nil, nil
+	}
+	if len(values) != 1 || values[0] == "" {
+		return nil, fmt.Errorf("%s must be a single RFC3339 timestamp", name)
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, values[0])
+	if err != nil {
+		return nil, err
+	}
+	parsed = parsed.UTC()
+	return &parsed, nil
 }
 
 // getWorkflowRun handles GET /v1/workflows/runs/{id}

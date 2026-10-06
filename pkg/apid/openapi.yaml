@@ -17042,6 +17042,160 @@ paths:
           default: false
         description: Explicitly return ownership to the current YAML definition after
           deletion.
+  /v1/apps/{slug}/automations/{name}/health:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: Automation whose recent execution health is summarized.
+    get:
+      tags: [workflows]
+      operationId: getAutomationHealth
+      summary: Get bounded execution health for one automation.
+      description: |
+        Returns run counts by status, the completed-run success rate, median
+        and p95 duration, recent run identities and the most common failed
+        steps. Inputs, outputs, and error text are never included. The default
+        window is the previous seven days; the maximum window is 30 days.
+        created_after and created_before are inclusive RFC3339 timestamps, and
+        created_before may not be in the future. Failed loop items are grouped
+        under their parent step; at most ten failed steps are returned.
+      parameters:
+        - name: created_after
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Inclusive start of the summary window; defaults to seven days before created_before or now.
+        - name: created_before
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Inclusive end of the summary window; defaults to now.
+      responses:
+        '200':
+          description: Safe operational summary for the selected automation and time window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationHealthResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/automations/{name}/revisions:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Automation whose immutable published revisions are listed.
+    get:
+      tags: [workflows]
+      operationId: listAutomationRevisions
+      summary: List published automation revisions, newest first.
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        description: Maximum number of revisions to return (1–100; defaults to 50).
+      - name: offset
+        in: query
+        required: false
+        schema: { type: integer, format: int32, minimum: 0, maximum: 2147483647, default: 0 }
+        description: Number of newest revisions to skip before returning results (maximum 2147483647).
+      responses:
+        '200':
+          description: Immutable published definitions and pagination metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListAutomationRevisionsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+  /v1/apps/{slug}/automations/{name}/revisions/{version}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Automation that owns the requested published revision.
+    - name: version
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+      description: Published revision identifier returned by the revision list.
+    get:
+      tags: [workflows]
+      operationId: getAutomationRevision
+      summary: Read one immutable published automation revision.
+      responses:
+        '200':
+          description: The selected published definition and its canonical hash.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationRevisionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+  /v1/apps/{slug}/automations/{name}/revisions/{version}/restore:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Automation that receives the restored draft.
+    - name: version
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+      description: Published revision to copy into the current draft.
+    post:
+      tags: [workflows]
+      operationId: restoreAutomationRevision
+      summary: Restore a published revision as a new draft using optimistic version checking.
+      description: |
+        Copies the selected immutable revision into the automation's draft. It
+        does not publish the copy or change running and accepted workflows.
+        Send expected_version from the latest automation read; use zero when
+        creating a draft after the automation was deleted. YAML ownership still
+        requires explicit takeover when the restored draft is later published.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestoreAutomationRevisionRequest' }
+      responses:
+        '200':
+          description: The updated automation draft; publishing remains a separate operation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AutomationConflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/AutomationInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
   /v1/apps/{slug}/automations/{name}/publish:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -17194,7 +17348,17 @@ paths:
       description: |
         Snapshots the named effective workflow definition from the app's live
         default deployment and dashboard publications and creates a pending run. The optional request body is
-        retained as the workflow input and may be any valid JSON value.
+        retained as the workflow input and may be any valid JSON value. An
+        optional Idempotency-Key binds this request to its original run for as
+        long as that run is retained. A matching retry returns the original
+        run, including its original definition snapshot; reusing the key with
+        different input returns 409.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 255 }
+          description: Stable caller key for retrying this run creation. Reuse only with the same workflow input.
       requestBody:
         required: false
         content:
@@ -17224,7 +17388,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
-          description: "code: workflow_tenant_identity_unavailable — tenant-required apps must use a tenant-scoped workflow run route."
+          description: "Tenant-required apps need a tenant-scoped run route, or the Idempotency-Key was already used with different workflow input."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -17444,6 +17608,21 @@ paths:
             type: string
             enum: [pending, running, awaiting_event, succeeded, failed, dead]
           description: Optional exact status filter.
+        - name: workflow_name
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 128 }
+          description: Optional exact workflow name filter.
+        - name: created_after
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Include runs created at or after this RFC3339 timestamp.
+        - name: created_before
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Include runs created at or before this RFC3339 timestamp.
         - name: limit
           in: query
           required: false
@@ -17460,6 +17639,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ListWorkflowRunsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -22529,7 +22709,9 @@ paths:
       description: |
         Returns the public endpoint_url once. Gregale stores only a SHA-256
         digest of its opaque token and an age/X25519-sealed provider signing
-        secret. Hobby, Pro, and Scale plans are supported.
+        secret. Providers are Stripe and generic timestamped HMAC-SHA256 senders.
+        Generic secrets must contain at least 32 bytes of random material.
+        Hobby, Pro, and Scale plans are supported.
       requestBody:
         required: true
         content:
@@ -22724,13 +22906,17 @@ paths:
     post:
       tags: [inbound_webhooks]
       operationId: receiveInboundWebhook
-      summary: Verify and durably accept a provider webhook.
+      summary: Verify and durably accept a Stripe or generic signed webhook.
       description: |
         This route does not use a Gregale bearer key. The opaque URL and the
         provider signature are the trust boundary. For Stripe, the exact raw
-        body is verified against Stripe-Signature. An exact workflow callback
-        binding completes its callback durably instead of enqueuing an app
-        invocation. Unmatched events keep the ordinary invocation path.
+        body is verified against Stripe-Signature. Generic endpoints require
+        X-Gregale-Event-ID, X-Gregale-Event-Type, X-Gregale-Timestamp and
+        X-Gregale-Signature. The HMAC-SHA256 covers the timestamp, event ID,
+        event type and exact raw body; timestamps must be within five minutes.
+        An exact Stripe workflow callback binding completes its callback
+        durably instead of enqueuing an app invocation. Unmatched events keep
+        the ordinary invocation path.
         Terminal callbacks are acknowledged as ignored after verification.
         An automation-bound endpoint captures its published definition in durable
         fanout work. Paused, unpublished or type-unmatched events are durably ignored;
@@ -22740,9 +22926,29 @@ paths:
       parameters:
         - name: Stripe-Signature
           in: header
-          required: true
-          description: Stripe v1 timestamped HMAC signature over the exact request body.
+          required: false
+          description: Required for Stripe endpoints; Stripe v1 timestamped HMAC signature over the exact request body.
           schema: { type: string, maxLength: 4096 }
+        - name: X-Gregale-Event-ID
+          in: header
+          required: false
+          description: Required for generic endpoints; stable event ID of 1 to 256 visible ASCII bytes, with no spaces.
+          schema: { type: string, pattern: '^[!-~]{1,256}$', maxLength: 256 }
+        - name: X-Gregale-Event-Type
+          in: header
+          required: false
+          description: Required for generic endpoints; exact event type matching ^[a-z][a-z0-9_.]{0,255}$.
+          schema: { type: string, pattern: '^[a-z][a-z0-9_.]{0,255}$', maxLength: 256 }
+        - name: X-Gregale-Timestamp
+          in: header
+          required: false
+          description: Required for generic endpoints; Unix timestamp in seconds.
+          schema: { type: string, pattern: '^[0-9]{1,12}$' }
+        - name: X-Gregale-Signature
+          in: header
+          required: false
+          description: Required for generic endpoints; sha256= followed by the lowercase hex HMAC-SHA256 digest.
+          schema: { type: string, pattern: '^sha256=[0-9a-f]{64}$' }
       requestBody:
         required: true
         content:
@@ -41595,6 +41801,128 @@ components:
           items:
             $ref: '#/components/schemas/AutomationResponse'
       description: App automation definitions, plan limit and execution availability.
+    AutomationHealthRun:
+      type: object
+      additionalProperties: false
+      required: [id, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, running, awaiting_event, succeeded, failed, dead] }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+      description: Safe recent-run identity and timestamps; workflow input, output and error text are omitted.
+    AutomationHealthStepFailure:
+      type: object
+      additionalProperties: false
+      required: [step_name, failed_run_count, last_failed_at]
+      properties:
+        step_name: { type: string, minLength: 1, maxLength: 128 }
+        failed_run_count: { type: integer, format: int64, minimum: 1 }
+        last_failed_at: { type: string, format: date-time }
+      description: Number of terminal runs that failed at this logical step; loop items are grouped by parent.
+    AutomationHealthResponse:
+      type: object
+      additionalProperties: false
+      required: [app_slug, automation_name, window_start, window_end, run_count, completed_run_count, active_run_count, queued_run_count, success_rate, status_counts, failed_steps]
+      properties:
+        app_slug: { type: string }
+        automation_name: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        run_count: { type: integer, format: int64, minimum: 0 }
+        completed_run_count: { type: integer, format: int64, minimum: 0 }
+        active_run_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current non-terminal runs that have started, including retries and parked waits; independent of the requested health window.
+        queued_run_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current pending runs that have not started; independent of the requested health window.
+        success_rate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Succeeded runs divided by succeeded, failed and dead runs; zero when none completed.
+        status_counts:
+          type: object
+          required: [pending, running, awaiting_event, succeeded, failed, dead]
+          properties:
+            pending: { type: integer, format: int64, minimum: 0 }
+            running: { type: integer, format: int64, minimum: 0 }
+            awaiting_event: { type: integer, format: int64, minimum: 0 }
+            succeeded: { type: integer, format: int64, minimum: 0 }
+            failed: { type: integer, format: int64, minimum: 0 }
+            dead: { type: integer, format: int64, minimum: 0 }
+          additionalProperties: false
+        p50_duration_ms: { type: integer, format: int64, minimum: 0, description: Median duration of completed runs with start and finish timestamps; omitted when no samples exist. }
+        p95_duration_ms: { type: integer, format: int64, minimum: 0, description: 95th percentile duration of completed runs with start and finish timestamps; omitted when no samples exist. }
+        last_run: { $ref: '#/components/schemas/AutomationHealthRun' }
+        last_success: { $ref: '#/components/schemas/AutomationHealthRun' }
+        last_failure: { $ref: '#/components/schemas/AutomationHealthRun' }
+        failed_steps:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/AutomationHealthStepFailure' }
+      description: Bounded aggregate automation health. Customer payloads and error strings are never returned.
+    AutomationRevisionResponse:
+      type: object
+      additionalProperties: false
+      required: [version, definition, definition_hash, recorded_at, legacy_snapshot, published_by_account_id]
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Immutable published revision identifier.
+        definition:
+          $ref: '#/components/schemas/WorkflowSpec'
+        definition_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: SHA-256 of the canonical JSON encoding of definition.
+        recorded_at:
+          type: string
+          format: date-time
+          description: When this immutable history record was stored; for legacy snapshots this is the migration time.
+        legacy_snapshot:
+          type: boolean
+          description: True for the one current publication copied into history during rollout; older history was not retained.
+        published_by_account_id:
+          type: string
+          format: uuid
+          description: Account that published this revision, or owned the legacy snapshot at rollout.
+        published_by_api_key_id:
+          type: string
+          format: uuid
+          description: API key used for the publish when the request used key authentication; omitted for session authentication and legacy snapshots.
+      description: Immutable published automation definition with actor and rollout provenance.
+    ListAutomationRevisionsResponse:
+      type: object
+      additionalProperties: false
+      required: [revisions, total, limit, offset]
+      properties:
+        revisions:
+          type: array
+          items: { $ref: '#/components/schemas/AutomationRevisionResponse' }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        offset: { type: integer, minimum: 0 }
+      description: Newest-first immutable publication history and pagination metadata.
+    RestoreAutomationRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version]
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current draft revision for optimistic concurrency; zero creates a draft after deletion.
+      description: Restores a selected immutable publication into the draft without publishing it.
     SaveAutomationDraftRequest:
       type: object
       additionalProperties: false
@@ -41641,7 +41969,7 @@ components:
           type: boolean
       description: Publication revision and the desired state of automatic starts.
     SimulateAutomationRequest:
-      description: Sample workflow data and successful action results for a stateless simulation.
+      description: Sample workflow data and mocked action or timeout outcomes for a stateless simulation.
       type: object
       additionalProperties: false
       required: [definition]
@@ -41661,6 +41989,35 @@ components:
             type: array
             maxItems: 128
             items: {}
+        mock_attempts:
+          description: Ordered per-attempt outcomes keyed by action name; waits accept one timeout outcome when they have an on_timeout route. Action timeouts also require on_timeout. Cannot be combined with mock_outputs for the same step.
+          type: object
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 25
+            items:
+              $ref: '#/components/schemas/AutomationSimulationMockAttempt'
+    AutomationSimulationMockAttempt:
+      description: One mocked attempt; success requires output, failure requires exactly one of error or non-2xx http_status, and timeout has no additional fields.
+      type: object
+      additionalProperties: false
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [success, failure, timeout]
+        output:
+          description: Successful result; any JSON value, including null.
+        error:
+          type: string
+          minLength: 1
+          description: Mocked transport or action error message used as failure.message.
+        http_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: Mocked non-2xx response status.
     SimulateAutomationResponse:
       description: Definition validity, submitted-definition SHA-256 and deterministic simulated data flow.
       type: object
@@ -41675,7 +42032,7 @@ components:
           description: SHA-256 of the JSON-serialized submitted definition, independent of samples; not a publication revision.
         complete:
           type: boolean
-          description: All roots resolved or skipped under these mocks; false for missing results, waits or evaluation errors.
+          description: Every root reached a known terminal outcome under these mocks; false for missing results, unresolved retries, waits or evaluation errors.
         issues:
           type: array
           items: { type: string }
@@ -41702,7 +42059,7 @@ components:
           enum: [run, path, outbound, for_each, join, event_wait, callback_wait, duration_wait, condition_wait]
         state:
           type: string
-          enum: [would_execute, mocked, would_wait, resolved, expanded, skipped, blocked, error]
+          enum: [would_execute, mocked, would_wait, resolved, expanded, skipped, blocked, would_retry, timed_out, failed, dead, error]
         reason:
           type: string
           description: Stable decision reason with no referenced customer values.
@@ -41713,7 +42070,13 @@ components:
         input:
           description: Resolved action input or materialized loop source; any JSON type is preserved.
         output:
-          description: Supplied successful mock or a control output; omitted when no result is known.
+          description: Supplied successful mock, timeout sentinel or control output; omitted when no result is known.
+        attempts:
+          type: array
+          description: Safe summary of supplied action attempt outcomes; mocked error text is exposed only through eligible failure context.
+          maxItems: 25
+          items:
+            $ref: '#/components/schemas/AutomationSimulationAttempt'
         run: { type: string }
         path: { type: string }
         method: { type: string }
@@ -41722,6 +42085,17 @@ components:
         parent_step: { type: string }
         item_index: { type: integer, minimum: 0 }
         item_count: { type: integer, minimum: 0, maximum: 128 }
+    AutomationSimulationAttempt:
+      description: Safe summary of one supplied hypothetical attempt outcome.
+      type: object
+      additionalProperties: false
+      required: [attempt, outcome]
+      properties:
+        attempt: { type: integer, minimum: 1, maximum: 25 }
+        outcome:
+          type: string
+          enum: [success, failure, timeout]
+        http_status: { type: integer, minimum: 100, maximum: 599 }
     ValidateAutomationRequest:
       type: object
       additionalProperties: false
@@ -41916,12 +42290,19 @@ components:
 
     WorkflowForEachSpec:
       description: |
-        Sequential action over a JSON array from input or a direct dependency output.
-        Snapshots all items and resolved action inputs before dispatch. At most 128
-        items, 1 MiB source/prepared inputs and 1 MiB collected output. Parent names
-        permit at most 64 UTF-8 bytes. Stops on item failure; completed items survive
-        recovery. Output is an array of item outputs in input order; an empty list
-        succeeds with []. Parent consumes zero attempts; each item has its own ledger.
+        Bounded-concurrency action over a JSON array from input or a direct dependency
+        output. Snapshots all items and resolved action inputs before dispatch. At most
+        128 items, 1 MiB source/prepared inputs and 1 MiB collected output. Parent names
+        permit at most 64 UTF-8 bytes. Omitted or zero max_parallel means one active
+        item; values up to 16 limit active items per batch. Items are admitted in
+        input order within a bounded window, and collected output always follows input
+        order. By default no new items start after a terminal item failure; already
+        active items finish and the parent fails. `on_item_failure: continue` attempts
+        later items and still marks the parent unsuccessful if any item failed.
+        Completed items survive recovery. With the default stop policy, output retains
+        the completed prefix. With continue, output includes every input position and
+        null for guarded or unsuccessful items. An empty list succeeds with []. Parent
+        consumes zero attempts; each item has its own ledger.
       type: object
       additionalProperties: false
       required: [items, action]
@@ -41932,14 +42313,25 @@ components:
           description: Array reference without delimiters, such as input.invoices or steps.lookup.output.items.
         action:
           $ref: '#/components/schemas/WorkflowForEachActionSpec'
+        max_parallel:
+          type: integer
+          minimum: 0
+          maximum: 16
+          description: Maximum active items for this batch. Omit or set 0 for sequential execution.
+        on_item_failure:
+          type: string
+          enum: [continue]
+          description: "Continue after failed or dead items and mark the parent unsuccessful after all items are attempted. Omit to stop at the first failure."
 
     WorkflowForEachActionSpec:
       description: |
         Exactly one of run, path or outbound. No nested iteration, dependencies,
-        guards or exception routes. Omitted input sends the item itself. Explicit
-        input templates read input.item, input.index, input.input (original run input)
-        and outputs of the parent's declared dependencies. Inputs are never re-rendered
-        on retry. Mutating outbound retries require provider idempotency support.
+        waits, joins or exception routes. An optional when guard is evaluated once
+        for each item using input.item, input.index and input.input, plus outputs of
+        the parent's declared dependencies. Omitted input sends the item itself.
+        Explicit input templates use the same item context. Inputs and guard decisions
+        are snapshotted before dispatch and never reevaluated on retry. Mutating
+        outbound retries require provider idempotency support.
       type: object
       additionalProperties: false
       properties:
@@ -41967,6 +42359,8 @@ components:
           example: '30s'
         retry:
           $ref: '#/components/schemas/WorkflowRetrySpec'
+        when:
+          $ref: '#/components/schemas/WorkflowGuardSpec'
 
     WorkflowJoinSpec:
       description: |
@@ -41994,7 +42388,9 @@ components:
       description: |
         Call an existing customer managed outbound integration bound to this app.
         Credentials and fixed-origin routing remain with outboundd. Input is a
-        templated JSON body; GET and HEAD have no body and forbid explicit input.
+        templated JSON body. Path segments and query values support the workflow
+        template syntax; dynamic path values are escaped as one segment. GET and
+        HEAD have no body and forbid explicit input.
         One provider call occurs per workflow attempt. Automatic mutating retries
         require explicit provider idempotency support. Workflow outputs contain
         status and body; sensitive headers and failed-response bodies are omitted.
@@ -42013,8 +42409,22 @@ components:
         path:
           type: string
           maxLength: 2048
-          description: "Fixed canonical relative provider path; no URL, query, escaping, or traversal."
-          example: "/v1/contacts"
+          description: "Canonical relative provider path. A whole segment may be a template, such as /v1/contacts/{{input.contact_id}}; resolved values are escaped and checked against the bound route policy at execution time."
+          example: "/v1/contacts/{{input.contact_id}}"
+        query:
+          type: object
+          maxProperties: 32
+          description: "Optional static query keys with templated scalar values. Values are URL-encoded; the request remains bound to this integration and its route permissions."
+          propertyNames:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[^{}&=#?\s]+$'
+          additionalProperties:
+            type: string
+            maxLength: 2048
+          example:
+            email: "{{input.email}}"
         idempotency_supported:
           type: boolean
           default: false
@@ -42030,7 +42440,7 @@ components:
         max_attempts: { type: integer, minimum: 1, maximum: 1000 }
 
     WorkflowSpec:
-      description: "A named workflow DAG submitted with a deployment (ADR-081)."
+      description: "A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances for this workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota. max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler queue while all action slots are occupied."
       type: object
       required: [name, steps]
       properties:
@@ -42040,6 +42450,18 @@ components:
           oneOf:
             - $ref: '#/components/schemas/WorkflowTriggerSpec'
             - type: 'null'
+        max_concurrent_runs:
+          type: integer
+          minimum: 0
+          maximum: 200
+          default: 0
+          description: "Maximum active run instances for this workflow. Omit or set 0 to rely only on the app plan limit. Pending runs that have not started are queued and do not consume a slot."
+        max_concurrent_actions:
+          type: integer
+          minimum: 0
+          maximum: 200
+          default: 0
+          description: "Maximum running action and condition-check steps across runs of this workflow. Omit or set 0 for no additional per-workflow action cap. Event, callback, and duration waits do not consume an action slot. Runs use the value from their immutable definition snapshot."
         steps:
           type: array
           items:
@@ -54868,6 +55290,19 @@ components:
         duration_ms: { type: integer, format: int64, minimum: 0 }
       additionalProperties: true
 
+    WorkflowFinishedWebhookPayload:
+      type: object
+      description: Safe workflow run metadata delivered after a run reaches succeeded, failed, or dead. Inputs, outputs, and error text are omitted; fetch the run using its ID when authorized.
+      required: [app_id, run_id, workflow_name, status, finished_at, resume_count]
+      properties:
+        app_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        status: { type: string, enum: [succeeded, failed, dead] }
+        finished_at: { type: string, format: date-time }
+        resume_count: { type: integer, minimum: 0, maximum: 16 }
+      additionalProperties: false
+
     PreviewCreatedWebhookPayload:
       type: object
       description: Preview URL details delivered with preview.created.
@@ -55013,19 +55448,19 @@ components:
 
     CreateInboundWebhookEndpointRequest:
       type: object
-      description: Create a provider-verified endpoint whose accepted events become durable app invocations.
+      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or automation starts when bound.
       required: [name, provider, signing_secret]
       properties:
         name:
           type: string
           pattern: '^[a-z][a-z0-9-]{0,62}$'
           maxLength: 63
-        provider: { type: string, enum: [stripe] }
+        provider: { type: string, enum: [stripe, generic] }
         signing_secret:
           type: string
           minLength: 1
           maxLength: 256
-          description: Provider endpoint secret; sealed at rest and never returned.
+          description: Stripe signing secret or custom sender HMAC secret (at least 32 bytes for generic); sealed at rest and never returned.
         delivery_path:
           type: string
           pattern: '^/[^?#]*$'
@@ -55040,9 +55475,9 @@ components:
 
     UpdateInboundWebhookEndpointRequest:
       type: object
-      description: Omitted fields remain unchanged. A signing_secret value rotates the provider secret in place.
+      description: Omitted fields remain unchanged. A signing_secret value rotates the provider secret in place; generic secrets must contain at least 32 bytes.
       properties:
-        signing_secret: { type: string, minLength: 1, maxLength: 256 }
+        signing_secret: { type: string, minLength: 1, maxLength: 256, description: Generic provider secrets must contain at least 32 bytes. }
         delivery_path: { type: string, pattern: '^/[^?#]*$', maxLength: 256 }
         enabled: { type: boolean }
 
@@ -55055,7 +55490,7 @@ components:
         app_id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
         name: { type: string, maxLength: 63 }
-        provider: { type: string, enum: [stripe] }
+        provider: { type: string, enum: [stripe, generic] }
         delivery_path: { type: string, maxLength: 256 }
         enabled: { type: boolean }
         signing_secret_masked: { type: string, enum: ['***'] }
@@ -55131,7 +55566,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -55614,7 +56049,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -55695,7 +56130,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

@@ -6534,6 +6534,17 @@ type WorkflowAutomationDefinition struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type WorkflowAutomationRevision struct {
+	AppID                pgtype.UUID
+	Name                 string
+	Version              int64
+	Definition           []byte
+	RecordedAt           pgtype.Timestamptz
+	LegacySnapshot       bool
+	PublishedByAccountID pgtype.UUID
+	PublishedByApiKeyID  pgtype.UUID
+}
+
 type WorkflowCallbackWebhookBinding struct {
 	ID         pgtype.UUID
 	EndpointID pgtype.UUID
@@ -6575,24 +6586,26 @@ type WorkflowOperationEffect struct {
 }
 
 type WorkflowRun struct {
-	ID                 pgtype.UUID
-	AppID              pgtype.UUID
-	WorkflowName       string
-	Status             string
-	CurrentStep        pgtype.Text
-	Input              []byte
-	Output             []byte
-	DefinitionSnapshot []byte
-	ScheduledFor       pgtype.Timestamptz
-	StartedAt          pgtype.Timestamptz
-	FinishedAt         pgtype.Timestamptz
-	LastError          pgtype.Text
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	LeaseUntil         pgtype.Timestamptz
-	ResumeCount        int32
-	CancelledAt        pgtype.Timestamptz
-	PlatformTenantID   pgtype.UUID
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	WorkflowName             string
+	Status                   string
+	CurrentStep              pgtype.Text
+	Input                    []byte
+	Output                   []byte
+	DefinitionSnapshot       []byte
+	ScheduledFor             pgtype.Timestamptz
+	StartedAt                pgtype.Timestamptz
+	FinishedAt               pgtype.Timestamptz
+	LastError                pgtype.Text
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	CreateIdempotencyKey     pgtype.Text
+	CreateRequestFingerprint []byte
+	LeaseUntil               pgtype.Timestamptz
+	ResumeCount              int32
+	CancelledAt              pgtype.Timestamptz
+	PlatformTenantID         pgtype.UUID
 }
 
 type WorkflowRunResume struct {

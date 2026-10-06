@@ -166,6 +166,9 @@ func mdFlagLabel(f cliFlag) string {
 }
 
 func mdFlagValue(f cliFlag) string {
+	if f.Bool {
+		return ""
+	}
 	if f.Value != "" {
 		return f.Value
 	}

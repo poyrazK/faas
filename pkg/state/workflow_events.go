@@ -37,7 +37,11 @@ func eventWorkflowRun(recipient PublishedEventRecipient, payload []byte, plan ap
 		return nil, err
 	}
 	if recipient.WebhookEndpointID != "" {
-		if recipient.Source != webhookAutomationSource(recipient.WebhookEndpointID) || recipient.ID != webhookAutomationRecipientID(recipient.WebhookEndpointID, definition.Name) {
+		provider := recipient.WebhookProvider
+		if provider == "" {
+			provider = InboundWebhookProviderStripe
+		}
+		if recipient.Source != webhookAutomationSource(provider, recipient.WebhookEndpointID) || recipient.ID != webhookAutomationRecipientID(recipient.WebhookEndpointID, definition.Name) {
 			return nil, ErrWorkflowEventDefinitionInvalid
 		}
 	} else if definition.Trigger == nil || definition.Trigger.Type != "event" ||

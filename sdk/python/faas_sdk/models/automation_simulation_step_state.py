@@ -1,17 +1,32 @@
 from typing import Literal
 
 AutomationSimulationStepState = Literal[
-    "blocked", "error", "expanded", "mocked", "resolved", "skipped", "would_execute", "would_wait"
+    "blocked",
+    "dead",
+    "error",
+    "expanded",
+    "failed",
+    "mocked",
+    "resolved",
+    "skipped",
+    "timed_out",
+    "would_execute",
+    "would_retry",
+    "would_wait",
 ]
 
 AUTOMATION_SIMULATION_STEP_STATE_VALUES: set[AutomationSimulationStepState] = {
     "blocked",
+    "dead",
     "error",
     "expanded",
+    "failed",
     "mocked",
     "resolved",
     "skipped",
+    "timed_out",
     "would_execute",
+    "would_retry",
     "would_wait",
 }
 

@@ -105,6 +105,48 @@ func TestPgStore_WorkflowCallbackWebhookBinding(t *testing.T) {
 	}
 }
 
+func TestPgStore_ListWorkflowRunsFilters(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "wf-run-filters@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "wf-run-filters", RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	runs := []*state.WorkflowRun{
+		{AppID: app.ID, WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)},
+		{AppID: app.ID, WorkflowName: "refund", DefinitionSnapshot: json.RawMessage(`{"name":"refund"}`)},
+		{AppID: app.ID, WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)},
+	}
+	for i, run := range runs {
+		if err := s.CreateWorkflowRun(ctx, run); err != nil {
+			t.Fatalf("CreateWorkflowRun(%d): %v", i, err)
+		}
+		createdAt := base.Add(time.Duration(i) * time.Hour)
+		if _, err := pool.Exec(ctx, `UPDATE workflow_runs SET created_at = $1 WHERE id = $2`, createdAt, run.ID); err != nil {
+			t.Fatalf("set run %d timestamp: %v", i, err)
+		}
+	}
+
+	after, before := base, base.Add(2*time.Hour)
+	filtered, total, err := s.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{
+		WorkflowName: "charge", CreatedAfter: &after, CreatedBefore: &before, Limit: 1, Offset: 1,
+	})
+	if err != nil || total != 2 || len(filtered) != 1 || filtered[0].ID != runs[0].ID {
+		t.Fatalf("filtered runs = %#v, total=%d, err=%v; want oldest charge run on page 2 of 2", filtered, total, err)
+	}
+
+	if _, _, err := s.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{
+		CreatedAfter: &before, CreatedBefore: &after,
+	}); !errors.Is(err, state.ErrWorkflowInvalidCreatedRange) {
+		t.Fatalf("reversed created range error = %v, want ErrWorkflowInvalidCreatedRange", err)
+	}
+}
+
 func TestPgStore_WorkflowConditionCheckTransitions(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	acct, err := s.CreateAccount(ctx, "wf-condition@example.com", api.PlanHobby)
