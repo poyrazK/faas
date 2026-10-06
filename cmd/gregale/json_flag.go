@@ -137,7 +137,7 @@ func (w *jsonFlagErrorWriter) Write(p []byte) (int, error) {
 	return len(p), err
 }
 
-// applyJSONFlag consumes a leading --json (or -j / --json=BOOL) from
+// applyJSONFlag consumes --json (or -j / --json=BOOL) before "--" from
 // args and sets jsonOutput. Honors FAAS_JSON first, then the persistent
 // non-secret config preference, unless --json=false is explicit on the
 // command line. Returns the args with the flag
@@ -158,6 +158,9 @@ func applyJSONFlag(args []string) []string {
 		jsonOutput = configured
 	}
 	for i, a := range args {
+		if a == "--" {
+			break
+		}
 		switch {
 		case a == "--json" || a == "-j":
 			jsonOutput = true
@@ -172,6 +175,9 @@ func applyJSONFlag(args []string) []string {
 
 func invalidJSONFlagValue(args []string) string {
 	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
 		if !strings.HasPrefix(arg, "--json=") {
 			continue
 		}

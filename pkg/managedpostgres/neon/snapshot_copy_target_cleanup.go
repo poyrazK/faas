@@ -170,7 +170,7 @@ func (p *Provider) findSnapshotCopyOwnedProject(ctx context.Context, name string
 			found = candidate
 		}
 		cursor = response.Pagination.Cursor
-		if cursor == "" {
+		if len(response.Projects) == 0 || cursor == "" {
 			if found.ID == "" {
 				return project{}, managedpostgres.ErrNotFound
 			}

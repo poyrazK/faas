@@ -199,6 +199,9 @@ func signupMagicLink(email string) int {
 	if err := c.PostAuthSignupMagicLink(ctx, email); err != nil {
 		return printErr("Could not send magic link", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]string{"status": "ok"}))
+	}
 	_, _ = fmt.Fprintln(osStdout, "Check your email — a one-time signup link is on the way.")
 	return 0
 }

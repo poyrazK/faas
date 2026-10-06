@@ -34,7 +34,9 @@ func (p *Provider) readDatabaseMetadata(ctx context.Context, ref resourceRef, in
 	})
 	if includeOperations {
 		group.Go(func() error {
-			return p.doJSON(groupCtx, http.MethodGet, path+"/operations", url.Values{"limit": {"1000"}}, nil, &metadata.operations, http.StatusOK)
+			var err error
+			metadata.operations.Operations, err = p.listProjectOperations(groupCtx, ref.projectID)
+			return err
 		})
 	}
 	if err := group.Wait(); err != nil {

@@ -28,6 +28,18 @@ set -euo pipefail
 case "$1" in
   apps) exit 0 ;;
   deployment)
+    # Keep the simulated rollout open until its continuity probe is observed.
+    # An immediate fake completion can otherwise skip the script's probe loop.
+    if [[ "${TEST_REDEPLOY_503:-}" == 1 ]]; then
+      for ((attempt=0; attempt<1000; attempt++)); do
+        if [[ -f "${TEST_CURL_LOG}.continuity" ]]; then break; fi
+        sleep 0.01
+      done
+      if [[ ! -f "${TEST_CURL_LOG}.continuity" ]]; then
+        echo "continuity probe was never observed" >&2
+        exit 1
+      fi
+    fi
     # Like the real CLI, deployment wait prints the bare deployment: no app_url.
     printf '{"id":"redeployed","status":"live","rollout_state":"complete","hosting_receipt":{"smoke":{"status":"verified","status_code":200,"path":"/healthz"}}}\n'
     exit 0 ;;
@@ -94,6 +106,7 @@ exit 2
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_CURL_LOG"
 if [[ "${TEST_REDEPLOY_503:-}" == 1 && "$*" == *"ra-"* && "$*" != *"--write-out"* ]]; then
+  touch "${TEST_CURL_LOG}.continuity"
   headers=""; body=""
   while (($#)); do
     case "$1" in

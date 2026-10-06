@@ -75,12 +75,18 @@ func (f *forkDeletionFixture) serveHTTP(w http.ResponseWriter, r *http.Request) 
 		ops := f.ops
 		cursor := ""
 		if f.fault == "pagination" && r.URL.Query().Get("cursor") == "" {
-			ops = []operation{}
+			ops = []operation{{ID: "unrelated-operation", ProjectID: "project-source", BranchID: "br-unrelated", Status: "finished"}}
 			cursor = "next-page"
 		}
 		if f.fault == "cycle" {
-			ops = []operation{}
+			ops = []operation{{ID: "loop-operation", ProjectID: "project-source", BranchID: "br-unrelated", Status: "finished"}}
 			cursor = "same-page"
+		}
+		if f.fault == "terminal" {
+			cursor = "last-operation"
+			if r.URL.Query().Get("cursor") != "" {
+				ops = []operation{}
+			}
 		}
 		writeResponse(f.base.t, w, http.StatusOK, map[string]any{"operations": ops, "pagination": map[string]any{"cursor": cursor}})
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, root+"/operations/"):
@@ -98,6 +104,20 @@ func (f *forkDeletionFixture) serveHTTP(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusNotFound)
 	default:
 		f.base.serveHTTP(w, r)
+	}
+}
+
+func TestSnapshotRestoreDeletionAcceptsRetainedTerminalCursor(t *testing.T) {
+	f := newForkDeletionFixture(t)
+	f.base.rows = []branch{}
+	f.ops = f.deletionOps()
+	for i := range f.ops {
+		f.ops[i].Status = "finished"
+	}
+	f.fault = "terminal"
+	actual, err := f.base.p.ObserveSnapshotRestoreDeletion(t.Context(), f.base.definition, f.request)
+	if err != nil || !actual.Done || f.lists != 2 || f.deletes != 0 {
+		t.Fatalf("terminal cursor deletion proof: %+v err=%v lists=%d deletes=%d", actual, err, f.lists, f.deletes)
 	}
 }
 
