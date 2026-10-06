@@ -17,14 +17,19 @@ import (
 
 func seedBindingCandidate(t *testing.T, e testEnv, app state.App, scope string) state.Deployment {
 	t.Helper()
-	dep, err := e.store.CreateDeployment(context.Background(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive, Scope: scope, TrafficPercent: 0, TrafficPercentExplicit: true, ImageDigest: appTaskTestDigest, CreatedAt: time.Now().UTC().Add(time.Second)})
+	return seedBindingCandidateWithContext(context.Background(), t, e, app, scope)
+}
+
+func seedBindingCandidateWithContext(ctx context.Context, t *testing.T, e testEnv, app state.App, scope string) state.Deployment {
+	t.Helper()
+	dep, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive, Scope: scope, TrafficPercent: 0, TrafficPercentExplicit: true, ImageDigest: appTaskTestDigest, CreatedAt: time.Now().UTC().Add(time.Second)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.SetDeploymentRootfs(context.Background(), dep.ID, "/candidate/image", "candidate/"+dep.ID, 4096); err != nil {
+	if err := e.store.SetDeploymentRootfs(ctx, dep.ID, "/candidate/image", "candidate/"+dep.ID, 4096); err != nil {
 		t.Fatal(err)
 	}
-	dep, err = e.store.DeploymentByID(context.Background(), dep.ID)
+	dep, err = e.store.DeploymentByID(ctx, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

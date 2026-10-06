@@ -71,15 +71,15 @@ func checkedProjectReleaseFixture(t *testing.T, store state.Store) (state.Accoun
 	return acct, project, apps, members, old
 }
 
-func graphFences(t *testing.T, store state.Store, acct state.Account, members []state.ProjectReleaseMember) []state.BindingPromotionFence {
+func graphFences(ctx context.Context, t *testing.T, store state.Store, acct state.Account, members []state.ProjectReleaseMember) []state.BindingPromotionFence {
 	t.Helper()
 	var fences []state.BindingPromotionFence
 	for _, member := range members {
-		revision, err := store.(state.BindingPromotionStore).ReadBindingPromotionRevision(context.Background(), acct.ID, member.AppID)
+		revision, err := store.(state.BindingPromotionStore).ReadBindingPromotionRevision(ctx, acct.ID, member.AppID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		policy, err := store.(state.BindingReleasePolicyStore).GetBindingReleasePolicy(context.Background(), acct.ID, member.AppID, "production")
+		policy, err := store.(state.BindingReleasePolicyStore).GetBindingReleasePolicy(ctx, acct.ID, member.AppID, "production")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func checkedProjectReleaseSuite(t *testing.T, store state.Store) {
 	unchanged()
 	for _, tc := range []string{"missing", "expired", "wrong-target", "wrong-scope", "wrong-policy", "waiver", "stale-revision", "wrong-active"} {
 		t.Run(tc, func(t *testing.T) {
-			fences := graphFences(t, store, acct, members)
+			fences := graphFences(ctx, t, store, acct, members)
 			expected := old.ID
 			switch tc {
 			case "missing":
@@ -145,7 +145,7 @@ func checkedProjectReleaseSuite(t *testing.T, store state.Store) {
 			unchanged()
 		})
 	}
-	fences := graphFences(t, store, acct, members)
+	fences := graphFences(ctx, t, store, acct, members)
 	activated, err := checked.PublishProjectReleaseSetWithBindings(state.WithBindingReleaseFences(ctx, fences), acct.ID, project.ID, "production", old.ID, 1800, members)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +158,7 @@ func checkedProjectReleaseSuite(t *testing.T, store state.Store) {
 	if err != nil || retired.Active || retired.ExpiresAt == nil {
 		t.Fatalf("retention: %+v %v", retired, err)
 	}
-	fences = graphFences(t, store, acct, members)
+	fences = graphFences(ctx, t, store, acct, members)
 	if _, err := checked.PublishProjectReleaseSetWithBindings(state.WithBindingReleaseFences(ctx, fences), acct.ID, project.ID, "production", old.ID, 1800, members); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale graph CAS: %v", err)
 	}
@@ -172,7 +172,7 @@ func checkedProjectReleaseSuite(t *testing.T, store state.Store) {
 	if _, err := policyStore.SetBindingReleasePolicy(ctx, acct.ID, apps[0].ID, "production", api.SetBindingReleasePolicyRequest{Mode: "off", ExpectedRevision: &policy.Revision, MaxVerificationAge: "30s", RequireApplicationAck: true, Reason: "graph parity test"}); err != nil {
 		t.Fatal(err)
 	}
-	fences = graphFences(t, store, acct, members)
+	fences = graphFences(ctx, t, store, acct, members)
 	wrong := append([]state.BindingPromotionFence(nil), fences...)
 	for i := range wrong {
 		if wrong[i].AppID == apps[0].ID {

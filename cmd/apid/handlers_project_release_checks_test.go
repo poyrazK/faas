@@ -35,7 +35,7 @@ func TestCheckedProjectReleaseUsesPinnedServiceBindings(t *testing.T) {
 	if _, err := e.store.PutProjectEnvironmentWorkloadSpec(ctx, e.acct.ID, project.ID, "production", app.ID, 0, settings); err != nil {
 		t.Fatal(err)
 	}
-	deployment := seedBindingCandidate(t, e, app, "production")
+	deployment := seedBindingCandidateWithContext(ctx, t, e, app, "production")
 	manifest := app.Manifest
 	manifest.ServiceBindings = api.ServiceBindingsForTargets([]string{"new-billing"})
 	if _, err := e.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
@@ -90,7 +90,7 @@ func TestCheckedProjectReleaseExactServiceEvidenceAndAtomicActivation(t *testing
 		if err := e.store.SetDeploymentRootfs(ctx, serving.ID, "/serving/image", "serving/"+serving.ID, 4096); err != nil {
 			t.Fatal(err)
 		}
-		return app, seedBindingCandidate(t, e, app, "production")
+		return app, seedBindingCandidateWithContext(ctx, t, e, app, "production")
 	}
 	caller, callerDep := create("shop-api", api.ServiceBindingsForTargets([]string{"shop-billing"}))
 	_, target := create("shop-billing", nil)

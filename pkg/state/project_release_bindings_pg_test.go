@@ -21,7 +21,7 @@ func TestCheckedProjectReleasePG(t *testing.T) {
 func TestCheckedProjectReleasePGConcurrentActivation(t *testing.T) {
 	store, ctx, _ := pgWithPool(t)
 	acct, project, _, members, old := checkedProjectReleaseFixture(t, store)
-	fences := graphFences(t, store, acct, members)
+	fences := graphFences(ctx, t, store, acct, members)
 	start, results := make(chan struct{}), make(chan error, 2)
 	for range 2 {
 		go func() {
@@ -52,7 +52,7 @@ func TestCheckedProjectReleasePGConcurrentActivation(t *testing.T) {
 func TestCheckedProjectReleasePGExpiryAfterLockWait(t *testing.T) {
 	store, ctx, pool := pgWithPool(t)
 	acct, project, _, members, old := checkedProjectReleaseFixture(t, store)
-	fences := graphFences(t, store, acct, members)
+	fences := graphFences(ctx, t, store, acct, members)
 	fences[0].ValidUntil = time.Now().Add(350 * time.Millisecond)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestCheckedProjectReleasePGExactTaskAndGrantIsolation(t *testing.T) {
 	if err != nil || task.BindingVerification == nil || task.BindingVerification.TargetDeploymentID != members[1].DeploymentID {
 		t.Fatalf("exact task: %+v %v", task, err)
 	}
-	fences := graphFences(t, store, acct, members)
+	fences := graphFences(ctx, t, store, acct, members)
 	activated, err := store.PublishProjectReleaseSetWithBindings(state.WithBindingReleaseFences(ctx, fences), acct.ID, project.ID, "production", old.ID, 1800, members)
 	if err != nil {
 		t.Fatal(err)
