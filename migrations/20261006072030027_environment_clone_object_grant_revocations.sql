@@ -1,7 +1,9 @@
+-- filename: 20261006072030027_environment_clone_object_grant_revocations.sql
+
 -- +goose Up
 -- ADR-590: retain the original tracked capability roster before private
 -- provider IO. Nothing here infers native drainage from time or request counts.
-CREATE TABLE project_environment_clone_object_grant_revocations (
+CREATE TABLE IF NOT EXISTS project_environment_clone_object_grant_revocations (
     operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
     source_bucket_id uuid NOT NULL CHECK (source_bucket_id <> '00000000-0000-0000-0000-000000000000'),
     request_id uuid NOT NULL UNIQUE CHECK (request_id <> '00000000-0000-0000-0000-000000000000'),
