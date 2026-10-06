@@ -454,6 +454,30 @@ func TestBurstCapacityUsesExistingTargetsWhenExpansionStalls(t *testing.T) {
 	}
 }
 
+// production-us hunt #4 (H4-39): during `app restart` a request waited out
+// the restart, then failed with 503 "burst admission made no progress" at the
+// instant the new instance became ready: schedd admitted nothing because its
+// one slot was held by that instance, whose route had not reached this
+// gateway yet. A target that becomes routable within the admission budget
+// must serve the request.
+func TestBurstCapacityServesTargetThatBecomesRoutableAfterStall(t *testing.T) {
+	b := &cappedBurstBackend{fakeBackend: &fakeBackend{app: App{ID: "app-1", Plan: api.PlanScale}}}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.burstPressure.state(b.app.ID).inflight.Store(1)
+	go func() {
+		for b.burstCalls.Load() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(150 * time.Millisecond) // the route notification lands after the stall
+		b.AddTarget(Target{NodeID: "node-2", InstanceID: "restarted"})
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := h.maybeBurstCapacity(ctx, b.app, 1, 80); err != nil {
+		t.Fatalf("maybeBurstCapacity = %v, want the late-routable target to serve the request", err)
+	}
+}
+
 func TestBurstCapacityClampsAppCeilingToPlan(t *testing.T) {
 	for _, appLimit := range []int{0, 1, 100} {
 		t.Run(itoa(uint64(appLimit)), func(t *testing.T) {

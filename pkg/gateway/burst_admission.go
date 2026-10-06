@@ -255,6 +255,15 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 			if generation.err != nil && h.backend.HealthyCount(app.ID) > 0 {
 				return waited, nil
 			}
+			if errors.Is(generation.err, errBurstCapacityStalled) && h.awaitRoutableTarget(ctx, app.ID) {
+				// The scheduler admitted nothing because its slots are held by
+				// an instance that is already coming up, typically one woken
+				// through another node's gateway whose route has not reached
+				// this cache yet. production-us hunt #4: during `app restart`
+				// a request waited out the restart and then got a 503 at the
+				// instant the new instance became ready.
+				return waited, nil
+			}
 			if generation.err != nil {
 				return waited, generation.err
 			}
@@ -265,6 +274,27 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 		}
 	}
 }
+
+// awaitRoutableTarget waits, within the caller's admission budget, for the
+// app to gain a routable target. It reports whether one appeared.
+func (h *Handler) awaitRoutableTarget(ctx context.Context, appID string) bool {
+	ticker := time.NewTicker(routableTargetPollInterval)
+	defer ticker.Stop()
+	for {
+		if h.backend.HealthyCount(appID) > 0 {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+// routableTargetPollInterval paces awaitRoutableTarget. Route updates arrive by
+// pg_notify within tens of milliseconds, so this adds little latency.
+const routableTargetPollInterval = 50 * time.Millisecond
 
 func (h *Handler) runBurstCapacity(ctx context.Context, app App, maxInstances, perVM int, state *burstPressureState, generation *burstGeneration, admitter burstCapacityAdmitter) {
 	lifecycleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admissionLifecycleTimeout)
