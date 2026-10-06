@@ -687,6 +687,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/workflows/runs":                                     "ListWorkflowRuns",
 	"GET /v1/apps/{slug}/automations":                                        "ListAutomations",
 	"GET /v1/apps/{slug}/automations/{name}":                                 "GetAutomation",
+	"GET /v1/apps/{slug}/automations/{name}/health":                          "GetAutomationHealth",
 	"GET /v1/apps/{slug}/automations/{name}/revisions":                       "ListAutomationRevisions",
 	"GET /v1/apps/{slug}/automations/{name}/revisions/{version}":             "GetAutomationRevision",
 	"POST /v1/apps/{slug}/automations/{name}/revisions/{version}/restore":    "RestoreAutomationRevision",
