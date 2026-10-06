@@ -1,4 +1,4 @@
-// adr: 595 — durable compute resizing, ambiguity recovery and generation fences.
+// adr: 623 — durable compute resizing, ambiguity recovery and generation fences.
 package managedpostgres
 
 import (

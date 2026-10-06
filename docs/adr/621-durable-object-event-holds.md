@@ -1,8 +1,8 @@
-# ADR-620 · Manage exact-version event holds durably
+# ADR-621 · Manage exact-version event holds durably
 
 - **Status:** Accepted
 - **Date:** 2026-10-05
-- **Amends:** ADR-584, ADR-618 and ADR-619
+- **Amends:** ADR-584, ADR-619 and ADR-620
 
 ## Context
 
@@ -58,7 +58,7 @@ permanently Enabled native Object Lock bucket.
 
 This amendment qualifies mutation on existing owned versions. Event-hold write
 headers and new-version/default snapshots remain outside the fixed write
-protection contract in ADR-618. Governance bypass and replication remain open.
+protection contract in ADR-619. Governance bypass and replication remain open.
 The existing one-active-operation bucket fence, 45-second deadline, two-minute
 lease, 30-second retry and bounded daemon batches are unchanged.
 

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// adr: 620
+// adr: 621
 func TestObjectEventHoldProtectionMigration(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if e := db.MigrateUp(t.Context(), pool); e != nil {

@@ -1,4 +1,4 @@
-// adr: 595 — customer admission, durable progress and secret-free projections.
+// adr: 623 — customer admission, durable progress and secret-free projections.
 package main
 
 import (

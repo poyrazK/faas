@@ -1,4 +1,4 @@
--- ADR-595: preserve an immutable, generation-bound compute resize intent.
+-- ADR-623: preserve an immutable, generation-bound compute resize intent.
 -- +goose Up
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS managed_postgres_resizes (

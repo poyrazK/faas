@@ -1,5 +1,5 @@
 // adr: 590
-// adr: 595 — pending resize intents belong only to their original database.
+// adr: 623 — pending resize intents belong only to their original database.
 package state
 
 import (

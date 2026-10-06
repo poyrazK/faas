@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 595 — atomic intent, receipt and server-clock lease fences.
+// adr: 623 — atomic intent, receipt and server-clock lease fences.
 package managedpostgres
 
 import (

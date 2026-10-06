@@ -1,4 +1,4 @@
-// adr: 595 — pinned compute convergence and ambiguous PATCH recovery.
+// adr: 623 — pinned compute convergence and ambiguous PATCH recovery.
 package neon
 
 import (
