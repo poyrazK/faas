@@ -200,6 +200,7 @@ bounded and may require snapshot resynchronization during a long wait. Once
 work is stopped, ordinary projection/tombstone retention can release capacity.
 Adapters must also preserve usable deployment/release pins across long waits;
 an unlimited timestamp pin is not a substitute for checking active ownership.
+
 ## Workflow definition snapshots — 2026-10-06
 
 A definition selects exactly one target: an ordinary HTTP method/path or a
