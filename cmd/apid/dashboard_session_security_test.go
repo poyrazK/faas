@@ -619,3 +619,56 @@ func TestDeleteAccount_RefusedWhileOwningASharedOrgWithMembers(t *testing.T) {
 		t.Fatalf("delete once the org has no other member = %d %s, want 200", rec.Code, rec.Body)
 	}
 }
+
+// TestSessionWrites_AllowWebDashboardOrigin reproduces production-us on
+// 2026-10-06: the web dashboard on https://gregale.dev proxies /v1 to
+// api.gregale.dev (faas-web vercel.json), so its requests reach apid with
+// Host api.gregale.dev and Origin https://gregale.dev. Creating an app (and
+// every other dashboard change) failed with "session-authenticated changes
+// must come from the Gregale dashboard". The apex is a reserved platform
+// host; look-alike origins and customer app hosts must stay refused.
+func TestSessionWrites_AllowWebDashboardOrigin(t *testing.T) {
+	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "dash-app", Runtime: "node22", RAMMB: 128, Status: state.AppActive}); err != nil {
+		t.Fatal(err)
+	}
+	park := func(origin string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "http://api.gregale.dev/v1/apps/dash-app/park", nil)
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		r.AddCookie(cookie)
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if code := park("https://gregale.dev"); code == http.StatusForbidden {
+		t.Errorf("web dashboard (apex origin) cookie write = 403, want it accepted")
+	}
+	for _, origin := range []string{
+		"http://gregale.dev",               // not the HTTPS dashboard
+		"https://gregale.dev:8443",         // not the dashboard's origin
+		"https://gregale.dev.evil.example", // look-alike suffix
+		"https://evil.gregale.dev",         // a customer app
+	} {
+		if code := park(origin); code != http.StatusForbidden {
+			t.Errorf("origin %s: cookie write = %d, want 403", origin, code)
+		}
+	}
+
+	id := accountID(t, store, "alice@example.com")
+	seedPassword(t, store, id)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "http://api.gregale.dev/v1/auth/login",
+		strings.NewReader(`{"email":"alice@example.com","password":"`+seededPassword+`"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "https://gregale.dev")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	h.ServeHTTP(rec, r)
+	if rec.Code == http.StatusForbidden {
+		t.Errorf("sign-in from the web dashboard = 403: %s", rec.Body)
+	}
+}
