@@ -294,7 +294,7 @@ func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req req
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	if err = h.mutate(r.Context(), req, func(mutationCtx context.Context) error {
+	if err = objectstorageactivity.RunMultipart(r.Context(), h.store, store, req.bucket, claimed, func(mutationCtx context.Context) error {
 		return req.provider.AbortMultipartUpload(mutationCtx, req.bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID})
 	}); err != nil {
 		h.providerError(w, r, req, err, key)

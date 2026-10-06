@@ -3945,6 +3945,7 @@ type ObjectBucketMutation struct {
 	PhysicalName       string
 	CreatedAt          pgtype.Timestamptz
 	UploadID           pgtype.UUID
+	MultipartUploadID  pgtype.UUID
 }
 
 type ObjectBucketNotification struct {

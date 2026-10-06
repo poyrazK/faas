@@ -82,7 +82,7 @@ func TestObjectUploadGrantAPIAndGatewayDrainSynchronousWrite(t *testing.T) {
 			t.Fatal("provider upload bytes changed", err)
 		}
 		fence, err := e.store.AcquireObjectBucketWriteFence(context.Background(), b, token)
-		if err != nil || fence.Requests != 1 || fence.NativeGrants != 0 {
+		if err != nil || fence.Requests != int64(3-calls) || fence.Uploads != int64(3-calls) || fence.NativeGrants != 0 {
 			t.Fatalf("active broker writer absent: %+v %v", fence, err)
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{"etag"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
@@ -93,14 +93,23 @@ func TestObjectUploadGrantAPIAndGatewayDrainSynchronousWrite(t *testing.T) {
 		t.Fatalf("redeem = %d %s", out.Code, out.Body.String())
 	}
 	fence, err := e.store.ReadObjectBucketWriteFence(context.Background(), b, token)
-	if err != nil || fence.Requests != 0 || fence.NativeGrants != 0 {
+	if err != nil || fence.Requests != 1 || fence.Uploads != 1 || fence.NativeGrants != 0 {
 		t.Fatalf("completed broker request failed to drain: %+v %v", fence, err)
 	}
-	// An unused URL issued before capture cannot start provider IO under the fence.
+	// The earlier prepared journal already owns a bound receipt. Its original
+	// URL can finish while held; capture remains busy until both journals settle.
 	out = httptest.NewRecorder()
 	h.ServeHTTP(out, brokerGrantRequest(unused, "abc"))
-	if out.Code != 503 || calls != 1 {
-		t.Fatalf("earlier URL bypassed fence: %d %s", out.Code, out.Body.String())
+	if out.Code != 200 || calls != 2 {
+		t.Fatalf("original prepared writer blocked: %d %s", out.Code, out.Body.String())
+	}
+	fence, err = e.store.ReadObjectBucketWriteFence(context.Background(), b, token)
+	if err != nil || fence.Requests != 0 || fence.Uploads != 0 || fence.NativeGrants != 0 {
+		t.Fatal("original receipts did not drain", fence, err)
+	}
+	response := e.do(t, "POST", path+"/signed-url", map[string]any{"method": "PUT", "key": "fresh", "size_bytes": 3}, nil)
+	if response.Code != 503 || !strings.Contains(response.Body.String(), "object_storage_checkpoint_active") || calls != 2 {
+		t.Fatal("hold admitted a new writer", response.Code, response.Body.String(), calls)
 	}
 }
 

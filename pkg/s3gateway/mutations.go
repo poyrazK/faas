@@ -1,16 +1,11 @@
 package s3gateway
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
-
-func (h *Handler) mutate(ctx context.Context, req requestContext, call func(context.Context) error) error {
-	return objectstorageactivity.Run(ctx, h.store, req.bucket, call)
-}
 
 // The signed provider URL stays private to the proxy. Reserve the writer
 // immediately before sending the PUT, after request/body validation. HTTP

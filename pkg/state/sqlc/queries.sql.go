@@ -34342,7 +34342,7 @@ func (q *Queries) ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBu
 
 const objectBucketMutationFinish = `-- name: ObjectBucketMutationFinish :execrows
 DELETE FROM object_bucket_mutations
-WHERE id=$1 AND bucket_id=$2 AND kind='request' AND upload_id IS NULL
+WHERE id=$1 AND bucket_id=$2 AND kind='request' AND upload_id IS NULL AND multipart_upload_id IS NULL
 AND backend_id=$3 AND backend_fingerprint=$4
 AND physical_name=$5
 `
@@ -34372,7 +34372,7 @@ func (q *Queries) ObjectBucketMutationFinish(ctx context.Context, db DBTX, arg O
 const objectBucketMutationInsert = `-- name: ObjectBucketMutationInsert :one
 INSERT INTO object_bucket_mutations (id, bucket_id, kind, backend_id, backend_fingerprint, physical_name)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at, upload_id
+RETURNING id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at, upload_id, multipart_upload_id
 `
 
 type ObjectBucketMutationInsertParams struct {
@@ -34403,6 +34403,7 @@ func (q *Queries) ObjectBucketMutationInsert(ctx context.Context, db DBTX, arg O
 		&i.PhysicalName,
 		&i.CreatedAt,
 		&i.UploadID,
+		&i.MultipartUploadID,
 	)
 	return i, err
 }
@@ -34452,7 +34453,7 @@ func (q *Queries) ObjectBucketMutationLock(ctx context.Context, db DBTX, arg Obj
 }
 
 const objectBucketNativeGrants = `-- name: ObjectBucketNativeGrants :many
-SELECT id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at, upload_id FROM object_bucket_mutations
+SELECT id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at, upload_id, multipart_upload_id FROM object_bucket_mutations
 WHERE bucket_id=$1 AND kind='native_grant' ORDER BY id
 `
 
@@ -34474,6 +34475,7 @@ func (q *Queries) ObjectBucketNativeGrants(ctx context.Context, db DBTX, bucketI
 			&i.PhysicalName,
 			&i.CreatedAt,
 			&i.UploadID,
+			&i.MultipartUploadID,
 		); err != nil {
 			return nil, err
 		}
@@ -37081,6 +37083,27 @@ func (q *Queries) ObjectMultipartLockBucket(ctx context.Context, db DBTX, arg Ob
 	return id, err
 }
 
+const objectMultipartMutationRead = `-- name: ObjectMultipartMutationRead :one
+SELECT id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at, upload_id, multipart_upload_id FROM object_bucket_mutations WHERE multipart_upload_id=$1
+`
+
+func (q *Queries) ObjectMultipartMutationRead(ctx context.Context, db DBTX, multipartUploadID pgtype.UUID) (ObjectBucketMutation, error) {
+	row := db.QueryRow(ctx, objectMultipartMutationRead, multipartUploadID)
+	var i ObjectBucketMutation
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.Kind,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.CreatedAt,
+		&i.UploadID,
+		&i.MultipartUploadID,
+	)
+	return i, err
+}
+
 const objectMultipartPartBegin = `-- name: ObjectMultipartPartBegin :exec
 INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until)
 VALUES ($1,$2,$3,true,$4,clock_timestamp()+($5::int * interval '1 second'))
@@ -39176,7 +39199,7 @@ func (q *Queries) ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg Ob
 }
 
 const objectTrackedUploadMutationRead = `-- name: ObjectTrackedUploadMutationRead :one
-SELECT id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at, upload_id FROM object_bucket_mutations WHERE upload_id=$1
+SELECT id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at, upload_id, multipart_upload_id FROM object_bucket_mutations WHERE upload_id=$1
 `
 
 func (q *Queries) ObjectTrackedUploadMutationRead(ctx context.Context, db DBTX, uploadID pgtype.UUID) (ObjectBucketMutation, error) {
@@ -39191,6 +39214,7 @@ func (q *Queries) ObjectTrackedUploadMutationRead(ctx context.Context, db DBTX, 
 		&i.PhysicalName,
 		&i.CreatedAt,
 		&i.UploadID,
+		&i.MultipartUploadID,
 	)
 	return i, err
 }

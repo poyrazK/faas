@@ -86,8 +86,8 @@ func TestObjectUploadGrantAPIMultipartSigningDoesNotContactProvider(t *testing.T
 			}
 			token := uuid.NewString()
 			fence, err := e.store.AcquireObjectBucketWriteFence(context.Background(), b, token)
-			if err != nil || fence.Requests != 0 || fence.NativeGrants != 0 {
-				t.Fatalf("broker signing unexpectedly created a native upload capability: %+v %v", fence, err)
+			if err != nil || fence.Requests != 1 || fence.Multipart != 1 || fence.NativeGrants != 0 {
+				t.Fatalf("broker signing changed original session custody: %+v %v", fence, err)
 			}
 			calls := len(provider.accessed)
 			response = e.do(t, "POST", base+"/"+upload.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{ExpiresIn: 60}, nil)

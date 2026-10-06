@@ -408,7 +408,7 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 			for _, part := range upload.Parts {
 				parts = append(parts, objectstorage.CompletedPart{PartNumber: part.PartNumber, ETag: part.ETag})
 			}
-			err = objectstorageactivity.Run(callCtx, s.store, bucket, func(mutationCtx context.Context) error {
+			err = objectstorageactivity.RunMultipart(callCtx, s.store, store, bucket, upload, func(mutationCtx context.Context) error {
 				return objectstorage.CompleteMultipart(mutationCtx, backend.Provider, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
 					SessionID: upload.ID, Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, SizeBytes: upload.SizeBytes, Parts: parts,
 				}, upload.CompletionConditions)
@@ -474,7 +474,7 @@ func (s *server) retryObjectMultipartOperation(ctx context.Context, store state.
 
 func (s *server) executeObjectMultipartAbort(ctx context.Context, store state.ObjectMultipartUploadStore, bucket state.ObjectBucket, u state.ObjectMultipartUpload, provider objectstorage.Provider) error {
 	request := objectstorage.MultipartAbortRequest{Key: u.Key, ProviderUploadID: u.ProviderUploadID}
-	if err := objectstorageactivity.Run(ctx, s.store, bucket, func(mutationCtx context.Context) error {
+	if err := objectstorageactivity.RunMultipart(ctx, s.store, store, bucket, u, func(mutationCtx context.Context) error {
 		return provider.AbortMultipartUpload(mutationCtx, bucket.PhysicalName, request)
 	}); err != nil {
 		return err

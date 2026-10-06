@@ -50,6 +50,7 @@ func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMu
 		m.commitObjectVersionLocked(old.BucketID, version)
 	}
 	m.objectMultipartUploads[u.ID] = old
+	m.retireMultipartMutationLocked(u.ID)
 	old.Parts, old.Metadata = cloneMultipartParts(old.Parts), cloneObjectMultipartMetadata(old.Metadata)
 	return cloneObjectMultipartUpload(old), nil
 }

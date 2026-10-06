@@ -7291,3 +7291,36 @@ zero issues across state, object storage, activity wrappers, S3 gateway and
 APID. SQLC v1.31.1 parity, migration-ID and repository policy checks pass.
 Optional Packer and live nft checks remain skipped; these checks do not qualify
 a live provider, a complete common point or native KVM restoration.
+
+### Bind multipart completion and abort to the original session receipt (2026-10-07)
+
+New multipart reservations now create a pinned provider receipt in the same
+transaction as the session. Completion and abort resume that receipt through
+an optional store interface rather than asking capture for a fresh admission.
+The read requires the current unexpired lease, original native upload ID,
+object key, scope, encryption/protection snapshots, and captured placement;
+completion also checks the original size, conditions, part revision and vector.
+A provider ACK alone does not retire it. Completed settlement or verified abort
+removes only the bound receipt atomically with the terminal journal transition.
+Rollback restores both. Database triggers enforce creation and ownership for
+older replicas too, reject intent reassignment and refuse a busy downgrade.
+
+Initiation and independent part writers still use their separate provider
+receipts. An unknown initiation result cannot be adopted or recreated through
+this completion/abort interface. Legacy sessions use ordinary admission, which
+capture rejects while held; their unknown receipts are never inferred away.
+Native part grants and late-transfer checks retain their existing evidence and
+drain requirements. This increment therefore does not claim closure of every
+multipart writer. Public fully copyable capture remains gated on those remaining
+writers, provider qualification for R2/OVH, and a qualified common checkpoint
+across PostgreSQL and object storage, followed by restoration and promotion.
+
+Validation: memory/PostgreSQL multipart and upload capture contracts pass under
+`-race`, including stale/expired authority, rejected intent rewrites, atomic
+retirement, rollback and migration round trips. Multipart SDK tests pass under
+`-race`, including held completion recovery after lost replies and verified
+abort with an unrelated receipt still outstanding. Control API multipart and
+broker URL regression checks pass. SQLC v1.31.1 parity, migration and repository
+policy checks pass; golangci-lint v2.4.0 reports zero issues across state, object
+storage, activity wrappers, S3 gateway and APID. Optional Packer/live nft checks
+were skipped. These checks do not qualify a live provider or a common point.

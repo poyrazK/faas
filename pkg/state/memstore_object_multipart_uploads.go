@@ -53,7 +53,7 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 		}
 		count++
 	}
-	if _, exists := m.objectMultipartUploads[upload.ID]; exists || count >= limit {
+	if _, exists := m.objectMultipartUploads[upload.ID]; exists || count >= limit || m.objectMutations[upload.ID].ID != "" {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	if _, held := m.objectWriteFences[upload.BucketID]; held {
@@ -86,6 +86,10 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 	if m.objectMultipartUploads == nil {
 		m.objectMultipartUploads = map[string]ObjectMultipartUpload{}
 	}
+	if m.objectMutations == nil {
+		m.objectMutations = map[string]ObjectBucketMutation{}
+	}
+	m.objectMutations[upload.ID] = ObjectBucketMutation{ID: upload.ID, MultipartUploadID: upload.ID, Bucket: bucket, Kind: ObjectBucketMutationRequest, CreatedAt: now}
 	m.objectMultipartUploads[upload.ID] = cloneObjectMultipartUpload(upload)
 	return cloneObjectMultipartUpload(upload), nil
 }
@@ -229,6 +233,7 @@ func (m *MemStore) FinishObjectMultipartUpload(_ context.Context, id, token, nex
 	upload.AttemptCount, upload.LastErrorCode = 0, ""
 	upload.UpdatedAt, upload.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = upload
+	m.retireMultipartMutationLocked(id)
 	return nil
 }
 

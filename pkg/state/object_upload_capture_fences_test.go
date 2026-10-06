@@ -147,7 +147,7 @@ func multipartCaptureContract(t *testing.T, st accountingStore, expire func()) {
 		t.Fatal(err)
 	}
 	f, err := fences.AcquireObjectBucketWriteFence(ctx, b, uuid.NewString())
-	if err != nil || f.Multipart != 1 || f.Uploads != 0 {
+	if err != nil || f.Multipart != 1 || f.Uploads != 0 || f.Requests != 1 {
 		t.Fatal("initiating upload missing", f, err)
 	}
 	if replay, err := sessions.ReserveObjectMultipartUpload(ctx, input, 100); err != nil || replay.ID != u.ID {
@@ -170,12 +170,27 @@ func multipartCaptureContract(t *testing.T, st accountingStore, expire func()) {
 	if err != nil || observed.Multipart != 1 {
 		t.Fatal("session expiry released capture", observed, err)
 	}
-	if _, err := sessions.ClaimObjectMultipartUpload(ctx, b.AccountID, b.AppID, b.ID, u.ID, "abort", state.ObjectMultipartAborting, nil, false); err != nil {
+	claimed, err := sessions.ClaimObjectMultipartUpload(ctx, b.AccountID, b.AppID, b.ID, u.ID, "abort", state.ObjectMultipartAborting, nil, false)
+	if err != nil {
 		t.Fatal(err)
 	}
 	observed, err = fences.ReadObjectBucketWriteFence(ctx, b, f.Token)
 	if err != nil || observed.Multipart != 1 {
 		t.Fatal("abort claim erased custody", observed, err)
+	}
+	receipt, err := st.(state.ObjectMultipartMutationStore).ReadObjectMultipartMutation(ctx, claimed)
+	if err != nil || receipt.MultipartUploadID != u.ID || receipt.Bucket.PhysicalName != b.PhysicalName {
+		t.Fatal("held abort lost original placement", receipt, err)
+	}
+	if err := fences.FinishObjectBucketMutation(ctx, receipt); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("generic ACK retired session", err)
+	}
+	for _, change := range []func(*state.ObjectMultipartUpload){func(u *state.ObjectMultipartUpload) { u.ID = uuid.NewString() }, func(u *state.ObjectMultipartUpload) { u.AccountID = uuid.NewString() }, func(u *state.ObjectMultipartUpload) { u.LeaseToken = "stale" }, func(u *state.ObjectMultipartUpload) { u.ProviderUploadID = "changed" }, func(u *state.ObjectMultipartUpload) { u.Key = "changed" }} {
+		stale := claimed
+		change(&stale)
+		if _, err := st.(state.ObjectMultipartMutationStore).ReadObjectMultipartMutation(ctx, stale); !errors.Is(err, state.ErrConflict) {
+			t.Fatal("changed authority resumed", err)
+		}
 	}
 	ready, err := transfers.ObjectMultipartAbortReady(ctx, u.ID, "abort")
 	if err != nil || !ready {
@@ -185,7 +200,7 @@ func multipartCaptureContract(t *testing.T, st accountingStore, expire func()) {
 		t.Fatal(err)
 	}
 	observed, err = fences.ReadObjectBucketWriteFence(ctx, b, f.Token)
-	if err != nil || observed.Multipart != 0 {
+	if err != nil || observed.Multipart != 0 || observed.Requests != 0 {
 		t.Fatal("verified abort still counted", observed, err)
 	}
 	if _, err := sessions.ReserveObjectMultipartUpload(ctx, fresh, 100); !errors.Is(err, state.ErrObjectBucketWriteFenced) {

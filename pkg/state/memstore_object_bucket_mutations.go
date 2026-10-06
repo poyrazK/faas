@@ -42,7 +42,7 @@ func (m *MemStore) FinishObjectBucketMutation(ctx context.Context, receipt Objec
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	actual, exists := m.objectMutations[receipt.ID]
-	if !exists || actual.UploadID != "" || actual.Kind != receipt.Kind || !sameObjectMutationBucket(receipt.Bucket, actual.Bucket) || !sameObjectMutationBucket(receipt.Bucket, m.objectBuckets[receipt.Bucket.ID]) {
+	if !exists || actual.UploadID != "" || actual.MultipartUploadID != "" || actual.Kind != receipt.Kind || !sameObjectMutationBucket(receipt.Bucket, actual.Bucket) || !sameObjectMutationBucket(receipt.Bucket, m.objectBuckets[receipt.Bucket.ID]) {
 		return ErrConflict
 	}
 	delete(m.objectMutations, receipt.ID)

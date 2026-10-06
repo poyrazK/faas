@@ -4493,6 +4493,7 @@
       "created_at",
       "id",
       "kind",
+      "multipart_upload_id",
       "physical_name",
       "upload_id"
     ],

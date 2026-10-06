@@ -86,6 +86,7 @@ func (m *MemStore) FinishVerifiedObjectMultipartAbort(_ context.Context, id, tok
 	u.AttemptCount, u.LastErrorCode = 0, ""
 	u.UpdatedAt, u.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = u
+	m.retireMultipartMutationLocked(id)
 	for part, transfer := range m.objectMultipartTransfers[id] {
 		if transfer.tracked {
 			delete(m.objectMultipartPartGrants[id], part)

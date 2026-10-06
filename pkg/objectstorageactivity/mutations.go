@@ -3,6 +3,7 @@ package objectstorageactivity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -73,4 +74,33 @@ func ExecuteUpload[T any](ctx context.Context, store any, bucket state.ObjectBuc
 		return zero, objectstorage.ErrConfiguration
 	}
 	return call(ctx)
+}
+
+// ExecuteMultipart resumes original completion or abort. Only terminal journal
+// settlement retires the receipt; provider ACK alone does not establish it.
+func ExecuteMultipart[T any](ctx context.Context, store, journal any, bucket state.ObjectBucket, u state.ObjectMultipartUpload, call func(context.Context) (T, error)) (T, error) {
+	var zero T
+	st, ok := journal.(state.ObjectMultipartMutationStore)
+	if !ok {
+		return Execute(ctx, store, bucket, call)
+	}
+	receipt, err := st.ReadObjectMultipartMutation(ctx, u)
+	if errors.Is(err, state.ErrNotFound) {
+		// Legacy journals have no original binding. Keep ordinary admission and
+		// leave any pre-existing unknown receipt untouched; a hold rejects this.
+		return Execute(ctx, store, bucket, call)
+	}
+	if err != nil {
+		return zero, err
+	}
+	b := receipt.Bucket
+	if b.ID != bucket.ID || b.AccountID != bucket.AccountID || b.AppID != bucket.AppID || b.BackendID != bucket.BackendID || b.BackendFingerprint != bucket.BackendFingerprint || b.PhysicalName != bucket.PhysicalName {
+		return zero, objectstorage.ErrConfiguration
+	}
+	return call(ctx)
+}
+
+func RunMultipart(ctx context.Context, store, journal any, bucket state.ObjectBucket, u state.ObjectMultipartUpload, call func(context.Context) error) error {
+	_, err := ExecuteMultipart(ctx, store, journal, bucket, u, func(callCtx context.Context) (struct{}, error) { return struct{}{}, call(callCtx) })
+	return err
 }

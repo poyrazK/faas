@@ -19,11 +19,12 @@ const (
 // grants are not synchronous requests: URL expiry, caller cancellation and
 // signing completion do not prove that the provider has drained their writes.
 type ObjectBucketMutation struct {
-	ID        string
-	UploadID  string
-	Bucket    ObjectBucket
-	Kind      string
-	CreatedAt time.Time
+	ID                string
+	UploadID          string
+	MultipartUploadID string
+	Bucket            ObjectBucket
+	Kind              string
+	CreatedAt         time.Time
 }
 
 type ObjectBucketWriteFence struct {
@@ -83,4 +84,10 @@ func validObjectMutationToken(token string) bool {
 // Reads never create a receipt or adopt an unbound legacy writer.
 type ObjectTrackedUploadMutationStore interface {
 	ReadTrackedObjectUploadMutation(context.Context, ObjectUploadCompletion) (ObjectBucketMutation, error)
+}
+
+// Original multipart completion and abort use only their reserved placement.
+// Initiation and independent part writers retain separate admission receipts.
+type ObjectMultipartMutationStore interface {
+	ReadObjectMultipartMutation(context.Context, ObjectMultipartUpload) (ObjectBucketMutation, error)
 }
