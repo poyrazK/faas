@@ -2254,7 +2254,14 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, key, fingerprint); err != nil || !isReplay {
 		t.Fatalf("replay after definition update = (replayed:%t, err:%v), want original run", isReplay, err)
 	}
-	if changedDefinition.ID != runID || string(changedDefinition.DefinitionSnapshot) != `{"name":"idempotent-create","steps":[]}` {
+	var replayedSnapshot, expectedSnapshot any
+	if err := json.Unmarshal(changedDefinition.DefinitionSnapshot, &replayedSnapshot); err != nil {
+		t.Fatalf("decode replayed definition snapshot: %v", err)
+	}
+	if err := json.Unmarshal([]byte(`{"name":"idempotent-create","steps":[]}`), &expectedSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if changedDefinition.ID != runID || !reflect.DeepEqual(replayedSnapshot, expectedSnapshot) {
 		t.Fatalf("definition update changed replayed run = %+v", changedDefinition)
 	}
 

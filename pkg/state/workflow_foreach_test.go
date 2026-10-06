@@ -142,7 +142,7 @@ func TestWorkflowForEachBoundedParallelAdmissionAndFailureDrain(t *testing.T) {
 		}
 		complete, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch")
 		parent := guardStep(t, store, run.ID, "batch")
-		if err != nil || !complete.Complete || parent.Status != WorkflowStepStatusSucceeded || string(parent.Output) != `[0,1,2]` {
+		if err != nil || !complete.Complete || parent.Status != WorkflowStepStatusSucceeded || !equalWorkflowJSON(parent.Output, json.RawMessage(`[0,1,2]`)) {
 			t.Fatalf("parallel results lost input order: outcome=%+v parent=%+v err=%v", complete, parent, err)
 		}
 

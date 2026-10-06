@@ -748,7 +748,13 @@ func (m *MemStore) StartWorkflowStep(ctx context.Context, runID, stepName string
 	if !ok {
 		return nil, ErrWorkflowStepNotFound
 	}
+	if step.ForEachParent != nil && step.Status == WorkflowStepStatusSkipped {
+		return nil, ErrWorkflowGuardNotReady
+	}
 	if step.Status != WorkflowStepStatusPending && step.Status != WorkflowStepStatusAwaitingEvent {
+		if step.ForEachParent != nil {
+			return nil, ErrWorkflowOutboundAttemptExpired
+		}
 		return nil, fmt.Errorf("%w: workflow step is not pending or parked", ErrConflict)
 	}
 	if actionLimit := workflowRunMaxConcurrentActions(run.DefinitionSnapshot); actionLimit > 0 {

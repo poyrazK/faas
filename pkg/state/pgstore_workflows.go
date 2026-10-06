@@ -793,8 +793,10 @@ func (s *PgStore) CreateWorkflowSteps(ctx context.Context, runID string, steps [
 
 	query := `
 		INSERT INTO workflow_steps (
-			run_id, step_name, status, attempt, input
-		) VALUES ($1, $2, $3, $4, $5)
+			run_id, step_name, status, attempt, input,
+			foreach_parent, foreach_index, foreach_count,
+			when_matched, when_evaluated_at, skip_reason
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (run_id, step_name) DO NOTHING
 	`
 	for _, step := range steps {
@@ -802,7 +804,9 @@ func (s *PgStore) CreateWorkflowSteps(ctx context.Context, runID string, steps [
 		if status == "" {
 			status = WorkflowStepStatusPending
 		}
-		if _, err := tx.Exec(ctx, query, runID, step.StepName, status, step.Attempt, step.Input); err != nil {
+		if _, err := tx.Exec(ctx, query, runID, step.StepName, status, step.Attempt, step.Input,
+			step.ForEachParent, step.ForEachIndex, step.ForEachCount,
+			step.WhenMatched, step.WhenEvaluatedAt, step.SkipReason); err != nil {
 			return fmt.Errorf("pgstore: insert step %q: %w", step.StepName, err)
 		}
 	}
@@ -926,6 +930,17 @@ func (s *PgStore) StartWorkflowStep(ctx context.Context, runID, stepName string,
 		return nil, err
 	}
 	if !current {
+		var stepStatus string
+		var foreachParent pgtype.Text
+		if err := tx.QueryRow(ctx, `SELECT status, foreach_parent FROM workflow_steps WHERE run_id = $1 AND step_name = $2`, runID, stepName).Scan(&stepStatus, &foreachParent); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrWorkflowStepNotFound
+			}
+			return nil, fmt.Errorf("pgstore: inspect stale workflow step start: %w", err)
+		}
+		if foreachParent.Valid && stepStatus == WorkflowStepStatusSkipped {
+			return nil, ErrWorkflowGuardNotReady
+		}
 		return nil, ErrWorkflowOutboundAttemptExpired
 	}
 	if runStatus == WorkflowRunStatusSucceeded || runStatus == WorkflowRunStatusFailed || runStatus == WorkflowRunStatusDead {
