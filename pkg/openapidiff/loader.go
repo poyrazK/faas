@@ -118,6 +118,9 @@ type SchemaBreak struct {
 // ContentTypes → normalisedSchema. The Components map is held
 // alongside for $ref resolution by the differ.
 type Spec struct {
+	// Raw retains the immutable document for bounded local request references
+	// and root security metadata. It is never serialized in comparison results.
+	Raw map[string]any `json:"-"`
 	// Paths is keyed by the path string from the embedded spec.
 	Paths map[string]*PathItem
 	// Components is the resolved-by-name schema map. Populated by
@@ -235,8 +238,9 @@ func Load() (*Spec, error) {
 }
 
 // LoadBytes parses a raw OpenAPI 3.x YAML document and returns a
-// normalised [Spec]. Exposed for tests; production callers should
-// use [Load] so the embedded spec is the source of truth.
+// normalised [Spec]. It is used for customer-supplied local documents
+// and tests; callers inspecting Gregale's served contract should use
+// [Load] so the embedded spec remains the source of truth.
 func LoadBytes(data []byte) (*Spec, error) {
 	var doc map[string]any
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -246,6 +250,7 @@ func LoadBytes(data []byte) (*Spec, error) {
 		return nil, errors.New("openapidiff: empty spec")
 	}
 	spec := &Spec{
+		Raw:        cloneOpenAPIMap(doc),
 		Paths:      map[string]*PathItem{},
 		Components: map[string]*Schema{},
 	}

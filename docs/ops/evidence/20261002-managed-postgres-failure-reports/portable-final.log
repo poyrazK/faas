@@ -1,0 +1,13 @@
+# github.com/onebox-faas/faas/pkg/sched.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-1211678774/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+# github.com/onebox-faas/faas/cmd/vmmd.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-3723436821/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+# github.com/onebox-faas/faas/pkg/scheddgrpc.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-2843240117/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/onebox-faas/faas/pkg/sched	34.742s
+ok  	github.com/onebox-faas/faas/pkg/vmmd/failureoutbox	3.323s
+ok  	github.com/onebox-faas/faas/cmd/vmmd	10.440s
+ok  	github.com/onebox-faas/faas/pkg/scheddgrpc	3.206s
+# github.com/onebox-faas/faas/pkg/fcvm.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-3983897240/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/onebox-faas/faas/pkg/fcvm	17.619s

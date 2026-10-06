@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"sort"
 	"time"
 )
 
@@ -14,6 +15,10 @@ const (
 	secondsPerHour                 = int64(time.Hour / time.Second)
 	bytesPerGiB                    = int64(1 << 30)
 	byteSecondsPerGiBHour          = secondsPerHour * bytesPerGiB
+	// Recovery and correction replay share this per-database request budget.
+	// Committed coverage resumes remaining recovery windows on the next run.
+	maximumUsageWindowsPerSweep  = 24
+	recentUsageCorrectionWindows = 3
 )
 
 type UsageCollectionObservation struct {
@@ -123,67 +128,270 @@ func (c *UsageCollector) Collect(ctx context.Context) (summary UsageCollectionSu
 	if to.IsZero() {
 		return summary, ErrInvalid
 	}
-	from := to.Add(-c.policy.Window)
-	// Page through every ready database. A single ListUsageDatabases call
-	// returned the same oldest-updated batch on every sweep — recording
-	// usage does not touch updated_at — so any database past the first
-	// batchSize was never metered, billed, or held to its monthly caps.
+	// Build the sweep from paginated catalog rows and durable coverage. Retain
+	// one work item per database so no page can replay corrections before a
+	// later page has had its recovery turns.
+	var work []*usageCollectionWork
+	seen := make(map[string]bool)
+	defer func() {
+		sweepErr = errors.Join(sweepErr, c.finishUsageCollection(ctx, work, sweepErr, &summary))
+	}()
 	var after UsageDatabaseCursor
 	for {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
 		databases, err := c.store.ListUsageDatabases(ctx, after, c.batchSize)
 		if err != nil {
-			return summary, errors.Join(sweepErr, err)
+			return summary, err
 		}
-		summary.Discovered += len(databases)
 		for _, database := range databases {
 			if err := ctx.Err(); err != nil {
 				return summary, err
 			}
-			sweepErr = errors.Join(sweepErr, c.collectOne(ctx, database, from, to, now, &summary))
+			// Lifecycle writes can move an already-seen row beyond a later
+			// keyset cursor. Keep one request budget per logical resource.
+			if seen[database.ID] {
+				continue
+			}
+			seen[database.ID] = true
+			summary.Discovered++
+			work = append(work, c.prepareUsageCollection(ctx, database, to))
 		}
 		if len(databases) < c.batchSize {
-			return summary, sweepErr
+			break
 		}
 		last := databases[len(databases)-1]
 		after = UsageDatabaseCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
 	}
+	// Oldest successful observations go first, with the catalog order breaking
+	// ties. Unmetered databases precede metered ones; persisted observations
+	// move recently successful work behind older observations after a restart.
+	sort.SliceStable(work, func(i, j int) bool {
+		return work[i].observedAt.Before(work[j].observedAt)
+	})
+	if err := c.collectUsageRounds(ctx, work, now, false); err != nil {
+		return summary, err
+	}
+	// Exhaust every eligible recovery turn before any correction request.
+	// Databases with unfinished recovery cannot replay older windows.
+	return summary, c.collectUsageRounds(ctx, work, now, true)
 }
 
-// collectOne meters one database for the window and records the outcome in
-// summary. It returns the collection error for a deferred database.
-func (c *UsageCollector) collectOne(ctx context.Context, database Database, from, to, now time.Time, summary *UsageCollectionSummary) error {
-	var collectErr error
-	outcome := "recorded"
-	backend, resolveErr := c.registry.Resolve(database.BackendID, database.BackendFingerprint)
-	includedInSource := resolveErr == nil && database.State == StateReady && database.ProviderResourceID != "" &&
-		database.RestoreSourceDatabaseID != "" && backend.Capabilities.RestoreUsageIncludedInSource
-	if includedInSource {
-		// The source resource reports a provider-shared aggregate. Recording
-		// it against every restore descendant would multiply COGS and could
-		// make admission decisions depend on how many targets were restored.
-		outcome = "included_in_source"
-		summary.IncludedInSourceUsage++
-	} else if err := c.collectDatabase(ctx, database, from, to, now); err != nil {
-		outcome = "deferred"
-		summary.Deferred++
-		collectErr = err
-	} else {
-		summary.Recorded++
-	}
-	if c.observe != nil {
-		c.observe(UsageCollectionObservation{DatabaseID: database.ID, Outcome: outcome})
-	}
-	return collectErr
+type usageCollectionWork struct {
+	database    Database
+	backend     Backend
+	from        time.Time
+	replayFrom  time.Time
+	replayUntil time.Time
+	observedAt  time.Time
+	to          time.Time
+	completed   bool
+	discover    bool
+	requests    int
+	included    bool
+	err         error
 }
 
-func (c *UsageCollector) collectDatabase(ctx context.Context, database Database, from, to, observedAt time.Time) error {
-	if database.State != StateReady || database.ProviderResourceID == "" {
-		return ErrConflict
-	}
+func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Database, to time.Time) *usageCollectionWork {
+	work := &usageCollectionWork{database: database, to: to}
 	backend, err := c.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {
-		return ErrUnavailable
+		work.err = ErrUnavailable
+		return work
 	}
+	work.backend = backend
+	if database.ProviderResourceID == "" {
+		// An old unknown tombstone has no identity-based shutdown evidence.
+		// Discovery must not promote its logical deletion time to settlement.
+		if database.State == StateDeleted || database.LeaseUntil.After(c.now()) {
+			work.err = ErrUsageStale
+			return work
+		}
+		// Identity recovery gets one provider turn in the same fleet rounds
+		// and request budget as window recovery, after catalog preparation.
+		work.discover = true
+		return work
+	}
+	if database.RestoreSourceDatabaseID != "" && backend.Capabilities.RestoreUsageIncludedInSource {
+		// A restore descendant shares its root's aggregate and accounting
+		// endpoint, never an independent provider request or shutdown window.
+		work.included = true
+		work.err = c.recordSharedUsage(ctx, database)
+		return work
+	}
+	if database.State == StateDeleted {
+		if database.DeletedAt == nil {
+			work.err = ErrUsageStale
+			return work
+		}
+		work.to = usageEnd(*database.DeletedAt, c.policy.Window)
+		// Never ask the provider for a still-open final window.
+		if work.to.IsZero() || work.to.After(to) {
+			work.err = ErrUsageStale
+			return work
+		}
+	}
+	progress, err := c.store.UsageProgress(ctx, database.AccountID, database.ID, c.policy.Window)
+	if err != nil {
+		work.err = err
+		return work
+	}
+	work.observedAt = progress.ObservedAt
+	to = work.to
+	// Keep replaying the final correction tail until every window has an
+	// observation beyond the existing three-window correction horizon. Retained
+	// tombstones remain in admission checks, but stop consuming provider calls.
+	work.completed = database.State == StateDeleted && !progress.CollectedUntil.Before(to) &&
+		!progress.CorrectionObservedAt.Before(to.Add(recentUsageCorrectionWindows*c.policy.Window))
+	work.from = to.Add(-c.policy.Window)
+	if !progress.CollectedUntil.IsZero() {
+		work.from = progress.CollectedUntil
+	} else if !database.CreatedAt.IsZero() {
+		work.from = database.CreatedAt.UTC().Truncate(c.policy.Window)
+	}
+	if !work.from.Before(to) && progress.CollectedUntil.IsZero() {
+		work.err = ErrUsageStale
+		return work
+	}
+	collectedFrom := progress.CollectedFrom
+	if collectedFrom.IsZero() {
+		collectedFrom = work.from
+	}
+	// Replay only windows established before this sweep. Recovery must not
+	// fetch a new window and immediately request it again as a correction.
+	work.replayUntil = work.from
+	if work.replayUntil.After(to) {
+		work.replayUntil = to
+	}
+	work.replayFrom = to.Add(-recentUsageCorrectionWindows * c.policy.Window)
+	if work.replayFrom.Before(collectedFrom) {
+		work.replayFrom = collectedFrom
+	}
+	return work
+}
+
+func (c *UsageCollector) collectUsageRounds(ctx context.Context, work []*usageCollectionWork, observedAt time.Time, corrections bool) error {
+	rounds := maximumUsageWindowsPerSweep
+	if corrections {
+		rounds = recentUsageCorrectionWindows
+	}
+	for round := 0; round < rounds; round++ {
+		attempted := false
+		for _, item := range work {
+			if item.err != nil || item.included || item.completed || item.requests >= maximumUsageWindowsPerSweep {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if item.discover {
+				if !corrections {
+					attempted = true
+					item.requests++
+					item.err = c.recoverUsageIdentity(ctx, item)
+				}
+				continue
+			}
+			from := item.from
+			to := item.to
+			if corrections {
+				if from.Before(to) || !item.replayUntil.After(item.replayFrom) {
+					continue
+				}
+				from = item.replayUntil.Add(-c.policy.Window)
+			} else if !from.Before(to) {
+				continue
+			}
+			attempted = true
+			item.requests++
+			item.err = c.collectWindow(ctx, item.database, item.backend, from, from.Add(c.policy.Window), observedAt)
+			if item.err == nil {
+				if corrections {
+					item.replayUntil = from
+				} else {
+					item.from = from.Add(c.policy.Window)
+				}
+			}
+		}
+		if !attempted {
+			break
+		}
+	}
+	return ctx.Err()
+}
+
+func (c *UsageCollector) recoverUsageIdentity(ctx context.Context, work *usageCollectionWork) error {
+	identity, err := discoverResource(ctx, work.backend.Provider, work.database)
+	if errors.Is(err, ErrNotFound) {
+		return ErrUsageStale
+	}
+	if err != nil {
+		return err
+	}
+	if err := c.store.RecordDiscoveredResource(ctx, work.database, identity, c.now()); err != nil {
+		return err
+	}
+	database := work.database
+	database.ProviderResourceID = identity
+	next := c.prepareUsageCollection(ctx, database, work.to)
+	next.requests = work.requests
+	*work = *next
+	return work.err
+}
+
+func (c *UsageCollector) finishUsageCollection(ctx context.Context, work []*usageCollectionWork, interrupted error, summary *UsageCollectionSummary) error {
+	var collectionErr error
+	for _, item := range work {
+		if item.err == nil && !item.included {
+			pending := item.requests < maximumUsageWindowsPerSweep && item.replayUntil.After(item.replayFrom)
+			if item.from.Before(item.to) || (interrupted != nil && pending && !item.completed) {
+				item.err = ErrUsageStale
+				if err := ctx.Err(); err != nil {
+					item.err = err
+				}
+			}
+		}
+		outcome := "recorded"
+		switch {
+		case item.err != nil:
+			outcome = "deferred"
+			summary.Deferred++
+			collectionErr = errors.Join(collectionErr, item.err)
+		case item.included:
+			outcome = "included_in_source"
+			summary.IncludedInSourceUsage++
+		default:
+			summary.Recorded++
+		}
+		if c.observe != nil {
+			c.observe(UsageCollectionObservation{DatabaseID: item.database.ID, Outcome: outcome})
+		}
+	}
+	return collectionErr
+}
+
+func (c *UsageCollector) recordSharedUsage(ctx context.Context, database Database) error {
+	source := database
+	seen := map[string]bool{database.ID: true}
+	for source.RestoreSourceDatabaseID != "" {
+		if seen[source.RestoreSourceDatabaseID] {
+			return ErrConflict
+		}
+		seen[source.RestoreSourceDatabaseID] = true
+		var err error
+		source, err = c.store.Get(ctx, database.AccountID, source.RestoreSourceDatabaseID)
+		if err != nil {
+			return err
+		}
+		if source.ProviderResourceID == "" || source.BackendID != database.BackendID || source.BackendFingerprint != database.BackendFingerprint {
+			return ErrConflict
+		}
+	}
+	return c.store.RecordSharedUsage(ctx, database.AccountID, database.ID, source.ID, c.policy.Window)
+}
+
+func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time) error {
 	usage, err := backend.Provider.Usage(ctx, database.ProviderResourceID, UsageWindow{From: from, To: to})
 	if err != nil {
 		return normalizeProviderError(err)
@@ -191,8 +399,22 @@ func (c *UsageCollector) collectDatabase(ctx context.Context, database Database,
 	if err := usage.Validate(); err != nil {
 		return ErrUnavailable
 	}
-	if usage.Window.From.UTC() != from || usage.Window.To.UTC() != to {
+	// PostgreSQL checkpoints can carry time.Local; compare instants rather
+	// than time.Time's location pointer or monotonic clock representation.
+	if !usage.Window.From.Equal(from) || !usage.Window.To.Equal(to) {
 		return ErrUnavailable
+	}
+	for _, meter := range backend.Capabilities.UsageMeters {
+		found := false
+		for _, reading := range usage.Readings {
+			if reading.Meter == meter {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrUnavailable
+		}
 	}
 	records := make([]UsageRecord, 0, len(usage.Readings))
 	for _, reading := range usage.Readings {

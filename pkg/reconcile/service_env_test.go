@@ -21,10 +21,12 @@ func TestServiceEnvForWorkload(t *testing.T) {
 	)
 	want := map[string]string{
 		"APP_MODE":                        "prod",
-		"GREGALE_SERVICE_DB_URL":          "http://db.svc.gregale:10080",
+		"GREGALE_SERVICE_DB_URL":          "http://db.svc.gregale:10081",
 		"GREGALE_SERVICE_DB_HTTPS_URL":    "https://db.internal",
-		"GREGALE_SERVICE_CACHE_URL":       "http://cache.svc.gregale:10080",
+		"GREGALE_SERVICE_CACHE_URL":       "http://cache.svc.gregale:10081",
 		"GREGALE_SERVICE_CACHE_HTTPS_URL": "https://cache.internal",
+		"GREGALE_SERVICE_DB_HOST":         "db.svc.gregale",
+		"GREGALE_SERVICE_CACHE_HOST":      "cache.svc.gregale",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("service env = %#v, want %#v", got, want)
@@ -68,6 +70,7 @@ func TestServiceEnvHTTPSFirstUsesInternalAliasForCanonicalURL(t *testing.T) {
 	want := map[string]string{
 		"GREGALE_SERVICE_BILLING_URL":       "https://billing.internal",
 		"GREGALE_SERVICE_BILLING_HTTPS_URL": "https://billing.internal",
+		"GREGALE_SERVICE_BILLING_HOST":      "billing.svc.gregale",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("HTTPS-first service env = %#v, want %#v", got, want)
@@ -94,7 +97,7 @@ func TestDiffFieldsChangedBackfillsServiceBindingReadModel(t *testing.T) {
 		WorkloadName:  "api",
 		WorkloadClass: state.WorkloadClassHTTP,
 		Manifest: state.AppManifest{Env: map[string]string{
-			"GREGALE_SERVICE_DB_URL": "http://db.svc.gregale:10080",
+			"GREGALE_SERVICE_DB_URL": "http://db.svc.gregale:10081",
 		}},
 	}
 	got := diffFieldsChanged(app, workload, "", map[string]struct{}{"api": {}, "db": {}})
@@ -145,8 +148,9 @@ func TestDiffFieldsChangedDetectsHTTPSFirstTransportAndPreservesOmittedMode(t *t
 			ServiceBindings:      []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_DB_URL", Service: "db"}},
 			ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
 			Env: map[string]string{
-				"GREGALE_SERVICE_DB_URL":       "http://db.svc.gregale:10080",
+				"GREGALE_SERVICE_DB_URL":       "http://db.svc.gregale:10081",
 				"GREGALE_SERVICE_DB_HTTPS_URL": "https://db.internal",
+				"GREGALE_SERVICE_DB_HOST":      "db.svc.gregale",
 			},
 		},
 	}

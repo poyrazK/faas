@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/releasebundle"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -614,6 +615,15 @@ func checkNodes(ctx context.Context, deps *doctorDeps) ([]doctorFinding, error) 
 	var findings []doctorFinding
 	for _, n := range nodes {
 		if deps.nodeFilter != "" && n.Name != deps.nodeFilter {
+			continue
+		}
+		// Migration 00024 seeds a synthetic default-local row in every
+		// database. On a multi-node fleet it stays inactive and is never
+		// released to, and apid refuses to retire it, so its empty
+		// release_id is not drift. production-us rc.239: fleet_verify's
+		// doctor run failed control-plane convergence on exactly this row.
+		// A single-box install's active default-local is still checked.
+		if deps.nodeFilter == "" && n.Name == state.DefaultLocalNodeName && !n.Active {
 			continue
 		}
 		// Validity runs BEFORE the --release filter: empty /
@@ -1675,6 +1685,22 @@ func checkBuilderBaseExt4(ctx context.Context, deps *doctorDeps) ([]doctorFindin
 		cached := ""
 		if os.Getenv("FAAS_BUILDER_BASE_PATH") == "" && basePath == canonicalPath {
 			cached = cachedBuilderBasePath()
+		}
+		if cached == "" && os.Getenv("FAAS_BUILDER_BASE_PATH") == "" && basePath == canonicalPath {
+			// The read-through cache evicts the builder base like any other
+			// entry, and imaged stages it again from shared storage when it
+			// starts. A node rollout runs this doctor after stopping imaged,
+			// so treating an empty cache as a warning failed the roll and left
+			// every compute daemon stopped (production fsn-3, rc.236). When
+			// the roll names the ref imaged will stage, the gap is expected.
+			if ref := strings.TrimSpace(os.Getenv("FAAS_BUILDER_BASE_REF")); ref != "" {
+				return []doctorFinding{{
+					Check:    doctorCheckBuilderBaseExt4,
+					Severity: doctorSeverityOK,
+					Message:  "builder base not cached yet; imaged stages it from shared storage when it starts",
+					Detail:   ref,
+				}}, nil
+			}
 		}
 		if cached == "" {
 			return []doctorFinding{{

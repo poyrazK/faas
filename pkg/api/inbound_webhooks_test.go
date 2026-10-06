@@ -20,3 +20,25 @@ func TestValidStripeWorkflowCallbackMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestValidInboundWebhookEventMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+		typ  string
+		want bool
+	}{
+		{name: "normal", id: "evt_123:abc", typ: "order.paid", want: true},
+		{name: "empty id", id: "", typ: "order.paid"},
+		{name: "space id", id: "evt 123", typ: "order.paid"},
+		{name: "newline id", id: "evt\n123", typ: "order.paid"},
+		{name: "uppercase type", id: "evt_123", typ: "Order.Paid"},
+		{name: "wildcard type", id: "evt_123", typ: "order.*"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ValidInboundWebhookEventID(tc.id) && ValidInboundWebhookEventType(tc.typ); got != tc.want {
+				t.Fatalf("metadata validation = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}

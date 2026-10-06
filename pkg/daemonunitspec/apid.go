@@ -18,11 +18,11 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // Wipe-comments-load-bearing rationale that USED to live in the unit
 // file body, now preserved here:
 //
-//   - apid is the SOLE consumer of faas_session_key, faas_host_age_identity,
-//     faas_fleet_age_identity, and faas_host_hmac_key LoadCredentials (every
-//     other control-plane daemon reads sealed.env but does NOT read these
-//     credentials; the session key, X25519 private halves, and value-hash
-//     HMAC key never enter their environments). The public recipient files
+//   - apid and its private clone-worker mode receive the value-hash HMAC key
+//     through LoadCredential. The worker loads fleet/host identities for clone
+//     ciphertext and no session credential; other data-plane owners receive
+//     only the identities their own unit declares. Private key contents never
+//     enter their environments. The public recipient files
 //     are credentials too because /etc/faas/secrets is intentionally
 //     root-only; their contents are public, but an unprivileged daemon cannot
 //     traverse that directory directly.

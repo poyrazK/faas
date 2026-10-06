@@ -62,10 +62,11 @@ def sync_detailed(
     r"""Internal — schedd posts a batch envelope to the gateway.
 
      Internal-only route. Schedd invokes this once per closed
-    batch (size / window / 6MB cap). The function under the
-    trigger responds with `{\"batchItemFailures\":[{\"itemIdentifier\":\"...\"}]}`.
-    Empty / missing response ⇒ full success. Mirrors AWS Lambda's
-    `ReportBatchItemFailures` contract verbatim.
+    batch. The gateway delivers records sequentially and returns one
+    result per item. Each function response may include
+    `{\"batchItemFailures\":[{\"itemIdentifier\":\"...\"}]}`.
+    Durable queue records include an invocation ID and current claim
+    attempt; source must be esm for these records.
 
     Args:
         body (DispatchInvocationBatchBody):
@@ -97,10 +98,11 @@ def sync(
     r"""Internal — schedd posts a batch envelope to the gateway.
 
      Internal-only route. Schedd invokes this once per closed
-    batch (size / window / 6MB cap). The function under the
-    trigger responds with `{\"batchItemFailures\":[{\"itemIdentifier\":\"...\"}]}`.
-    Empty / missing response ⇒ full success. Mirrors AWS Lambda's
-    `ReportBatchItemFailures` contract verbatim.
+    batch. The gateway delivers records sequentially and returns one
+    result per item. Each function response may include
+    `{\"batchItemFailures\":[{\"itemIdentifier\":\"...\"}]}`.
+    Durable queue records include an invocation ID and current claim
+    attempt; source must be esm for these records.
 
     Args:
         body (DispatchInvocationBatchBody):
@@ -127,10 +129,11 @@ async def asyncio_detailed(
     r"""Internal — schedd posts a batch envelope to the gateway.
 
      Internal-only route. Schedd invokes this once per closed
-    batch (size / window / 6MB cap). The function under the
-    trigger responds with `{\"batchItemFailures\":[{\"itemIdentifier\":\"...\"}]}`.
-    Empty / missing response ⇒ full success. Mirrors AWS Lambda's
-    `ReportBatchItemFailures` contract verbatim.
+    batch. The gateway delivers records sequentially and returns one
+    result per item. Each function response may include
+    `{\"batchItemFailures\":[{\"itemIdentifier\":\"...\"}]}`.
+    Durable queue records include an invocation ID and current claim
+    attempt; source must be esm for these records.
 
     Args:
         body (DispatchInvocationBatchBody):
@@ -160,10 +163,11 @@ async def asyncio(
     r"""Internal — schedd posts a batch envelope to the gateway.
 
      Internal-only route. Schedd invokes this once per closed
-    batch (size / window / 6MB cap). The function under the
-    trigger responds with `{\"batchItemFailures\":[{\"itemIdentifier\":\"...\"}]}`.
-    Empty / missing response ⇒ full success. Mirrors AWS Lambda's
-    `ReportBatchItemFailures` contract verbatim.
+    batch. The gateway delivers records sequentially and returns one
+    result per item. Each function response may include
+    `{\"batchItemFailures\":[{\"itemIdentifier\":\"...\"}]}`.
+    Durable queue records include an invocation ID and current claim
+    attempt; source must be esm for these records.
 
     Args:
         body (DispatchInvocationBatchBody):

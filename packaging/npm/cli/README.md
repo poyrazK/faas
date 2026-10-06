@@ -4,7 +4,7 @@ The CLI for [Gregale](https://github.com/poyrazK/faas) — scale-to-zero
 Functions-as-a-Service on Firecracker microVMs.
 
 ```sh
-npm install -g gregale
+npm install -g gregale@rc
 gregale login
 gregale deploy
 ```
@@ -12,7 +12,7 @@ gregale deploy
 Or without installing:
 
 ```sh
-npx gregale deploy
+npx gregale@rc deploy
 ```
 
 ## What this package contains
@@ -29,10 +29,11 @@ downloads only the one matching your machine:
 | Linux arm64 | `@gregale/cli-linux-arm64` |
 
 If the launcher reports a missing platform package, optional dependencies
-were skipped during install:
+may have been skipped, or the platform version may not yet be public. Retry
+the exact version printed by the launcher, or the current release candidate:
 
 ```sh
-npm install --include=optional gregale
+npm install -g --include=optional gregale@rc
 ```
 
 **Windows is not supported yet.** The `os` field makes npm refuse the
@@ -40,7 +41,8 @@ install rather than leave you with a launcher that cannot find a binary.
 
 ## Release channels
 
-`latest` tracks stable releases. Pre-1.0 release candidates publish under
+`latest` tracks stable releases. Use `npm install -g gregale` after a stable
+release publishes. Release candidates publish under
 the `rc` tag:
 
 ```sh

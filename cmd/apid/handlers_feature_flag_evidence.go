@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -200,15 +201,37 @@ func featureFlagOutcomeQuery(r *http.Request, scope state.FeatureFlagScope, rete
 		}
 		customerID = id.String()
 	}
+	ruleID := r.URL.Query().Get("rule_id")
+	if ruleID != "" && !flags.ValidKey(ruleID) {
+		return sqlc.FeatureFlagRequestOutcomesParams{}, start, end, state.ErrInvalidArgument
+	}
+	configVersion := int64(0)
+	if raw := r.URL.Query().Get("config_version"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 1 {
+			return sqlc.FeatureFlagRequestOutcomesParams{}, start, end, state.ErrInvalidArgument
+		}
+		configVersion = parsed
+	}
 	params := sqlc.FeatureFlagRequestOutcomesParams{
 		EnvironmentSlug: r.PathValue("environment"),
 		AccountID:       stringToPgUUID(scope.AccountID),
 		CustomerID:      customerID,
 		FlagKey:         r.PathValue("key"),
+		RuleID:          ruleID,
+		ConfigVersion:   configVersion,
 		ReceivedFrom:    pgtype.Timestamptz{Time: start, Valid: true},
 		ReceivedUntil:   pgtype.Timestamptz{Time: end, Valid: true},
 	}
 	return params, start, end, nil
+}
+
+func featureFlagRolloutOutcomeRequest(r *http.Request, window time.Duration, ruleID string, configVersion int64) *http.Request {
+	clone := r.Clone(r.Context())
+	clone.URL = new(url.URL)
+	*clone.URL = *r.URL
+	clone.URL.RawQuery = url.Values{"since": {window.String()}, "rule_id": {ruleID}, "config_version": {strconv.FormatInt(configVersion, 10)}}.Encode()
+	return clone
 }
 
 func (s *server) listFeatureFlagOutcomes(w http.ResponseWriter, r *http.Request, acct state.Account) {

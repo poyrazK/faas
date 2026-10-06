@@ -20,14 +20,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
-	rolloutsUsage        = "usage: gregale rollouts recover <slug> --action advance|promote|abort [--reason <text>]"
-	rolloutsRecoverUsage = rolloutsUsage
+	rolloutsUsage        = rolloutsRecoverUsage + "\n" + rolloutsStatusUsage
+	rolloutsRecoverUsage = "usage: gregale rollouts recover <slug> --action advance|promote|abort [--deployment ID|vN --expected-predecessor ID|vN] [--reason <text>]"
 )
 
 func cmdRollouts(args []string) int {
@@ -42,8 +44,10 @@ func cmdRollouts(args []string) int {
 	switch args[0] {
 	case "recover":
 		return cmdRolloutsRecover(args[1:])
+	case "status":
+		return cmdRolloutsStatus(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown rollouts subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown rollouts subcommand %q\n", args[0])
 	return 1
 }
 
@@ -83,6 +87,8 @@ func cmdRolloutsRecover(args []string) int {
 	fs := newFlagSet("rollouts recover", flag.ContinueOnError)
 	action := fs.String("action", "", "recover action (advance|promote|abort)")
 	reason := fs.String("reason", "", "operator-supplied reason (logged to deployment_audit)")
+	deployment := fs.String("deployment", "", "exact deployment ID or vN (abort only)")
+	predecessor := fs.String("expected-predecessor", "", "exact retained predecessor ID or vN (requires --deployment)")
 	// The public usage is `recover <slug> --action ...`, while the
 	// standard flag package stops parsing at the first positional
 	// argument. Peel off the documented slug first so both that
@@ -123,13 +129,56 @@ func cmdRolloutsRecover(args []string) int {
 	if !api.AllowedRecoverRolloutAction(*action) {
 		return printErr("Invalid --action", fmt.Errorf("--action must be one of: advance, promote, abort; got %q", *action))
 	}
+	pinned := *deployment != "" || *predecessor != ""
+	if pinned && (*action != "abort" || *deployment == "" || *predecessor == "") {
+		return printErr("Invalid recovery selection", fmt.Errorf("exact recovery requires --action abort, --deployment and --expected-predecessor"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.RecoverRollout(context.Background(), slug, *action, *reason)
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	ctx, cancel := context.WithTimeout(signalCtx, 30*time.Second)
+	defer cancel()
+	var resp api.RolloutTransitionResponse
+	if pinned {
+		*deployment, err = resolveBindingDeployment(ctx, client, slug, *deployment)
+		if err != nil {
+			return printErr("Resolve deployment failed", err)
+		}
+		*predecessor, err = resolveBindingDeployment(ctx, client, slug, *predecessor)
+		if err != nil {
+			return printErr("Resolve predecessor failed", err)
+		}
+		if sameBindingDeployment(*deployment, *predecessor) {
+			return printErr("Invalid recovery selection", fmt.Errorf("the predecessor must be different from the candidate deployment"))
+		}
+		resp, err = client.RecoverExactRollout(ctx, slug, *deployment, *predecessor, *reason)
+	} else {
+		resp, err = client.RecoverRollout(ctx, slug, *action, *reason)
+	}
 	if err != nil {
+		if signalCtx.Err() != nil {
+			return 130
+		}
 		return printErr("Recover failed", err)
+	}
+	if pinned && resp.ServiceRecovery != nil {
+		h := resp.Deployment.ServiceRolloutHandoff
+		receipt := resp.ServiceRecovery
+		if resp.Recovery != nil || resp.Deployment.CanaryTotalSteps != 0 || !sameBindingDeployment(resp.Deployment.ID, *deployment) || resp.AuditID == "" || resp.Deployment.RolloutState != "rolling_out" || h == nil || h.Action != "abort" || h.Phase != "pending" || h.BindingsCheck == nil || receipt.Status != "accepted" || receipt.RequestID == "" || h.BindingsCheck.RequestID != receipt.RequestID || h.BindingsCheck.Action != "abort" || h.BindingsCheck.Status != "pending" && h.BindingsCheck.Status != "blocked" || !sameBindingDeployment(h.BindingsCheck.DeploymentID, *predecessor) || !sameBindingDeployment(h.PredecessorDeploymentID, *predecessor) || !sameBindingDeployment(receipt.DeploymentID, *deployment) || !sameBindingDeployment(receipt.PredecessorDeploymentID, *predecessor) {
+			return printErr("Invalid recovery receipt", fmt.Errorf("server did not confirm the exact service abort request"))
+		}
+	} else if pinned && (!sameBindingDeployment(resp.Deployment.ID, *deployment) || resp.Deployment.RolloutState != "aborted" || resp.Deployment.TrafficPercent != 0 || resp.AuditID == "" || resp.Recovery == nil || !sameBindingDeployment(resp.Recovery.DeploymentID, *deployment) || !sameBindingDeployment(resp.Recovery.PredecessorDeploymentID, *predecessor) || resp.Recovery.RestoredTrafficPercent != 100) {
+		return printErr("Invalid recovery receipt", fmt.Errorf("server did not confirm the exact canary abort and predecessor restoration"))
+	}
+	if pinned && resp.Recovery != nil {
+		for _, report := range resp.Recovery.BindingsChecks {
+			if !report.Passed || report.AllowUnsupported || !sameBindingDeployment(report.DeploymentID, *predecessor) {
+				return printErr("Invalid recovery receipt", fmt.Errorf("server returned a failed or mismatched predecessor binding check"))
+			}
+		}
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
@@ -137,7 +186,11 @@ func cmdRolloutsRecover(args []string) int {
 	// Human-mode echo: deployment id, post-state, traffic
 	// percent, and the audit row id (the operator can paste
 	// the audit id into the dashboard's deployment timeline).
-	_, _ = fmt.Fprintf(osStdout, "Rollout %s on app %s.\n", *action, slug)
+	if resp.ServiceRecovery != nil {
+		_, _ = fmt.Fprintf(osStdout, "Service abort accepted on app %s; binding checks, routing and drain completion are pending.\n", slug)
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "Rollout %s on app %s.\n", *action, slug)
+	}
 	_, _ = fmt.Fprintf(osStdout, "  deployment:  %s\n", resp.Deployment.ID)
 	if resp.Deployment.RolloutState != "" {
 		_, _ = fmt.Fprintf(osStdout, "  state:       %s\n", resp.Deployment.RolloutState)
@@ -159,5 +212,8 @@ func cmdRolloutsRecover(args []string) int {
 		}
 	}
 	_, _ = fmt.Fprintf(osStdout, "  audit_id:    %s\n", resp.AuditID)
+	if resp.Recovery != nil {
+		_, _ = fmt.Fprintf(osStdout, "  restored:    %s (%d%% traffic)\n", resp.Recovery.PredecessorDeploymentID, resp.Recovery.RestoredTrafficPercent)
+	}
 	return 0
 }

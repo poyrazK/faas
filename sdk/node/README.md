@@ -52,6 +52,46 @@ cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
+## Container listeners
+
+UDP ingress requires an operator-enabled public edge and source-CIDR/firewall
+rollout. The app must declare the guest UDP port. Reserving a listener creates a
+disabled endpoint; enable it explicitly after deployment and rollout checks:
+
+```ts
+import { FaaSClient, AppsService } from '@gregale/sdk-node';
+
+new FaaSClient('https://api.example.com', { token: process.env.FAAS_TOKEN! });
+const udp = await AppsService.createAppUdpListener({
+  slug: 'app', requestBody: { name: 'dns', guest_port: 5353 },
+});
+await AppsService.updateAppUdpListener({
+  slug: 'app', name: udp.name, requestBody: { enabled: true },
+});
+```
+
+An existing TCP listener can terminate TLS using a verified app-owned hostname.
+The operator provisions its certificate bundle on the serving edge. Updating TLS
+policy disables the listener; send a separate enable mutation after provisioning:
+
+```ts
+await AppsService.updateAppTcpListener({
+  slug: 'app', name: 'echo',
+  requestBody: { tls: { mode: 'terminate', hostname: 'echo.example.com' } },
+});
+await AppsService.updateAppTcpListener({
+  slug: 'app', name: 'echo', requestBody: { enabled: true },
+});
+const status = await AppsService.appTcpListenerTlsStatus({ slug: 'app', name: 'echo' });
+console.log(status.observations);
+```
+
+Supply exactly one of `enabled` or `tls` in each TCP update. Status covers observed
+edges only: empty observations or `unknown` do not establish readiness. Certificate
+readiness does not prove fleet coverage, client trust or guest availability.
+Native listener qualification remains pending; see the
+[qualification procedure](../../docs/container-qualification.md).
+
 ## Quick start
 
 ```ts
@@ -196,6 +236,20 @@ generated services. The canonical mapping:
 
 Regenerate via `npm run gen` (committed per ADR-013; CI's
 `sdk-gen-node` job is the dirty-diff gate).
+
+## Transactional operation handlers
+
+For managed HTTP operations, `operationRequestFromHeaders` verifies negotiated
+support and captures the trusted identity with original request bytes.
+`withOperationTransaction(pool, operation, callback)` commits the callback's
+PostgreSQL writes and managed result/webhook intent together. A later attempt
+returns the saved response without repeating committed writes.
+
+Install `operationReceiptSchema` explicitly as the database owner. Use an idle,
+exclusively leased pg-compatible pool connection. Send `response.body` unchanged
+as `application/json`; `response.replayed` identifies receipt recovery. See the
+[transactional handler guide](../../docs/operation-transactions.md) for Express,
+receipt retention, and uncertain commit handling.
 
 ## Idempotency contract
 
@@ -531,3 +585,54 @@ don't require the fixture.
 ## License
 
 Internal — see `LICENSE`.
+## Internal HTTP Operations preview
+
+Operations is staged and production submission remains disabled. For locally
+enabled acceptance, import `GregaleOperationClient` from the browser entry point
+and supply a callback that obtains a current tenant-bound token:
+
+```ts
+import { GregaleOperationClient } from '@gregale/sdk-node/browser';
+
+const operations = new GregaleOperationClient({
+  apiURL: 'https://api.example.com',
+  credential: () => session.currentTenantToken(),
+});
+const receipt = await operations.start(definitionID, { count: 100 }, submissionKey);
+for await (const update of operations.subscribe(receipt.id, { signal })) {
+  await saveAndRender(update);
+}
+```
+
+Keep `submissionKey` stable for duplicate submissions. Account API keys stay on
+the backend. The client refreshes credentials on reconnect; persist the applied
+event cursor and pass it as `after` when rebuilding the client.
+
+Server handlers import `GregaleOperations` from the main entry point and wrap
+trusted Gregale guest requests with `runRequest(req.headers, handler)`. Within
+that handler, use `progress({ report_id, stage, completed, total })` and
+`artifact({ report_id, name, uri, size_bytes, sha256 })`. Use stable report IDs
+when repeating a report. Workload metadata is fetched for every report, while
+the current invocation capability stays private to its request context.
+See [Operations](../../docs/operations.md) for ownership, retention and recovery.
+
+Completion delivery inspection, attempt history, and immutable retry decisions
+are exposed through the Operations APIs (`getOperationDelivery`,
+`getOperationDeliveryAttempts`, `retryOperationDeliveryWithReceipt`; PascalCase
+in Go and snake_case Python modules). New retries carry `retry_id`, `delivery_id`
+and an explicit `expected_replay_generation`, including zero. Reuse the same
+request after an uncertain reply; the returned `queued` receipt describes the
+original decision. Read delivery status separately. Business results and
+execution generations are unaffected. The legacy retry method remains available.
+
+
+## Object version protection
+
+The Storage API supports typed retention/legal-hold reads and mutations, plus
+protection operation inspection. Use an explicit owned public version UUIDv4
+(or `null` in an eligible Object Lock bucket). Mutations require a stable UUIDv4
+operation ID and return a durable receipt; retain the returned ID for retries
+and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
+holds are supported. Event-hold changes and governance bypass are unsupported.
+See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+for enrollment, pending-operation fences and recovery behavior.

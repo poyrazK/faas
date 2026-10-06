@@ -29,9 +29,9 @@ func TestPg_FeatureFlagRequestOutcomesWeightsCollapsedRows(t *testing.T) {
 			t.Fatalf("insert flag evidence: %v", err)
 		}
 	}
-	insert(200, 10, 2, customerA, `[{"flag":"new-export","value":true,"used":true}]`, 0)
-	insert(503, 20, 1, customerA, `[{"flag":"new-export","value":true,"used":false}]`, time.Second)
-	insert(500, 30, 2, customerB, `[{"flag":"new-export","value":false,"used":true}]`, 2*time.Second)
+	insert(200, 10, 2, customerA, `[{"flag":"new-export","rule_id":"selected","config_version":5,"value":true,"used":true}]`, 0)
+	insert(503, 20, 1, customerA, `[{"flag":"new-export","rule_id":"selected","config_version":5,"value":true,"used":false}]`, time.Second)
+	insert(500, 30, 2, customerB, `[{"flag":"new-export","rule_id":"other","config_version":5,"value":false,"used":true}]`, 2*time.Second)
 	insert(201, 40, 4, customerA, `[{"flag":"pipeline","type":"variant","value":"new","used":true}]`, 3*time.Second)
 	insert(500, 1, 9, customerA, `[{"flag":"other-flag","value":true,"used":true}]`, 4*time.Second)
 
@@ -70,6 +70,27 @@ func TestPg_FeatureFlagRequestOutcomesWeightsCollapsedRows(t *testing.T) {
 	rows, err = f.s.FeatureFlagRequestOutcomes(f.ctx, query)
 	if err != nil || len(rows) != 1 || rows[0].DecisionValue != "true" || rows[0].RequestCount != 3 {
 		t.Fatalf("customer-scoped outcomes=%+v err=%v", rows, err)
+	}
+
+	query.CustomerID, query.RuleID = "", "selected"
+	rows, err = f.s.FeatureFlagRequestOutcomes(f.ctx, query)
+	if err != nil || len(rows) != 1 || rows[0].DecisionValue != "true" || rows[0].RequestCount != 3 || rows[0].UsedCount != 2 {
+		t.Fatalf("rule-scoped outcomes=%+v err=%v", rows, err)
+	}
+	query.RuleID = "other"
+	rows, err = f.s.FeatureFlagRequestOutcomes(f.ctx, query)
+	if err != nil || len(rows) != 1 || rows[0].DecisionValue != "false" || rows[0].RequestCount != 2 {
+		t.Fatalf("other rule outcomes=%+v err=%v", rows, err)
+	}
+	query.RuleID, query.ConfigVersion = "selected", 5
+	rows, err = f.s.FeatureFlagRequestOutcomes(f.ctx, query)
+	if err != nil || len(rows) != 1 || rows[0].DecisionValue != "true" || rows[0].RequestCount != 3 {
+		t.Fatalf("version-scoped outcomes=%+v err=%v", rows, err)
+	}
+	query.ConfigVersion = 6
+	rows, err = f.s.FeatureFlagRequestOutcomes(f.ctx, query)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("empty version-scoped outcomes=%+v err=%v", rows, err)
 	}
 }
 

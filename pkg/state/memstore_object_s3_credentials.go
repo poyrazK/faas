@@ -15,11 +15,15 @@ var _ ObjectS3CredentialBindingStore = (*MemStore)(nil)
 func (m *MemStore) CreateObjectS3Credential(_ context.Context, c ObjectS3Credential, maxPerBucket int) (ObjectS3Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createObjectS3CredentialLocked(c, maxPerBucket, false)
+}
+
+func (m *MemStore) createObjectS3CredentialLocked(c ObjectS3Credential, maxPerBucket int, cloneAuthorized bool) (ObjectS3Credential, error) {
 	if !validObjectS3Credential(c) || maxPerBucket < 1 {
 		return ObjectS3Credential{}, ErrConflict
 	}
 	bucket, ok := m.objectBuckets[c.BucketID]
-	if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" {
+	if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" || !cloneAuthorized && !m.cloneBucketAccessibleLocked(bucket) {
 		return ObjectS3Credential{}, ErrNotFound
 	}
 	if m.objectS3Credentials == nil {
@@ -30,7 +34,7 @@ func (m *MemStore) CreateObjectS3Credential(_ context.Context, c ObjectS3Credent
 		if existing.AccessKeyID == c.AccessKeyID || existing.ID == c.ID {
 			return ObjectS3Credential{}, ErrConflict
 		}
-		if existing.BucketID == c.BucketID && existing.Status == ObjectS3CredentialStatusActive && existing.RotationParentID == "" {
+		if existing.BucketID == c.BucketID && existing.Status == ObjectS3CredentialStatusActive && existing.RotationParentID == "" && existing.URL == nil {
 			active++
 		}
 	}
@@ -50,9 +54,13 @@ func (m *MemStore) CreateObjectS3ComputeBinding(_ context.Context, req ObjectS3C
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createObjectS3ComputeBindingLocked(req, false)
+}
+
+func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBindingCreateRequest, cloneAuthorized bool) (ObjectS3Credential, error) {
 	c := req.Credential
 	bucket, ok := m.objectBuckets[c.BucketID]
-	if !ok || bucket.AccountID != c.AccountID || bucket.AppID != c.ManagedAppID || bucket.State != "ready" {
+	if !ok || bucket.AccountID != c.AccountID || bucket.AppID != c.ManagedAppID || bucket.State != "ready" || !cloneAuthorized && !m.cloneBucketAccessibleLocked(bucket) {
 		return ObjectS3Credential{}, ErrNotFound
 	}
 	app, ok := m.apps[c.ManagedAppID]
@@ -66,7 +74,7 @@ func (m *MemStore) CreateObjectS3ComputeBinding(_ context.Context, req ObjectS3C
 				existing.ManagedAppID == c.ManagedAppID && existing.ManagedScope == c.ManagedScope && existing.ManagedPrefix == c.ManagedPrefix) {
 			return ObjectS3Credential{}, ErrConflict
 		}
-		if existing.BucketID == c.BucketID && existing.Status == ObjectS3CredentialStatusActive && existing.RotationParentID == "" {
+		if existing.BucketID == c.BucketID && existing.Status == ObjectS3CredentialStatusActive && existing.RotationParentID == "" && existing.URL == nil {
 			active++
 		}
 	}
@@ -100,6 +108,11 @@ func (m *MemStore) CreateObjectS3ComputeBinding(_ context.Context, req ObjectS3C
 		secret.DeliveryVersion, secret.DeliveryStatus = 1, SecretDeliveryPending
 		m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}] = secret
 	}
+	// A private clone has no running target yet. Publishing its release is the
+	// visibility boundary; preparation must not invalidate production snapshots.
+	if cloneAuthorized {
+		return cloneObjectS3Credential(c), nil
+	}
 	if m.runtimeConfigChangedAt == nil {
 		m.runtimeConfigChangedAt = map[string]time.Time{}
 	}
@@ -124,7 +137,7 @@ func (m *MemStore) ListObjectS3Credentials(_ context.Context, accountID, bucketI
 	}
 	out := make([]ObjectS3Credential, 0)
 	for _, c := range m.objectS3Credentials {
-		if c.AccountID == accountID && c.BucketID == bucketID && c.Status == ObjectS3CredentialStatusActive && c.RotationParentID == "" {
+		if c.AccountID == accountID && c.BucketID == bucketID && c.Status == ObjectS3CredentialStatusActive && c.RotationParentID == "" && c.URL == nil {
 			out = append(out, cloneObjectS3Credential(c))
 		}
 	}
@@ -179,7 +192,7 @@ func (m *MemStore) RevokeObjectS3ComputeBinding(_ context.Context, accountID, bu
 	}
 	for key, secret := range m.secrets {
 		if secret.ManagedObjectStorageCredentialID == bindingID {
-			delete(m.secrets, key)
+			m.deleteRuntimeAppSecretLocked(key)
 			changed = true
 		}
 	}
@@ -207,7 +220,7 @@ func (m *MemStore) GetObjectS3Credential(_ context.Context, accountID, bucketID,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.objectS3Credentials[credentialID]
-	if !ok || c.AccountID != accountID || c.BucketID != bucketID || c.RotationParentID != "" {
+	if !ok || c.AccountID != accountID || c.BucketID != bucketID || c.RotationParentID != "" || c.URL != nil {
 		return ObjectS3Credential{}, ErrNotFound
 	}
 	return cloneObjectS3Credential(c), nil
@@ -324,11 +337,11 @@ func (m *MemStore) ResolveObjectS3Credential(_ context.Context, accessKeyID stri
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, c := range m.objectS3Credentials {
-		if c.AccessKeyID != accessKeyID || c.Status != ObjectS3CredentialStatusActive {
+		if c.AccessKeyID != accessKeyID || c.Status != ObjectS3CredentialStatusActive || !m.objectURLCredentialLiveLocked(c) {
 			continue
 		}
 		bucket, ok := m.objectBuckets[c.BucketID]
-		if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" {
+		if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" || !m.cloneBucketAccessibleLocked(bucket) {
 			return ObjectS3Credential{}, ObjectBucket{}, ErrNotFound
 		}
 		return cloneObjectS3Credential(c), bucket, nil
@@ -359,7 +372,7 @@ func (m *MemStore) ListObjectS3CredentialsForRekey(_ context.Context, limit int,
 	}
 	out := make([]ObjectS3Credential, 0, limit)
 	for _, c := range m.objectS3Credentials {
-		if c.Status == ObjectS3CredentialStatusActive && c.ID > afterID {
+		if c.Status == ObjectS3CredentialStatusActive && c.ID > afterID && (c.URL == nil || c.URL.ExpiresAt.After(m.clock())) {
 			out = append(out, cloneObjectS3Credential(c))
 		}
 	}
@@ -387,6 +400,7 @@ func (m *MemStore) ResealObjectS3Credential(_ context.Context, credentialID, pre
 }
 
 func cloneObjectS3Credential(c ObjectS3Credential) ObjectS3Credential {
+	c.URL = c.URL.Clone()
 	c.SecretSealed = append([]byte(nil), c.SecretSealed...)
 	if c.LastUsedAt != nil {
 		v := *c.LastUsedAt

@@ -296,12 +296,12 @@ func TestParseConfig_StopSignalAbsentDefault(t *testing.T) {
 }
 
 func TestParseConfig_SecretReloadSignalLabel(t *testing.T) {
-	b := []byte(`{"config":{"Cmd":["/app/server"],"Labels":{"com.gregale.secret-reload-signal":"SIGHUP"}},"rootfs":{"type":"layers"}}`)
+	b := []byte(`{"config":{"Cmd":["/app/server"],"Labels":{"com.gregale.secret-reload-signal":"SIGHUP","com.gregale.secret-reload-readiness":"required"}},"rootfs":{"type":"layers"}}`)
 	cfg, err := ParseConfig(bytes.NewReader(b))
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
-	if cfg.SecretReloadSignal != "SIGHUP" {
+	if cfg.SecretReloadSignal != "SIGHUP" || !cfg.SecretReloadReadiness {
 		t.Fatalf("Config.SecretReloadSignal = %q, want SIGHUP", cfg.SecretReloadSignal)
 	}
 	img, err := parseImageConfig(b)
@@ -309,14 +309,15 @@ func TestParseConfig_SecretReloadSignalLabel(t *testing.T) {
 		t.Fatalf("parseImageConfig: %v", err)
 	}
 	manifest, err := ManifestFromConfig(Config{
-		Entrypoint:         img.Entrypoint,
-		Cmd:                img.Cmd,
-		SecretReloadSignal: img.SecretReloadSignal,
+		Entrypoint:            img.Entrypoint,
+		Cmd:                   img.Cmd,
+		SecretReloadSignal:    img.SecretReloadSignal,
+		SecretReloadReadiness: img.SecretReloadReadiness,
 	})
 	if err != nil {
 		t.Fatalf("ManifestFromConfig: %v", err)
 	}
-	if manifest.SecretReloadSignal != "SIGHUP" {
+	if manifest.SecretReloadSignal != "SIGHUP" || !manifest.SecretReloadReadiness {
 		t.Fatalf("manifest secret_reload_signal = %q, want SIGHUP", manifest.SecretReloadSignal)
 	}
 }
@@ -348,9 +349,9 @@ func TestParseConfig_NumericUser(t *testing.T) {
 // over a nested one.
 func TestParseConfig_HealthcheckFlatPreferred(t *testing.T) {
 	raw := []byte(`{
-        "Healthcheck": {"Test": ["CMD", "/flat/check"], "Interval": 60},
+        "Healthcheck": {"Test": ["CMD", "/flat/check"], "Interval": 60000000000},
         "config": {
-            "Healthcheck": {"Test": ["CMD", "/nested/check"], "Interval": 30}
+            "Healthcheck": {"Test": ["CMD", "/nested/check"], "Interval": 30000000000}
         }
     }`)
 	cfg, err := ParseConfig(bytes.NewReader(raw))
@@ -378,4 +379,16 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestSecretReloadReadinessRejectsInvalidLabels(t *testing.T) {
+	for _, labels := range []string{`"com.gregale.secret-reload-readiness":"true"`, `"com.gregale.secret-reload-readiness":"required"`} {
+		body := []byte(`{"config":{"Cmd":["server"],"Labels":{` + labels + `}},"rootfs":{"type":"layers"}}`)
+		if _, err := ParseConfig(bytes.NewReader(body)); err == nil {
+			t.Fatal("accepted invalid readiness label")
+		}
+		if _, err := parseImageConfig(body); err == nil {
+			t.Fatal("registry parser accepted invalid readiness label")
+		}
+	}
 }

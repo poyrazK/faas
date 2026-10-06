@@ -97,7 +97,7 @@ def test_run_execution_creates_streams_and_fetches_receipt() -> None:
         if request.method == "POST" and request.url.path == "/v1/executions":
             assert request.headers["idempotency-key"] == "run-key-1"
             body = request.read().decode()
-            assert "console.log('hello')" in body
+            assert "def main(input, context): return input" in body
             return httpx.Response(202, json=_receipt("queued"))
         if request.url.path == f"/v1/executions/{_EXECUTION_ID}/events":
             return _stream(
@@ -106,7 +106,18 @@ def test_run_execution_creates_streams_and_fetches_receipt() -> None:
                 'id: 3\nevent: terminal\ndata: {"status":"succeeded"}\n\n'
             )
         if request.method == "GET" and request.url.path == f"/v1/executions/{_EXECUTION_ID}":
-            return httpx.Response(200, json=_receipt("succeeded", result={"ok": True}, stdout="hello"))
+            return httpx.Response(
+                200,
+                json=_receipt(
+                    "succeeded",
+                    runtime="python313",
+                    profile="python-data-v1",
+                    runtime_image_digest="sha256:" + "a" * 64,
+                    packages={"numpy": "2.5.3"},
+                    result={"ok": True},
+                    stdout="hello",
+                ),
+            )
         return httpx.Response(404)
 
     client = FaaSClient(
@@ -116,7 +127,7 @@ def test_run_execution_creates_streams_and_fetches_receipt() -> None:
     try:
         seen: list[str] = []
         receipt = client.run_execution(
-            {"runtime": "node22", "source": "console.log('hello')"},
+            {"runtime": "python313", "profile": "python-data-v1", "source": "def main(input, context): return input"},
             on_event=lambda event: seen.append(event.type),
             idempotency_key="run-key-1",
             retry_initial=0,
@@ -124,6 +135,10 @@ def test_run_execution_creates_streams_and_fetches_receipt() -> None:
         )
         assert str(receipt.id) == _EXECUTION_ID
         assert receipt.status == "succeeded"
+        assert receipt.profile == "python-data-v1"
+        assert receipt.packages.to_dict() == {"numpy": "2.5.3"}
+        assert receipt.runtime_image_digest == "sha256:" + "a" * 64
+        assert '"profile":"python-data-v1"' in requests[0].content.decode().replace(" ", "")
         assert receipt.result == {"ok": True}
         assert seen == ["status", "stdout", "terminal"]
         assert [request.method for request in requests] == ["POST", "GET", "GET"]
@@ -165,3 +180,27 @@ async def test_arun_execution_awaits_callback_and_returns_receipt() -> None:
         assert len(requests) == 3
     finally:
         await client.aclose()
+
+
+def test_decode_execution_artifact_validates_binary_content() -> None:
+    import base64
+    import hashlib
+
+    from faas_sdk import decode_execution_artifact
+    from faas_sdk.models.execution_artifact import ExecutionArtifact
+
+    content = bytes([0, 1, 255])
+    artifact = ExecutionArtifact(
+        name="result.bin",
+        size_bytes=3,
+        sha256="sha256:" + hashlib.sha256(content).hexdigest(),
+        content=base64.b64encode(content).decode(),
+    )
+    assert decode_execution_artifact(artifact) == content
+    artifact.size_bytes = 4
+    with pytest.raises(ValueError):
+        decode_execution_artifact(artifact)
+    artifact.size_bytes = 3
+    artifact.sha256 = "sha256:bad"
+    with pytest.raises(ValueError):
+        decode_execution_artifact(artifact)

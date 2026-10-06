@@ -251,3 +251,30 @@ func getScrapeBody(t *testing.T, url string) string {
 	}
 	return string(body)
 }
+
+func TestWakeCompanionSnapshotMemoryFallback(t *testing.T) {
+	for _, mb := range []int{0, 128, 192} {
+		t.Run(fmt.Sprint(mb), func(t *testing.T) {
+			vmm := &fakeVMM{}
+			m := newTestManager(&fakeRunner{}, vmm)
+			snap := usableSnapshot()
+			snap.MemBytes = int64(mb) << 20
+			req := wakeReq("companion-memory", snap)
+			req.Sidecars = []WorkloadSpec{{Name: "metrics", Type: "sidecar", StorageKey: "metrics.ext4", DriveID: "layer-sidecar-0", RamMB: 64}}
+			inst, err := m.Wake(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := WakeColdBoot
+			if mb == 192 {
+				want = WakeRestore
+			}
+			if inst.Method != want {
+				t.Fatalf("wake method = %s, want %s", inst.Method, want)
+			}
+			if want == WakeColdBoot && vmm.coldBootSpecs[0].MemSizeMiB != 192 {
+				t.Fatalf("fallback memory = %d, want 192", vmm.coldBootSpecs[0].MemSizeMiB)
+			}
+		})
+	}
+}

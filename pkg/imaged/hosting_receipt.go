@@ -90,14 +90,31 @@ func HostingHealthPath(app state.App, dep state.Deployment) string {
 	return path
 }
 
+// VerifyHostingDeployment retains strict HTTP health checks when configured.
+// Direct OCI images with TCP readiness, and gRPC apps, use candidate route
+// connectivity.
+func VerifyHostingDeployment(ctx context.Context, verifier apihostingreceipt.Verifier, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
+	if routeConnectivitySmoke(app, dep) {
+		return verifier.VerifyDeploymentRoute(ctx, app.Slug, dep.ID)
+	}
+	return verifier.VerifyDeployment(ctx, app.Slug, HostingHealthPath(app, dep), dep.ID)
+}
+
 func buildHostingReceipt(app state.App, dep state.Deployment, smoke apihostingreceipt.SmokeResult) apihostingreceipt.Receipt {
+	profile := hostingReceiptProfile(app, dep)
+	if smoke.Verification == "" {
+		smoke.Verification = apihostingreceipt.VerificationHTTPHealth
+		if routeConnectivitySmoke(app, dep) {
+			smoke.Verification = apihostingreceipt.VerificationRouteConnectivity
+		}
+	}
 	return apihostingreceipt.Receipt{
 		SchemaVersion: apihostingreceipt.SchemaVersion,
 		DeploymentID:  dep.ID,
 		AppID:         app.ID,
 		AppURL:        hostingAppURL(app.Slug),
 		Source:        apihostingreceipt.Source{Kind: string(dep.Kind), URL: safeSourceURL(dep.SourceURL), CommitSHA: dep.CommitSHA, ImageDigest: dep.ImageDigest},
-		Profile:       hostingReceiptProfile(app, dep),
+		Profile:       profile,
 		Artifact:      apihostingreceipt.Artifact{RootfsKey: dep.RootfsKey, RootfsBytes: dep.RootfsBytes},
 		Smoke:         smoke,
 	}
@@ -152,4 +169,35 @@ func hostingSmokeFailure(smoke apihostingreceipt.SmokeResult) error {
 		return errors.New(smoke.ErrorCode)
 	}
 	return errors.New("post-readiness smoke failed")
+}
+
+// routeConnectivitySmoke reports whether the public smoke proves route
+// connectivity rather than an HTTP GET of the health path. A gRPC server
+// answers a plain GET with 415, so on production-us every app_protocol=grpc
+// deploy passed its in-VM gRPC readiness and then failed "post-readiness
+// smoke failed: health probe returned HTTP 415". Readiness is already proven
+// by the gRPC health check inside the VM. The public smoke only has to show
+// that the route reaches the candidate.
+func routeConnectivitySmoke(app state.App, dep state.Deployment) bool {
+	if isDirectOCIImage(app, dep) && hostingReceiptProfile(app, dep).HealthPath == "" {
+		return true
+	}
+	return strings.EqualFold(app.AppProtocol, "grpc") || grpcReadiness(dep)
+}
+
+// grpcReadiness reports whether the deployment's startup readiness is the
+// standard gRPC health service (`deploy --healthcheck-grpc` or a manifest
+// healthcheck.grpc). It mirrors pkg/sched healthcheckGRPCFromDep.
+func grpcReadiness(dep state.Deployment) bool {
+	if frozen, err := dep.ScopedWorkloadRuntime(); err == nil && frozen != nil {
+		if raw, declared := frozen.Runtime["healthcheck"]; declared {
+			var hc api.AppManifestHealthcheck
+			return json.Unmarshal(raw, &hc) == nil && hc.GRPC != nil
+		}
+	}
+	if len(dep.OverrideHealthcheck) == 0 {
+		return false
+	}
+	var hc api.DeploymentHealthcheck
+	return json.Unmarshal(dep.OverrideHealthcheck, &hc) == nil && hc.GRPC != nil
 }

@@ -15,6 +15,7 @@ import (
 // platform runtime. It intentionally contains no tenant source, input,
 // credentials, or mutable application state.
 type RuntimeSnapshotRecord struct {
+	Profile             api.ExecutionProfile
 	ID                  string
 	CatalogKey          string
 	Runtime             api.ExecutionRuntime
@@ -54,9 +55,13 @@ type RuntimeSnapshotStore interface {
 }
 
 func (r RuntimeSnapshotRecord) identityKey() string {
+	profilePath := ""
+	if r.Profile.Normalized() != api.ExecutionProfileStandard {
+		profilePath = "/profile-" + string(r.Profile)
+	}
 	return fmt.Sprintf(
-		"execution-snapshots/v%d/%s/%s/memory-%d/disk-%d/kernel-%s/executor-%s/base-%s",
-		r.FormatVersion, r.Runtime, r.Architecture, r.MemoryMB, r.EphemeralDiskMB,
+		"execution-snapshots/v%d/%s%s/%s/memory-%d/disk-%d/kernel-%s/executor-%s/base-%s",
+		r.FormatVersion, r.Runtime, profilePath, r.Architecture, r.MemoryMB, r.EphemeralDiskMB,
 		r.KernelDigest, r.GuestExecutorDigest, r.BaseImageDigest,
 	)
 }
@@ -65,6 +70,9 @@ func (r RuntimeSnapshotRecord) identityKey() string {
 // sync with sched.RuntimeSnapshot.Validate; duplicating the small invariant
 // here avoids an import cycle between state and sched.
 func (r RuntimeSnapshotRecord) Validate() error {
+	if err := r.Profile.Validate(r.Runtime); err != nil {
+		return fmt.Errorf("%w: %w", ErrRuntimeSnapshotInvalid, err)
+	}
 	if !r.Runtime.Valid() {
 		return fmt.Errorf("%w: unsupported runtime %q", ErrRuntimeSnapshotInvalid, r.Runtime)
 	}

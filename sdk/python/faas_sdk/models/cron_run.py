@@ -27,8 +27,8 @@ class CronRun:
     """When the cron fired (the invocation/task creation time), not when the app began executing."""
     outcome: CronRunOutcome
     """Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget
-    was exhausted; `running` means the run has not reached a terminal state yet. Branch on this, never on `error`.
-   """
+    was exhausted; `running` means the run has not reached a terminal state yet; `uncertain` means delivery may have
+    reached the app without a completion receipt. Branch on this, never on `error`."""
     attempts: int
     """Dispatch attempts for this run; greater than 1 means it was retried."""
     completed_at: datetime.datetime | None | Unset = UNSET

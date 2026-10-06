@@ -153,6 +153,21 @@ func (r *prefetchMetalRig) wakeWith(t *testing.T, mutate func(*WakeRequest)) tim
 	if r.prepared || r.port != netns.AppPort {
 		req.Port = r.port
 	}
+	var preparedNamespaces []os.FileInfo
+	if r.prepared {
+		p := r.m.preparedNetworks
+		p.mu.Lock()
+		for _, entry := range p.ready {
+			info, err := os.Stat("/run/netns/" + entry.config.Netns)
+			if err == nil {
+				preparedNamespaces = append(preparedNamespaces, info)
+			}
+		}
+		p.mu.Unlock()
+		if len(preparedNamespaces) == 0 {
+			t.Fatal("prepared pool has no readable namespace")
+		}
+	}
 	start := time.Now()
 	out, err := r.m.Wake(context.Background(), req)
 	if err != nil {
@@ -161,14 +176,20 @@ func (r *prefetchMetalRig) wakeWith(t *testing.T, mutate func(*WakeRequest)) tim
 	if out.Method != WakeRestore {
 		t.Fatalf("wake method = %s, want restore", out.Method)
 	}
-	// A hit costs nothing; a custom port adds one nft transaction to retarget
-	// the claimed namespace's DNAT. A rebuild costs tens of milliseconds.
-	limit := int64(5)
-	if r.port != netns.AppPort {
-		limit = 25
-	}
-	if r.prepared && out.NetnsTapMs > limit {
-		t.Fatalf("wake built its network inline (%d ms); the prepared pool missed", out.NetnsTapMs)
+	// Namespace identity proves reuse independently of host scheduling and
+	// the custom-port DNAT transaction's duration. Keep timing as a measurement.
+	if r.prepared {
+		info, err := os.Stat("/run/netns/" + out.Lease.Netns)
+		if err != nil {
+			t.Fatalf("restored namespace: %v", err)
+		}
+		reused := false
+		for _, prepared := range preparedNamespaces {
+			reused = reused || os.SameFile(prepared, info)
+		}
+		if !reused {
+			t.Fatal("wake replaced the prepared namespace instead of reusing it")
+		}
 	}
 	r.lastNetnsTapMs = out.NetnsTapMs
 	return time.Since(start)

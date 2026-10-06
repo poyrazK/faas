@@ -39,6 +39,40 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	}
 	defer conn.Release()
 
+	// ADR-430: Commit's relay SQL belongs to a customer's independent
+	// database. Restore qualification also owns a separate disposable DB.
+	// Platform migrations must never install either one's public tables.
+	var customerTablesInPlatform bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.gregale_outbox') IS NOT NULL OR to_regclass('public.gregale_commit_binding') IS NOT NULL OR to_regclass('public.gregale_qualification_restore_probe') IS NOT NULL`).Scan(&customerTablesInPlatform); err != nil {
+		t.Fatal(err)
+	}
+	if customerTablesInPlatform {
+		t.Fatal("platform migrations installed customer or qualification tables")
+	}
+	customerPool := pgtest.OpenDatabase(t)
+	customerSchema, err := os.ReadFile("../../pkg/commit/schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := customerPool.Exec(ctx, string(customerSchema)); err != nil {
+		t.Fatal(err)
+	}
+	customerConn, err := customerPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer customerConn.Release()
+
+	qualificationPool := pgtest.OpenDatabase(t)
+	if _, err := qualificationPool.Exec(ctx, `CREATE TABLE public.gregale_qualification_restore_probe (id integer PRIMARY KEY CHECK (id = 1), marker text NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	qualificationConn, err := qualificationPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer qualificationConn.Release()
+
 	stmts := literalSQLStatements(t, "../../pkg", "../../cmd")
 	if len(stmts) < 500 {
 		t.Fatalf("found only %d SQL literals; the source walk is broken", len(stmts))
@@ -59,21 +93,43 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		"42601": true, // syntax_error
 		"42702": true, // ambiguous_column
 		"42P10": true, // invalid_column_reference
+		"42P08": true, // ambiguous_parameter / inconsistent parameter types
 	}
+	var customerStatements, qualificationStatements int
 	for i, s := range stmts {
 		name := fmt.Sprintf("sql_gate_%d", i)
+		target := conn
+		query := strings.ReplaceAll(s.sql, "public.", "")
+		pos := filepath.ToSlash(s.pos)
+		if strings.HasPrefix(pos, "../../pkg/commit/") || strings.HasPrefix(pos, "../../pkg/commitmanaged/") {
+			target = customerConn
+			query = s.sql
+			customerStatements++
+		} else if strings.HasPrefix(pos, "../../pkg/managedpostgres/neon/restore_probe.go:") {
+			target = qualificationConn
+			query = s.sql
+			qualificationStatements++
+		}
 		// pgtest isolates each test in its own schema, which stands in for
 		// public; a few statements qualify public.<table> deliberately.
-		_, err := conn.Conn().Prepare(ctx, name, strings.ReplaceAll(s.sql, "public.", ""))
+		// Customer and qualification SQL keep public qualification in their own DBs.
+		_, err := target.Conn().Prepare(ctx, name, query)
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && definitive[pgErr.Code] {
 			t.Errorf("%s: %s %s\n%s", s.pos, pgErr.Code, pgErr.Message, s.sql)
 			continue
 		}
 		if err == nil {
-			_ = conn.Conn().Deallocate(ctx, name)
+			_ = target.Conn().Deallocate(ctx, name)
 		}
 	}
+	if customerStatements == 0 {
+		t.Fatal("customer Commit SQL was absent from the source walk")
+	}
+	if qualificationStatements == 0 {
+		t.Fatal("restore qualification SQL was absent from the source walk")
+	}
+	t.Logf("validated %d platform, %d customer and %d qualification SQL literals", len(stmts)-customerStatements-qualificationStatements, customerStatements, qualificationStatements)
 }
 
 type sqlLiteral struct {

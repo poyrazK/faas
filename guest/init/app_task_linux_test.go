@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/jobresult"
 )
 
 func TestDecideModeAppTaskMarkerWins(t *testing.T) {
@@ -61,6 +62,37 @@ func TestExecuteAppTaskCommandUsesScopedEnvironmentAndWorkingDir(t *testing.T) {
 	}
 	if got, want := stdout.String(), dir+"|api|yes|hidden"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestAppTaskStructuredOutcomeAndPlatformManifestPath(t *testing.T) {
+	manifestPath := stampAppTaskOutputManifestPath([]string{
+		"PATH=/bin", "GREGALE_OUTPUT_MANIFEST_PATH=/customer/override.json", "KEEP=yes",
+	})
+	var paths []string
+	for _, item := range manifestPath {
+		if strings.HasPrefix(item, "GREGALE_OUTPUT_MANIFEST_PATH=") {
+			paths = append(paths, item)
+		}
+	}
+	if len(paths) != 1 || paths[0] != "GREGALE_OUTPUT_MANIFEST_PATH="+jobresult.GuestPath {
+		t.Fatalf("platform output path = %v", paths)
+	}
+
+	manifest := []byte(`{"version":1,"artifacts":[],"outcome_code":"invalid_record"}`)
+	exitCode := 0
+	got := appTaskResultWithOutputManifest(apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exitCode}, manifest, nil)
+	if got.Status != apptaskproto.StatusSucceeded || got.OutcomeCode != "invalid_record" {
+		t.Fatalf("successful command result = %+v", got)
+	}
+	badManifest := appTaskResultWithOutputManifest(apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exitCode}, []byte("{"), nil)
+	if badManifest.Status != apptaskproto.StatusFailed || badManifest.FailureCode != "guest_protocol_error" {
+		t.Fatalf("invalid result manifest = %+v", badManifest)
+	}
+	failedExit := 1
+	failed := appTaskResultWithOutputManifest(apptaskproto.Result{Status: apptaskproto.StatusFailed, ExitCode: &failedExit}, manifest, nil)
+	if failed.Status != apptaskproto.StatusFailed || failed.OutcomeCode != "invalid_record" {
+		t.Fatalf("failed command result = %+v", failed)
 	}
 }
 

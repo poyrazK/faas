@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -192,6 +191,18 @@ func detachedServiceContext(ctx context.Context) context.Context {
 
 func (e *Engine) scheduleServiceReconcile(ctx context.Context, deploymentID string) {
 	if e == nil || e.store == nil || deploymentID == "" {
+		return
+	}
+	e.mu.Lock()
+	submit := e.serviceReconcileSubmit
+	e.mu.Unlock()
+	if submit != nil {
+		dep, err := e.store.DeploymentByID(ctx, deploymentID)
+		if err != nil {
+			e.log.Warn("service recovery: resolve event app", "deployment", deploymentID, "err", err)
+			return
+		}
+		submit(ctx, dep.AppID)
 		return
 	}
 	go e.ReconcileServiceDeployment(detachedServiceContext(ctx), deploymentID)
@@ -384,12 +395,15 @@ func activeServiceRollouts(deployments []state.Deployment) map[string]state.Depl
 func previousServiceDeployment(rollout state.Deployment, deployments []state.Deployment) state.Deployment {
 	var previous state.Deployment
 	for _, dep := range deployments {
-		if dep.ID == rollout.ID || dep.Status != state.DeployLive ||
+		if pinned := rollout.ServiceRolloutHandoff.PredecessorDeploymentID; pinned != "" && dep.ID != pinned {
+			continue
+		}
+		if dep.ID == rollout.ID || dep.AppID != rollout.AppID || dep.Status != state.DeployLive ||
 			serviceRolloutScope(dep) != serviceRolloutScope(rollout) ||
 			state.IsServiceRollout(dep) {
 			continue
 		}
-		if !rollout.CreatedAt.IsZero() && dep.CreatedAt.After(rollout.CreatedAt) {
+		if rollout.ServiceRolloutHandoff.PredecessorDeploymentID == "" && !rollout.CreatedAt.IsZero() && dep.CreatedAt.After(rollout.CreatedAt) {
 			continue
 		}
 		if previous.ID == "" || dep.CreatedAt.After(previous.CreatedAt) ||
@@ -848,6 +862,11 @@ func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, rollo
 }
 
 func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollout, previous state.Deployment) bool {
+	if pinned := rollout.ServiceRolloutHandoff.PredecessorDeploymentID; pinned != "" && previous.ID != pinned {
+		e.failServiceRolloutHandoff(ctx, rollout.ID, state.ServiceRolloutPhasePending, "predecessor_missing", nil)
+		return false
+	}
+
 	if previous.ID != "" {
 		if _, err := e.store.BeginServiceRolloutCutover(ctx, rollout.ID); err != nil {
 			if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
@@ -931,29 +950,31 @@ func (e *Engine) abortServiceRollout(ctx context.Context, app state.App, rollout
 // reconcileServiceRollout advances one scope by at most one ready replica per
 // pass. The old generation keeps the remainder of the desired capacity until
 // the new generation proves readiness; the total temporary surge is one.
-func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, deployments []state.Deployment) {
+func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, deployments []state.Deployment) error {
 	if rollout.ServiceRolloutHandoff.ActiveAbort() {
 		e.reverseServiceRollout(ctx, app, rollout)
-		return
+		return nil
 	}
 	desired := desiredServiceReplicas(app.Manifest)
 	previous := previousServiceDeployment(rollout, deployments)
 	replicas, err := listServiceReplicas(ctx, e.store, app.ID, rollout.ID)
 	if err != nil {
 		e.log.Warn("sched: list new service rollout replicas", "app", app.ID, "deployment", rollout.ID, "err", err)
-		return
+		return err
 	}
 	status := classifyServiceReplicas(replicas)
 	if status.ready >= desired {
 		e.finishServiceRollout(ctx, app, rollout, previous)
-		return
+		return nil
 	}
 	if serviceRolloutTimedOut(rollout, time.Now().UTC()) {
 		e.abortServiceRollout(ctx, app, rollout, "readiness timeout")
-		return
+		return nil
 	}
 	if previous.ID == "" {
-		e.convergeServiceReplicasToTarget(ctx, rollout.ID, desired, true)
+		if err := e.convergeServiceReplicasToTarget(ctx, rollout.ID, desired, true); err != nil {
+			return err
+		}
 	} else {
 		newTarget := status.ready + 1
 		if newTarget > desired {
@@ -963,8 +984,12 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 		if oldTarget < 0 {
 			oldTarget = 0
 		}
-		e.convergeServiceReplicasToTarget(ctx, previous.ID, oldTarget, false)
-		e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true)
+		if err := e.convergeServiceReplicasToTarget(ctx, previous.ID, oldTarget, false); err != nil {
+			return err
+		}
+		if err := e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true); err != nil {
+			return err
+		}
 	}
 	// Admission may synchronously reach RUNNING. Re-read so a fast boot can
 	// complete the rollout without waiting for a second notification.
@@ -972,6 +997,7 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 	if readErr == nil && classifyServiceReplicas(ready).ready >= desired {
 		e.finishServiceRollout(ctx, app, rollout, previous)
 	}
+	return readErr
 }
 
 // ReconcileServiceDeployment restores the app's service allocation after a
@@ -979,7 +1005,9 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 // a canary and its predecessor are both live during a rollout.
 func (e *Engine) ReconcileServiceDeployment(ctx context.Context, deploymentID string) {
 	ctx = detachedServiceContext(ctx)
-	dep, err := e.store.DeploymentByID(ctx, deploymentID)
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	dep, err := e.store.DeploymentByID(readCtx, deploymentID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load service deployment for app reconcile", "deployment", deploymentID, "err", err)
@@ -993,29 +1021,24 @@ func (e *Engine) ReconcileServiceDeployment(ctx context.Context, deploymentID st
 // every live deployment of an app. Steady-state surplus is parked before a
 // deficit is admitted. Active rollout scopes are handled separately above and
 // never park healthy predecessor capacity merely to make candidate headroom.
-func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
-	ctx = detachedServiceContext(ctx)
-	reconcileMu := e.serviceAppMutex(appID)
-	reconcileMu.Lock()
-	defer reconcileMu.Unlock()
-
+func (e *Engine) reconcileServiceAppOnce(ctx context.Context, appID string) error {
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load service app", "app", appID, "err", err)
 		}
-		return
+		return err
 	}
 	if !e.ownsApp(app) {
-		return
+		return nil
 	}
 	if app.Status != state.AppActive {
-		return
+		return nil
 	}
 	deployments, err := e.store.LiveDeployments(ctx, appID)
 	if err != nil {
 		e.log.Warn("sched: list live service deployments", "app", appID, "err", err)
-		return
+		return err
 	}
 	defer e.observeServiceReplicaStatus(ctx, app, deployments)
 	handledScopes := make(map[string]struct{})
@@ -1028,7 +1051,9 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		sort.Strings(scopes)
 		for _, scope := range scopes {
 			handledScopes[scope] = struct{}{}
-			e.reconcileServiceRollout(ctx, app, rollouts[scope], deployments)
+			if err := e.reconcileServiceRollout(ctx, app, rollouts[scope], deployments); err != nil {
+				return err
+			}
 		}
 	}
 	targets := make(map[string]int, len(deployments))
@@ -1037,7 +1062,7 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		targets, targetErr = e.serviceReplicaTargets(ctx, app, deployments)
 		if targetErr != nil {
 			e.log.Warn("sched: allocate service replicas", "app", appID, "err", targetErr)
-			return
+			return targetErr
 		}
 		for _, dep := range deployments {
 			if _, handled := handledScopes[serviceRolloutScope(dep)]; handled {
@@ -1058,7 +1083,9 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		if !ok {
 			continue
 		}
-		e.convergeServiceReplicasToTarget(ctx, dep.ID, target, false)
+		if err := e.convergeServiceReplicasToTarget(ctx, dep.ID, target, false); err != nil {
+			return err
+		}
 	}
 	// Then fill deficits with the capacity made available above.
 	for _, dep := range deployments {
@@ -1066,8 +1093,11 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		if !ok {
 			continue
 		}
-		e.convergeServiceReplicasToTarget(ctx, dep.ID, target, true)
+		if err := e.convergeServiceReplicasToTarget(ctx, dep.ID, target, true); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (e *Engine) convergeServiceReplicas(ctx context.Context, deploymentID string) {
@@ -1110,10 +1140,10 @@ func (e *Engine) convergeServiceReplicas(ctx context.Context, deploymentID strin
 	if !ok {
 		return
 	}
-	e.convergeServiceReplicasToTarget(ctx, deploymentID, desired, true)
+	_ = e.convergeServiceReplicasToTarget(ctx, deploymentID, desired, true)
 }
 
-func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deploymentID string, desired int, admit bool) {
+func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deploymentID string, desired int, admit bool) error {
 	if desired < 0 {
 		desired = 0
 	}
@@ -1125,45 +1155,47 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load service deployment", "deployment", deploymentID, "err", err)
+			return err
 		}
-		return
+		return nil
 	}
 	if dep.Status != state.DeployLive {
-		return
+		return nil
 	}
 	app, err := e.store.AppByID(ctx, dep.AppID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load service app", "app", dep.AppID, "deployment", deploymentID, "err", err)
+			return err
 		}
-		return
+		return nil
 	}
 	if app.Status != state.AppActive {
-		return
+		return nil
 	}
 	serviceMode := instanceModeForApp(app) == string(state.InstanceModeService)
 	if serviceMode {
 		mirror, mirrorErr := e.isMirrorDeployment(ctx, dep.AppID, dep.ID)
 		if mirrorErr != nil {
 			e.log.Warn("sched: check service mirror deployment", "app", dep.AppID, "deployment", dep.ID, "err", mirrorErr)
-			return
+			return mirrorErr
 		}
 		if mirror {
-			return
+			return nil
 		}
 	}
 	if serviceMode {
 		instances, listErr := listLiveDeploymentInstances(ctx, e.store, dep.AppID, dep.ID)
 		if listErr != nil {
 			e.log.Warn("sched: list incompatible service instances", "deployment", dep.ID, "err", listErr)
-			return
+			return listErr
 		}
 		e.drainIncompatibleServiceReplicas(ctx, instances)
 	}
 	serviceReplicas, err := listServiceReplicas(ctx, e.store, dep.AppID, deploymentID)
 	if err != nil {
 		e.log.Warn("sched: list service replicas", "deployment", deploymentID, "err", err)
-		return
+		return err
 	}
 	status := classifyServiceReplicas(serviceReplicas)
 	// Never trade away healthy capacity while a replacement is still
@@ -1175,7 +1207,7 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 		status.ready -= parked
 	}
 	if !admit || desired <= 0 {
-		return
+		return nil
 	}
 	// Service capacity is a failure-isolation contract. Do not let the
 	// app-level sticky-warm hint place every replica on the same compute node;
@@ -1189,11 +1221,15 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 		)
 		if admitErr != nil {
 			e.log.Warn("sched: admit service replica", "app", dep.AppID, "deployment", dep.ID, "err", admitErr)
-			return
+			var problem *api.Problem
+			if errors.Is(admitErr, state.ErrNodeCapacity) || (errors.As(admitErr, &problem) && problem.Code == api.CodeCapacity) {
+				return errors.Join(errServiceCapacity, admitErr)
+			}
+			return errors.Join(errServiceStartup, admitErr)
 		}
 		if result.AtCapacity {
 			e.log.Debug("sched: service replica admission at capacity", "app", dep.AppID, "deployment", dep.ID)
-			return
+			return errServiceCapacity
 		}
 		// AdmitInstanceForDeployment returns only after the new replica has
 		// reached RUNNING (or has failed), so count the successful result as
@@ -1201,6 +1237,7 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 		// another reconciliation for failures and replacements.
 		status.ready++
 	}
+	return nil
 }
 
 // scheduleWorkerReconcile restores the worker allocation after an
@@ -1268,150 +1305,6 @@ func workerStatePreference(ins state.Instance) int {
 	}
 }
 
-// workerQueueDepth returns the queue signal used by the worker reconciler.
-// Enabled queue bindings are aggregated when present; an app with no bindings
-// retains the legacy app-wide queue projection. Keeping this read in the
-// reconciler means an instance transition cannot accidentally collapse a
-// queue-sized worker fleet back to the singleton target.
-func (e *Engine) workerQueueDepth(ctx context.Context, app state.App) (int, error) {
-	if e.brokerLag != nil {
-		lag, ok, err := e.brokerLag.BrokerLag(ctx, app.ID)
-		if err != nil {
-			return 0, err
-		}
-		if ok {
-			return int(lag), nil
-		}
-	}
-	bindings, err := e.store.ListQueueBindingsForApp(ctx, app.AccountID, app.ID)
-	if err != nil {
-		return 0, err
-	}
-	if len(bindings) == 0 {
-		stats, statsErr := e.store.QueueState(ctx, app.ID)
-		if statsErr != nil {
-			return 0, statsErr
-		}
-		return stats.Depth, nil
-	}
-	depth := 0
-	for _, binding := range bindings {
-		if !binding.Enabled {
-			continue
-		}
-		stats, statsErr := e.store.QueueStateForQueue(ctx, app.ID, binding.QueueName)
-		if statsErr != nil {
-			return 0, statsErr
-		}
-		depth += stats.Depth
-	}
-	return depth, nil
-}
-
-// workerReplicaTarget derives the resident worker count from the queue-depth
-// policy and the plan/app ceilings. Worker mode intentionally retains one
-// resident worker when the queue is empty: this is the long-lived consumer
-// contract, while request-mode scale-to-zero remains unchanged. A caller may
-// provide an already-computed desired value from the queue trigger; the
-// durable policy/queue read remains the fallback for lifecycle notifications.
-func (e *Engine) workerReplicaTarget(ctx context.Context, app state.App, override *int) int {
-	account, err := e.store.AccountByID(ctx, app.AccountID)
-	if err != nil {
-		e.log.Warn("sched: load worker account limits", "app", app.ID, "err", err)
-		return 1
-	}
-	limits, ok := api.LimitsFor(account.Plan)
-	if !ok || limits.WorkerReplicasMax <= 0 {
-		return 0
-	}
-
-	max := app.MaxConcurrency
-	if max <= 0 || max > limits.MaxConcurrency {
-		max = limits.MaxConcurrency
-	}
-	if app.ScalingPolicy != nil && app.ScalingPolicy.MaxInstances > 0 && app.ScalingPolicy.MaxInstances < max {
-		max = app.ScalingPolicy.MaxInstances
-	}
-	if limits.WorkerReplicasMax < max {
-		max = limits.WorkerReplicasMax
-	}
-	if max <= 0 {
-		return 0
-	}
-
-	minAllowed := 1
-	if app.Manifest.WorkerReplicas != nil && app.Manifest.WorkerReplicas.Min == 0 {
-		minAllowed = 0
-	}
-	desired := minAllowed
-	if override != nil {
-		desired = *override
-	} else if policy := app.ScalingPolicy; policy != nil && policy.Target != nil && (policy.Target.Metric == "queue_depth" || policy.Target.Metric == "queue_lag") && policy.Target.Value > 0 {
-		depth, depthErr := e.workerQueueDepth(ctx, app)
-		if depthErr != nil {
-			e.log.Warn("sched: read worker queue depth", "app", app.ID, "err", depthErr)
-		} else if depth > 0 {
-			desired = int(math.Ceil(float64(depth) / policy.Target.Value))
-		} else {
-			desired = 0
-		}
-		if policy.MinInstances > desired {
-			desired = policy.MinInstances
-		}
-	}
-	if desired < minAllowed {
-		desired = minAllowed
-	}
-	if desired > max {
-		desired = max
-	}
-	return desired
-}
-
-// capWorkerReplicasToAccount applies the plan's account-wide worker budget to
-// this app's target. The normal app ledger still enforces max_concurrency; the
-// additional count is needed because WorkerReplicasMax is intentionally a
-// cross-app plan limit.
-func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, current []state.Instance, desired int) int {
-	if desired <= 0 {
-		return desired
-	}
-	account, err := e.store.AccountByID(ctx, app.AccountID)
-	if err != nil {
-		e.log.Warn("sched: load worker account capacity", "app", app.ID, "err", err)
-		return desired
-	}
-	limits, ok := api.LimitsFor(account.Plan)
-	if !ok || limits.WorkerReplicasMax <= 0 {
-		return 0
-	}
-	all, err := e.store.ListInstancesForAccount(ctx, app.AccountID)
-	if err != nil {
-		e.log.Warn("sched: list account workers", "app", app.ID, "err", err)
-		return desired
-	}
-	currentAppWorkers := 0
-	for _, ins := range current {
-		if state.State(ins.State).CountsForConcurrency() {
-			currentAppWorkers++
-		}
-	}
-	totalWorkers := 0
-	for _, ins := range all {
-		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForConcurrency() {
-			totalWorkers++
-		}
-	}
-	available := limits.WorkerReplicasMax - (totalWorkers - currentAppWorkers)
-	if available < 0 {
-		available = 0
-	}
-	if desired > available {
-		desired = available
-	}
-	return desired
-}
-
 // ReconcileWorkerApp converges worker mode to the queue-derived resident count
 // for the newest live deployment in each scope. With no queue-depth policy the
 // target remains one, preserving the original worker singleton behavior. It
@@ -1419,19 +1312,19 @@ func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, 
 // The same app-level mutex used by service allocation serializes mode switches
 // without nesting appMu around admission or graceful stop calls.
 func (e *Engine) ReconcileWorkerApp(ctx context.Context, appID string) {
-	e.reconcileWorkerApp(ctx, appID, nil)
+	if err := e.ReconcileWorkerPools(detachedServiceContext(ctx), appID, TriggerWorkerSingleton); err != nil {
+		e.log.Warn("sched: reconcile worker environments", "app", appID, "err", err)
+	}
 }
 
-// ReconcileWorkerPool applies a queue trigger's desired worker count. It is a
-// narrow optional engine surface used by pkg/sched/targets: unlike request
-// wakes, worker admissions go through the explicit deployment path so the
-// request wake gate cannot reject a legitimate queue-driven scale-out.
+// ReconcileWorkerPool retains the legacy default-environment entry point.
+// A caller with environment identity must use ReconcileWorkerPoolForScope.
 func (e *Engine) ReconcileWorkerPool(ctx context.Context, appID string, desired int, trigger string) error {
-	if trigger == "" {
-		trigger = TriggerWorkerPool
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return err
 	}
-	e.reconcileWorkerAppWithTrigger(ctx, appID, &desired, trigger)
-	return nil
+	return e.ReconcileWorkerPoolForScope(ctx, appID, state.DefaultInvocationDeploymentScope(app), desired, trigger)
 }
 
 // parseStopSignal parses a string signal representation (e.g. "SIGTERM", "TERM", "15",
@@ -1469,99 +1362,6 @@ func (e *Engine) workerStopOptions(app state.App) StopOptions {
 	return StopOptions{
 		Signal:       int32(sig),
 		GraceSeconds: int32(grace),
-	}
-}
-
-func (e *Engine) reconcileWorkerApp(ctx context.Context, appID string, desiredOverride *int) {
-	e.reconcileWorkerAppWithTrigger(ctx, appID, desiredOverride, TriggerWorkerSingleton)
-}
-
-func (e *Engine) reconcileWorkerAppWithTrigger(ctx context.Context, appID string, desiredOverride *int, trigger string) {
-	ctx = detachedServiceContext(ctx)
-	reconcileMu := e.serviceAppMutex(appID)
-	reconcileMu.Lock()
-	defer reconcileMu.Unlock()
-
-	app, err := e.store.AppByID(ctx, appID)
-	if err != nil {
-		if !errors.Is(err, state.ErrNotFound) {
-			e.log.Warn("sched: load worker app", "app", appID, "err", err)
-		}
-		return
-	}
-	if !e.ownsApp(app) {
-		return
-	}
-	deployments, err := e.store.LiveDeployments(ctx, appID)
-	if err != nil {
-		e.log.Warn("sched: list live worker deployments", "app", appID, "err", err)
-		return
-	}
-	targets := make(map[string]struct{})
-	if app.Status == state.AppActive && instanceModeForApp(app) == string(state.InstanceModeWorker) {
-		targets = workerDeploymentTargets(deployments)
-	}
-	desired := 0
-	if len(targets) > 0 {
-		desired = e.workerReplicaTarget(ctx, app, desiredOverride)
-	}
-
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
-	if err != nil {
-		e.log.Warn("sched: list worker instances", "app", appID, "err", err)
-		return
-	}
-	workers := make([]state.Instance, 0, len(instances))
-	for _, ins := range instances {
-		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForRAM() {
-			workers = append(workers, ins)
-		}
-	}
-	sort.SliceStable(workers, func(i, j int) bool {
-		left, right := workerStatePreference(workers[i]), workerStatePreference(workers[j])
-		if left != right {
-			return left < right
-		}
-		if workers[i].StartedAt.Equal(workers[j].StartedAt) {
-			return workers[i].ID < workers[j].ID
-		}
-		return workers[i].StartedAt.Before(workers[j].StartedAt)
-	})
-
-	stopOpts := e.workerStopOptions(app)
-	kept := make(map[string]int, len(targets))
-	for _, ins := range workers {
-		_, wanted := targets[ins.DeploymentID]
-		if wanted && kept[ins.DeploymentID] < desired && state.State(ins.State).CountsForConcurrency() {
-			kept[ins.DeploymentID]++
-			continue
-		}
-		if err := e.stopManagedWorker(ctx, ins.ID, stopOpts); err != nil {
-			e.log.Warn("sched: drain surplus worker", "app", appID, "deployment", ins.DeploymentID, "instance", ins.ID, "err", err)
-		}
-	}
-	desired = e.capWorkerReplicasToAccount(ctx, app, workers, desired)
-
-	for deploymentID := range targets {
-		for kept[deploymentID] < desired {
-			dep, depErr := e.store.DeploymentByID(ctx, deploymentID)
-			if depErr != nil || dep.Status != state.DeployLive {
-				if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
-					e.log.Warn("sched: reload worker target", "app", appID, "deployment", deploymentID, "err", depErr)
-				}
-				break
-			}
-			result, admitErr := e.AdmitInstanceForDeployment(ctx, appID, deploymentID, dep.Scope, trigger)
-			if admitErr != nil {
-				e.log.Warn("sched: admit worker replica", "app", appID, "deployment", deploymentID, "err", admitErr)
-				break
-			}
-			if result.AtCapacity {
-				e.log.Debug("sched: worker replica admission at capacity", "app", appID, "deployment", deploymentID)
-				break
-			}
-			kept[deploymentID]++
-		}
 	}
 }
 

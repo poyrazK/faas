@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // JobWakeResult is the engine-level outcome of WakeJob. Distinct
@@ -269,12 +270,13 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	}
 	// These values identify the actual task and attempt, so customer-supplied
 	// job/run environment entries must never be able to replace them.
+	partitionIndex, partitionCount := e.jobPartition(ctx, run, task)
 	env["GREGALE_RUN_ID"] = run.ID
-	env["GREGALE_TASK_INDEX"] = strconv.Itoa(task.TaskIndex)
+	env["GREGALE_TASK_INDEX"] = strconv.Itoa(partitionIndex)
 	env["GREGALE_TASK_ATTEMPT"] = strconv.Itoa(task.Attempt)
-	env["GREGALE_TASK_COUNT"] = strconv.Itoa(run.Tasks)
-	env["GREGALE_PARTITION_INDEX"] = strconv.Itoa(task.TaskIndex)
-	env["GREGALE_PARTITION_COUNT"] = strconv.Itoa(run.Tasks)
+	env["GREGALE_TASK_COUNT"] = strconv.Itoa(partitionCount)
+	env["GREGALE_PARTITION_INDEX"] = strconv.Itoa(partitionIndex)
+	env["GREGALE_PARTITION_COUNT"] = strconv.Itoa(partitionCount)
 	env["GREGALE_OUTPUT_MANIFEST_PATH"] = jobresult.GuestPath
 	if task.InputID != "" {
 		env["GREGALE_INPUT_ID"] = task.InputID
@@ -540,13 +542,18 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	// (M8); keep them in lock-step.
 	status := mapExitToTerminalStatus(exitCode, errorClass)
 	var output json.RawMessage
+	var outcomeCode string
 	if len(outputManifest) > 0 && len(outputManifest[0]) > 0 {
-		if status == "succeeded" {
-			if _, err := jobresult.Validate(outputManifest[0]); err == nil {
+		if manifest, err := jobresult.Validate(outputManifest[0]); err == nil {
+			outcomeCode = manifest.OutcomeCode
+			if status == "succeeded" {
 				output = outputManifest[0]
-			} else {
-				status, exitCode, errorClass = "failed", 65, "failed"
 			}
+		} else if status == "succeeded" {
+			// A successful process with malformed result metadata is itself a
+			// confirmed task failure. Preserve the existing protocol-error exit
+			// code so customers can classify and retry it explicitly.
+			status, exitCode, errorClass = "failed", 65, "failed"
 		}
 	}
 	computeNodeID := e.ownerNodeID
@@ -564,7 +571,38 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		logTruncated = true
 		e.log.Warn("sched: capture terminal job logs", "run", runID, "task", taskIndex, "instance", instanceID, "node", computeNodeID, "err", logErr)
 	}
-	if err := e.store.JobTaskCompleteClaimedWithLogs(ctx, runID, taskIndex, instanceID, leaseTokenStr, status, exitCode, errorClass, "", logContent, logTruncated, time.Now(), output); err != nil {
+	decision := workpolicy.Evaluate(run.FailureRules, workpolicy.Evidence{
+		Succeeded: status == "succeeded", Cancelled: status == "cancelled",
+		Infra: errorClass == "infra", ExitCode: &exitCode, OutcomeCode: outcomeCode,
+	})
+	if decision.Reason == "outcome_code_matched" && status == "succeeded" {
+		// A configured application outcome can make a clean process exit a
+		// failed partition (for example, a record rejected by validation).
+		status, errorClass = "failed", "user_error"
+		output = nil
+	}
+	retryRequested := decision.Action == "retry" && (status == "failed" || status == "timeout" || status == "oom")
+	retryMax, retryMaxKnown := 0, false
+	if retryRequested {
+		if job, err := e.store.JobGetByID(ctx, run.JobID); err == nil {
+			retryMax, retryMaxKnown = effectiveJobRetryMax(job, run), true
+		}
+		if retryMaxKnown && !jobTaskHasRetryRemaining(task.Attempt, retryMax) {
+			// The classifier still says "retry", but no attempt is left: the
+			// task dead-letters. Recording retryable/retry on that final
+			// attempt told production-us operators a retry was coming.
+			decision.Action, decision.Reason = "dead_letter", "retry_budget_exhausted"
+		}
+	}
+	var completionErr error
+	if classified, ok := e.store.(state.JobTaskCompletionStore); ok {
+		completionErr = classified.CompleteJobTaskAttempt(ctx, state.JobTaskCompletion{RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, LeaseToken: leaseTokenStr, Status: status, ExitCode: exitCode, ErrorClass: errorClass, LogContent: logContent, LogTruncated: logTruncated, FinishedAt: time.Now(), OutputManifest: output, OutcomeCode: outcomeCode, Decision: &decision})
+	} else if run.FailureRules != nil {
+		completionErr = errors.New("classified job completion store unavailable")
+	} else {
+		completionErr = e.store.JobTaskCompleteClaimedWithLogs(ctx, runID, taskIndex, instanceID, leaseTokenStr, status, exitCode, errorClass, "", logContent, logTruncated, time.Now(), output)
+	}
+	if err := completionErr; err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			// A boot failure, cancellation, or newer claim won while logs were
 			// captured. Never settle that newer attempt with this old receipt.
@@ -587,13 +625,8 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
 	// Retry-on-failure: re-queue failed/timeout/oom tasks if budget
 	// remains.
-	if status == "failed" || status == "timeout" || status == "oom" {
-		job, err := e.store.JobGetByID(ctx, run.JobID)
-		retryMax := 0
-		if err == nil {
-			retryMax = effectiveJobRetryMax(job, run)
-		}
-		if err == nil && jobTaskHasRetryRemaining(task.Attempt, retryMax) {
+	if retryRequested {
+		if retryMaxKnown && jobTaskHasRetryRemaining(task.Attempt, retryMax) {
 			delay := jobRetryDelay(task.Attempt)
 			next := time.Now().Add(delay)
 			if rerr := e.store.JobTaskRetry(ctx, runID, taskIndex, next); rerr == nil {
@@ -604,7 +637,7 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		}
 		// Exhausted retries → dead-letter. JobRunRecompute picks
 		// this up via the dead_letter_count column.
-		if err == nil && !jobTaskHasRetryRemaining(task.Attempt, retryMax) {
+		if retryMaxKnown && !jobTaskHasRetryRemaining(task.Attempt, retryMax) {
 			_ = e.store.JobRunIncrementDeadLetter(ctx, runID)
 		}
 	}
@@ -1176,3 +1209,35 @@ var ErrJobTaskNotRetriable = errors.New("sched: job task not retriable")
 // ErrJobTaskMaxRetriesReached marks a RetryJob against a task
 // that's already exhausted job.retry_max+1 attempts.
 var ErrJobTaskMaxRetriesReached = errors.New("sched: job task max retries reached")
+
+// maxJobReplayDepth bounds the source_run_id walk for a replay of a replay.
+const maxJobReplayDepth = 8
+
+// jobPartition returns the partition identity a task works on. Ordinary tasks
+// are partition TaskIndex of run.Tasks. A replayed task (jobs replay-failed)
+// keeps the index and count of the run it replays, the stable partition
+// identity docs/jobs.md promises. On production-us replay-failed re-ran failed
+// partition 2 of 4 as partition 0 of 1: the task redid partition 0's work, the
+// replay run reported OK, and partition 2 was never redone. A source run that
+// cannot be read falls back to the replay run's count.
+func (e *Engine) jobPartition(ctx context.Context, run state.JobRun, task state.JobTask) (index, count int) {
+	if task.SourceTaskIndex == nil {
+		return task.TaskIndex, run.Tasks
+	}
+	index, count = *task.SourceTaskIndex, run.Tasks
+	source := run
+	for hop := 0; hop < maxJobReplayDepth && source.SourceRunID != nil && *source.SourceRunID != ""; hop++ {
+		parent, err := e.store.JobRunGetByID(ctx, *source.SourceRunID)
+		if err != nil {
+			break
+		}
+		source = parent
+	}
+	if source.Tasks > count {
+		count = source.Tasks
+	}
+	if index >= count {
+		count = index + 1
+	}
+	return index, count
+}

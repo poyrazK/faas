@@ -1,0 +1,13 @@
+egress-render: OK default-local
+egress-render: OK cloudflare-origin
+# Post-ADR-055: there is no committed static artifact any more —
+# the Jinja2 template `policy_nftables.conf.j2` is the
+# ansible-side verifier, the Go renderer is the source of truth,
+# and the byte-equality of the two surfaces for the default
+# values is what this gate enforces (delegated to
+# egress-render-cross-check via the prerequisite above).
+egress-check: nft not on PATH; live kernel check skipped (macOS dev OK)
+# github.com/onebox-faas/faas/pkg/netns.test
+/Users/poyrazk/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.13.darwin-arm64/pkg/tool/darwin_arm64/link: mapping output file failed: no space left on device
+egress-check: TestTenantBridgeMatches FAILED
+make: *** [egress-check] Error 1

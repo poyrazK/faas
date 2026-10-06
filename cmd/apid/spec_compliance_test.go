@@ -63,6 +63,9 @@ const (
 	managedPostgresFile           = "managed_postgres.go"
 	openapiContractFile           = "openapi_contract.go"
 	executionsFile                = "executions.go"                  // ADR-171 — disposable one-shot execution DTOs
+	executionWorkflowManagedFile  = "execution_workflow_managed.go"  // ADR-171 — server-managed sequential workflow DTOs
+	executionCapabilitiesFile     = "execution_capabilities.go"      // ADR-171 — Runs preflight capability DTOs
+	executionArtifactGrantsFile   = "execution_artifact_grants.go"   // ADR-171 — one-time cross-agent artifact capabilities
 	appTasksFile                  = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
 	projectsFile                  = "projects.go"                    // issue #2201 — durable project lifecycle and recovery DTOs
 	devSyncFile                   = "dev_sync.go"                    // developer edit-to-live history
@@ -83,7 +86,9 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions": true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":  true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy": true, // scoped HTML/CSRF adapter for issue impact alert policy updates
+	"POST /dashboard/apps/{slug}/issues/ownership-rules":     true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 
 	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
@@ -187,11 +192,14 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/raise-overage-cap":                          true, // HTML form (issue #561)
 	"POST /dashboard/upgrade":                                    true, // HTML form (hosted-checkout hand-off)
 	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":            true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
+	"POST /dashboard/apps/{slug}/crons/{id}/policy":              true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/apps/{slug}/env":                            true, // HTML form, env editor (issue #1397 G2)
 	"POST /dashboard/apps/{slug}/env/{key}/delete":               true, // HTML form, env editor (issue #1397 G2)
 	"POST /dashboard/apps/{slug}/secrets":                        true, // HTML form, write-only secrets editor (issue #1397 G2)
 	"POST /dashboard/apps/{slug}/secrets/{key}/delete":           true, // HTML form, write-only secrets editor (issue #1397 G2)
 	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secret-references":              true, // HTML reference form; JSON API is documented separately
+	"POST /dashboard/apps/{slug}/secret-references/{key}/delete": true, // HTML reference removal; JSON API is documented separately
 	"POST /dashboard/apps/{slug}/instances/{action}":             true, // HTML form, app lifecycle controls (issue #1397 G6)
 	"POST /dashboard/apps/{slug}/edge-rules":                     true, // HTML form, edge-rule create (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/trace":               true, // HTML form, read-only edge-rule request trace
@@ -199,6 +207,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         true, // HTML form, edge-rule delete (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    true, // HTML form, security-headers preset (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay": true, // HTML form, queue DLQ replay (issue #1397 G7)
+	"POST /dashboard/jobs/{name}/policy":                         true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":        true, // HTML form, failed job partition replay (ADR-385)
 	"POST /dashboard/apps/{slug}/rollback":                       true, // HTML form, app rollback (issue #248)
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":         true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":    true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
@@ -228,22 +238,24 @@ var routeExclude = map[string]bool{
 	// parallel to the cron fire-now + retry entries. The /preview POST
 	// re-renders the preview; /preview/apply commits. Both share the
 	// multipart envelope + CSRF posture of the cron/retry handlers.
-	"POST /dashboard/projects/{slug}/preview":       true, // ADR-124 HTML form, preview re-render
-	"POST /dashboard/projects/{slug}/preview/apply": true, // ADR-124 HTML form, apply-with-exclude
-	"POST /dashboard/projects/{slug}/update":        true, // issue #2201 HTML project recovery form
-	"POST /dashboard/projects/{slug}/delete":        true, // issue #2201 HTML project deletion form
-	"POST /v1/cli-auth/code":                        true, // CLI device-code mint
-	"POST /v1/cli-auth/exchange":                    true, // CLI device-code exchange
-	"GET /cli-auth":                                 true, // dashboard claim form
-	"POST /cli-auth":                                true, // dashboard claim form submit
-	"GET /docs":                                     true, // anonymous Swagger UI metadata page; no SDK method
-	"GET /docs/":                                    true, // slash alias of the documented /docs route
-	"GET /status":                                   true, // public HTML status page
-	"GET /status/slo.json":                          true, // public status JSON
-	"GET /healthz":                                  true, // loopback infra probe
-	"GET /readyz":                                   true, // loopback dependency-aware readiness probe (PR #1038 pre-release-readiness-gates)
-	"GET /v1/orgs/me":                               true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-061); documented in PR 5 alongside the rest of /v1/orgs/{slug}
-	"GET /v1/traces/{trace_id}":                     true, // issue #555: gatewayd-public trace endpoint (mounted via bare /v1/traces/ prefix; the scanner doesn't match it)
+	"POST /dashboard/projects/{slug}/preview":                                    true, // ADR-124 HTML form, preview re-render
+	"POST /dashboard/projects/{slug}/preview/apply":                              true, // ADR-124 HTML form, apply-with-exclude
+	"POST /dashboard/projects/{slug}/update":                                     true, // issue #2201 HTML project recovery form
+	"POST /dashboard/projects/{slug}/delete":                                     true, // issue #2201 HTML project deletion form
+	"GET /dashboard/projects/{slug}/environments/{environment}/gitops":           true, // ADR-379 session-authenticated HTML review
+	"POST /dashboard/projects/{slug}/environments/{environment}/gitops/{action}": true, // ADR-379 CSRF-protected HTML controls
+	"POST /v1/cli-auth/code":                                                     true, // CLI device-code mint
+	"POST /v1/cli-auth/exchange":                                                 true, // CLI device-code exchange
+	"GET /cli-auth":                                                              true, // dashboard claim form
+	"POST /cli-auth":                                                             true, // dashboard claim form submit
+	"GET /docs":                                                                  true, // anonymous Swagger UI metadata page; no SDK method
+	"GET /docs/":                                                                 true, // slash alias of the documented /docs route
+	"GET /status":                                                                true, // public HTML status page
+	"GET /status/slo.json":                                                       true, // public status JSON
+	"GET /healthz":                                                               true, // loopback infra probe
+	"GET /readyz":                                                                true, // loopback dependency-aware readiness probe (PR #1038 pre-release-readiness-gates)
+	"GET /v1/orgs/me":                                                            true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-061); documented in PR 5 alongside the rest of /v1/orgs/{slug}
+	"GET /v1/traces/{trace_id}":                                                  true, // issue #555: gatewayd-public trace endpoint (mounted via bare /v1/traces/ prefix; the scanner doesn't match it)
 
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
 	// /dashboard/apps/new wizard renders GET /v1/templates as the
@@ -305,22 +317,32 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"ApplyResponseApp":                true, // inline {slug,id} row in ApplyResponse.apis schema
-	"CliAuthCodeResponse":             true, // POST /v1/cli-auth/code (anonymous)
-	"CliAuthExchangeRequest":          true, // POST /v1/cli-auth/exchange
-	"CliAuthExchangeResponse":         true, // POST /v1/cli-auth/exchange
-	"CliAuthStatus":                   true, // enum used by CLI auth
-	"ComputeNodeEnrollmentRequest":    true, // authenticated operator-only compute-node mutation payload
-	"ComputeNodeOperatorResponse":     true, // authenticated operator-only compute-node projection
-	"StatusPage":                      true, // GET /status/slo.json (public status)
-	"SessionsRevokeRequest":           true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
-	"ManagedPostgresPlanLimits":       true, // internal plan policy, not a wire DTO
-	"RealtimeLimits":                  true, // internal plan policy, not a wire DTO
-	"ExecutionSnapshotShape":          true, // internal snapshot compatibility key, not a wire DTO
-	"ResolvedExecutionRequest":        true, // sealed scheduler intent, not a public DTO
-	"ResolvedCreateAppTaskRequest":    true, // validated state admission input, not a public DTO
-	"RecoverDeploymentRolloutRequest": true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
-	"AlertRuleRow":                    true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	// ADR-563 native adapter primitives. Customer per-version lock management
+	// is not part of the ADR-564 bucket API capability.
+	"ObjectVersionRetention": true,
+	"ObjectVersionLegalHold": true,
+	// Parsed ARN routing helper; notification wire requests carry a string destination.
+	"ObjectNotificationTarget":          true,
+	"ObjectWriteConditions":             true, // internal S3 protocol validators, not a JSON wire DTO
+	"ApplyResponseApp":                  true, // inline {slug,id} row in ApplyResponse.apis schema
+	"CliAuthCodeResponse":               true, // POST /v1/cli-auth/code (anonymous)
+	"CliAuthExchangeRequest":            true, // POST /v1/cli-auth/exchange
+	"CliAuthExchangeResponse":           true, // POST /v1/cli-auth/exchange
+	"CliAuthStatus":                     true, // enum used by CLI auth
+	"ComputeNodeEnrollmentRequest":      true, // authenticated operator-only compute-node mutation payload
+	"ComputeNodeOperatorResponse":       true, // authenticated operator-only compute-node projection
+	"StatusPage":                        true, // GET /status/slo.json (public status)
+	"SessionsRevokeRequest":             true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
+	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
+	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
+	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
+	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
+	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
+	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
+	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
+	"CanaryRouteHealthRecoveryResponse": true, // loopback-only worker result
 	// Canary and smoke reports are emitted through app-task stdout for the CLI
 	// to decode; these structs are not standalone HTTP request/response DTOs.
 	"ServiceBindingProbeCheck":  true,
@@ -346,6 +368,9 @@ var dtoExclude = map[string]bool{
 	"ListPlatformTenantReconciliationReceiptsOptions": true, // client-only pagination query parameters, not a wire DTO
 	"ListPlatformTenantOffboardingReceiptsOptions":    true, // client-only pagination query parameters, not a wire DTO
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
+	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
+	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
+	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
 	"InboundWebhookEndpointRow":                       true,
 	"AppLogDrainRow":                                  true,
 	"QueueBindingRow":                                 true,
@@ -456,9 +481,11 @@ var dtoExclude = map[string]bool{
 	"ObsCapacityProfile":  true,
 	"ObsCapacityResponse": true,
 	"ObsCapacitySummary":  true,
-	"ObsDeploymentRow":    true,
-	"ObsInstanceRow":      true,
-	"ObsInvocationRow":    true,
+	// ADR-422: this aggregate belongs to the same operator capacity response.
+	"ServiceCapacityProtection": true,
+	"ObsDeploymentRow":          true,
+	"ObsInstanceRow":            true,
+	"ObsInvocationRow":          true,
 	// ObsInvoiceSummary: PR #1099 P3 follow-on (post-PR #1111);
 	// admin-only billing summary shape.
 	"ObsInvoiceSummary":       true,
@@ -528,11 +555,12 @@ var schemaSpecOnly = map[string]bool{
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
-	"FlagRule": true, "FlagVariant": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagRule": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
-	"InspectFeatureFlagRequest": true, "FlagRequestEvidence": true, "FlagEvidencePage": true,
+	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,
+	"FlagRequestEvidence": true, "FlagEvidencePage": true,
 	"FlagOutcome": true, "FlagOutcomesResponse": true,
 	// Migration preflight verdict level is a typed string, not a struct, so
 	// the DTO scanner does not surface it. Same pattern as TriggerKind and
@@ -583,6 +611,13 @@ var schemaSpecOnly = map[string]bool{
 	"ServiceReliabilityPolicies": true, // Named map schema for the per-binding policy object.
 	"PreviewServiceCallsPolicy":  true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
 	"ServiceCallerScopes":        true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
+	// Scheduled-work policy structs live in pkg/workpolicy and are embedded
+	// in the pkg/api request/response DTOs. This scanner only indexes structs
+	// declared directly in pkg/api; request field parity still checks them.
+	"SchedulePolicy": true,
+	"FailureRule":    true,
+	"FailureRules":   true,
+	"WorkDecision":   true,
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.
@@ -975,13 +1010,41 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
 	files := []string{
+		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
+		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
+		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
+		filepath.Join(root, "pkg", "api", "object_encryption.go"),
+		filepath.Join(root, "pkg", "api", "object_lock.go"),
+		filepath.Join(root, "pkg", "api", "object_bucket_object_lock.go"),
+		filepath.Join(root, "pkg", "api", "object_version_protection.go"),
+		filepath.Join(root, "pkg", "api", "object_write_protection.go"),
+		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
+		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
+		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
+		filepath.Join(root, "pkg", "api", "object_lifecycle.go"),
+		filepath.Join(root, "pkg", "api", "object_notifications.go"),
+		filepath.Join(root, "pkg", "api", "object_version_delete.go"),
+		filepath.Join(root, "pkg", "api", "object_deletion.go"),
+		filepath.Join(root, "pkg", "api", "object_tagging.go"),
+		filepath.Join(root, "pkg", "api", "object_write_receipts.go"),
+		filepath.Join(root, "pkg", "api", "object_capacity_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),
 		filepath.Join(root, "pkg", "api", workflowFile),
+		filepath.Join(root, "pkg", "api", "workflow_schedules.go"),
+		filepath.Join(root, "pkg", "api", "automations.go"),
+		filepath.Join(root, "pkg", "api", "automation_simulation.go"),
+		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
+		filepath.Join(root, "pkg", "api", "workflow_guard.go"),
+		filepath.Join(root, "pkg", "api", "workflow_join.go"),
+		filepath.Join(root, "pkg", "api", "workflow_foreach.go"),
+		filepath.Join(root, "pkg", "api", "workflow_resume.go"),
 		filepath.Join(root, "pkg", "api", secretsFile),
+		filepath.Join(root, "pkg", "api", "secret_references.go"),
 		filepath.Join(root, "pkg", "api", envFile),
 		filepath.Join(root, "pkg", "api", registryFile),
 		filepath.Join(root, "pkg", "api", alertsFile),
@@ -998,9 +1061,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),
 		filepath.Join(root, "pkg", "api", inboundWebhooksFile),
+		filepath.Join(root, "pkg", "api", "workflow_webhooks.go"),
 		filepath.Join(root, "pkg", "api", realtimeFile),
 		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
+		filepath.Join(root, "pkg", "api", "financial.go"),
 		filepath.Join(root, "pkg", "api", diffFile),
 		filepath.Join(root, "pkg", "api", upstreamsFile),
 		filepath.Join(root, "pkg", "api", triggerFile),
@@ -1012,14 +1077,32 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_capabilities.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_resize.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_compute_policy.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_usage_import.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_accounting_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
+		filepath.Join(root, "pkg", "api", executionWorkflowManagedFile),
+		filepath.Join(root, "pkg", "api", executionCapabilitiesFile),
+		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
+		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
+		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
+		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
+		filepath.Join(root, "pkg", "api", "binding_release_policy.go"),
+		filepath.Join(root, "pkg", "api", "rollout_recovery.go"),
+		filepath.Join(root, "pkg", "api", "service_rollout_bindings.go"),
+		filepath.Join(root, "pkg", "api", "checked_rollback.go"),
+		filepath.Join(root, "pkg", "api", "alert_rollbacks.go"),
+		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
@@ -1027,11 +1110,61 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
+		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),
+		filepath.Join(root, "pkg", "api", "udp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
+		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
+		filepath.Join(root, "pkg", "api", "operations.go"),
+		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
+		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
+		filepath.Join(root, "pkg", "api", "route_policy.go"),
+		filepath.Join(root, "pkg", "api", "route_check_history.go"),
+		filepath.Join(root, "pkg", "api", "route_gate.go"),
+		filepath.Join(root, "pkg", "api", "route_health.go"),
+		filepath.Join(root, "pkg", "api", "route_monitor.go"),
+		filepath.Join(root, "pkg", "api", "route_client_errors.go"),
+		filepath.Join(root, "pkg", "api", "route_investigation.go"),
+		filepath.Join(root, "pkg", "api", "route_customers.go"),
+		filepath.Join(root, "pkg", "api", "route_customer_health.go"),
+		filepath.Join(root, "pkg", "api", "route_health_history.go"),
+		filepath.Join(root, "pkg", "api", "route_health_notifications.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
+	}
+	// adr: 566 — financial domain structs are embedded directly in the API.
+	// Check their actual JSON fields rather than excluding their schemas.
+	financialDTOs, err := scanDTOs([]string{
+		filepath.Join(root, "pkg", "financial", "cost.go"),
+		filepath.Join(root, "pkg", "financial", "contracts.go"),
+		filepath.Join(root, "pkg", "financial", "forecast.go"),
+		filepath.Join(root, "pkg", "financial", "budget.go"),
+	})
+	if err != nil {
+		t.Fatalf("scan financial DTOs: %v", err)
+	}
+	for name, schema := range map[string]string{"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation", "MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast", "BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope"} {
+		dtos[schema] = financialDTOs[name]
+	}
+
+	// Git approval evidence is shared with githubd and the state transaction
+	// without importing pkg/api there. Check its actual JSON fields under the
+	// public schema names rather than exempting the nested evidence contracts.
+	approvalDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "gitapproval", "evidence.go")})
+	if err != nil {
+		t.Fatalf("scan Git approval DTOs: %v", err)
+	}
+	for goName, schemaName := range map[string]string{
+		"PolicyEvidence": "EnvironmentGitProtectedBranchEvidence",
+		"ReviewEvidence": "EnvironmentGitReviewEvidence",
+		"MergeEvidence":  "EnvironmentGitReviewedMergeEvidence",
+	} {
+		fields, ok := approvalDTOs[goName]
+		if !ok {
+			t.Fatalf("Git approval DTO %s is missing", goName)
+		}
+		dtos[schemaName] = fields
 	}
 
 	var missingInSpec []string

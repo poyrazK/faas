@@ -22,6 +22,8 @@ EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/object-storage/provider.env
 EnvironmentFile=-/etc/faas/otel.env
 EnvironmentFile=-/etc/faas/tcpd.env
+EnvironmentFile=-/etc/faas/udpd.env
+Environment=GOMEMLIMIT=384MiB
 Environment=FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json
 Environment=FAAS_PUBLIC_LISTEN_ADDR=127.0.0.1:8080
 Environment=FAAS_PUBLIC_CONTROL_ADDR=127.0.0.1:9092

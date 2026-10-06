@@ -24,6 +24,7 @@ Public surface:
   and return the stable delivery ID for receiver-side deduplication.
 * `pre_auth_target_digest` - opaque login-target signal for selected failed
   responses on opt-in pre-auth routes.
+* Runtime flags client, ASGI middleware and HTTPX transport for Python apps.
 """
 
 from ._rfc7807 import (
@@ -43,6 +44,7 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
+from .commit import CommitEventRouting, insert_commit_event
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
     AsyncDevBridgeTransport,
@@ -51,7 +53,23 @@ from .dev_bridge import (
     current_dev_bridge_context,
     with_dev_bridge_context,
 )
-from .executions import ExecutionEvent, ExecutionID, awatch_execution, watch_execution
+from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
+from .flags import (
+    GREGALE_FLAG_CONTEXT_HEADER,
+    GREGALE_FLAG_EVIDENCE_HEADER,
+    GREGALE_FLAG_PROPAGATION_HEADER,
+    AsyncGregaleFlagsTransport,
+    FlagDecision,
+    GregaleFlags,
+    GregaleFlagsMiddleware,
+    evaluate_flag,
+    evaluate_variant,
+    flag_bucket,
+    flag_subject_bucket,
+    flag_subject_variant_bucket,
+    flag_variant_bucket,
+    validate_bundle,
+)
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -59,6 +77,19 @@ from .idempotency import (
     with_idempotency_key,
 )
 from .issues import IssueReporter
+from .operations import (
+    OperationCommitUnknownError,
+    OperationConflictError,
+    OperationEffect,
+    OperationOutcome,
+    OperationRequest,
+    OperationTransactionResult,
+    awith_operation_transaction,
+    operation_receipt_schema,
+    operation_request_digest,
+    operation_request_from_headers,
+    with_operation_transaction,
+)
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,
@@ -96,6 +127,20 @@ __all__ = (
     "current_idempotency_key",
     "GREGALE_RELEASE_HEADER",
     "GREGALE_REVISION_HEADER",
+    "GREGALE_FLAG_CONTEXT_HEADER",
+    "GREGALE_FLAG_EVIDENCE_HEADER",
+    "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GregaleFlags",
+    "GregaleFlagsMiddleware",
+    "AsyncGregaleFlagsTransport",
+    "FlagDecision",
+    "evaluate_flag",
+    "evaluate_variant",
+    "flag_bucket",
+    "flag_subject_bucket",
+    "flag_subject_variant_bucket",
+    "flag_variant_bucket",
+    "validate_bundle",
     "GregaleReleaseMiddleware",
     "GregaleReleaseTransport",
     "AsyncGregaleReleaseTransport",
@@ -128,6 +173,7 @@ __all__ = (
     "ExecutionID",
     "watch_execution",
     "awatch_execution",
+    "decode_execution_artifact",
     "__version__",
     "DEV_BRIDGE_CONTEXT_HEADER",
     "AsyncDevBridgeTransport",
@@ -135,4 +181,17 @@ __all__ = (
     "DevBridgeTransport",
     "current_dev_bridge_context",
     "with_dev_bridge_context",
+    "insert_commit_event",
+    "CommitEventRouting",
+    "OperationCommitUnknownError",
+    "OperationConflictError",
+    "OperationEffect",
+    "OperationOutcome",
+    "OperationRequest",
+    "OperationTransactionResult",
+    "awith_operation_transaction",
+    "operation_receipt_schema",
+    "operation_request_digest",
+    "operation_request_from_headers",
+    "with_operation_transaction",
 )

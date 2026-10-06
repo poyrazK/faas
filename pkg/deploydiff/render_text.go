@@ -247,7 +247,10 @@ func otherScalars(changes []Change) []Change {
 // field column padded to 14 chars so the → arrow lines up across
 // rows. Matches the printPlanText Fprintf style.
 func printScalar(w io.Writer, c Change) {
-	label := c.Field
+	// Pad to a 14-column label, but always leave a space: longer fields
+	// such as deployment.framework ran into the value
+	// ("deployment.frameworknode → express").
+	label := c.Field + " "
 	for len(label) < 14 {
 		label += " "
 	}

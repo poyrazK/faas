@@ -126,6 +126,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("outboundd: workload identity: %w", err)
 	}
+	var executionIdentityVerifier outbound.ExecutionIdentityVerifier
+	if identityVerifier != nil {
+		var ok bool
+		executionIdentityVerifier, ok = identityVerifier.(outbound.ExecutionIdentityVerifier)
+		if !ok {
+			return fmt.Errorf("outboundd: workload identity verifier does not support Runs")
+		}
+	}
 	managedAuthorizations := make(map[string]string)
 	needCustomerCredentials := false
 	customerCredentialIDs := make([]string, 0)
@@ -146,6 +154,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	backend, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		return err
+	}
+	executionAuthorizer, err := outbound.NewPostgresExecutionAuthorizer(pool)
 	if err != nil {
 		return err
 	}
@@ -171,6 +183,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return errors.New("outboundd: customer-sealed credentials require FAAS_FLEET_AGE_IDENTITY_PATH")
 	}
 	handler.IdentityVerifier = identityVerifier
+	handler.ExecutionIdentityVerifier = executionIdentityVerifier
+	handler.ExecutionAuthorizer = executionAuthorizer
+	if cfg.WorkflowOutboundEnabled || os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
+		authorizer, err := outbound.NewPostgresWorkflowAuthorizer(pool)
+		if err != nil {
+			return err
+		}
+		handler.WorkflowAuthorizer = authorizer
+	}
 	outboundMetrics, err := outbound.NewMetrics(ops.Registry())
 	if err != nil {
 		return fmt.Errorf("outboundd: register metrics: %w", err)

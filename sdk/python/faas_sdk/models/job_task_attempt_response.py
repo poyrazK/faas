@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.job_task_attempt_response_output_manifest import JobTaskAttemptResponseOutputManifest
+    from ..models.work_decision import WorkDecision
 
 
 T = TypeVar("T", bound="JobTaskAttemptResponse")
@@ -34,6 +35,9 @@ class JobTaskAttemptResponse:
     log_truncated: bool
     input_id: str | Unset = UNSET
     input_ref: str | Unset = UNSET
+    work_decision: WorkDecision | Unset = UNSET
+    """Persisted classifier decision for one execution result."""
+    outcome_code: str | Unset = UNSET
     instance_id: UUID | Unset = UNSET
     error_class: str | Unset = UNSET
     error_message: str | Unset = UNSET
@@ -60,6 +64,12 @@ class JobTaskAttemptResponse:
         input_id = self.input_id
 
         input_ref = self.input_ref
+
+        work_decision: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.work_decision, Unset):
+            work_decision = self.work_decision.to_dict()
+
+        outcome_code = self.outcome_code
 
         instance_id: str | Unset = UNSET
         if not isinstance(self.instance_id, Unset):
@@ -96,6 +106,10 @@ class JobTaskAttemptResponse:
             field_dict["input_id"] = input_id
         if input_ref is not UNSET:
             field_dict["input_ref"] = input_ref
+        if work_decision is not UNSET:
+            field_dict["work_decision"] = work_decision
+        if outcome_code is not UNSET:
+            field_dict["outcome_code"] = outcome_code
         if instance_id is not UNSET:
             field_dict["instance_id"] = instance_id
         if error_class is not UNSET:
@@ -114,6 +128,7 @@ class JobTaskAttemptResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.job_task_attempt_response_output_manifest import JobTaskAttemptResponseOutputManifest
+        from ..models.work_decision import WorkDecision
 
         d = dict(src_dict)
         run_id = UUID(d.pop("run_id"))
@@ -133,6 +148,15 @@ class JobTaskAttemptResponse:
         input_id = d.pop("input_id", UNSET)
 
         input_ref = d.pop("input_ref", UNSET)
+
+        _work_decision = d.pop("work_decision", UNSET)
+        work_decision: WorkDecision | Unset
+        if isinstance(_work_decision, Unset):
+            work_decision = UNSET
+        else:
+            work_decision = WorkDecision.from_dict(_work_decision)
+
+        outcome_code = d.pop("outcome_code", UNSET)
 
         _instance_id = d.pop("instance_id", UNSET)
         instance_id: UUID | Unset
@@ -171,6 +195,8 @@ class JobTaskAttemptResponse:
             log_truncated=log_truncated,
             input_id=input_id,
             input_ref=input_ref,
+            work_decision=work_decision,
+            outcome_code=outcome_code,
             instance_id=instance_id,
             error_class=error_class,
             error_message=error_message,

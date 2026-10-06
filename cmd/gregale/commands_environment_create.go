@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -13,18 +14,24 @@ import (
 // envCreate provides the branch-like shorthand inside a linked project:
 // gregale env create staging --from production.
 func envCreate(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "protected", "share-resources", "full", "wait")
 	fs := newFlagSet("env-create", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment to clone")
 	project := fs.String("project", "", "project slug (defaults to linked project)")
 	protected := fs.Bool("protected", false, "protect the new environment")
 	shareResources := fs.Bool("share-resources", false, "explicitly share managed database and object-storage data with the source environment")
+	full := fs.Bool("full", false, "require a complete isolated copy of configuration, workloads, and data")
+	wait := fs.Bool("wait", false, "wait for the full clone to finish")
+	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected] [--share-resources]", "env")
+		PrintUsage(os.Stderr, "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected] [--share-resources | --full [--wait] [--timeout SECONDS]]", "env")
 		return 1
 	}
 	if !api.ValidProjectEnvironmentSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || positional[0] == *from {
 		return printErr("Invalid environment", errors.New("target and --from must be different valid environment slugs"))
+	}
+	if *full && *shareResources || *wait && !*full || *timeoutSeconds <= 0 || *timeoutSeconds > 24*60*60 {
+		return printErr("Invalid clone options", errors.New("--full requires isolated resources, --wait requires --full, and --timeout must be between 1 and 86400 seconds"))
 	}
 	projectSlug, err := environmentProjectSlug(*project)
 	if err != nil {
@@ -35,10 +42,16 @@ func envCreate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	environment, err := client.CreateProjectEnvironment(context.Background(), projectSlug, api.CreateProjectEnvironmentRequest{
-		Slug: positional[0], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources,
+		Slug: positional[0], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources, Full: *full,
 	})
 	if err != nil {
 		return printErr("Create failed", err)
+	}
+	if *full {
+		if *wait {
+			return finishProjectEnvironmentCloneWait(context.Background(), client, *environment.CloneOperation, time.Duration(*timeoutSeconds)*time.Second)
+		}
+		return renderProjectEnvironmentCloneOperation(*environment.CloneOperation, false)
 	}
 	return renderProjectEnvironment(environment)
 }

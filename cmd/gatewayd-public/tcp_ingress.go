@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -75,9 +76,18 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 	nodes := gateway.NewNodeClientCache(func(dialCtx context.Context, target string) (*grpc.ClientConn, error) {
 		return overlay.Dial(dialCtx, overlay.New(target), vmmdTLS)
 	}, log)
+	var certificates *tcpd.FileCertificateProvider
 	closeDependencies := func() {
 		_ = sched.Close()
 		_ = nodes.Close()
+		if certificates != nil {
+			_ = certificates.Close()
+		}
+	}
+	certificates, err = tcpCertificateProvider(os.Getenv("FAAS_TCPD_TLS_CERT_DIR"))
+	if err != nil {
+		closeDependencies()
+		return nil, nil, err
 	}
 
 	maxBytes := api.RawTCPStreamMaxBytes
@@ -138,6 +148,9 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 		MaxConnections:           maxConnections,
 		MaxConnectionsPerAccount: maxConnectionsPerAccount,
 		Metrics:                  metrics,
+		Certificates:             certificates,
+		Observations:             store,
+		EdgeID:                   envOr("FAAS_NODE_NAME", "legacy-singlebox"),
 		OnReady:                  func() { close(serveReady) },
 		OnError: func(err error) {
 			log.Error("gatewayd-public: tcpd runtime error", "err", err)
@@ -187,4 +200,18 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 		stop()
 		return err
 	}, nil
+}
+
+func tcpCertificateProvider(directory string) (*tcpd.FileCertificateProvider, error) {
+	if directory == "" {
+		return nil, nil
+	}
+	if !filepath.IsAbs(directory) {
+		return nil, errors.New("gatewayd-public: FAAS_TCPD_TLS_CERT_DIR must be an absolute directory")
+	}
+	provider, err := tcpd.NewFileCertificateProvider(directory)
+	if err != nil {
+		return nil, errors.New("gatewayd-public: TCP TLS certificate directory unavailable")
+	}
+	return provider, nil
 }

@@ -26,7 +26,7 @@ func TestClientServeRoundTrip(t *testing.T) {
 			_, _ = stdout.Write([]byte("hello\n"))
 			_, _ = stderr.Write([]byte("warning\n"))
 			exit := 0
-			return Result{Status: StatusSucceeded, ExitCode: &exit}, nil
+			return Result{Status: StatusSucceeded, ExitCode: &exit, OutcomeCode: "accepted"}, nil
 		})
 	}()
 	client, err := NewClient(host)
@@ -37,7 +37,7 @@ func TestClientServeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != StatusSucceeded || string(result.Stdout) != "hello\n" || string(result.Stderr) != "warning\n" {
+	if result.Status != StatusSucceeded || result.OutcomeCode != "accepted" || string(result.Stdout) != "hello\n" || string(result.Stderr) != "warning\n" {
 		t.Fatalf("result = %+v", result)
 	}
 	if err := <-done; err != nil {
@@ -86,6 +86,16 @@ func TestRequestValidation(t *testing.T) {
 		mutate(&req)
 		if err := req.Validate(); !errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("Validate() error = %v", err)
+		}
+	}
+}
+
+func TestResultRejectsInvalidOutcomeCode(t *testing.T) {
+	code := 0
+	for _, value := range []string{"Invalid", "bad code", "" + string(make([]byte, 65))} {
+		result := Result{Status: StatusSucceeded, ExitCode: &code, OutcomeCode: value}
+		if err := result.Validate(1024); err == nil {
+			t.Fatalf("accepted invalid outcome code %q", value)
 		}
 	}
 }

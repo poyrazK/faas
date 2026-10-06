@@ -114,6 +114,10 @@ def sync_detailed(
     `fresh=true`, destroys live instances without capturing process memory,
     invalidates cached snapshots, and cold-boots with the latest environment
     and secrets. The fresh path is durably queued.
+    For `fresh=true`, use the returned `wake_id` with
+    `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+    queued, running, retrying, completed, or failed status and any safe
+    failure reason.
 
     Args:
         slug (str):
@@ -156,6 +160,10 @@ def sync(
     `fresh=true`, destroys live instances without capturing process memory,
     invalidates cached snapshots, and cold-boots with the latest environment
     and secrets. The fresh path is durably queued.
+    For `fresh=true`, use the returned `wake_id` with
+    `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+    queued, running, retrying, completed, or failed status and any safe
+    failure reason.
 
     Args:
         slug (str):
@@ -193,6 +201,10 @@ async def asyncio_detailed(
     `fresh=true`, destroys live instances without capturing process memory,
     invalidates cached snapshots, and cold-boots with the latest environment
     and secrets. The fresh path is durably queued.
+    For `fresh=true`, use the returned `wake_id` with
+    `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+    queued, running, retrying, completed, or failed status and any safe
+    failure reason.
 
     Args:
         slug (str):
@@ -233,6 +245,10 @@ async def asyncio(
     `fresh=true`, destroys live instances without capturing process memory,
     invalidates cached snapshots, and cold-boots with the latest environment
     and secrets. The fresh path is durably queued.
+    For `fresh=true`, use the returned `wake_id` with
+    `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+    queued, running, retrying, completed, or failed status and any safe
+    failure reason.
 
     Args:
         slug (str):

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { WorkDecision } from './WorkDecision.js';
 /**
  * Immutable terminal outcome of one task attempt.
  */
@@ -12,6 +13,8 @@ export type JobTaskAttemptResponse = {
   input_id?: string;
   input_ref?: string;
   status: 'succeeded' | 'failed' | 'timeout' | 'cancelled' | 'oom';
+  work_decision?: WorkDecision;
+  outcome_code?: string;
   instance_id?: string;
   error_class?: string;
   error_message?: string;
