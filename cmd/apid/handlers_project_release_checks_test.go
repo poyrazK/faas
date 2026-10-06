@@ -13,6 +13,61 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 618 — graph checks and probes use immutable deployment settings.
+func TestCheckedProjectReleaseUsesPinnedServiceBindings(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	configureSourceRefManagedPostgres(t, sourceRefTestEnv{acctID: e.acct.ID, srv: e.s})
+	ctx := context.Background()
+	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "pinned-graph"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "pinned-api", Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 2,
+		Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600, ServiceBindingTransport: api.ServiceBindingTransportHTTPS, ServiceBindings: api.ServiceBindingsForTargets([]string{"billing"})}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := state.WorkloadSettingsFromApp(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.PutProjectEnvironmentWorkloadSpec(ctx, e.acct.ID, project.ID, "production", app.ID, 0, settings); err != nil {
+		t.Fatal(err)
+	}
+	deployment := seedBindingCandidate(t, e, app, "production")
+	manifest := app.Manifest
+	manifest.ServiceBindings = api.ServiceBindingsForTargets([]string{"new-billing"})
+	if _, err := e.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	inventory := decodeBindingInventory(t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings?deployment_id="+deployment.ID, nil, nil))
+	if len(inventory.Bindings) != 1 || inventory.Bindings[0].Name != "billing" {
+		t.Fatalf("inventory used the desired head: %+v", inventory)
+	}
+	task := createAppTaskForTest(t, e, app.Slug, api.CreateAppTaskRequest{VerificationDeploymentID: deployment.ID, Command: []string{api.AppTaskServiceBindingProbeCommand, "billing"}})
+	stored, err := e.store.AppTaskByID(ctx, e.acct.ID, app.ID, task.ID)
+	if err != nil || stored.BindingVerification == nil || stored.BindingVerification.Binding != "billing" {
+		t.Fatalf("pinned binding probe: %+v %v", stored, err)
+	}
+	response := e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/tasks", api.CreateAppTaskRequest{VerificationDeploymentID: deployment.ID, Command: []string{api.AppTaskServiceBindingProbeCommand, "new-billing"}}, nil)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("probe admitted a binding absent from the deployment: %d %s", response.Code, response.Body.String())
+	}
+	empty := ""
+	response = e.do(t, http.MethodPost, "/v1/projects/pinned-graph/environments/production/release-sets/check", api.PublishProjectReleaseSetRequest{TTLSeconds: 1800, ExpectedActiveReleaseID: &empty, Deployments: map[string]string{app.Slug: deployment.ID}}, nil)
+	var report api.ProjectReleaseCheckResponse
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &report) != nil || report.Passed {
+		t.Fatalf("pinned dependency was omitted from graph checking: %d %s", response.Code, response.Body.String())
+	}
+	for _, blocker := range report.Blockers {
+		if blocker.Code == "graph_service_target_missing" && blocker.Name == "billing" {
+			return
+		}
+	}
+	t.Fatalf("wrong graph dependency: %+v", report)
+}
+
 func TestCheckedProjectReleaseExactServiceEvidenceAndAtomicActivation(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	enableAppTaskAPIForTest(&e)

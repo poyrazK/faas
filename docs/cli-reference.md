@@ -937,7 +937,7 @@ gregale bindings object-storage revoke my-api assets BINDING_ID
 
 Check a private service route or test a managed PostgreSQL or object-storage binding
 
-`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
+`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--deployment <ID|vN>] [--target-deployment <UUID>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -946,6 +946,7 @@ Check a private service route or test a managed PostgreSQL or object-storage bin
 | `--outbound <INTEGRATION_ID>` | verify a configured outbound integration by UUID |  |
 | `--object-storage <PREFIX>` | verify one object-storage binding by environment prefix (read access only) |  |
 | `--deployment <ID|vN>` | exact live deployment to verify, including zero-traffic candidates |  |
+| `--target-deployment <UUID>` | exact service target required by a candidate graph |  |
 | `--poll-interval <D>` | status polling interval while the canary runs |  |
 | `--wait-timeout <D>` | maximum time to wait for the canary task |  |
 
@@ -6393,14 +6394,36 @@ Inspect the active graph and environment deployments
 
 #### projects environments release-sets
 
-List release graphs and their retention deadlines
+List release graphs, or check and publish exact membership
 
-`gregale projects environments release-sets [--before <CURSOR>] [--limit <N>]`
+`gregale projects environments release-sets [--before <CURSOR>] [--limit <N>] <project-slug> <environment-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--before <CURSOR>` | page cursor |  |
 | `--limit <N>` | page size |  |
+
+##### projects environments release-sets check
+
+Check every exact deployment without activating the graph
+
+`gregale projects environments release-sets check --file <FILE> --expected-active <UUID|none> <project-slug> <environment-slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <FILE>` | exact deployment graph JSON | required |
+| `--expected-active <UUID|none>` | expected active graph | required |
+
+##### projects environments release-sets publish
+
+Recheck and atomically activate every exact deployment
+
+`gregale projects environments release-sets publish --file <FILE> --expected-active <UUID|none> <project-slug> <environment-slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <FILE>` | exact deployment graph JSON | required |
+| `--expected-active <UUID|none>` | expected active graph | required |
 
 #### projects environments releases
 
@@ -7461,31 +7484,3 @@ Print the powershell completion snippet
 Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg)
 
 `gregale man <command>`
-
-### Checked project release activation
-
-Prepare `release.json` with a retention TTL and one exact deployment UUID for
-**every** project workload:
-
-```json
-{"ttl_seconds":1800,"deployments":{"shop-api":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","shop-billing":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}}
-```
-
-For a service binding, verify the caller against the target selected by that
-map. This performs the platform HTTPS HEAD route check, without waking the
-service or invoking its application handler:
-
-```sh
-gregale bindings verify shop-api shop-billing --deployment aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa --target-deployment bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
-gregale projects environments release-sets check shop production --file release.json --expected-active none
-gregale projects environments release-sets publish shop production --file release.json --expected-active none
-```
-
-Use the current active release UUID instead of `none` when replacing a graph.
-The check reports the exact membership, digest and per-deployment blockers and
-creates no probes. Publication independently rechecks evidence, applies stored
-policies and atomically compares and replaces the active graph. One failed or
-expired member blocks the entire switch. A successful receipt confirms exactly
-the requested graph; previous releases retain their compatibility TTL.
-`--json` includes the structured check or activation receipt. A blocked check
-exits nonzero. Environment promotion and rollback remain separate workflows.

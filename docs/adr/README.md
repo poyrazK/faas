@@ -56,10 +56,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 609 | [Event protection for new object versions](609-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
-| 608 | [Durable object event holds](608-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
-| 607 | [Protection-aware object lifecycle deletion](607-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |
-| 606 | [Durable object write protection](606-durable-object-write-protection.md) | accepted | Immutable bounded write policies and exact native version verification for PUT, copy and multipart |
+| 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
+| 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
+| 620 | [Protection-aware object lifecycle deletion](620-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |
+| 619 | [Durable object write protection](619-durable-object-write-protection.md) | accepted | Immutable bounded write policies and exact native version verification for PUT, copy and multipart |
 | 596 | [Service binding dependency evidence](596-service-binding-dependency-evidence.md) | accepted | Versioned evidence for service binding dependencies. |
 | 597 | [Exact caller deployment for service smoke tests](597-caller-pinned-service-smoke.md) | accepted | Probe the exact selected caller deployment. |
 | 598 | [Stored binding release policy per deployment scope](598-stored-binding-release-policy.md) | accepted | Persist and enforce binding checks at release transitions. |
@@ -605,3 +605,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-615: Customer event storage admission](615-customer-event-storage-admission.md)
 - [ADR-616: Bounded event routing history](616-bounded-event-routing-history.md)
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
+
+- [ADR-618: Binding-checked project release activation](618-binding-checked-project-release-activation.md)

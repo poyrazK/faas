@@ -144,6 +144,10 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 	if problem != nil {
 		return observation, problem
 	}
+	app, err = state.ResolveAppForDeployment(r.Context(), s.store, app, deployment)
+	if err != nil {
+		return observation, api.ErrCapacity("the selected deployment configuration could not be read")
+	}
 	policyStore, ok := s.store.(state.BindingReleasePolicyStore)
 	if !ok {
 		return observation, api.ErrCapacity("binding release policies are unavailable")

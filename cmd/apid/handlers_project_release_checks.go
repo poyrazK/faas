@@ -149,6 +149,13 @@ func (s *server) observeProjectRelease(r *http.Request, acct state.Account, c pr
 	var observations []bindingPromotionObservation
 	for i, app := range c.apps {
 		dep, depProblem := s.selectBindingVerificationDeployment(r.Context(), app, c.members[i].DeploymentID)
+		if depProblem == nil {
+			var err error
+			app, err = state.ResolveAppForDeployment(r.Context(), s.store, app, dep)
+			if err != nil {
+				depProblem = api.ErrCapacity("the selected deployment configuration could not be read")
+			}
+		}
 		if depProblem != nil || dep.AppID != app.ID || dep.Scope != c.environment || dep.Status != state.DeployLive || dep.RootfsKey == "" || dep.ImageDigest == "" || app.Manifest.RevisionPinTTLSeconds < c.request.TTLSeconds {
 			report.Passed = false
 			report.Blockers = append(report.Blockers, api.BindingCheckFinding{Code: "release_member_unavailable", DeploymentID: c.members[i].DeploymentID, Message: "The selected member must be a materialized live deployment in this environment with sufficient revision retention."})

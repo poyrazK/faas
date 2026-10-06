@@ -60,6 +60,20 @@ func (s *server) getAppBindingInventory(w http.ResponseWriter, r *http.Request, 
 // Each domain retains its own store and authorization boundary. The bounded
 // parallel reads prevent one unavailable domain from delaying healthy sections.
 func (s *server) collectBindingInventory(parent context.Context, r *http.Request, acct state.Account, app state.App, scope string) api.AppBindingInventory {
+	if id := r.URL.Query().Get("deployment_id"); id != "" {
+		deployment, problem := s.selectBindingVerificationDeployment(parent, app, id)
+		if problem == nil {
+			var err error
+			app, err = state.ResolveAppForDeployment(parent, s.store, app, deployment)
+			if err != nil {
+				problem = api.ErrCapacity("the selected deployment configuration could not be read")
+			}
+		}
+		if problem != nil {
+			return api.AppBindingInventory{App: app.Slug, Scope: scope, RequestedDeploymentID: id, Complete: false, GeneratedAt: time.Now().UTC(),
+				Issues: []api.BindingInventoryIssue{{Code: "deployment_configuration_unavailable", Severity: "error", Message: problem.Detail}}}
+		}
+	}
 	inventory := api.AppBindingInventory{
 		App: app.Slug, Scope: scope, Complete: true, GeneratedAt: time.Now().UTC(),
 		RequestedDeploymentID: r.URL.Query().Get("deployment_id"),

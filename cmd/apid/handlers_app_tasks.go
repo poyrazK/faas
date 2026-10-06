@@ -112,12 +112,19 @@ func (s *server) createAppTask(w http.ResponseWriter, r *http.Request, acct stat
 }
 
 func (s *server) admitAppTask(r *http.Request, acct state.Account, app state.App, resolved api.ResolvedCreateAppTaskRequest) (state.AppTask, *api.Problem) {
-	if api.IsServiceBindingSmokeCommand(resolved.Command, resolved.CommandShell) && !declaresSmokeService(app, resolved.Command[1]) {
-		return state.AppTask{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Service binding unavailable", "The selected service is not declared for this app.")
-	}
 	deployment, problem := s.selectAppTaskDeployment(r.Context(), app, resolved)
 	if problem != nil {
 		return state.AppTask{}, problem
+	}
+	if api.IsBindingVerificationCommand(resolved.Command, resolved.CommandShell) || api.IsServiceBindingSmokeCommand(resolved.Command, resolved.CommandShell) {
+		var err error
+		app, err = state.ResolveAppForDeployment(r.Context(), s.store, app, deployment)
+		if err != nil {
+			return state.AppTask{}, api.ErrCapacity("the selected deployment configuration could not be read")
+		}
+	}
+	if api.IsServiceBindingSmokeCommand(resolved.Command, resolved.CommandShell) && !declaresSmokeService(app, resolved.Command[1]) {
+		return state.AppTask{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Service binding unavailable", "The selected service is not declared for this deployment.")
 	}
 	pin, pinErr := s.captureBindingVerificationPin(r, acct, app, deployment, resolved)
 	if pinErr != nil {

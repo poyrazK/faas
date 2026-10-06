@@ -1,4 +1,4 @@
--- adr: 606
+-- adr: 618
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE app_tasks DROP CONSTRAINT IF EXISTS app_tasks_binding_verification_check;
