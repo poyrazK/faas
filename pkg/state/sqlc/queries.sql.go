@@ -16125,6 +16125,27 @@ func (q *Queries) InsertCustomerOperationExecution(ctx context.Context, db DBTX,
 	return err
 }
 
+const insertCustomerOperationJobExecution = `-- name: InsertCustomerOperationJobExecution :execrows
+INSERT INTO customer_operation_executions(operation_id,generation,job_run_id)
+SELECT o.id,$1::integer,j.id FROM customer_operations o
+JOIN job_runs j ON j.id=$2::uuid AND j.account_id=o.account_id AND j.operation_id=o.id
+WHERE o.id=$3::uuid AND o.execution_kind='job'
+`
+
+type InsertCustomerOperationJobExecutionParams struct {
+	Generation  int32
+	RunID       pgtype.UUID
+	OperationID pgtype.UUID
+}
+
+func (q *Queries) InsertCustomerOperationJobExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationJobExecutionParams) (int64, error) {
+	result, err := db.Exec(ctx, insertCustomerOperationJobExecution, arg.Generation, arg.RunID, arg.OperationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertCustomerOperationRecovery = `-- name: InsertCustomerOperationRecovery :exec
 INSERT INTO customer_operation_recoveries(operation_id,recovery_id,fingerprint,request,created_at)
 VALUES($1::uuid,$2::text,$3::text,
@@ -16195,6 +16216,28 @@ func (q *Queries) InsertCustomerOperationStream(ctx context.Context, db DBTX, ar
 		arg.ExpiresAt,
 	)
 	return err
+}
+
+const insertCustomerOperationWorkflowExecution = `-- name: InsertCustomerOperationWorkflowExecution :execrows
+INSERT INTO customer_operation_executions(operation_id,generation,workflow_run_id)
+SELECT o.id,$1::integer,w.id FROM customer_operations o
+JOIN workflow_runs w ON w.id=$2::uuid AND w.app_id=o.app_id AND w.operation_id=o.id
+AND w.platform_tenant_id=o.platform_tenant_id
+WHERE o.id=$3::uuid AND o.execution_kind='workflow'
+`
+
+type InsertCustomerOperationWorkflowExecutionParams struct {
+	Generation  int32
+	RunID       pgtype.UUID
+	OperationID pgtype.UUID
+}
+
+func (q *Queries) InsertCustomerOperationWorkflowExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowExecutionParams) (int64, error) {
+	result, err := db.Exec(ctx, insertCustomerOperationWorkflowExecution, arg.Generation, arg.RunID, arg.OperationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertDataUpstream = `-- name: InsertDataUpstream :one
@@ -28595,6 +28638,25 @@ func (q *Queries) LockCustomerOperationAccount(ctx context.Context, db DBTX, acc
 	return plan, err
 }
 
+const lockCustomerOperationBackendExecution = `-- name: LockCustomerOperationBackendExecution :one
+SELECT o.record,e.generation,e.execution_kind FROM customer_operations o
+JOIN customer_operation_executions e ON e.operation_id=o.id
+WHERE e.execution_id=$1::uuid FOR UPDATE OF o
+`
+
+type LockCustomerOperationBackendExecutionRow struct {
+	Record        []byte
+	Generation    int32
+	ExecutionKind string
+}
+
+func (q *Queries) LockCustomerOperationBackendExecution(ctx context.Context, db DBTX, executionID pgtype.UUID) (LockCustomerOperationBackendExecutionRow, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationBackendExecution, executionID)
+	var i LockCustomerOperationBackendExecutionRow
+	err := row.Scan(&i.Record, &i.Generation, &i.ExecutionKind)
+	return i, err
+}
+
 const lockCustomerOperationBlob = `-- name: LockCustomerOperationBlob :one
 SELECT id, operation_id, account_id, generation, execution_id, attempt, report_id, fingerprint, storage_key, size_bytes, state, expires_at, next_attempt_at, lease_token, lease_until FROM customer_operation_result_blobs WHERE id = $1::uuid FOR UPDATE
 `
@@ -31904,7 +31966,7 @@ func (q *Queries) LockWorkflowRunAdmission(ctx context.Context, db DBTX, appKey 
 }
 
 const lockWorkflowRunForManualRetry = `-- name: LockWorkflowRunForManualRetry :one
-SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, create_idempotency_key, create_request_fingerprint, lease_until, resume_count, cancelled_at, platform_tenant_id FROM workflow_runs
+SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint FROM workflow_runs
 WHERE id=$1::text::uuid
 FOR UPDATE
 `
@@ -31927,12 +31989,13 @@ func (q *Queries) LockWorkflowRunForManualRetry(ctx context.Context, db DBTX, ru
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.CreateIdempotencyKey,
-		&i.CreateRequestFingerprint,
 		&i.LeaseUntil,
+		&i.OperationID,
 		&i.ResumeCount,
 		&i.CancelledAt,
 		&i.PlatformTenantID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestFingerprint,
 	)
 	return i, err
 }
@@ -52652,7 +52715,7 @@ SET status='pending',current_step=$1::text,
     lease_until=NULL,updated_at=clock_timestamp()
 WHERE id=$2::text::uuid
   AND status IN ('failed','dead')
-RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, create_idempotency_key, create_request_fingerprint, lease_until, resume_count, cancelled_at, platform_tenant_id
+RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint
 `
 
 type RequeueWorkflowRunForRetryParams struct {
@@ -52678,12 +52741,13 @@ func (q *Queries) RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg R
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.CreateIdempotencyKey,
-		&i.CreateRequestFingerprint,
 		&i.LeaseUntil,
+		&i.OperationID,
 		&i.ResumeCount,
 		&i.CancelledAt,
 		&i.PlatformTenantID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestFingerprint,
 	)
 	return i, err
 }
@@ -55560,6 +55624,45 @@ type SetCustomerOperationExecutionIdentityParams struct {
 func (q *Queries) SetCustomerOperationExecutionIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationExecutionIdentityParams) error {
 	_, err := db.Exec(ctx, setCustomerOperationExecutionIdentity, arg.OperationID, arg.InvocationID)
 	return err
+}
+
+const setCustomerOperationJobIdentity = `-- name: SetCustomerOperationJobIdentity :execrows
+UPDATE job_runs j SET operation_id=o.id FROM customer_operations o
+WHERE j.id=$1::uuid AND o.id=$2::uuid AND j.account_id=o.account_id AND o.execution_kind='job'
+AND (j.operation_id IS NULL OR j.operation_id=o.id)
+`
+
+type SetCustomerOperationJobIdentityParams struct {
+	RunID       pgtype.UUID
+	OperationID pgtype.UUID
+}
+
+func (q *Queries) SetCustomerOperationJobIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationJobIdentityParams) (int64, error) {
+	result, err := db.Exec(ctx, setCustomerOperationJobIdentity, arg.RunID, arg.OperationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setCustomerOperationWorkflowIdentity = `-- name: SetCustomerOperationWorkflowIdentity :execrows
+UPDATE workflow_runs w SET operation_id=o.id FROM customer_operations o
+WHERE w.id=$1::uuid AND o.id=$2::uuid AND w.app_id=o.app_id AND o.execution_kind='workflow'
+AND w.platform_tenant_id=o.platform_tenant_id
+AND (w.operation_id IS NULL OR w.operation_id=o.id)
+`
+
+type SetCustomerOperationWorkflowIdentityParams struct {
+	RunID       pgtype.UUID
+	OperationID pgtype.UUID
+}
+
+func (q *Queries) SetCustomerOperationWorkflowIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationWorkflowIdentityParams) (int64, error) {
+	result, err := db.Exec(ctx, setCustomerOperationWorkflowIdentity, arg.RunID, arg.OperationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setDeploymentFailed = `-- name: SetDeploymentFailed :one
