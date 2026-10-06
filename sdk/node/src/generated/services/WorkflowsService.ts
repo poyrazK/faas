@@ -2,11 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AutomationHealthResponse } from '../models/AutomationHealthResponse.js';
 import type { AutomationResponse } from '../models/AutomationResponse.js';
+import type { AutomationRevisionResponse } from '../models/AutomationRevisionResponse.js';
 import type { CompleteWorkflowCallbackResponse } from '../models/CompleteWorkflowCallbackResponse.js';
 import type { CreateWorkflowCallbackWebhookBindingRequest } from '../models/CreateWorkflowCallbackWebhookBindingRequest.js';
 import type { InjectWorkflowEventRequest } from '../models/InjectWorkflowEventRequest.js';
 import type { InjectWorkflowEventResponse } from '../models/InjectWorkflowEventResponse.js';
+import type { ListAutomationRevisionsResponse } from '../models/ListAutomationRevisionsResponse.js';
 import type { ListAutomationsResponse } from '../models/ListAutomationsResponse.js';
 import type { ListWorkflowCallbacksResponse } from '../models/ListWorkflowCallbacksResponse.js';
 import type { ListWorkflowResumesResponse } from '../models/ListWorkflowResumesResponse.js';
@@ -15,6 +18,7 @@ import type { ListWorkflowSchedulesResponse } from '../models/ListWorkflowSchedu
 import type { ListWorkflowStepAttemptsResponse } from '../models/ListWorkflowStepAttemptsResponse.js';
 import type { ListWorkflowStepsResponse } from '../models/ListWorkflowStepsResponse.js';
 import type { PublishAutomationRequest } from '../models/PublishAutomationRequest.js';
+import type { RestoreAutomationRevisionRequest } from '../models/RestoreAutomationRevisionRequest.js';
 import type { ResumeWorkflowRunRequest } from '../models/ResumeWorkflowRunRequest.js';
 import type { SaveAutomationDraftRequest } from '../models/SaveAutomationDraftRequest.js';
 import type { SetAutomationEnabledRequest } from '../models/SetAutomationEnabledRequest.js';
@@ -304,6 +308,230 @@ export class WorkflowsService {
     });
   }
   /**
+   * Get bounded execution health for one automation.
+   * Returns run counts by status, the completed-run success rate, median
+   * and p95 duration, recent run identities and the most common failed
+   * steps. Inputs, outputs, and error text are never included. The default
+   * window is the previous seven days; the maximum window is 30 days.
+   * created_after and created_before are inclusive RFC3339 timestamps, and
+   * created_before may not be in the future. Failed loop items are grouped
+   * under their parent step; at most ten failed steps are returned.
+   *
+   * @returns AutomationHealthResponse Safe operational summary for the selected automation and time window.
+   * @throws ApiError
+   */
+  public static getAutomationHealth({
+    slug,
+    name,
+    createdAfter,
+    createdBefore,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation whose recent execution health is summarized.
+     */
+    name: string,
+    /**
+     * Inclusive start of the summary window; defaults to seven days before created_before or now.
+     */
+    createdAfter?: string,
+    /**
+     * Inclusive end of the summary window; defaults to now.
+     */
+    createdBefore?: string,
+  }): CancelablePromise<AutomationHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations/{name}/health',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'created_after': createdAfter,
+        'created_before': createdBefore,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List published automation revisions, newest first.
+   * @returns ListAutomationRevisionsResponse Immutable published definitions and pagination metadata.
+   * @throws ApiError
+   */
+  public static listAutomationRevisions({
+    slug,
+    name,
+    limit = 50,
+    offset,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation whose immutable published revisions are listed.
+     */
+    name: string,
+    /**
+     * Maximum number of revisions to return (1–100; defaults to 50).
+     */
+    limit?: number,
+    /**
+     * Number of newest revisions to skip before returning results (maximum 2147483647).
+     */
+    offset?: number,
+  }): CancelablePromise<ListAutomationRevisionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations/{name}/revisions',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read one immutable published automation revision.
+   * @returns AutomationRevisionResponse The selected published definition and its canonical hash.
+   * @throws ApiError
+   */
+  public static getAutomationRevision({
+    slug,
+    name,
+    version,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation that owns the requested published revision.
+     */
+    name: string,
+    /**
+     * Published revision identifier returned by the revision list.
+     */
+    version: number,
+  }): CancelablePromise<AutomationRevisionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations/{name}/revisions/{version}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'version': version,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Restore a published revision as a new draft using optimistic version checking.
+   * Copies the selected immutable revision into the automation's draft. It
+   * does not publish the copy or change running and accepted workflows.
+   * Send expected_version from the latest automation read; use zero when
+   * creating a draft after the automation was deleted. YAML ownership still
+   * requires explicit takeover when the restored draft is later published.
+   *
+   * @returns AutomationResponse The updated automation draft; publishing remains a separate operation.
+   * @throws ApiError
+   */
+  public static restoreAutomationRevision({
+    slug,
+    name,
+    version,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation that receives the restored draft.
+     */
+    name: string,
+    /**
+     * Published revision to copy into the current draft.
+     */
+    version: number,
+    requestBody: RestoreAutomationRevisionRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AutomationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations/{name}/revisions/{version}/restore',
+      path: {
+        'slug': slug,
+        'name': name,
+        'version': version,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
    * Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
    * Published definitions survive future YAML deployments. A live default deployment is required. Runtime execution also requires FAAS_WORKFLOWS_ENABLED on apid and schedd. Events accepted before publication retain their captured definition.
    * @returns AutomationResponse publishAutomation result.
@@ -449,7 +677,11 @@ export class WorkflowsService {
    * Start a durable workflow run.
    * Snapshots the named effective workflow definition from the app's live
    * default deployment and dashboard publications and creates a pending run. The optional request body is
-   * retained as the workflow input and may be any valid JSON value.
+   * retained as the workflow input and may be any valid JSON value. An
+   * optional Idempotency-Key binds this request to its original run for as
+   * long as that run is retained. A matching retry returns the original
+   * run, including its original definition snapshot; reusing the key with
+   * different input returns 409.
    *
    * @returns WorkflowRunResponse The new pending workflow run.
    * @throws ApiError
@@ -457,6 +689,7 @@ export class WorkflowsService {
   public static createWorkflowRun({
     slug,
     name,
+    idempotencyKey,
     requestBody,
   }: {
     /**
@@ -467,6 +700,10 @@ export class WorkflowsService {
      * Workflow name from the app's effective published definitions.
      */
     name: string,
+    /**
+     * Stable caller key for retrying this run creation. Reuse only with the same workflow input.
+     */
+    idempotencyKey?: string,
     requestBody?: any,
   }): CancelablePromise<WorkflowRunResponse> {
     return __request(OpenAPI, {
@@ -476,6 +713,9 @@ export class WorkflowsService {
         'slug': slug,
         'name': name,
       },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
@@ -484,7 +724,7 @@ export class WorkflowsService {
         402: `code: plan_workflows_not_allowed — this plan does not include durable workflows.`,
         403: `code: plan_workflows_quota | forbidden — the concurrent-run cap is exhausted or the caller lacks scope.`,
         404: `code: workflow_definition_not_found | app_not_found — the app or named live workflow definition does not exist.`,
-        409: `code: workflow_tenant_identity_unavailable — tenant-required apps must use a tenant-scoped workflow run route.`,
+        409: `Tenant-required apps need a tenant-scoped run route, or the Idempotency-Key was already used with different workflow input.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -723,6 +963,9 @@ export class WorkflowsService {
   public static listWorkflowRuns({
     slug,
     status,
+    workflowName,
+    createdAfter,
+    createdBefore,
     limit = 50,
     offset,
   }: {
@@ -734,6 +977,18 @@ export class WorkflowsService {
      * Optional exact status filter.
      */
     status?: 'pending' | 'running' | 'awaiting_event' | 'succeeded' | 'failed' | 'dead',
+    /**
+     * Optional exact workflow name filter.
+     */
+    workflowName?: string,
+    /**
+     * Include runs created at or after this RFC3339 timestamp.
+     */
+    createdAfter?: string,
+    /**
+     * Include runs created at or before this RFC3339 timestamp.
+     */
+    createdBefore?: string,
     /**
      * Maximum runs to return in this page.
      */
@@ -751,10 +1006,14 @@ export class WorkflowsService {
       },
       query: {
         'status': status,
+        'workflow_name': workflowName,
+        'created_after': createdAfter,
+        'created_before': createdBefore,
         'limit': limit,
         'offset': offset,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses

@@ -6996,6 +6996,72 @@ $$;
 
 
 --
+
+
+-- Name: faas_capture_workflow_finished_webhook_event(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_capture_workflow_finished_webhook_event() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    event_account_id uuid;
+    recipient_ids uuid[];
+    event_finished_at timestamptz;
+BEGIN
+    IF OLD.status IS NOT DISTINCT FROM NEW.status
+       OR OLD.status IN ('succeeded', 'failed', 'dead')
+       OR NEW.status NOT IN ('succeeded', 'failed', 'dead') THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT a.account_id,
+           COALESCE(
+               array_agg(h.id ORDER BY h.id) FILTER (WHERE h.id IS NOT NULL),
+               ARRAY[]::uuid[]
+           )
+      INTO event_account_id, recipient_ids
+      FROM apps a
+      LEFT JOIN app_webhooks h
+        ON h.app_id = NEW.app_id
+       AND h.account_id = a.account_id
+       AND h.scope = 'app'
+       AND h.enabled
+       AND (cardinality(h.event_filter) = 0 OR 'workflow.finished' = ANY(h.event_filter))
+     WHERE a.id = NEW.app_id
+     GROUP BY a.account_id;
+
+    IF COALESCE(cardinality(recipient_ids), 0) = 0 THEN
+        RETURN NEW;
+    END IF;
+
+    event_finished_at := COALESCE(NEW.finished_at, clock_timestamp());
+    INSERT INTO app_webhook_event_outbox (
+        account_id, app_id, event, source_id, payload, recipient_webhook_ids
+    ) VALUES (
+        event_account_id,
+        NEW.app_id,
+        'workflow.finished',
+        gen_random_uuid(),
+        jsonb_build_object(
+            'app_id', NEW.app_id::text,
+            'run_id', NEW.id::text,
+            'workflow_name', NEW.workflow_name,
+            'status', NEW.status,
+            'finished_at', event_finished_at,
+            'resume_count', NEW.resume_count
+        ),
+        recipient_ids
+    ) ON CONFLICT (event, source_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+
+
 -- Name: faas_stamp_app_deletion_deadline(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14729,7 +14795,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -18740,7 +18806,7 @@ CREATE TABLE public.inbound_webhook_endpoints (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT inbound_webhook_endpoints_delivery_path_chk CHECK ((((char_length(delivery_path) >= 1) AND (char_length(delivery_path) <= 256)) AND ("left"(delivery_path, 1) = '/'::text) AND (POSITION(('?'::text) IN (delivery_path)) = 0) AND (POSITION(('#'::text) IN (delivery_path)) = 0))),
     CONSTRAINT inbound_webhook_endpoints_name_chk CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = 'stripe'::text)),
+    CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'generic'::text]))),
     CONSTRAINT inbound_webhook_endpoints_token_hash_len_chk CHECK ((octet_length(token_hash) = 32))
 );
 
@@ -22412,6 +22478,39 @@ CREATE TABLE public.project_environment_clone_object_entries (
 
 
 --
+-- Name: project_environment_clone_object_grant_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_grant_revocations (
+    operation_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    plan jsonb NOT NULL,
+    plan_sha256 text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    revocation_id text DEFAULT ''::text NOT NULL,
+    retained_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    request_started_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    drained_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_object_grant_r_source_bucket_id_check CHECK ((source_bucket_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT project_environment_clone_object_grant_revo_revocation_id_check CHECK ((length(revocation_id) <= 512)),
+    CONSTRAINT project_environment_clone_object_grant_revoca_plan_sha256_check CHECK ((plan_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_object_grant_revocat_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check CHECK (((state = 'reserved'::text) = (request_started_at IS NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check1 CHECK (((state = 'drained'::text) = (drained_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check2 CHECK (((observed_at IS NULL) = (revocation_id = ''::text))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check3 CHECK (((state <> 'drained'::text) OR (observed_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check4 CHECK (((observed_at IS NULL) OR (request_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check5 CHECK (((request_started_at IS NULL) OR (request_started_at >= retained_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check6 CHECK (((observed_at IS NULL) OR (observed_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check7 CHECK (((drained_at IS NULL) OR (drained_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_plan_check CHECK ((jsonb_typeof(plan) = 'object'::text)),
+    CONSTRAINT project_environment_clone_object_grant_revocations_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'dispatched'::text, 'drained'::text])))
+);
+
+
+--
 -- Name: project_environment_clone_object_manifests; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25226,6 +25325,25 @@ CREATE TABLE public.workflow_automation_definitions (
 
 
 --
+-- Name: workflow_automation_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_revisions (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    version bigint NOT NULL,
+    definition jsonb NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    legacy_snapshot boolean DEFAULT false NOT NULL,
+    published_by_account_id uuid NOT NULL,
+    published_by_api_key_id uuid,
+    CONSTRAINT workflow_automation_revisions_definition_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
+    CONSTRAINT workflow_automation_revisions_name_check CHECK ((length(name) > 0)),
+    CONSTRAINT workflow_automation_revisions_version_check CHECK ((version > 0))
+);
+
+
+--
 -- Name: workflow_callback_webhook_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25328,12 +25446,15 @@ CREATE TABLE public.workflow_runs (
     last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    create_idempotency_key text,
+    create_request_fingerprint bytea,
     lease_until timestamp with time zone,
     resume_count integer DEFAULT 0 NOT NULL,
     cancelled_at timestamp with time zone,
     platform_tenant_id uuid,
     CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
     CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
+    CONSTRAINT workflow_runs_create_idempotency_check CHECK (((create_idempotency_key IS NULL) AND (create_request_fingerprint IS NULL)) OR ((create_idempotency_key IS NOT NULL) AND (octet_length(create_idempotency_key) >= 1) AND (octet_length(create_idempotency_key) <= 255) AND (create_request_fingerprint IS NOT NULL) AND (octet_length(create_request_fingerprint) = 32))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
 );
 
@@ -29735,6 +29856,22 @@ ALTER TABLE ONLY public.project_environment_clone_object_entries
 
 
 --
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revocatio_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revocatio_request_id_key UNIQUE (request_id);
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revocations_pkey PRIMARY KEY (operation_id, source_bucket_id);
+
+
+--
 -- Name: project_environment_clone_object_manifests project_environment_clone_object_manifests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30980,6 +31117,14 @@ ALTER TABLE ONLY public.webhook_deliveries
 
 ALTER TABLE ONLY public.workflow_automation_definitions
     ADD CONSTRAINT workflow_automation_definitions_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: workflow_automation_revisions workflow_automation_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_revisions
+    ADD CONSTRAINT workflow_automation_revisions_pkey PRIMARY KEY (app_id, name, version);
 
 
 --
@@ -36669,6 +36814,26 @@ CREATE INDEX workflow_runs_app_id_idx ON public.workflow_runs USING btree (app_i
 
 
 --
+-- Name: workflow_runs_app_name_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_name_created_idx ON public.workflow_runs USING btree (app_id, workflow_name, created_at DESC);
+
+
+--
+-- Name: workflow_runs_app_name_concurrency_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_name_concurrency_idx ON public.workflow_runs USING btree (app_id, workflow_name, status, started_at) WHERE (status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text]));
+
+--
+-- Name: workflow_runs_create_idempotency_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX workflow_runs_create_idempotency_idx ON public.workflow_runs USING btree (app_id, workflow_name, create_idempotency_key) WHERE (create_idempotency_key IS NOT NULL);
+
+
+--
 -- Name: workflow_runs_dispatch_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -40229,6 +40394,13 @@ CREATE TRIGGER workflow_runs_capture_dead_letter_event AFTER UPDATE OF status ON
 --
 
 CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.workflow_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
+
+
+--
+-- Name: workflow_runs_capture_finished_webhook_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_runs_capture_finished_webhook_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_finished_webhook_event();
 
 
 --
@@ -45381,6 +45553,14 @@ ALTER TABLE ONLY public.project_environment_clone_object_credentials
 
 
 --
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revoca_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revoca_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: project_environment_clone_object_manifests project_environment_clone_object_manifests_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -47074,6 +47254,14 @@ ALTER TABLE ONLY public.usage_minutes
 
 ALTER TABLE ONLY public.workflow_automation_definitions
     ADD CONSTRAINT workflow_automation_definitions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_revisions workflow_automation_revisions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_revisions
+    ADD CONSTRAINT workflow_automation_revisions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

@@ -20,30 +20,57 @@ var (
 
 type WorkflowForEachOutcome struct {
 	Item     *WorkflowStep
+	Items    []*WorkflowStep
 	Complete bool
 }
 
-func workflowForEachOutputs(steps map[string]WorkflowStep, parent string, count int, proposedName string, proposed json.RawMessage) (json.RawMessage, error) {
-	values := make([]json.RawMessage, 0, count)
+func workflowForEachOutputs(steps map[string]WorkflowStep, parent string, count int, proposedName string, proposed json.RawMessage, continueOnFailure ...bool) (json.RawMessage, error) {
+	var output bytes.Buffer
+	output.WriteByte('[')
+	keepGoing := len(continueOnFailure) > 0 && continueOnFailure[0]
+	appended := 0
 	for index := range count {
 		step, ok := steps[api.WorkflowForEachItemName(parent, index)]
-		if !ok || (step.Status != WorkflowStepStatusSucceeded && step.StepName != proposedName) {
+		if !ok {
 			break
 		}
-		value := step.Output
-		if step.StepName == proposedName {
+		var value json.RawMessage
+		if step.Status == WorkflowStepStatusSkipped && step.WhenMatched != nil && !*step.WhenMatched {
+			value = json.RawMessage("null")
+		} else if keepGoing && step.StepName != proposedName && (step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead || step.Status == WorkflowStepStatusPending || step.Status == WorkflowStepStatusRunning) {
+			value = json.RawMessage("null")
+		} else if step.Status != WorkflowStepStatusSucceeded && step.StepName != proposedName {
+			break
+		} else if step.StepName == proposedName {
 			value = proposed
+		} else {
+			value = step.Output
 		}
 		if len(value) == 0 {
 			value = json.RawMessage("null")
 		}
-		values = append(values, value)
+		compact, err := json.Marshal(value)
+		if err != nil {
+			return nil, ErrWorkflowForEachOutputLimit
+		}
+		separator := 0
+		if appended > 0 {
+			separator = 1
+		}
+		if int64(output.Len()+separator+len(compact)+1) > api.WorkflowForEachMaxOutputBytes {
+			return nil, ErrWorkflowForEachOutputLimit
+		}
+		if separator != 0 {
+			output.WriteByte(',')
+		}
+		output.Write(compact)
+		appended++
 	}
-	output, err := json.Marshal(values)
-	if err != nil || int64(len(output)) > api.WorkflowForEachMaxOutputBytes {
+	output.WriteByte(']')
+	if int64(output.Len()) > api.WorkflowForEachMaxOutputBytes {
 		return nil, ErrWorkflowForEachOutputLimit
 	}
-	return output, nil
+	return output.Bytes(), nil
 }
 
 func workflowForEachDefinition(run WorkflowRun, parent WorkflowStep, steps map[string]WorkflowStep) (*api.WorkflowStepSpec, error) {
@@ -65,57 +92,173 @@ func workflowForEachDefinition(run WorkflowRun, parent WorkflowStep, steps map[s
 	return spec, nil
 }
 
-func workflowForEachInputs(run WorkflowRun, spec api.WorkflowStepSpec, steps map[string]WorkflowStep) (json.RawMessage, []json.RawMessage, error) {
+func workflowForEachInputs(run WorkflowRun, spec api.WorkflowStepSpec, steps map[string]WorkflowStep) (json.RawMessage, []json.RawMessage, []*bool, error) {
 	outputs := make(map[string]json.RawMessage, len(spec.DependsOn))
 	for _, name := range spec.DependsOn {
 		outputs[name] = steps[name].Output
 	}
-	items, inputs, err := api.ResolveWorkflowForEachInputs(spec, run.Input, outputs)
+	items, inputs, matches, err := api.ResolveWorkflowForEachInputsWithGuards(spec, run.Input, outputs)
 	if err != nil {
-		return nil, nil, ErrWorkflowForEachEvaluation
+		return nil, nil, nil, ErrWorkflowForEachEvaluation
 	}
 	for index := range inputs {
 		if _, exists := steps[api.WorkflowForEachItemName(spec.Name, index)]; exists {
-			return nil, nil, ErrWorkflowForEachEvaluation
+			return nil, nil, nil, ErrWorkflowForEachEvaluation
 		}
 	}
-	return items, inputs, nil
+	return items, inputs, matches, nil
 }
 
-func workflowForEachNext(parent WorkflowStep, steps map[string]WorkflowStep) (WorkflowForEachOutcome, string, json.RawMessage, *string, error) {
+func workflowForEachNext(parent WorkflowStep, steps map[string]WorkflowStep, continueOnFailure bool, maxParallel int) (WorkflowForEachOutcome, string, json.RawMessage, *string, error) {
 	if parent.ForEachCount == nil {
 		return WorkflowForEachOutcome{}, "", nil, nil, ErrWorkflowForEachEvaluation
 	}
+	maxParallel = workflowForEachParallelLimit(maxParallel)
+	failed, dead := 0, 0
+	running := 0
+	firstFailure := -1
+	firstFailureStatus := ""
+	frontier := -1
+	hasPending := false
 	for index := range *parent.ForEachCount {
 		item, ok := steps[api.WorkflowForEachItemName(parent.StepName, index)]
 		if !ok || item.ForEachParent == nil || *item.ForEachParent != parent.StepName || item.ForEachIndex == nil || *item.ForEachIndex != index {
 			return WorkflowForEachOutcome{}, "", nil, nil, ErrWorkflowForEachEvaluation
 		}
 		switch item.Status {
-		case WorkflowStepStatusSucceeded:
+		case WorkflowStepStatusSucceeded, WorkflowStepStatusSkipped:
+			if item.Status == WorkflowStepStatusSkipped && (item.WhenMatched == nil || *item.WhenMatched) {
+				return WorkflowForEachOutcome{}, "", nil, nil, ErrWorkflowForEachEvaluation
+			}
 			continue
 		case WorkflowStepStatusPending:
-			if item.NextRetryAt != nil && item.NextRetryAt.After(time.Now()) {
-				return WorkflowForEachOutcome{}, "", nil, nil, nil
+			hasPending = true
+			if frontier < 0 {
+				frontier = index
 			}
-			item.ForEachParent = cloneWorkflowString(item.ForEachParent)
-			item.ForEachIndex = cloneWorkflowInt(item.ForEachIndex)
-			item.Input = cloneWorkflowJSON(item.Input)
-			return WorkflowForEachOutcome{Item: &item}, "", nil, nil, nil
 		case WorkflowStepStatusRunning:
-			return WorkflowForEachOutcome{}, "", nil, nil, nil
-		default:
-			output, err := workflowForEachOutputs(steps, parent.StepName, *parent.ForEachCount, "", nil)
-			message := fmt.Sprintf("for_each item %d failed", index)
-			status := WorkflowStepStatusFailed
+			running++
+			if frontier < 0 {
+				frontier = index
+			}
+		case WorkflowStepStatusFailed, WorkflowStepStatusDead:
 			if item.Status == WorkflowStepStatusDead {
+				dead++
+			} else {
+				failed++
+			}
+			if !continueOnFailure {
+				if firstFailure < 0 {
+					firstFailure, firstFailureStatus = index, item.Status
+				}
+				if frontier < 0 {
+					frontier = index
+				}
+			}
+		default:
+			return WorkflowForEachOutcome{}, "", nil, nil, ErrWorkflowForEachEvaluation
+		}
+	}
+
+	if frontier < 0 {
+		output, err := workflowForEachOutputs(steps, parent.StepName, *parent.ForEachCount, "", nil, continueOnFailure)
+		if failed+dead > 0 {
+			message := fmt.Sprintf("for_each completed with %d failed item(s)", failed+dead)
+			status := WorkflowStepStatusFailed
+			if dead > 0 {
 				status = WorkflowStepStatusDead
 			}
 			return WorkflowForEachOutcome{Complete: true}, status, output, &message, err
 		}
+		return WorkflowForEachOutcome{Complete: true}, WorkflowStepStatusSucceeded, output, nil, err
 	}
-	output, err := workflowForEachOutputs(steps, parent.StepName, *parent.ForEachCount, "", nil)
+
+	windowEnd := frontier + maxParallel
+	if windowEnd > *parent.ForEachCount {
+		windowEnd = *parent.ForEachCount
+	}
+	available := maxParallel - running
+	if available < 0 {
+		available = 0
+	}
+	items := make([]*WorkflowStep, 0, available)
+	for index := frontier; index < windowEnd && len(items) < available; index++ {
+		if firstFailure >= 0 && index >= firstFailure {
+			break
+		}
+		item := steps[api.WorkflowForEachItemName(parent.StepName, index)]
+		if item.Status != WorkflowStepStatusPending || (item.NextRetryAt != nil && item.NextRetryAt.After(time.Now())) {
+			continue
+		}
+		item.ForEachParent = cloneWorkflowString(item.ForEachParent)
+		item.ForEachIndex = cloneWorkflowInt(item.ForEachIndex)
+		item.Input = cloneWorkflowJSON(item.Input)
+		items = append(items, &item)
+	}
+	if len(items) > 0 {
+		return WorkflowForEachOutcome{Item: items[0], Items: items}, "", nil, nil, nil
+	}
+
+	if firstFailure >= 0 {
+		// With stop-on-failure, let any already admitted work finish and allow
+		// retries before the first failure to settle before making the parent
+		// terminal. Pending items after that failure are skipped on completion.
+		pendingBeforeFailure := false
+		for index := 0; index < firstFailure; index++ {
+			item := steps[api.WorkflowForEachItemName(parent.StepName, index)]
+			if item.Status == WorkflowStepStatusPending {
+				pendingBeforeFailure = true
+				break
+			}
+		}
+		if running > 0 || pendingBeforeFailure {
+			return WorkflowForEachOutcome{}, "", nil, nil, nil
+		}
+		output, err := workflowForEachOutputs(steps, parent.StepName, *parent.ForEachCount, "", nil)
+		message := fmt.Sprintf("for_each item %d failed", firstFailure)
+		return WorkflowForEachOutcome{Complete: true}, firstFailureStatus, output, &message, err
+	}
+
+	if running > 0 || hasPending {
+		return WorkflowForEachOutcome{}, "", nil, nil, nil
+	}
+	output, err := workflowForEachOutputs(steps, parent.StepName, *parent.ForEachCount, "", nil, continueOnFailure)
+	if dead+failed > 0 {
+		message := fmt.Sprintf("for_each completed with %d failed item(s)", dead+failed)
+		status := WorkflowStepStatusFailed
+		if dead > 0 {
+			status = WorkflowStepStatusDead
+		}
+		return WorkflowForEachOutcome{Complete: true}, status, output, &message, err
+	}
 	return WorkflowForEachOutcome{Complete: true}, WorkflowStepStatusSucceeded, output, nil, err
+}
+
+func workflowForEachContinuesOnFailure(snapshot json.RawMessage, parent string) bool {
+	spec := api.WorkflowRuntimeStep(snapshot, parent)
+	return spec != nil && spec.ForEach != nil && spec.ForEach.OnItemFailure == "continue"
+}
+
+func workflowForEachMaxParallel(snapshot json.RawMessage, parent string) int {
+	spec := api.WorkflowRuntimeStep(snapshot, parent)
+	if spec == nil || spec.ForEach == nil {
+		return 1
+	}
+	return workflowForEachParallelLimit(spec.ForEach.MaxParallel)
+}
+
+func workflowForEachParallelLimit(maxParallel int) int {
+	if maxParallel < 1 {
+		return 1
+	}
+	if maxParallel > api.WorkflowForEachMaxParallelLimit {
+		return api.WorkflowForEachMaxParallelLimit
+	}
+	return maxParallel
+}
+
+func workflowForEachGuardSkipped(step WorkflowStep) bool {
+	return step.Status == WorkflowStepStatusSkipped && step.WhenMatched != nil && !*step.WhenMatched
 }
 
 func (m *MemStore) ResolveWorkflowForEach(ctx context.Context, runID, name string) (WorkflowForEachOutcome, error) {
@@ -142,7 +285,7 @@ func (m *MemStore) ResolveWorkflowForEach(ctx context.Context, runID, name strin
 	}
 	now := time.Now().UTC()
 	if parent.ForEachCount == nil {
-		items, inputs, err := workflowForEachInputs(run, *spec, steps)
+		items, inputs, matches, err := workflowForEachInputs(run, *spec, steps)
 		if err != nil {
 			return WorkflowForEachOutcome{}, err
 		}
@@ -152,10 +295,19 @@ func (m *MemStore) ResolveWorkflowForEach(ctx context.Context, runID, name strin
 		for index, input := range inputs {
 			position, owner := index, name
 			childName := api.WorkflowForEachItemName(name, index)
-			steps[childName] = WorkflowStep{RunID: runID, StepName: childName, Status: WorkflowStepStatusPending, Input: cloneWorkflowJSON(input), ForEachParent: &owner, ForEachIndex: &position, CreatedAt: now}
+			child := WorkflowStep{RunID: runID, StepName: childName, Status: WorkflowStepStatusPending, Input: cloneWorkflowJSON(input), ForEachParent: &owner, ForEachIndex: &position, CreatedAt: now}
+			if matches != nil {
+				child.WhenMatched, child.WhenEvaluatedAt = matches[index], &now
+				if !*matches[index] {
+					reason := WorkflowSkipWhenFalse
+					child.Status, child.SkipReason, child.FinishedAt = WorkflowStepStatusSkipped, &reason, &now
+				}
+			}
+			steps[childName] = child
 		}
 	}
-	outcome, status, output, message, err := workflowForEachNext(parent, steps)
+	continueOnFailure := workflowForEachContinuesOnFailure(run.DefinitionSnapshot, name)
+	outcome, status, output, message, err := workflowForEachNext(parent, steps, continueOnFailure, spec.ForEach.MaxParallel)
 	if err != nil || !outcome.Complete {
 		return outcome, err
 	}
@@ -231,7 +383,7 @@ func (s *PgStore) ResolveWorkflowForEach(ctx context.Context, runID, name string
 	}
 	q := sqlc.New()
 	if parent.ForEachCount == nil {
-		items, inputs, err := workflowForEachInputs(run, *spec, steps)
+		items, inputs, matches, err := workflowForEachInputs(run, *spec, steps)
 		if err != nil {
 			return WorkflowForEachOutcome{}, err
 		}
@@ -245,11 +397,25 @@ func (s *PgStore) ResolveWorkflowForEach(ctx context.Context, runID, name string
 			if err := q.CreateWorkflowForEachItem(ctx, tx, sqlc.CreateWorkflowForEachItemParams{RunID: mustPgUUID(runID), StepName: childName, Input: input, Parent: name, ItemIndex: int32(index)}); err != nil {
 				return WorkflowForEachOutcome{}, fmt.Errorf("pgstore: create for_each item: %w", err)
 			}
+			child := WorkflowStep{RunID: runID, StepName: childName, Status: WorkflowStepStatusPending, Input: input}
+			if matches != nil {
+				matched := *matches[index]
+				if err := q.RecordWorkflowGuardDecision(ctx, tx, sqlc.RecordWorkflowGuardDecisionParams{RunID: mustPgUUID(runID), StepName: childName, Matched: matched}); err != nil {
+					return WorkflowForEachOutcome{}, fmt.Errorf("pgstore: record for_each guard: %w", err)
+				}
+				child.WhenMatched = matches[index]
+				if !matched {
+					reason := WorkflowSkipWhenFalse
+					child.Status, child.SkipReason = WorkflowStepStatusSkipped, &reason
+				}
+			}
 			owner, position := name, index
-			steps[childName] = WorkflowStep{RunID: runID, StepName: childName, Status: WorkflowStepStatusPending, Input: input, ForEachParent: &owner, ForEachIndex: &position}
+			child.ForEachParent, child.ForEachIndex = &owner, &position
+			steps[childName] = child
 		}
 	}
-	outcome, status, output, message, err := workflowForEachNext(parent, steps)
+	continueOnFailure := workflowForEachContinuesOnFailure(run.DefinitionSnapshot, name)
+	outcome, status, output, message, err := workflowForEachNext(parent, steps, continueOnFailure, spec.ForEach.MaxParallel)
 	if err != nil {
 		return outcome, err
 	}
@@ -274,6 +440,9 @@ func (s *PgStore) ResolveWorkflowForEach(ctx context.Context, runID, name string
 }
 
 func workflowForEachStartAllowed(snapshot json.RawMessage, steps map[string]WorkflowStep, step WorkflowStep, input json.RawMessage) bool {
+	if workflowForEachGuardSkipped(step) {
+		return false
+	}
 	spec := api.WorkflowRuntimeStep(snapshot, step.StepName)
 	if spec != nil && spec.ForEach != nil {
 		return false
@@ -288,9 +457,45 @@ func workflowForEachStartAllowed(snapshot json.RawMessage, steps map[string]Work
 	if !ok || parent.Status != WorkflowStepStatusPending || parent.ForEachCount == nil || *parent.ForEachCount <= *step.ForEachIndex {
 		return false
 	}
-	for index := range *step.ForEachIndex {
-		if previous := steps[api.WorkflowForEachItemName(parent.StepName, index)]; previous.Status != WorkflowStepStatusSucceeded {
+	maxParallel := workflowForEachMaxParallel(snapshot, parent.StepName)
+	continueOnFailure := workflowForEachContinuesOnFailure(snapshot, parent.StepName)
+	running := 0
+	frontier := -1
+	for index := range *parent.ForEachCount {
+		previous, exists := steps[api.WorkflowForEachItemName(parent.StepName, index)]
+		if !exists {
 			return false
+		}
+		if previous.Status == WorkflowStepStatusRunning {
+			running++
+		}
+		switch previous.Status {
+		case WorkflowStepStatusSucceeded:
+			continue
+		case WorkflowStepStatusSkipped:
+			if workflowForEachGuardSkipped(previous) {
+				continue
+			}
+		case WorkflowStepStatusFailed, WorkflowStepStatusDead:
+			if continueOnFailure {
+				continue
+			}
+		case WorkflowStepStatusPending, WorkflowStepStatusRunning:
+		default:
+			return false
+		}
+		frontier = index
+		break
+	}
+	if frontier < 0 || running >= maxParallel || *step.ForEachIndex >= frontier+maxParallel {
+		return false
+	}
+	if !continueOnFailure {
+		for index := 0; index < *step.ForEachIndex; index++ {
+			previous := steps[api.WorkflowForEachItemName(parent.StepName, index)]
+			if previous.Status == WorkflowStepStatusFailed || previous.Status == WorkflowStepStatusDead {
+				return false
+			}
 		}
 	}
 	return true

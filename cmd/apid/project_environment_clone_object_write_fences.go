@@ -6,8 +6,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Abandoning capture resumes only object admission. Unknown requests/native
-// grants remain tracked. This does not publish a stage or clear other cleanup.
+// Abandoning capture resumes only object admission after dispatched native
+// retirements have drained. Unknown requests/native grants remain tracked.
+// This does not publish a stage or clear other cleanup.
 func (s *server) abandonProjectEnvironmentCloneObjectWriteFences(ctx context.Context, lease state.ProjectEnvironmentCloneLease) (state.ProjectEnvironmentCloneLease, error) {
 	store, ok := s.store.(state.ProjectEnvironmentCloneObjectWriteFenceStore)
 	leases, leasesOK := s.store.(state.ProjectEnvironmentCloneWorkerLeaseStore)

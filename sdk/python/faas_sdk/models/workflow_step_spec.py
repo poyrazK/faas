@@ -42,12 +42,19 @@ class WorkflowStepSpec:
     """Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must
     use the transactional operation SDK."""
     for_each: WorkflowForEachSpec | Unset = UNSET
-    """Sequential action over a JSON array from input or a direct dependency output.
-    Snapshots all items and resolved action inputs before dispatch. At most 128
-    items, 1 MiB source/prepared inputs and 1 MiB collected output. Parent names
-    permit at most 64 UTF-8 bytes. Stops on item failure; completed items survive
-    recovery. Output is an array of item outputs in input order; an empty list
-    succeeds with []. Parent consumes zero attempts; each item has its own ledger.
+    """Bounded-concurrency action over a JSON array from input or a direct dependency
+    output. Snapshots all items and resolved action inputs before dispatch. At most
+    128 items, 1 MiB source/prepared inputs and 1 MiB collected output. Parent names
+    permit at most 64 UTF-8 bytes. Omitted or zero max_parallel means one active
+    item; values up to 16 limit active items per batch. Items are admitted in
+    input order within a bounded window, and collected output always follows input
+    order. By default no new items start after a terminal item failure; already
+    active items finish and the parent fails. `on_item_failure: continue` attempts
+    later items and still marks the parent unsuccessful if any item failed.
+    Completed items survive recovery. With the default stop policy, output retains
+    the completed prefix. With continue, output includes every input position and
+    null for guarded or unsuccessful items. An empty list succeeds with []. Parent
+    consumes zero attempts; each item has its own ledger.
     """
     join: WorkflowJoinSpec | Unset = UNSET
     """Native branch join. Waits for all dependencies to finish and permits only
@@ -62,7 +69,9 @@ class WorkflowStepSpec:
     outbound: WorkflowOutboundSpec | Unset = UNSET
     """Call an existing customer managed outbound integration bound to this app.
     Credentials and fixed-origin routing remain with outboundd. Input is a
-    templated JSON body; GET and HEAD have no body and forbid explicit input.
+    templated JSON body. Path segments and query values support the workflow
+    template syntax; dynamic path values are escaped as one segment. GET and
+    HEAD have no body and forbid explicit input.
     One provider call occurs per workflow attempt. Automatic mutating retries
     require explicit provider idempotency support. Workflow outputs contain
     status and body; sensitive headers and failed-response bodies are omitted.

@@ -456,9 +456,7 @@ func TestNativeHostHelperDaemonDeathBeforePublicationClosesGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = producer.Wait()
-	if data := waitNativeHelperFile(t, outcome); string(data) != "rejected" {
-		t.Fatalf("orphan gate outcome=%q", data)
-	}
+	waitNativeHelperFileContents(t, outcome, "rejected")
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("daemon death permitted an unrecorded host command")
 	}
@@ -513,6 +511,28 @@ func waitNativeHelperFile(t *testing.T, path string) []byte {
 		select {
 		case <-deadline.C:
 			t.Fatalf("helper file %s never appeared", path)
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+func waitNativeHelperFileContents(t *testing.T, path, want string) []byte {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	var last []byte
+	for {
+		if data, err := os.ReadFile(path); err == nil {
+			last = data
+			if string(data) == want {
+				return data
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("helper file %s contents = %q, want %q", path, last, want)
 		case <-time.After(time.Millisecond):
 		}
 	}

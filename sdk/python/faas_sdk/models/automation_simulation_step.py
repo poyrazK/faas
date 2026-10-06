@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -11,6 +11,10 @@ from ..models.automation_simulation_step_state import (
     check_automation_simulation_step_state,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.automation_simulation_attempt import AutomationSimulationAttempt
+
 
 T = TypeVar("T", bound="AutomationSimulationStep")
 
@@ -29,7 +33,10 @@ class AutomationSimulationStep:
     input_: Any | Unset = UNSET
     """Resolved action input or materialized loop source; any JSON type is preserved."""
     output: Any | Unset = UNSET
-    """Supplied successful mock or a control output; omitted when no result is known."""
+    """Supplied successful mock, timeout sentinel or control output; omitted when no result is known."""
+    attempts: list[AutomationSimulationAttempt] | Unset = UNSET
+    """Safe summary of supplied action attempt outcomes; mocked error text is exposed only through eligible failure
+    context."""
     run: str | Unset = UNSET
     path: str | Unset = UNSET
     method: str | Unset = UNSET
@@ -57,6 +64,13 @@ class AutomationSimulationStep:
         input_ = self.input_
 
         output = self.output
+
+        attempts: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.attempts, Unset):
+            attempts = []
+            for attempts_item_data in self.attempts:
+                attempts_item = attempts_item_data.to_dict()
+                attempts.append(attempts_item)
 
         run = self.run
 
@@ -93,6 +107,8 @@ class AutomationSimulationStep:
             field_dict["input"] = input_
         if output is not UNSET:
             field_dict["output"] = output
+        if attempts is not UNSET:
+            field_dict["attempts"] = attempts
         if run is not UNSET:
             field_dict["run"] = run
         if path is not UNSET:
@@ -114,6 +130,8 @@ class AutomationSimulationStep:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.automation_simulation_attempt import AutomationSimulationAttempt
+
         d = dict(src_dict)
         step_name = d.pop("step_name")
 
@@ -130,6 +148,15 @@ class AutomationSimulationStep:
         input_ = d.pop("input", UNSET)
 
         output = d.pop("output", UNSET)
+
+        _attempts = d.pop("attempts", UNSET)
+        attempts: list[AutomationSimulationAttempt] | Unset = UNSET
+        if _attempts is not UNSET:
+            attempts = []
+            for attempts_item_data in _attempts:
+                attempts_item = AutomationSimulationAttempt.from_dict(attempts_item_data)
+
+                attempts.append(attempts_item)
 
         run = d.pop("run", UNSET)
 
@@ -156,6 +183,7 @@ class AutomationSimulationStep:
             when_matched=when_matched,
             input_=input_,
             output=output,
+            attempts=attempts,
             run=run,
             path=path,
             method=method,

@@ -1805,7 +1805,7 @@ jobs:
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

@@ -24340,7 +24340,8 @@ const deploymentSelectColumnsWithRootfs = `
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
-	coalesce(environment_workload_runtime::text,'')`
+	coalesce(environment_workload_runtime::text,''),
+	secret_reload_signal`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -24399,7 +24400,8 @@ const deploymentSelectColumnsQualified = `
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
-	coalesce(d.environment_workload_runtime::text,'')`
+	coalesce(d.environment_workload_runtime::text,''),
+	d.secret_reload_signal`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -24421,6 +24423,7 @@ var _ = deploymentSelectColumnsQualified
 // the SELECT projection so the destination count matches.
 func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *string, rootfsBytes *int64) error {
 	var kind, statusStr string
+	var secretReloadSignal *string
 	var scanStatus *string
 	var scannedAt *time.Time
 	var parkedAt *time.Time
@@ -24518,8 +24521,17 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
 		&d.EnvironmentWorkloadRuntime,
+		&secretReloadSignal,
 	); err != nil {
 		return mapErr(err)
+	}
+	// production-us rc.242: this column was never read, so every PgStore
+	// deployment had SecretReloadSignalKnown=false while the runtime-value
+	// SQL projection reports secret_reload_signal IS NOT NULL. schedd's
+	// artifact hash then differed for every deployment and every wake and
+	// prime failed with "deployment runtime value owner or grants changed".
+	if secretReloadSignal != nil {
+		d.SecretReloadSignal, d.SecretReloadSignalKnown = *secretReloadSignal, true
 	}
 	if rootfsPath != nil {
 		d.RootfsPath = *rootfsPath

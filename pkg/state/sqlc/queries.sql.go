@@ -1458,7 +1458,7 @@ SELECT EXISTS(
  AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
  AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
- AND COALESCE(r.platform_tenant_id::text, '')=$7::text
+ AND COALESCE(r.platform_tenant_id::text, '')=COALESCE($7::text, '')
  AND (r.platform_tenant_id IS NULL OR EXISTS (
   SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
   AND (
@@ -1471,6 +1471,7 @@ SELECT EXISTS(
  AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,integration_id}'=i.id::text
  AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,method}'=$9::text
  AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,path}'=$10::text
+ AND coalesce(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound'->'query','{}'::jsonb)=$11::jsonb
 )
 `
 
@@ -1484,7 +1485,8 @@ type AuthorizeWorkflowOutboundParams struct {
 	TenantID      string
 	IntegrationID pgtype.UUID
 	Method        string
-	Path          string
+	PathTemplate  string
+	QueryTemplate []byte
 }
 
 func (q *Queries) AuthorizeWorkflowOutbound(ctx context.Context, db DBTX, arg AuthorizeWorkflowOutboundParams) (bool, error) {
@@ -1498,7 +1500,8 @@ func (q *Queries) AuthorizeWorkflowOutbound(ctx context.Context, db DBTX, arg Au
 		arg.TenantID,
 		arg.IntegrationID,
 		arg.Method,
-		arg.Path,
+		arg.PathTemplate,
+		arg.QueryTemplate,
 	)
 	var exists bool
 	err := row.Scan(&exists)
@@ -4640,6 +4643,193 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const cloneObjectGrantRevocationDispatch = `-- name: CloneObjectGrantRevocationDispatch :one
+UPDATE project_environment_clone_object_grant_revocations
+SET state=CASE WHEN state='reserved' THEN 'dispatched' ELSE state END,
+request_started_at=COALESCE(request_started_at,clock_timestamp())
+WHERE operation_id=$1 AND source_bucket_id=$2
+AND request_id=$3 AND plan_sha256=$4
+RETURNING operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at
+`
+
+type CloneObjectGrantRevocationDispatchParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	RequestID      pgtype.UUID
+	PlanSha256     string
+}
+
+func (q *Queries) CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationDispatch,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.RequestID,
+		arg.PlanSha256,
+	)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectGrantRevocationInsert = `-- name: CloneObjectGrantRevocationInsert :one
+INSERT INTO project_environment_clone_object_grant_revocations
+(operation_id, source_bucket_id, request_id, plan, plan_sha256)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at
+`
+
+type CloneObjectGrantRevocationInsertParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	RequestID      pgtype.UUID
+	Plan           []byte
+	PlanSha256     string
+}
+
+func (q *Queries) CloneObjectGrantRevocationInsert(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationInsertParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationInsert,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.RequestID,
+		arg.Plan,
+		arg.PlanSha256,
+	)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectGrantRevocationObserve = `-- name: CloneObjectGrantRevocationObserve :one
+UPDATE project_environment_clone_object_grant_revocations
+SET revocation_id=$1, observed_at=clock_timestamp(),
+state=CASE WHEN $2::boolean THEN 'drained' ELSE state END,
+drained_at=CASE WHEN $2::boolean THEN COALESCE(drained_at,clock_timestamp()) ELSE drained_at END
+WHERE operation_id=$3 AND source_bucket_id=$4
+AND request_id=$5 AND plan_sha256=$6 AND state<>'reserved'
+AND (revocation_id='' OR revocation_id=$1)
+AND (state<>'drained' OR $2::boolean)
+RETURNING operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at
+`
+
+type CloneObjectGrantRevocationObserveParams struct {
+	RevocationID   string
+	Drained        bool
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	RequestID      pgtype.UUID
+	PlanSha256     string
+}
+
+func (q *Queries) CloneObjectGrantRevocationObserve(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationObserveParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationObserve,
+		arg.RevocationID,
+		arg.Drained,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.RequestID,
+		arg.PlanSha256,
+	)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectGrantRevocationRead = `-- name: CloneObjectGrantRevocationRead :one
+SELECT operation_id, source_bucket_id, request_id, plan, plan_sha256, state, revocation_id, retained_at, request_started_at, observed_at, drained_at FROM project_environment_clone_object_grant_revocations
+WHERE operation_id=$1 AND source_bucket_id=$2
+`
+
+type CloneObjectGrantRevocationReadParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) CloneObjectGrantRevocationRead(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationReadParams) (ProjectEnvironmentCloneObjectGrantRevocation, error) {
+	row := db.QueryRow(ctx, cloneObjectGrantRevocationRead, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneObjectGrantRevocation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.RequestID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.RevocationID,
+		&i.RetainedAt,
+		&i.RequestStartedAt,
+		&i.ObservedAt,
+		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const cloneObjectNativeGrantsFinish = `-- name: CloneObjectNativeGrantsFinish :execrows
+DELETE FROM object_bucket_mutations
+WHERE bucket_id=$1 AND id=ANY($2::uuid[]) AND kind='native_grant'
+AND backend_id=$3 AND backend_fingerprint=$4
+AND physical_name=$5
+`
+
+type CloneObjectNativeGrantsFinishParams struct {
+	BucketID           pgtype.UUID
+	GrantIds           []pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+// Only an independently authenticated provider retirement observation may
+// consume this private statement. Request completion cannot call it.
+func (q *Queries) CloneObjectNativeGrantsFinish(ctx context.Context, db DBTX, arg CloneObjectNativeGrantsFinishParams) (int64, error) {
+	result, err := db.Exec(ctx, cloneObjectNativeGrantsFinish,
+		arg.BucketID,
+		arg.GrantIds,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cloneObjectWriteFenceBuckets = `-- name: CloneObjectWriteFenceBuckets :many
 SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id FROM object_buckets b JOIN object_bucket_write_fences f ON f.bucket_id=b.id
 WHERE f.clone_operation_id=$1 ORDER BY b.id
@@ -4695,6 +4885,8 @@ AND f.physical_name=$4
 AND op.id=$5 AND op.status='compensating'
 AND op.revision=$6 AND op.lease_token=$7::uuid
 AND op.lease_until > clock_timestamp()
+AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations r
+ WHERE r.operation_id=op.id AND r.source_bucket_id=f.bucket_id AND r.request_started_at IS NOT NULL AND r.state<>'drained')
 `
 
 type CloneObjectWriteFenceDeleteParams struct {
@@ -6075,6 +6267,41 @@ SELECT count(*) FROM app_udp_listeners WHERE app_id = $1::text::uuid
 
 func (q *Queries) CountUDPListenersForApp(ctx context.Context, db DBTX, appID string) (int64, error) {
 	row := db.QueryRow(ctx, countUDPListenersForApp, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countWorkflowAutomationRevisions = `-- name: CountWorkflowAutomationRevisions :one
+SELECT count(*) FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2
+`
+
+type CountWorkflowAutomationRevisionsParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) CountWorkflowAutomationRevisions(ctx context.Context, db DBTX, arg CountWorkflowAutomationRevisionsParams) (int64, error) {
+	row := db.QueryRow(ctx, countWorkflowAutomationRevisions, arg.AppID, arg.Name)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countWorkflowRunningActionsForAdmission = `-- name: CountWorkflowRunningActionsForAdmission :one
+SELECT count(*) FROM workflow_steps s
+JOIN workflow_runs r ON r.id=s.run_id
+WHERE r.app_id=$1 AND r.workflow_name=$2
+  AND r.status IN ('pending','running','awaiting_event') AND s.status='running'
+`
+
+type CountWorkflowRunningActionsForAdmissionParams struct {
+	AppID        pgtype.UUID
+	WorkflowName string
+}
+
+func (q *Queries) CountWorkflowRunningActionsForAdmission(ctx context.Context, db DBTX, arg CountWorkflowRunningActionsForAdmissionParams) (int64, error) {
+	row := db.QueryRow(ctx, countWorkflowRunningActionsForAdmission, arg.AppID, arg.WorkflowName)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -16610,6 +16837,96 @@ func (q *Queries) GetWebhookAutomationReceipt(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const getWorkflowAutomationHealthSummary = `-- name: GetWorkflowAutomationHealthSummary :one
+SELECT count(*)::bigint AS run_count,
+       count(*) FILTER (WHERE status='pending')::bigint AS pending_runs,
+       count(*) FILTER (WHERE status='running')::bigint AS running_runs,
+       count(*) FILTER (WHERE status='awaiting_event')::bigint AS awaiting_event_runs,
+       count(*) FILTER (WHERE status='succeeded')::bigint AS succeeded_runs,
+       count(*) FILTER (WHERE status='failed')::bigint AS failed_runs,
+       count(*) FILTER (WHERE status='dead')::bigint AS dead_runs,
+       count(*) FILTER (WHERE started_at IS NOT NULL AND finished_at >= started_at AND status IN ('succeeded','failed','dead'))::bigint AS duration_samples,
+       COALESCE(round((percentile_cont(0.50) WITHIN GROUP (
+           ORDER BY (EXTRACT(EPOCH FROM (finished_at-started_at))*1000)::double precision
+       ) FILTER (WHERE started_at IS NOT NULL AND finished_at >= started_at AND status IN ('succeeded','failed','dead')))::numeric)::bigint, 0)::bigint AS p50_duration_ms,
+       COALESCE(round((percentile_cont(0.95) WITHIN GROUP (
+           ORDER BY (EXTRACT(EPOCH FROM (finished_at-started_at))*1000)::double precision
+       ) FILTER (WHERE started_at IS NOT NULL AND finished_at >= started_at AND status IN ('succeeded','failed','dead')))::numeric)::bigint, 0)::bigint AS p95_duration_ms
+FROM workflow_runs
+WHERE app_id=$1::uuid AND workflow_name=$2::text
+  AND created_at >= $3::timestamptz
+  AND created_at <= $4::timestamptz
+`
+
+type GetWorkflowAutomationHealthSummaryParams struct {
+	AppID         pgtype.UUID
+	WorkflowName  string
+	CreatedAfter  pgtype.Timestamptz
+	CreatedBefore pgtype.Timestamptz
+}
+
+type GetWorkflowAutomationHealthSummaryRow struct {
+	RunCount          int64
+	PendingRuns       int64
+	RunningRuns       int64
+	AwaitingEventRuns int64
+	SucceededRuns     int64
+	FailedRuns        int64
+	DeadRuns          int64
+	DurationSamples   int64
+	P50DurationMs     int64
+	P95DurationMs     int64
+}
+
+func (q *Queries) GetWorkflowAutomationHealthSummary(ctx context.Context, db DBTX, arg GetWorkflowAutomationHealthSummaryParams) (GetWorkflowAutomationHealthSummaryRow, error) {
+	row := db.QueryRow(ctx, getWorkflowAutomationHealthSummary,
+		arg.AppID,
+		arg.WorkflowName,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+	)
+	var i GetWorkflowAutomationHealthSummaryRow
+	err := row.Scan(
+		&i.RunCount,
+		&i.PendingRuns,
+		&i.RunningRuns,
+		&i.AwaitingEventRuns,
+		&i.SucceededRuns,
+		&i.FailedRuns,
+		&i.DeadRuns,
+		&i.DurationSamples,
+		&i.P50DurationMs,
+		&i.P95DurationMs,
+	)
+	return i, err
+}
+
+const getWorkflowAutomationRevision = `-- name: GetWorkflowAutomationRevision :one
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2 AND version=$3
+`
+
+type GetWorkflowAutomationRevisionParams struct {
+	AppID   pgtype.UUID
+	Name    string
+	Version int64
+}
+
+func (q *Queries) GetWorkflowAutomationRevision(ctx context.Context, db DBTX, arg GetWorkflowAutomationRevisionParams) (WorkflowAutomationRevision, error) {
+	row := db.QueryRow(ctx, getWorkflowAutomationRevision, arg.AppID, arg.Name, arg.Version)
+	var i WorkflowAutomationRevision
+	err := row.Scan(
+		&i.AppID,
+		&i.Name,
+		&i.Version,
+		&i.Definition,
+		&i.RecordedAt,
+		&i.LegacySnapshot,
+		&i.PublishedByAccountID,
+		&i.PublishedByApiKeyID,
+	)
+	return i, err
+}
+
 const getWorkflowScheduleCursor = `-- name: GetWorkflowScheduleCursor :one
 SELECT app_id, workflow_name, deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id, updated_at FROM workflow_schedule_cursors WHERE app_id = $1 AND workflow_name = $2
 `
@@ -21504,6 +21821,35 @@ func (q *Queries) InsertWebhookAutomationReceipt(ctx context.Context, db DBTX, a
 		arg.OutboxID,
 		arg.Status,
 		arg.IgnoredReason,
+	)
+	return err
+}
+
+const insertWorkflowAutomationRevision = `-- name: InsertWorkflowAutomationRevision :exec
+INSERT INTO workflow_automation_revisions(
+ app_id,name,version,definition,recorded_at,legacy_snapshot,published_by_account_id,published_by_api_key_id
+) VALUES($1,$2,$3,$4,$5,false,$6,$7)
+`
+
+type InsertWorkflowAutomationRevisionParams struct {
+	AppID                pgtype.UUID
+	Name                 string
+	Version              int64
+	Definition           []byte
+	RecordedAt           pgtype.Timestamptz
+	PublishedByAccountID pgtype.UUID
+	PublishedByApiKeyID  pgtype.UUID
+}
+
+func (q *Queries) InsertWorkflowAutomationRevision(ctx context.Context, db DBTX, arg InsertWorkflowAutomationRevisionParams) error {
+	_, err := db.Exec(ctx, insertWorkflowAutomationRevision,
+		arg.AppID,
+		arg.Name,
+		arg.Version,
+		arg.Definition,
+		arg.RecordedAt,
+		arg.PublishedByAccountID,
+		arg.PublishedByApiKeyID,
 	)
 	return err
 }
@@ -30910,6 +31256,181 @@ func (q *Queries) ListWarmPoolReconciliationAppIDs(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const listWorkflowAutomationHealthFailedSteps = `-- name: ListWorkflowAutomationHealthFailedSteps :many
+SELECT COALESCE(s.foreach_parent, s.step_name) AS step_name,
+       count(DISTINCT r.id)::bigint AS failed_run_count,
+       max(COALESCE(r.finished_at, r.created_at))::timestamptz AS last_failed_at
+FROM workflow_runs r
+JOIN workflow_steps s ON s.run_id=r.id
+WHERE r.app_id=$1::uuid AND r.workflow_name=$2::text
+  AND r.created_at >= $3::timestamptz
+  AND r.created_at <= $4::timestamptz
+  AND r.status IN ('failed','dead') AND s.status IN ('failed','dead')
+GROUP BY COALESCE(s.foreach_parent, s.step_name)
+ORDER BY failed_run_count DESC, step_name
+LIMIT $5::int
+`
+
+type ListWorkflowAutomationHealthFailedStepsParams struct {
+	AppID         pgtype.UUID
+	WorkflowName  string
+	CreatedAfter  pgtype.Timestamptz
+	CreatedBefore pgtype.Timestamptz
+	MaxSteps      int32
+}
+
+type ListWorkflowAutomationHealthFailedStepsRow struct {
+	StepName       string
+	FailedRunCount int64
+	LastFailedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListWorkflowAutomationHealthFailedSteps(ctx context.Context, db DBTX, arg ListWorkflowAutomationHealthFailedStepsParams) ([]ListWorkflowAutomationHealthFailedStepsRow, error) {
+	rows, err := db.Query(ctx, listWorkflowAutomationHealthFailedSteps,
+		arg.AppID,
+		arg.WorkflowName,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+		arg.MaxSteps,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkflowAutomationHealthFailedStepsRow{}
+	for rows.Next() {
+		var i ListWorkflowAutomationHealthFailedStepsRow
+		if err := rows.Scan(&i.StepName, &i.FailedRunCount, &i.LastFailedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkflowAutomationHealthRecentRuns = `-- name: ListWorkflowAutomationHealthRecentRuns :many
+WITH recent AS (
+    (SELECT 'latest'::text AS kind, id, status, created_at, finished_at
+     FROM workflow_runs
+     WHERE app_id=$1::uuid AND workflow_name=$2::text
+       AND created_at >= $3::timestamptz
+       AND created_at <= $4::timestamptz
+     ORDER BY created_at DESC, id DESC LIMIT 1)
+    UNION ALL
+    (SELECT 'success'::text AS kind, id, status, created_at, finished_at
+     FROM workflow_runs
+     WHERE app_id=$1::uuid AND workflow_name=$2::text
+       AND created_at >= $3::timestamptz
+       AND created_at <= $4::timestamptz AND status='succeeded'
+     ORDER BY created_at DESC, id DESC LIMIT 1)
+    UNION ALL
+    (SELECT 'failure'::text AS kind, id, status, created_at, finished_at
+     FROM workflow_runs
+     WHERE app_id=$1::uuid AND workflow_name=$2::text
+       AND created_at >= $3::timestamptz
+       AND created_at <= $4::timestamptz AND status IN ('failed','dead')
+     ORDER BY created_at DESC, id DESC LIMIT 1)
+)
+SELECT kind, id, status, created_at, finished_at FROM recent
+`
+
+type ListWorkflowAutomationHealthRecentRunsParams struct {
+	AppID         pgtype.UUID
+	WorkflowName  string
+	CreatedAfter  pgtype.Timestamptz
+	CreatedBefore pgtype.Timestamptz
+}
+
+type ListWorkflowAutomationHealthRecentRunsRow struct {
+	Kind       string
+	ID         pgtype.UUID
+	Status     string
+	CreatedAt  pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListWorkflowAutomationHealthRecentRuns(ctx context.Context, db DBTX, arg ListWorkflowAutomationHealthRecentRunsParams) ([]ListWorkflowAutomationHealthRecentRunsRow, error) {
+	rows, err := db.Query(ctx, listWorkflowAutomationHealthRecentRuns,
+		arg.AppID,
+		arg.WorkflowName,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkflowAutomationHealthRecentRunsRow{}
+	for rows.Next() {
+		var i ListWorkflowAutomationHealthRecentRunsRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkflowAutomationRevisions = `-- name: ListWorkflowAutomationRevisions :many
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id FROM workflow_automation_revisions
+WHERE app_id=$1 AND name=$2
+ORDER BY version DESC
+LIMIT $3 OFFSET $4
+`
+
+type ListWorkflowAutomationRevisionsParams struct {
+	AppID  pgtype.UUID
+	Name   string
+	Limit  int32
+	Offset int32
+}
+
+func (q *Queries) ListWorkflowAutomationRevisions(ctx context.Context, db DBTX, arg ListWorkflowAutomationRevisionsParams) ([]WorkflowAutomationRevision, error) {
+	rows, err := db.Query(ctx, listWorkflowAutomationRevisions,
+		arg.AppID,
+		arg.Name,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowAutomationRevision{}
+	for rows.Next() {
+		var i WorkflowAutomationRevision
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.Version,
+			&i.Definition,
+			&i.RecordedAt,
+			&i.LegacySnapshot,
+			&i.PublishedByAccountID,
+			&i.PublishedByApiKeyID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkflowOperationEffects = `-- name: ListWorkflowOperationEffects :many
 SELECT e.id::text AS id,e.name,e.generation,e.webhook_id::text AS webhook_id,
  e.id::text AS delivery_id,e.event_type AS type,
@@ -35155,6 +35676,15 @@ func (q *Queries) LockWebhookAutomationEndpoint(ctx context.Context, db DBTX, ar
 	return i, err
 }
 
+const lockWorkflowActionAdmission = `-- name: LockWorkflowActionAdmission :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 1))
+`
+
+func (q *Queries) LockWorkflowActionAdmission(ctx context.Context, db DBTX, workflowKey string) error {
+	_, err := db.Exec(ctx, lockWorkflowActionAdmission, workflowKey)
+	return err
+}
+
 const lockWorkflowGuardRun = `-- name: LockWorkflowGuardRun :one
 SELECT status, input, definition_snapshot FROM workflow_runs
 WHERE id=$1 FOR UPDATE
@@ -35309,7 +35839,7 @@ func (q *Queries) LockWorkflowRunAdmission(ctx context.Context, db DBTX, appKey 
 }
 
 const lockWorkflowRunForManualRetry = `-- name: LockWorkflowRunForManualRetry :one
-SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at, platform_tenant_id FROM workflow_runs
+SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, create_idempotency_key, create_request_fingerprint, lease_until, resume_count, cancelled_at, platform_tenant_id FROM workflow_runs
 WHERE id=$1::text::uuid
 FOR UPDATE
 `
@@ -35332,6 +35862,8 @@ func (q *Queries) LockWorkflowRunForManualRetry(ctx context.Context, db DBTX, ru
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestFingerprint,
 		&i.LeaseUntil,
 		&i.ResumeCount,
 		&i.CancelledAt,
@@ -37642,6 +38174,39 @@ func (q *Queries) ObjectBucketMutationLock(ctx context.Context, db DBTX, arg Obj
 		&i.EnvironmentCloneOperationID,
 	)
 	return i, err
+}
+
+const objectBucketNativeGrants = `-- name: ObjectBucketNativeGrants :many
+SELECT id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at FROM object_bucket_mutations
+WHERE bucket_id=$1 AND kind='native_grant' ORDER BY id
+`
+
+func (q *Queries) ObjectBucketNativeGrants(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]ObjectBucketMutation, error) {
+	rows, err := db.Query(ctx, objectBucketNativeGrants, bucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucketMutation{}
+	for rows.Next() {
+		var i ObjectBucketMutation
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketID,
+			&i.Kind,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectBucketObjectLockDue = `-- name: ObjectBucketObjectLockDue :many
@@ -56911,7 +57476,7 @@ SET status='pending',current_step=$1::text,
     lease_until=NULL,updated_at=clock_timestamp()
 WHERE id=$2::text::uuid
   AND status IN ('failed','dead')
-RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at, platform_tenant_id
+RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, create_idempotency_key, create_request_fingerprint, lease_until, resume_count, cancelled_at, platform_tenant_id
 `
 
 type RequeueWorkflowRunForRetryParams struct {
@@ -56937,6 +57502,8 @@ func (q *Queries) RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg R
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestFingerprint,
 		&i.LeaseUntil,
 		&i.ResumeCount,
 		&i.CancelledAt,
@@ -63188,21 +63755,42 @@ const workflowForEachStartAllowed = `-- name: WorkflowForEachStartAllowed :one
 SELECT NOT EXISTS(SELECT 1 FROM workflow_steps s JOIN workflow_runs r ON r.id=s.run_id
 WHERE s.run_id=$1 AND s.step_name=$2 AND (
  jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'for_each')='object'
- OR (s.foreach_parent IS NOT NULL AND NOT EXISTS(SELECT 1 FROM workflow_steps p
- WHERE p.run_id=s.run_id AND p.step_name=s.foreach_parent AND p.status='pending' AND p.foreach_count>s.foreach_index
- AND s.input=$3::jsonb AND NOT EXISTS(SELECT 1 FROM workflow_steps prev
- WHERE prev.run_id=s.run_id AND prev.foreach_parent=s.foreach_parent AND prev.foreach_index<s.foreach_index AND prev.status<>'succeeded')))
+ OR (s.status='skipped' AND s.when_matched IS FALSE)
+ OR (s.foreach_parent IS NOT NULL AND (
+   NOT EXISTS(SELECT 1 FROM workflow_steps p
+    WHERE p.run_id=s.run_id AND p.step_name=s.foreach_parent AND p.status='pending' AND p.foreach_count>s.foreach_index)
+   OR s.input<>$3::jsonb
+   OR (SELECT count(*) FROM workflow_steps active
+       WHERE active.run_id=s.run_id AND active.foreach_parent=s.foreach_parent AND active.status='running')>=$4::integer
+   OR s.foreach_index>=COALESCE((SELECT min(frontier.foreach_index)+$4::integer
+       FROM workflow_steps frontier
+       WHERE frontier.run_id=s.run_id AND frontier.foreach_parent=s.foreach_parent
+        AND frontier.status<>'succeeded'
+        AND NOT (frontier.status='skipped' AND frontier.when_matched IS FALSE)
+        AND NOT (frontier.status IN ('failed','dead')
+         AND (workflow_step_definition(r.definition_snapshot,s.foreach_parent,NULL::text,NULL::integer)#>>'{for_each,on_item_failure}') IS NOT DISTINCT FROM 'continue')),-1)
+   OR ((workflow_step_definition(r.definition_snapshot,s.foreach_parent,NULL::text,NULL::integer)#>>'{for_each,on_item_failure}') IS DISTINCT FROM 'continue'
+       AND EXISTS(SELECT 1 FROM workflow_steps prev
+        WHERE prev.run_id=s.run_id AND prev.foreach_parent=s.foreach_parent AND prev.foreach_index<s.foreach_index
+         AND prev.status IN ('failed','dead')))
+ ))
 ))
 `
 
 type WorkflowForEachStartAllowedParams struct {
-	RunID    pgtype.UUID
-	StepName string
-	Input    []byte
+	RunID         pgtype.UUID
+	StepName      string
+	Input         []byte
+	ParallelLimit int32
 }
 
 func (q *Queries) WorkflowForEachStartAllowed(ctx context.Context, db DBTX, arg WorkflowForEachStartAllowedParams) (bool, error) {
-	row := db.QueryRow(ctx, workflowForEachStartAllowed, arg.RunID, arg.StepName, arg.Input)
+	row := db.QueryRow(ctx, workflowForEachStartAllowed,
+		arg.RunID,
+		arg.StepName,
+		arg.Input,
+		arg.ParallelLimit,
+	)
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
