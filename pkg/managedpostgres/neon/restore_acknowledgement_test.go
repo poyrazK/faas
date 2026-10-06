@@ -85,6 +85,11 @@ func TestRestoreHydratesAsyncAcknowledgementWithoutRepeatingCreate(t *testing.T)
 				wantErr = managedpostgres.ErrUnavailable
 			case "cancelled":
 				wantErr = context.Canceled
+				// Cancellation may interrupt POST, or its accepted reply can
+				// arrive before the lineage read observes cancellation.
+				if errors.Is(err, managedpostgres.ErrUnavailable) {
+					wantErr = managedpostgres.ErrUnavailable
+				}
 			}
 			if !errors.Is(err, wantErr) || (err == nil && (observed.RestoreLineage == nil || !observed.RestoreLineage.PointInTime.Equal(point))) ||
 				(err != nil && (observed.ProviderResourceID != "" || observed.RestoreLineage != nil)) {

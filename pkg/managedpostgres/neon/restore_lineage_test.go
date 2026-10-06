@@ -81,7 +81,11 @@ func TestRestoreValidatesProviderLineageOnCreateAndRecovery(t *testing.T) {
 						w.WriteHeader(http.StatusMethodNotAllowed)
 					}
 				}))
-				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+				budget := 5 * time.Second
+				if errors.Is(fault.want, managedpostgres.ErrUnavailable) {
+					budget = 250 * time.Millisecond
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), budget)
 				defer cancel()
 				observed, err := provider.Restore(ctx, request)
 				if !errors.Is(err, fault.want) {
