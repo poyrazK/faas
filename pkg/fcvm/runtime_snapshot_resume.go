@@ -15,15 +15,23 @@ import (
 // receipt. The load hash continues to describe the original paused command.
 // Durable promotion, readiness and advertised capability remain gated.
 type RuntimeSnapshotResumeObservation struct {
-	Request                    runtimeadmission.Promotion
-	ArtifactConsumption        runtimeadmission.ArtifactConsumption
-	SnapshotConsumption        runtimeadmission.SnapshotConsumption
-	ResumeCommandHash          string
-	ResumeHookPayloadHash      string
-	CommandCompletedAtUnixNano int64
-	HostTimeUnixNano           int64
-	HookCompletedAtUnixNano    int64
-	CompletedAtUnixNano        int64
+	Request             runtimeadmission.Promotion
+	ArtifactConsumption runtimeadmission.ArtifactConsumption
+	SnapshotConsumption runtimeadmission.SnapshotConsumption
+	ResumeEvidence      runtimeadmission.SnapshotResumeEvidence
+}
+
+func (o RuntimeSnapshotResumeObservation) Check(p runtimeadmission.Promotion, now time.Time) error {
+	if !o.Request.Equal(p) {
+		return runtimeadmission.ErrStale
+	}
+	return o.ResumeEvidence.Check(p, o.ArtifactConsumption, o.SnapshotConsumption, now)
+}
+
+func (o RuntimeSnapshotResumeObservation) Clone() RuntimeSnapshotResumeObservation {
+	o.Request = o.Request.Clone()
+	o.ArtifactConsumption = o.ArtifactConsumption.Clone()
+	return o
 }
 
 // PromoteSnapshotVerified resumes a retained paused load at most once. It
@@ -33,6 +41,10 @@ type RuntimeSnapshotResumeObservation struct {
 func (v *JailerVMM) PromoteSnapshotVerified(ctx context.Context, lease Lease, p runtimeadmission.Promotion) (result RuntimeSnapshotResumeObservation, err error) {
 	p = p.Clone()
 	if err := p.CheckSnapshotResumeRequest(time.Now()); err != nil {
+		return result, err
+	}
+	parentHash, err := runtimeadmission.HashSnapshotResumeParent(p.Parent)
+	if err != nil {
 		return result, err
 	}
 	if lease.IsBuilder || lease.Instance != p.Binding.InstanceID || int32(lease.UID) != p.Parent.LeaseUID || lease.HostIP.String() != p.Parent.HostIP || lease.Netns != p.Parent.Netns {
@@ -82,12 +94,18 @@ func (v *JailerVMM) PromoteSnapshotVerified(ctx context.Context, lease Lease, p 
 	if err := errors.Join(p.CheckSnapshotResumeRequest(completed), ctx.Err()); err != nil {
 		return result, err
 	}
-	if command.Version != 1 || hook.Version != 1 || !runtimeadmission.ValidHash(command.CommandHash) || !runtimeadmission.ValidHash(hook.PayloadHash) || command.CompletedAtUnixNano < p.Parent.CompletedAtUnixNano || hook.HostTimeUnixNano < command.CompletedAtUnixNano || hook.CompletedAtUnixNano < hook.HostTimeUnixNano || completed.UnixNano() < hook.CompletedAtUnixNano {
+	if command.Version != 1 || hook.Version != 1 {
 		return result, runtimeadmission.ErrStale
 	}
-	return RuntimeSnapshotResumeObservation{Request: p.Clone(), ArtifactConsumption: drives, SnapshotConsumption: snapshot,
-		ResumeCommandHash: command.CommandHash, ResumeHookPayloadHash: hook.PayloadHash,
-		CommandCompletedAtUnixNano: command.CompletedAtUnixNano, HostTimeUnixNano: hook.HostTimeUnixNano, HookCompletedAtUnixNano: hook.CompletedAtUnixNano, CompletedAtUnixNano: completed.UnixNano()}, nil
+	result = RuntimeSnapshotResumeObservation{Request: p.Clone(), ArtifactConsumption: drives, SnapshotConsumption: snapshot,
+		ResumeEvidence: runtimeadmission.SnapshotResumeEvidence{Version: runtimeadmission.SnapshotResumeEvidenceVersion, Binding: p.Binding, ParentReceiptHash: parentHash,
+			ResumeCommandHash: command.CommandHash, ResumeHookPayloadHash: hook.PayloadHash,
+			CommandCompletedAtUnixNano: command.CompletedAtUnixNano, HostTimeUnixNano: hook.HostTimeUnixNano,
+			HookCompletedAtUnixNano: hook.CompletedAtUnixNano, CompletedAtUnixNano: completed.UnixNano()}}
+	if err := result.Check(p, completed); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func checkSnapshotResumeOwner(handoff *runtimeDriveHandoff, p runtimeadmission.Promotion) error {

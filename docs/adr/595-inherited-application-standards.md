@@ -2782,3 +2782,32 @@ protobuf, durable promotion authority and both stores still need the full
 measured promotion contract. Protocol 2 paused publication remains refused,
 production restore advertisement stays zero, public activation remains disabled
 and every outstanding release item remains open.
+
+## Checked resume evidence contract (2026-10-06)
+
+The owned native observation now returns a versioned resume evidence object.
+Its complete fresh binding and domain-separated hash of the exact historical
+paused receipt retain the initial load command, process start, drives and private
+mapping. A shared validator compares both observed consumption records with that
+same parent, requires the exact acknowledged resume command, and checks the hook
+hash and ordered command, host, hook and completion clocks against the fresh
+grant. Changing the grant's nonce, policy, payload or expiry cannot reuse an
+observation. Replacing the original paused command with a serving-load hash is
+refused. Returned observations own their request and drive copies.
+
+The standalone protobuf message preserves this complete contract and refuses
+unknown fields, unsupported versions and missing bindings. It is deliberately
+separate from boot receipts and promotion responses: no historical receipt wire
+encoding or SQL migration changes. Native production validates the complete
+object before returning it; an attempted resume that fails validation follows
+the same joined retirement path as a failed command or hook.
+
+Portable tests check substituted history, grant, process, mapping, command and
+clock facts, owned copies and protobuf/JSON round trips. The Linux process
+fixture checks the same contract against its actual descriptors and mappings
+with simulated Firecracker and guest peers. These observations do not certify
+guest readiness, physical entropy reseeding or KVM acceptance. Durable receipt
+publication through Manager, RPC and both stores remains implementation work.
+Production restore advertisement and public activation stay disabled, and all
+release checklist items remain open. The user confirmed that no alternative
+dedicated native acceptance host is currently available.

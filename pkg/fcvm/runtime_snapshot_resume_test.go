@@ -146,3 +146,48 @@ func TestSnapshotResumeFlightsExcludeCaptureAndSourcePreparation(t *testing.T) {
 		t.Fatal("source/resume shared an owned capture flight", err)
 	}
 }
+
+func TestSnapshotResumeObservationOwnsAndChecksCompleteEvidence(t *testing.T) {
+	f, _ := newSnapshotResumeFixture(t)
+	drives, snapshot := simulatedPausedSnapshotConsumption(f)
+	p := snapshotResumePromotion(t, f, drives, snapshot)
+	hash, err := runtimeadmission.HashSnapshotResumeParent(p.Parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Now().UnixNano()
+	o := RuntimeSnapshotResumeObservation{Request: p.Clone(), ArtifactConsumption: drives.Clone(), SnapshotConsumption: snapshot,
+		ResumeEvidence: runtimeadmission.SnapshotResumeEvidence{Version: runtimeadmission.SnapshotResumeEvidenceVersion,
+			Binding: p.Binding, ParentReceiptHash: hash, ResumeCommandHash: runtimeadmission.SnapshotResumeCommandHash(), ResumeHookPayloadHash: strings.Repeat("a", 64),
+			CommandCompletedAtUnixNano: clock, HostTimeUnixNano: clock, HookCompletedAtUnixNano: clock, CompletedAtUnixNano: clock}}
+	// This checks the contract only; the simulated process must still be refused
+	// by PromoteSnapshotVerified's actual owner observation before any command.
+	if err := o.Check(p, time.Now()); err != nil {
+		t.Fatal("complete simulated contract refused", err)
+	}
+	for _, fault := range []string{"request", "parent hash", "grant", "command", "drive", "mapping"} {
+		t.Run(fault, func(t *testing.T) {
+			changed := o.Clone()
+			switch fault {
+			case "request":
+				changed.Request.Parent.ArtifactConsumption.Drives[0].DriveID = "caller-edit"
+			case "parent hash":
+				changed.ResumeEvidence.ParentReceiptHash = strings.Repeat("0", 64)
+			case "grant":
+				changed.ResumeEvidence.Binding.Token = uuid.NewString()
+			case "command":
+				changed.ResumeEvidence.ResumeCommandHash = strings.Repeat("0", 64)
+			case "drive":
+				changed.ArtifactConsumption.Drives[0].DriveID = "caller-edit"
+			case "mapping":
+				changed.SnapshotConsumption.MappedMemoryBytes--
+			}
+			if changed.Check(p, time.Now()) == nil || o.Check(p, time.Now()) != nil {
+				t.Fatal("substituted evidence accepted or caller edit changed retained facts")
+			}
+		})
+	}
+	if _, err := f.vmm.PromoteSnapshotVerified(t.Context(), f.lease, p); err == nil {
+		t.Fatal("structural evidence replaced actual native process ownership")
+	}
+}

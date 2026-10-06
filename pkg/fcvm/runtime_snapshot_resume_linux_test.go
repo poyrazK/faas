@@ -225,10 +225,10 @@ func TestSnapshotResumeCouplesActualProcessAndAcknowledgments(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || !result.Request.Equal(p) || !result.ArtifactConsumption.Equal(drives) || result.SnapshotConsumption != snapshot || result.ArtifactConsumption.ConfigHash != runtimeadmission.SnapshotLoadCommandHash(true) || result.ResumeCommandHash != runtimeResumePayloadHash("gregale.runtime-resume.command.v1\x00", []byte(`{"state":"Resumed"}`)) || result.ResumeHookPayloadHash != runtimeResumePayloadHash("gregale.runtime-resume.hook.v1\x00", hook.frame) || !plan.keepPaused || !plan.resumeAttempted || calls.Load() != 1 {
+			if err != nil || result.Check(p, time.Now()) != nil || !result.Request.Equal(p) || !result.ArtifactConsumption.Equal(drives) || result.SnapshotConsumption != snapshot || result.ArtifactConsumption.ConfigHash != runtimeadmission.SnapshotLoadCommandHash(true) || result.ResumeEvidence.ResumeCommandHash != runtimeResumePayloadHash("gregale.runtime-resume.command.v1\x00", []byte(`{"state":"Resumed"}`)) || result.ResumeEvidence.ResumeHookPayloadHash != runtimeResumePayloadHash("gregale.runtime-resume.hook.v1\x00", hook.frame) || !plan.keepPaused || !plan.resumeAttempted || calls.Load() != 1 {
 				t.Fatalf("native coupled facts lost original paused load: result=%+v error=%v", result, err)
 			}
-			if result.CommandCompletedAtUnixNano > result.HostTimeUnixNano || result.HostTimeUnixNano > result.HookCompletedAtUnixNano || result.HookCompletedAtUnixNano > result.CompletedAtUnixNano || result.HookCompletedAtUnixNano < hook.acked {
+			if result.ResumeEvidence.CommandCompletedAtUnixNano > result.ResumeEvidence.HostTimeUnixNano || result.ResumeEvidence.HostTimeUnixNano > result.ResumeEvidence.HookCompletedAtUnixNano || result.ResumeEvidence.HookCompletedAtUnixNano > result.ResumeEvidence.CompletedAtUnixNano || result.ResumeEvidence.HookCompletedAtUnixNano < hook.acked {
 				t.Fatal("resume/hook observation clocks are not ordered")
 			}
 			if _, err := f.vmm.PromoteSnapshotVerified(t.Context(), f.lease, p); err == nil || calls.Load() != 1 {

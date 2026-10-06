@@ -2625,6 +2625,20 @@ message RuntimeSnapshotConsumption {
   int64 mapped_memory_bytes = 7;
 }
 
+// Native resume facts, kept separate from RuntimeBootReceipt until durable
+// promotion publication can validate the complete paused-load lineage.
+message RuntimeSnapshotResumeEvidence {
+  uint32 version = 1;
+  RuntimeBootBinding binding = 2;
+  string parent_receipt_hash = 3;
+  string resume_command_hash = 4;
+  string resume_hook_payload_hash = 5;
+  int64 command_completed_at_unix_nano = 6;
+  int64 host_time_unix_nano = 7;
+  int64 hook_completed_at_unix_nano = 8;
+  int64 completed_at_unix_nano = 9;
+}
+
 message RuntimeArtifactConsumption {
   string config_hash = 1;
   uint32 process_pid = 2;
