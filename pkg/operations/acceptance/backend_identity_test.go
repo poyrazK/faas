@@ -184,6 +184,38 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), `ALTER TABLE deployments ADD COLUMN IF NOT EXISTS environment_workload_runtime jsonb`); err != nil {
 		t.Fatal(err)
 	}
+	// Current CreateDeployment also pins workload settings. Provision the exact
+	// later-migration table shapes so the pre-identity fixture can seed its
+	// deployment; leave the migrations unapplied for the ordered upgrade below.
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS project_environment_workload_specs (
+		id uuid PRIMARY KEY,
+		environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+		revision bigint NOT NULL CHECK (revision > 0),
+		config_hash text NOT NULL CHECK (config_hash ~ '^[a-f0-9]{64}$'),
+		settings json NOT NULL CHECK (json_typeof(settings) = 'object'),
+		created_at timestamptz NOT NULL DEFAULT now(),
+		UNIQUE (environment_id, app_id, revision),
+		UNIQUE (environment_id, app_id, id)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS project_environment_workload_heads (
+		environment_id uuid NOT NULL,
+		app_id uuid NOT NULL,
+		spec_id uuid NOT NULL,
+		PRIMARY KEY (environment_id, app_id),
+		FOREIGN KEY (environment_id, app_id, spec_id)
+			REFERENCES project_environment_workload_specs(environment_id, app_id, id) ON DELETE CASCADE
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS project_environment_workload_deployment_specs (
+		deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+		spec_id uuid NOT NULL REFERENCES project_environment_workload_specs(id) ON DELETE CASCADE
+	)`); err != nil {
+		t.Fatal(err)
+	}
 	s := state.NewPgStore(pool)
 	ctx, account, _, def, tenant, _ := operationFixture(t, s)
 	admission := state.OperationAdmission{AccountID: account.ID, DefinitionID: def.ID,
