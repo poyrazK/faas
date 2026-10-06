@@ -2727,3 +2727,27 @@ restore advertisement and public activation stay disabled. Dedicated KVM
 test-metal/leakcheck, physical entropy/clock/resource isolation, native/fleet
 recovery, remaining onboarding/environment scope and the full release checklist
 remain open.
+
+## Acknowledged resume transport for measured promotion (2026-10-06)
+
+The private native resume transport now retains versioned acknowledgments of
+the actual PATCH command and the complete framed guest-hook payload that
+received ACK=0. The hook acknowledgment includes its supplied host clock and
+completion clock, and hashes the exact frame with a distinct versioned domain.
+Entropy remains inside the transport; neither the observation nor logs retain
+the payload. A lost ACK retries with fresh entropy and keeps only the successful
+attempt's hash. Errors, cancellation, NACKs and incomplete writes return no
+acknowledgment.
+
+A strict resume observation does not accept a Firecracker conflict as evidence
+of a state transition. The existing legacy resume retry still tolerates that
+conflict, without producing a strict acknowledgment. Unix-socket tests inspect
+the delivered bytes, clock, retry entropy and failure boundaries using simulated
+Firecracker and guest peers.
+
+These are transport facts, not native promotion receipts. The measured promotion
+path must still couple them to the same owned PID/start and pinned paused load,
+retain the original load-command hash, and bind fresh durable promotion authority
+through Manager, RPC, protobuf and both stores. Protocol 2 paused restore remains
+unavailable, production restore advertisement remains zero and the complete
+native acceptance and release checklist above is unchanged.

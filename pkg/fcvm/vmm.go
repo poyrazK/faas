@@ -2434,12 +2434,11 @@ func readConnectAck(conn net.Conn) (string, error) {
 // shared entropy is exactly the failure mode V6 rejects, so we refuse
 // to declare it ready.
 func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
-	return retryResumeTransport(ctx, func(callCtx context.Context) error {
-		return v.triggerResumeHookOnce(callCtx, l, hostTimeUnixNano)
-	})
+	_, err := v.triggerResumeHookObserved(ctx, l, hostTimeUnixNano)
+	return err
 }
 
-func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
+func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTimeUnixNano int64, observed *runtimeResumeHookAcknowledgment) error {
 	// Defense-in-depth: refuse to dial with a half-built VMM or empty instance.
 	// Without this guard, a refactor that passes an uninitialised JailerVMM
 	// (test seam, future caller) would dial a malformed UDS path and return a
@@ -2478,7 +2477,7 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 			// Step 1: FC CONNECT-port handshake. "CONNECT <port>\n" — ASCII,
 			// newline-terminated. Guest listens on port VsockResumePort (1024).
 			connectCmd := fmt.Sprintf("CONNECT %d\n", resumeHookGuestPort)
-			if _, err = c.Write([]byte(connectCmd)); err == nil {
+			if err = writeResumeHookFrame(c, []byte(connectCmd)); err == nil {
 				// Step 2: read "OK <hostside_port>\n". FC prefixes the host-assigned
 				// ephemeral port with "OK ". We don't care about the value (it's
 				// for connection-multiplexing bookkeeping on the FC side), only
@@ -2553,7 +2552,7 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgResume)
 	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
 	copy(msg[8:], body)
-	if _, err := conn.Write(msg); err != nil {
+	if err := writeResumeHookFrame(conn, msg); err != nil {
 		return fmt.Errorf("vmm: write resume request: %w", err)
 	}
 
@@ -2569,6 +2568,14 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 			return fmt.Errorf("vmm: %w (ack=%d)", ErrAfterRestoreHook, ack[0])
 		}
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if observed != nil {
+		*observed = runtimeResumeHookAcknowledgment{Version: 1,
+			PayloadHash:      runtimeResumePayloadHash("gregale.runtime-resume.hook.v1\x00", msg),
+			HostTimeUnixNano: hostTimeUnixNano, CompletedAtUnixNano: time.Now().UnixNano()}
 	}
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.
@@ -3334,7 +3341,7 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 	// applies on a long-paused VM that just got hit by /snapshot/
 	// create — the socket is fine, but defensive retries are
 	// cheap).
-	err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Resumed"})
+	_, err := v.resumeVMObserved(ctx, l)
 	if err == nil {
 		return nil
 	}
