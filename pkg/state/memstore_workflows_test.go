@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -494,12 +495,13 @@ func TestMemStore_WorkflowRunListFilters(t *testing.T) {
 	ctx := context.Background()
 	ms := state.NewMemStore()
 
-	first := &state.WorkflowRun{AppID: "app-run-filters", PlatformTenantID: "tenant-a", WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
+	tenantA, tenantB := uuid.NewString(), uuid.NewString()
+	first := &state.WorkflowRun{AppID: "app-run-filters", PlatformTenantID: tenantA, WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
 	if err := ms.CreateWorkflowRun(ctx, first); err != nil {
 		t.Fatalf("CreateWorkflowRun(first): %v", err)
 	}
 	time.Sleep(time.Millisecond)
-	other := &state.WorkflowRun{AppID: first.AppID, PlatformTenantID: "tenant-b", WorkflowName: "refund", DefinitionSnapshot: json.RawMessage(`{"name":"refund"}`)}
+	other := &state.WorkflowRun{AppID: first.AppID, PlatformTenantID: tenantB, WorkflowName: "refund", DefinitionSnapshot: json.RawMessage(`{"name":"refund"}`)}
 	if err := ms.CreateWorkflowRun(ctx, other); err != nil {
 		t.Fatalf("CreateWorkflowRun(other): %v", err)
 	}
@@ -521,9 +523,9 @@ func TestMemStore_WorkflowRunListFilters(t *testing.T) {
 		t.Fatalf("filtered list = %#v, total=%d, err=%v; want one paged charge run from two matches", runs, total, err)
 	}
 	tenantRuns, tenantTotal, err := ms.ListWorkflowRuns(ctx, first.AppID, state.ListWorkflowRunsOpts{
-		PlatformTenantID: "tenant-a", Limit: 1, Offset: 1,
+		PlatformTenantID: tenantA, Limit: 1, Offset: 1,
 	})
-	if err != nil || tenantTotal != 2 || len(tenantRuns) != 1 || tenantRuns[0].ID != first.ID || tenantRuns[0].PlatformTenantID != "tenant-a" {
+	if err != nil || tenantTotal != 2 || len(tenantRuns) != 1 || tenantRuns[0].ID != first.ID || tenantRuns[0].PlatformTenantID != tenantA {
 		t.Fatalf("tenant-filtered list = %#v, total=%d, err=%v; want only tenant-a's second page", tenantRuns, tenantTotal, err)
 	}
 

@@ -168,7 +168,7 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 			var snapshot api.WorkflowSpec
 			if err := json.Unmarshal(run.DefinitionSnapshot, &snapshot); err != nil || snapshot.Trigger == nil ||
 				snapshot.Trigger.Schedule != "*/2 * * * *" || string(snapshot.Trigger.Input) != `{"report":"owner-default"}` {
-				t.Fatalf("tenant run snapshot did not apply the tenant cadence while preserving app input: %+v err=%v", snapshot, err)
+				t.Fatalf("tenant run snapshot did not apply the tenant cadence while preserving app input: definition=%s run_input=%s err=%v", run.DefinitionSnapshot, run.Input, err)
 			}
 		}
 
