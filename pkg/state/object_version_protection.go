@@ -14,9 +14,16 @@ var ErrObjectVersionProtectionPending = errors.New("object version protection is
 
 type ObjectVersionProtection struct {
 	api.ObjectVersionProtection
-	AccountID, AppID, ProviderVersionID, Token string    `json:"-"`
-	LeaseUntil, RetryAt                        time.Time `json:"-"`
-	Dispatched                                 bool      `json:"-"`
+	AccountID, AppID, ProviderVersionID, Token string                      `json:"-"`
+	LeaseUntil, RetryAt                        time.Time                   `json:"-"`
+	Dispatched                                 bool                        `json:"-"`
+	EventHoldBaseline                          *api.ObjectVersionRetention `json:"-"`
+}
+
+// ObjectEventHoldProtectionStore preserves the observed policy before an
+// event-hold mutation. Older stores cannot safely dispatch these operations.
+type ObjectEventHoldProtectionStore interface {
+	PrepareObjectEventHoldProtection(context.Context, string, string, api.ObjectVersionRetention) (ObjectVersionProtection, error)
 }
 
 type ObjectVersionProtectionStore interface {
@@ -30,6 +37,10 @@ type ObjectVersionProtectionStore interface {
 }
 
 func cloneObjectVersionProtection(j ObjectVersionProtection) ObjectVersionProtection {
+	if j.EventHoldBaseline != nil {
+		r := j.EventHoldBaseline.Clone()
+		j.EventHoldBaseline = &r
+	}
 	if j.Retention != nil {
 		r := j.Retention.Clone()
 		j.Retention = &r
@@ -53,7 +64,7 @@ func ValidObjectVersionProtectionIntent(j ObjectVersionProtection) bool {
 	}
 	switch j.Kind {
 	case "retention":
-		return j.LegalHold == nil && j.Retention != nil && j.Retention.ValidForWrite() && j.Retention.EventHold == "" && j.Retention.EventHoldDuration == nil
+		return j.LegalHold == nil && j.Retention != nil && j.Retention.ValidForWrite()
 	case "legal_hold":
 		return j.Retention == nil && j.LegalHold != nil && j.LegalHold.Valid()
 	}
@@ -68,6 +79,7 @@ func newProtectionIntent(j ObjectVersionProtection, native string, now time.Time
 	j.State = "waiting"
 	j.Token = ""
 	j.Dispatched = false
+	j.EventHoldBaseline = nil
 	j.LeaseUntil = time.Time{}
 	j.LastErrorCode = ""
 	j.CreatedAt = now
@@ -89,6 +101,9 @@ func validProtectionLease(j ObjectVersionProtection, token string, now time.Time
 	return j.State == "applying" && token != "" && j.Token == token && j.LeaseUntil.After(now)
 }
 func finishProtection(j ObjectVersionProtection, token, status, code string, now time.Time) (ObjectVersionProtection, error) {
+	if status == "ready" && eventHoldProtection(j) && j.EventHoldBaseline == nil {
+		return j, ErrConflict
+	}
 	if !validProtectionLease(j, token, now) || status != "ready" && status != "failed" || status == "ready" && code != "" || status == "failed" && code != "preparation_failed" && code != "provider_rejected" {
 		return j, ErrConflict
 	}
@@ -99,6 +114,26 @@ func finishProtection(j ObjectVersionProtection, token, status, code string, now
 	j.LastErrorCode = code
 	j.Token = ""
 	j.LeaseUntil = time.Time{}
+	j.UpdatedAt = now
+	return cloneObjectVersionProtection(j), nil
+}
+
+func eventHoldProtection(j ObjectVersionProtection) bool {
+	return j.Kind == "retention" && j.Retention != nil && j.Retention.EventHold != ""
+}
+
+func prepareEventHoldProtection(j ObjectVersionProtection, token string, baseline api.ObjectVersionRetention, now time.Time) (ObjectVersionProtection, error) {
+	if !validProtectionLease(j, token, now) || j.Dispatched || !eventHoldProtection(j) || !baseline.Valid() || baseline.EventHold != "" && baseline.RetainUntilDate == nil || j.Retention.EventHold == "OFF" && j.Retention.RetainUntilDate == nil && baseline.EventHold != "ON" {
+		return j, ErrConflict
+	}
+	if j.EventHoldBaseline != nil {
+		if !reflect.DeepEqual(*j.EventHoldBaseline, baseline) {
+			return j, ErrConflict
+		}
+		return cloneObjectVersionProtection(j), nil
+	}
+	baseline = baseline.Clone()
+	j.EventHoldBaseline = &baseline
 	j.UpdatedAt = now
 	return cloneObjectVersionProtection(j), nil
 }

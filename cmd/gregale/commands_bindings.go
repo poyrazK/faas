@@ -52,6 +52,8 @@ type objectStorageBindingCLIRevokeResult struct {
 func cmdBindings(args []string) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "release-policy":
+			return cmdBindingsReleasePolicy(args[1:])
 		case "check":
 			return cmdBindingsCheck(args[1:])
 		case "object-storage":

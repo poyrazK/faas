@@ -122,12 +122,17 @@ func (m *MemStore) ClaimObjectVersionProtection(_ context.Context, id, token str
 }
 func (m *MemStore) DispatchObjectVersionProtection(_ context.Context, id, token string) (ObjectVersionProtection, error) {
 	return m.mutateProtection(id, func(j ObjectVersionProtection, now time.Time) (ObjectVersionProtection, error) {
-		if !validProtectionLease(j, token, now) || j.Dispatched {
+		if !validProtectionLease(j, token, now) || j.Dispatched || eventHoldProtection(j) && j.EventHoldBaseline == nil {
 			return j, ErrConflict
 		}
 		j.Dispatched = true
 		j.UpdatedAt = now
 		return j, nil
+	})
+}
+func (m *MemStore) PrepareObjectEventHoldProtection(_ context.Context, id, token string, baseline api.ObjectVersionRetention) (ObjectVersionProtection, error) {
+	return m.mutateProtection(id, func(j ObjectVersionProtection, now time.Time) (ObjectVersionProtection, error) {
+		return prepareEventHoldProtection(j, token, baseline, now)
 	})
 }
 func (m *MemStore) FinishObjectVersionProtection(_ context.Context, id, token, status, code string) (ObjectVersionProtection, error) {

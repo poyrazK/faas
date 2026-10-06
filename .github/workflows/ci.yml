@@ -541,6 +541,9 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # Concurrent template migrations and schema teardown share the
+          # cluster lock table; match the other parallel PostgreSQL shard.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
@@ -948,7 +951,9 @@ jobs:
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Race compilation plus the scheduler suite can consume ten minutes.
+    # Leave room for the coverage gate and upload after the tests pass.
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -1782,7 +1787,7 @@ jobs:
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -1927,9 +1932,13 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # A full-schema teardown locks thousands of relations. Without
+          # headroom failed cleanup leaks schemas into later migration tests.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
+          --shm-size 1g
           --health-cmd "pg_isready -U faas -d faas"
           --health-interval 5s
           --health-timeout 3s

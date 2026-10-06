@@ -570,6 +570,62 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/bindings/release-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: scope
+        in: query
+        description: Exact deployment scope. Omit to select default.
+        schema: { type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
+    get:
+      tags: [apps]
+      operationId: getBindingReleasePolicy
+      summary: Read a scope's stored binding release policy.
+      description: Requires apps:read or admin and completed MFA. Defaults to off with revision 0. No probes or provider calls occur.
+      responses:
+        '200':
+          description: Stored policy, or the disabled default.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setBindingReleasePolicy
+      summary: Replace a binding release policy using its current revision.
+      description: |
+        Requires deploy:write or admin and completed MFA. expected_revision is
+        mandatory (0 initially); each accepted write increments it. Enforcement
+        requires complete fresh verification on every deployment gaining traffic,
+        including through redistribution. Promotion, direct traffic PATCH and
+        canary advance evaluate the policy; request flags may only strengthen it.
+        New candidates must be admitted with explicit zero traffic. Automatic
+        cutovers, legacy recovery and project release graph switches fail closed
+        until they support binding fences. To recover without evidence, explicitly
+        set off with the current revision and a reason, then retry. Every update
+        has durable policy history. Existing traffic is not changed by this call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetBindingReleasePolicyRequest' }
+      responses:
+        '200':
+          description: Saved policy with incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/bindings:
     get:
       tags: [apps]
@@ -1293,6 +1349,60 @@ paths:
               schema: { $ref: '#/components/schemas/AccountUsageResponse' }
         default:
           description: Authentication or usage accounting error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/databases/{id}/resize:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: resizeManagedPostgresDatabase
+      summary: Resize managed PostgreSQL compute
+      description: Durably reserves a service-class change on the pinned dataset. Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute class changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResizeManagedPostgresDatabaseRequest' }
+      responses:
+        '202':
+          description: Accepted resize or current progress for an existing request
+          headers:
+            Location:
+              description: Progress URL
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresResize' }
+        default:
+          description: Invalid request, conflict, plan limit or backend unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/databases/{id}/resizes/{resize_id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: resize_id
+        in: path
+        required: true
+        description: Canonical UUID supplied as request_id when reserving this resize.
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getManagedPostgresResize
+      summary: Get managed PostgreSQL resize progress
+      description: Reads a durable resize request for the authenticated account and database. Responses are not cached and omit private provider identity.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Account and database scoped resize progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresResize' }
+        default:
+          description: Authentication or resize lookup error
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -2118,7 +2228,7 @@ paths:
     put:
       operationId: putObjectVersionRetention
       summary: Request a durable exact version retention change
-      description: Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      description: Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Separately enrolled event holds support ON with one days or years duration and OFF without a duration. Releasing an active hold preserves its observed retention bound and verifies the provider-calculated final date. Governance bypass is unsupported.
       tags: [storage]
       requestBody:
         required: true
@@ -2167,7 +2277,7 @@ paths:
     put:
       operationId: putObjectVersionLegalHold
       summary: Request a durable exact version legal hold change
-      description: Accept durable legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      description: Accept durable independent ON or OFF legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies exact-version readback without repeating a dispatched PUT. Retention and event hold policies remain independent.
       tags: [storage]
       requestBody:
         required: true
@@ -3265,7 +3375,15 @@ paths:
         different type, schema version, or data returns 409. Older snake_case input attribute
         names remain accepted during migration. API keys require
         `events:publish`, `deploy:write`, or `admin`.
-        Matching and delivery are asynchronous follow-up work.
+        Matching and delivery are asynchronous follow-up work. The Location header
+        and receipt_url point to GET /v1/events/receipt for delivery evidence.
+        Identical identity retries return the original accepted_at timestamp,
+        including when retained customer event storage is full. New identities
+        exceeding the account count or byte budget return 429 with code
+        event_storage_capacity_exhausted, limit/observed and Retry-After. No ledger
+        or receipt is committed on rejection. Storage is released by receipt
+        retention pruning, not by delivery completion. GET /v1/events/storage
+        reports current usage and plan limits.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3287,6 +3405,216 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/backlog:
+    get:
+      tags: [events]
+      operationId: getEventBacklog
+      summary: Discover waiting application event recipients and consumer counts.
+      description: |
+        Requires apps:read or admin. Reads only the authenticated account's
+        captured application recipients in pending or processing routing state,
+        in both whole-event and independent-recipient routing modes. Includes
+        capacity waits before an invocation exists; excludes settled routing and
+        handler execution queues. Returns metadata and receipt/history links,
+        never envelope data. Consumers count all matching recipients, independently
+        of either bounded page. Age is measured from durable event acceptance.
+        Recipient pages are oldest accepted first, then receipt and subscription
+        identity; consumer pages use app and subscription identity. Pass each
+        continuation cursor with the same filters; page sizes may change. Cursors
+        anchor window_at and its age cutoff, while membership and counts remain
+        live on every request. Recovered rows disappear, including cursor rows.
+        Replay behind a cursor requires restarting discovery. This inspection
+        ordering does not guarantee delivery FIFO. A repeatable read keeps each
+        response consistent. Aggregation has a five-second deadline; narrow
+        filters if event_backlog_read_timeout is returned. Responses use
+        Cache-Control no-store. unattributed_receipts counts pending legacy
+        receipts without captured recipients across the account; only the
+        acceptance/age window applies to that count, including with other filters.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: app
+          description: Owned app slug; an unknown or foreign app returns 404.
+          schema: { type: string, maxLength: 256 }
+        - in: query
+          name: subscription_id
+          description: Captured application recipient identifier.
+          schema: { type: string, maxLength: 256 }
+        - in: query
+          name: state
+          description: Restrict current routing state.
+          schema: { type: string, enum: [pending, processing] }
+        - in: query
+          name: capacity_scope
+          description: Restrict currently pending waits by the last recorded capacity scope.
+          schema: { type: string, enum: [consumer, app, account] }
+        - in: query
+          name: min_age_seconds
+          description: Minimum whole seconds since acceptance, relative to window_at.
+          schema: { type: integer, format: int64, minimum: 0, maximum: 31536000, default: 0 }
+        - in: query
+          name: after
+          description: Opaque next_after recipient cursor, bound to account and filters.
+          schema: { type: string, maxLength: 8192 }
+        - in: query
+          name: consumers_after
+          description: Opaque next_consumers_after cursor, bound to account and filters. Both cursors must share window_at.
+          schema: { type: string, maxLength: 8192 }
+        - in: query
+          name: limit
+          description: Maximum waiting recipients in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - in: query
+          name: consumer_limit
+          description: Maximum consumer summaries in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: Matching live backlog metadata and independently paginated consumer counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventBacklogResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/storage:
+    get:
+      tags: [events]
+      operationId: getEventStorageUsage
+      summary: Inspect retained customer event storage and account limits.
+      description: |
+        Requires apps:read or admin. Returns usage only for the authenticated
+        account. Logical UTF-8 JSON bytes include envelope, duplicated event data,
+        and immutable recipient snapshots. Pending and settled receipts remain
+        charged until retention pruning. Reserved gregale.* platform events are
+        exempt. Indexes, TOAST compression, ledger and attempt history are outside
+        this budget. A null oldest_pending_at means no customer routing is pending.
+        Responses use Cache-Control no-store.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current retained storage and plan limits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventStorageUsageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/receipt:
+    get:
+      tags: [events]
+      operationId: getEventReceipt
+      summary: Inspect acceptance, routing, and execution for one event.
+      description: |
+        Requires apps:read or admin. Reads the retained account/source/id receipt
+        and a bounded page of immutable acceptance-time recipients. Routing
+        counts cover the entire snapshot, including recipients without invocations.
+        Enqueued routing does not imply handler success: keyed cancellation can
+        produce a cancellation receipt instead. The original deterministic
+        invocation is shown when retained; trusted generic replay lineage adds
+        the latest replay and a paginated history URL without replacing the
+        original failure. Recovery actions target the latest retained replay
+        when present. Recovery actions require their existing
+        write scopes and are revalidated when called. Legacy receipts without
+        snapshots report snapshot_captured=false and cannot reconstruct recipients.
+        Pages follow acceptance order while outcomes may change between requests.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, description: Published event source paired with the required ID for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Published event ID paired with the required source for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: after, in: query, description: 'Opaque next_after cursor bound to account, source, ID, and retained receipt. Mismatched or stale cursors return 400.', schema: { type: string, maxLength: 8192 } }
+        - { name: limit, in: query, description: Maximum recipients in this page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Current receipt evidence and recipient page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/receipt/replays:
+    get:
+      tags: [events]
+      operationId: getEventReceiptReplays
+      summary: Inspect retained handler replay history for one captured recipient.
+      description: |
+        Requires apps:read or admin. Returns generic invocation replays linked by
+        ledger-owned parent/root identity, newest first by created_at and ID.
+        Original and intermediate execution records may expire independently;
+        surviving descendants remain visible. Legacy replays without trusted
+        lineage cannot be reconstructed from guest headers. Unknown or foreign
+        receipts, recipients and current app owners return 404. Cursors bind the
+        account, source, event ID, subscription and retained receipt identity;
+        mismatched or stale cursors return 400. Cursor anchors remain usable after
+        their execution record expires. Outcomes may change between requests.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, description: Published event source., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Published event ID., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: subscription_id, in: query, required: true, description: Captured consumer identifier whose retained handler replay history is requested., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: after, in: query, description: Opaque next_after cursor for this replay history., schema: { type: string, maxLength: 8192 } }
+        - { name: limit, in: query, description: Maximum retained replays in this page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Retained replay execution evidence and pagination cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptReplayHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/receipt/attempts:
+    get:
+      tags: [events]
+      operationId: getEventReceiptAttempts
+      summary: Inspect retained handler delivery attempts for one captured recipient.
+      description: |
+        Requires apps:read or admin. Includes the original async invocation and
+        trusted child replays, ordered by descending attempt history ID. Each
+        claim records its attempt and replay generation atomically with dispatch.
+        A claim does not prove handler execution. Recovered expired leases have
+        outcome unknown; external side effects still require idempotency.
+        Only attempts recorded after rollout and still retained are available.
+        Closed attempts expire after at most 30 days, earlier when result retention
+        expires or their invocation is deleted. Running attempts are not pruned.
+        Missing history does not establish that no delivery occurred. Unknown or
+        foreign receipts, captured recipients and current app owners return 404.
+        Cursors bind account, source, event ID, recipient and retained receipt;
+        stale or mismatched cursors return 400. New claims do not reorder older
+        pages; a running outcome may settle between reads.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, description: Source of the published event whose dispatch attempts are requested., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Identity within the published source for this dispatch-attempt history., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: subscription_id, in: query, required: true, description: Captured consumer identifier., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: after, in: query, description: Opaque next_after cursor for this attempt history., schema: { type: string, maxLength: 8192 } }
+        - { name: limit, in: query, description: Maximum retained attempts per page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Retained dispatch evidence and pagination cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptAttemptHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/event-schemas:
     post:
@@ -7239,7 +7567,16 @@ paths:
       tags: [platform-tenants]
       operationId: replayPlatformTenantSelfInvocation
       summary: Replay this tenant's failed or dead-lettered invocation.
-      description: Requires a tenant-bound token with platform_tenant:invocations:manage. Replays only this customer's failed or dead-lettered work into a fresh invocation preserving the original tenant and request. Idempotency-Key is scoped to this tenant and original invocation. Foreign, unbound and missing invocations return the same 404.
+      description: |
+        Requires a tenant-bound token with platform_tenant:invocations:manage.
+        Only this customer's failed or dead-lettered unbound unkeyed work is
+        eligible. Preserves the original customer, request, deployment scope,
+        retry policy and trusted parent/root lineage. Each parent has one durable
+        child shared with account-operator replay. Repeated and concurrent
+        requests return it regardless of Idempotency-Key, including after
+        completion; further recovery targets the failed child. A pruned child
+        returns 409 invocation_replay_unavailable. Foreign, unbound and missing
+        invocations return the same 404. Current app ownership is always checked.
       parameters:
         - name: id
           in: path
@@ -7248,7 +7585,7 @@ paths:
           schema: { type: string, format: uuid }
         - name: Idempotency-Key
           in: header
-          description: Optional key scoped to this tenant and original invocation.
+          description: Optional transport key; parent identity deduplicates across keys and account-operator requests.
           schema: { type: string }
       responses:
         '202':
@@ -12127,11 +12464,19 @@ paths:
 
         With `target_deployment_id` in the body, rolls back to the
         named deployment. The id must belong to this app and the row
-        must have `status='superseded'`. Rolling back to the
+        must be superseded or live with zero traffic. Rolling back to the
         already-current live deployment is rejected (409
         `rollback_target_already_live`). A target whose snapshot has
         been garbage-collected is rejected (409
         `rollback_target_snapshot_expired`).
+        With both `target_deployment_id` and `expected_current_deployment_id`,
+        starts an exact checked rollback. The expected deployment must still
+        serve all traffic with no active rollout in this scope. A 202 response
+        includes `rollback_operation`, confirming durable intent. Readiness,
+        artifact and API contract checks precede a zero-traffic activation;
+        fresh binding evidence is checked at the traffic transaction. Service
+        completion also waits for the existing gateway ACK and drain handoff.
+        Stored binding enforcement requires this exact workflow.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -12143,7 +12488,7 @@ paths:
             example: {"target_deployment_id":"0123456789abcdef0123456789abcdef"}
       responses:
         '202':
-          description: The deployment that was created by rolling back to the previous version.
+          description: The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
           content:
             application/json:
               schema:
@@ -12154,8 +12499,83 @@ paths:
         '404': { $ref: '#/components/responses/RollbackTargetNotFound' }
         '409':
           $ref: '#/components/responses/RollbackConflict'
-          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired'
+          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required'
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/alert-rollbacks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [alert_rules]
+      operationId: listAlertRollbacks
+      summary: List recent automatic canary rollbacks.
+      description: Read-only, bounded to the 32 most recently updated production alert rollback actions for this owned app. Alert fires pin the exact active canary and serving predecessor. Binding blockers retry fresh evidence after APID restarts; deployment changes fail without retargeting.
+      responses:
+        '200':
+          description: Recent alert rollback receipts, newest update first.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 32
+                items: { $ref: '#/components/schemas/AlertRollback' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/alert-rollbacks/{fire}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: fire
+        in: path
+        required: true
+        description: UUID of the production alert delivery that captured this rollback.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [alert_rules]
+      operationId: getAlertRollback
+      summary: Read one automatic canary rollback.
+      description: Read-only status for an immutable alert fire and deployment pair. Complete includes the audit committed with traffic restoration; blocked is pending recovery rather than completion. A failed target selection has no eligible pair and never selects one later.
+      responses:
+        '200':
+          description: Durable alert rollback receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertRollback' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/rollbacks/{operation}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: operation
+        in: path
+        required: true
+        description: UUID of the accepted historical rollback operation.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getRollbackOperation
+      summary: Read an exact historical rollback operation.
+      description: Read-only progress for a pinned deployment pair. Complete includes a committed routing audit; service completion also requires the matching handoff to finish. Blocked operations retry fresh evidence without choosing another deployment.
+      responses:
+        '200':
+          description: Durable rollback progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/rollouts/recover:
     parameters:
@@ -12194,6 +12614,23 @@ paths:
         so the operator's terminal can echo `audit_id=…`. Plan-tier
         gated to Pro+ (Hobby / Free get 403
         `plan_traffic_split_not_allowed`).
+
+        For an exact canary abort, supply both `deployment_id` and
+        `expected_predecessor_deployment_id`. The older predecessor must
+        remain live and serving in the same app/scope. If its stored binding
+        release policy enforces verification, recovery checks that exact
+        recipient's fresh evidence and rechecks policy revisions and expiry
+        inside the recovery transaction. Missing or changed evidence leaves
+        traffic unchanged. Success restores the predecessor to 100 percent,
+        aborts the selected canary, and includes an exact recovery receipt.
+        For an exact service abort, the pinned predecessor may remain live
+        at zero weight after cutover. The response is 202 with a
+        `service_recovery` receipt confirming the durable request only.
+        APID checks that recipient and ready service capacity before publishing
+        routes; schedd then completes gateway acknowledgement and request drain.
+        GET the exact deployment to observe `service_rollout_handoff` progress
+        and bounded `bindings_check` blockers. Restarted workers resume the same
+        request and never substitute a different predecessor.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -16659,6 +17096,160 @@ paths:
           default: false
         description: Explicitly return ownership to the current YAML definition after
           deletion.
+  /v1/apps/{slug}/automations/{name}/health:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: Automation whose recent execution health is summarized.
+    get:
+      tags: [workflows]
+      operationId: getAutomationHealth
+      summary: Get bounded execution health for one automation.
+      description: |
+        Returns run counts by status, the completed-run success rate, median
+        and p95 duration, recent run identities and the most common failed
+        steps. Inputs, outputs, and error text are never included. The default
+        window is the previous seven days; the maximum window is 30 days.
+        created_after and created_before are inclusive RFC3339 timestamps, and
+        created_before may not be in the future. Failed loop items are grouped
+        under their parent step; at most ten failed steps are returned.
+      parameters:
+        - name: created_after
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Inclusive start of the summary window; defaults to seven days before created_before or now.
+        - name: created_before
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Inclusive end of the summary window; defaults to now.
+      responses:
+        '200':
+          description: Safe operational summary for the selected automation and time window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationHealthResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/automations/{name}/revisions:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Automation whose immutable published revisions are listed.
+    get:
+      tags: [workflows]
+      operationId: listAutomationRevisions
+      summary: List published automation revisions, newest first.
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        description: Maximum number of revisions to return (1–100; defaults to 50).
+      - name: offset
+        in: query
+        required: false
+        schema: { type: integer, format: int32, minimum: 0, maximum: 2147483647, default: 0 }
+        description: Number of newest revisions to skip before returning results (maximum 2147483647).
+      responses:
+        '200':
+          description: Immutable published definitions and pagination metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListAutomationRevisionsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+  /v1/apps/{slug}/automations/{name}/revisions/{version}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Automation that owns the requested published revision.
+    - name: version
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+      description: Published revision identifier returned by the revision list.
+    get:
+      tags: [workflows]
+      operationId: getAutomationRevision
+      summary: Read one immutable published automation revision.
+      responses:
+        '200':
+          description: The selected published definition and its canonical hash.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationRevisionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+  /v1/apps/{slug}/automations/{name}/revisions/{version}/restore:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Automation that receives the restored draft.
+    - name: version
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+      description: Published revision to copy into the current draft.
+    post:
+      tags: [workflows]
+      operationId: restoreAutomationRevision
+      summary: Restore a published revision as a new draft using optimistic version checking.
+      description: |
+        Copies the selected immutable revision into the automation's draft. It
+        does not publish the copy or change running and accepted workflows.
+        Send expected_version from the latest automation read; use zero when
+        creating a draft after the automation was deleted. YAML ownership still
+        requires explicit takeover when the restored draft is later published.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestoreAutomationRevisionRequest' }
+      responses:
+        '200':
+          description: The updated automation draft; publishing remains a separate operation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AutomationConflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/AutomationInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
   /v1/apps/{slug}/automations/{name}/publish:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -16811,7 +17402,17 @@ paths:
       description: |
         Snapshots the named effective workflow definition from the app's live
         default deployment and dashboard publications and creates a pending run. The optional request body is
-        retained as the workflow input and may be any valid JSON value.
+        retained as the workflow input and may be any valid JSON value. An
+        optional Idempotency-Key binds this request to its original run for as
+        long as that run is retained. A matching retry returns the original
+        run, including its original definition snapshot; reusing the key with
+        different input returns 409.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 255 }
+          description: Stable caller key for retrying this run creation. Reuse only with the same workflow input.
       requestBody:
         required: false
         content:
@@ -16841,7 +17442,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
-          description: "code: workflow_tenant_identity_unavailable — tenant-required apps must use a tenant-scoped workflow run route."
+          description: "Tenant-required apps need a tenant-scoped run route, or the Idempotency-Key was already used with different workflow input."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -17061,6 +17662,21 @@ paths:
             type: string
             enum: [pending, running, awaiting_event, succeeded, failed, dead]
           description: Optional exact status filter.
+        - name: workflow_name
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 128 }
+          description: Optional exact workflow name filter.
+        - name: created_after
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Include runs created at or after this RFC3339 timestamp.
+        - name: created_before
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Include runs created at or before this RFC3339 timestamp.
         - name: limit
           in: query
           required: false
@@ -17077,6 +17693,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ListWorkflowRunsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -22110,7 +22727,9 @@ paths:
       description: |
         Returns the public endpoint_url once. Gregale stores only a SHA-256
         digest of its opaque token and an age/X25519-sealed provider signing
-        secret. Hobby, Pro, and Scale plans are supported.
+        secret. Providers are Stripe and generic timestamped HMAC-SHA256 senders.
+        Generic secrets must contain at least 32 bytes of random material.
+        Hobby, Pro, and Scale plans are supported.
       requestBody:
         required: true
         content:
@@ -22305,13 +22924,17 @@ paths:
     post:
       tags: [inbound_webhooks]
       operationId: receiveInboundWebhook
-      summary: Verify and durably accept a provider webhook.
+      summary: Verify and durably accept a Stripe or generic signed webhook.
       description: |
         This route does not use a Gregale bearer key. The opaque URL and the
         provider signature are the trust boundary. For Stripe, the exact raw
-        body is verified against Stripe-Signature. An exact workflow callback
-        binding completes its callback durably instead of enqueuing an app
-        invocation. Unmatched events keep the ordinary invocation path.
+        body is verified against Stripe-Signature. Generic endpoints require
+        X-Gregale-Event-ID, X-Gregale-Event-Type, X-Gregale-Timestamp and
+        X-Gregale-Signature. The HMAC-SHA256 covers the timestamp, event ID,
+        event type and exact raw body; timestamps must be within five minutes.
+        An exact Stripe workflow callback binding completes its callback
+        durably instead of enqueuing an app invocation. Unmatched events keep
+        the ordinary invocation path.
         Terminal callbacks are acknowledged as ignored after verification.
         An automation-bound endpoint captures its published definition in durable
         fanout work. Paused, unpublished or type-unmatched events are durably ignored;
@@ -22321,9 +22944,29 @@ paths:
       parameters:
         - name: Stripe-Signature
           in: header
-          required: true
-          description: Stripe v1 timestamped HMAC signature over the exact request body.
+          required: false
+          description: Required for Stripe endpoints; Stripe v1 timestamped HMAC signature over the exact request body.
           schema: { type: string, maxLength: 4096 }
+        - name: X-Gregale-Event-ID
+          in: header
+          required: false
+          description: Required for generic endpoints; stable event ID of 1 to 256 visible ASCII bytes, with no spaces.
+          schema: { type: string, pattern: '^[!-~]{1,256}$', maxLength: 256 }
+        - name: X-Gregale-Event-Type
+          in: header
+          required: false
+          description: Required for generic endpoints; exact event type matching ^[a-z][a-z0-9_.]{0,255}$.
+          schema: { type: string, pattern: '^[a-z][a-z0-9_.]{0,255}$', maxLength: 256 }
+        - name: X-Gregale-Timestamp
+          in: header
+          required: false
+          description: Required for generic endpoints; Unix timestamp in seconds.
+          schema: { type: string, pattern: '^[0-9]{1,12}$' }
+        - name: X-Gregale-Signature
+          in: header
+          required: false
+          description: Required for generic endpoints; sha256= followed by the lowercase hex HMAC-SHA256 digest.
+          schema: { type: string, pattern: '^sha256=[0-9a-f]{64}$' }
       requestBody:
         required: true
         content:
@@ -23933,8 +24576,9 @@ paths:
       description: |
         Requeues only the named failed recipient from the immutable recipient
         snapshot captured when the event was accepted. Other recipients and
-        their outcomes are left untouched. The event must have settled before
-        a failed recipient can be replayed.
+        their outcomes are left untouched. With independent recipient routing,
+        a terminal recipient can be replayed while siblings are active and gets
+        a fresh routing retry budget. Legacy receipts must settle first.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/Slug'
@@ -23965,10 +24609,10 @@ paths:
         Requeues up to 100 terminal recipients for the app whose stable failure
         classification marks them retryable. Optional event_source and event_id
         narrow the action to one published event and must be supplied together.
-        Non-retryable recipients are left alone, and an event being processed
-        by the fanout worker is not modified. A replayed event can accept more
-        recipients while pending; if has_more remains true while the worker is
-        processing it, repeat the request after that event settles.
+        Non-retryable recipients are left alone. Independent recipient routing
+        permits replay while siblings are active and renews each selected
+        recipient's routing retry budget. Legacy receipts with active whole-event
+        claims are skipped; repeat after they settle if has_more remains true.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/Slug'
@@ -24348,20 +24992,31 @@ paths:
       operationId: replayInvocation
       summary: Re-issue a failed or dead_letter invocation.
       description: |
-        Accepts no request body. The replayed row carries the original's
-        payload + headers + method + path verbatim and is enqueued against
-        the same app. The new row's Source is `replay` (issue #315).
+        Accepts no request body. Requires deployment write scope and configured
+        MFA. Only failed or dead-lettered unbound unkeyed work is eligible.
+        The parent and its current app must belong to the caller. The child
+        preserves the original request, deployment scope, customer identity
+        and trusted replay lineage. Trace/version headers and execution/result
+        lifetimes are refreshed; retry policy uses the current app and plan.
 
-        Only invocations whose current state is `failed` or `dead_letter`
-        can be replayed — re-running a successful or in-flight invocation
-        would be a customer bug, not a flow we want to enable by accident.
-        A replay attempt on any other state returns 409
-        `invocation_not_replayable`.
+        Each parent creates at most one durable recovery child. Concurrent and
+        repeated requests return that child regardless of Idempotency-Key,
+        including after completion. A subsequent recovery targets the failed
+        child. If its child has been pruned, the retained parent returns 409
+        `invocation_replay_unavailable` instead of creating another execution.
+        Existing acceptance is returned before checking expired deployment pins.
+        Application delivery and external side effects remain at least once.
+
+        Other parent states return `invocation_not_replayable`. Keyed work
+        returns `keyed_replay_requires_policy`; use `/replay-keyed` for failed
+        keyed work. Queue-bound or named-queue work returns
+        `queue_replay_requires_binding` and requires its app queue dead-letter
+        replay endpoint.
       parameters:
         - $ref: '#/components/parameters/Id32'
       responses:
         '202':
-          description: The new invocation row was enqueued.
+          description: The recovery child was enqueued or already exists.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AsyncInvokeResponse' }
@@ -24369,10 +25024,48 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            The invocation is not in a replayable state. Returns the
-            `invocation_not_replayable` problem code with the current
-            state in the detail field; only `failed` and `dead_letter`
-            invocations can be replayed.
+            The parent is not replayable, requires its policy/binding recovery
+            path, or its durable child is no longer retained
+            (`invocation_replay_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/invocations/{id}/replay-keyed:
+    post:
+      tags: [invocations]
+      operationId: replayKeyedInvocation
+      summary: Recover failed keyed work in its captured policy lane
+      description: |
+        Accepts no request body. Requires deploy write scope and configured MFA.
+        Only failed keyed work without a queue binding is eligible. The child
+        retains the captured policy revision, key, fairness limits, deployment
+        scope, customer identity, payload, retry policy and trusted replay root.
+        It receives the next sequence in the same lane, after previously admitted
+        work. Replay does not supersede pending rows or restart debounce.
+
+        The original pending expiry and start deadline remain effective. A new
+        replay after either elapsed deadline returns `keyed_replay_expired`.
+        Each parent creates at most one child. Repeating a request returns that
+        child, including after completion; a subsequent recovery must target
+        the failed child. If the child has been pruned while its parent remains,
+        the parent returns `keyed_replay_unavailable` instead of executing again.
+        The original failure remains visible in event receipts and retained
+        replay history. Delivery and application side effects remain at least once.
+      parameters:
+        - $ref: '#/components/parameters/Id32'
+      responses:
+        '202':
+          description: The lane-preserving recovery child was admitted or is already retained.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AsyncInvokeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Recovery is ineligible, its pending deadline expired, or its child is no longer retained.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -30899,7 +31592,7 @@ components:
         state: { type: string, enum: [prepared, dispatched, completed, failed] }
         version_id: { type: string, description: Selected public version UUID or new public marker UUID or null when acknowledged; private provider IDs are never exposed. }
         delete_marker: { type: boolean }
-        last_error_code: { type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected] }
+        last_error_code: { type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected, object_protected], description: object_protected defers a lifecycle target under retention or a hold until a later scan. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     ObjectTaggingRequest:
@@ -32173,9 +32866,33 @@ components:
         path: { type: string, minLength: 1, maxLength: 512 }
         expected_status: { type: integer, minimum: 200, maximum: 299 }
 
+    BindingReleasePolicy:
+      type: object
+      description: Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes default to off.
+      required: [app_id, scope, mode, revision, max_verification_age, require_application_ack]
+      properties:
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        mode: { type: string, enum: [off, enforce] }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        max_verification_age: { type: string, description: 'Canonical Go duration between 1s and 24h; default 10m0s.' }
+        require_application_ack: { type: boolean }
+        updated_at: { type: string, format: date-time }
+        reason: { type: string, description: 'Recorded single-line change reason, at most 256 UTF-8 bytes.' }
+    SetBindingReleasePolicyRequest:
+      type: object
+      description: Compare-and-set binding release enforcement for one deployment scope, including evidence age, application acknowledgements and an explicit change reason.
+      required: [mode, expected_revision]
+      properties:
+        mode: { type: string, enum: [off, enforce] }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        max_verification_age: { type: string, default: 10m, description: 'Whole-second Go duration between 1s and 24h.' }
+        require_application_ack: { type: boolean, default: false }
+        reason: { type: string, description: 'Required for off mode; single line, at most 256 UTF-8 bytes.' }
+
     BindingPromotionRequest:
       type: object
-      description: Policy for a server-enforced bindings promotion; the gate is always required on this route.
+      description: Policy for a server-enforced bindings promotion; the gate is always required on this route. Stored scope policy may require a shorter age or application ACKs and disallow unsupported waivers. The response reports the effective policy.
       properties:
         expected_serving_deployment_id: { type: string, format: uuid }
         max_verification_age: { type: string, default: 10m, description: 'Positive Go duration; maximum age of passed verification evidence.' }
@@ -33510,7 +34227,7 @@ components:
     ManagedPostgresCapabilities:
       description: Versioned PostgreSQL support for the default backend in a region, intersected with customer plan limits. Provider identities, costs, endpoints and credentials are excluded. Capabilities remain visible while the rollout gate is closed.
       type: object
-      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, storage_limit_bytes, restore_window_seconds]
+      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, storage_limit_bytes, restore_window_seconds]
       properties:
         contract_version: { type: integer, minimum: 1 }
         region: { type: string }
@@ -33524,8 +34241,32 @@ components:
         always_on: { type: boolean }
         pooled_connections: { type: boolean }
         point_in_time_restore: { type: boolean }
+        class_resize: { type: boolean, description: "Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
+    ResizeManagedPostgresDatabaseRequest:
+      description: Canonical UUID request for a compute-class change on an existing managed PostgreSQL database.
+      type: object
+      additionalProperties: false
+      required: [request_id, service_class]
+      properties:
+        request_id: { type: string, format: uuid, description: "Canonical nonzero UUID; reuse with the same database and target after uncertain responses." }
+        service_class: { type: string, enum: [development, burstable, production] }
+    ManagedPostgresResize:
+      description: Durable compute resize progress. Provider identity and credentials are never returned; existing connections may be interrupted.
+      type: object
+      required: [id, database_id, from_class, target_class, generation, state, connection_interruption_expected, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        database_id: { type: string }
+        from_class: { type: string, enum: [development, burstable, production] }
+        target_class: { type: string, enum: [development, burstable, production] }
+        generation: { type: integer, format: int64, minimum: 2 }
+        state: { type: string, enum: [pending, succeeded] }
+        connection_interruption_expected: { type: boolean }
+        last_error_code: { type: string, description: "Safe diagnostic code; pending intent remains recoverable after uncertain provider outcomes." }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object
@@ -34141,6 +34882,8 @@ components:
         content_language: { type: string, maxLength: 255, description: Content-Language value for PUT. }
         metadata: { type: object, additionalProperties: { type: string, maxLength: 2048 }, maxProperties: 90, description: PUT-only x-amz-meta-* values. }
         tags: { type: object, additionalProperties: { type: string, maxLength: 256 }, maxProperties: 10, description: PUT-only S3 object tags. }
+        protection:
+          $ref: '#/components/schemas/ObjectWriteProtection'
         encryption: { $ref: '#/components/schemas/ObjectEncryption' }
     ObjectSignedRequest:
       description: Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL dispatches at most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
@@ -34290,10 +35033,19 @@ components:
         encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Verified active default for new implicit writes. }
         desired_encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Requested default awaiting native verification. }
         updated_at: { type: string, format: date-time }
+    ObjectWriteProtection:
+      type: object
+      additionalProperties: false
+      description: Fixed or enrolled event retention and an independent legal hold for a new object version. Omitted retention inherits the immutable admitted bucket default. Event hold ON requires one days or years duration and permits an optional minimum date. Event hold OFF on creation requires an explicit fixed date and no duration. Governance bypass is unsupported.
+      properties:
+        retention:
+          $ref: '#/components/schemas/ObjectVersionRetention'
+        legal_hold:
+          $ref: '#/components/schemas/ObjectVersionLegalHold'
     ObjectVersionRetention:
       type: object
       additionalProperties: false
-      description: Verified native retention, or a fixed-retention intent. An empty object requests a clear; active retention cannot be shortened without bypass, which is unsupported. Event hold fields are observation only for this contract.
+      description: Verified native retention or a retention intent. An empty object requests a clear. Active fixed retention cannot be shortened and active COMPLIANCE cannot be downgraded. Enrolled event hold ON requires one duration; OFF omits duration and lets the provider fix the final date from the existing hold. Observed dates and requested minimum dates are preserved. Governance bypass is unsupported. For new writes, OFF requires a fixed date; an undated OFF is reserved for releasing an existing hold.
       properties:
         mode: { type: string, enum: [GOVERNANCE, COMPLIANCE] }
         retain_until_date: { type: string, format: date-time }
@@ -34308,7 +35060,7 @@ components:
         status: { type: string, enum: [ON, OFF] }
     ObjectVersionRetentionRequest:
       type: object
-      description: Stable identity and fixed retention intent for an owned version.
+      description: Stable identity and fixed or enrolled event hold retention intent for an owned version. ON requires a duration; OFF omits duration and requires a previously active hold unless a fixed date is supplied.
       additionalProperties: false
       required: [id, retention]
       properties:
@@ -34357,12 +35109,14 @@ components:
         updated_at: { type: string, format: date-time }
     ObjectLockCapabilities:
       type: object
-      description: Enrolled bucket configuration, default event holds, fixed version retention and legal-hold capabilities without a native health check.
+      description: Enrolled bucket configuration, default and per-version event holds, fixed version retention and legal-hold capabilities without a native health check.
       additionalProperties: false
-      required: [bucket_configuration, default_event_hold, version_retention, version_legal_hold]
+      required: [bucket_configuration, default_event_hold, version_retention, version_legal_hold, version_event_hold, write_event_hold]
       properties:
         bucket_configuration: { type: boolean }
         default_event_hold: { type: boolean }
+        version_event_hold: { type: boolean, description: Separately enrolled durable per-version event hold mutations. }
+        write_event_hold: { type: boolean, description: Separately enrolled event holds on new writes and captured bucket defaults. }
         version_retention: { type: boolean }
         version_legal_hold: { type: boolean }
     ObjectRetentionPeriod:
@@ -34535,6 +35289,8 @@ components:
         key: { type: string, minLength: 1, maxLength: 1024 }
         size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5497558138880 }
         content_type: { type: string, maxLength: 255 }
+        protection:
+          $ref: '#/components/schemas/ObjectWriteProtection'
         encryption: { $ref: '#/components/schemas/ObjectEncryption' }
     ObjectMultipartPartSignRequest:
       description: Requested lifetime for one exact-length part capability.
@@ -35864,7 +36620,7 @@ components:
           pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           x-since: "2026-08"
-          x-issue: "adr-092"
+          x-issue: "adr-92"
         ciphertext: { type: string, description: 'base64-encoded age-sealed envelope' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -40058,14 +40814,36 @@ components:
         rollout_aborted_reason:
           type: string
           description: "Operator or orchestrator reason recorded when the rollout is aborted."
+        rollback_operation:
+          $ref: '#/components/schemas/RollbackOperation'
         service_rollout_handoff:
           $ref: '#/components/schemas/ServiceRolloutHandoffResponse'
+
+    ServiceRolloutBindingGate:
+      type: object
+      description: "Bounded progress of an exact binding check at the service routing boundary. Passed confirms the routing transaction; scheduler ACK and drain completion are reported by the enclosing handoff phase."
+      required: [request_id, action, deployment_id, status]
+      properties:
+        request_id: { type: string, format: uuid }
+        action: { type: string, enum: [promote, abort] }
+        deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, blocked, passed] }
+        code: { type: string }
+        blockers:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/BindingCheckFinding' }
+        checked_at: { type: [string, "null"], format: date-time }
+        policy_revision: { type: integer, format: int64, minimum: 0 }
+        audit_id: { type: string }
 
     ServiceRolloutHandoffResponse:
       description: Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff.
       type: object
       required: [action, phase, retry_count]
       properties:
+        bindings_check:
+          $ref: '#/components/schemas/ServiceRolloutBindingGate'
         action:
           type: string
           enum: [promote, abort]
@@ -40264,6 +41042,86 @@ components:
           description: "The deployment_audit row id, stringified for SDK portability."
           example: "42"
 
+    AlertRollback:
+      type: object
+      description: Durable exact canary, active service, or opt-in completed-release rollback captured atomically with one production alert fire. Historical actions link one checked rollback operation and complete only after readiness, checked routing and service handoff barriers. Service actions pin the retained predecessor and complete only after the matching abort handoff finishes. Binding evidence is never reusable. Unavailable or ambiguous selections fail closed. Deleting the alert rule deletes its delivery and action ledger.
+      required: [id, rule_id, account_id, app_id, scope, status, reason, observed_value, fired_at, updated_at]
+      properties:
+        deployment_evidence: { $ref: '#/components/schemas/AlertRollbackDeploymentEvidence' }
+        historical: { type: boolean }
+        rollback_operation_id: { type: string, format: uuid }
+        rollback_phase: { type: string, enum: [preparing, ready, blocked, routing, complete, failed] }
+        rollback_routing_audit_id: { type: string }
+        id: { type: string, format: uuid }
+        rule_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        candidate_deployment_id: { type: string, format: uuid }
+        predecessor_deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, blocked, complete, failed] }
+        reason: { type: string }
+        code: { type: string }
+        blockers:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/BindingCheckFinding' }
+        observed_value: { type: number, format: double }
+        fired_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        audit_id: { type: string }
+        service: { type: boolean }
+        service_request_id: { type: string, format: uuid }
+        service_phase: { type: string, enum: [pending, routing, draining, complete] }
+        service_routing_audit_id: { type: string }
+
+    AlertRollbackDeploymentEvidence:
+      type: object
+      description: Exact deployment request evidence for post-deploy rollback. Windows contain only complete minutes after cutover and before the fire with 30 seconds of ingestion lag. Requests counts only 2xx and 5xx responses, weighted by telemetry publisher counts. At least 20 requests, one server error, and a sample within two minutes of the window end are required. Only error_rate_pct with gt or gte comparisons qualifies. Unaccepted fires expire after two minutes. Accepted evidence is immutable and included in intent and completion audits; existing accepted operations continue without requalification.
+      required: [version, deployment_id, metric, comparison, threshold, window_spec, cutover_at, window_start, window_end, requests, server_errors, minimum_requests, error_rate_pct, status]
+      properties:
+        version: { type: integer, enum: [1] }
+        deployment_id: { type: string, format: uuid }
+        metric: { type: string }
+        comparison: { type: string }
+        threshold: { type: number, format: double }
+        window_spec: { type: string }
+        cutover_at: { type: string, format: date-time }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        checked_at: { type: string, format: date-time }
+        last_sample_at: { type: string, format: date-time }
+        requests: { type: integer, format: int64, minimum: 0 }
+        server_errors: { type: integer, format: int64, minimum: 0 }
+        minimum_requests: { type: integer, format: int64, minimum: 20 }
+        error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        status: { type: string, enum: [pending, breached, healthy, insufficient, unavailable, unsupported, stale, expired] }
+        code: { type: string }
+
+    RollbackOperation:
+      type: object
+      description: Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
+      required: [id, app_id, scope, target_deployment_id, current_deployment_id, status, service, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        target_deployment_id: { type: string, format: uuid }
+        current_deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [preparing, ready, blocked, routing, complete, failed] }
+        service: { type: boolean }
+        reason: { type: string, maxLength: 256 }
+        code: { type: string }
+        blockers:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/BindingCheckFinding' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        audit_id: { type: string }
+
     RollbackRequest:
       description: "Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G, issue #976). All fields optional. Without a body the handler falls back to rolling back to the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler validates that the named deployment belongs to this app and is superseded or live with zero traffic."
       type: object
@@ -40271,13 +41129,23 @@ components:
         target_deployment_id:
           type: string
           format: uuid
-          description: "The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."
+          description: "The UUID or vN of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."
           example: "0123456789abcdef0123456789abcdef"
         alert_rule_id:
           type: string
           format: uuid
           description: "SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): when set, the handler stamps the deployment_audit row's alert_rule_id column with this UUID so an operator can cross-link the audit timeline back to /dashboard/alerts/{id}. Wire-additive per ADR-016; the field is ignored when nil/empty. Only privileged in-process callers (meterd ActionDispatcher) set this; the API does not enforce role because the endpoint already requires MFA + ScopesDeployWrite."
           example: "abcdef0123456789abcdef0123456789"
+        expected_current_deployment_id:
+          type: string
+          format: uuid
+          description: Exact current deployment UUID or vN. Together with an explicit target starts the checked asynchronous workflow and returns rollback_operation. Rejects a changed current deployment instead of selecting another one.
+        reason:
+          type: string
+          maxLength: 256
+          description: One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id.
+
+
 
     RecoverRolloutRequest:
       description: "Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort}; `reason` is the operator-supplied free-text captured into the deployment_audit row's data payload."
@@ -40293,6 +41161,14 @@ components:
           type: string
           description: "Operator-supplied reason (≤1024 chars). Lands verbatim in the deployment_audit row's data payload under the `reason` key."
           example: "manual-test"
+        deployment_id:
+          type: string
+          format: uuid
+          description: "Exact active canary or service rollout to abort. Requires action abort and expected_predecessor_deployment_id; both are checked in the recovery transaction."
+        expected_predecessor_deployment_id:
+          type: string
+          format: uuid
+          description: "Exact older live predecessor in the candidate scope. Canary recovery requires positive serving weight; a service handoff also accepts its retained zero-weight predecessor. Required with deployment_id. Enforced binding policies check this exact recipient before routing can change."
 
     RolloutTransitionResponse:
       description: "POST /v1/apps/{slug}/rollouts/recover response. The post-recovery Deployment + the audit row id (so the operator's terminal can echo audit_id=…)."
@@ -40305,6 +41181,39 @@ components:
           type: string
           description: "The deployment_audit row id (stringified so JSON-number → int64 → BigInt drift doesn't poison SDK callers)."
           example: "42"
+        recovery:
+          $ref: '#/components/schemas/RolloutRecoveryReceipt'
+        service_recovery:
+          $ref: '#/components/schemas/ServiceRolloutRecoveryReceipt'
+
+    ServiceRolloutRecoveryReceipt:
+      type: object
+      description: "Durable exact service abort request. Acceptance does not confirm traffic restoration, gateway acknowledgement or request drain. Poll the exact deployment's service_rollout_handoff."
+      required: [deployment_id, predecessor_deployment_id, request_id, status]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        predecessor_deployment_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        status: { type: string, enum: [accepted] }
+
+    RolloutRecoveryReceipt:
+      type: object
+      description: "Committed exact canary abort, including the restored traffic recipient and any binding reports required by its stored release policy."
+      required: [deployment_id, predecessor_deployment_id, restored_traffic_percent]
+      properties:
+        deployment_id:
+          type: string
+          format: uuid
+        predecessor_deployment_id:
+          type: string
+          format: uuid
+        restored_traffic_percent:
+          type: integer
+          enum: [100]
+        bindings_checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/BindingCheckReport'
 
     DeploymentListResponse:
       description: "Paginated deployment list with a `next_before` cursor for backward pagination."
@@ -40934,6 +41843,128 @@ components:
           items:
             $ref: '#/components/schemas/AutomationResponse'
       description: App automation definitions, plan limit and execution availability.
+    AutomationHealthRun:
+      type: object
+      additionalProperties: false
+      required: [id, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, running, awaiting_event, succeeded, failed, dead] }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+      description: Safe recent-run identity and timestamps; workflow input, output and error text are omitted.
+    AutomationHealthStepFailure:
+      type: object
+      additionalProperties: false
+      required: [step_name, failed_run_count, last_failed_at]
+      properties:
+        step_name: { type: string, minLength: 1, maxLength: 128 }
+        failed_run_count: { type: integer, format: int64, minimum: 1 }
+        last_failed_at: { type: string, format: date-time }
+      description: Number of terminal runs that failed at this logical step; loop items are grouped by parent.
+    AutomationHealthResponse:
+      type: object
+      additionalProperties: false
+      required: [app_slug, automation_name, window_start, window_end, run_count, completed_run_count, active_run_count, queued_run_count, success_rate, status_counts, failed_steps]
+      properties:
+        app_slug: { type: string }
+        automation_name: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        run_count: { type: integer, format: int64, minimum: 0 }
+        completed_run_count: { type: integer, format: int64, minimum: 0 }
+        active_run_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current non-terminal runs that have started, including retries and parked waits; independent of the requested health window.
+        queued_run_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current pending runs that have not started; independent of the requested health window.
+        success_rate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Succeeded runs divided by succeeded, failed and dead runs; zero when none completed.
+        status_counts:
+          type: object
+          required: [pending, running, awaiting_event, succeeded, failed, dead]
+          properties:
+            pending: { type: integer, format: int64, minimum: 0 }
+            running: { type: integer, format: int64, minimum: 0 }
+            awaiting_event: { type: integer, format: int64, minimum: 0 }
+            succeeded: { type: integer, format: int64, minimum: 0 }
+            failed: { type: integer, format: int64, minimum: 0 }
+            dead: { type: integer, format: int64, minimum: 0 }
+          additionalProperties: false
+        p50_duration_ms: { type: integer, format: int64, minimum: 0, description: Median duration of completed runs with start and finish timestamps; omitted when no samples exist. }
+        p95_duration_ms: { type: integer, format: int64, minimum: 0, description: 95th percentile duration of completed runs with start and finish timestamps; omitted when no samples exist. }
+        last_run: { $ref: '#/components/schemas/AutomationHealthRun' }
+        last_success: { $ref: '#/components/schemas/AutomationHealthRun' }
+        last_failure: { $ref: '#/components/schemas/AutomationHealthRun' }
+        failed_steps:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/AutomationHealthStepFailure' }
+      description: Bounded aggregate automation health. Customer payloads and error strings are never returned.
+    AutomationRevisionResponse:
+      type: object
+      additionalProperties: false
+      required: [version, definition, definition_hash, recorded_at, legacy_snapshot, published_by_account_id]
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Immutable published revision identifier.
+        definition:
+          $ref: '#/components/schemas/WorkflowSpec'
+        definition_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: SHA-256 of the canonical JSON encoding of definition.
+        recorded_at:
+          type: string
+          format: date-time
+          description: When this immutable history record was stored; for legacy snapshots this is the migration time.
+        legacy_snapshot:
+          type: boolean
+          description: True for the one current publication copied into history during rollout; older history was not retained.
+        published_by_account_id:
+          type: string
+          format: uuid
+          description: Account that published this revision, or owned the legacy snapshot at rollout.
+        published_by_api_key_id:
+          type: string
+          format: uuid
+          description: API key used for the publish when the request used key authentication; omitted for session authentication and legacy snapshots.
+      description: Immutable published automation definition with actor and rollout provenance.
+    ListAutomationRevisionsResponse:
+      type: object
+      additionalProperties: false
+      required: [revisions, total, limit, offset]
+      properties:
+        revisions:
+          type: array
+          items: { $ref: '#/components/schemas/AutomationRevisionResponse' }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        offset: { type: integer, minimum: 0 }
+      description: Newest-first immutable publication history and pagination metadata.
+    RestoreAutomationRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version]
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current draft revision for optimistic concurrency; zero creates a draft after deletion.
+      description: Restores a selected immutable publication into the draft without publishing it.
     SaveAutomationDraftRequest:
       type: object
       additionalProperties: false
@@ -40980,7 +42011,7 @@ components:
           type: boolean
       description: Publication revision and the desired state of automatic starts.
     SimulateAutomationRequest:
-      description: Sample workflow data and successful action results for a stateless simulation.
+      description: Sample workflow data and mocked action or timeout outcomes for a stateless simulation.
       type: object
       additionalProperties: false
       required: [definition]
@@ -41000,6 +42031,35 @@ components:
             type: array
             maxItems: 128
             items: {}
+        mock_attempts:
+          description: Ordered per-attempt outcomes keyed by action name; waits accept one timeout outcome when they have an on_timeout route. Action timeouts also require on_timeout. Cannot be combined with mock_outputs for the same step.
+          type: object
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 25
+            items:
+              $ref: '#/components/schemas/AutomationSimulationMockAttempt'
+    AutomationSimulationMockAttempt:
+      description: One mocked attempt; success requires output, failure requires exactly one of error or non-2xx http_status, and timeout has no additional fields.
+      type: object
+      additionalProperties: false
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [success, failure, timeout]
+        output:
+          description: Successful result; any JSON value, including null.
+        error:
+          type: string
+          minLength: 1
+          description: Mocked transport or action error message used as failure.message.
+        http_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: Mocked non-2xx response status.
     SimulateAutomationResponse:
       description: Definition validity, submitted-definition SHA-256 and deterministic simulated data flow.
       type: object
@@ -41014,7 +42074,7 @@ components:
           description: SHA-256 of the JSON-serialized submitted definition, independent of samples; not a publication revision.
         complete:
           type: boolean
-          description: All roots resolved or skipped under these mocks; false for missing results, waits or evaluation errors.
+          description: Every root reached a known terminal outcome under these mocks; false for missing results, unresolved retries, waits or evaluation errors.
         issues:
           type: array
           items: { type: string }
@@ -41041,7 +42101,7 @@ components:
           enum: [run, path, outbound, for_each, join, event_wait, callback_wait, duration_wait, condition_wait]
         state:
           type: string
-          enum: [would_execute, mocked, would_wait, resolved, expanded, skipped, blocked, error]
+          enum: [would_execute, mocked, would_wait, resolved, expanded, skipped, blocked, would_retry, timed_out, failed, dead, error]
         reason:
           type: string
           description: Stable decision reason with no referenced customer values.
@@ -41052,7 +42112,13 @@ components:
         input:
           description: Resolved action input or materialized loop source; any JSON type is preserved.
         output:
-          description: Supplied successful mock or a control output; omitted when no result is known.
+          description: Supplied successful mock, timeout sentinel or control output; omitted when no result is known.
+        attempts:
+          type: array
+          description: Safe summary of supplied action attempt outcomes; mocked error text is exposed only through eligible failure context.
+          maxItems: 25
+          items:
+            $ref: '#/components/schemas/AutomationSimulationAttempt'
         run: { type: string }
         path: { type: string }
         method: { type: string }
@@ -41061,6 +42127,17 @@ components:
         parent_step: { type: string }
         item_index: { type: integer, minimum: 0 }
         item_count: { type: integer, minimum: 0, maximum: 128 }
+    AutomationSimulationAttempt:
+      description: Safe summary of one supplied hypothetical attempt outcome.
+      type: object
+      additionalProperties: false
+      required: [attempt, outcome]
+      properties:
+        attempt: { type: integer, minimum: 1, maximum: 25 }
+        outcome:
+          type: string
+          enum: [success, failure, timeout]
+        http_status: { type: integer, minimum: 100, maximum: 599 }
     ValidateAutomationRequest:
       type: object
       additionalProperties: false
@@ -41255,12 +42332,19 @@ components:
 
     WorkflowForEachSpec:
       description: |
-        Sequential action over a JSON array from input or a direct dependency output.
-        Snapshots all items and resolved action inputs before dispatch. At most 128
-        items, 1 MiB source/prepared inputs and 1 MiB collected output. Parent names
-        permit at most 64 UTF-8 bytes. Stops on item failure; completed items survive
-        recovery. Output is an array of item outputs in input order; an empty list
-        succeeds with []. Parent consumes zero attempts; each item has its own ledger.
+        Bounded-concurrency action over a JSON array from input or a direct dependency
+        output. Snapshots all items and resolved action inputs before dispatch. At most
+        128 items, 1 MiB source/prepared inputs and 1 MiB collected output. Parent names
+        permit at most 64 UTF-8 bytes. Omitted or zero max_parallel means one active
+        item; values up to 16 limit active items per batch. Items are admitted in
+        input order within a bounded window, and collected output always follows input
+        order. By default no new items start after a terminal item failure; already
+        active items finish and the parent fails. `on_item_failure: continue` attempts
+        later items and still marks the parent unsuccessful if any item failed.
+        Completed items survive recovery. With the default stop policy, output retains
+        the completed prefix. With continue, output includes every input position and
+        null for guarded or unsuccessful items. An empty list succeeds with []. Parent
+        consumes zero attempts; each item has its own ledger.
       type: object
       additionalProperties: false
       required: [items, action]
@@ -41271,14 +42355,25 @@ components:
           description: Array reference without delimiters, such as input.invoices or steps.lookup.output.items.
         action:
           $ref: '#/components/schemas/WorkflowForEachActionSpec'
+        max_parallel:
+          type: integer
+          minimum: 0
+          maximum: 16
+          description: Maximum active items for this batch. Omit or set 0 for sequential execution.
+        on_item_failure:
+          type: string
+          enum: [continue]
+          description: "Continue after failed or dead items and mark the parent unsuccessful after all items are attempted. Omit to stop at the first failure."
 
     WorkflowForEachActionSpec:
       description: |
         Exactly one of run, path or outbound. No nested iteration, dependencies,
-        guards or exception routes. Omitted input sends the item itself. Explicit
-        input templates read input.item, input.index, input.input (original run input)
-        and outputs of the parent's declared dependencies. Inputs are never re-rendered
-        on retry. Mutating outbound retries require provider idempotency support.
+        waits, joins or exception routes. An optional when guard is evaluated once
+        for each item using input.item, input.index and input.input, plus outputs of
+        the parent's declared dependencies. Omitted input sends the item itself.
+        Explicit input templates use the same item context. Inputs and guard decisions
+        are snapshotted before dispatch and never reevaluated on retry. Mutating
+        outbound retries require provider idempotency support.
       type: object
       additionalProperties: false
       properties:
@@ -41306,6 +42401,8 @@ components:
           example: '30s'
         retry:
           $ref: '#/components/schemas/WorkflowRetrySpec'
+        when:
+          $ref: '#/components/schemas/WorkflowGuardSpec'
 
     WorkflowJoinSpec:
       description: |
@@ -41333,7 +42430,9 @@ components:
       description: |
         Call an existing customer managed outbound integration bound to this app.
         Credentials and fixed-origin routing remain with outboundd. Input is a
-        templated JSON body; GET and HEAD have no body and forbid explicit input.
+        templated JSON body. Path segments and query values support the workflow
+        template syntax; dynamic path values are escaped as one segment. GET and
+        HEAD have no body and forbid explicit input.
         One provider call occurs per workflow attempt. Automatic mutating retries
         require explicit provider idempotency support. Workflow outputs contain
         status and body; sensitive headers and failed-response bodies are omitted.
@@ -41352,8 +42451,22 @@ components:
         path:
           type: string
           maxLength: 2048
-          description: "Fixed canonical relative provider path; no URL, query, escaping, or traversal."
-          example: "/v1/contacts"
+          description: "Canonical relative provider path. A whole segment may be a template, such as /v1/contacts/{{input.contact_id}}; resolved values are escaped and checked against the bound route policy at execution time."
+          example: "/v1/contacts/{{input.contact_id}}"
+        query:
+          type: object
+          maxProperties: 32
+          description: "Optional static query keys with templated scalar values. Values are URL-encoded; the request remains bound to this integration and its route permissions."
+          propertyNames:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[^{}&=#?\s]+$'
+          additionalProperties:
+            type: string
+            maxLength: 2048
+          example:
+            email: "{{input.email}}"
         idempotency_supported:
           type: boolean
           default: false
@@ -41369,7 +42482,7 @@ components:
         max_attempts: { type: integer, minimum: 1, maximum: 1000 }
 
     WorkflowSpec:
-      description: "A named workflow DAG submitted with a deployment (ADR-081)."
+      description: "A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances for this workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota. max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler queue while all action slots are occupied."
       type: object
       required: [name, steps]
       properties:
@@ -41379,6 +42492,18 @@ components:
           oneOf:
             - $ref: '#/components/schemas/WorkflowTriggerSpec'
             - type: 'null'
+        max_concurrent_runs:
+          type: integer
+          minimum: 0
+          maximum: 200
+          default: 0
+          description: "Maximum active run instances for this workflow. Omit or set 0 to rely only on the app plan limit. Pending runs that have not started are queued and do not consume a slot."
+        max_concurrent_actions:
+          type: integer
+          minimum: 0
+          maximum: 200
+          default: 0
+          description: "Maximum running action and condition-check steps across runs of this workflow. Omit or set 0 for no additional per-workflow action cap. Event, callback, and duration waits do not consume an action slot. Runs use the value from their immutable definition snapshot."
         steps:
           type: array
           items:
@@ -41517,11 +42642,97 @@ components:
       description: Durable acceptance receipt for a published internal event.
       type: object
       additionalProperties: false
-      required: [id, accepted_at, account_id]
+      required: [id, accepted_at, account_id, receipt_url]
       properties:
         id: { type: string }
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
+        receipt_url: { type: string, format: uri-reference, description: Account-authenticated relative URL for this event receipt. }
+
+    EventBacklogResponse:
+      example: { observed_at: "2026-10-05T12:00:00Z", window_at: "2026-10-05T12:00:00Z", coverage: captured_application_recipients, recipients: [], consumers: [], unattributed_receipts: 0 }
+      type: object
+      additionalProperties: false
+      description: Live waiting recipients and exact matching counts, with an anchored acceptance window.
+      required: [observed_at, window_at, coverage, recipients, consumers, unattributed_receipts]
+      properties:
+        observed_at: { type: string, format: date-time, description: Time of this live observation. }
+        window_at: { type: string, format: date-time, description: First-page time anchoring acceptance and minimum-age cutoff across pages. }
+        coverage: { type: string, const: captured_application_recipients }
+        recipients:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventBacklogRecipient' }
+        consumers:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventBacklogConsumer' }
+        unattributed_receipts: { type: integer, format: int64, minimum: 0, description: Account-wide unresolved receipts without a captured snapshot; only the age/acceptance window applies. }
+        next_after: { type: string, description: Opaque continuation for the recipient page. }
+        next_consumers_after: { type: string, description: Opaque continuation for the consumer page. }
+
+    EventBacklogRecipient:
+      type: object
+      additionalProperties: false
+      description: One captured application recipient awaiting routing, without envelope data.
+      required: [event_source, event_id, event_type, accepted_at, app_id, app_slug, target_available, subscription_id, routing_mode, state, attempts, capacity_deferrals, pending_age_seconds, waiting_reason, receipt_url]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        event_type: { type: string }
+        accepted_at: { type: string, format: date-time }
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string, description: Empty when the captured app is no longer owned by this account. }
+        target_available: { type: boolean }
+        subscription_id: { type: string }
+        routing_mode: { type: string, enum: [event, recipient] }
+        state: { type: string, enum: [pending, processing] }
+        capacity_scope: { type: string, enum: [consumer, app, account], description: Last recorded capacity scope for a currently pending recipient. }
+        attempts: { type: integer, minimum: 0 }
+        capacity_deferrals: { type: integer, minimum: 0 }
+        next_attempt_at: { type: string, format: date-time }
+        lease_until: { type: string, format: date-time, description: Recipient lease or shared whole-receipt lease. }
+        pending_age_seconds: { type: number, format: double, minimum: 0, description: "Age from acceptance at observed_at, not time spent at the latest capacity scope." }
+        waiting_reason: { type: string, enum: [capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, ready], description: Recorded capacity takes precedence for pending recipients; receipt_processing refers only to a shared receipt lease. }
+        receipt_url: { type: string, format: uri-reference }
+        fanout_history_url: { type: string, format: uri-reference, description: Present when the captured target still belongs to the account. History coverage is independently bounded. }
+
+    EventBacklogConsumer:
+      type: object
+      additionalProperties: false
+      description: Exact counts over all matching waiting recipients for one captured app/subscription, independent of recipient pagination.
+      required: [app_id, app_slug, target_available, subscription_id, waiting_recipients, pending_recipients, processing_recipients, capacity_waiting_recipients, oldest_accepted_at, oldest_age_seconds]
+      properties:
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string }
+        target_available: { type: boolean }
+        subscription_id: { type: string }
+        waiting_recipients: { type: integer, format: int64, minimum: 0 }
+        pending_recipients: { type: integer, format: int64, minimum: 0 }
+        processing_recipients: { type: integer, format: int64, minimum: 0 }
+        capacity_waiting_recipients: { type: integer, format: int64, minimum: 0 }
+        oldest_accepted_at: { type: string, format: date-time }
+        oldest_age_seconds: { type: number, format: double, minimum: 0 }
+
+    EventStorageUsageResponse:
+      description: Retained customer event counts, logical JSON bytes, pending age and current account budgets.
+      example: { retained_events: 0, retained_bytes: 0, pending_events: 0, oldest_pending_at: null, limits: { retained_events: 16384, retained_bytes: 67108864 } }
+      type: object
+      additionalProperties: false
+      required: [retained_events, retained_bytes, pending_events, oldest_pending_at, limits]
+      properties:
+        retained_events: { type: integer, format: int64, minimum: 0 }
+        retained_bytes: { type: integer, format: int64, minimum: 0 }
+        pending_events: { type: integer, format: int64, minimum: 0 }
+        oldest_pending_at: { type: [string, 'null'], format: date-time }
+        limits:
+          example: { retained_events: 16384, retained_bytes: 67108864 }
+          type: object
+          additionalProperties: false
+          required: [retained_events, retained_bytes]
+          properties:
+            retained_events: { type: integer, format: int64, minimum: 0 }
+            retained_bytes: { type: integer, format: int64, minimum: 0 }
 
     RegisterEventSchemaRequest:
       description: Immutable event schema registration request.
@@ -41693,9 +42904,17 @@ components:
         retryable: { type: boolean }
         last_error: { type: string }
         occurred_at: { type: string, format: date-time }
+        capacity_scope: { type: string, enum: [consumer, app, account], description: Capacity wait scope for this immutable observation. }
+        capacity_deferrals: { type: integer, format: int64, minimum: 0, description: Cumulative deferrals at this observation; summaries provide the current total. }
+        details_truncated: { type: boolean, description: Error or failure code detail was truncated to its UTF-8 byte ceiling. }
 
     EventFanoutAttemptHistoryResponse:
-      description: Bounded immutable routing history for one app-scoped event identity.
+      description: >-
+        Bounded recorded routing outcomes with durable recipient summaries. Repeated capacity waits
+        coalesce; details have row and logical byte caps and thirty-day retention independent of receipt
+        settlement. Latest outcome, failure and replay evidence is prioritized. Summaries describe gaps,
+        not an exhaustive historical audit. IDs remain immutable and cursors remain valid after pruning.
+        Summaries are current observations across the identity, independent of the detail page cursor.
       type: object
       additionalProperties: false
       required: [app_slug, event_source, event_id, history]
@@ -41708,6 +42927,197 @@ components:
           type: array
           items: { $ref: '#/components/schemas/EventFanoutAttemptResponse' }
         next_before: { type: string, description: Opaque cursor bound to the app, event identity, and optional recipient filter. }
+        coverage: { type: string, enum: [bounded_recorded_outcomes], description: Recorded observations only; pre-migration transitions and compacted details are unavailable. }
+        summaries:
+          type: array
+          items: { $ref: '#/components/schemas/EventFanoutHistorySummaryResponse' }
+
+    EventFanoutHistorySummaryResponse:
+      description: Durable recipient counters and detail coverage for the retained receipt.
+      type: object
+      additionalProperties: false
+      required: [subscription_id, observed_outcomes, capacity_deferrals, coalesced_outcomes, compacted_outcomes, retained_records, retained_bytes]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        observed_outcomes: { type: integer, format: int64, minimum: 0, description: Recorded routing and replay observations including coalesced waits. }
+        capacity_deferrals: { type: integer, format: int64, minimum: 0, description: Highest durable cumulative recipient deferral checkpoint. }
+        coalesced_outcomes: { type: integer, format: int64, minimum: 0, description: Repeated waits represented by counters instead of detail rows. }
+        compacted_outcomes: { type: integer, format: int64, minimum: 0, description: Detail rows removed by retention or budgets. }
+        compacted_through_id: { type: integer, format: int64, minimum: 1, description: "Highest removed detail ID; protected older rows can remain, so this is not a contiguous missing prefix." }
+        compacted_through_at: { type: string, format: date-time, description: Latest occurrence time among removed detail rows. }
+        first_capacity_wait_at: { type: string, format: date-time, description: First recorded capacity wait after summary rollout. }
+        last_capacity_wait_at: { type: string, format: date-time }
+        last_capacity_scope: { type: string, enum: [consumer, app, account], description: "Most recent recorded capacity scope, also retained after recovery." }
+        retained_records: { type: integer, format: int64, minimum: 0 }
+        retained_bytes: { type: integer, format: int64, minimum: 0, description: Logical detail bytes including a fixed per-row allowance; excludes physical storage and indexes. }
+
+    EventReceiptResponse:
+      description: Acceptance and routing evidence with a bounded recipient page; execution is a separate lifecycle.
+      type: object
+      additionalProperties: false
+      required: [event_id, event_source, event_type, accepted_at, snapshot_captured, routing_mode, recipient_count, routing_summary, recipients]
+      properties:
+        event_id: { type: string }
+        event_source: { type: string }
+        event_type: { type: string }
+        schema_version: { type: string }
+        accepted_at: { type: string, format: date-time, description: "First durable acceptance time, preserved on identical retries." }
+        routing_settled_at: { type: string, format: date-time, description: "All routing candidates settled, including filtered and failed outcomes; absent while routing is active." }
+        retain_until: { type: string, format: date-time, description: 'Settled receipt retention boundary, 30 days after routing settled. Absent for active routing.' }
+        snapshot_captured: { type: boolean, description: "False means legacy recipient membership is unknown, rather than an empty matching set." }
+        routing_mode: { type: string, enum: [event, recipient], description: Whole-event legacy routing or independent recipient leases. }
+        recipient_count: { type: integer, minimum: 0, description: Total captured candidates across all pages; unknown when snapshot_captured=false. }
+        routing_summary:
+          description: Counts across all captured recipients by current routing checkpoint state.
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        recipients:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventReceiptRecipientResponse' }
+        next_after: { type: string, description: Opaque cursor for the next acceptance-ordered recipient page. }
+
+    EventReceiptRecipientResponse:
+      description: One captured recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, routing, recovery_actions]
+      properties:
+        subscription_id: { type: string, description: Immutable captured subscription or notification identifier. }
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string, description: Current slug when the target still belongs to the authenticated account. }
+        routing: { $ref: '#/components/schemas/EventReceiptRoutingResponse' }
+        execution: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        recovery: { $ref: '#/components/schemas/EventReceiptRecoveryResponse' }
+        cancellation: { $ref: '#/components/schemas/EventReceiptCancellationResponse' }
+        execution_unavailable:
+          type: string
+          enum: [not_enqueued, record_unavailable, cancel_pending]
+          description: No original invocation was found; record_unavailable after enqueue may reflect independent retention and is not a success claim.
+        recovery_actions:
+          type: array
+          items: { $ref: '#/components/schemas/EventReceiptRecoveryAction' }
+          description: Applicable selective recovery requests; empty when no action is currently eligible. Authorization and state are checked again on POST.
+        fanout_history_url: { type: string, format: uri-reference, description: Account-authenticated routing and replay history for this recipient. }
+        attempt_history_url: { type: string, format: uri-reference, description: Account-authenticated handler attempt history including trusted replays. }
+
+    EventReceiptRoutingResponse:
+      description: Recipient routing checkpoint and lifetime attempts; execution attempts are separate.
+      type: object
+      additionalProperties: false
+      required: [state, attempts, retryable, replay_count]
+      properties:
+        state: { type: string, enum: [pending, processing, filtered, enqueued, failed] }
+        attempts: { type: integer, minimum: 0, description: "Lifetime routing attempts, including replay generations." }
+        generation_capacity_deferrals: { type: integer, minimum: 0, description: Capacity waits in this independent routing generation; subtract from generation_attempts for failure-budget use. }
+        capacity_deferrals: { type: integer, minimum: 0, description: Lifetime capacity waits; excluded from the routing failure budget. }
+        capacity_scope: { type: string, enum: [consumer, app, account], description: Active capacity wait reason; absent after admission. }
+        pending_age_seconds: { type: number, minimum: 0, description: Age since event acceptance while routing is pending or processing. }
+        generation: { type: integer, format: int64, minimum: 1, description: Independent routing generation; absent on legacy whole-event receipts. }
+        generation_attempts: { type: integer, minimum: 0, description: "Claims in the current independent generation, including capacity waits; subtract generation_capacity_deferrals for failure-budget use." }
+        next_attempt_at: { type: string, format: date-time, description: "Scheduled pending routing retry, not a dispatch guarantee." }
+        lease_until: { type: string, format: date-time, description: Independent routing claim expiry; no claim token is exposed. }
+        updated_at: { type: string, format: date-time }
+        last_error: { type: string }
+        failure_code: { type: string }
+        retryable: { type: boolean }
+        replay_count: { type: integer, format: int64, minimum: 0 }
+        last_replayed_at: { type: string, format: date-time }
+
+    EventReceiptExecutionResponse:
+      description: Current retained invocation state. The recipient execution is the original deterministic invocation; recovery and history contain trusted generic replay invocations.
+      type: object
+      additionalProperties: false
+      required: [invocation_id, state, attempts, replay_generation, created_at]
+      properties:
+        invocation_id: { type: string, format: uuid }
+        replayed_from_invocation_id: { type: string, format: uuid, description: Trusted immediate parent for a generic replay; its execution record may have expired. }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, superseded, expired, dead_letter] }
+        attempts: { type: integer, minimum: 0 }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: "This invocation's budget generation, updated by in-place dead-letter replay." }
+        next_attempt_at: { type: string, format: date-time, description: Next pending invocation due time; dispatch may be delayed by admission. }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        last_error: { type: string }
+
+    EventReceiptRecoveryResponse:
+      description: Latest retained generic replay and history; original execution remains separate. Completed means this latest replay recovered; counts may decrease as execution records expire. Absence does not prove that no historical replay occurred.
+      type: object
+      additionalProperties: false
+      required: [retained_replay_count, latest_replay, history_url]
+      properties:
+        retained_replay_count: { type: integer, format: int64, minimum: 1 }
+        latest_replay: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        history_url: { type: string, format: uri-reference, description: Account-authenticated paginated replay history for this captured recipient. }
+
+    EventReceiptReplayHistoryResponse:
+      description: A page of retained generic replay executions for one captured event consumer.
+      type: object
+      additionalProperties: false
+      required: [event_source, event_id, subscription_id, original_invocation_id, replays]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        subscription_id: { type: string }
+        original_invocation_id: { type: string, format: uuid, description: Deterministic root delivery ID; its execution record may have expired. }
+        replays:
+          type: array
+          items: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        next_after: { type: string, description: Opaque cursor for the next older page; omit after when starting a fresh history read. }
+
+    InvocationAttemptResponse:
+      description: Recorded invocation claim and its eventual dispatch outcome within one replay generation.
+      type: object
+      additionalProperties: false
+      required: [id, invocation_id, replay_generation, attempt, started_at, outcome, retain_until]
+      properties:
+        id: { type: integer, format: int64, minimum: 1 }
+        invocation_id: { type: string, format: uuid }
+        replay_generation: { type: integer, format: int64, minimum: 0 }
+        attempt: { type: integer, minimum: 1 }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        outcome: { type: string, enum: [running, succeeded, retry, failed, dead_letter, cancelled, unknown], description: Dispatch evidence; unknown does not prove whether the handler ran. }
+        error_detail: { type: string, maxLength: 1024 }
+        next_attempt_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time, description: Closed attempts can expire earlier if their invocation is deleted; running attempts are not pruned. }
+
+    EventReceiptAttemptHistoryResponse:
+      description: Retained dispatch attempts for the original application event delivery and its trusted replay descendants.
+      type: object
+      additionalProperties: false
+      required: [event_source, event_id, subscription_id, original_invocation_id, coverage, attempts]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        subscription_id: { type: string }
+        original_invocation_id: { type: string, format: uuid }
+        coverage: { type: string, enum: [recorded_attempts_only], description: History is not backfilled and may be pruned; absence is not proof of no delivery. }
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/InvocationAttemptResponse' }
+        next_after: { type: string, description: Opaque cursor for the next page of older dispatch attempts for this captured recipient. }
+
+    EventReceiptCancellationResponse:
+      description: Durable work-policy cancel_pending operation receipt, which creates no handler invocation.
+      type: object
+      additionalProperties: false
+      required: [receipt_id, cancelled_count, created_at]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        cancelled_count: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+
+    EventReceiptRecoveryAction:
+      description: Selective recovery request through an existing authorized endpoint. GET receipt inspection never performs this action.
+      type: object
+      additionalProperties: false
+      required: [kind, method, url]
+      properties:
+        kind: { type: string, enum: [routing_replay, handler_replay, keyed_handler_replay, dead_letter_replay] }
+        method: { type: string, enum: [POST] }
+        url: { type: string, format: uri-reference }
+        body: { $ref: '#/components/schemas/ReplayEventFanoutFailureRequest' }
 
     EventDeliveryListResponse:
       description: App-scoped event invocation and fanout failure history, each ordered newest first.
@@ -45981,6 +47391,11 @@ components:
         - created_at
         - updated_at
       properties:
+        post_deploy_rollback_window_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage.
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id:
           type: string
@@ -46052,6 +47467,11 @@ components:
       type: object
       required: [name, metric, comparison, threshold, window_spec, webhook_url, webhook_secret]
       properties:
+        post_deploy_rollback_window_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify.
         name: { type: string, example: "p99 > 500ms" }
         enabled: { type: boolean, example: true }
         metric:
@@ -46086,6 +47506,11 @@ components:
       description: 'Partial update — every field is optional. Omitted means leave alone.'
       type: object
       properties:
+        post_deploy_rollback_window_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry qualifies.
         name: { type: string }
         enabled: { type: boolean }
         metric:
@@ -49906,7 +51331,7 @@ components:
           pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           x-since: "2026-08"
-          x-issue: "adr-092"
+          x-issue: "adr-92"
         secret_class:
           type: string
           enum: [persistent, ephemeral]
@@ -51739,11 +53164,15 @@ components:
         One manual command to execute against the app's live deployment.
         verification_deployment_id optionally selects an exact app-owned,
         materialized live deployment for the reserved service, PostgreSQL,
-        object-storage or configured outbound verification probes only. Generic and smoke commands
-        cannot select a deployment. An explicit probe requires authorized,
-        managed binding metadata and remains live at atomic task admission.
-        The selector is supported only on direct POST /v1/apps/{slug}/tasks;
-        exclusive-operation task admission rejects it.
+        object-storage or configured outbound verification probes only.
+        smoke_deployment_id selects an exact app-owned, materialized live caller
+        deployment for the reserved service smoke GET command. The service must
+        be declared on the caller; target authorization remains enforced by the gateway.
+        Generic commands cannot select a deployment. The selectors are mutually
+        exclusive and require the selected deployment to remain live at atomic
+        task admission. An explicit verification probe also requires authorized,
+        managed binding metadata. Both selectors are supported only on direct
+        POST /v1/apps/{slug}/tasks; exclusive-operation task admission rejects them.
         `command_shell=false` executes argv directly. Shell mode requires one
         command string and is explicit so clients preserve quoting semantics.
         `__gregale_service_binding_probe_v1__ <service>` is reserved for the
@@ -51755,6 +53184,7 @@ components:
       additionalProperties: false
       properties:
         verification_deployment_id: { type: string, format: uuid, description: "Exact source deployment for a reserved binding verification probe; omit for the current manual-task selection." }
+        smoke_deployment_id: { type: string, format: uuid, description: "Exact caller deployment for a reserved service smoke GET; mutually exclusive with verification_deployment_id. Omit for automatic caller selection." }
         command:
           type: array
           minItems: 1
@@ -53875,6 +55305,19 @@ components:
         duration_ms: { type: integer, format: int64, minimum: 0 }
       additionalProperties: true
 
+    WorkflowFinishedWebhookPayload:
+      type: object
+      description: Safe workflow run metadata delivered after a run reaches succeeded, failed, or dead. Inputs, outputs, and error text are omitted; fetch the run using its ID when authorized.
+      required: [app_id, run_id, workflow_name, status, finished_at, resume_count]
+      properties:
+        app_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        status: { type: string, enum: [succeeded, failed, dead] }
+        finished_at: { type: string, format: date-time }
+        resume_count: { type: integer, minimum: 0, maximum: 16 }
+      additionalProperties: false
+
     PreviewCreatedWebhookPayload:
       type: object
       description: Preview URL details delivered with preview.created.
@@ -54020,19 +55463,19 @@ components:
 
     CreateInboundWebhookEndpointRequest:
       type: object
-      description: Create a provider-verified endpoint whose accepted events become durable app invocations.
+      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or automation starts when bound.
       required: [name, provider, signing_secret]
       properties:
         name:
           type: string
           pattern: '^[a-z][a-z0-9-]{0,62}$'
           maxLength: 63
-        provider: { type: string, enum: [stripe] }
+        provider: { type: string, enum: [stripe, generic] }
         signing_secret:
           type: string
           minLength: 1
           maxLength: 256
-          description: Provider endpoint secret; sealed at rest and never returned.
+          description: Stripe signing secret or custom sender HMAC secret (at least 32 bytes for generic); sealed at rest and never returned.
         delivery_path:
           type: string
           pattern: '^/[^?#]*$'
@@ -54047,9 +55490,9 @@ components:
 
     UpdateInboundWebhookEndpointRequest:
       type: object
-      description: Omitted fields remain unchanged. A signing_secret value rotates the provider secret in place.
+      description: Omitted fields remain unchanged. A signing_secret value rotates the provider secret in place; generic secrets must contain at least 32 bytes.
       properties:
-        signing_secret: { type: string, minLength: 1, maxLength: 256 }
+        signing_secret: { type: string, minLength: 1, maxLength: 256, description: Generic provider secrets must contain at least 32 bytes. }
         delivery_path: { type: string, pattern: '^/[^?#]*$', maxLength: 256 }
         enabled: { type: boolean }
 
@@ -54062,7 +55505,7 @@ components:
         app_id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
         name: { type: string, maxLength: 63 }
-        provider: { type: string, enum: [stripe] }
+        provider: { type: string, enum: [stripe, generic] }
         delivery_path: { type: string, maxLength: 256 }
         enabled: { type: boolean }
         signing_secret_masked: { type: string, enum: ['***'] }
@@ -54138,7 +55581,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -54621,7 +56064,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -54702,7 +56145,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

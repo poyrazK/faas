@@ -3737,20 +3737,22 @@ func (c *Client) CancelPlatformTenantExclusiveOperation(ctx context.Context, id 
 	return c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
 
-// ReplayInvocation re-issues a failed invocation. The server
-// enqueues a fresh async invocation carrying the original payload,
-// headers, method, and path; returns 202 + AsyncInvokeResponse on
-// success and 409 if the original is not in a replayable state (the
-// handler's allow-list is {failed, dead_letter} — see
-// cmd/apid/handlers_invocations.go::replayInvocation for the source
-// of truth, issue #315 tier-2 DX).
-//
-// Account-scoped: a customer can't replay another tenant's
-// invocation; the server surfaces ErrInvocationNotFound in that
-// case (same IDOR-safe path as GetInvocation).
+// ReplayInvocation recovers failed or dead-lettered unbound unkeyed work.
+// Each parent creates one durable child, preserving its request, customer,
+// environment and trusted lineage. Repeated calls return that child regardless
+// of request keys, including after completion. Further recovery targets the
+// failed child. A pruned child returns 409 invocation_replay_unavailable.
+// The parent and its current app must still belong to the caller.
 func (c *Client) ReplayInvocation(ctx context.Context, id string) (AsyncInvokeResponse, error) {
 	var out AsyncInvokeResponse
 	return out, c.do(ctx, "POST", "/v1/invocations/"+id+"/replay", nil, &out)
+}
+
+// ReplayKeyedInvocation recovers failed keyed work in its captured lane.
+// Repeating the same parent returns its existing child without re-execution.
+func (c *Client) ReplayKeyedInvocation(ctx context.Context, id string) (AsyncInvokeResponse, error) {
+	var out AsyncInvokeResponse
+	return out, c.do(ctx, "POST", "/v1/invocations/"+url.PathEscape(id)+"/replay-keyed", nil, &out)
 }
 
 // QueueDeadLetterReplay resets a dead-letter queue row back to
@@ -6925,19 +6927,45 @@ func (c *Client) DeleteCorsPreset(ctx context.Context, id string) error {
 
 // RunWorkflow (ADR-081) triggers a new workflow execution run for an app.
 func (c *Client) RunWorkflow(ctx context.Context, slug, workflowName string, input json.RawMessage) (WorkflowRunResponse, error) {
+	return c.RunWorkflowWithIdempotencyKey(ctx, slug, workflowName, input, "")
+}
+
+// RunWorkflowWithIdempotencyKey starts a durable run with a caller-stable key.
+// Reuse the same key after an uncertain response; a different input with that
+// key returns a conflict. An empty key uses the SDK's per-request default.
+func (c *Client) RunWorkflowWithIdempotencyKey(ctx context.Context, slug, workflowName string, input json.RawMessage, idempotencyKey string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse
 	path := fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", slug, workflowName)
-	err := c.do(ctx, "POST", path, input, &resp)
+	err := c.doWithIdempotencyKey(ctx, "POST", path, input, &resp, idempotencyKey)
 	return resp, err
 }
 
 // ListWorkflowRuns (ADR-081) lists workflow runs for an app.
 func (c *Client) ListWorkflowRuns(ctx context.Context, slug string, limit, offset int, status string) (ListWorkflowRunsResponse, error) {
+	return c.ListWorkflowRunsWithOptions(ctx, slug, WorkflowRunListOptions{
+		Limit: limit, Offset: offset, Status: status,
+	})
+}
+
+// ListWorkflowRunsWithOptions lists workflow runs for an app with optional filters.
+func (c *Client) ListWorkflowRunsWithOptions(ctx context.Context, slug string, opts WorkflowRunListOptions) (ListWorkflowRunsResponse, error) {
 	var resp ListWorkflowRunsResponse
-	path := fmt.Sprintf("/v1/apps/%s/workflows/runs?limit=%d&offset=%d", slug, limit, offset)
-	if status != "" {
-		path += "&status=" + status
+	query := url.Values{}
+	query.Set("limit", strconv.Itoa(opts.Limit))
+	query.Set("offset", strconv.Itoa(opts.Offset))
+	if opts.Status != "" {
+		query.Set("status", opts.Status)
 	}
+	if opts.WorkflowName != "" {
+		query.Set("workflow_name", opts.WorkflowName)
+	}
+	if opts.CreatedAfter != nil {
+		query.Set("created_after", opts.CreatedAfter.UTC().Format(time.RFC3339Nano))
+	}
+	if opts.CreatedBefore != nil {
+		query.Set("created_before", opts.CreatedBefore.UTC().Format(time.RFC3339Nano))
+	}
+	path := fmt.Sprintf("/v1/apps/%s/workflows/runs?%s", slug, query.Encode())
 	err := c.do(ctx, "GET", path, nil, &resp)
 	return resp, err
 }
@@ -7183,4 +7211,49 @@ func (c *Client) PutAppCustomMetric(ctx context.Context, slug, name string, valu
 // per-app name cap. Deleting a name that does not exist succeeds.
 func (c *Client) DeleteAppCustomMetric(ctx context.Context, slug, name string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/custom-metrics/"+name, nil, nil)
+}
+
+// GetEventReceipt reads one account-scoped event identity and a bounded page
+// of acceptance-time recipients. Pass NextAfter verbatim for another page.
+func (c *Client) GetEventReceipt(ctx context.Context, source, id, after string, limit int) (EventReceiptResponse, error) {
+	var out EventReceiptResponse
+	query := url.Values{"source": {source}, "id": {id}}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/events/receipt?"+query.Encode(), nil, &out)
+}
+
+func (c *Client) GetEventReceiptReplays(ctx context.Context, source, id, subscriptionID, after string, limit int) (EventReceiptReplayHistoryResponse, error) {
+	var out EventReceiptReplayHistoryResponse
+	query := url.Values{"source": {source}, "id": {id}, "subscription_id": {subscriptionID}}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/events/receipt/replays?"+query.Encode(), nil, &out)
+}
+
+func (c *Client) GetEventReceiptAttempts(ctx context.Context, source, id, subscriptionID, after string, limit int) (EventReceiptAttemptHistoryResponse, error) {
+	var out EventReceiptAttemptHistoryResponse
+	query := url.Values{"source": {source}, "id": {id}, "subscription_id": {subscriptionID}}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/events/receipt/attempts?"+query.Encode(), nil, &out)
+}
+
+// GetEventStorageUsage reads retained customer event usage and plan budgets.
+func (c *Client) GetEventStorageUsage(ctx context.Context) (EventStorageUsageResponse, error) {
+	var out EventStorageUsageResponse
+	err := c.do(ctx, http.MethodGet, "/v1/events/storage", nil, &out)
+	return out, err
 }

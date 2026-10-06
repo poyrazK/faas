@@ -54,6 +54,7 @@ func (s *server) objectVersionProtection(w http.ResponseWriter, r *http.Request,
 		bucketProblem(w, objectstorage.ErrUnsupported)
 		return
 	}
+	svc.EventHolds = backend.ObjectLock.PublicCapabilities(p).VersionEventHold
 	s.putVersionProtection(w, r, b, svc, key, version, kind)
 }
 func versionProtectionSelection(r *http.Request) (string, string, string, error) {

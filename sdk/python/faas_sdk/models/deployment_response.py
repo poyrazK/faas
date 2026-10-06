@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
     from ..models.log_excerpt import LogExcerpt
+    from ..models.rollback_operation import RollbackOperation
     from ..models.scan_result import ScanResult
     from ..models.secret_scan_result import SecretScanResult
     from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
@@ -259,6 +260,9 @@ class DeploymentResponse:
     """Wall-clock timestamp at which the rollout was aborted."""
     rollout_aborted_reason: str | Unset = UNSET
     """Operator or orchestrator reason recorded when the rollout is aborted."""
+    rollback_operation: RollbackOperation | Unset = UNSET
+    """Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding
+    evidence or move traffic for another operation."""
     service_rollout_handoff: ServiceRolloutHandoffResponse | Unset = UNSET
     """Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -569,6 +573,10 @@ class DeploymentResponse:
 
         rollout_aborted_reason = self.rollout_aborted_reason
 
+        rollback_operation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollback_operation, Unset):
+            rollback_operation = self.rollback_operation.to_dict()
+
         service_rollout_handoff: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_rollout_handoff, Unset):
             service_rollout_handoff = self.service_rollout_handoff.to_dict()
@@ -693,6 +701,8 @@ class DeploymentResponse:
             field_dict["rollout_aborted_at"] = rollout_aborted_at
         if rollout_aborted_reason is not UNSET:
             field_dict["rollout_aborted_reason"] = rollout_aborted_reason
+        if rollback_operation is not UNSET:
+            field_dict["rollback_operation"] = rollback_operation
         if service_rollout_handoff is not UNSET:
             field_dict["service_rollout_handoff"] = service_rollout_handoff
 
@@ -708,6 +718,7 @@ class DeploymentResponse:
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
         from ..models.log_excerpt import LogExcerpt
+        from ..models.rollback_operation import RollbackOperation
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
         from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
@@ -1250,6 +1261,13 @@ class DeploymentResponse:
 
         rollout_aborted_reason = d.pop("rollout_aborted_reason", UNSET)
 
+        _rollback_operation = d.pop("rollback_operation", UNSET)
+        rollback_operation: RollbackOperation | Unset
+        if isinstance(_rollback_operation, Unset):
+            rollback_operation = UNSET
+        else:
+            rollback_operation = RollbackOperation.from_dict(_rollback_operation)
+
         _service_rollout_handoff = d.pop("service_rollout_handoff", UNSET)
         service_rollout_handoff: ServiceRolloutHandoffResponse | Unset
         if isinstance(_service_rollout_handoff, Unset):
@@ -1318,6 +1336,7 @@ class DeploymentResponse:
             rollout_completed_at=rollout_completed_at,
             rollout_aborted_at=rollout_aborted_at,
             rollout_aborted_reason=rollout_aborted_reason,
+            rollback_operation=rollback_operation,
             service_rollout_handoff=service_rollout_handoff,
         )
 

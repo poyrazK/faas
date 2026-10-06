@@ -50,6 +50,9 @@ class AlertRuleResponse:
     """What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll
     the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
     promote = short-circuit the canary ladder to 100%. Pre-auth target metrics support webhook only."""
+    post_deploy_rollback_window_seconds: int | Unset = UNSET
+    """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
+    deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
     last_fired_at: datetime.datetime | Unset = UNSET
@@ -87,6 +90,8 @@ class AlertRuleResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
+
         failure_source: str | Unset = UNSET
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
@@ -120,6 +125,8 @@ class AlertRuleResponse:
                 "updated_at": updated_at,
             }
         )
+        if post_deploy_rollback_window_seconds is not UNSET:
+            field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
         if last_fired_at is not UNSET:
@@ -162,6 +169,8 @@ class AlertRuleResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
+
         _failure_source = d.pop("failure_source", UNSET)
         failure_source: AlertRuleResponseFailureSource | Unset
         if isinstance(_failure_source, Unset):
@@ -199,6 +208,7 @@ class AlertRuleResponse:
             state=state,
             created_at=created_at,
             updated_at=updated_at,
+            post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             failure_source=failure_source,
             last_fired_at=last_fired_at,
             last_evaluated_at=last_evaluated_at,

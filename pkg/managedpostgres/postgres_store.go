@@ -163,7 +163,7 @@ func (s *PostgresStore) Claim(ctx context.Context, accountID, databaseID, leaseT
 	if operation == StateDeleting {
 		return s.ClaimDelete(ctx, accountID, databaseID, leaseToken, now, leaseUntil)
 	}
-	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) || operation != StateProvisioning {
+	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) || operation != StateProvisioning && operation != StateUpdating {
 		return Database{}, ErrInvalid
 	}
 	account, err := postgresUUID(accountID)
@@ -173,6 +173,9 @@ func (s *PostgresStore) Claim(ctx context.Context, accountID, databaseID, leaseT
 	id, err := postgresUUID(databaseID)
 	if err != nil {
 		return Database{}, err
+	}
+	if operation == StateUpdating {
+		return s.claimResize(ctx, accountID, databaseID, leaseToken, now, leaseUntil)
 	}
 	q := new(sqlc.Queries)
 	row, err := q.ClaimManagedPostgresLifecycleProvision(ctx, s.pool, sqlc.ClaimManagedPostgresLifecycleProvisionParams{
@@ -218,7 +221,7 @@ func (s *PostgresStore) ClaimDelete(ctx context.Context, accountID, databaseID, 
 		return Database{}, mapPostgresError(err)
 	}
 	current := databaseFromSQL(row)
-	if current.State == StateDeleted || (!current.LeaseUntil.IsZero() && current.LeaseUntil.After(now)) {
+	if current.State == StateUpdating || current.State == StateDeleted || (!current.LeaseUntil.IsZero() && current.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
 	dependants, err := q.ReadManagedPostgresLifecycleDependants(ctx, tx, id)
@@ -275,7 +278,7 @@ func (s *PostgresStore) FinishProvision(ctx context.Context, databaseID, leaseTo
 }
 
 func (s *PostgresStore) Release(ctx context.Context, databaseID, leaseToken string, next State, errorCode string, now, retryAt time.Time) error {
-	if leaseToken == "" || now.IsZero() || retryAt.Before(now) || !validErrorCode(errorCode) || (next != StateProvisioning && next != StateDeleting && next != StateFailed) {
+	if leaseToken == "" || now.IsZero() || retryAt.Before(now) || !validErrorCode(errorCode) || (next != StateProvisioning && next != StateUpdating && next != StateDeleting && next != StateFailed) {
 		return ErrInvalid
 	}
 	id, err := postgresUUID(databaseID)
@@ -381,7 +384,7 @@ func mapPostgresError(err error) error {
 	case pgerrcode.ForeignKeyViolation:
 		return ErrNotFound
 	case pgerrcode.CheckViolation:
-		if postgresError.ConstraintName == "managed_postgres_cutover_conflict" || postgresError.ConstraintName == "managed_postgres_database_has_bindings" || postgresError.ConstraintName == "managed_postgres_database_has_restore_descendants" {
+		if postgresError.ConstraintName == "managed_postgres_resize_conflict" || postgresError.ConstraintName == "managed_postgres_cutover_conflict" || postgresError.ConstraintName == "managed_postgres_database_has_bindings" || postgresError.ConstraintName == "managed_postgres_database_has_restore_descendants" {
 			return ErrConflict
 		}
 		return fmt.Errorf("%w: %s", ErrInvalid, postgresError.ConstraintName)

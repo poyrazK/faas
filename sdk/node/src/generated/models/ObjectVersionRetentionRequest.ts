@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ObjectVersionRetention } from './ObjectVersionRetention.js';
 /**
- * Stable identity and fixed retention intent for an owned version.
+ * Stable identity and fixed or enrolled event hold retention intent for an owned version. ON requires a duration; OFF omits duration and requires a previously active hold unless a fixed date is supplied.
  */
 export type ObjectVersionRetentionRequest = {
   /**

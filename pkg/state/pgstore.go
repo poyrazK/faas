@@ -7749,6 +7749,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, ErrTrafficChangeDuringCanary
 	}
 
+	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+		return Deployment{}, err
+	}
 	if guard != nil {
 		current, err := s.checkBindingTrafficGuard(ctx, tx, guard)
 		if err != nil {
@@ -8011,6 +8014,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		persistedStep = dep.CanaryTotalSteps
 	} else if len(siblings) == 0 {
 		return Deployment{}, 0, ErrTrafficPercentSumInvalid
+	}
+	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+		return Deployment{}, 0, err
 	}
 	newWeights := RedistributeTraffic(siblings, 100-params.TrafficPercent)
 	if terminal {
@@ -8687,7 +8693,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 // predecessor observed by the caller is still live and serving in the same
 // scope. The exact pair is checked under row locks before traffic is changed.
 func (s *PgStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
-	if deploymentID == "" || expectedPredecessorID == "" || deploymentID == expectedPredecessorID || action != "abort" {
+	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
 	return s.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
@@ -8848,15 +8854,15 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 	}
 	if expectedPredecessorID != "" {
-		if IsServiceRollout(dep) {
+		if IsServiceRollout(dep) || expectedPredecessorID == dep.ID {
 			return dep, 0, ErrRolloutStateInvalid
 		}
 		var predecessorID string
 		if err := tx.QueryRow(ctx,
 			`select id from deployments
 			  where app_id = $1 and scope = $2 and id = $3::uuid
-			    and status = 'live' and traffic_percent > 0
-			  for update`, dep.AppID, dep.Scope, expectedPredecessorID).Scan(&predecessorID); err != nil {
+			    and status = 'live' and traffic_percent > 0 and created_at < $4
+			  for update`, dep.AppID, dep.Scope, expectedPredecessorID, dep.CreatedAt).Scan(&predecessorID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return dep, 0, ErrNotFound
 			}
@@ -9058,6 +9064,11 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		auditData = rolloutAuditData("promote", reason)
 
 	case "abort":
+		if expectedPredecessorID != "" {
+			if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+				return dep, 0, err
+			}
+		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set
 				rollout_state = 'aborted',
@@ -9127,6 +9138,9 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 		auditKind = DeployRolledBack
 		auditData = rolloutAuditData("abort", reason)
+		if expectedPredecessorID != "" {
+			auditData = rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx))
+		}
 	}
 
 	// Audit emit rides the same tx as the deployment stamp. The actor
@@ -9135,24 +9149,23 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 	if emergencyGrace != nil {
 		actor = "apid:safe_release_lease_expired"
 	}
-	var auditAccountID *uuid.UUID
+	var auditAccountID, auditRuleID *uuid.UUID
 	if auditOverride != nil {
 		auditKind, auditData, actor, now = auditOverride.Kind, auditOverride.Data, auditOverride.Actor, auditOverride.At
-		auditAccountID = auditOverride.AccountID
+		auditAccountID, auditRuleID = auditOverride.AccountID, auditOverride.AlertRuleID
+		if expectedPredecessorID != "" && len(bindingReleaseFences(ctx)) > 0 {
+			var err error
+			auditData, err = addRolloutRecoveryAuditFences(auditData, expectedPredecessorID, bindingReleaseFences(ctx))
+			if err != nil {
+				return dep, 0, err
+			}
+		}
 	}
-	var auditID int64
-	if err := tx.QueryRow(ctx,
-		`insert into deployment_audit
-		    (deployment_id, account_id, kind, actor, at, data)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
-		 returning id`,
-		dep.ID,
-		auditAccountID, // nullable for existing operator and emergency recoveries
-		string(auditKind),
-		actor,
-		now,
-		auditData,
-	).Scan(&auditID); err != nil {
+	auditID, err := sqlc.New().AppendRolloutRecoveryAudit(ctx, tx, sqlc.AppendRolloutRecoveryAuditParams{
+		DeploymentID: mustPgUUID(dep.ID), AccountID: optionalPgUUID(auditAccountID), AlertRuleID: optionalPgUUID(auditRuleID),
+		Kind: string(auditKind), Actor: actor, At: pgtype.Timestamptz{Time: now, Valid: true}, Data: auditData,
+	})
+	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout append audit: %w", err)
 	}
 
@@ -9284,6 +9297,24 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
 		return err
 	}
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
+		return err
+	}
+	if r, readErr := s.CheckedRollbackForTarget(ctx, id); readErr == nil && r.Status == "preparing" {
+		if err := s.markCheckedRollbackReadyTx(ctx, tx, dep, r); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	} else if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+		return readErr
+	}
+
+	if failed, err := sqlc.New().FailedCheckedRollbackTarget(ctx, tx, mustPgUUID(id)); err != nil {
+		return err
+	} else if failed && dep.Status != DeployLive {
+		return ErrCheckedRollbackRequired
+	}
+
 	if dep.Status == DeployCancelled {
 		return ErrInvalidStateTransition
 	}
@@ -13323,115 +13354,8 @@ func (s *PgStore) ReactivateCronsForApp(ctx context.Context, appID string) (int,
 //   - webhook_secret_sealed is []byte (NOT NULL); the handler seals
 //     via pkg/secretbox.SealOne before calling.
 
-const alertRuleSelectCols = `id, account_id, app_id, name, enabled, metric, comparison,
-       threshold, window_spec, failure_source, action, webhook_url,
-       webhook_secret_sealed, cooldown_minutes, state,
-       last_fired_at, last_evaluated_at, created_at, updated_at`
-
-func scanAlertRule(row pgx.Row) (AlertRule, error) {
-	r, err := scanAlertRuleCols(row.Scan)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return AlertRule{}, ErrNotFound
-		}
-		return AlertRule{}, err
-	}
-	return r, nil
-}
-
-func scanAlertRules(rows pgx.Rows) ([]AlertRule, error) {
-	var out []AlertRule
-	for rows.Next() {
-		r, err := scanAlertRuleCols(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// scanAlertRuleCols is the single source of column order for
-// alert_rules. The select clause above is the contract — every
-// SELECT against alert_rules lists these columns in this order, and
-// the SELECT statement binds Scan's positional arguments against
-// this list. A future column add lands here first, in the same
-// commit, so a SELECT-write drift cannot silently swallow a column.
-func scanAlertRuleCols(scan func(...any) error) (AlertRule, error) {
-	r := AlertRule{}
-	var metric, comparison, windowSpec, action, state string
-	var appID, failureSource *string
-	var secret []byte
-	var lastFired, lastEvaluated *time.Time
-	if err := scan(
-		&r.ID, &r.AccountID, &appID, &r.Name, &r.Enabled,
-		&metric, &comparison, &r.Threshold, &windowSpec, &failureSource,
-		&action, &r.WebhookURL, &secret, &r.CooldownMinutes, &state,
-		&lastFired, &lastEvaluated, &r.CreatedAt, &r.UpdatedAt,
-	); err != nil {
-		return AlertRule{}, err
-	}
-	r.Metric = AlertMetric(metric)
-	r.Comparison = AlertComparison(comparison)
-	r.WindowSpec = AlertWindowSpec(windowSpec)
-	r.Action = AlertAction(action)
-	r.State = AlertState(state)
-	if failureSource != nil && *failureSource != "" {
-		r.FailureSource = AlertFailureSource(*failureSource)
-	}
-	if appID != nil {
-		r.AppID = *appID
-	}
-	if len(secret) > 0 {
-		r.WebhookSecretSealed = secret
-	}
-	if lastFired != nil {
-		r.LastFiredAt = *lastFired
-	}
-	if lastEvaluated != nil {
-		r.LastEvaluatedAt = *lastEvaluated
-	}
-	return r, nil
-}
-
 func (s *PgStore) CreateAlertRule(ctx context.Context, in AlertRule) (AlertRule, error) {
-	var appIDArg any
-	if in.AppID != "" {
-		appIDArg = in.AppID
-	}
-	var sourceArg any
-	if in.FailureSource != "" {
-		sourceArg = string(in.FailureSource)
-	}
-	stateArg := string(in.State)
-	if stateArg == "" {
-		stateArg = string(AlertStateOk)
-	}
-	actionArg := string(in.Action)
-	if actionArg == "" {
-		actionArg = string(AlertActionWebhook)
-	}
-	row := s.pool.QueryRow(ctx, `
-		insert into alert_rules (
-			account_id, app_id, name, enabled, metric, comparison,
-			threshold, window_spec, failure_source, action, webhook_url,
-			webhook_secret_sealed, cooldown_minutes, state
-		) values (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11,
-			$12, $13, $14
-		)
-		returning `+alertRuleSelectCols,
-		in.AccountID, appIDArg, in.Name, in.Enabled,
-		string(in.Metric), string(in.Comparison), in.Threshold,
-		string(in.WindowSpec), sourceArg, actionArg, in.WebhookURL,
-		in.WebhookSecretSealed, in.CooldownMinutes, stateArg,
-	)
-	r, err := scanAlertRule(row)
-	if err != nil {
-		return AlertRule{}, mapErr(err)
-	}
-	return r, nil
+	return insertCustomerAlertRule(ctx, s.pool, in)
 }
 
 // CreateAlertRuleIfUnderQuota — see Store interface. Account-wide
@@ -13497,37 +13421,10 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 		}
 	}
 
-	var appIDArg any
-	if in.AppID != "" {
-		appIDArg = in.AppID
-	}
-	var sourceArg any
-	if in.FailureSource != "" {
-		sourceArg = string(in.FailureSource)
-	}
-	actionArg := string(in.Action)
-	if actionArg == "" {
-		actionArg = string(AlertActionWebhook)
-	}
-	row := tx.QueryRow(ctx, `
-		insert into alert_rules (
-			account_id, app_id, name, enabled, metric, comparison,
-			threshold, window_spec, failure_source, action, webhook_url,
-			webhook_secret_sealed, cooldown_minutes, state
-		) values (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11,
-			$12, $13, 'ok'
-		)
-		returning `+alertRuleSelectCols,
-		in.AccountID, appIDArg, in.Name, in.Enabled,
-		string(in.Metric), string(in.Comparison), in.Threshold,
-		string(in.WindowSpec), sourceArg, actionArg, in.WebhookURL,
-		in.WebhookSecretSealed, in.CooldownMinutes,
-	)
-	r, err := scanAlertRule(row)
+	in.State = AlertStateOk
+	r, err := insertCustomerAlertRule(ctx, tx, in)
 	if err != nil {
-		return AlertRule{}, mapErr(err)
+		return AlertRule{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AlertRule{}, fmt.Errorf("state: commit create alert rule: %w", err)
@@ -13536,9 +13433,11 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 }
 
 func (s *PgStore) AlertRuleByID(ctx context.Context, id string) (AlertRule, error) {
-	row := s.pool.QueryRow(ctx,
-		`select `+alertRuleSelectCols+` from alert_rules where id = $1`, id)
-	return scanAlertRule(row)
+	key, err := alertPgUUID(id)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	return customerAlertRuleResult(sqlc.New().ReadCustomerAlertRule(ctx, s.pool, key))
 }
 
 // AlertRuleByAccountAppAndPresetName resolves the alert_rules row
@@ -13559,21 +13458,15 @@ func (s *PgStore) AlertRuleByID(ctx context.Context, id string) (AlertRule, erro
 //
 // Refs: ADR-123 PR-C, issue #1233, plan §Commit 2.
 func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accountID, appID, presetName string) (AlertRule, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+alertRuleSelectCols+`
-		FROM alert_rules r
-		WHERE r.account_id = $1
-		  AND r.app_id = $2
-		  AND r.name LIKE (
-		    SELECT (display_name || ' (%') FROM alert_presets WHERE name = $3
-		  )
-		ORDER BY r.created_at DESC
-		LIMIT 2`, accountID, appID, presetName)
+	acct, err := alertPgUUID(accountID)
 	if err != nil {
 		return AlertRule{}, err
 	}
-	defer rows.Close()
-	matched, err := scanAlertRules(rows)
+	app, err := alertPgUUID(appID)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	matched, err := customerAlertRules(sqlc.New().ListCustomerAlertRulesByPreset(ctx, s.pool, sqlc.ListCustomerAlertRulesByPresetParams{AccountID: acct, AppID: app, PresetName: presetName}))
 	if err != nil {
 		return AlertRule{}, err
 	}
@@ -13583,11 +13476,6 @@ func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accoun
 	case 1:
 		return matched[0], nil
 	default:
-		// Defensive: catalog display_name uniqueness + the
-		// (account_id, app_id, name) UNIQUE constraint should make
-		// this unreachable. Returning ErrConflict keeps the handler
-		// clean — 409 with a sane message beats a panic or a silent
-		// "send test alert to a stale rule" outcome.
 		return AlertRule{}, ErrConflict
 	}
 }
@@ -13598,53 +13486,6 @@ func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accoun
 // path) and a non-nil replaces the column. FailureSource is not on
 // UpdateAlertRuleParams — see the struct godoc for why metric and
 // source rotate together or not at all.
-func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertRuleParams) (AlertRule, error) {
-	var nameArg, urlArg any
-	if p.Name != nil {
-		nameArg = *p.Name
-	}
-	if p.WebhookURL != nil {
-		urlArg = *p.WebhookURL
-	}
-	var secretArg any
-	if p.WebhookSecretSealed != nil {
-		secretArg = *p.WebhookSecretSealed
-	}
-	var metricArg, comparisonArg, windowArg any
-	if p.Metric != nil {
-		metricArg = string(*p.Metric)
-	}
-	if p.Comparison != nil {
-		comparisonArg = string(*p.Comparison)
-	}
-	if p.WindowSpec != nil {
-		windowArg = string(*p.WindowSpec)
-	}
-
-	row := s.pool.QueryRow(ctx, `
-		update alert_rules set
-			name    = coalesce($2, name),
-			enabled = coalesce($3, enabled),
-			metric  = coalesce($4, metric),
-			comparison = coalesce($5, comparison),
-			threshold  = coalesce($6, threshold),
-			window_spec = coalesce($7, window_spec),
-			webhook_url = coalesce($8, webhook_url),
-			webhook_secret_sealed = coalesce($9, webhook_secret_sealed),
-			cooldown_minutes = coalesce($10, cooldown_minutes),
-			action  = coalesce($11, action),
-			updated_at = now()
-		where id = $1
-		returning `+alertRuleSelectCols,
-		id, nameArg, p.Enabled, metricArg, comparisonArg, p.Threshold,
-		windowArg, urlArg, secretArg, p.CooldownMinutes, p.Action,
-	)
-	r, err := scanAlertRule(row)
-	if err != nil {
-		return AlertRule{}, mapErr(err)
-	}
-	return r, nil
-}
 
 func (s *PgStore) DeleteAlertRule(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `delete from alert_rules where id = $1`, id)
@@ -13658,24 +13499,15 @@ func (s *PgStore) DeleteAlertRule(ctx context.Context, id string) error {
 }
 
 func (s *PgStore) ListAlertRulesForAccount(ctx context.Context, accountID string) ([]AlertRule, error) {
-	rows, err := s.pool.Query(ctx,
-		`select `+alertRuleSelectCols+` from alert_rules
-		 where account_id = $1 order by created_at desc`, accountID)
+	id, err := alertPgUUID(accountID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanAlertRules(rows)
+	return customerAlertRules(sqlc.New().ListCustomerAlertRulesForAccount(ctx, s.pool, id))
 }
 
 func (s *PgStore) ListEnabledAlertRules(ctx context.Context) ([]AlertRule, error) {
-	rows, err := s.pool.Query(ctx,
-		`select `+alertRuleSelectCols+` from alert_rules where enabled = true order by account_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanAlertRules(rows)
+	return customerAlertRules(sqlc.New().ListEnabledCustomerAlertRules(ctx, s.pool))
 }
 
 // ----------------------------------------------------------------------------
@@ -14968,6 +14800,10 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	if _, err := sqlc.New().LockAlertRollbackFireApp(ctx, tx, mustPgUUID(ruleID)); err != nil {
+		return "", false, fmt.Errorf("state: lock alert rollback app: %w", err)
+	}
+
 	var exists bool
 	if err := tx.QueryRow(ctx,
 		`select true from alert_rules where id = $1`, ruleID,
@@ -15002,6 +14838,10 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("state: claim alert fire insert %s: %w", ruleID, err)
+	}
+
+	if err := s.captureAlertRollbackTx(ctx, tx, ruleID, deliveryID, observed, at); err != nil {
+		return "", false, fmt.Errorf("state: capture alert rollback: %w", err)
 	}
 
 	// Stamp last_fired_at alongside the INSERT. The stamp is a
@@ -15317,7 +15157,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit, environment_id, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation, occurrence_id, start_deadline_at, failure_rules, work_decision, outcome_code`
+       work_fairness_digest, work_fairness_limit, environment_id, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation, occurrence_id, start_deadline_at, failure_rules, work_decision, outcome_code, replayed_from_invocation_id, replay_root_invocation_id, replay_root_created_at`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15577,21 +15417,21 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 }
 
 func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
-	return s.completeInvocation(ctx, id, 0, result)
+	return s.completeInvocation(ctx, id, 0, nil, result)
 }
 
 func (s *PgStore) CompleteInvocationWithWorkClassification(ctx context.Context, id string, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
-	return s.completeInvocation(ctx, id, 0, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+	return s.completeInvocation(ctx, id, 0, nil, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
 }
 
 func (s *PgStore) CompleteKeyedInvocation(ctx context.Context, id string, attempt int, result json.RawMessage) error {
 	if attempt <= 0 {
 		return ErrNotFound
 	}
-	return s.completeInvocation(ctx, id, attempt, result)
+	return s.completeInvocation(ctx, id, attempt, nil, result)
 }
 
-func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int, result json.RawMessage, classification ...InvocationWorkClassification) error {
+func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int, claim *InvocationClaim, result json.RawMessage, classification ...InvocationWorkClassification) error {
 	// outcome (issue #791) is stamped alongside state so the cron
 	// run-history read never has to infer success from state.
 	//
@@ -15603,6 +15443,11 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		return fmt.Errorf("state: invocations complete begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if claim != nil {
+		if err := lockInvocationAttemptClaim(ctx, tx, id, *claim); err != nil {
+			return err
+		}
+	}
 	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, true); err != nil {
 		return err
 	}
@@ -15620,10 +15465,10 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 			select id, account_id, quota_reserved
 			  from invocations
 			 where id = $1 and state = 'dispatching'
-			   and ((work_policy_name is null and $3 = 0
+			   and ($7::boolean or ((work_policy_name is null and $3 = 0
                  and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id))
              or (attempts=$3 and $3>0 and (work_policy_name is not null
-                 or exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id))))
+                 or exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id)))))
 			 for update
 		)
 		update invocations as invocation
@@ -15638,7 +15483,7 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		       quota_reserved = false
 		  from target
 		 where invocation.id = target.id
-			 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification).Scan(&accountID, &quotaReserved); err != nil {
+			 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification, claim != nil).Scan(&accountID, &quotaReserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -15866,6 +15711,12 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 	// leak a slot.
 	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, true); err != nil {
 		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if failOpts.Claim != nil {
+		if err := lockInvocationAttemptClaim(ctx, tx, id, *failOpts.Claim); err != nil {
+			return err
+		}
 	}
 	var accountID string
 	var newState string
@@ -16485,6 +16336,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var workFairnessDigest []byte
 	var workFairnessLimit *int
 	var environmentID, platformTenantID, queueBindingID *string
+	var replayedFrom, replayRoot *string
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
@@ -16494,11 +16346,17 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
 		&workFairnessDigest, &workFairnessLimit, &environmentID, &platformTenantID, &inv.DeploymentScope, &queueBindingID, &inv.ReplayGeneration, &occurrenceID, &startDeadlineAt,
-		&failureRules, &workDecision, &outcomeCode,
+		&failureRules, &workDecision, &outcomeCode, &replayedFrom, &replayRoot, &inv.ReplayRootCreatedAt,
 	); err != nil {
 		return Invocation{}, err
 	}
 	inv.Source = InvocationSource(source)
+	if replayedFrom != nil {
+		inv.ReplayedFromInvocationID = *replayedFrom
+	}
+	if replayRoot != nil {
+		inv.ReplayRootInvocationID = *replayRoot
+	}
 	if platformTenantID != nil {
 		inv.PlatformTenantID = *platformTenantID
 	}
@@ -17735,21 +17593,7 @@ func (s *PgStore) AppRuntimeConfigChangedAt(ctx context.Context, appID string) (
 // row. Stale rows are intentionally included because their artifacts remain
 // restorable until the stale-retention window expires.
 func (s *PgStore) ListSnapshotDeploymentIDs(ctx context.Context) ([]string, error) {
-	rows, err := s.pool.Query(ctx,
-		`select distinct deployment_id::text from snapshots order by deployment_id::text`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var deploymentID string
-		if err := rows.Scan(&deploymentID); err != nil {
-			return nil, err
-		}
-		out = append(out, deploymentID)
-	}
-	return out, rows.Err()
+	return sqlc.New().ListSnapshotDeploymentIDs(ctx, s.pool)
 }
 
 // DeleteSnapshotsByID bulk-removes the named rows. No cascade; schedd's
@@ -19673,6 +19517,9 @@ func (s *PgStore) AppendEvent(ctx context.Context, actor, kind string, subject *
 // path; persisting that time keeps cross-daemon timelines accurate even when
 // the best-effort events worker reaches Postgres later.
 func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error {
+	if subject != nil && customerPublishedEvent(kind, data) && !at.IsZero() {
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, nil, &at)
+	}
 	if at.IsZero() {
 		return s.AppendEvent(ctx, actor, kind, subject, data)
 	}
@@ -19696,6 +19543,9 @@ func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject
 // on events.trace_id is enforced by Postgres on INSERT; a non-hex
 // value surfaces as SQLSTATE 23514 to the caller.
 func (s *PgStore) AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error {
+	if subject != nil && customerPublishedEvent(kind, data) {
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, traceID, nil)
+	}
 	var subj *uuid.UUID
 	if subject != nil {
 		u, err := uuid.Parse(*subject)
@@ -24501,7 +24351,8 @@ const deploymentSelectColumnsWithRootfs = `
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
-	coalesce(environment_workload_runtime::text,'')`
+	coalesce(environment_workload_runtime::text,''),
+	secret_reload_signal`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -24560,7 +24411,8 @@ const deploymentSelectColumnsQualified = `
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
-	coalesce(d.environment_workload_runtime::text,'')`
+	coalesce(d.environment_workload_runtime::text,''),
+	d.secret_reload_signal`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -24582,6 +24434,7 @@ var _ = deploymentSelectColumnsQualified
 // the SELECT projection so the destination count matches.
 func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *string, rootfsBytes *int64) error {
 	var kind, statusStr string
+	var secretReloadSignal *string
 	var scanStatus *string
 	var scannedAt *time.Time
 	var parkedAt *time.Time
@@ -24679,8 +24532,17 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
 		&d.EnvironmentWorkloadRuntime,
+		&secretReloadSignal,
 	); err != nil {
 		return mapErr(err)
+	}
+	// production-us rc.242: this column was never read, so every PgStore
+	// deployment had SecretReloadSignalKnown=false while the runtime-value
+	// SQL projection reports secret_reload_signal IS NOT NULL. schedd's
+	// artifact hash then differed for every deployment and every wake and
+	// prime failed with "deployment runtime value owner or grants changed".
+	if secretReloadSignal != nil {
+		d.SecretReloadSignal, d.SecretReloadSignalKnown = *secretReloadSignal, true
 	}
 	if rootfsPath != nil {
 		d.RootfsPath = *rootfsPath
@@ -25217,7 +25079,20 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
-			if pgErr.ConstraintName == "object_version_protection_fenced" {
+			switch pgErr.ConstraintName {
+			case "event_delivery_capacity":
+				return &EventDeliveryCapacityError{Scope: pgErr.Detail}
+			case "checked_rollback_required":
+				return ErrCheckedRollbackRequired
+			case "binding_release_required":
+				return ErrBindingReleaseRequired
+			case "binding_release_changed":
+				return ErrBindingPromotionChanged
+			case "binding_release_expired":
+				return ErrBindingPromotionExpired
+			case "binding_release_policy_revision":
+				return ErrBindingReleasePolicyRevision
+			case "object_version_protection_fenced":
 				return ErrConflict
 			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
@@ -29975,11 +29850,29 @@ func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocatio
 	if err != nil {
 		return Invocation{}, err
 	}
-	row, err := sqlc.New().RetryProductionQueueDeadLetter(ctx, s.pool, sqlc.RetryProductionQueueDeadLetterParams{ID: id, AccountID: account})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("state: retry queue dead-letter begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationReplayLaneTx(ctx, tx, id, account, pgtype.UUID{}); err != nil {
+		return Invocation{}, err
+	}
+	if err := refreshEventReplayCapacity(ctx, tx, invocationID); err != nil {
+		return Invocation{}, err
+	}
+	row, err := sqlc.New().RetryProductionQueueDeadLetter(ctx, tx, sqlc.RetryProductionQueueDeadLetterParams{ID: id, AccountID: account})
 	if err != nil {
 		return Invocation{}, mapErr(err)
 	}
-	return invocationFromSQLC(row)
+	inv, err := invocationFromSQL(row)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invocation{}, fmt.Errorf("state: retry queue dead-letter commit: %w", err)
+	}
+	return inv, nil
 }
 
 // ListDeadLetterEvents returns the unified, app-scoped DLQ projection. The
@@ -30094,6 +29987,12 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		if parseErr != nil {
 			return time.Time{}, parseErr
 		}
+		if err := lockInvocationReplayLaneTx(ctx, tx, mustPgUUID(ev.SourceID), mustPgUUID(accountID), mustPgUUID(appID)); err != nil {
+			return time.Time{}, mapErr(err)
+		}
+		if err := refreshEventReplayCapacity(ctx, tx, ev.SourceID); err != nil {
+			return time.Time{}, mapErr(err)
+		}
 		n, updateErr := sqlc.New().ReplayProductionDeadLetterInvocation(ctx, tx, sqlc.ReplayProductionDeadLetterInvocationParams{
 			InvocationID: args.EventID, AccountID: args.AccountID, AppID: args.AppID,
 		})
@@ -30151,7 +30050,7 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		return time.Time{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
 	}
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return time.Time{}, ErrNotFound

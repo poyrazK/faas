@@ -3,10 +3,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingcheck"
@@ -19,9 +21,12 @@ func cmdBindingsCheck(args []string) int {
 	maxAge := fs.Duration("max-verification-age", bindingcheck.DefaultMaxVerificationAge, "maximum age of passed probe evidence (default 10m)")
 	allowUnsupported := fs.Bool("allow-unsupported", false, "waive connectivity coverage for active queue and outbound bindings")
 	requireAck := fs.Bool("require-application-ack", false, "require current application acknowledgements for PostgreSQL and object-storage binding secrets")
-	flags, positionals := splitArgsForFlags(args, "allow-unsupported", "require-application-ack")
-	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 || len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) || *maxAge <= 0 || !validBindingDeploymentFlag(*deployment) {
-		PrintUsage(osStderr, "usage: gregale bindings check <app> [--deployment ID|vN] [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] [--require-application-ack] [--json]", "bindings")
+	wait := fs.Bool("wait", false, "poll read-only inventory while probes, refreshes or application acknowledgements are pending")
+	timeout := fs.Duration("timeout", bindingProbeWaitTimeoutDefault, "maximum time to wait for binding preflight")
+	pollInterval := fs.Duration("poll-interval", bindingCheckPollIntervalDefault, "inventory polling interval with --wait")
+	flags, positionals := splitArgsForFlags(args, "allow-unsupported", "require-application-ack", "wait")
+	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 || len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) || *maxAge <= 0 || *timeout <= 0 || *pollInterval <= 0 || !validBindingDeploymentFlag(*deployment) {
+		PrintUsage(osStderr, "usage: gregale bindings check <app> [--deployment ID|vN] [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] [--require-application-ack] [--wait --timeout DURATION --poll-interval DURATION] [--json]", "bindings")
 		return 1
 	}
 	if *scope != "" {
@@ -33,18 +38,34 @@ func cmdBindingsCheck(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	ctx := context.Background()
+	if *wait {
+		interrupted, stop := signal.NotifyContext(ctx, os.Interrupt)
+		defer stop()
+		bounded, cancel := context.WithTimeout(interrupted, *timeout)
+		defer cancel()
+		ctx = bounded
+	}
 	slug := strings.TrimSpace(positionals[0])
-	deploymentID, err := resolveBindingDeployment(context.Background(), client, slug, *deployment)
+	deploymentID, err := resolveBindingDeployment(ctx, client, slug, *deployment)
 	if err != nil {
-		return printErr("Could not resolve binding check deployment", err)
+		code := printErr("Could not resolve binding check deployment", err)
+		if errors.Is(err, context.Canceled) {
+			return 130
+		}
+		return code
 	}
-	inventory, err := client.GetAppBindingInventoryForDeployment(context.Background(), slug, *scope, deploymentID)
-	if err != nil {
-		return printErr("Could not load app bindings", err)
+	policy := bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck}
+	report, err := pollBindingCheck(ctx, client, policy, *wait, *pollInterval)
+	if err != nil && report.App == "" {
+		code := printErr("Could not load app bindings", err)
+		if errors.Is(err, context.Canceled) {
+			return 130
+		}
+		return code
 	}
-	report, err := bindingcheck.Evaluate(inventory, bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck}, time.Now())
 	if err != nil {
-		return printErr("Could not evaluate app bindings", err)
+		_, _ = fmt.Fprintln(osStderr, "Binding preflight wait ended:", err)
 	}
 	if jsonOutput {
 		if code := jsonOut(writeJSON(report)); code != 0 {
@@ -53,7 +74,10 @@ func cmdBindingsCheck(args []string) int {
 	} else {
 		renderBindingCheck(report)
 	}
-	if !report.Passed {
+	if errors.Is(err, context.Canceled) {
+		return 130
+	}
+	if err != nil || !report.Passed {
 		return 1
 	}
 	return 0

@@ -123,6 +123,58 @@ func TestWebhookAutomationQuotaSnapshotsAndRoutingModes(t *testing.T) {
 		}
 	})
 }
+
+func TestGenericWebhookAutomationCapturesSignedEventMetadata(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		app, _ := seedEventWorkflow(t, store)
+		ctx := t.Context()
+		endpoint, err := store.(InboundWebhookStore).CreateInboundWebhookEndpointIfUnderQuota(ctx, InboundWebhookEndpoint{
+			AppID: app.ID, AccountID: app.AccountID, Name: "generic-automation", Provider: InboundWebhookProviderGeneric,
+			DeliveryPath: "/", TokenHash: bytes.Repeat([]byte{7}, 32), SigningSecretSealed: []byte("sealed"), Enabled: true,
+		}, api.MustLimitsFor(api.PlanHobby))
+		if err != nil {
+			t.Fatal(err)
+		}
+		starts := store.(WebhookAutomationStore)
+		if _, err := starts.SaveWebhookAutomationBinding(ctx, WebhookAutomationBindingOptions{
+			EndpointID: endpoint.ID, AppID: app.ID, AccountID: app.AccountID, WorkflowName: "paid", EventType: "order.*",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		body := json.RawMessage(`{"order_id":"ord_1","amount":150}`)
+		receipt, handled, err := starts.AcceptVerifiedWebhookAutomation(ctx, endpoint, "evt_generic_1", "order.paid", body, true)
+		if err != nil || !handled || receipt.Status != "accepted" || receipt.EventSource != webhookAutomationSource(InboundWebhookProviderGeneric, endpoint.ID) {
+			t.Fatalf("accept=%+v handled=%v err=%v", receipt, handled, err)
+		}
+		duplicate, handled, err := starts.AcceptVerifiedWebhookAutomation(ctx, endpoint, "evt_generic_1", "order.paid", body, true)
+		if err != nil || !handled || !duplicate.Duplicate || duplicate.ReceiptID != receipt.ReceiptID {
+			t.Fatalf("duplicate=%+v handled=%v err=%v", duplicate, handled, err)
+		}
+		if _, _, err := starts.AcceptVerifiedWebhookAutomation(ctx, endpoint, "evt_generic_1", "order.updated", body, true); !errors.Is(err, ErrWebhookAutomationConflict) {
+			t.Fatalf("event type reused with same ID: %v", err)
+		}
+		work, err := store.(PublishedEventWorkStore).ClaimDuePublishedEvent(ctx, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(work.RecipientSnapshot) != 1 || work.RecipientSnapshot[0].WebhookProvider != InboundWebhookProviderGeneric || work.RecipientSnapshot[0].Source != receipt.EventSource {
+			t.Fatalf("recipient snapshot=%+v", work.RecipientSnapshot)
+		}
+		runID, err := store.(EventWorkflowStore).AdmitEventWorkflow(ctx, work.ID, work.ClaimToken, work.RecipientSnapshot[0].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := store.GetWorkflowRun(ctx, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var input webhookAutomationEnvelope
+		if err := json.Unmarshal(run.Input, &input); err != nil || input.ID != "evt_generic_1" || input.Type != "order.paid" || input.Source != receipt.EventSource || !equalWorkflowJSON(input.Data, body) {
+			t.Fatalf("workflow input=%s err=%v", run.Input, err)
+		}
+	})
+}
+
 func TestWebhookAutomationMigrationRollbackAndReapply(t *testing.T) {
 	store := NewPgStore(pgtest.OpenMigrated(t))
 	_, endpoint, _ := seedWebhookAutomation(t, store)
@@ -250,7 +302,7 @@ func TestWebhookAutomationDurableAdmissionAndProviderRetry(t *testing.T) {
 			Source string          `json:"source"`
 			Data   json.RawMessage `json:"data"`
 		}
-		if err := json.Unmarshal(run.Input, &input); err != nil || !equalWorkflowJSON(input.Data, body) || input.Source != webhookAutomationSource(endpoint.ID) {
+		if err := json.Unmarshal(run.Input, &input); err != nil || !equalWorkflowJSON(input.Data, body) || input.Source != webhookAutomationSource(endpoint.Provider, endpoint.ID) {
 			t.Fatalf("input=%s err=%v", run.Input, err)
 		}
 		receipt, err := starts.GetWebhookAutomationReceipt(ctx, endpoint.ID, "evt_atomic")

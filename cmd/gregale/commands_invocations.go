@@ -38,7 +38,7 @@ import (
 // `gregale invocations get` errors. Mirrors PrintUsage's docs URL
 // convention (output.go:144) so the line carries the stable docs
 // site pointer.
-const invocationGetCmdUsage = "usage: gregale invocations get [--json|--replay] <id>"
+const invocationGetCmdUsage = "usage: gregale invocations get [--json] [--replay|--replay-keyed] <id>"
 
 const invocationWaitCmdUsage = "usage: gregale invocations wait [--json] [--timeout D] [--interval D] <id>"
 
@@ -235,10 +235,11 @@ func cmdInvocationsList(args []string) int {
 func cmdInvocationsGet(args []string) int {
 	fs := newFlagSet("invocations get", flag.ContinueOnError)
 	replay := fs.Bool("replay", false, "re-issue a failed invocation (returns the new async invocation)")
+	replayKeyed := fs.Bool("replay-keyed", false, "recover failed keyed work in its captured policy lane")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if fs.NArg() != 1 || *replay && *replayKeyed {
 		PrintUsage(os.Stderr, invocationGetCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -257,8 +258,13 @@ func cmdInvocationsGet(args []string) int {
 		}
 		return printErr("Could not fetch invocation", err)
 	}
-	if *replay {
-		resp, err := client.ReplayInvocation(ctx, id)
+	if *replay || *replayKeyed {
+		var resp api.AsyncInvokeResponse
+		if *replayKeyed {
+			resp, err = client.ReplayKeyedInvocation(ctx, id)
+		} else {
+			resp, err = client.ReplayInvocation(ctx, id)
+		}
 		if err != nil {
 			var ae *APIError
 			if errors.As(err, &ae) {

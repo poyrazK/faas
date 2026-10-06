@@ -369,6 +369,8 @@ var dtoExclude = map[string]bool{
 	"ListPlatformTenantOffboardingReceiptsOptions":    true, // client-only pagination query parameters, not a wire DTO
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
+	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
+	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
 	"InboundWebhookEndpointRow":                       true,
 	"AppLogDrainRow":                                  true,
 	"QueueBindingRow":                                 true,
@@ -1020,6 +1022,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_object_lock.go"),
 		filepath.Join(root, "pkg", "api", "object_version_protection.go"),
+		filepath.Join(root, "pkg", "api", "object_write_protection.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
@@ -1076,6 +1079,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_capabilities.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_resize.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_usage_import.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_accounting_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
@@ -1092,6 +1096,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
+		filepath.Join(root, "pkg", "api", "binding_release_policy.go"),
+		filepath.Join(root, "pkg", "api", "rollout_recovery.go"),
+		filepath.Join(root, "pkg", "api", "service_rollout_bindings.go"),
+		filepath.Join(root, "pkg", "api", "checked_rollback.go"),
+		filepath.Join(root, "pkg", "api", "alert_rollbacks.go"),
 		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),

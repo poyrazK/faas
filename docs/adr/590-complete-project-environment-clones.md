@@ -3289,13 +3289,12 @@ database. Its installer rejects public/other-role connection grants, login-role
 membership that exposes maintenance authority, foreign maintenance sessions,
 and schema/function grants. PostgreSQL infrastructure superusers remain trusted
 operators; their active maintenance sessions still invalidate isolation checks.
-Amendment (2026-10-05): a session is a `pg_stat_activity` row with a user.
-Rows without one are server processes: autovacuum workers, user-less
-background workers and backends still authenticating. They do not invalidate
-isolation. Autovacuum visits every database, and counting its workers made
-every fence operation return unsupported whenever one was in the maintenance
-database. The maintenance role cannot read `backend_type`, so the check uses
-`usename IS NOT NULL`.
+Server housekeeping without an assigned session role OID, including autovacuum,
+does not count as a foreign maintenance client. The unprivileged owner cannot
+read other processes' backend types; the guard uses the visible session role OID
+and still rejects clients whose role names have disappeared after a role drop.
+Source drainage continues to count every backend, including server housekeeping.
+See [PostgreSQL activity visibility](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/utils/adt/pgstatfuncs.c).
 The maintenance schema is not a control-plane migration or a cloned application
 configuration input. SQLC owns the installer, catalogue reads and transactional
 functions, and `make sqlc-check` verifies both generated packages.
@@ -6686,3 +6685,217 @@ checks. This did not alter another process or database. Exact owned test
 databases, PostgreSQL process, RAM fixture and generated binary are retired
 after qualification. Full repository, deployed provider and native Linux
 acceptance are still outstanding.
+
+### Native source catalogue discovery for original selection (2026-10-05)
+
+The private PostgreSQL selection producer now reads the native `pg_database`
+catalogue through the authenticated maintenance connection. It includes
+templates, databases closed to connections, and databases owned by other roles;
+only the authenticated maintenance database is excluded. A read-only repeatable
+read transaction obtains the selection, bounded by the existing database quota
+with one extra row to detect overflow. Discovery installs no checkpoint ledger
+and changes no source connection flags.
+
+The optional managed PostgreSQL capability validates the frozen backend and
+source identity, requires the original ready maintenance owner and OID pins,
+bounds provider IO and returns no selection on failed checks. The Neon adapter
+independently authenticates native maintenance and provider placement before and
+after the read. Private APID wiring retains the result through the existing
+encrypted, write-once selection protocol under the original source hold and
+clone lease. Lost acknowledgement, worker handoff and key rotation recover the
+committed original without rediscovering today's catalogue. Incorrect frozen
+plans, cancellation, lease handoff during IO or changed source placement cannot
+commit new intent.
+
+This is source discovery, not complete writer coverage or a common capture
+point. Catalogue changes and PostgreSQL/background writers still need coverage
+checks and barriers; configuration and object-storage data must share the
+qualified capture point, with retained source data and authenticated barrier
+release. The coordinator's data-bearing gate and public full-clone admission
+remain closed until those contracts qualify.
+
+Verification uses actual isolated PostgreSQL 16 for the native catalogue and
+connection flags, plus encrypted receipt and lease persistence in the full APID
+test package. Provider placement responses are synthetic HTTP fixtures; live
+paid-provider and native Linux full-clone qualification remain outstanding.
+Read-only rollback retains the caller's deadline. A real SQL rollback message
+blackhole qualifies bounded failure and recovery of the pool's only connection
+slot; restoring the earlier unbounded cleanup fails that regression contract.
+
+### PostgreSQL transaction drainage and catalogue rechecks (2026-10-05)
+
+The native closure observation now counts unresolved prepared transactions in
+each selected database as well as admitted sessions. `Drained` requires both
+counts to be zero. PostgreSQL explicitly permits prepared transactions to
+survive their originating session, so disconnected clients are insufficient
+evidence ([PostgreSQL 16 PREPARE TRANSACTION](https://www.postgresql.org/docs/16/sql-prepare-transaction.html)).
+The barrier never commits or rolls back a customer's prepared transaction;
+abandonment restores original connection admission while retaining that state.
+
+Each observation also counts every native database OID outside the original
+selection, excluding only the authenticated private maintenance database.
+Templates, system databases and other owners remain visible. Native ledger,
+selected identities and catalogue observations use one read-only repeatable
+read transaction with caller-bounded cleanup and a fresh maintenance/schema
+authentication after commit. This prevents mixing catalogue snapshots; it does
+not establish stability after the observation.
+
+The service validates nonnegative transaction/catalogue counts and rejects a
+provider's false drainage assertion. Neon propagates these native counts through
+its existing placement and maintenance authentication. The private clone worker
+rejects a nonzero omitted-database count in either the close reply or independent
+observation. It retains the original encrypted selection and source hold, creates
+no target data and advances no capture resource when this check fails. Unresolved
+prepared transactions return busy evidence under the original hold.
+
+Complete source coverage remains unfinished. Extension background workers can
+even bypass `ALLOW_CONNECTIONS`
+([PostgreSQL 16 background workers](https://www.postgresql.org/docs/16/bgworker.html)).
+The common configuration/database/object point, immutable source retention and
+authenticated successful barrier release must qualify before data-bearing
+capture and public full-clone admission can open.
+
+Qualification includes actual isolated PostgreSQL 16 with
+`max_prepared_transactions=32`: a real prepared insert survives client disconnect,
+blocks drainage, remains visible after worker replacement, and survives barrier
+abandonment. Restoring the old session-only predicate through a test-only Go
+overlay fails this regression. Passing qualification uses the normal production
+sources; the counterexample does not alter the checkout. The contract explicitly
+skips on a test cluster with prepared transactions disabled, so its dedicated
+enabled-cluster run remains necessary.
+
+The focused native/service/Neon contracts passed 24 top-level tests (48 including
+subtests). The normal APID production/test package compiled, and its 9 focused
+recovery tests passed (18 including subtests), with no skipped cases. APID uses
+actual migrated PostgreSQL persistence
+and synthetic provider replies; this does not qualify a live paid-provider common
+point. Targeted managed PostgreSQL lint passed with zero issues. Local build
+storage pressure required task-owned RAM build/cache storage; the passing APID
+run used unmodified production/test source files. At this checkpoint PR #4251
+was closed and the branch retained the work for further development.
+
+### Composed source barrier preparation (2026-10-05)
+
+A private driver now derives the complete PostgreSQL and object source roster
+from the authenticated frozen configuration. It reserves every PostgreSQL hold
+and acquires every owned object write fence before provider maintenance,
+discovery or closure IO. Independent roster reads reject omissions, duplicates,
+changed owners, changed placement and invalid writer counts. Shared PostgreSQL
+bindings produce one source plan. Each database consumes its original encrypted
+selection and the existing independently observed native closure protocol.
+
+Control-plane validation compares the current source with the original root in
+a repeatable-read transaction before hold acquisition and after remote IO. It
+reads the current release selection, artifacts, values, secrets, flags, workload
+settings, policies, bindings and workload membership. Drift returns a conflict
+without recapturing or replacing the frozen root. Final lease authorization and
+worker admission checks bound which worker can consume the observations.
+
+Lost replies, cancellation, partial acquisition and worker handoff retain all
+committed holds and original native selection. Tracked requests remain busy
+until their completion is acknowledged. Native grants remain outstanding;
+the request-completion API cannot clear them, and an authenticated provider
+revocation/drain protocol remains unfinished. Elapsed time does not erase
+either kind of writer. Error paths return no usable barrier observation. The
+existing compensating protocols remain responsible for abandonment.
+
+The driver returns transient instrumented-writer observations only. Sequential
+database observations and a matching configuration snapshot do not prove a
+shared capture point, configuration stability after that snapshot, complete
+provider/background writer coverage, or immutable data retention. It selects no
+capture timestamp, records no capture resources, creates no target and releases
+no source. The driver is private and is not called by the active coordinator;
+data-bearing capture and public full-clone admission remain gated. Next work
+must qualify those remaining contracts and successful source release before
+connecting this driver to capture dispatch.
+
+Qualification uses actual migrated PostgreSQL 16.15 with UTF-8 encoding and the
+CI template-database harness. The normal state and APID production/test packages
+compiled without source overlays. Eighteen focused top-level tests passed (58
+including subtests), with no failed or skipped cases. Coverage includes eight
+configuration drift categories, partial acquisition with a lost reply, original
+selection recovery after handoff, complete shared-database/two-bucket rosters,
+request/native-grant accounting, zero-count capture gating, and authority or
+roster changes during provider IO. Provider replies remain synthetic; these
+tests do not qualify a live provider common point.
+
+State and APID lint passed separately with zero issues using the repository's
+pinned golangci-lint v2.4.0, built with Go 1.25.13. The newer system linter is
+not used for this qualification.
+
+The release increment combines original catalogue discovery, transaction
+drainage checks and private barrier preparation under ADR-590. It retains the
+data-bearing capture and public full-clone gates described above. Integrating
+current main also retains its shared-cluster test serialization and maintenance
+session authentication fixes. PR #4251 remains a closed historical proposal;
+the combined increment is prepared in a new release PR.
+
+Native adapter fixtures allow one minute for aggregate cleanup of their three
+owned databases and roles. Each database drop forces a PostgreSQL checkpoint;
+the former ten-second aggregate budget left occupied fixture names under disk
+contention. This test cleanup budget does not change production IO deadlines.
+
+### Private native object-grant retirement and recovery (2026-10-06)
+
+A private provider protocol and durable control-plane intent now prepare native
+object-write grant retirement. Reservation requires an owned source bucket hold
+and freezes the exact sorted tracked-grant roster, source placement, source
+configuration root and request identity before provider IO. Dispatch is retained
+before each authenticated idempotent resume; retries and replacement workers
+reuse the original request and roster. Provider calls receive independent copies
+of that roster. A disappeared receipt, additional grant or placement substitution
+rejects recovery rather than silently replacing the selection.
+
+Revocation replies cannot settle native grants. The worker requires a separate
+authenticated read of the provider's immutable retirement journal, bound to the
+original source, request and plan hash. The provider retirement identity becomes
+write-once on its first observation. Only permanent revocation of every selected
+native capability together with zero already-admitted native writes consumes
+the exact original native receipts. Synchronous request receipts remain
+independent. Missing journals, unknown replies, negative counts, changed
+identities, elapsed time and signing/URL expiry do not establish drainage.
+
+Source-row locks serialize roster checks and consumption, with fresh SQL-clock
+lease authorization after waits and before commit. The private APID driver checks
+worker admission and authority around provider IO and validates the original
+frozen source configuration before and after retirement while capturing.
+Uncertainty returns no usable observation. Compensation may resume an already
+dispatched original retirement even after source configuration edits, but cannot
+start an undispatched one. Dispatched unknown or busy retirements block local
+source-hold abandonment; an undispatched intent may abandon admission without
+clearing any grants. The provider contract creates no temporary remote admission
+hold and must never invalidate unrelated buckets or newer capabilities.
+
+The native provider adapter remains a qualification gap. The protocol requires
+an authenticated mapping to the original issued capabilities and a recoverable
+provider journal with independent admitted-write observations. Historical
+control-plane receipt UUIDs alone do not provide that mapping. Built-in S3 and
+GCS adapters do not implement this capability and fail closed; credential
+rotation, ordinary IAM success or object listings are not substitutes. Provider
+replies in local contracts are synthetic, not live-provider revocation evidence.
+
+The retirement worker is private and is not installed in the active capture
+coordinator or composed barrier driver. It selects no capture time, retains no
+object manifest or PostgreSQL recovery point, creates no target and releases no
+successful-capture source hold. Complete provider/external/background writer
+coverage, a common frozen configuration/database/object point, immutable source
+retention and authenticated successful source release remain required before
+data-bearing capture and public full-clone admission can open. Independent
+restoration, credential remapping, publication/readiness and qualified promotion
+preserving production data also remain unfinished.
+
+Qualification uses task-owned migrated PostgreSQL 16.15 with UTF-8 encoding,
+`max_prepared_transactions=32` and the official template-database harness.
+Twenty-two focused state/schema top-level contracts passed under the race
+detector (71 including subtests), and seventeen normal APID top-level contracts
+passed (72 including subtests). There were no failed or skipped cases in those
+final runs. Coverage includes original selection and caller mutation, changed
+provider identity or roster, lost reservation/dispatch/provider/observation
+acknowledgements, worker handoff, lease expiry after source-lock waits,
+configuration/admission/placement drift during IO, unknown native outcomes,
+compensation after configuration edits, schema registration and existing
+coordinated-capture/broker regressions. Normal production and test packages
+compiled without source overlays. Pinned golangci-lint v2.4.0 built with Go
+1.25.13 reports zero affected-package issues; SQLC v1.31.1 parity, formatting
+and whitespace checks pass. These contracts do not qualify a live native
+provider or native x86_64 KVM full clone.

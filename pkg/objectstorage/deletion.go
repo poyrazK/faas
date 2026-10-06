@@ -74,11 +74,24 @@ func (s DeletionService) start(ctx context.Context, b state.ObjectBucket, key, s
 			return s.failPreparation(ctx, j, e)
 		}
 	}
+	if j.ProtectionRequired {
+		if e = s.lifecycleProtectionClear(ctx, b, j); e != nil {
+			return s.failPreparation(ctx, j, e)
+		}
+	}
 	// Metrics must commit before dispatch; a recording failure cannot mutate.
 	if e = s.before(ctx); e != nil {
 		return s.failPreparation(ctx, j, e)
 	}
-	j, e = s.Store.DispatchObjectDeletion(ctx, j.ID, j.Token, status, baseline)
+	if j.ProtectionRequired {
+		if store, ok := s.Store.(state.ObjectProtectedLifecycleDeletionStore); ok {
+			j, e = store.DispatchObjectProtectedLifecycleDeletion(ctx, j.ID, j.Token, status, baseline)
+		} else {
+			return s.failPreparation(ctx, j, ErrUnsupported)
+		}
+	} else {
+		j, e = s.Store.DispatchObjectDeletion(ctx, j.ID, j.Token, status, baseline)
+	}
 	if e != nil {
 		if j.Lifecycle != nil && j.State == "prepared" {
 			return s.failPreparation(ctx, j, e)
@@ -114,6 +127,17 @@ func (s DeletionService) execute(ctx context.Context, b state.ObjectBucket, j st
 			return s.fail(ctx, j, "provider_rejected", e)
 		}
 		return s.deferAttempt(ctx, j, e)
+	}
+	if j.ProtectionRequired {
+		absent, err := s.lifecycleTargetAbsent(ctx, b, j)
+		if err != nil || !absent {
+			if err == nil {
+				err = ErrUnavailable
+			}
+			return s.deferAttempt(ctx, j, err)
+		}
+		j.DeletionVerified = true
+		receipt.DeleteMarker = *j.Lifecycle.ExpectedDeleteMarker
 	}
 	return s.finish(ctx, j, receipt)
 }
@@ -246,6 +270,9 @@ func (s DeletionService) finish(ctx context.Context, j state.ObjectDeletion, r M
 	return s.Store.FinishObjectDeletion(finish, j)
 }
 func (s DeletionService) failPreparation(ctx context.Context, j state.ObjectDeletion, cause error) (state.ObjectDeletion, error) {
+	if j.ProtectionRequired && errors.Is(cause, ErrObjectProtected) {
+		return s.fail(ctx, j, "object_protected", cause)
+	}
 	return s.fail(ctx, j, "preparation_failed", cause)
 }
 func (s DeletionService) fail(ctx context.Context, j state.ObjectDeletion, code string, cause error) (state.ObjectDeletion, error) {
@@ -298,6 +325,9 @@ func (s DeletionService) Recover(ctx context.Context, b state.ObjectBucket, id s
 	}
 	if s.Provider == nil {
 		return s.deferAttempt(ctx, j, ErrConfiguration)
+	}
+	if j.ProtectionRequired {
+		return s.recoverProtectedLifecycle(ctx, b, j)
 	}
 	if j.TargetProviderVersionID != "" {
 		if e = s.before(ctx); e != nil {

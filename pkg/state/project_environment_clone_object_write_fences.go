@@ -22,8 +22,9 @@ func validCloneObjectFenceLease(lease ProjectEnvironmentCloneLease) bool {
 type ProjectEnvironmentCloneObjectWriteFenceStore interface {
 	AcquireProjectEnvironmentCloneObjectWriteFence(context.Context, ProjectEnvironmentCloneLease, string) (ObjectBucketWriteFence, error)
 	ProjectEnvironmentCloneObjectWriteFencesForLease(context.Context, ProjectEnvironmentCloneLease) ([]ObjectBucketWriteFence, error)
-	// Abandon capture only in compensating. Successful capture release needs
-	// a separate, verified immutable-source checkpoint protocol.
+	// Abandon capture only in compensating, after dispatched native grant
+	// retirements drain. Successful capture release needs a separate,
+	// verified immutable-source checkpoint protocol.
 	AbandonProjectEnvironmentCloneObjectWriteFences(context.Context, ProjectEnvironmentCloneLease) error
 }
 

@@ -512,8 +512,11 @@ func run(args []string) (status int) {
 		// lives in commands_jobs.go (cmdJobs).
 		return cmdJobs(args[1:])
 	case "workflows":
-		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
+		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
+	case "automations":
+		// Manage declarative automation definitions: validate, save a draft, publish.
+		return cmdAutomations(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "events":
@@ -661,7 +664,11 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 			return true
 		}
 		if helpPath == "rollouts recover" {
-			PrintUsage(w, rolloutsUsage, command.DocSlug)
+			PrintUsage(w, rolloutsRecoverUsage, command.DocSlug)
+			return true
+		}
+		if helpPath == "rollouts status" {
+			PrintUsage(w, rolloutsStatusUsage, command.DocSlug)
 			return true
 		}
 		if helpPath == "deploys retry" {
@@ -685,6 +692,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	switch command.Name {
 	case "rollback":
 		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
+		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackStatusUsage, "usage: "))
 		if len(command.Examples) > 0 {
 			_, _ = fmt.Fprintln(w, "\nExamples:")
 			printCLIExamples(w, command.Examples)

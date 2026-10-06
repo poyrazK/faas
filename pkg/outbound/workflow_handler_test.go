@@ -12,9 +12,10 @@ import (
 )
 
 type workflowAuthorizerStub struct {
-	identity WorkflowIdentity
-	err      error
-	calls    int
+	identity  WorkflowIdentity
+	err       error
+	calls     int
+	lastQuery string
 }
 
 func TestWorkflowGatewayDoesNotReplayDroppedProviderConnection(t *testing.T) {
@@ -74,8 +75,9 @@ func TestWorkflowGatewayDoesNotReplayDroppedProviderConnection(t *testing.T) {
 	}
 }
 
-func (a *workflowAuthorizerStub) AuthorizeWorkflow(_ context.Context, _, _, _, _ string, _ []byte) (WorkflowIdentity, error) {
+func (a *workflowAuthorizerStub) AuthorizeWorkflow(_ context.Context, _, _, _, _, rawQuery string, _ []byte) (WorkflowIdentity, error) {
 	a.calls++
+	a.lastQuery = rawQuery
 	return a.identity, a.err
 }
 func TestWorkflowGatewayUsesBindingsAndSingleProviderAttempt(t *testing.T) {
@@ -149,7 +151,8 @@ func TestWorkflowGatewayUsesBindingsAndSingleProviderAttempt(t *testing.T) {
 	if w := call("/v1/contacts"); w.Code != 502 || strings.Contains(w.Body.String(), "provider-secret") {
 		t.Fatalf("reflected credential leaked: %d %s", w.Code, w.Body.String())
 	}
-	if w := call("/v1/contacts?q=1"); w.Code != 403 {
-		t.Fatalf("unbound query accepted: %d", w.Code)
+	responseBody = `{"ok":true}`
+	if w := call("/v1/contacts?q=1"); w.Code != 200 || authorizer.lastQuery != "q=1" {
+		t.Fatalf("signed query was not forwarded: %d %s (query=%q)", w.Code, w.Body.String(), authorizer.lastQuery)
 	}
 }

@@ -250,6 +250,10 @@ func parseObjectLockPeriod(v map[string]string, prefix string) (*api.ObjectReten
 }
 
 func parseObjectRetention(body []byte) (api.ObjectVersionRetention, error) {
+	return parseObjectRetentionPolicy(body, true)
+}
+
+func parseObjectRetentionPolicy(body []byte, observation bool) (api.ObjectVersionRetention, error) {
 	const root = "Retention"
 	v, err := objectLockXML(body, root, objectLockSchema(root, "Mode", "RetainUntilDate", "EventHold", "EventHoldDuration/Days", "EventHoldDuration/Years"))
 	if err != nil {
@@ -270,7 +274,7 @@ func parseObjectRetention(body []byte) (api.ObjectVersionRetention, error) {
 		parsed = parsed.UTC()
 		r.RetainUntilDate = &parsed
 	}
-	if r.EventHold == "OFF" && r.RetainUntilDate == nil {
+	if observation && r.EventHold == "OFF" && r.RetainUntilDate == nil {
 		return r, ErrUnavailable
 	}
 	r.EventHoldDuration, err = parseObjectLockPeriod(v, root+"/EventHoldDuration/")

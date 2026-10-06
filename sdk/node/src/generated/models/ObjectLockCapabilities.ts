@@ -3,11 +3,19 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Enrolled bucket configuration, default event holds, fixed version retention and legal-hold capabilities without a native health check.
+ * Enrolled bucket configuration, default and per-version event holds, fixed version retention and legal-hold capabilities without a native health check.
  */
 export type ObjectLockCapabilities = {
   bucket_configuration: boolean;
   default_event_hold: boolean;
+  /**
+   * Separately enrolled durable per-version event hold mutations.
+   */
+  version_event_hold: boolean;
+  /**
+   * Separately enrolled event holds on new writes and captured bucket defaults.
+   */
+  write_event_hold: boolean;
   version_retention: boolean;
   version_legal_hold: boolean;
 };
