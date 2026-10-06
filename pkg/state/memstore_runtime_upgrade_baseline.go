@@ -45,10 +45,17 @@ func (m *MemStore) CaptureDeploymentRuntimeUpgradeBaseline(_ context.Context, de
 }
 
 func (m *MemStore) runtimeUpgradeBaselineLocked(candidate Deployment, servingID string) (RuntimeUpgradeBaseline, error) {
+	pin, pinned := m.runtimeUpgradeTargets[candidate.ID]
+	if !pinned || !pin.matches(candidate) {
+		return RuntimeUpgradeBaseline{}, ErrConflict
+	}
+	return m.runtimeUpgradeBaselineForTargetLocked(candidate, servingID, pin)
+}
+
+func (m *MemStore) runtimeUpgradeBaselineForTargetLocked(candidate Deployment, servingID string, pin runtimeUpgradeTarget) (RuntimeUpgradeBaseline, error) {
 	serving, ok := m.deployments[servingID]
 	app := m.apps[candidate.AppID]
-	pin, pinned := m.runtimeUpgradeTargets[candidate.ID]
-	if !ok || !pinned || !pin.matches(candidate) {
+	if !ok || !pin.matches(candidate) {
 		return RuntimeUpgradeBaseline{}, ErrConflict
 	}
 	deployments := make([]Deployment, 0, len(m.deployments))

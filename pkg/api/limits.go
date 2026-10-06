@@ -8727,6 +8727,9 @@ const (
 	RuntimeReleaseSidecarMaxBytes      = 4096
 	RuntimeUpgradeSourceFieldMaxBytes  = 4096             // frozen build root or function handler
 	RuntimeUpgradeAcceptanceMaxAge     = 15 * time.Minute // starts at candidate cold-boot dispatch
+	RuntimeUpgradeOperationMaxAge      = 30 * time.Minute // private executor, includes queue and readiness
+	RuntimeUpgradeOperationLease       = 30 * time.Second
+	RuntimeUpgradeOperationInterval    = 5 * time.Second
 	RuntimeQualificationReportMaxBytes = 64 * 1024
 	RuntimeQualificationLogMaxBytes    = 64 * 1024 * 1024
 	RuntimeQualificationEventMaxBytes  = 256 * 1024

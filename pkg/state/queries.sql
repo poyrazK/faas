@@ -14071,3 +14071,51 @@ SELECT pg_notify('deployment_changed',json_build_object('kind','traffic','app_id
 -- name: LockDeploymentTrafficApp :one
 SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
 WHERE d.id=$1 AND a.status<>'deleted' FOR UPDATE OF a;
+
+-- Private apid runtime upgrade executor (ADR-604).
+-- name: InsertRuntimeUpgradeOperation :one
+INSERT INTO runtime_upgrade_operations(id,account_id,app_id,deployment_id,serving_deployment_id,target_release_id,source_sha256,qualification_report_sha256,deadline_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+make_interval(secs=>sqlc.arg(deadline_seconds)::int)) RETURNING *;
+
+-- name: GetRuntimeUpgradeOperation :one
+SELECT * FROM runtime_upgrade_operations WHERE id=$1;
+
+-- name: ClaimRuntimeUpgradeOperation :one
+WITH due AS (
+ SELECT id FROM runtime_upgrade_operations WHERE phase IN ('prepared','waiting')
+ AND next_attempt_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<=clock_timestamp())
+ ORDER BY next_attempt_at,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE runtime_upgrade_operations o SET lease_token=gen_random_uuid(),lease_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::int)
+FROM due WHERE o.id=due.id RETURNING o.*;
+
+-- name: LockRuntimeUpgradeOperation :one
+SELECT * FROM runtime_upgrade_operations WHERE id=$1 AND lease_token=$2 AND lease_until>clock_timestamp()
+ AND phase IN ('prepared','waiting') FOR UPDATE;
+
+-- name: AdvanceRuntimeUpgradeOperation :one
+UPDATE runtime_upgrade_operations SET phase=sqlc.arg(phase)::text,blocker=sqlc.arg(blocker)::text,wake_id=sqlc.narg(wake_id)::uuid,
+ next_attempt_at=clock_timestamp()+make_interval(secs=>sqlc.arg(interval_seconds)::int),lease_token=NULL,lease_until=NULL,
+ finished_at=CASE WHEN sqlc.arg(phase)::text IN ('complete','blocked') THEN clock_timestamp() ELSE NULL END
+WHERE id=sqlc.arg(id)::uuid AND lease_token=sqlc.arg(lease_token)::uuid AND lease_until>clock_timestamp()
+RETURNING *;
+
+-- name: ReadRuntimeUpgradeOperationCandidate :one
+SELECT d.status,COALESCE(d.source_path,'')::text AS source_path,COALESCE(d.source_sha256,'')::text AS source_sha256,
+ COALESCE(d.rootfs_key,'')::text AS rootfs_key,COALESCE(d.rootfs_path,'')::text AS rootfs_path,d.image_digest,d.traffic_percent,d.traffic_percent_explicit,d.canary_total_steps,d.rollout_state,d.environment_workload_runtime,
+ COALESCE(d.build_id::text,'')::text AS build_id,
+ COALESCE((SELECT b.status FROM builds b WHERE b.id=d.build_id AND b.deployment_id=d.id),'')::text AS build_status, d.deleted_at,COALESCE(a.manifest->>'execution_mode','') IN ('job','service') AS unsupported_mode,
+ EXISTS(SELECT 1 FROM builds b WHERE b.deployment_id=d.id) AS has_build
+FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$1;
+
+-- name: QueueRuntimeUpgradeOperationBuild :one
+INSERT INTO builds(id,deployment_id,kind,source_bytes,status,log_path)
+SELECT sqlc.arg(build_id)::uuid,d.id,d.kind,d.source_bytes,'queued',d.log_path FROM deployments d
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.status='pending' AND d.traffic_percent=0 AND d.traffic_percent_explicit
+ AND NOT EXISTS(SELECT 1 FROM builds b WHERE b.deployment_id=d.id) RETURNING id;
+
+-- name: PublishRuntimeUpgradeOperationBuild :execrows
+UPDATE deployments SET status='building',build_id=sqlc.arg(build_id)::uuid WHERE id=sqlc.arg(deployment_id)::uuid AND status='pending';
+
+-- name: NotifyRuntimeUpgradeOperationBuild :exec
+SELECT pg_notify('build_queued',json_build_object('build',sqlc.arg(build_id)::text,'deployment',d.id,'app',d.app_id,'kind',d.kind,'source',d.kind)::text) FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid;

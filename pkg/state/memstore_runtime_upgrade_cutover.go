@@ -13,6 +13,10 @@ func (m *MemStore) CutoverDeploymentRuntimeUpgrade(ctx context.Context, r Runtim
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.cutoverRuntimeUpgradeLocked(ctx, r)
+}
+
+func (m *MemStore) cutoverRuntimeUpgradeLocked(ctx context.Context, r RuntimeUpgradeCutoverRequest) (RuntimeUpgradeCutover, error) {
 	if err := ctx.Err(); err != nil {
 		return RuntimeUpgradeCutover{}, err
 	}

@@ -5385,6 +5385,36 @@ $$;
 
 
 --
+-- Name: guard_runtime_upgrade_operation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_operation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+ IF (NEW.id,NEW.account_id,NEW.app_id,NEW.deployment_id,NEW.serving_deployment_id,NEW.target_release_id,
+     NEW.source_sha256,NEW.qualification_report_sha256,NEW.created_at,NEW.deadline_at)
+  IS DISTINCT FROM
+    (OLD.id,OLD.account_id,OLD.app_id,OLD.deployment_id,OLD.serving_deployment_id,OLD.target_release_id,
+     OLD.source_sha256,OLD.qualification_report_sha256,OLD.created_at,OLD.deadline_at)
+  OR OLD.phase IN ('complete','blocked')
+  OR (OLD.phase='waiting' AND NEW.phase='prepared') THEN
+  RAISE EXCEPTION 'immutable runtime upgrade intent or terminal operation' USING ERRCODE='23514';
+ END IF;
+ END IF;
+ IF NEW.phase='complete' AND NOT EXISTS (
+  SELECT 1 FROM deployment_runtime_upgrade_cutovers c WHERE c.deployment_id=NEW.deployment_id
+   AND c.serving_deployment_id=NEW.serving_deployment_id AND c.target_release_id=NEW.target_release_id
+   AND c.qualification_report_sha256=NEW.qualification_report_sha256 AND c.wake_id=NEW.wake_id
+ ) THEN
+  RAISE EXCEPTION 'runtime upgrade completion requires retained cutover' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_runtime_upgrade_source(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19119,6 +19149,46 @@ CREATE TABLE public.runtime_snapshots (
 
 
 --
+-- Name: runtime_upgrade_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_operations (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    serving_deployment_id uuid NOT NULL,
+    target_release_id text NOT NULL,
+    source_sha256 text NOT NULL,
+    qualification_report_sha256 text NOT NULL,
+    phase text DEFAULT 'prepared'::text NOT NULL,
+    blocker text DEFAULT ''::text NOT NULL,
+    wake_id uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    finished_at timestamp with time zone,
+    CONSTRAINT runtime_upgrade_operations_blocker_check CHECK ((blocker = ANY (ARRAY[''::text, 'deadline_exceeded'::text, 'candidate_changed'::text, 'baseline_changed'::text, 'qualification_changed'::text, 'readiness_changed'::text, 'intent_changed'::text]))),
+    CONSTRAINT runtime_upgrade_operations_check CHECK ((isfinite(deadline_at) AND (deadline_at > created_at))),
+    CONSTRAINT runtime_upgrade_operations_check1 CHECK ((deployment_id <> serving_deployment_id)),
+    CONSTRAINT runtime_upgrade_operations_check2 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT runtime_upgrade_operations_check3 CHECK ((((phase = ANY (ARRAY['prepared'::text, 'waiting'::text])) AND (blocker = ''::text) AND (wake_id IS NULL) AND (finished_at IS NULL)) OR ((phase = 'complete'::text) AND (blocker = ''::text) AND (wake_id IS NOT NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)) OR ((phase = 'blocked'::text) AND (blocker <> ''::text) AND (wake_id IS NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)))),
+    CONSTRAINT runtime_upgrade_operations_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_operations_finished_at_check CHECK (isfinite(finished_at)),
+    CONSTRAINT runtime_upgrade_operations_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_operations_lease_token_check CHECK ((lease_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_operations_lease_until_check CHECK (isfinite(lease_until)),
+    CONSTRAINT runtime_upgrade_operations_next_attempt_at_check CHECK (isfinite(next_attempt_at)),
+    CONSTRAINT runtime_upgrade_operations_phase_check CHECK ((phase = ANY (ARRAY['prepared'::text, 'waiting'::text, 'complete'::text, 'blocked'::text]))),
+    CONSTRAINT runtime_upgrade_operations_qualification_report_sha256_check CHECK ((qualification_report_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_operations_source_sha256_check CHECK ((source_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_operations_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: safe_release_worker_lease; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24812,6 +24882,22 @@ ALTER TABLE ONLY public.runtime_snapshots
 
 
 --
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_deployment_id_key UNIQUE (deployment_id);
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: safe_release_worker_lease safe_release_worker_lease_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30100,6 +30186,20 @@ CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USI
 
 
 --
+-- Name: runtime_upgrade_operations_active_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX runtime_upgrade_operations_active_app ON public.runtime_upgrade_operations USING btree (app_id) WHERE (phase = ANY (ARRAY['prepared'::text, 'waiting'::text]));
+
+
+--
+-- Name: runtime_upgrade_operations_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations USING btree (next_attempt_at, created_at, id) WHERE (phase = ANY (ARRAY['prepared'::text, 'waiting'::text]));
+
+
+--
 -- Name: scenario_test_members_run_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33121,6 +33221,13 @@ CREATE TRIGGER runtime_upgrade_baseline_immutable BEFORE DELETE OR UPDATE ON pub
 --
 
 CREATE TRIGGER runtime_upgrade_cutover_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_operation_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_operations FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_operation();
 
 
 --
@@ -39374,6 +39481,46 @@ ALTER TABLE ONLY public.runtime_instance_config_proofs
 
 ALTER TABLE ONLY public.runtime_release_qualifications
     ADD CONSTRAINT runtime_release_qualifications_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_serving_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_serving_deployment_id_fkey FOREIGN KEY (serving_deployment_id) REFERENCES public.deployments(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_target_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
 
 
 --

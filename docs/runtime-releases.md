@@ -119,7 +119,18 @@ candidate to 100% and retains the previous live artifact at zero for rollback.
 Generic traffic and rollout SQL cannot give a pinned candidate its first live
 traffic without that cutover record; failure fallback excludes unactivated
 candidates. A retry confirms historical completion and never reapplies a
-rolled-back update. This state seam has no customer caller. Apid operation
-orchestration, native end-to-end acceptance and gateway acknowledgment/drain
-remain outstanding, and `execution_available=false` stays unchanged. See
+rolled-back update. This state seam has no customer caller. Native end-to-end
+acceptance and gateway acknowledgment/drain remain outstanding, and
+`execution_available=false` stays unchanged. See
 [ADR-603](adr/603-atomic-runtime-upgrade-cutover.md).
+
+The private apid executor now journals a reviewed, pre-uploaded zero-weight
+candidate with its target pin and baseline. It queues one stable build, waits
+for the existing build/image/fresh-prime pipeline, and commits cutover with its
+completion checkpoint. Expiring fenced leases recover abandoned work; lost
+responses cannot duplicate a build or undo rollback. Input/qualification drift
+blocks the operation with a fixed code. The operation has a 30-minute deadline,
+30-second lease and five-second polling interval. Source reservation/staging,
+customer controls and production worker startup remain outstanding; the
+executor is private and disabled at daemon startup. See
+[ADR-604](adr/604-durable-private-runtime-upgrade-executor.md).

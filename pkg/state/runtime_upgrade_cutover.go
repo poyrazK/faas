@@ -19,7 +19,7 @@ type RuntimeUpgradeCutover struct {
 	CutoverAt                                                                             time.Time
 }
 
-// Only the future apid executor may call the mutation seam. No customer route,
+// Only private apid execution may call the mutation seam. No customer route,
 // scheduler or collector calls it. The gate and traffic write share one lock.
 type RuntimeUpgradeCutoverStore interface {
 	CutoverDeploymentRuntimeUpgrade(context.Context, RuntimeUpgradeCutoverRequest) (RuntimeUpgradeCutover, error)

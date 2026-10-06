@@ -6757,6 +6757,29 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "runtime_upgrade_operations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "blocker",
+      "created_at",
+      "deadline_at",
+      "deployment_id",
+      "finished_at",
+      "id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "phase",
+      "qualification_report_sha256",
+      "serving_deployment_id",
+      "source_sha256",
+      "target_release_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "safe_release_worker_lease",
     "columns": [
       "expires_at",

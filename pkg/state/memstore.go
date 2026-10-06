@@ -144,6 +144,7 @@ type MemStore struct {
 	runtimeUpgradeBaselines      map[string]RuntimeUpgradeBaseline
 	runtimeUpgradeAcceptances    map[string]RuntimeUpgradeAcceptance
 	runtimeUpgradeCutovers       map[string]RuntimeUpgradeCutover
+	runtimeUpgradeOperations     map[string]RuntimeUpgradeOperation
 	operationData                *operationMemory
 	operationCodePins            map[string]time.Time
 	qualificationExecutions      map[string]EnvironmentQualificationExecutionStatus

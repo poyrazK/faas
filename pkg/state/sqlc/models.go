@@ -5995,6 +5995,26 @@ type RuntimeSnapshot struct {
 	Profile             string
 }
 
+type RuntimeUpgradeOperation struct {
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	DeploymentID              pgtype.UUID
+	ServingDeploymentID       pgtype.UUID
+	TargetReleaseID           string
+	SourceSha256              string
+	QualificationReportSha256 string
+	Phase                     string
+	Blocker                   string
+	WakeID                    pgtype.UUID
+	CreatedAt                 pgtype.Timestamptz
+	DeadlineAt                pgtype.Timestamptz
+	NextAttemptAt             pgtype.Timestamptz
+	LeaseToken                pgtype.UUID
+	LeaseUntil                pgtype.Timestamptz
+	FinishedAt                pgtype.Timestamptz
+}
+
 type SafeReleaseWorkerLease struct {
 	Singleton bool
 	HealthyAt pgtype.Timestamptz
