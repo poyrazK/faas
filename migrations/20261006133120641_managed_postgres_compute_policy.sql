@@ -1,10 +1,15 @@
 -- ADR-624: one fenced compute journal for class and idle-policy changes.
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE managed_postgres_resizes ADD COLUMN target_scale_to_zero boolean;
-ALTER TABLE managed_postgres_resizes ADD CONSTRAINT managed_postgres_compute_policy_target_check
- CHECK (target_scale_to_zero IS NULL OR (target_class IS NOT DISTINCT FROM source_spec->>'Class'
-  AND jsonb_typeof(source_spec->'ScaleToZero') IS NOT DISTINCT FROM 'boolean'));
+ALTER TABLE managed_postgres_resizes ADD COLUMN IF NOT EXISTS target_scale_to_zero boolean;
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='managed_postgres_resizes'::regclass
+  AND conname='managed_postgres_compute_policy_target_check') THEN
+  ALTER TABLE managed_postgres_resizes ADD CONSTRAINT managed_postgres_compute_policy_target_check
+   CHECK (target_scale_to_zero IS NULL OR (target_class IS NOT DISTINCT FROM source_spec->>'Class'
+    AND jsonb_typeof(source_spec->'ScaleToZero') IS NOT DISTINCT FROM 'boolean'));
+ END IF;
+END $$;
 CREATE OR REPLACE FUNCTION check_managed_postgres_resize_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE r managed_postgres_resizes; d managed_postgres_databases; target_spec jsonb; actual_spec jsonb;
 BEGIN

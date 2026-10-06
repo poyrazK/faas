@@ -64,6 +64,9 @@ func TestPostgresComputePolicyReceiptFencesOldReconciler(t *testing.T) {
 		t.Fatal(err)
 	}
 	sections := strings.SplitN(string(raw), "-- +goose Down", 2)
+	if _, err := pool.Exec(ctx, sections[0]); err != nil {
+		t.Fatal("replay with completed policy history", err)
+	}
 	if _, err := pool.Exec(ctx, sections[1]); err == nil {
 		t.Fatal("rollback erased completed policy history")
 	}
@@ -80,6 +83,9 @@ func TestPostgresComputePolicyMigrationPreservesPendingClassIntent(t *testing.T)
 		t.Fatal(err)
 	}
 	sections := strings.SplitN(string(raw), "-- +goose Down", 2)
+	if _, err := pool.Exec(ctx, sections[0]); err != nil {
+		t.Fatal("replay up", err)
+	}
 	database := postgresResizeDatabase(t, store, account)
 	operation := postgresResizeIntent(database)
 	if _, err := store.ReserveResize(ctx, database, operation, time.Now()); err != nil {

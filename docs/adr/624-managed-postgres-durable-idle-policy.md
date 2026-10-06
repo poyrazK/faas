@@ -23,6 +23,8 @@ generation-fenced transaction publishes the observed target specification and
 completion together. The deferred database receipt verifies the full target
 configuration, preventing older binaries from falsely completing new policy
 intents. Rollback cannot discard policy history, including completed receipts.
+Migration replay tolerates its column and constraint already being installed
+without changing pending intents or completed policy history.
 
 A separate `ScaleToZeroUpdate` provider capability declares both directions.
 It requires creation-time scale-to-zero support. API capability contract v3
