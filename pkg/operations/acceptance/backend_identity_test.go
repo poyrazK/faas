@@ -164,9 +164,9 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if _, err := provider.Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	// Current CreateDeployment reads this later-added table. Provision only its
-	// table shape so the fixture can seed a deployment in the pre-identity
-	// schema; leave the migration unapplied for the ordered upgrade below.
+	// Current CreateDeployment reads these later-added schema objects. Provision
+	// only their shapes so the fixture can seed a deployment in the pre-identity
+	// schema; leave the migrations unapplied for the ordered upgrade below.
 	if _, err := pool.Exec(t.Context(), `CREATE TABLE workflow_automation_definitions (
 		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
 		name text NOT NULL CHECK (length(name)>0),
@@ -179,6 +179,9 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 		PRIMARY KEY (app_id, name),
 		CHECK ((published IS NULL) = (published_version=0))
 	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `ALTER TABLE deployments ADD COLUMN IF NOT EXISTS environment_workload_runtime jsonb`); err != nil {
 		t.Fatal(err)
 	}
 	s := state.NewPgStore(pool)
