@@ -16,13 +16,15 @@ const (
 	ResizeSucceeded ResizeState = "succeeded"
 )
 
-// ResizeOperation is an immutable request plus its completion receipt. The
+// ResizeOperation journals a class or idle-policy request and its receipt. The
 // source snapshot is private control-plane evidence, never a public DTO.
 type ResizeOperation struct {
 	ID, AccountID, DatabaseID                                         string
 	BackendID, BackendFingerprint, ProviderResourceID, DataResourceID string
 	SourceSpec                                                        Spec
 	TargetClass                                                       ServiceClass
+	PolicyChange                                                      bool
+	TargetScaleToZero                                                 bool
 	Generation                                                        int64
 	State                                                             ResizeState
 	LastErrorCode                                                     string
@@ -32,6 +34,9 @@ type ResizeOperation struct {
 func (r ResizeOperation) TargetSpec() Spec {
 	target := r.SourceSpec
 	target.Class = r.TargetClass
+	if r.PolicyChange {
+		target.ScaleToZero = r.TargetScaleToZero
+	}
 	return target
 }
 
@@ -58,6 +63,7 @@ func validResizeOperation(r ResizeOperation) bool {
 	return validResizeRequestID(r.ID) && r.AccountID != "" && r.DatabaseID != "" &&
 		r.BackendID != "" && validSHA256(r.BackendFingerprint) && validOpaqueID(r.ProviderResourceID) &&
 		validDataResourceID(r.DataResourceID) && r.SourceSpec.Validate() == nil && r.TargetSpec().Validate() == nil &&
+		(r.PolicyChange && r.TargetClass == r.SourceSpec.Class || !r.PolicyChange && !r.TargetScaleToZero) &&
 		r.Generation > 1 && r.State == ResizePending && !r.CreatedAt.IsZero() && r.CompletedAt.IsZero()
 }
 
@@ -80,6 +86,10 @@ func validateResizeObservation(r ResizeOperation, observed ObservedDatabase) err
 // Resize commits customer intent only. Recovery is owned by the existing
 // reconciler and never depends on the lifetime of the HTTP request.
 func (s *Service) Resize(ctx context.Context, request ResizeDatabaseRequest) (ResizeOperation, error) {
+	return s.reserveComputeChange(ctx, request, nil)
+}
+
+func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDatabaseRequest, scaleToZero *bool) (ResizeOperation, error) {
 	if request.AccountID == "" || request.DatabaseID == "" || !validResizeRequestID(request.RequestID) {
 		return ResizeOperation{}, ErrInvalid
 	}
@@ -89,7 +99,9 @@ func (s *Service) Resize(ctx context.Context, request ResizeDatabaseRequest) (Re
 	}
 	existing, err := store.GetResize(ctx, request.AccountID, request.RequestID)
 	if err == nil {
-		if existing.DatabaseID != request.DatabaseID || existing.TargetClass != request.TargetClass {
+		if existing.DatabaseID != request.DatabaseID || existing.PolicyChange != (scaleToZero != nil) ||
+			(scaleToZero == nil && existing.TargetClass != request.TargetClass) ||
+			(scaleToZero != nil && existing.TargetScaleToZero != *scaleToZero) {
 			return ResizeOperation{}, ErrConflict
 		}
 		return existing, nil
@@ -102,7 +114,11 @@ func (s *Service) Resize(ctx context.Context, request ResizeDatabaseRequest) (Re
 		return ResizeOperation{}, err
 	}
 	target := database.Spec
-	target.Class = request.TargetClass
+	if scaleToZero == nil {
+		target.Class = request.TargetClass
+	} else {
+		target.ScaleToZero = *scaleToZero
+	}
 	if err := target.Validate(); err != nil {
 		return ResizeOperation{}, err
 	}
@@ -119,7 +135,7 @@ func (s *Service) Resize(ctx context.Context, request ResizeDatabaseRequest) (Re
 	if err != nil {
 		return ResizeOperation{}, err
 	}
-	if !backend.Capabilities.ClassResize {
+	if scaleToZero == nil && !backend.Capabilities.ClassResize || scaleToZero != nil && !backend.Capabilities.ScaleToZeroUpdate {
 		return ResizeOperation{}, ErrUnsupported
 	}
 	if err := backend.Capabilities.Supports(target); err != nil {
@@ -138,8 +154,11 @@ func (s *Service) Resize(ctx context.Context, request ResizeDatabaseRequest) (Re
 	now := s.now()
 	operation := ResizeOperation{ID: request.RequestID, AccountID: request.AccountID, DatabaseID: database.ID,
 		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, ProviderResourceID: database.ProviderResourceID,
-		DataResourceID: database.DataResourceID, SourceSpec: database.Spec, TargetClass: request.TargetClass,
+		DataResourceID: database.DataResourceID, SourceSpec: database.Spec, TargetClass: target.Class,
 		Generation: database.DesiredGeneration + 1, State: ResizePending, CreatedAt: now}
+	if scaleToZero != nil {
+		operation.PolicyChange, operation.TargetScaleToZero = true, *scaleToZero
+	}
 	return store.ReserveResize(ctx, database, operation, now)
 }
 
@@ -152,7 +171,7 @@ func (s *Service) GetResize(ctx context.Context, account, database, id string) (
 		return ResizeOperation{}, ErrInvalid
 	}
 	operation, err := store.GetResize(ctx, account, id)
-	if err == nil && operation.DatabaseID != database {
+	if err == nil && (operation.DatabaseID != database || operation.PolicyChange) {
 		return ResizeOperation{}, ErrNotFound
 	}
 	return operation, err
@@ -176,7 +195,7 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 	if err != nil {
 		return Database{}, s.releaseKnownError(ctx, claimed, StateUpdating, "backend_unavailable", ErrUnavailable, time.Hour)
 	}
-	if !backend.Capabilities.ClassResize || backend.Capabilities.Supports(operation.TargetSpec()) != nil {
+	if !computeChangeSupported(backend.Capabilities, operation) || backend.Capabilities.Supports(operation.TargetSpec()) != nil {
 		return Database{}, s.releaseKnownError(ctx, claimed, StateUpdating, "unsupported", ErrUnsupported, time.Hour)
 	}
 	providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
@@ -206,4 +225,16 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 		return Database{}, err
 	}
 	return s.store.Get(ctx, claimed.AccountID, claimed.ID)
+}
+
+func computeChangeSupported(c Capabilities, operation ResizeOperation) bool {
+	if operation.PolicyChange {
+		return c.ScaleToZeroUpdate
+	}
+	return c.ClassResize
+}
+
+func sameComputeChangeRequest(a, b ResizeOperation) bool {
+	return a.DatabaseID == b.DatabaseID && a.PolicyChange == b.PolicyChange && a.TargetClass == b.TargetClass &&
+		(!a.PolicyChange || a.TargetScaleToZero == b.TargetScaleToZero)
 }

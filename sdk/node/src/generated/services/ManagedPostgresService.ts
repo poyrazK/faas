@@ -2,11 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
+import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgresComputePolicyChange.js';
 import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
@@ -273,6 +275,62 @@ export class ManagedPostgresService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/account/managed-postgres-usage',
+    });
+  }
+  /**
+   * Change managed PostgreSQL scale-to-zero policy
+   * Durably reserves a scale-to-zero policy change on the pinned dataset. Clients may disconnect during the policy change. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute idle policy changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+   * @returns Problem Compute policy validation, concurrency, entitlement or provider admission failure
+   * @returns ManagedPostgresComputePolicyChange Accepted policy change or current progress for an existing request
+   * @throws ApiError
+   */
+  public static changeManagedPostgresComputePolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ChangeManagedPostgresComputePolicyRequest,
+  }): CancelablePromise<Problem | ManagedPostgresComputePolicyChange> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/compute-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get managed PostgreSQL compute policy progress
+   * Reads a durable compute policy request for the authenticated account and database. Responses are not cached and omit private provider identity.
+   * @returns ManagedPostgresComputePolicyChange Account and database scoped compute policy progress
+   * @returns Problem Authentication or policy lookup error
+   * @throws ApiError
+   */
+  public static getManagedPostgresComputePolicyChange({
+    id,
+    changeId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Canonical UUID supplied as request_id when reserving this policy change.
+     */
+    changeId: string,
+  }): CancelablePromise<ManagedPostgresComputePolicyChange | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/compute-policy-changes/{change_id}',
+      path: {
+        'id': id,
+        'change_id': changeId,
+      },
     });
   }
   /**

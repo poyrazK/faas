@@ -1078,13 +1078,22 @@ END $$;
 CREATE FUNCTION public.check_managed_postgres_resize_receipt() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE r managed_postgres_resizes; d managed_postgres_databases;
+DECLARE r managed_postgres_resizes; d managed_postgres_databases; target_spec jsonb; actual_spec jsonb;
 BEGIN
  SELECT * INTO r FROM managed_postgres_resizes WHERE id=NEW.id;
  IF NOT FOUND THEN RETURN NULL; END IF;
  SELECT * INTO d FROM managed_postgres_databases WHERE id=r.database_id FOR UPDATE;
  IF NOT FOUND THEN RETURN NULL; END IF;
+ target_spec := r.source_spec || jsonb_build_object('Class',r.target_class);
+ IF r.target_scale_to_zero IS NOT NULL THEN
+  target_spec := target_spec || jsonb_build_object('ScaleToZero',r.target_scale_to_zero);
+ END IF;
+ actual_spec := jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,'Class',d.service_class,
+  'Availability',d.availability,'ScaleToZero',d.scale_to_zero,'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds);
  IF r.account_id<>d.account_id OR (r.state='succeeded' AND d.observed_generation<r.generation)
+  OR (r.state='succeeded' AND d.observed_generation=r.generation AND (target_spec IS DISTINCT FROM actual_spec
+    OR r.backend_id<>d.backend_id OR r.backend_fingerprint<>d.backend_fingerprint
+    OR r.provider_resource_id IS DISTINCT FROM d.provider_resource_id OR r.data_resource_id IS DISTINCT FROM d.data_resource_id))
   OR (r.state='pending' AND (d.state<>'updating' OR d.desired_generation<>r.generation OR d.observed_generation<>r.generation-1
     OR d.environment_clone_operation_id IS NOT NULL OR d.clone_resource_role<>'target' OR d.cutover_id IS NOT NULL
     OR r.backend_id<>d.backend_id OR r.backend_fingerprint<>d.backend_fingerprint
@@ -15713,6 +15722,8 @@ CREATE TABLE public.managed_postgres_resizes (
     state text DEFAULT 'pending'::text NOT NULL,
     created_at timestamp with time zone NOT NULL,
     completed_at timestamp with time zone,
+    target_scale_to_zero boolean,
+    CONSTRAINT managed_postgres_compute_policy_target_check CHECK (((target_scale_to_zero IS NULL) OR ((NOT (target_class IS DISTINCT FROM (source_spec ->> 'Class'::text))) AND (NOT (jsonb_typeof((source_spec -> 'ScaleToZero'::text)) IS DISTINCT FROM 'boolean'::text))))),
     CONSTRAINT managed_postgres_resizes_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_resizes_backend_id_check CHECK ((length(backend_id) > 0)),
     CONSTRAINT managed_postgres_resizes_check CHECK ((((state = 'pending'::text) AND (completed_at IS NULL)) OR ((state = 'succeeded'::text) AND (completed_at IS NOT NULL) AND (completed_at >= created_at)))),
