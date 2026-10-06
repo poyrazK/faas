@@ -139,19 +139,30 @@ func (s *MemoryStore) RuntimeQuota(_ context.Context, owner, slug, id string) (R
 func (s *MemoryStore) IssueRuntimeQuotaTarget(ctx context.Context, owner, slug, id, region string) (RuntimeQuotaTarget, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	a, target, err := s.prepareIssuedQuota(ctx, owner, slug, id, region)
+	if err == nil {
+		s.runtimeQuotas[a.GlobalAppID][id] = copyQuota(a)
+	}
+	return target, err
+}
+
+// Caller holds mu. Return a private candidate; signing/outbox failure must not
+// mutate an issued marker through an aliased target slice or timestamp.
+func (s *MemoryStore) prepareIssuedQuota(ctx context.Context, owner, slug, id, region string) (RuntimeQuotaAllocation, RuntimeQuotaTarget, error) {
 	a, err := s.quota(owner, slug, id)
 	if err != nil {
-		return RuntimeQuotaTarget{}, err
+		return RuntimeQuotaAllocation{}, RuntimeQuotaTarget{}, err
 	}
+	a = copyQuota(a)
 	policy, err := s.currentQuotaPolicy(ctx, owner)
 	if err != nil {
-		return RuntimeQuotaTarget{}, err
+		return a, RuntimeQuotaTarget{}, err
 	}
 	if policy != a.Policy {
-		return RuntimeQuotaTarget{}, ErrOwnerPlanChanged
+		return a, RuntimeQuotaTarget{}, ErrOwnerPlanChanged
 	}
 	if a.RetiredAt != nil {
-		return RuntimeQuotaTarget{}, ErrRuntimeQuotaRetired
+		return a, RuntimeQuotaTarget{}, ErrRuntimeQuotaRetired
 	}
 	for i, target := range a.Targets {
 		if target.Region != region {
@@ -161,16 +172,15 @@ func (s *MemoryStore) IssueRuntimeQuotaTarget(ctx context.Context, owner, slug, 
 		cell := s.cells[region]
 		current.APIBase, current.CellEnabled, current.RegistryGeneration = cell.APIBase, cell.Enabled, cell.Generation
 		if !ok || !snapshotMatches(target.Target, current) {
-			return RuntimeQuotaTarget{}, ErrStaleCell
+			return a, RuntimeQuotaTarget{}, ErrStaleCell
 		}
 		if target.IssuedAt == nil {
 			now := time.Now().UTC()
 			a.Targets[i].IssuedAt = &now
-			s.runtimeQuotas[a.GlobalAppID][id] = copyQuota(a)
 		}
-		return copyQuota(a).Targets[i], nil
+		return a, copyQuota(a).Targets[i], nil
 	}
-	return RuntimeQuotaTarget{}, ErrNotFound
+	return a, RuntimeQuotaTarget{}, ErrNotFound
 }
 
 func (s *MemoryStore) currentQuotaPolicy(ctx context.Context, owner string) (RuntimeQuotaPolicy, error) {

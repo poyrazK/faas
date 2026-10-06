@@ -93,6 +93,7 @@ type Querier interface {
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
 	AssertGlobalDirectoryScope(ctx context.Context, db DBTX) error
+	AssertGlobalQuotaDeliveryClaim(ctx context.Context, db DBTX, arg AssertGlobalQuotaDeliveryClaimParams) error
 	AttachGlobalAppTarget(ctx context.Context, db DBTX, arg AttachGlobalAppTargetParams) (string, error)
 	AuthorizeWorkflowOutbound(ctx context.Context, db DBTX, arg AuthorizeWorkflowOutboundParams) (bool, error)
 	AutomationManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (AutomationManifestRow, error)
@@ -134,6 +135,7 @@ type Querier interface {
 	CancelWorkflowOutboundAttempts(ctx context.Context, db DBTX, arg CancelWorkflowOutboundAttemptsParams) error
 	CaptureRuntimeLogArchiveBinding(ctx context.Context, db DBTX, arg CaptureRuntimeLogArchiveBindingParams) (CaptureRuntimeLogArchiveBindingRow, error)
 	CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg CheckExclusiveWorkRuntimeParams) (string, error)
+	CheckGlobalQuotaDeliveryScope(ctx context.Context, db DBTX, deliveryID pgtype.UUID) error
 	CheckGlobalRuntimeConsentScope(ctx context.Context, db DBTX, arg CheckGlobalRuntimeConsentScopeParams) error
 	ClaimAppTaskWithRegionalQuota(ctx context.Context, db DBTX, arg ClaimAppTaskWithRegionalQuotaParams) (AppTask, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
@@ -142,6 +144,7 @@ type Querier interface {
 	ClaimEnvironmentGitOpsJob(ctx context.Context, db DBTX, arg ClaimEnvironmentGitOpsJobParams) (EnvironmentGitopsJob, error)
 	ClaimEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg ClaimEnvironmentGitSourcePollParams) (EnvironmentGitSourcePoll, error)
 	ClaimEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg ClaimEnvironmentWorkloadQualificationParams) (EnvironmentWorkloadQualificationRequest, error)
+	ClaimGlobalQuotaDeliveries(ctx context.Context, db DBTX, arg ClaimGlobalQuotaDeliveriesParams) ([]GlobalRuntimeQuotaDelivery, error)
 	ClaimGlobalRecovery(ctx context.Context, db DBTX, arg ClaimGlobalRecoveryParams) ([]ClaimGlobalRecoveryRow, error)
 	ClaimImmediateNotificationForNode(ctx context.Context, db DBTX, arg ClaimImmediateNotificationForNodeParams) (ClaimImmediateNotificationForNodeRow, error)
 	ClaimManagedPostgresBindingRetirement(ctx context.Context, db DBTX, arg ClaimManagedPostgresBindingRetirementParams) (ClaimManagedPostgresBindingRetirementRow, error)
@@ -531,6 +534,7 @@ type Querier interface {
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
 	FinishEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg FinishEnvironmentGitOpsRunParams) (int64, error)
 	FinishEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg FinishEnvironmentGitSourcePollParams) (int64, error)
+	FinishGlobalQuotaDelivery(ctx context.Context, db DBTX, arg FinishGlobalQuotaDeliveryParams) error
 	FinishGlobalRecovery(ctx context.Context, db DBTX, arg FinishGlobalRecoveryParams) (int64, error)
 	FinishManagedPostgresBindingProvision(ctx context.Context, db DBTX, arg FinishManagedPostgresBindingProvisionParams) (FinishManagedPostgresBindingProvisionRow, error)
 	FinishManagedPostgresCutoverStep(ctx context.Context, db DBTX, arg FinishManagedPostgresCutoverStepParams) error
@@ -754,6 +758,7 @@ type Querier interface {
 	// ADR-608: immutable sealed authority and restart-safe recovery claims.
 	InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error)
 	InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg InsertGlobalOwnerCellBindingParams) error
+	InsertGlobalQuotaDelivery(ctx context.Context, db DBTX, arg InsertGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
 	InsertGlobalRuntimeConsent(ctx context.Context, db DBTX, arg InsertGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error)
 	// ADR-644: durable directory issuer, independent of regional cell identity.
 	InsertGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) error
@@ -1315,6 +1320,7 @@ type Querier interface {
 	LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg LockGlobalDirectoryCellParams) (LockGlobalDirectoryCellRow, error)
 	// ADR-611: current organization consent is held through binding commit.
 	LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg LockGlobalOrgTargetOwnerParams) (pgtype.UUID, error)
+	LockGlobalQuotaDelivery(ctx context.Context, db DBTX, arg LockGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
 	// ADR-646: public runtime consent retained independently of image delegation.
 	LockGlobalRuntimeConsentJournal(ctx context.Context, db DBTX, globalAppID pgtype.UUID) error
 	LockGlobalRuntimeQuotaOwner(ctx context.Context, db DBTX, arg LockGlobalRuntimeQuotaOwnerParams) (string, error)
@@ -1809,6 +1815,9 @@ type Querier interface {
 	ReadGlobalDirectoryOwner(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ReadGlobalDirectoryOwnerRow, error)
 	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
 	ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (ReadGlobalOwnerCellBindingRow, error)
+	// ADR-647: original signed quota delivery and leased recovery.
+	ReadGlobalQuotaDelivery(ctx context.Context, db DBTX, arg ReadGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
+	ReadGlobalQuotaDeliveryIdentity(ctx context.Context, db DBTX, arg ReadGlobalQuotaDeliveryIdentityParams) (GlobalRuntimeQuotaDelivery, error)
 	ReadGlobalRuntimeConsent(ctx context.Context, db DBTX, arg ReadGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error)
 	ReadGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaAllocationParams) (ReadGlobalRuntimeQuotaAllocationRow, error)
 	ReadGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX) (string, error)
@@ -2068,6 +2077,7 @@ type Querier interface {
 	RetireRuntimeLogArchive(ctx context.Context, db DBTX, arg RetireRuntimeLogArchiveParams) (int64, error)
 	RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg RetryCustomerOperationBlobCleanupParams) (int64, error)
 	RetryExternalTriggerRecordByOperator(ctx context.Context, db DBTX, arg RetryExternalTriggerRecordByOperatorParams) (int64, error)
+	RetryGlobalQuotaDelivery(ctx context.Context, db DBTX, arg RetryGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
 	RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, arg RetryQueueDeadLetterInvocationParams) (Invocation, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
 	// Revokes every active row for accountID except the supplied sid

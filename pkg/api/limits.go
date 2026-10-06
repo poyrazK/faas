@@ -8689,3 +8689,15 @@ const (
 	GlobalRuntimeConsentsPerAppMax    = 32 // ADR-646: pending/active/revoking unexpired directory records.
 	RegionalRuntimeConsentMaxLifetime = 6 * 24 * time.Hour
 )
+
+// ADR-647: bounded durable quota delivery; leases exceed a complete request.
+const (
+	GlobalQuotaDeliveryJobsPerAppMax = 1024
+	GlobalQuotaDeliveryBatch         = 2
+	GlobalQuotaDeliveryLease         = 2 * time.Minute
+	GlobalQuotaDeliveryTimeout       = 45 * time.Second
+	GlobalQuotaDeliveryFinishTimeout = 10 * time.Second
+	GlobalQuotaDeliveryInterval      = 5 * time.Second
+	GlobalQuotaDeliveryRetryMin      = 30 * time.Second
+	GlobalQuotaDeliveryRetryMax      = 5 * time.Minute
+)

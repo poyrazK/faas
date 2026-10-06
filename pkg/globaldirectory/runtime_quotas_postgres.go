@@ -130,54 +130,55 @@ func (s *PgStore) checkQuotaSnapshot(ctx context.Context, tx pgx.Tx, target Runt
 func (s *PgStore) IssueRuntimeQuotaTarget(ctx context.Context, owner, slug, id, region string) (RuntimeQuotaTarget, error) {
 	var out RuntimeQuotaTarget
 	err := s.transaction(ctx, "issue runtime quota", func(tx pgx.Tx) error {
-		q := &sqlc.Queries{}
-		current, err := q.LockGlobalRuntimeQuotaTenant(ctx, tx, idArg(owner))
-		if err != nil {
-			return err
-		}
-		policy, err := runtimeQuotaPolicy(api.Plan(current))
-		if err != nil {
-			return err
-		}
-		if err = lockQuotaApp(ctx, tx, owner, slug); err != nil {
-			return err
-		}
-		a, err := s.readRuntimeQuota(ctx, tx, owner, slug, id)
-		if err != nil {
-			return err
-		}
-		if a.Policy != policy {
-			return ErrOwnerPlanChanged
-		}
-		if a.RetiredAt != nil {
-			return ErrRuntimeQuotaRetired
-		}
-		for _, target := range a.Targets {
-			if target.Region != region {
-				continue
-			}
-			if err = s.checkQuotaSnapshot(ctx, tx, target); err != nil {
-				return err
-			}
-			if target.IssuedAt == nil {
-				if _, err = q.IssueGlobalRuntimeQuotaTarget(ctx, tx, sqlc.IssueGlobalRuntimeQuotaTargetParams{GlobalAppID: idArg(a.GlobalAppID), AllocationID: idArg(id), Region: region}); err != nil {
-					return err
-				}
-				a, err = s.readRuntimeQuota(ctx, tx, owner, slug, id)
-				if err != nil {
-					return err
-				}
-			}
-			for _, t := range a.Targets {
-				if t.Region == region {
-					out = t
-					return nil
-				}
-			}
-		}
-		return ErrNotFound
+		var err error
+		_, out, err = s.prepareIssuedQuotaTx(ctx, tx, owner, slug, id, region)
+		return err
 	})
 	return out, err
+}
+
+// Shares the caller's transaction, including rollback on signing/outbox failure.
+func (s *PgStore) prepareIssuedQuotaTx(ctx context.Context, tx pgx.Tx, owner, slug, id, region string) (RuntimeQuotaAllocation, RuntimeQuotaTarget, error) {
+	q := &sqlc.Queries{}
+	current, err := q.LockGlobalRuntimeQuotaTenant(ctx, tx, idArg(owner))
+	if err != nil {
+		return RuntimeQuotaAllocation{}, RuntimeQuotaTarget{}, err
+	}
+	policy, err := runtimeQuotaPolicy(api.Plan(current))
+	if err != nil {
+		return RuntimeQuotaAllocation{}, RuntimeQuotaTarget{}, err
+	}
+	if err = lockQuotaApp(ctx, tx, owner, slug); err != nil {
+		return RuntimeQuotaAllocation{}, RuntimeQuotaTarget{}, err
+	}
+	a, err := s.readRuntimeQuota(ctx, tx, owner, slug, id)
+	if err != nil {
+		return a, RuntimeQuotaTarget{}, err
+	}
+	if a.Policy != policy {
+		return a, RuntimeQuotaTarget{}, ErrOwnerPlanChanged
+	}
+	if a.RetiredAt != nil {
+		return a, RuntimeQuotaTarget{}, ErrRuntimeQuotaRetired
+	}
+	t, err := quotaTarget(a, region)
+	if err != nil {
+		return a, t, err
+	}
+	if err = s.checkQuotaSnapshot(ctx, tx, t); err != nil {
+		return a, t, err
+	}
+	if t.IssuedAt == nil {
+		if _, err = q.IssueGlobalRuntimeQuotaTarget(ctx, tx, sqlc.IssueGlobalRuntimeQuotaTargetParams{GlobalAppID: idArg(a.GlobalAppID), AllocationID: idArg(id), Region: region}); err != nil {
+			return a, t, err
+		}
+		a, err = s.readRuntimeQuota(ctx, tx, owner, slug, id)
+		if err != nil {
+			return a, t, err
+		}
+		t, err = quotaTarget(a, region)
+	}
+	return a, t, err
 }
 
 func (s *PgStore) RetireRuntimeQuota(ctx context.Context, owner, actor, slug, id string) (RuntimeQuotaAllocation, error) {

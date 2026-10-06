@@ -1185,6 +1185,20 @@ func (q *Queries) AssertGlobalDirectoryScope(ctx context.Context, db DBTX) error
 	return err
 }
 
+const assertGlobalQuotaDeliveryClaim = `-- name: AssertGlobalQuotaDeliveryClaim :exec
+SELECT assert_global_quota_delivery_claim($1::uuid,$2::uuid)
+`
+
+type AssertGlobalQuotaDeliveryClaimParams struct {
+	DeliveryID pgtype.UUID
+	ClaimID    pgtype.UUID
+}
+
+func (q *Queries) AssertGlobalQuotaDeliveryClaim(ctx context.Context, db DBTX, arg AssertGlobalQuotaDeliveryClaimParams) error {
+	_, err := db.Exec(ctx, assertGlobalQuotaDeliveryClaim, arg.DeliveryID, arg.ClaimID)
+	return err
+}
+
 const attachGlobalAppTarget = `-- name: AttachGlobalAppTarget :one
 INSERT INTO global_app_targets(global_app_id, owner_id, cell_id, region, cell_generation, regional_account_id, regional_org_id, regional_app_id, regional_app_slug)
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::text, $5::bigint,
@@ -1799,6 +1813,15 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 	return i_id, err
 }
 
+const checkGlobalQuotaDeliveryScope = `-- name: CheckGlobalQuotaDeliveryScope :exec
+SELECT check_global_quota_delivery_scope(d) FROM global_runtime_quota_deliveries d WHERE id=$1::uuid
+`
+
+func (q *Queries) CheckGlobalQuotaDeliveryScope(ctx context.Context, db DBTX, deliveryID pgtype.UUID) error {
+	_, err := db.Exec(ctx, checkGlobalQuotaDeliveryScope, deliveryID)
+	return err
+}
+
 const checkGlobalRuntimeConsentScope = `-- name: CheckGlobalRuntimeConsentScope :exec
 SELECT check_global_runtime_consent_scope($1::uuid,$2::uuid,$3::text,$4::uuid,$5::jsonb,$6::timestamptz)
 `
@@ -2157,6 +2180,58 @@ func (q *Queries) ClaimEnvironmentWorkloadQualification(ctx context.Context, db 
 		&i.ReservedInstanceID,
 	)
 	return i, err
+}
+
+const claimGlobalQuotaDeliveries = `-- name: ClaimGlobalQuotaDeliveries :many
+SELECT id, global_app_id, owner_id, global_app_slug, allocation_id, region, purpose, consent_id, issuer_id, grant_claims, envelope, retirement_id, retired_at, created_at, status, attempts, next_attempt_at, claim_id, claim_until, accepted_at, receipt, last_code FROM claim_global_runtime_quota_deliveries($1::integer,$2::integer)
+`
+
+type ClaimGlobalQuotaDeliveriesParams struct {
+	Batch        int32
+	LeaseSeconds int32
+}
+
+func (q *Queries) ClaimGlobalQuotaDeliveries(ctx context.Context, db DBTX, arg ClaimGlobalQuotaDeliveriesParams) ([]GlobalRuntimeQuotaDelivery, error) {
+	rows, err := db.Query(ctx, claimGlobalQuotaDeliveries, arg.Batch, arg.LeaseSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GlobalRuntimeQuotaDelivery{}
+	for rows.Next() {
+		var i GlobalRuntimeQuotaDelivery
+		if err := rows.Scan(
+			&i.ID,
+			&i.GlobalAppID,
+			&i.OwnerID,
+			&i.GlobalAppSlug,
+			&i.AllocationID,
+			&i.Region,
+			&i.Purpose,
+			&i.ConsentID,
+			&i.IssuerID,
+			&i.GrantClaims,
+			&i.Envelope,
+			&i.RetirementID,
+			&i.RetiredAt,
+			&i.CreatedAt,
+			&i.Status,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.ClaimID,
+			&i.ClaimUntil,
+			&i.AcceptedAt,
+			&i.Receipt,
+			&i.LastCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const claimGlobalRecovery = `-- name: ClaimGlobalRecovery :many
@@ -10314,6 +10389,31 @@ func (q *Queries) FinishEnvironmentGitSourcePoll(ctx context.Context, db DBTX, a
 	return result.RowsAffected(), nil
 }
 
+const finishGlobalQuotaDelivery = `-- name: FinishGlobalQuotaDelivery :exec
+SELECT finish_global_quota_delivery($1::uuid,$2::uuid,$3::text,$4::text,$5::jsonb,$6::integer)
+`
+
+type FinishGlobalQuotaDeliveryParams struct {
+	DeliveryID   pgtype.UUID
+	ClaimID      pgtype.UUID
+	Outcome      string
+	Code         string
+	Receipt      []byte
+	RetrySeconds int32
+}
+
+func (q *Queries) FinishGlobalQuotaDelivery(ctx context.Context, db DBTX, arg FinishGlobalQuotaDeliveryParams) error {
+	_, err := db.Exec(ctx, finishGlobalQuotaDelivery,
+		arg.DeliveryID,
+		arg.ClaimID,
+		arg.Outcome,
+		arg.Code,
+		arg.Receipt,
+		arg.RetrySeconds,
+	)
+	return err
+}
+
 const finishGlobalRecovery = `-- name: FinishGlobalRecovery :execrows
 UPDATE global_release_recovery_work SET claim_id=NULL,claim_until=NULL,cursor_id=NULLIF($1::text,'')::uuid,
  next_attempt_at=CASE WHEN wake_id=$2::uuid THEN clock_timestamp()+make_interval(secs=>$3::integer) ELSE next_attempt_at END
@@ -13344,6 +13444,71 @@ func (q *Queries) InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg
 		arg.RegionalAccountID,
 	)
 	return err
+}
+
+const insertGlobalQuotaDelivery = `-- name: InsertGlobalQuotaDelivery :one
+INSERT INTO global_runtime_quota_deliveries(id,global_app_id,owner_id,global_app_slug,allocation_id,region,purpose,consent_id,issuer_id,grant_claims,envelope,retirement_id,retired_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid,$6::text,$7::text,$8::uuid,$9::uuid,$10::jsonb,$11::jsonb,$12::uuid,$13::timestamptz) RETURNING id, global_app_id, owner_id, global_app_slug, allocation_id, region, purpose, consent_id, issuer_id, grant_claims, envelope, retirement_id, retired_at, created_at, status, attempts, next_attempt_at, claim_id, claim_until, accepted_at, receipt, last_code
+`
+
+type InsertGlobalQuotaDeliveryParams struct {
+	DeliveryID   pgtype.UUID
+	GlobalAppID  pgtype.UUID
+	OwnerID      pgtype.UUID
+	Slug         string
+	AllocationID pgtype.UUID
+	Region       string
+	Purpose      string
+	ConsentID    pgtype.UUID
+	IssuerID     pgtype.UUID
+	GrantClaims  []byte
+	Envelope     []byte
+	RetirementID pgtype.UUID
+	RetiredAt    pgtype.Timestamptz
+}
+
+func (q *Queries) InsertGlobalQuotaDelivery(ctx context.Context, db DBTX, arg InsertGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error) {
+	row := db.QueryRow(ctx, insertGlobalQuotaDelivery,
+		arg.DeliveryID,
+		arg.GlobalAppID,
+		arg.OwnerID,
+		arg.Slug,
+		arg.AllocationID,
+		arg.Region,
+		arg.Purpose,
+		arg.ConsentID,
+		arg.IssuerID,
+		arg.GrantClaims,
+		arg.Envelope,
+		arg.RetirementID,
+		arg.RetiredAt,
+	)
+	var i GlobalRuntimeQuotaDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.GlobalAppSlug,
+		&i.AllocationID,
+		&i.Region,
+		&i.Purpose,
+		&i.ConsentID,
+		&i.IssuerID,
+		&i.GrantClaims,
+		&i.Envelope,
+		&i.RetirementID,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.ClaimID,
+		&i.ClaimUntil,
+		&i.AcceptedAt,
+		&i.Receipt,
+		&i.LastCode,
+	)
+	return i, err
 }
 
 const insertGlobalRuntimeConsent = `-- name: InsertGlobalRuntimeConsent :one
@@ -23717,6 +23882,46 @@ func (q *Queries) LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg Loc
 	var owner_id pgtype.UUID
 	err := row.Scan(&owner_id)
 	return owner_id, err
+}
+
+const lockGlobalQuotaDelivery = `-- name: LockGlobalQuotaDelivery :one
+SELECT id, global_app_id, owner_id, global_app_slug, allocation_id, region, purpose, consent_id, issuer_id, grant_claims, envelope, retirement_id, retired_at, created_at, status, attempts, next_attempt_at, claim_id, claim_until, accepted_at, receipt, last_code FROM global_runtime_quota_deliveries WHERE id=$1::uuid AND owner_id=$2::uuid AND global_app_slug=$3::text FOR UPDATE
+`
+
+type LockGlobalQuotaDeliveryParams struct {
+	DeliveryID pgtype.UUID
+	OwnerID    pgtype.UUID
+	Slug       string
+}
+
+func (q *Queries) LockGlobalQuotaDelivery(ctx context.Context, db DBTX, arg LockGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error) {
+	row := db.QueryRow(ctx, lockGlobalQuotaDelivery, arg.DeliveryID, arg.OwnerID, arg.Slug)
+	var i GlobalRuntimeQuotaDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.GlobalAppSlug,
+		&i.AllocationID,
+		&i.Region,
+		&i.Purpose,
+		&i.ConsentID,
+		&i.IssuerID,
+		&i.GrantClaims,
+		&i.Envelope,
+		&i.RetirementID,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.ClaimID,
+		&i.ClaimUntil,
+		&i.AcceptedAt,
+		&i.Receipt,
+		&i.LastCode,
+	)
+	return i, err
 }
 
 const lockGlobalRuntimeConsentJournal = `-- name: LockGlobalRuntimeConsentJournal :exec
@@ -36150,6 +36355,93 @@ func (q *Queries) ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg R
 	return i, err
 }
 
+const readGlobalQuotaDelivery = `-- name: ReadGlobalQuotaDelivery :one
+SELECT id, global_app_id, owner_id, global_app_slug, allocation_id, region, purpose, consent_id, issuer_id, grant_claims, envelope, retirement_id, retired_at, created_at, status, attempts, next_attempt_at, claim_id, claim_until, accepted_at, receipt, last_code FROM global_runtime_quota_deliveries WHERE id=$1::uuid AND owner_id=$2::uuid AND global_app_slug=$3::text
+`
+
+type ReadGlobalQuotaDeliveryParams struct {
+	DeliveryID pgtype.UUID
+	OwnerID    pgtype.UUID
+	Slug       string
+}
+
+// ADR-647: original signed quota delivery and leased recovery.
+func (q *Queries) ReadGlobalQuotaDelivery(ctx context.Context, db DBTX, arg ReadGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error) {
+	row := db.QueryRow(ctx, readGlobalQuotaDelivery, arg.DeliveryID, arg.OwnerID, arg.Slug)
+	var i GlobalRuntimeQuotaDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.GlobalAppSlug,
+		&i.AllocationID,
+		&i.Region,
+		&i.Purpose,
+		&i.ConsentID,
+		&i.IssuerID,
+		&i.GrantClaims,
+		&i.Envelope,
+		&i.RetirementID,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.ClaimID,
+		&i.ClaimUntil,
+		&i.AcceptedAt,
+		&i.Receipt,
+		&i.LastCode,
+	)
+	return i, err
+}
+
+const readGlobalQuotaDeliveryIdentity = `-- name: ReadGlobalQuotaDeliveryIdentity :one
+SELECT id, global_app_id, owner_id, global_app_slug, allocation_id, region, purpose, consent_id, issuer_id, grant_claims, envelope, retirement_id, retired_at, created_at, status, attempts, next_attempt_at, claim_id, claim_until, accepted_at, receipt, last_code FROM global_runtime_quota_deliveries WHERE global_app_id=$1::uuid AND allocation_id=$2::uuid AND region=$3::text AND purpose=$4::text
+`
+
+type ReadGlobalQuotaDeliveryIdentityParams struct {
+	GlobalAppID  pgtype.UUID
+	AllocationID pgtype.UUID
+	Region       string
+	Purpose      string
+}
+
+func (q *Queries) ReadGlobalQuotaDeliveryIdentity(ctx context.Context, db DBTX, arg ReadGlobalQuotaDeliveryIdentityParams) (GlobalRuntimeQuotaDelivery, error) {
+	row := db.QueryRow(ctx, readGlobalQuotaDeliveryIdentity,
+		arg.GlobalAppID,
+		arg.AllocationID,
+		arg.Region,
+		arg.Purpose,
+	)
+	var i GlobalRuntimeQuotaDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.GlobalAppSlug,
+		&i.AllocationID,
+		&i.Region,
+		&i.Purpose,
+		&i.ConsentID,
+		&i.IssuerID,
+		&i.GrantClaims,
+		&i.Envelope,
+		&i.RetirementID,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.ClaimID,
+		&i.ClaimUntil,
+		&i.AcceptedAt,
+		&i.Receipt,
+		&i.LastCode,
+	)
+	return i, err
+}
+
 const readGlobalRuntimeConsent = `-- name: ReadGlobalRuntimeConsent :one
 SELECT id, issuer_id, global_app_id, owner_id, global_app_slug, binding, expires_at, created_at, status, regional_created_at, regional_revoked_at FROM global_runtime_consents WHERE id=$1::uuid AND owner_id=$2::uuid AND global_app_slug=$3::text
 `
@@ -40379,6 +40671,47 @@ func (q *Queries) RetryExternalTriggerRecordByOperator(ctx context.Context, db D
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const retryGlobalQuotaDelivery = `-- name: RetryGlobalQuotaDelivery :one
+UPDATE global_runtime_quota_deliveries SET status='pending',last_code='',next_attempt_at=clock_timestamp()
+WHERE id=$1::uuid AND owner_id=$2::uuid AND global_app_slug=$3::text AND status IN ('pending','blocked') RETURNING id, global_app_id, owner_id, global_app_slug, allocation_id, region, purpose, consent_id, issuer_id, grant_claims, envelope, retirement_id, retired_at, created_at, status, attempts, next_attempt_at, claim_id, claim_until, accepted_at, receipt, last_code
+`
+
+type RetryGlobalQuotaDeliveryParams struct {
+	DeliveryID pgtype.UUID
+	OwnerID    pgtype.UUID
+	Slug       string
+}
+
+func (q *Queries) RetryGlobalQuotaDelivery(ctx context.Context, db DBTX, arg RetryGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error) {
+	row := db.QueryRow(ctx, retryGlobalQuotaDelivery, arg.DeliveryID, arg.OwnerID, arg.Slug)
+	var i GlobalRuntimeQuotaDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.GlobalAppSlug,
+		&i.AllocationID,
+		&i.Region,
+		&i.Purpose,
+		&i.ConsentID,
+		&i.IssuerID,
+		&i.GrantClaims,
+		&i.Envelope,
+		&i.RetirementID,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.ClaimID,
+		&i.ClaimUntil,
+		&i.AcceptedAt,
+		&i.Receipt,
+		&i.LastCode,
+	)
+	return i, err
 }
 
 const retryQueueDeadLetterInvocation = `-- name: RetryQueueDeadLetterInvocation :one

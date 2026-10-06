@@ -2777,6 +2777,36 @@ type GlobalRuntimeQuotaAllocation struct {
 	RetiredAt          pgtype.Timestamptz
 }
 
+type GlobalRuntimeQuotaDelivery struct {
+	ID            pgtype.UUID
+	GlobalAppID   pgtype.UUID
+	OwnerID       pgtype.UUID
+	GlobalAppSlug string
+	AllocationID  pgtype.UUID
+	Region        string
+	Purpose       string
+	ConsentID     pgtype.UUID
+	IssuerID      pgtype.UUID
+	GrantClaims   []byte
+	Envelope      []byte
+	RetirementID  pgtype.UUID
+	RetiredAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	Status        string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	ClaimID       pgtype.UUID
+	ClaimUntil    pgtype.Timestamptz
+	AcceptedAt    pgtype.Timestamptz
+	Receipt       []byte
+	LastCode      string
+}
+
+type GlobalRuntimeQuotaDeliveryOwner struct {
+	OwnerID       pgtype.UUID
+	LastClaimedAt pgtype.Timestamptz
+}
+
 type GlobalRuntimeQuotaIssuer struct {
 	Singleton bool
 	IssuerID  pgtype.UUID

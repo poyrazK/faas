@@ -53,19 +53,20 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	devBridgeEnabled       bool
-	devBridgeURL           string
-	devBridgeObserver      *devbridge.Observer
-	featureFlagsEnabled    bool
-	regionalComputeEnabled bool
-	globalDirectory        globaldirectory.Store
-	globalQuotaAuthority   *globaldirectory.RuntimeQuotaAuthority
-	regionalQuotaTrust     runtimequota.Trust
-	regionalQuotaAPIBase   string
-	globalVerifier         globaldirectory.Verifier
-	globalDelegationKeys   globaldirectory.DelegationKeys
-	controlPlaneCell       db.CellIdentity
-	flagsWorkloadVerifier  *workloadidentity.Verifier
+	devBridgeEnabled          bool
+	devBridgeURL              string
+	devBridgeObserver         *devbridge.Observer
+	featureFlagsEnabled       bool
+	regionalComputeEnabled    bool
+	globalDirectory           globaldirectory.Store
+	globalQuotaAuthority      *globaldirectory.RuntimeQuotaAuthority
+	globalQuotaDeliveryWorker bool
+	regionalQuotaTrust        runtimequota.Trust
+	regionalQuotaAPIBase      string
+	globalVerifier            globaldirectory.Verifier
+	globalDelegationKeys      globaldirectory.DelegationKeys
+	controlPlaneCell          db.CellIdentity
+	flagsWorkloadVerifier     *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                             *totpGuard
 	objectStorage                    *objectstorage.Registry

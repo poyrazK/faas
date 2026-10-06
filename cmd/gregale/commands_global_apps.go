@@ -12,11 +12,14 @@ import (
 
 func cmdGlobalApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale global-app create|list|show|attach|detach|resolve|reserve-quota|show-quota|retire-quota|setup-runtime-consent|show-runtime-consent|revoke-runtime-consent", "global-app")
+		PrintUsage(os.Stderr, "usage: gregale global-app create|list|show|attach|detach|resolve|reserve-quota|show-quota|retire-quota|setup-runtime-consent|show-runtime-consent|revoke-runtime-consent|queue-quota-delivery|show-quota-delivery|retry-quota-delivery", "global-app")
 		return 1
 	}
 	if args[0] == "reserve-quota" || args[0] == "show-quota" || args[0] == "retire-quota" {
 		return cmdGlobalRuntimeQuota(args[0], args[1:])
+	}
+	if args[0] == "queue-quota-delivery" || args[0] == "show-quota-delivery" || args[0] == "retry-quota-delivery" {
+		return cmdGlobalQuotaDelivery(args[0], args[1:])
 	}
 	if args[0] == "setup-runtime-consent" || args[0] == "show-runtime-consent" || args[0] == "revoke-runtime-consent" {
 		return cmdGlobalRuntimeConsent(args[0], args[1:])

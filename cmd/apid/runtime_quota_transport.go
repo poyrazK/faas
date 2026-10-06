@@ -22,6 +22,7 @@ type RuntimeQuotaTransportConfig struct {
 	PrivateKeyPath    string `toml:"private_key_path"`
 	TrustBundlePath   string `toml:"trust_bundle_path"`
 	RegionalAPIBase   string `toml:"regional_api_base"`
+	DeliveryWorker    bool   `toml:"delivery_worker"`
 }
 
 func (s *server) configureRuntimeQuotaTransport(ctx context.Context, cfg RuntimeQuotaTransportConfig, pool *pgxpool.Pool) error {
@@ -31,7 +32,7 @@ func (s *server) configureRuntimeQuotaTransport(ctx context.Context, cfg Runtime
 	if s.globalDirectory != nil {
 		return s.configureDirectoryQuotaAuthority(ctx, cfg)
 	}
-	if pool == nil || cfg.DirectoryIssuerID != "" || cfg.PrivateKeyPath != "" || !api.ValidGlobalDirectoryAPIBase(cfg.RegionalAPIBase) || cfg.TrustBundlePath == "" {
+	if pool == nil || cfg.DeliveryWorker || cfg.DirectoryIssuerID != "" || cfg.PrivateKeyPath != "" || !api.ValidGlobalDirectoryAPIBase(cfg.RegionalAPIBase) || cfg.TrustBundlePath == "" {
 		return fmt.Errorf("apid: regional quota transport requires a bound database, canonical HTTPS origin and trust bundle: %w", runtimequota.ErrTrust)
 	}
 	cell, err := (&sqlc.Queries{}).ReadControlPlaneCell(ctx, pool)
@@ -63,6 +64,11 @@ func (s *server) configureDirectoryQuotaAuthority(ctx context.Context, cfg Runti
 	if !ok || !issuerOK || cfg.RegionalAPIBase != "" || s.controlPlaneCell.ID != "" || s.controlPlaneCell.Region != "" {
 		return runtimequota.ErrTrust
 	}
+	if cfg.DeliveryWorker {
+		if _, ok := s.globalDirectory.(globaldirectory.QuotaDeliveryStore); !ok {
+			return runtimequota.ErrTrust
+		}
+	}
 	keys, err := runtimequota.LoadAuthorityKeys(runtimequota.KeyConfig{PrivateKeyPath: cfg.PrivateKeyPath, TrustBundlePath: cfg.TrustBundlePath}, runtimequota.Directory, cfg.DirectoryIssuerID)
 	if err != nil {
 		return err
@@ -71,6 +77,7 @@ func (s *server) configureDirectoryQuotaAuthority(ctx context.Context, cfg Runti
 		return fmt.Errorf("apid: immutable directory quota issuer: %w", err)
 	}
 	s.globalQuotaAuthority = &globaldirectory.RuntimeQuotaAuthority{Store: store, Signer: keys.Signer, Directories: keys.Trust, Cells: keys.Trust}
+	s.globalQuotaDeliveryWorker = cfg.DeliveryWorker
 	return nil
 }
 

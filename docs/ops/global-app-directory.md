@@ -109,6 +109,9 @@ implemented. Current bindings report identity verification only.
 
 ## Runtime quota reservations
 
+See [durable quota delivery](#durable-quota-delivery) for restart recovery after
+reserving shares and setting up original regional runtime consent.
+
 Reserve a positive concurrency share for every selected, verified region using
 `PUT /v1/global-apps/{slug}/runtime-quotas/{allocation_id}`. The allocation UUID
 and shares are immutable; keep the UUID across retries. The current account or
@@ -168,8 +171,65 @@ before dispatch.
 Revocation blocks directory dispatch before contacting the original regional
 endpoint. Its original admin key is required even after detachment. Lost replies
 remain retryable. Expiry or revocation never releases issued global quota, and
-signed retirement remains independent of consent. The durable quota delivery
-outbox/worker remains pending; there is no automatic quota dispatch yet.
+signed retirement remains independent of consent.
+
+## Durable quota delivery
+
+ADR-647 adds a retained delivery journal and an optional directory apid worker.
+Enable it only on the unbound directory with its existing configured runtime quota
+signing identity and trust bundle:
+
+```toml
+[runtime_quota_transport]
+directory_issuer_id = "DIRECTORY_UUID"
+private_key_path = "/etc/faas/runtime-quota/private-key"
+trust_bundle_path = "/etc/faas/runtime-quota/trust.json"
+delivery_worker = true
+```
+
+Regional receivers reject `delivery_worker`; their runtime heads remain frozen.
+Keep old directory public verification anchors during signing-key rotation so
+outstanding jobs and original regional receipts can still be verified.
+
+After reserving shares and obtaining active runtime consent for each region,
+queue a grant with a stable new delivery UUID per allocation and region:
+
+```sh
+gregale global-app queue-quota-delivery shop --allocation ALLOCATION_UUID \
+  --delivery DELIVERY_UUID --region eu-fsn --runtime-consent CONSENT_UUID
+gregale global-app show-quota-delivery shop --allocation ALLOCATION_UUID \
+  --delivery DELIVERY_UUID
+gregale global-app retry-quota-delivery shop --allocation ALLOCATION_UUID \
+  --delivery DELIVERY_UUID
+```
+
+Issuance and signed-job storage commit together before transport. Repeat the
+same queue UUID and input after a lost response; queueing never changes its
+envelope or consent. The worker carries no regional admin key. It checks current
+owner, plan, selected binding and original consent before grant dispatch. Pending
+work retries with a 30-second to five-minute backoff; blocked work needs explicit
+retry after resolving its reported `owner`, `binding`, `consent`, `retired` or
+`trust` cause. A leased job cannot be manually retried until its worker finishes
+or expiry recovery reclaims it. At most two jobs, one per owner, are claimed per
+batch with fresh two-minute leases. At most 1024 jobs per app may be pending or
+leased, including explicit retries.
+
+`accepted` means the exact signed regional receipt was verified and stored.
+It does not enable execution or release capacity. Cancellation leaves the lease
+recoverable. Expired/replaced workers cannot finish, and lost replies retry with
+the same original body. Inspection contains public scope and status only.
+
+For an already retired allocation, queue a separate delivery UUID with
+`--purpose retirement --region REGION`, omitting `--runtime-consent`. Signed
+retirement uses the original endpoint and remains independent of consent and
+current target/owner eligibility. Its receipt still does not prove native drain.
+Existing runtime quota retention continues to protect app collection.
+
+A quota target issued before durable queueing cannot be adopted by this journal.
+An old job cannot switch to renewed consent. In either case retire the old
+allocation, obtain independent verified drain, then reserve a new allocation and
+queue using its explicit consent. Registry changes, detachment, consent expiry,
+and delivery failure never release outstanding issued quota.
 
 ## Invalidation and recovery
 

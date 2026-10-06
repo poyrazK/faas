@@ -299,6 +299,15 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "show-quota", Short: "Read a retained quota reservation", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "allocation", Short: "allocation UUID", Req: true}}},
 			{Name: "retire-quota", Short: "Retire a reservation; issued capacity requires verified drain", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "allocation", Short: "allocation UUID", Req: true}}},
+			{Name: "queue-quota-delivery", Short: "Queue a durable regional quota delivery", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{
+				{Name: "allocation", Short: "original allocation UUID", Req: true},
+				{Name: "delivery", Short: "stable delivery UUID", Req: true},
+				{Name: "region", Short: "original selected region", Req: true},
+				{Name: "purpose", Short: "grant or retirement", ClosedSet: []string{"grant", "retirement"}},
+				{Name: "runtime-consent", Short: "original consent UUID for grant"},
+			}},
+			{Name: "show-quota-delivery", Short: "Inspect a durable quota delivery", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "allocation", Short: "original allocation UUID", Req: true}, {Name: "delivery", Short: "delivery UUID", Req: true}}},
+			{Name: "retry-quota-delivery", Short: "Retry the original quota delivery", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "allocation", Short: "original allocation UUID", Req: true}, {Name: "delivery", Short: "delivery UUID", Req: true}}},
 		}},
 
 	mcpCLICommand(),

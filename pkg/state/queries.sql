@@ -9205,6 +9205,36 @@ WHERE id=sqlc.arg(consent_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND gl
 UPDATE global_runtime_consents SET status=CASE WHEN status='revoked' THEN status ELSE 'revoking' END
 WHERE id=sqlc.arg(consent_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text RETURNING *;
 
+-- ADR-647: original signed quota delivery and leased recovery.
+-- name: ReadGlobalQuotaDelivery :one
+SELECT * FROM global_runtime_quota_deliveries WHERE id=sqlc.arg(delivery_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text;
+
+-- name: ReadGlobalQuotaDeliveryIdentity :one
+SELECT * FROM global_runtime_quota_deliveries WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(allocation_id)::uuid AND region=sqlc.arg(region)::text AND purpose=sqlc.arg(purpose)::text;
+
+-- name: LockGlobalQuotaDelivery :one
+SELECT * FROM global_runtime_quota_deliveries WHERE id=sqlc.arg(delivery_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text FOR UPDATE;
+
+-- name: InsertGlobalQuotaDelivery :one
+INSERT INTO global_runtime_quota_deliveries(id,global_app_id,owner_id,global_app_slug,allocation_id,region,purpose,consent_id,issuer_id,grant_claims,envelope,retirement_id,retired_at)
+VALUES(sqlc.arg(delivery_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(owner_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(allocation_id)::uuid,sqlc.arg(region)::text,sqlc.arg(purpose)::text,sqlc.narg(consent_id)::uuid,sqlc.arg(issuer_id)::uuid,sqlc.arg(grant_claims)::jsonb,sqlc.arg(envelope)::jsonb,sqlc.narg(retirement_id)::uuid,sqlc.narg(retired_at)::timestamptz) RETURNING *;
+
+-- name: ClaimGlobalQuotaDeliveries :many
+SELECT * FROM claim_global_runtime_quota_deliveries(sqlc.arg(batch)::integer,sqlc.arg(lease_seconds)::integer);
+
+-- name: CheckGlobalQuotaDeliveryScope :exec
+SELECT check_global_quota_delivery_scope(d) FROM global_runtime_quota_deliveries d WHERE id=sqlc.arg(delivery_id)::uuid;
+
+-- name: AssertGlobalQuotaDeliveryClaim :exec
+SELECT assert_global_quota_delivery_claim(sqlc.arg(delivery_id)::uuid,sqlc.arg(claim_id)::uuid);
+
+-- name: FinishGlobalQuotaDelivery :exec
+SELECT finish_global_quota_delivery(sqlc.arg(delivery_id)::uuid,sqlc.arg(claim_id)::uuid,sqlc.arg(outcome)::text,sqlc.arg(code)::text,sqlc.narg(receipt)::jsonb,sqlc.arg(retry_seconds)::integer);
+
+-- name: RetryGlobalQuotaDelivery :one
+UPDATE global_runtime_quota_deliveries SET status='pending',last_code='',next_attempt_at=clock_timestamp()
+WHERE id=sqlc.arg(delivery_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text AND status IN ('pending','blocked') RETURNING *;
+
 -- name: UpsertGlobalDirectoryCell :one
 INSERT INTO global_directory_cells(id, region, api_base, enabled)
 VALUES (sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text, sqlc.arg(api_base)::text, sqlc.arg(enabled)::boolean)
