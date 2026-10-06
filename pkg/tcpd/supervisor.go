@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -57,6 +58,15 @@ type supervisedListener struct {
 	route    Route
 	listener net.Listener
 	cancel   context.CancelFunc
+	stopping *atomic.Bool
+}
+
+func (l supervisedListener) stop() {
+	l.stopping.Store(true)
+	// TLS and forwarding cancellation can close sessions immediately. Release
+	// the accepting socket first so a closed session also proves port release.
+	_ = l.listener.Close()
+	l.cancel()
 }
 
 // Serve runs the listener reconciliation loop until ctx is canceled.
@@ -122,8 +132,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 		}
 		mu.Unlock()
 		for _, entry := range current {
-			entry.cancel()
-			_ = entry.listener.Close()
+			entry.stop()
 		}
 	}
 	defer func() {
@@ -180,8 +189,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 		for port, entry := range listeners {
 			if route, keep := desired[port]; !keep || route != entry.route {
 				delete(listeners, port)
-				entry.cancel()
-				_ = entry.listener.Close()
+				entry.stop()
 			}
 		}
 		mu.Unlock()
@@ -198,6 +206,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				return fmt.Errorf("bind TCP listener %d: %w", port, err)
 			}
 			childCtx, cancel := context.WithCancel(serveCtx)
+			stopping := new(atomic.Bool)
 			server := &Server{
 				Listener:        listener,
 				BoundRoute:      &route,
@@ -210,18 +219,18 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				MaxConnections:  s.MaxConnections,
 				connectionSlots: connectionSlots,
 				OnError: func(err error) {
-					if s.OnError != nil && !isDraining() {
+					if s.OnError != nil && !isDraining() && !stopping.Load() {
 						s.OnError(fmt.Errorf("TCP port %d: %w", port, err))
 					}
 				},
 			}
 			mu.Lock()
-			listeners[port] = supervisedListener{listener: listener, cancel: cancel, route: route}
+			listeners[port] = supervisedListener{listener: listener, cancel: cancel, route: route, stopping: stopping}
 			mu.Unlock()
 			servers.Add(1)
 			go func(port int, route Route, srv *Server, childCtx context.Context) {
 				defer servers.Done()
-				if err := srv.Serve(childCtx); err != nil && childCtx.Err() == nil && s.OnError != nil && !isDraining() {
+				if err := srv.Serve(childCtx); err != nil && childCtx.Err() == nil && s.OnError != nil && !isDraining() && !stopping.Load() {
 					s.OnError(fmt.Errorf("serve TCP port %d (%s): %w", port, route.ListenerName, err))
 				}
 			}(port, route, server, childCtx)
