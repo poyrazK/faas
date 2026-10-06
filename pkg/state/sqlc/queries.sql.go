@@ -19137,6 +19137,41 @@ func (q *Queries) InsertRuntimeUpgradeOperation(ctx context.Context, db DBTX, ar
 	return i, err
 }
 
+const insertRuntimeUpgradePublicEdgeRoster = `-- name: InsertRuntimeUpgradePublicEdgeRoster :one
+INSERT INTO runtime_upgrade_public_edge_rosters(revision,gateway_roster_revision,topology_sha256,slot_ids,public_sessions,config_sha256s) VALUES ($1,$2,$3,$4,$5,$6) RETURNING revision, gateway_roster_revision, topology_sha256, slot_ids, public_sessions, config_sha256s, created_at
+`
+
+type InsertRuntimeUpgradePublicEdgeRosterParams struct {
+	Revision              pgtype.UUID
+	GatewayRosterRevision pgtype.UUID
+	TopologySha256        string
+	SlotIds               []pgtype.UUID
+	PublicSessions        []pgtype.UUID
+	ConfigSha256s         []string
+}
+
+func (q *Queries) InsertRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBTX, arg InsertRuntimeUpgradePublicEdgeRosterParams) (RuntimeUpgradePublicEdgeRoster, error) {
+	row := db.QueryRow(ctx, insertRuntimeUpgradePublicEdgeRoster,
+		arg.Revision,
+		arg.GatewayRosterRevision,
+		arg.TopologySha256,
+		arg.SlotIds,
+		arg.PublicSessions,
+		arg.ConfigSha256s,
+	)
+	var i RuntimeUpgradePublicEdgeRoster
+	err := row.Scan(
+		&i.Revision,
+		&i.GatewayRosterRevision,
+		&i.TopologySha256,
+		&i.SlotIds,
+		&i.PublicSessions,
+		&i.ConfigSha256s,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertRuntimeUpgradeVerification = `-- name: InsertRuntimeUpgradeVerification :one
 INSERT INTO runtime_upgrade_verifications(operation_id,gateway_sessions,cutover_at,deadline_at,gateway_roster_revision)
 VALUES ($1,$2,$3,$3::timestamptz+make_interval(secs=>$4::int),$5) RETURNING operation_id, gateway_sessions, cutover_at, created_at, deadline_at, phase, reason, last_observation, next_attempt_at, lease_token, lease_until, finished_at, gateway_roster_revision
@@ -31110,6 +31145,17 @@ func (q *Queries) LockRuntimeUpgradeOperationControl(ctx context.Context, db DBT
 	return i, err
 }
 
+const lockRuntimeUpgradePublicEdgeRosterHead = `-- name: LockRuntimeUpgradePublicEdgeRosterHead :one
+SELECT revision FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradePublicEdgeRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradePublicEdgeRosterHead)
+	var revision pgtype.UUID
+	err := row.Scan(&revision)
+	return revision, err
+}
+
 const lockRuntimeUpgradeTargetApp = `-- name: LockRuntimeUpgradeTargetApp :one
 SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
 WHERE d.id=$1::uuid AND a.status='active' FOR UPDATE OF a
@@ -41931,6 +41977,23 @@ func (q *Queries) PublishRuntimeUpgradeOperationBuild(ctx context.Context, db DB
 	return result.RowsAffected(), nil
 }
 
+const publishRuntimeUpgradePublicEdgeRoster = `-- name: PublishRuntimeUpgradePublicEdgeRoster :execrows
+UPDATE runtime_upgrade_public_edge_roster_head SET revision=$1::uuid WHERE singleton AND revision IS NOT DISTINCT FROM $2::uuid
+`
+
+type PublishRuntimeUpgradePublicEdgeRosterParams struct {
+	Revision         pgtype.UUID
+	ExpectedRevision pgtype.UUID
+}
+
+func (q *Queries) PublishRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBTX, arg PublishRuntimeUpgradePublicEdgeRosterParams) (int64, error) {
+	result, err := db.Exec(ctx, publishRuntimeUpgradePublicEdgeRoster, arg.Revision, arg.ExpectedRevision)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
 INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
 VALUES($1::text,$2::uuid,$3::uuid,
@@ -48017,6 +48080,63 @@ func (q *Queries) ReadRuntimeUpgradeOperationCandidate(ctx context.Context, db D
 	return i, err
 }
 
+const readRuntimeUpgradePublicEdgeGuards = `-- name: ReadRuntimeUpgradePublicEdgeGuards :many
+SELECT slot_id, public_session_id, public_roster_revision, config_sha256, guard_enabled, observed_at, expires_at FROM runtime_upgrade_public_edge_guards WHERE public_roster_revision=$1 ORDER BY slot_id LIMIT $2
+`
+
+type ReadRuntimeUpgradePublicEdgeGuardsParams struct {
+	PublicRosterRevision pgtype.UUID
+	Limit                int32
+}
+
+func (q *Queries) ReadRuntimeUpgradePublicEdgeGuards(ctx context.Context, db DBTX, arg ReadRuntimeUpgradePublicEdgeGuardsParams) ([]RuntimeUpgradePublicEdgeGuard, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradePublicEdgeGuards, arg.PublicRosterRevision, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradePublicEdgeGuard{}
+	for rows.Next() {
+		var i RuntimeUpgradePublicEdgeGuard
+		if err := rows.Scan(
+			&i.SlotID,
+			&i.PublicSessionID,
+			&i.PublicRosterRevision,
+			&i.ConfigSha256,
+			&i.GuardEnabled,
+			&i.ObservedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradePublicEdgeRoster = `-- name: ReadRuntimeUpgradePublicEdgeRoster :one
+SELECT r.revision, r.gateway_roster_revision, r.topology_sha256, r.slot_ids, r.public_sessions, r.config_sha256s, r.created_at FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision WHERE h.singleton
+`
+
+// Private reviewed public-edge inventory and guard observations (ADR-613).
+func (q *Queries) ReadRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBTX) (RuntimeUpgradePublicEdgeRoster, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradePublicEdgeRoster)
+	var i RuntimeUpgradePublicEdgeRoster
+	err := row.Scan(
+		&i.Revision,
+		&i.GatewayRosterRevision,
+		&i.TopologySha256,
+		&i.SlotIds,
+		&i.PublicSessions,
+		&i.ConfigSha256s,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const readSavedRouteRequirements = `-- name: ReadSavedRouteRequirements :one
 SELECT jsonb_build_object('app_id', saved.app_id, 'revision', saved.revision, 'sha256', saved.sha256, 'requirements', saved.requirements, 'updated_at', saved.updated_at) AS saved
 FROM saved_route_requirements AS saved JOIN apps AS a ON a.id = saved.app_id
@@ -50196,6 +50316,38 @@ func (q *Queries) RecordRuntimeUpgradeGatewayReceipt(ctx context.Context, db DBT
 		arg.GatewaySessionID,
 		arg.DeploymentID,
 		arg.SessionLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordRuntimeUpgradePublicEdgeGuard = `-- name: RecordRuntimeUpgradePublicEdgeGuard :execrows
+WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+INSERT INTO runtime_upgrade_public_edge_guards(slot_id,public_session_id,public_roster_revision,config_sha256,guard_enabled,observed_at,expires_at)
+SELECT $1::uuid,$2::uuid,r.revision,$3::text,true,o.observed_at,o.observed_at+make_interval(secs=>$4::int)
+FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision
+JOIN runtime_upgrade_gateway_roster_head g ON g.revision=r.gateway_roster_revision CROSS JOIN observation o
+WHERE h.singleton AND g.singleton
+ AND r.public_sessions[array_position(r.slot_ids,$1::uuid)]=$2::uuid
+ AND r.config_sha256s[array_position(r.slot_ids,$1::uuid)]=$3::text
+ON CONFLICT (slot_id) DO UPDATE SET public_session_id=EXCLUDED.public_session_id,public_roster_revision=EXCLUDED.public_roster_revision,config_sha256=EXCLUDED.config_sha256,guard_enabled=EXCLUDED.guard_enabled,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at
+`
+
+type RecordRuntimeUpgradePublicEdgeGuardParams struct {
+	SlotID          pgtype.UUID
+	PublicSessionID pgtype.UUID
+	ConfigSha256    string
+	LeaseSeconds    int32
+}
+
+func (q *Queries) RecordRuntimeUpgradePublicEdgeGuard(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeGuardParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRuntimeUpgradePublicEdgeGuard,
+		arg.SlotID,
+		arg.PublicSessionID,
+		arg.ConfigSha256,
+		arg.LeaseSeconds,
 	)
 	if err != nil {
 		return 0, err
@@ -52759,6 +52911,15 @@ DELETE FROM runtime_upgrade_gateway_heartbeats
 
 func (q *Queries) ResetRuntimeUpgradeGatewayHeartbeats(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, resetRuntimeUpgradeGatewayHeartbeats)
+	return err
+}
+
+const resetRuntimeUpgradePublicEdgeGuards = `-- name: ResetRuntimeUpgradePublicEdgeGuards :exec
+DELETE FROM runtime_upgrade_public_edge_guards
+`
+
+func (q *Queries) ResetRuntimeUpgradePublicEdgeGuards(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, resetRuntimeUpgradePublicEdgeGuards)
 	return err
 }
 
@@ -55868,6 +56029,17 @@ SELECT revision FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHA
 
 func (q *Queries) ShareRuntimeUpgradeGatewayRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, shareRuntimeUpgradeGatewayRosterHead)
+	var revision pgtype.UUID
+	err := row.Scan(&revision)
+	return revision, err
+}
+
+const shareRuntimeUpgradePublicEdgeRosterHead = `-- name: ShareRuntimeUpgradePublicEdgeRosterHead :one
+SELECT revision FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE
+`
+
+func (q *Queries) ShareRuntimeUpgradePublicEdgeRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, shareRuntimeUpgradePublicEdgeRosterHead)
 	var revision pgtype.UUID
 	err := row.Scan(&revision)
 	return revision, err

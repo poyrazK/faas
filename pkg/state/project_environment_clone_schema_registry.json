@@ -6842,6 +6842,40 @@
     "kind": "operational"
   },
   {
+    "table": "runtime_upgrade_public_edge_guards",
+    "columns": [
+      "config_sha256",
+      "expires_at",
+      "guard_enabled",
+      "observed_at",
+      "public_roster_revision",
+      "public_session_id",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_roster_head",
+    "columns": [
+      "revision",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_rosters",
+    "columns": [
+      "config_sha256s",
+      "created_at",
+      "gateway_roster_revision",
+      "public_sessions",
+      "revision",
+      "slot_ids",
+      "topology_sha256"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "runtime_upgrade_verifications",
     "columns": [
       "created_at",

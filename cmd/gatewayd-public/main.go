@@ -667,6 +667,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: multi-host bind check failed: %w", err)
 	}
 	publicSrv, controlSrv := buildServers(listenAddr, controlAddr, publicHandler, controlMux)
+	edgeObserver, err := prepareRuntimePublicEdgeObserver(proxy, pgStore, publicEdgeConfig(upstreamMode, h2cEnabled, listenAddr, trustedIngressCIDRs, os.Getenv), os.Getenv, log)
+	if err != nil {
+		return err
+	}
+	defer edgeObserver.attach(ctx, publicSrv)()
 	// Tier A8 / ADR-083 (code-review fix #5): hook the public
 	// listener's ConnState to the in-flight tracker so the
 	// DNSHandoff orchestrator can wait for in-flight to reach

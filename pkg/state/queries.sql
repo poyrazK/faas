@@ -14328,3 +14328,36 @@ ORDER BY d.app_id::text LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: PruneAppRuntimeUpgradeGatewayDrains :exec
 DELETE FROM runtime_upgrade_gateway_drains WHERE app_id=$1 AND expires_at<=statement_timestamp();
+
+-- Private reviewed public-edge inventory and guard observations (ADR-613).
+-- name: ReadRuntimeUpgradePublicEdgeRoster :one
+SELECT r.* FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision WHERE h.singleton;
+
+-- name: LockRuntimeUpgradePublicEdgeRosterHead :one
+SELECT revision FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR UPDATE;
+
+-- name: ShareRuntimeUpgradePublicEdgeRosterHead :one
+SELECT revision FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+
+-- name: InsertRuntimeUpgradePublicEdgeRoster :one
+INSERT INTO runtime_upgrade_public_edge_rosters(revision,gateway_roster_revision,topology_sha256,slot_ids,public_sessions,config_sha256s) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *;
+
+-- name: PublishRuntimeUpgradePublicEdgeRoster :execrows
+UPDATE runtime_upgrade_public_edge_roster_head SET revision=sqlc.arg(revision)::uuid WHERE singleton AND revision IS NOT DISTINCT FROM sqlc.narg(expected_revision)::uuid;
+
+-- name: ResetRuntimeUpgradePublicEdgeGuards :exec
+DELETE FROM runtime_upgrade_public_edge_guards;
+
+-- name: RecordRuntimeUpgradePublicEdgeGuard :execrows
+WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+INSERT INTO runtime_upgrade_public_edge_guards(slot_id,public_session_id,public_roster_revision,config_sha256,guard_enabled,observed_at,expires_at)
+SELECT sqlc.arg(slot_id)::uuid,sqlc.arg(public_session_id)::uuid,r.revision,sqlc.arg(config_sha256)::text,true,o.observed_at,o.observed_at+make_interval(secs=>sqlc.arg(lease_seconds)::int)
+FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision
+JOIN runtime_upgrade_gateway_roster_head g ON g.revision=r.gateway_roster_revision CROSS JOIN observation o
+WHERE h.singleton AND g.singleton
+ AND r.public_sessions[array_position(r.slot_ids,sqlc.arg(slot_id)::uuid)]=sqlc.arg(public_session_id)::uuid
+ AND r.config_sha256s[array_position(r.slot_ids,sqlc.arg(slot_id)::uuid)]=sqlc.arg(config_sha256)::text
+ON CONFLICT (slot_id) DO UPDATE SET public_session_id=EXCLUDED.public_session_id,public_roster_revision=EXCLUDED.public_roster_revision,config_sha256=EXCLUDED.config_sha256,guard_enabled=EXCLUDED.guard_enabled,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at;
+
+-- name: ReadRuntimeUpgradePublicEdgeGuards :many
+SELECT * FROM runtime_upgrade_public_edge_guards WHERE public_roster_revision=$1 ORDER BY slot_id LIMIT $2;

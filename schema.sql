@@ -5462,6 +5462,57 @@ END $$;
 
 
 --
+-- Name: guard_runtime_upgrade_public_edge_fact(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_fact() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ IF NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters r
+  JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision
+  JOIN runtime_upgrade_gateway_roster_head g ON g.revision=r.gateway_roster_revision
+  WHERE r.revision=NEW.public_roster_revision
+   AND r.public_sessions[array_position(r.slot_ids,NEW.slot_id)]=NEW.public_session_id
+   AND r.config_sha256s[array_position(r.slot_ids,NEW.slot_id)]=NEW.config_sha256) THEN
+  RAISE EXCEPTION 'public guard fact requires exact current reviewed process and config' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_public_edge_roster(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_roster() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE canonical uuid[];
+BEGIN
+ IF TG_OP <> 'INSERT' THEN
+  RAISE EXCEPTION 'immutable public edge roster' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=NEW.gateway_roster_revision FOR SHARE;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'public edge roster requires current internal roster' USING ERRCODE='23514';
+ END IF;
+ SELECT array_agg(DISTINCT s ORDER BY s) INTO canonical FROM unnest(NEW.slot_ids) s;
+ IF NEW.slot_ids IS DISTINCT FROM canonical
+  OR (SELECT count(DISTINCT s) FROM unnest(NEW.public_sessions) s) <> cardinality(NEW.public_sessions)
+  OR array_position(NEW.slot_ids,NULL::uuid) IS NOT NULL OR array_position(NEW.public_sessions,NULL::uuid) IS NOT NULL
+  OR array_position(NEW.slot_ids,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL
+  OR array_position(NEW.public_sessions,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL
+  OR EXISTS (SELECT 1 FROM unnest(NEW.config_sha256s) s WHERE s IS NULL OR s !~ '^[0-9a-f]{64}$') THEN
+  RAISE EXCEPTION 'invalid public edge roster' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $_$;
+
+
+--
 -- Name: guard_runtime_upgrade_source(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19376,6 +19427,59 @@ CREATE TABLE public.runtime_upgrade_operations (
 
 
 --
+-- Name: runtime_upgrade_public_edge_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_guards (
+    slot_id uuid NOT NULL,
+    public_session_id uuid NOT NULL,
+    public_roster_revision uuid NOT NULL,
+    config_sha256 text NOT NULL,
+    guard_enabled boolean NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_guards_check CHECK ((isfinite(expires_at) AND (expires_at = (observed_at + '00:01:00'::interval)))),
+    CONSTRAINT runtime_upgrade_public_edge_guards_config_sha256_check CHECK ((config_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_public_edge_guards_guard_enabled_check CHECK (guard_enabled),
+    CONSTRAINT runtime_upgrade_public_edge_guards_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_public_edge_guards_public_session_id_check CHECK ((public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_guards_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_public_edge_roster_head; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_roster_head (
+    singleton boolean DEFAULT true NOT NULL,
+    revision uuid,
+    CONSTRAINT runtime_upgrade_public_edge_roster_head_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: runtime_upgrade_public_edge_rosters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_rosters (
+    revision uuid NOT NULL,
+    gateway_roster_revision uuid NOT NULL,
+    topology_sha256 text NOT NULL,
+    slot_ids uuid[] NOT NULL,
+    public_sessions uuid[] NOT NULL,
+    config_sha256s text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_rosters_check CHECK (((cardinality(public_sessions) = cardinality(slot_ids)) AND (array_ndims(public_sessions) = 1) AND (array_lower(public_sessions, 1) = 1))),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_check1 CHECK (((cardinality(config_sha256s) = cardinality(slot_ids)) AND (array_ndims(config_sha256s) = 1) AND (array_lower(config_sha256s, 1) = 1))),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_revision_check CHECK ((revision <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_slot_ids_check CHECK ((((cardinality(slot_ids) >= 1) AND (cardinality(slot_ids) <= 64)) AND (array_ndims(slot_ids) = 1) AND (array_lower(slot_ids, 1) = 1))),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_topology_sha256_check CHECK ((topology_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: runtime_upgrade_verifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25157,6 +25261,30 @@ ALTER TABLE ONLY public.runtime_upgrade_operations
 
 ALTER TABLE ONLY public.runtime_upgrade_operations
     ADD CONSTRAINT runtime_upgrade_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_guards runtime_upgrade_public_edge_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_guards
+    ADD CONSTRAINT runtime_upgrade_public_edge_guards_pkey PRIMARY KEY (slot_id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_roster_head runtime_upgrade_public_edge_roster_head_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_roster_head
+    ADD CONSTRAINT runtime_upgrade_public_edge_roster_head_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: runtime_upgrade_public_edge_rosters runtime_upgrade_public_edge_rosters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_rosters
+    ADD CONSTRAINT runtime_upgrade_public_edge_rosters_pkey PRIMARY KEY (revision);
 
 
 --
@@ -33557,6 +33685,20 @@ CREATE TRIGGER runtime_upgrade_pin_traffic_fence BEFORE INSERT ON public.deploym
 
 
 --
+-- Name: runtime_upgrade_public_edge_guards runtime_upgrade_public_edge_fact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_fact_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_public_edge_guards FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_fact();
+
+
+--
+-- Name: runtime_upgrade_public_edge_rosters runtime_upgrade_public_edge_roster_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_roster_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_public_edge_rosters FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_roster();
+
+
+--
 -- Name: deployments runtime_upgrade_source_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -39919,6 +40061,30 @@ ALTER TABLE ONLY public.runtime_upgrade_operations
 
 ALTER TABLE ONLY public.runtime_upgrade_operations
     ADD CONSTRAINT runtime_upgrade_operations_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_guards runtime_upgrade_public_edge_guards_public_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_guards
+    ADD CONSTRAINT runtime_upgrade_public_edge_guards_public_roster_revision_fkey FOREIGN KEY (public_roster_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_public_edge_rosters runtime_upgrade_public_edge_roster_gateway_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_rosters
+    ADD CONSTRAINT runtime_upgrade_public_edge_roster_gateway_roster_revision_fkey FOREIGN KEY (gateway_roster_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_public_edge_roster_head runtime_upgrade_public_edge_roster_head_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_roster_head
+    ADD CONSTRAINT runtime_upgrade_public_edge_roster_head_revision_fkey FOREIGN KEY (revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
 
 
 --
