@@ -14033,3 +14033,41 @@ UPDATE runtime_release_qualifications SET revoked_at=COALESCE(revoked_at,clock_t
 WHERE release_id=sqlc.arg(release_id)::text AND report_sha256=sqlc.arg(expected_report)::text
  AND (revoked_at IS NULL OR revocation_sha256=sqlc.arg(reason)::text)
 RETURNING *;
+
+-- ADR-603: private apid cutover, original environment -> app -> deployment order.
+-- name: ReadRuntimeUpgradeCutoverOwner :one
+SELECT d.app_id::text AS app_id,a.account_id::text AS account_id
+FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$1 AND d.deleted_at IS NULL AND a.status='active' AND a.deleted_at IS NULL;
+
+-- name: LockRuntimeUpgradeCutoverDeployments :many
+SELECT id FROM deployments WHERE app_id=$1 ORDER BY id FOR UPDATE;
+
+-- name: InsertDeploymentRuntimeUpgradeCutover :one
+INSERT INTO deployment_runtime_upgrade_cutovers(deployment_id,serving_deployment_id,target_release_id,wake_id,qualification_report_sha256,cutover_at)
+VALUES ($1,$2,$3,$4,$5,$6) RETURNING *;
+
+-- name: GetDeploymentRuntimeUpgradeCutover :one
+SELECT * FROM deployment_runtime_upgrade_cutovers WHERE deployment_id=$1;
+
+-- name: ApplyDeploymentRuntimeUpgradeCutover :execrows
+UPDATE deployments SET traffic_percent=CASE WHEN id=sqlc.arg(deployment_id)::uuid THEN 100 ELSE 0 END
+WHERE (id=sqlc.arg(deployment_id)::uuid AND status='live' AND traffic_percent=0 AND traffic_percent_explicit)
+ OR (id=sqlc.arg(serving_deployment_id)::uuid AND status='live' AND traffic_percent=100);
+
+-- name: ReadRuntimeUpgradeEligibleFailureFallback :one
+SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.id<>sqlc.arg(failed_id)::uuid
+ AND d.status='live' AND d.deleted_at IS NULL
+ AND (NOT EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id)
+  OR EXISTS(SELECT 1 FROM deployment_runtime_upgrade_cutovers c JOIN deployment_runtime_upgrade_acceptances a ON a.deployment_id=c.deployment_id
+   JOIN deployment_runtime_upgrade_targets t ON t.deployment_id=c.deployment_id
+   WHERE c.deployment_id=d.id AND c.target_release_id=t.release_id AND c.target_release_id=a.target_release_id
+    AND c.wake_id=a.wake_id AND c.qualification_report_sha256=a.qualification_report_sha256 AND a.rootfs_key=d.rootfs_key))
+ORDER BY d.traffic_percent DESC,d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d;
+
+-- name: NotifyRuntimeUpgradeCutover :exec
+SELECT pg_notify('deployment_changed',json_build_object('kind','traffic','app_id',sqlc.arg(app_id)::text,
+ 'deployment_id',sqlc.arg(deployment_id)::text,'traffic_percent',100)::text);
+
+-- name: LockDeploymentTrafficApp :one
+SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE d.id=$1 AND a.status<>'deleted' FOR UPDATE OF a;

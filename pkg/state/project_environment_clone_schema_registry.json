@@ -1988,6 +1988,18 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_runtime_upgrade_cutovers",
+    "columns": [
+      "cutover_at",
+      "deployment_id",
+      "qualification_report_sha256",
+      "serving_deployment_id",
+      "target_release_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_runtime_upgrade_targets",
     "columns": [
       "deployment_id",

@@ -88,6 +88,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"deployment_runtime_upgrade_targets":      CloneSchemaOperational,
 		"deployment_runtime_upgrade_baselines":    CloneSchemaOperational,
 		"deployment_runtime_upgrade_acceptances":  CloneSchemaOperational,
+		"deployment_runtime_upgrade_cutovers":     CloneSchemaOperational,
 		"invocation_work_environment_domains":     CloneSchemaOperational, "invocation_work_environment_admissions": CloneSchemaOperational,
 		"project_environment_queue_runtime_sets": CloneSchemaOperational, "project_environment_queue_consumers": CloneSchemaOperational,
 		"feature_flag_versions":           CloneSchemaConfiguration,

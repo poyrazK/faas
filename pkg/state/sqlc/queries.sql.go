@@ -1211,6 +1211,25 @@ func (q *Queries) AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParam
 	return err
 }
 
+const applyDeploymentRuntimeUpgradeCutover = `-- name: ApplyDeploymentRuntimeUpgradeCutover :execrows
+UPDATE deployments SET traffic_percent=CASE WHEN id=$1::uuid THEN 100 ELSE 0 END
+WHERE (id=$1::uuid AND status='live' AND traffic_percent=0 AND traffic_percent_explicit)
+ OR (id=$2::uuid AND status='live' AND traffic_percent=100)
+`
+
+type ApplyDeploymentRuntimeUpgradeCutoverParams struct {
+	DeploymentID        pgtype.UUID
+	ServingDeploymentID pgtype.UUID
+}
+
+func (q *Queries) ApplyDeploymentRuntimeUpgradeCutover(ctx context.Context, db DBTX, arg ApplyDeploymentRuntimeUpgradeCutoverParams) (int64, error) {
+	result, err := db.Exec(ctx, applyDeploymentRuntimeUpgradeCutover, arg.DeploymentID, arg.ServingDeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
 select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
@@ -13477,6 +13496,24 @@ func (q *Queries) GetDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DB
 	return i, err
 }
 
+const getDeploymentRuntimeUpgradeCutover = `-- name: GetDeploymentRuntimeUpgradeCutover :one
+SELECT deployment_id, serving_deployment_id, target_release_id, wake_id, qualification_report_sha256, cutover_at FROM deployment_runtime_upgrade_cutovers WHERE deployment_id=$1
+`
+
+func (q *Queries) GetDeploymentRuntimeUpgradeCutover(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentRuntimeUpgradeCutover, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeUpgradeCutover, deploymentID)
+	var i DeploymentRuntimeUpgradeCutover
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.WakeID,
+		&i.QualificationReportSha256,
+		&i.CutoverAt,
+	)
+	return i, err
+}
+
 const getDeploymentRuntimeUpgradeTarget = `-- name: GetDeploymentRuntimeUpgradeTarget :one
 SELECT r.id, r.runtime, r.architecture, r.source_ref, r.guest_init_sha256, r.layout_version, r.base_sha256, r.created_at, (t.source_sha256=COALESCE(d.source_sha256,'') AND t.source_root=COALESCE(d.source_root,'')
  AND t.source_bytes=d.source_bytes AND t.kind=d.kind AND t.handler=COALESCE(d.handler,''))::boolean AS source_matches
@@ -15716,6 +15753,41 @@ func (q *Queries) InsertDeploymentRuntimeUpgradeBaseline(ctx context.Context, db
 		&i.InputFingerprint,
 		&i.InputSecretFingerprint,
 		&i.CapturedAt,
+	)
+	return i, err
+}
+
+const insertDeploymentRuntimeUpgradeCutover = `-- name: InsertDeploymentRuntimeUpgradeCutover :one
+INSERT INTO deployment_runtime_upgrade_cutovers(deployment_id,serving_deployment_id,target_release_id,wake_id,qualification_report_sha256,cutover_at)
+VALUES ($1,$2,$3,$4,$5,$6) RETURNING deployment_id, serving_deployment_id, target_release_id, wake_id, qualification_report_sha256, cutover_at
+`
+
+type InsertDeploymentRuntimeUpgradeCutoverParams struct {
+	DeploymentID              pgtype.UUID
+	ServingDeploymentID       pgtype.UUID
+	TargetReleaseID           string
+	WakeID                    pgtype.UUID
+	QualificationReportSha256 string
+	CutoverAt                 pgtype.Timestamptz
+}
+
+func (q *Queries) InsertDeploymentRuntimeUpgradeCutover(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeUpgradeCutoverParams) (DeploymentRuntimeUpgradeCutover, error) {
+	row := db.QueryRow(ctx, insertDeploymentRuntimeUpgradeCutover,
+		arg.DeploymentID,
+		arg.ServingDeploymentID,
+		arg.TargetReleaseID,
+		arg.WakeID,
+		arg.QualificationReportSha256,
+		arg.CutoverAt,
+	)
+	var i DeploymentRuntimeUpgradeCutover
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.WakeID,
+		&i.QualificationReportSha256,
+		&i.CutoverAt,
 	)
 	return i, err
 }
@@ -27576,6 +27648,18 @@ func (q *Queries) LockDeploymentHostingVerification(ctx context.Context, db DBTX
 	return i, err
 }
 
+const lockDeploymentTrafficApp = `-- name: LockDeploymentTrafficApp :one
+SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE d.id=$1 AND a.status<>'deleted' FOR UPDATE OF a
+`
+
+func (q *Queries) LockDeploymentTrafficApp(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockDeploymentTrafficApp, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const lockDevBridgeAccount = `-- name: LockDevBridgeAccount :one
 SELECT plan FROM accounts WHERE id=$1 FOR UPDATE
 `
@@ -30298,6 +30382,30 @@ func (q *Queries) LockRuntimeUpgradeBaselineCandidate(ctx context.Context, db DB
 	return id, err
 }
 
+const lockRuntimeUpgradeCutoverDeployments = `-- name: LockRuntimeUpgradeCutoverDeployments :many
+SELECT id FROM deployments WHERE app_id=$1 ORDER BY id FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradeCutoverDeployments(ctx context.Context, db DBTX, appID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockRuntimeUpgradeCutoverDeployments, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockRuntimeUpgradeTargetApp = `-- name: LockRuntimeUpgradeTargetApp :one
 SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
 WHERE d.id=$1::uuid AND a.status='active' FOR UPDATE OF a
@@ -31892,6 +32000,21 @@ SELECT pg_notify('deployment_changed', $1::text)
 
 func (q *Queries) NotifyRouteHealthRecovery(ctx context.Context, db DBTX, payload string) error {
 	_, err := db.Exec(ctx, notifyRouteHealthRecovery, payload)
+	return err
+}
+
+const notifyRuntimeUpgradeCutover = `-- name: NotifyRuntimeUpgradeCutover :exec
+SELECT pg_notify('deployment_changed',json_build_object('kind','traffic','app_id',$1::text,
+ 'deployment_id',$2::text,'traffic_percent',100)::text)
+`
+
+type NotifyRuntimeUpgradeCutoverParams struct {
+	AppID        string
+	DeploymentID string
+}
+
+func (q *Queries) NotifyRuntimeUpgradeCutover(ctx context.Context, db DBTX, arg NotifyRuntimeUpgradeCutoverParams) error {
+	_, err := db.Exec(ctx, notifyRuntimeUpgradeCutover, arg.AppID, arg.DeploymentID)
 	return err
 }
 
@@ -46682,6 +46805,47 @@ func (q *Queries) ReadRuntimeUpgradeBaselineDeployments(ctx context.Context, db 
 		return nil, err
 	}
 	return items, nil
+}
+
+const readRuntimeUpgradeCutoverOwner = `-- name: ReadRuntimeUpgradeCutoverOwner :one
+SELECT d.app_id::text AS app_id,a.account_id::text AS account_id
+FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$1 AND d.deleted_at IS NULL AND a.status='active' AND a.deleted_at IS NULL
+`
+
+type ReadRuntimeUpgradeCutoverOwnerRow struct {
+	AppID     string
+	AccountID string
+}
+
+// ADR-603: private apid cutover, original environment -> app -> deployment order.
+func (q *Queries) ReadRuntimeUpgradeCutoverOwner(ctx context.Context, db DBTX, id pgtype.UUID) (ReadRuntimeUpgradeCutoverOwnerRow, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeCutoverOwner, id)
+	var i ReadRuntimeUpgradeCutoverOwnerRow
+	err := row.Scan(&i.AppID, &i.AccountID)
+	return i, err
+}
+
+const readRuntimeUpgradeEligibleFailureFallback = `-- name: ReadRuntimeUpgradeEligibleFailureFallback :one
+SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.id<>$2::uuid
+ AND d.status='live' AND d.deleted_at IS NULL
+ AND (NOT EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id)
+  OR EXISTS(SELECT 1 FROM deployment_runtime_upgrade_cutovers c JOIN deployment_runtime_upgrade_acceptances a ON a.deployment_id=c.deployment_id
+   JOIN deployment_runtime_upgrade_targets t ON t.deployment_id=c.deployment_id
+   WHERE c.deployment_id=d.id AND c.target_release_id=t.release_id AND c.target_release_id=a.target_release_id
+    AND c.wake_id=a.wake_id AND c.qualification_report_sha256=a.qualification_report_sha256 AND a.rootfs_key=d.rootfs_key))
+ORDER BY d.traffic_percent DESC,d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d
+`
+
+type ReadRuntimeUpgradeEligibleFailureFallbackParams struct {
+	AppID    pgtype.UUID
+	FailedID pgtype.UUID
+}
+
+func (q *Queries) ReadRuntimeUpgradeEligibleFailureFallback(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeEligibleFailureFallbackParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeEligibleFailureFallback, arg.AppID, arg.FailedID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const readSavedRouteRequirements = `-- name: ReadSavedRouteRequirements :one

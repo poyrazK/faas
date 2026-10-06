@@ -73,43 +73,50 @@ func (s *PgStore) ValidateDeploymentRuntimeUpgradeAcceptance(ctx context.Context
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	q := sqlc.New()
-	a, err := q.GetDeploymentRuntimeUpgradeAcceptance(ctx, tx, mustPgUUID(id))
-	if err != nil {
-		return mapErr(err) // only receipt absence returns not-found
+	if _, _, _, err := validateRuntimeUpgradeAcceptanceDB(ctx, tx, id, false); err != nil {
+		return err
 	}
-	row, err := q.GetDeploymentRuntimeUpgradeBaseline(ctx, tx, mustPgUUID(id))
+	return runtimeUpgradeBaselineError(tx.Commit(ctx))
+}
+
+func validateRuntimeUpgradeAcceptanceDB(ctx context.Context, db sqlc.DBTX, id string, lockQualification bool) (RuntimeUpgradeAcceptance, RuntimeUpgradeBaseline, Deployment, error) {
+	q := sqlc.New()
+	a, err := q.GetDeploymentRuntimeUpgradeAcceptance(ctx, db, mustPgUUID(id))
 	if err != nil {
-		return runtimeSecretFenceError(err)
+		return RuntimeUpgradeAcceptance{}, RuntimeUpgradeBaseline{}, Deployment{}, mapErr(err) // only receipt absence returns not-found
+	}
+	row, err := q.GetDeploymentRuntimeUpgradeBaseline(ctx, db, mustPgUUID(id))
+	if err != nil {
+		return RuntimeUpgradeAcceptance{}, RuntimeUpgradeBaseline{}, Deployment{}, runtimeSecretFenceError(err)
 	}
 	baseline := runtimeUpgradeBaselineFromRow(row)
-	current, err := runtimeUpgradeBaselineDB(ctx, tx, id, baseline.ServingDeploymentID)
+	current, err := runtimeUpgradeBaselineDB(ctx, db, id, baseline.ServingDeploymentID)
 	if err != nil {
-		return err
+		return RuntimeUpgradeAcceptance{}, RuntimeUpgradeBaseline{}, Deployment{}, err
 	}
 	if !sameRuntimeUpgradeBaseline(baseline, current) {
-		return ErrConflict
+		return RuntimeUpgradeAcceptance{}, RuntimeUpgradeBaseline{}, Deployment{}, ErrConflict
 	}
-	candidate, target, qualification, err := runtimeUpgradeAcceptanceInputsDB(ctx, tx, id, baseline, false)
+	candidate, target, qualification, err := runtimeUpgradeAcceptanceInputsDB(ctx, db, id, baseline, lockQualification)
 	if err != nil {
-		return err
+		return RuntimeUpgradeAcceptance{}, RuntimeUpgradeBaseline{}, Deployment{}, err
 	}
-	app, err := q.AppByID(ctx, tx, mustPgUUID(candidate.AppID))
+	app, err := q.AppByID(ctx, db, mustPgUUID(candidate.AppID))
 	if err != nil {
-		return runtimeSecretFenceError(err)
+		return RuntimeUpgradeAcceptance{}, RuntimeUpgradeBaseline{}, Deployment{}, runtimeSecretFenceError(err)
 	}
-	values, err := runtimeAppValuesDB(ctx, tx, pgUUIDString(app.AccountID), candidate.AppID, id)
+	values, err := runtimeAppValuesDB(ctx, db, pgUUIDString(app.AccountID), candidate.AppID, id)
 	if err != nil {
-		return err
+		return RuntimeUpgradeAcceptance{}, RuntimeUpgradeBaseline{}, Deployment{}, err
 	}
 	fence, err := NewRuntimeAppConfigFence(values)
 	if err != nil {
-		return err
+		return RuntimeUpgradeAcceptance{}, RuntimeUpgradeBaseline{}, Deployment{}, err
 	}
 	if err := validateRuntimeUpgradeAcceptance(runtimeUpgradeAcceptanceFromRow(a), candidate, target, qualification, fence, time.Now().UTC()); err != nil {
-		return err
+		return RuntimeUpgradeAcceptance{}, RuntimeUpgradeBaseline{}, Deployment{}, err
 	}
-	return mapErr(tx.Commit(ctx))
+	return runtimeUpgradeAcceptanceFromRow(a), baseline, candidate, nil
 }
 
 func runtimeUpgradeAcceptanceInputsDB(ctx context.Context, db sqlc.DBTX, id string, baseline RuntimeUpgradeBaseline, lockQualification bool) (Deployment, RuntimeRelease, RuntimeReleaseQualification, error) {

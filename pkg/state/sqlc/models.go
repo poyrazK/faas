@@ -1859,6 +1859,15 @@ type DeploymentRuntimeUpgradeBaseline struct {
 	CapturedAt               pgtype.Timestamptz
 }
 
+type DeploymentRuntimeUpgradeCutover struct {
+	DeploymentID              pgtype.UUID
+	ServingDeploymentID       pgtype.UUID
+	TargetReleaseID           string
+	WakeID                    pgtype.UUID
+	QualificationReportSha256 string
+	CutoverAt                 pgtype.Timestamptz
+}
+
 type DeploymentRuntimeUpgradeTarget struct {
 	DeploymentID pgtype.UUID
 	ReleaseID    string

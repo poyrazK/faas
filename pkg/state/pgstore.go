@@ -7695,6 +7695,10 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	// Serialize with cutover/configuration before taking deployment locks.
+	if _, err := sqlc.New().LockDeploymentTrafficApp(ctx, tx, mustPgUUID(id)); err != nil {
+		return Deployment{}, fmt.Errorf("state: lock traffic app: %w", mapErr(err))
+	}
 	// (1) Lock the app's live rows. FOR UPDATE serialises concurrent
 	// UpdateDeploymentTraffic / CreateDeployment calls.
 	var appID string
@@ -8639,14 +8643,13 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 // deployment failed so readers can never observe failed traffic or a split
 // rollout with no 100% fallback.
 func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
-	var fallbackID string
-	err := tx.QueryRow(ctx, `
-		select id
-		  from deployments
-		 where app_id=$1 and id<>$2 and status='live' and deleted_at is null
-		 order by traffic_percent desc, created_at desc, id desc
-		 limit 1
-		 for update`, appID, failedID).Scan(&fallbackID)
+	fallback, err := sqlc.New().ReadRuntimeUpgradeEligibleFailureFallback(ctx, tx, sqlc.ReadRuntimeUpgradeEligibleFailureFallbackParams{
+		AppID: mustPgUUID(appID), FailedID: mustPgUUID(failedID),
+	})
+	fallbackID := pgUUIDString(fallback)
+	if errors.Is(err, pgx.ErrNoRows) {
+		fallbackID = ""
+	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
@@ -25253,6 +25256,9 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "runtime_upgrade_traffic_fenced" {
+				return ErrConflict
+			}
 			if pgErr.ConstraintName == "object_version_protection_fenced" {
 				return ErrConflict
 			}

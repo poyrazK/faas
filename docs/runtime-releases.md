@@ -108,5 +108,18 @@ revoked runtime qualification. A read-only validator checks those fences again
 and limits evidence to 15 minutes from cold-boot dispatch. Retries require new
 acceptance; restore and historical health evidence cannot supply it. This proves
 readiness at publication, before subsequent snapshot/hosting/rollout gates.
-It enables no customer apply or traffic change. Atomic cutover enforcement
-remains the next step. See [ADR-602](adr/602-runtime-upgrade-candidate-acceptance.md).
+It enables no customer apply. See
+[ADR-602](adr/602-runtime-upgrade-candidate-acceptance.md).
+
+The private apid state seam now provides atomic cutover enforcement. Inside
+one traffic transaction it rechecks the retained serving baseline, current
+configuration/secret versions, exact acceptance wake and artifact, freshness
+and unrevoked target qualification. It records the acceptance used, moves the
+candidate to 100% and retains the previous live artifact at zero for rollback.
+Generic traffic and rollout SQL cannot give a pinned candidate its first live
+traffic without that cutover record; failure fallback excludes unactivated
+candidates. A retry confirms historical completion and never reapplies a
+rolled-back update. This state seam has no customer caller. Apid operation
+orchestration, native end-to-end acceptance and gateway acknowledgment/drain
+remain outstanding, and `execution_available=false` stays unchanged. See
+[ADR-603](adr/603-atomic-runtime-upgrade-cutover.md).

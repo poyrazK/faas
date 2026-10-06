@@ -49,6 +49,9 @@ func (m *MemStore) serviceRolloutTargetLocked(id string) (Deployment, []memServi
 	if !ok {
 		return Deployment{}, nil, ErrNotFound
 	}
+	if err := m.checkRuntimeUpgradeRecoveryLocked(target.AppID); err != nil {
+		return Deployment{}, nil, err
+	}
 	if target.Status != DeployLive || !IsServiceRollout(target) {
 		return Deployment{}, nil, ErrServiceRolloutInvalid
 	}

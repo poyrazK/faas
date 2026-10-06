@@ -143,6 +143,7 @@ type MemStore struct {
 	runtimeUpgradeTargets        map[string]runtimeUpgradeTarget
 	runtimeUpgradeBaselines      map[string]RuntimeUpgradeBaseline
 	runtimeUpgradeAcceptances    map[string]RuntimeUpgradeAcceptance
+	runtimeUpgradeCutovers       map[string]RuntimeUpgradeCutover
 	operationData                *operationMemory
 	operationCodePins            map[string]time.Time
 	qualificationExecutions      map[string]EnvironmentQualificationExecutionStatus
@@ -4960,6 +4961,9 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if !ok {
 		return Deployment{}, 0, ErrNotFound
 	}
+	if err := m.checkRuntimeUpgradeRecoveryLocked(d.AppID); err != nil {
+		return Deployment{}, 0, err
+	}
 	before := d
 	rolloutState := NormalizeRolloutState(d.RolloutState)
 	if d.Status != DeployLive || (rolloutState != "pending" && rolloutState != "rolling_out") ||
@@ -5129,9 +5133,11 @@ func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPerc
 		}
 	}
 
-	// Stamp target first; sibling weights collected for redistribution.
+	// Plan every weight before mutating any row, including upgrade fences.
 	d.TrafficPercent = newPercent
-	m.putDeploymentLocked(id, d)
+	if err := m.checkRuntimeUpgradeTrafficLocked(d); err != nil {
+		return Deployment{}, err
+	}
 	appID := d.AppID
 
 	// Collect siblings (id-ordered for stable tie-break).
@@ -5159,22 +5165,25 @@ func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPerc
 		helperSiblings[i].Prior = s.Prior
 	}
 	newWeights := RedistributeTraffic(helperSiblings, 100-newPercent)
-	for i, s := range siblings {
-		other := m.deployments[s.ID]
+	sum := newPercent
+	for i, sibling := range siblings {
+		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
-		m.putDeploymentLocked(s.ID, other)
-	}
-
-	// Σ invariant (defensive tripwire).
-	var sum int
-	for _, row := range m.deployments {
-		if row.AppID == appID && row.Status == DeployLive {
-			sum += row.TrafficPercent
+		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+			return Deployment{}, err
 		}
+		sum += other.TrafficPercent
 	}
 	if sum != 100 {
 		return Deployment{}, ErrTrafficPercentSumInvalid
 	}
+	m.putDeploymentLocked(id, d)
+	for i, sibling := range siblings {
+		other := m.deployments[sibling.ID]
+		other.TrafficPercent = newWeights[i]
+		m.putDeploymentLocked(sibling.ID, other)
+	}
+
 	return d, nil
 }
 
@@ -7551,6 +7560,9 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if err := m.checkRuntimeUpgradeRecoveryLocked(appID); err != nil {
+		return Deployment{}, 0, err
+	}
 	// Find the active deployment for this app: rollout_state ∈
 	// ('pending','rolling_out') and status='live'. There can be
 	// at most one active rollout per app at a time (canary
@@ -8283,6 +8295,9 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	}
 	proposal := d
 	proposal.Status = status
+	if err := m.checkRuntimeUpgradeTrafficLocked(proposal); err != nil {
+		return err
+	}
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
 		return err
 	}
@@ -8345,7 +8360,7 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
-		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive {
+		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive || !m.runtimeUpgradeTrafficAllowedLocked(candidate) {
 			continue
 		}
 		if fallbackID == "" || candidate.TrafficPercent > fallback.TrafficPercent ||
@@ -8409,6 +8424,10 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if !m.runtimeUpgradeTrafficAllowedLocked(d) &&
+		(d.TrafficPercent > 0 || !d.TrafficPercentExplicit || d.CanaryTotalSteps > 0 || IsServiceRollout(d)) {
+		return ErrConflict
 	}
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return err
@@ -8507,6 +8526,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		for i, sibling := range siblings {
 			other := m.deployments[sibling.ID]
 			other.TrafficPercent = newWeights[i]
+			if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+				return err
+			}
 			updatedSiblings[sibling.ID] = other
 		}
 		if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
@@ -8613,6 +8635,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
+		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+			return err
+		}
 		updatedSiblings[sibling.ID] = other
 	}
 	if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
@@ -9176,7 +9201,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 			continue
 		}
 		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID)))
-		if d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
+		if !m.runtimeUpgradeTrafficAllowedLocked(d) || d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
 			continue
 		}
 		if targetID == "" || m.rollbackMoreRecentLocked(d, latest) {
@@ -9312,6 +9337,9 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	d.RootfsPath = path
 	d.RootfsKey = key
 	d.RootfsBytes = bytes
+	if err := m.checkRuntimeUpgradeTrafficLocked(d); err != nil {
+		return err
+	}
 	m.putDeploymentLocked(id, d)
 	return nil
 }

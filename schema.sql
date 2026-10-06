@@ -1600,6 +1600,49 @@ $$;
 
 
 --
+-- Name: enforce_runtime_upgrade_pin_traffic_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_runtime_upgrade_pin_traffic_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE candidate deployments;
+BEGIN
+ SELECT * INTO candidate FROM deployments WHERE id=NEW.deployment_id FOR SHARE;
+ IF candidate.status='live' AND candidate.traffic_percent>0 THEN
+  RAISE EXCEPTION 'serving deployment cannot acquire runtime upgrade preparation'
+   USING ERRCODE='23514',CONSTRAINT='runtime_upgrade_traffic_fenced';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enforce_runtime_upgrade_traffic_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_runtime_upgrade_traffic_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status='live' AND NEW.traffic_percent>0
+  AND EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets WHERE deployment_id=NEW.id)
+  AND NOT EXISTS (
+   SELECT 1 FROM deployment_runtime_upgrade_cutovers c
+   JOIN deployment_runtime_upgrade_acceptances a ON a.deployment_id=c.deployment_id
+   JOIN deployment_runtime_upgrade_targets t ON t.deployment_id=c.deployment_id
+   WHERE c.deployment_id=NEW.id AND c.target_release_id=t.release_id AND c.target_release_id=a.target_release_id
+    AND c.wake_id=a.wake_id AND c.qualification_report_sha256=a.qualification_report_sha256 AND a.rootfs_key=NEW.rootfs_key
+  ) THEN
+  RAISE EXCEPTION 'runtime upgrade requires atomic qualified cutover' USING ERRCODE='23514',CONSTRAINT='runtime_upgrade_traffic_fenced';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: enqueue_automatic_route_check(uuid, uuid, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11781,6 +11824,24 @@ CREATE TABLE public.deployment_runtime_upgrade_baselines (
 
 
 --
+-- Name: deployment_runtime_upgrade_cutovers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_upgrade_cutovers (
+    deployment_id uuid NOT NULL,
+    serving_deployment_id uuid NOT NULL,
+    target_release_id text NOT NULL,
+    wake_id uuid NOT NULL,
+    qualification_report_sha256 text NOT NULL,
+    cutover_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_runtime_upgrade_cu_qualification_report_sha256_check CHECK ((qualification_report_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_cutovers_check CHECK ((deployment_id <> serving_deployment_id)),
+    CONSTRAINT deployment_runtime_upgrade_cutovers_cutover_at_check CHECK (isfinite(cutover_at)),
+    CONSTRAINT deployment_runtime_upgrade_cutovers_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: deployment_runtime_upgrade_targets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21444,6 +21505,14 @@ ALTER TABLE ONLY public.deployment_runtime_upgrade_acceptances
 
 ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
     ADD CONSTRAINT deployment_runtime_upgrade_baselines_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers deployment_runtime_upgrade_cutovers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_cutovers
+    ADD CONSTRAINT deployment_runtime_upgrade_cutovers_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -31648,6 +31717,13 @@ CREATE TRIGGER deployments_rollout_outcome_webhooks AFTER UPDATE OF rollout_stat
 
 
 --
+-- Name: deployments deployments_runtime_upgrade_traffic_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_runtime_upgrade_traffic_fence BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_upgrade_traffic_fence();
+
+
+--
 -- Name: edge_rules edge_rules_record_change_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -33038,6 +33114,20 @@ CREATE TRIGGER runtime_upgrade_acceptance_immutable BEFORE DELETE OR UPDATE ON p
 --
 
 CREATE TRIGGER runtime_upgrade_baseline_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_baselines FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers runtime_upgrade_cutover_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_cutover_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: deployment_runtime_upgrade_targets runtime_upgrade_pin_traffic_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_pin_traffic_fence BEFORE INSERT ON public.deployment_runtime_upgrade_targets FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_upgrade_pin_traffic_fence();
 
 
 --
@@ -35148,6 +35238,30 @@ ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
 
 ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
     ADD CONSTRAINT deployment_runtime_upgrade_baselines_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers deployment_runtime_upgrade_cutovers_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_cutovers
+    ADD CONSTRAINT deployment_runtime_upgrade_cutovers_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_acceptances(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers deployment_runtime_upgrade_cutovers_serving_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_cutovers
+    ADD CONSTRAINT deployment_runtime_upgrade_cutovers_serving_deployment_id_fkey FOREIGN KEY (serving_deployment_id) REFERENCES public.deployments(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers deployment_runtime_upgrade_cutovers_target_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_cutovers
+    ADD CONSTRAINT deployment_runtime_upgrade_cutovers_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
 
 
 --

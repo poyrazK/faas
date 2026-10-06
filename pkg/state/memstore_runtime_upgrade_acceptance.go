@@ -52,6 +52,10 @@ func (m *MemStore) ValidateDeploymentRuntimeUpgradeAcceptance(_ context.Context,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.validateRuntimeUpgradeAcceptanceLocked(id)
+}
+
+func (m *MemStore) validateRuntimeUpgradeAcceptanceLocked(id string) error {
 	a, ok := m.runtimeUpgradeAcceptances[id]
 	if !ok {
 		return ErrNotFound
