@@ -25,7 +25,7 @@ DROP INDEX IF EXISTS customer_operation_executions_current_idx;
 CREATE UNIQUE INDEX customer_operation_executions_current_idx ON customer_operation_executions(operation_id,generation,execution_id,execution_kind);
 DO $$ BEGIN
  IF to_regclass('customer_operation_workflow_claims') IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='customer_operation_workflow_claims'::regclass AND conname='customer_operation_workflow_claims_execution_identity_fkey') THEN
+    AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('customer_operation_workflow_claims') AND conname='customer_operation_workflow_claims_execution_identity_fkey') THEN
   ALTER TABLE customer_operation_workflow_claims ADD CONSTRAINT customer_operation_workflow_claims_execution_identity_fkey
    FOREIGN KEY(operation_id,generation,workflow_run_id,execution_kind)
    REFERENCES customer_operation_executions(operation_id,generation,execution_id,execution_kind) ON DELETE CASCADE;
