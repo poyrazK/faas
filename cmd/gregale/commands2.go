@@ -3395,6 +3395,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			*tarball = path
 		}
 		if *tarball == "" {
+			// production-us hunt #4: a gregale.yaml that failed to parse made
+			// shape detection fall back to file heuristics and print
+			// "Detected: app" for a function before the real error appeared.
+			if _, _, manifestErr := gregalemanifest.Load(sourceDir); manifestErr != nil {
+				return printErr("Invalid deploy manifest", manifestErr)
+			}
 			detected, rt, hnd, err := resolveDeployShape(sourceDir, deployFunction, deployApp, jsonOutput, deployRuntime, deployHandler)
 			if err != nil {
 				return printErr("No deployable source found in "+filepath.Base(sourceDir), err)

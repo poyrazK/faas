@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -157,5 +159,36 @@ func TestVersionJSON(t *testing.T) {
 	var got map[string]string
 	if err := json.Unmarshal([]byte(out), &got); err != nil || got["version"] == "" {
 		t.Fatalf("--json version = %q (%v), want a JSON object with version", out, err)
+	}
+}
+
+// TestDeployInvalidManifestFailsBeforeDetection reproduces production-us
+// hunt #4: with a gregale.yaml that failed to parse, deploy fell back to
+// file heuristics and printed "Detected: app, framework=node" for a
+// function template before reporting the manifest error.
+func TestDeployInvalidManifestFailsBeforeDetection(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package.json", "{}")
+	writeFile(t, dir, "handler.js", "exports.handler = async () => ({})\n")
+	writeFile(t, dir, "gregale.yaml", "function:\n  runtime: node22\n  handler: handler.handler\ntrigers: []\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"title":"not found","status":404}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	stdout, restoreOut := captureStdout(t)
+	stderr, restoreErr := captureStderr(t)
+	code := run([]string{"deploy", "--dry-run", "--name", "manifest-typo", "--path", dir})
+	restoreErr()
+	restoreOut()
+	if code == 0 {
+		t.Fatal("deploy with an invalid manifest exited 0")
+	}
+	if !strings.Contains(stderr.String(), `unknown key "trigers"`) {
+		t.Errorf("stderr missing the manifest error:\n%s\nstdout:\n%s", stderr.String(), stdout.String())
+	}
+	if strings.Contains(stdout.String(), "Detected:") {
+		t.Errorf("deploy printed a heuristic shape before the manifest error:\n%s", stdout.String())
 	}
 }
