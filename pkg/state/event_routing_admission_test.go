@@ -415,9 +415,7 @@ func TestPgEventRoutingAdmissionRejectsTransferredTarget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := pool.Exec(ctx, `UPDATE apps SET account_id=$1 WHERE id=$2`, other.ID, receipt.RecipientSnapshot[0].AppID); err != nil {
-				t.Fatal(err)
-			}
+			seedLegacyForeignCreatingAccount(t, ctx, pool, receipt.RecipientSnapshot[0].AppID, other.ID)
 			_, err = pg.AdmitPublishedEventRecipient(ctx, claim)
 			var classified *state.EventRecipientAdmissionError
 			if !errors.As(err, &classified) || !errors.Is(err, state.ErrNotFound) || classified.Retryable || classified.FailureCode != state.EventFanoutFailureCodeTargetUnavailable {
