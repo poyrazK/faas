@@ -29,10 +29,12 @@ func nativeQualificationManagerFixture(t *testing.T) (*Manager, *JailerVMM, stat
 }
 
 func TestNativeQualificationManagerRejectsChangedBootBeforeAuthority(t *testing.T) {
-	for _, change := range []string{"unconfigured", "node", "instance", "app", "deployment", "memory", "artifact", "path_only", "account", "plan", "snapshot", "paused", "execution", "app_task", "builder", "wake"} {
+	for _, change := range []string{"unconfigured", "restore", "node", "instance", "app", "deployment", "memory", "artifact", "path_only", "account", "plan", "snapshot", "paused", "execution", "app_task", "builder", "wake"} {
 		t.Run(change, func(t *testing.T) {
 			m, v, frame, req, ctx := nativeQualificationManagerFixture(t)
 			switch change {
+			case "restore":
+				frame.CaptureInstanceID = uuid.NewString()
 			case "unconfigured":
 				m.WithNativeQualificationNodeID("")
 			case "node":

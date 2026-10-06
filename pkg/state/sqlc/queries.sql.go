@@ -1781,7 +1781,7 @@ UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id
  reserved_instance_id=$4::uuid
 WHERE id=$5::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
- AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=reserved_instance_id AND e.retired_at IS NULL) RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=environment_workload_qualification_requests.id AND e.retired_at IS NULL) RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
 `
 
 type ClaimEnvironmentWorkloadQualificationParams struct {
@@ -6468,7 +6468,7 @@ func (q *Queries) EnvironmentQualificationAppProtocol(ctx context.Context, db DB
 }
 
 const environmentQualificationExecution = `-- name: EnvironmentQualificationExecution :one
-SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at FROM environment_qualification_executions WHERE instance_id=$1::uuid
+SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at, capture_instance_id FROM environment_qualification_executions WHERE instance_id=$1::uuid
 `
 
 func (q *Queries) EnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error) {
@@ -6483,13 +6483,14 @@ func (q *Queries) EnvironmentQualificationExecution(ctx context.Context, db DBTX
 		&i.Retirement,
 		&i.CreatedAt,
 		&i.RetiredAt,
+		&i.CaptureInstanceID,
 	)
 	return i, err
 }
 
 const environmentQualificationExecutionRecoverable = `-- name: EnvironmentQualificationExecutionRecoverable :one
 SELECT e.retired_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
- AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+ AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=coalesce(e.capture_instance_id,e.instance_id)
  AND q.phase='claimed' AND q.lease_until>clock_timestamp()) AS recoverable
 FROM environment_qualification_executions e WHERE e.instance_id=$1::uuid
 `
@@ -6604,6 +6605,44 @@ func (q *Queries) EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBT
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const environmentQualificationRestoreCurrent = `-- name: EnvironmentQualificationRestoreCurrent :one
+SELECT environment_qualification_restore_current($1::uuid,$2::uuid)::boolean
+`
+
+type EnvironmentQualificationRestoreCurrentParams struct {
+	RequestID         pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+}
+
+func (q *Queries) EnvironmentQualificationRestoreCurrent(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreCurrentParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentQualificationRestoreCurrent, arg.RequestID, arg.CaptureInstanceID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const environmentQualificationRestoreReservation = `-- name: EnvironmentQualificationRestoreReservation :one
+SELECT instance_id, capture_instance_id, request_id, attempt, created_at FROM environment_qualification_restore_reservations WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationRestoreReservationParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationRestoreReservation(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReservationParams) (EnvironmentQualificationRestoreReservation, error) {
+	row := db.QueryRow(ctx, environmentQualificationRestoreReservation, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationRestoreReservation
+	err := row.Scan(
+		&i.InstanceID,
+		&i.CaptureInstanceID,
+		&i.RequestID,
+		&i.Attempt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const environmentQualificationSnapshotReceipt = `-- name: EnvironmentQualificationSnapshotReceipt :one
@@ -17298,11 +17337,11 @@ func (q *Queries) ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg Li
 }
 
 const listEnvironmentQualificationExecutionsForRecovery = `-- name: ListEnvironmentQualificationExecutionsForRecovery :many
-SELECT e.instance_id, e.request_id, e.frame, e.cleanup_token, e.dispatch_started, e.retirement, e.created_at, e.retired_at FROM environment_qualification_executions e
+SELECT e.instance_id, e.request_id, e.frame, e.cleanup_token, e.dispatch_started, e.retirement, e.created_at, e.retired_at, e.capture_instance_id FROM environment_qualification_executions e
 WHERE e.frame->>'node_id'=$1::text AND e.retired_at IS NULL
  AND ($2::text='' OR e.instance_id>nullif($2::text,'')::uuid)
  AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
-  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=coalesce(e.capture_instance_id,e.instance_id)
   AND q.phase='claimed' AND q.lease_until>clock_timestamp())
 ORDER BY e.instance_id LIMIT $3::integer
 `
@@ -17333,6 +17372,7 @@ func (q *Queries) ListEnvironmentQualificationExecutionsForRecovery(ctx context.
 			&i.Retirement,
 			&i.CreatedAt,
 			&i.RetiredAt,
+			&i.CaptureInstanceID,
 		); err != nil {
 			return nil, err
 		}
@@ -17359,7 +17399,7 @@ WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
  AND q.execution_mode<>'job' AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
  AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)='{}'::jsonb
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
- AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=q.reserved_instance_id AND e.retired_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)
 ORDER BY q.id LIMIT $3::integer
 `
 
@@ -20821,7 +20861,7 @@ func (q *Queries) LockEnvironmentQualificationAccount(ctx context.Context, db DB
 }
 
 const lockEnvironmentQualificationExecution = `-- name: LockEnvironmentQualificationExecution :one
-SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at FROM environment_qualification_executions WHERE instance_id=$1::uuid FOR UPDATE
+SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at, capture_instance_id FROM environment_qualification_executions WHERE instance_id=$1::uuid FOR UPDATE
 `
 
 func (q *Queries) LockEnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error) {
@@ -20836,6 +20876,7 @@ func (q *Queries) LockEnvironmentQualificationExecution(ctx context.Context, db 
 		&i.Retirement,
 		&i.CreatedAt,
 		&i.RetiredAt,
+		&i.CaptureInstanceID,
 	)
 	return i, err
 }
@@ -36173,6 +36214,28 @@ func (q *Queries) ReserveAccountCreditConsumption(ctx context.Context, db DBTX, 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const reserveEnvironmentQualificationRestore = `-- name: ReserveEnvironmentQualificationRestore :exec
+INSERT INTO environment_qualification_restore_reservations(instance_id,capture_instance_id,request_id,attempt)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::bigint)
+`
+
+type ReserveEnvironmentQualificationRestoreParams struct {
+	InstanceID        pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	RequestID         pgtype.UUID
+	Attempt           int64
+}
+
+func (q *Queries) ReserveEnvironmentQualificationRestore(ctx context.Context, db DBTX, arg ReserveEnvironmentQualificationRestoreParams) error {
+	_, err := db.Exec(ctx, reserveEnvironmentQualificationRestore,
+		arg.InstanceID,
+		arg.CaptureInstanceID,
+		arg.RequestID,
+		arg.Attempt,
+	)
+	return err
 }
 
 const reserveExclusiveWorkQuota = `-- name: ReserveExclusiveWorkQuota :one

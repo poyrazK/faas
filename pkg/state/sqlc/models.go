@@ -2117,14 +2117,23 @@ type EnvironmentManagementOverride struct {
 }
 
 type EnvironmentQualificationExecution struct {
-	InstanceID      pgtype.UUID
-	RequestID       pgtype.UUID
-	Frame           []byte
-	CleanupToken    pgtype.UUID
-	DispatchStarted bool
-	Retirement      []byte
-	CreatedAt       pgtype.Timestamptz
-	RetiredAt       pgtype.Timestamptz
+	InstanceID        pgtype.UUID
+	RequestID         pgtype.UUID
+	Frame             []byte
+	CleanupToken      pgtype.UUID
+	DispatchStarted   bool
+	Retirement        []byte
+	CreatedAt         pgtype.Timestamptz
+	RetiredAt         pgtype.Timestamptz
+	CaptureInstanceID pgtype.UUID
+}
+
+type EnvironmentQualificationRestoreReservation struct {
+	InstanceID        pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	RequestID         pgtype.UUID
+	Attempt           int64
+	CreatedAt         pgtype.Timestamptz
 }
 
 type EnvironmentQualificationSnapshotReceipt struct {

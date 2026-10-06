@@ -75,7 +75,7 @@ func (m *MemStore) MarkEnvironmentQualificationDispatched(ctx context.Context, c
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	status, exists := m.qualificationExecutions[execution.InstanceID]
-	if !exists || !qualificationExecutionMatches(status.Execution, execution) || status.RetiredAt != nil {
+	if !exists || status.CaptureInstanceID != "" || !qualificationExecutionMatches(status.Execution, execution) || status.RetiredAt != nil {
 		return ErrConflict
 	}
 	memory, current, err := m.qualificationLocked(claimed.ID)
@@ -115,6 +115,10 @@ func (m *MemStore) RetireEnvironmentQualificationExecution(ctx context.Context, 
 	}
 	if capture, exists := m.qualificationSnapshots[execution.InstanceID]; exists &&
 		(proof.Kind != QualificationNativeRetired || proof.NativeGeneration != capture.Snapshot.NativeGeneration || proof.KernelBootID != capture.Snapshot.KernelBootID) {
+		return ErrConflict
+	}
+	if status.CaptureInstanceID != "" && proof.Kind == QualificationNativeRetired &&
+		proof.NativeGeneration == m.qualificationSnapshots[status.CaptureInstanceID].Snapshot.NativeGeneration {
 		return ErrConflict
 	}
 	if status.RetiredAt != nil {

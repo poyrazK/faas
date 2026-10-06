@@ -44,6 +44,11 @@ func nativeQualificationJSONFields(t reflect.Type) []string {
 	var fields []string
 	for i := 0; i < t.NumField(); i++ {
 		name := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]
+		// The v2 capture journal predates restore authority. Its original wire
+		// shape remains exact; a restore frame requires a separate protocol.
+		if t == reflect.TypeOf(state.EnvironmentQualificationExecution{}) && name == "capture_instance_id" {
+			continue
+		}
 		if name != "" && name != "-" {
 			fields = append(fields, name)
 		}
@@ -82,6 +87,9 @@ func nativeQualificationUUID(value string) bool {
 }
 
 func validateNativeQualificationFrame(frame state.EnvironmentQualificationExecution, nodeID string) error {
+	if frame.CaptureInstanceID != "" {
+		return errors.New("native qualification: capture protocol cannot own a restore target")
+	}
 	for _, value := range []string{frame.InstanceID, frame.RequestID, frame.GraphID, frame.AppID, frame.DeploymentID, frame.NodeID,
 		frame.WakeID, frame.SourceID, frame.EnvironmentID, frame.RevisionID, frame.CleanupToken} {
 		if !nativeQualificationUUID(value) {

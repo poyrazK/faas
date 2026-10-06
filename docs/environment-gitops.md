@@ -218,9 +218,17 @@ and device-state binds are read-only; the drive is a separate writable clone.
 Permission changes and guest writes cannot reach the verified source inputs.
 Only the original daemon and its prepared target can stage this cohort; recovered
 records cannot create a producer. An uncertain first effect blocks a retry until
-original-owner retirement joins its retained epoch. This remains a staging
-primitive: the qualification restore execution frame, format/backing validation
-at load, isolated smoke and readiness must still be connected. The internal producer begins
+original-owner retirement joins its retained epoch. A separate internal store
+contract now reserves one charged restore target after the captured producer
+has retired. Its immutable execution retains the original capture ID and owns
+distinct placement, wake and cleanup authority. Admission and dispatch require
+the current reviewed attempt and fresh captured inputs; replay, generic capture
+dispatch and borrowing the producer's retirement are refused. Unretired restore
+targets block attempt replacement and remain recoverable after parent purge.
+The existing capture wire and native incoming journal reject restore frames.
+The dedicated native restore operation must still join this reservation to
+staging, validate format/backing at load, and prove isolated smoke and fresh
+readiness. The internal producer begins
 intent before output preparation and publishes memory, device state, the frozen
 private drive and backing identity. Actual buffered snapshot writes require the
 existing temporary snapshot headroom policy. The producer pins and journals the

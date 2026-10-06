@@ -74,11 +74,14 @@ func (s *PgStore) EnvironmentQualificationExecutionForRecovery(ctx context.Conte
 }
 
 func qualificationExecutionFromSQL(row sqlc.EnvironmentQualificationExecution) (EnvironmentQualificationExecutionStatus, error) {
-	status := EnvironmentQualificationExecutionStatus{DispatchStarted: row.DispatchStarted}
+	status := EnvironmentQualificationExecutionStatus{DispatchStarted: row.DispatchStarted, CaptureInstanceID: pgUUIDString(row.CaptureInstanceID)}
 	if err := json.Unmarshal(row.Frame, &status.Execution); err != nil {
 		return status, err
 	}
 	status.Execution.CleanupToken = pgUUIDString(row.CleanupToken)
+	if status.Execution.CaptureInstanceID != status.CaptureInstanceID {
+		return status, ErrConflict
+	}
 	if row.RetiredAt.Valid {
 		status.RetiredAt = &row.RetiredAt.Time
 		if err := json.Unmarshal(row.Retirement, &status.Retirement); err != nil {
@@ -119,7 +122,7 @@ func (s *PgStore) MarkEnvironmentQualificationDispatched(ctx context.Context, cl
 	if err != nil {
 		return err
 	}
-	if !qualificationExecutionMatches(status.Execution, execution) || status.DispatchStarted || status.RetiredAt != nil {
+	if status.CaptureInstanceID != "" || !qualificationExecutionMatches(status.Execution, execution) || status.DispatchStarted || status.RetiredAt != nil {
 		return ErrConflict
 	}
 	if _, err := q.SetEnvironmentWorkloadQualificationContext(ctx, tx, claimed.LeaseToken); err != nil {
@@ -163,6 +166,19 @@ func (s *PgStore) RetireEnvironmentQualificationExecution(ctx context.Context, e
 			return err
 		}
 		if proof.Kind != QualificationNativeRetired || proof.NativeGeneration != receipt.Snapshot.NativeGeneration || proof.KernelBootID != receipt.Snapshot.KernelBootID {
+			return ErrConflict
+		}
+	}
+	if status.CaptureInstanceID != "" && proof.Kind == QualificationNativeRetired {
+		capture, err := q.EnvironmentQualificationSnapshotReceipt(ctx, tx, mustPgUUID(status.CaptureInstanceID))
+		if err != nil {
+			return mapErr(err)
+		}
+		receipt, err := qualificationSnapshotReceiptFromSQL(capture)
+		if err != nil {
+			return err
+		}
+		if proof.NativeGeneration == receipt.Snapshot.NativeGeneration {
 			return ErrConflict
 		}
 	}

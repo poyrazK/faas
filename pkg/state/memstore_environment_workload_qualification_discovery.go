@@ -43,7 +43,7 @@ func (m *MemStore) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.
 			if ins, exists := m.instances[request.ReservedInstanceID]; exists && !qualificationInstanceRetired(ins) {
 				continue
 			}
-			if m.qualificationExecutionUnretiredLocked(request.ReservedInstanceID) {
+			if m.qualificationRequestUnretiredLocked(request.ID) {
 				continue
 			}
 			ids = append(ids, id)

@@ -14,25 +14,27 @@ import (
 // It survives removal of the source/request; cleanup uses the recorded node,
 // never the app's current owner. It grants no new boot or serving authority.
 type EnvironmentQualificationExecution struct {
-	InstanceID    string                      `json:"instance_id"`
-	RequestID     string                      `json:"request_id"`
-	GraphID       string                      `json:"graph_id"`
-	AppID         string                      `json:"app_id"`
-	DeploymentID  string                      `json:"deployment_id"`
-	NodeID        string                      `json:"node_id"`
-	WakeID        string                      `json:"wake_id"`
-	SourceID      string                      `json:"source_id"`
-	EnvironmentID string                      `json:"environment_id"`
-	RevisionID    string                      `json:"revision_id"`
-	Resource      string                      `json:"resource"`
-	Scope         string                      `json:"scope"`
-	PlanHash      string                      `json:"plan_hash"`
-	Generation    int64                       `json:"generation"`
-	IntentVersion int64                       `json:"intent_version"`
-	Attempt       int64                       `json:"attempt"`
-	RAMMB         int                         `json:"ram_mb"`
-	Artifact      EnvironmentWorkloadArtifact `json:"artifact"`
-	CleanupToken  string                      `json:"-"`
+	InstanceID string `json:"instance_id"`
+	// Restore targets cannot pass through the capture producer's boot protocol.
+	CaptureInstanceID string                      `json:"capture_instance_id,omitempty"`
+	RequestID         string                      `json:"request_id"`
+	GraphID           string                      `json:"graph_id"`
+	AppID             string                      `json:"app_id"`
+	DeploymentID      string                      `json:"deployment_id"`
+	NodeID            string                      `json:"node_id"`
+	WakeID            string                      `json:"wake_id"`
+	SourceID          string                      `json:"source_id"`
+	EnvironmentID     string                      `json:"environment_id"`
+	RevisionID        string                      `json:"revision_id"`
+	Resource          string                      `json:"resource"`
+	Scope             string                      `json:"scope"`
+	PlanHash          string                      `json:"plan_hash"`
+	Generation        int64                       `json:"generation"`
+	IntentVersion     int64                       `json:"intent_version"`
+	Attempt           int64                       `json:"attempt"`
+	RAMMB             int                         `json:"ram_mb"`
+	Artifact          EnvironmentWorkloadArtifact `json:"artifact"`
+	CleanupToken      string                      `json:"-"`
 }
 
 // Cleanup authority must stay out of diagnostic formatting as well as JSON.
@@ -43,10 +45,12 @@ func (e EnvironmentQualificationExecution) String() string {
 func (e EnvironmentQualificationExecution) GoString() string { return e.String() }
 
 type EnvironmentQualificationExecutionStatus struct {
-	Execution       EnvironmentQualificationExecution
-	DispatchStarted bool
-	Retirement      *EnvironmentQualificationRetirement
-	RetiredAt       *time.Time
+	Execution EnvironmentQualificationExecution
+	// Empty for capture producers; otherwise the retained original capture VM.
+	CaptureInstanceID string
+	DispatchStarted   bool
+	Retirement        *EnvironmentQualificationRetirement
+	RetiredAt         *time.Time
 }
 
 // Native evidence must come from the attempt-aware vmmd operation, after all
@@ -97,8 +101,12 @@ func qualificationRecoveryPageValid(nodeID, afterInstanceID string, limit int) b
 }
 
 func qualificationExecutionHasActiveLease(status EnvironmentQualificationExecutionStatus, request EnvironmentWorkloadQualificationRequest, now time.Time) bool {
+	reservation := status.Execution.InstanceID
+	if status.CaptureInstanceID != "" {
+		reservation = status.CaptureInstanceID
+	}
 	return request.ID == status.Execution.RequestID && request.Attempt == status.Execution.Attempt &&
-		request.ReservedInstanceID == status.Execution.InstanceID && request.Phase == "claimed" && request.LeaseUntil != nil && now.Before(*request.LeaseUntil)
+		request.ReservedInstanceID == reservation && request.Phase == "claimed" && request.LeaseUntil != nil && now.Before(*request.LeaseUntil)
 }
 
 func qualificationExecution(request EnvironmentWorkloadQualificationRequest, ins Instance, cleanupToken string) EnvironmentQualificationExecution {

@@ -22,6 +22,9 @@ func validUUID(value string) bool {
 }
 
 func validateExecution(frame state.EnvironmentQualificationExecution) error {
+	if frame.CaptureInstanceID != "" {
+		return fmt.Errorf("qualification capture protocol cannot carry restore authority: %w", state.ErrInvalidArgument)
+	}
 	for _, value := range []string{frame.InstanceID, frame.RequestID, frame.GraphID, frame.AppID, frame.DeploymentID, frame.NodeID,
 		frame.WakeID, frame.SourceID, frame.EnvironmentID, frame.RevisionID, frame.CleanupToken} {
 		if !validUUID(value) {

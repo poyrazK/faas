@@ -8309,7 +8309,7 @@ WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
  AND q.execution_mode<>'job' AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
  AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)='{}'::jsonb
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
- AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=q.reserved_instance_id AND e.retired_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)
 ORDER BY q.id LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: EnvironmentWorkloadQualificationSourceForUpdate :one
@@ -8343,7 +8343,7 @@ UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id
  reserved_instance_id=sqlc.narg(instance_id)::uuid
 WHERE id=sqlc.arg(id)::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
- AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=reserved_instance_id AND e.retired_at IS NULL) RETURNING *;
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=environment_workload_qualification_requests.id AND e.retired_at IS NULL) RETURNING *;
 
 -- name: RenewEnvironmentWorkloadQualification :one
 UPDATE environment_workload_qualification_requests SET lease_until=greatest(lease_until,clock_timestamp()+sqlc.arg(duration_us)::bigint*interval '1 microsecond')
@@ -8398,7 +8398,7 @@ SELECT e.* FROM environment_qualification_executions e
 WHERE e.frame->>'node_id'=sqlc.arg(node_id)::text AND e.retired_at IS NULL
  AND (sqlc.arg(after_instance_id)::text='' OR e.instance_id>nullif(sqlc.arg(after_instance_id)::text,'')::uuid)
  AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
-  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=coalesce(e.capture_instance_id,e.instance_id)
   AND q.phase='claimed' AND q.lease_until>clock_timestamp())
 ORDER BY e.instance_id LIMIT sqlc.arg(page_limit)::integer;
 
@@ -8406,7 +8406,7 @@ ORDER BY e.instance_id LIMIT sqlc.arg(page_limit)::integer;
 -- Use the database clock so host clock skew cannot expire a current lease.
 -- name: EnvironmentQualificationExecutionRecoverable :one
 SELECT e.retired_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
- AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+ AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=coalesce(e.capture_instance_id,e.instance_id)
  AND q.phase='claimed' AND q.lease_until>clock_timestamp()) AS recoverable
 FROM environment_qualification_executions e WHERE e.instance_id=sqlc.arg(instance_id)::uuid;
 
@@ -10472,3 +10472,13 @@ WHERE (i.node_id=coalesce(nullif(sqlc.arg(node_id)::text,'')::uuid,
  OR (sqlc.arg(node_id)::text='' AND sqlc.arg(node_name)::text=''))
  AND i.host_ip=sqlc.arg(host_ip)::text::inet
  AND i.state IN ('running','draining') ORDER BY i.id;
+
+-- name: EnvironmentQualificationRestoreReservation :one
+SELECT * FROM environment_qualification_restore_reservations WHERE request_id=sqlc.arg(request_id)::uuid AND attempt=sqlc.arg(attempt)::bigint;
+
+-- name: ReserveEnvironmentQualificationRestore :exec
+INSERT INTO environment_qualification_restore_reservations(instance_id,capture_instance_id,request_id,attempt)
+VALUES(sqlc.arg(instance_id)::uuid,sqlc.arg(capture_instance_id)::uuid,sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint);
+
+-- name: EnvironmentQualificationRestoreCurrent :one
+SELECT environment_qualification_restore_current(sqlc.arg(request_id)::uuid,sqlc.arg(capture_instance_id)::uuid)::boolean;

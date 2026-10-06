@@ -47,6 +47,14 @@ func TestExecutionWirePreservesEveryField(t *testing.T) {
 	}
 }
 
+func TestCaptureExecutionWireCannotEraseRestoreAuthority(t *testing.T) {
+	frame := wireFrame()
+	frame.CaptureInstanceID = uuid.NewString()
+	if _, err := ExecutionToProto(frame); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("capture protocol discarded restore identity", err)
+	}
+}
+
 func TestExecutionWireRejectsIncompleteOrUnknownAuthority(t *testing.T) {
 	for _, failure := range []string{"nil", "version", "artifact", "frame_unknown", "artifact_unknown", "cleanup", "negative_memory", "hash", "generation", "kind"} {
 		t.Run(failure, func(t *testing.T) {

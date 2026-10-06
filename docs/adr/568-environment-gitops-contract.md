@@ -3113,3 +3113,72 @@ establish native qualification restore execution, format/backing validation at
 load, isolated graph smoke, binding delivery, serving convergence, live GCS
 retirement, local conditional retirement or bare-metal/reboot/power-loss
 acceptance. Production gates remain closed and no PR is opened.
+
+### Separate qualification restore admission (2026-10-06)
+
+Schedd can internally reserve one restore target for the same reviewed
+qualification attempt after the original capture producer has complete native
+retirement evidence. The source reservation and immutable capture receipt stay
+unchanged. The target has its own instance, wake, placement and cleanup token,
+consumes normal node/worker/service capacity, and retains the source capture ID
+in both its immutable execution frame and database association. Admission and
+dispatch recheck the current source/graph lease and captured runtime inputs.
+This is a reservation contract, not native restore or readiness evidence.
+
+Memory and PostgreSQL stores refuse a second target, replacement placement,
+stale inputs, generic producer dispatch and duplicate restore dispatch. A lost
+dispatch response does not authorize replay. The current capture protobuf and
+native v2 incoming journal reject restore frames rather than erase their source
+identity. Existing capture journal JSON remains unchanged and readable. A
+dedicated restore protocol and original native owner must join this reservation
+to the receipt-bound descriptor staging primitive before any load can execute.
+
+Every unretired VM belonging to a request blocks attempt replacement, including
+the target after the producer has retired. Recovery uses the target's original
+node and the source attempt's lease, retains the capture association through
+control-plane purge, and grants cleanup only. Generic terminal/deletion writes
+cannot release an unretired target. A dispatched target requires its own native
+retirement proof and cannot borrow the captured producer's physical generation;
+an undispatched target accepts only exact never-dispatched evidence. Retained
+execution IDs cannot be reused after instance collection. Database triggers
+protect the same identities and the additive migration preserves them on replay.
+
+Native restore execution/load, backing compatibility, isolated smoke and fresh
+restored readiness, original-owner artifact retirement, generated binding
+delivery, complete graph evidence and serving convergence remain outstanding.
+Production qualification, activation and enforcement gates stay closed. The
+combined PR remains deferred until the full requested scope is reviewable.
+
+The final Linux restore/retirement/compatibility race selections passed with
+Go 1.25.13 on the approved nested GCP node: state (1.754 s), PostgreSQL/memory
+contracts (26.645 s), qualification wire (1.072 s) and native qualification
+guards (1.275 s). The broader GitOps/qualification PostgreSQL selection passed
+(153.779 s), as did scheduler (24.122 s) and wire (0.024 s) regressions. Contract
+coverage includes concurrent/idempotent admission, independent cleanup tokens,
+node admission, source retirement and wake separation, stale inputs before
+admission/dispatch, no dispatch replay, no generic terminal/readiness writes,
+no borrowed producer retirement, expiry/purge recovery, new-attempt refusal to
+adopt prior capture, raw SQL guards and migration replay. These capture and
+retirement records are storage fixtures, not native restore evidence.
+
+Linux lint for state, PostgreSQL integration, qualification wire and fcvm and
+changed-code metal lint reported zero issues. Repository-pinned sqlc v1.31.1
+regeneration matched the checked-in bindings. Local Darwin regressions and
+focused race selections also passed; full Darwin lint retained nineteen unused
+findings in unchanged helpers with Linux-only callers. They were not suppressed
+or treated as passing full-platform lint. Prior unrelated full-metal lint
+findings remain outside this checkpoint.
+
+`make test-metal` passed native ownership, publication, input/staging and capture
+regressions (54.911 s). The disk image fixture joined fifteen producer exits and
+successful descriptor staging (6.22 s child / 7.31 s parent). The actual VM
+capture, resume, retirement and receipt-verified ordinary restore regression
+passed (14.18 s child / 15.27 s parent), with 134,217,728 logical / 64,684,032
+allocated memory bytes, 13,696 logical / 16,384 allocated device-state bytes,
+67,108,864 logical / 86,016 allocated drive bytes and 64,786,432 stored bytes.
+The required 177-byte backing sidecar remains excluded from that stored total.
+Its scan sidecar is modeled. `make leakcheck` found no leaked namespaces, TAPs,
+jails, cgroups, processes, mounts or native loops. All 8,307 Go source
+fingerprints matched the validated upload. These checks preserve the ordinary
+VM regression and capture protocol; native qualification restore/load remains
+unimplemented and production gates stay closed.

@@ -13908,6 +13908,9 @@ func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID
 	if instanceID == "" {
 		instanceID = newID()
 	}
+	if _, retained := m.qualificationExecutions[instanceID]; retained {
+		return Instance{}, ErrConflict
+	}
 	for _, memory := range m.environmentGitOps {
 		for _, request := range memory.qualifications {
 			if request.ReservedInstanceID == instanceID {
@@ -14704,7 +14707,8 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 		}
 		for _, memory := range m.environmentGitOps {
 			for _, request := range memory.qualifications {
-				if request.ReservedInstanceID == id && request.LeaseUntil != nil && time.Now().Before(*request.LeaseUntil) {
+				status := m.qualificationExecutions[id]
+				if (request.ReservedInstanceID == id || status.CaptureInstanceID != "" && status.Execution.RequestID == request.ID) && request.LeaseUntil != nil && time.Now().Before(*request.LeaseUntil) {
 					return ErrConflict
 				}
 			}
