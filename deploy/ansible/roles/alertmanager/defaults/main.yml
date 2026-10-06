@@ -45,6 +45,26 @@ am_smtp_smarthost: ""                          # e.g. "smtp.resend.com:587"; emp
 am_pushover_token_file: ""
 am_pushover_user_key_file: ""
 
+# Chat webhooks. Each points at an operator-provisioned file holding the
+# webhook URL (the URL is the credential, so it never appears in vars or
+# the rendered config). Either one is a complete notification channel:
+# page and warn alerts both post to it.
+#   Discord: channel settings → Integrations → Webhooks → Copy Webhook URL,
+#            then append /slack (Discord's Slack-compatible endpoint;
+#            Alertmanager 0.27 cannot read a discord_configs URL from a
+#            file). The role refuses a Discord URL without the suffix.
+#   Slack:   an incoming-webhook app URL (https://hooks.slack.com/services/…)
+am_discord_webhook_url_file: ""
+am_slack_webhook_url_file: ""
+
+# Dead-man's switch. FaasWatchdog fires permanently and Alertmanager posts
+# it to the URL in this file every am_heartbeat_interval. An external
+# monitor (healthchecks.io, Better Stack, Cronitor, …) alerts you when the
+# posts stop: control plane down, Prometheus or Alertmanager stopped, or
+# rule evaluation broken. Required on control-plane hosts.
+am_heartbeat_url_file: ""
+am_heartbeat_interval: 5m
+
 am_email_from: "alertmanager@{{ ansible_domain | default('onebox.local') }}"
 am_email_to_warn: "ops-tickets@{{ ansible_domain | default('onebox.local') }}"
 am_email_to_page: "ops-pager@{{ ansible_domain | default('onebox.local') }}"
@@ -62,7 +82,8 @@ am_email_customer_alert_presets: false
 am_alerts_url: "http://127.0.0.1:9095/alerts"
 
 # When true, the role skips the receiver-secret permission asserts and
-# the systemd service start (the alertmanager unit is NOT enabled).
-# Production hosts MUST leave this unset / false. Dev/CI boxes that
-# don't page set it to true so make bootstrap completes.
+# leaves Alertmanager stopped and disabled. Only single-box dev/CI hosts
+# that deliberately page nobody may set it; the role refuses it on a
+# control-plane host, which must have a notification channel and a
+# heartbeat.
 am_dev_mode: false

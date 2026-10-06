@@ -1,0 +1,24 @@
+---
+- name: Reset expected validation result
+  ansible.builtin.set_fact:
+    tcp_tls_rejected: false
+
+- name: Exercise invalid configuration
+  block:
+    - name: Validate unsafe path
+      ansible.builtin.include_tasks: "{{ tcp_tls_tasks }}"
+      vars:
+        faas_tcpd_tls_cert_dir: "{{ item }}"
+  rescue:
+    - name: Confirm failure is from the path guard
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name == (tcp_tls_expected_failure | default('gatewayd_public_service — validate optional TCP TLS directory'))
+    - name: Record expected validation rejection
+      ansible.builtin.set_fact:
+        tcp_tls_rejected: true
+
+- name: Verify invalid configuration was rejected
+  ansible.builtin.assert:
+    that:
+      - tcp_tls_rejected

@@ -150,6 +150,7 @@ func (p *RuntimeSnapshotPublisher) PublishRuntimeSnapshot(ctx context.Context, p
 	}
 
 	record := state.RuntimeSnapshotRecord{
+		Profile:             entry.Identity.Profile,
 		CatalogKey:          catalogKey,
 		Runtime:             entry.Identity.Runtime,
 		Architecture:        entry.Identity.Architecture,

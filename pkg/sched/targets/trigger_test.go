@@ -146,8 +146,13 @@ func (q *fakeQueueBindings) ListQueueBindingsForApp(_ context.Context, _, appID 
 	return q.byApp[appID], nil
 }
 
-func (q *fakeQueueBindings) QueueStateForQueue(_ context.Context, _, queueName string) (state.QueueStats, error) {
-	return q.byQueue[queueName], nil
+func (q *fakeQueueBindings) QueueStateForBinding(_ context.Context, appID, bindingID string) (state.QueueStats, error) {
+	for _, binding := range q.byApp[appID] {
+		if binding.ID == bindingID {
+			return q.byQueue[binding.QueueName], nil
+		}
+	}
+	return state.QueueStats{}, nil
 }
 
 func (i *fakeInstats) MaxInflightForApp(appID string) (int64, bool) {

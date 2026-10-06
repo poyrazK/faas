@@ -160,7 +160,7 @@ func TestWorkerAdmissionNeverRestoresRequestSnapshot(t *testing.T) {
 
 func TestReconcileWorkerAppKeepsNewestSingleton(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, oldDep := seedApp(t, store, api.PlanHobby, 256, 4)
+	_, app, oldDep := seedApp(t, store, api.PlanPro, 256, 4)
 	configureExecutionMode(t, store, app, oldDep, api.ExecutionModeWorker, state.DeployLive)
 	newDep, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:new", Status: state.DeployLive,

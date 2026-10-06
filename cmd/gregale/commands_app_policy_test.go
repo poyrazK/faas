@@ -205,6 +205,8 @@ func TestCmdAppPolicyControlsVisibleInPlainAppRead(t *testing.T) {
 	for _, want := range []string{
 		"maintenance mode: enabled", "streaming: enabled", "websocket: enabled",
 		"route metrics: enabled", "consumer auth mode: required",
+		// Unset idle timeout means the plan default, not "0s".
+		"idle timeout: plan default",
 	} {
 		if !strings.Contains(plainOutput, want) {
 			t.Errorf("app read output missing %q:\n%s", want, output)

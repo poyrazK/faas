@@ -27,7 +27,8 @@ const (
 	// neighbour, so a short interval costs a handful of tiny frames.
 	TapARPRetransMs         = 50
 	AppPort                 = 8080         // the :8080 contract (spec §2)
-	ServiceProxyPort        = 10080        // guest-to-guest service proxy on HostBridgeIP (ADR-169)
+	ServiceProxyPort        = 10081        // Fetch-compatible service proxy on HostBridgeIP (ADR-384)
+	LegacyServiceProxyPort  = 10080        // compatibility for persisted bindings (ADR-169)
 	ServiceProxyHTTPSPort   = 443          // opt-in private HTTPS service proxy on HostBridgeIP
 	ServiceDiscoveryDNSPort = 53           // guest service-name resolver on HostBridgeIP (ADR-170)
 	TenantBridge            = "br-tenants" // root-ns bridge the veth host-side enslaves to
@@ -59,6 +60,15 @@ var DefaultHostBridgeIP = netip.MustParseAddr("10.100.0.1")
 var DefaultServiceProxyHTTPS bool
 
 func SetDefaultServiceProxyHTTPS(enabled bool) { DefaultServiceProxyHTTPS = enabled }
+
+// DefaultServiceAddressCIDR is seeded by vmmd before any network is prepared
+// (ADR-576). The zero prefix keeps private TCP service addressing off: no
+// netns admits the block, and the host renders no service NAT.
+var DefaultServiceAddressCIDR netip.Prefix
+
+// SetDefaultServiceAddressCIDR is vmmd's boot-time setter for
+// DefaultServiceAddressCIDR. Pass the zero prefix to disable.
+func SetDefaultServiceAddressCIDR(prefix netip.Prefix) { DefaultServiceAddressCIDR = prefix }
 
 // SetDefaultHostBridgeIP is the boot-time setter for the per-host
 // bridge IP. Mirrors the pattern of pkg/fcvm.SetHostIPBase: callers
@@ -211,6 +221,10 @@ type Config struct {
 	// resolver reports an answer. ADR-031 allowlisted destinations are
 	// exempt; they are accepted before the gate.
 	DNSGated bool
+	// ServiceAddressCIDR admits guest TCP to private service addresses
+	// (ADR-576). The host DNATs that traffic onto the tenant-bridge service
+	// listeners. The zero prefix admits nothing.
+	ServiceAddressCIDR netip.Prefix
 }
 
 // NewConfig fills the constant fields (tap name, /16) around the allocated names
@@ -234,7 +248,10 @@ func NewConfigWithBridge(instance, netnsName, vethHost, vethPeer string, hostIP,
 		HostIP:            hostIP,
 		HostBridgeIP:      bridgeIP,
 		ServiceProxyHTTPS: DefaultServiceProxyHTTPS,
-		HostBits:          16,
+		// ADR-576: part of Config so a prepared namespace (ADR-149) built
+		// before the switch flipped is never reused without the admission.
+		ServiceAddressCIDR: DefaultServiceAddressCIDR,
+		HostBits:           16,
 	}
 }
 
@@ -265,6 +282,25 @@ func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
 			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", port, "dnat", "to", target))
 	}
 	return rules
+}
+
+// serviceAddressRules admits guest TCP to private service addresses
+// (ADR-576) and drops everything else sent to the block. Reaching a
+// same-account service is a platform hop, like the bridge service proxy, so
+// the accept precedes every ADR-361/373 egress rule (fan-out, rate, non-TCP,
+// DNS gate, port allowlist). It follows the per-instance conntrack cap so
+// internal connections stay bounded by it. The block is outside every deny
+// entry, so its position relative to the lateral-movement deny is immaterial.
+func (c Config) serviceAddressRules(nft func(...string) []string) [][]string {
+	prefix := c.ServiceAddressCIDR
+	if !prefix.IsValid() || !prefix.Addr().Is4() {
+		return nil
+	}
+	block := prefix.Masked().String()
+	return [][]string{
+		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", block, "meta", "l4proto", "tcp", "accept"),
+		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", block, "drop"),
+	}
 }
 
 // RetargetAppPortCommands rewrites the prerouting chain of a namespace that
@@ -544,13 +580,15 @@ func (c Config) NftCommands() [][]string {
 	// guest already has in flight, which would convert a recoverable blip
 	// into a guaranteed failure for every in-flight request.
 	cmds = append(cmds, c.egressCircuitRules(nft, "ip")...)
-	// ADR-169: admit only the reserved service-proxy port on this host's
+	// ADR-169/384: admit only the reserved service-proxy ports on this host's
 	// bridge address. The listener binds HostBridgeIP, so this rule gives
 	// guests a cross-VM path without opening the rest of the host namespace;
 	// replies are covered by the established/related rule above.
 	if c.HostBridgeIP.IsValid() {
-		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
-			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyPort), "accept")
+		for _, port := range []int{ServiceProxyPort, LegacyServiceProxyPort} {
+			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
+		}
 		if c.ServiceProxyHTTPS {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept")
@@ -625,6 +663,7 @@ func (c Config) NftCommands() [][]string {
 	if rule := c.forwardConnlimitRule(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
+	cmds = append(cmds, c.serviceAddressRules(nft)...)
 	// Lateral-movement deny (spec §11 + ADR-023 + ADR-034) — the v4
 	// half of the shared DenySet. ADR-031 reorders this list so
 	// deny > allow on overlap with the per-app EgressAllowlist accept

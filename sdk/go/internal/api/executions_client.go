@@ -39,6 +39,13 @@ func (c *Client) CreateExecution(ctx context.Context, req CreateExecutionRequest
 	return out, c.do(ctx, "POST", "/v1/executions", req, &out)
 }
 
+// GetExecutionCapabilities returns the account's Runs admission contract and
+// current plan limits. It does not report scheduler or runtime image readiness.
+func (c *Client) GetExecutionCapabilities(ctx context.Context) (ExecutionCapabilitiesResponse, error) {
+	var out ExecutionCapabilitiesResponse
+	return out, c.do(ctx, "GET", "/v1/executions/capabilities", nil, &out)
+}
+
 // GetExecution returns the current state or terminal result for one run.
 func (c *Client) GetExecution(ctx context.Context, id string) (ExecutionResponse, error) {
 	var out ExecutionResponse
@@ -48,6 +55,15 @@ func (c *Client) GetExecution(ctx context.Context, id string) (ExecutionResponse
 // ListExecutions returns an account-scoped page of disposable execution
 // receipts. Zero limit and offset use the server defaults.
 func (c *Client) ListExecutions(ctx context.Context, limit, offset int, status ExecutionStatus) (ExecutionListResponse, error) {
+	return c.listExecutions(ctx, limit, offset, status, "")
+}
+
+// ListExecutionsForWorkflow returns the visible runs carrying workflowID.
+func (c *Client) ListExecutionsForWorkflow(ctx context.Context, workflowID string, limit, offset int, status ExecutionStatus) (ExecutionListResponse, error) {
+	return c.listExecutions(ctx, limit, offset, status, workflowID)
+}
+
+func (c *Client) listExecutions(ctx context.Context, limit, offset int, status ExecutionStatus, workflowID string) (ExecutionListResponse, error) {
 	query := url.Values{}
 	if limit > 0 {
 		query.Set("limit", strconv.Itoa(limit))
@@ -58,6 +74,9 @@ func (c *Client) ListExecutions(ctx context.Context, limit, offset int, status E
 	if status != "" {
 		query.Set("status", string(status))
 	}
+	if workflowID != "" {
+		query.Set("workflow_id", workflowID)
+	}
 	path := "/v1/executions"
 	if encoded := query.Encode(); encoded != "" {
 		path += "?" + encoded
@@ -66,9 +85,33 @@ func (c *Client) ListExecutions(ctx context.Context, limit, offset int, status E
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetExecutionWorkflow returns lifecycle and usage totals for the workflow
+// visible to this credential's key family or account-wide scope.
+func (c *Client) GetExecutionWorkflow(ctx context.Context, workflowID string) (ExecutionWorkflowResponse, error) {
+	var out ExecutionWorkflowResponse
+	path := "/v1/execution-workflows/" + url.PathEscape(workflowID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // CancelExecution requests cancellation. Cancellation is idempotent and
 // destroys a claimed VM during scheduler teardown.
 func (c *Client) CancelExecution(ctx context.Context, id string) (ExecutionResponse, error) {
 	var out ExecutionResponse
 	return out, c.do(ctx, "DELETE", "/v1/executions/"+url.PathEscape(id), nil, &out)
+}
+
+// CreateExecutionArtifactGrant creates a short-lived, single-use capability
+// for one artifact. The response token is shown once and should be shared
+// with the receiving agent over a secure channel.
+func (c *Client) CreateExecutionArtifactGrant(ctx context.Context, executionID string, req CreateExecutionArtifactGrantRequest) (ExecutionArtifactGrantResponse, error) {
+	var out ExecutionArtifactGrantResponse
+	path := "/v1/executions/" + url.PathEscape(executionID) + "/artifact-grants"
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
+// RevokeExecutionArtifactGrant prevents an unredeemed capability from being used.
+func (c *Client) RevokeExecutionArtifactGrant(ctx context.Context, grantID string) (RevokeExecutionArtifactGrantResponse, error) {
+	var out RevokeExecutionArtifactGrantResponse
+	path := "/v1/execution-artifact-grants/" + url.PathEscape(grantID)
+	return out, c.do(ctx, "DELETE", path, nil, &out)
 }

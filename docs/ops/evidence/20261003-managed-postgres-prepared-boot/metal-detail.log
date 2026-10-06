@@ -1,0 +1,33 @@
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/legacy_complete/namespace
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/legacy_complete/veth
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/legacy_complete/dummy
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/legacy_complete/uid
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/intent/absent
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/intent/namespace
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/intent/veth
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/intent/dummy
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/intent/uid
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_intent/absent
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_intent/namespace
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_intent/veth
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_intent/dummy
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_intent/uid
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/absent
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/namespace
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/veth
+    resource_restart_prepared_metal_test.go:121: foreign link changed <nil>
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/dummy
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/uid
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/link_intent/absent
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/link_intent/namespace
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/link_intent/veth
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/link_intent/dummy
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/link_intent/uid
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/complete/absent
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/complete/namespace
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/complete/veth
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

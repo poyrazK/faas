@@ -11,6 +11,7 @@ import (
 )
 
 var _ OutboundBindingStore = (*PgStore)(nil)
+var _ OutboundRunsGrantStore = (*PgStore)(nil)
 
 func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 	var id, accountID pgtype.UUID
@@ -19,7 +20,7 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 	var requestPolicy api.OutboundRequestPolicy
 	var offer OutboundIntegrationOffer
 	if err := row.Scan(&id, &accountID, &offer.Name, &offer.Origin, &offer.AllowedMethods, &offer.AllowedPathPrefixes,
-		&offer.Enabled, &offer.CredentialSource, &offer.CredentialConfigured, &offer.OwnerKind, &dailyRequestLimit, &accountPlan,
+		&offer.Enabled, &offer.RunsEnabled, &offer.CredentialSource, &offer.CredentialConfigured, &offer.OwnerKind, &dailyRequestLimit, &accountPlan,
 		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS,
 		&requestPolicy.MaxRetries, &requestPolicy.ResponseCacheTTLSeconds,
 		&requestPolicy.CircuitBreakerFailureThreshold, &requestPolicy.CircuitBreakerOpenSeconds,
@@ -47,7 +48,7 @@ func scanOutboundBinding(row pgx.Row) (OutboundAppBinding, error) {
 	var requestPolicy api.OutboundRequestPolicy
 	var binding OutboundAppBinding
 	if err := row.Scan(&id, &accountID, &appID, &binding.Name, &binding.Origin,
-		&binding.AllowedMethods, &binding.AllowedPathPrefixes, &binding.Enabled,
+		&binding.AllowedMethods, &binding.AllowedPathPrefixes, &binding.Enabled, &binding.RunsEnabled,
 		&binding.CredentialSource, &binding.CredentialConfigured, &binding.CreatedAt,
 		&binding.RouteMethods, &binding.RoutePathPrefixes, &binding.OwnerKind, &dailyRequestLimit, &bindingDailyRequestLimit, &accountPlan,
 		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS,
@@ -91,6 +92,7 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 	rows, err := s.pool.Query(ctx, `
 		SELECT integration.id, integration.account_id, integration.name, integration.origin,
 		       integration.allowed_methods, integration.allowed_path_prefixes, integration.enabled,
+		       integration.runs_enabled,
 		       integration.credential_source,
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
 		       integration.owner_kind, integration.daily_request_limit, account.plan,
@@ -120,13 +122,65 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 	return out, mapErr(rows.Err())
 }
 
+func (s *PgStore) SetOutboundIntegrationRunsEnabled(ctx context.Context, accountID, integrationID string, enabled bool) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var integrationEnabled bool
+	var allowedMethods, allowedPaths []string
+	err = tx.QueryRow(ctx, `
+		SELECT integration.enabled, integration.allowed_methods, integration.allowed_path_prefixes
+		  FROM outbound_integrations integration
+		 WHERE integration.account_id = $1 AND integration.id = $2
+		   AND integration.owner_kind = 'customer'
+		   AND integration.provider_auth_mode = 'managed'
+		   AND integration.credential_source = 'customer_sealed'
+		 FOR UPDATE OF integration`, mustPgUUID(accountID), mustPgUUID(integrationID)).Scan(
+		&integrationEnabled, &allowedMethods, &allowedPaths)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	if enabled {
+		if !integrationEnabled || len(allowedMethods) == 0 || len(allowedPaths) == 0 {
+			return ErrInvalidArgument
+		}
+		// Read credential presence in a separate statement after locking the
+		// integration row. Credential writes and revocations take the same
+		// row lock, so READ COMMITTED sees their committed ordering here.
+		var credentialConfigured bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+			    SELECT 1 FROM outbound_integration_credentials
+			     WHERE integration_id = $1 AND account_id = $2
+			)`, mustPgUUID(integrationID), mustPgUUID(accountID)).Scan(&credentialConfigured); err != nil {
+			return mapErr(err)
+		}
+		if !credentialConfigured {
+			return ErrInvalidArgument
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE outbound_integrations SET runs_enabled = $3, updated_at = now() WHERE account_id = $1 AND id = $2`,
+		mustPgUUID(accountID), mustPgUUID(integrationID), enabled); err != nil {
+		return mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapErr(err)
+	}
+	return nil
+}
+
 func (s *PgStore) ListOutboundAppBindings(ctx context.Context, accountID, appID string) ([]OutboundAppBinding, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT integration.id, integration.account_id, binding.app_id, integration.name,
 		       integration.origin, integration.allowed_methods, integration.allowed_path_prefixes,
 		       (integration.enabled AND integration.provider_auth_mode = 'managed'
 		        AND cardinality(integration.allowed_methods) > 0
-		        AND cardinality(integration.allowed_path_prefixes) > 0), integration.credential_source,
+		        AND cardinality(integration.allowed_path_prefixes) > 0), integration.runs_enabled, integration.credential_source,
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
 		       binding.created_at, binding.allowed_methods, binding.allowed_path_prefixes,
 		       integration.owner_kind, integration.daily_request_limit, binding.daily_request_limit, account.plan,
@@ -343,7 +397,7 @@ func (s *PgStore) BindOutboundIntegration(ctx context.Context, accountID, appID,
 	return scanOutboundBinding(s.pool.QueryRow(ctx, `
 		SELECT integration.id, integration.account_id, binding.app_id, integration.name,
 		       integration.origin, integration.allowed_methods, integration.allowed_path_prefixes,
-		       integration.enabled, integration.credential_source,
+		       integration.enabled, integration.runs_enabled, integration.credential_source,
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
 		       binding.created_at, binding.allowed_methods, binding.allowed_path_prefixes,
 		       integration.owner_kind, integration.daily_request_limit, binding.daily_request_limit, account.plan,
@@ -510,20 +564,33 @@ func (s *PgStore) SetOutboundCredential(ctx context.Context, accountID, integrat
 
 func (s *PgStore) DeleteOutboundCredential(ctx context.Context, accountID, integrationID string) error {
 	account, integration := mustPgUUID(accountID), mustPgUUID(integrationID)
-	var exists bool
-	err := s.pool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM outbound_integrations
-			 WHERE id = $2 AND account_id = $1 AND provider_auth_mode = 'managed'
-		   AND credential_source = 'customer_sealed')`, account, integration).Scan(&exists)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return mapErr(err)
 	}
-	if !exists {
+	defer func() { _ = tx.Rollback(ctx) }()
+	var lockedIntegration pgtype.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM outbound_integrations
+		 WHERE id = $2 AND account_id = $1 AND provider_auth_mode = 'managed'
+		   AND credential_source = 'customer_sealed'
+		 FOR UPDATE`, account, integration).Scan(&lockedIntegration)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	_, err = s.pool.Exec(ctx, `
+	if err != nil {
+		return mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
 		DELETE FROM outbound_integration_credentials
-		 WHERE account_id = $1 AND integration_id = $2`, account, integration)
-	return mapErr(err)
+		 WHERE account_id = $1 AND integration_id = $2`, account, integration); err != nil {
+		return mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE outbound_integrations
+		   SET runs_enabled = false, updated_at = now()
+		 WHERE account_id = $1 AND id = $2`, account, integration); err != nil {
+		return mapErr(err)
+	}
+	return mapErr(tx.Commit(ctx))
 }

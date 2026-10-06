@@ -37,7 +37,7 @@ import (
 // health-based exit code.
 func cmdDomainsDoctor(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: gregale domains doctor <domain>\n")
+		printCommandValidation(os.Stderr, "usage: gregale domains doctor <domain>\n")
 		return 1
 	}
 	domain := args[0]
@@ -101,18 +101,7 @@ func printDoctorReport(w io.Writer, r api.DomainDoctorReport) {
 	}
 	_, _ = fmt.Fprintln(w)
 	for _, c := range r.Checks {
-		marker := "?"
-		switch c.Status {
-		case doctorCheckOK:
-			marker = glyphOK()
-		case doctorCheckFail:
-			marker = glyphFail()
-		case doctorCheckPend:
-			marker = "…"
-		case doctorCheckNA:
-			marker = "·"
-		}
-		_, _ = fmt.Fprintf(w, "%s %-22s %s\n", marker, c.Name, c.Detail)
+		_, _ = fmt.Fprintf(w, "%s %-22s %s\n", doctorStatusMarker(c.Status), c.Name, c.Detail)
 		if c.Observed != "" {
 			_, _ = fmt.Fprintf(w, "                                observed: %s\n", c.Observed)
 		}
@@ -123,12 +112,46 @@ func printDoctorReport(w io.Writer, r api.DomainDoctorReport) {
 	if failing > 0 {
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, "Fix:")
+		// Two checks can share one fix (a missing CNAME fails both
+		// dns_record and points_to_gregale); list it once.
+		seen := map[string]bool{}
 		for _, c := range r.Checks {
-			if c.Status == doctorCheckFail && c.Remediation != "" {
+			if c.Status == doctorCheckFail && c.Remediation != "" && !seen[c.Remediation] {
+				seen[c.Remediation] = true
 				_, _ = fmt.Fprintf(w, "  - %s\n", c.Remediation)
 			}
 		}
 	}
+}
+
+// doctorStatusMarker is the per-check status prefix. With glyphs off (pipes,
+// NO_COLOR) the glyph used to vanish entirely, so a failing check read like a
+// passing one; the status word is printed instead.
+func doctorStatusMarker(status string) string {
+	if Enabled() {
+		switch status {
+		case doctorCheckOK:
+			return glyphOK()
+		case doctorCheckFail:
+			return glyphFail()
+		case doctorCheckPend:
+			return "…"
+		case doctorCheckNA:
+			return "·"
+		}
+		return "?"
+	}
+	switch status {
+	case doctorCheckOK:
+		return "[ok]     "
+	case doctorCheckFail:
+		return "[fail]   "
+	case doctorCheckPend:
+		return "[pending]"
+	case doctorCheckNA:
+		return "[n/a]    "
+	}
+	return "[?]      "
 }
 
 // glyphOK returns the OK marker glyph when output coloring is on,

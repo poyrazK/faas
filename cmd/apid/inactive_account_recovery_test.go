@@ -1,3 +1,4 @@
+// adr: 380
 package main
 
 import (
@@ -47,6 +48,7 @@ func TestInactiveAccount_CanStillPay(t *testing.T) {
 			}{
 				{"GET", "/v1/billing/portal", http.StatusOK},
 				{"GET", "/v1/billing/status", http.StatusOK},
+				{"GET", "/v1/billing/focus?month=2026-09", http.StatusOK},
 				{"GET", "/v1/account", http.StatusOK},
 				{"GET", "/v1/account/export", http.StatusOK},
 				{"GET", "/v1/usage", http.StatusOK},

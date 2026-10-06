@@ -73,7 +73,9 @@ type doctorImage struct {
 	WorkingDir      string                      `json:"working_dir,omitempty"`
 	StopSignal      string                      `json:"stop_signal,omitempty"`
 	Healthcheck     *api.AppManifestHealthcheck `json:"healthcheck,omitempty"`
+	ServingPort     int                         `json:"serving_port,omitempty"`
 	ExposedPorts    []string                    `json:"exposed_ports,omitempty"`
+	VolumePaths     []string                    `json:"volume_paths,omitempty"`
 }
 
 func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspector, strict, asJSON bool) int {
@@ -119,10 +121,11 @@ func runDoctorImageChecks(ctx context.Context, ref string, auth *oci.BasicAuth, 
 	rep.Checks = append(rep.Checks, doctorCheck{Name: "registry-metadata", Status: "ok"})
 	rep.Checks = append(rep.Checks, doctorImagePlatformCheck(result.Config))
 	rep.Checks = append(rep.Checks, doctorImageContractCheck(result.Config))
+	rep.Checks = append(rep.Checks, doctorImageListenerCheck(result.Config))
 	rep.Checks = append(rep.Checks, doctorImageHealthcheck(result.Config.Healthcheck))
 	rep.Checks = append(rep.Checks, doctorImageStopSignal(result.Config.StopSignal))
 	if len(result.Config.Volumes) > 0 {
-		rep.Checks = append(rep.Checks, doctorCheck{Name: "volumes", Status: "warn", Hint: "Image VOLUME declarations do not provision persistent storage.", Fix: "Keep durable state in an external data store."})
+		rep.Checks = append(rep.Checks, doctorCheck{Name: "volumes", Status: "warn", Hint: "Image VOLUME declarations do not provision persistent storage. Snapshots are a startup cache; filesystem contents are not guaranteed across instances, cold fallback, redeployment or node failure.", Fix: "Keep durable state in object storage or an external database; use local paths only for disposable data."})
 	}
 	for _, name := range []string{"startup-and-port", "filesystem-and-user", "plan-and-deployment-policy"} {
 		rep.Checks = append(rep.Checks, doctorCheck{Name: name, Status: "skipped", Reason: "Metadata inspection cannot verify running processes, layer contents, or account/deployment settings. Deployment validation remains authoritative."})
@@ -154,16 +157,47 @@ func doctorImagePlatformCheck(cfg oci.ImageConfig) doctorCheck {
 }
 
 func doctorImageContractCheck(cfg oci.ImageConfig) doctorCheck {
-	_, err := oci.ManifestFromConfig(oci.Config{Entrypoint: cfg.Entrypoint, Cmd: cfg.Cmd, WorkingDir: cfg.WorkingDir, User: cfg.User, Healthcheck: cfg.Healthcheck, StopSignal: cfg.StopSignal, StopGracePeriodS: cfg.StopGracePeriodS})
+	_, err := oci.ManifestFromConfig(oci.Config{Entrypoint: cfg.Entrypoint, Cmd: cfg.Cmd, WorkingDir: cfg.WorkingDir, User: cfg.User, ExposedPorts: cfg.ExposedPorts, Healthcheck: cfg.Healthcheck, StopSignal: cfg.StopSignal, StopGracePeriodS: cfg.StopGracePeriodS})
 	if err != nil {
-		return doctorCheck{Name: "runtime-contract", Status: "error", Code: api.CodeImageManifestInvalid, Hint: err.Error(), Fix: "Provide a valid ENTRYPOINT/CMD and lifecycle metadata. This check evaluates the image before deployment overrides."}
+		return doctorCheck{Name: "runtime-contract", Status: "error", Code: api.CodeImageManifestInvalid, Hint: err.Error(), Fix: "Provide valid ENTRYPOINT/CMD, exposed listeners, and lifecycle metadata. This check evaluates the image before deployment overrides."}
 	}
 	return doctorCheck{Name: "runtime-contract", Status: "ok"}
+}
+
+// Listener inference is metadata-only and precedes deployment overrides. Keep
+// port selection shared with imaged rather than guessing from ENV or argv.
+func doctorImageListenerCheck(cfg oci.ImageConfig) doctorCheck {
+	ports, err := oci.WorkloadPortsFromExposed(cfg.ExposedPorts)
+	if err != nil {
+		return doctorCheck{Name: "listener", Status: "error", Code: api.CodeImageManifestInvalid, Hint: err.Error(), Fix: "Reduce exposed listeners to the supported workload port limit."}
+	}
+	tcp := 0
+	for _, port := range ports {
+		if port.Protocol == api.WorkloadPortTCP {
+			tcp++
+		}
+	}
+	if tcp > 1 {
+		return doctorCheck{Name: "listener", Status: "warn", Hint: fmt.Sprintf("Multiple TCP ports are declared; the default serving port remains %d.", api.DefaultAppPort), Fix: "Set an explicit deployment port for the main HTTP listener. Additional declared TCP listeners use named routes."}
+	}
+	if tcp == 0 && len(ports) > 0 {
+		return doctorCheck{Name: "listener", Status: "warn", Hint: "Only UDP listeners are declared; declarations alone do not create public endpoints or HTTP readiness.", Fix: "Configure and enable app-owned UDP listeners on an edge with UDP ingress and source CIDRs enabled. Request or service mode still needs its main TCP listener; non-HTTP workloads should use worker or job mode."}
+	}
+	port := api.DefaultAppPort
+	if inferred, ok := oci.SingleTCPExposedPort(cfg.ExposedPorts); ok {
+		port = inferred
+	}
+	return doctorCheck{Name: "listener", Status: "ok", Hint: fmt.Sprintf("Serving port %d before deployment overrides; bind the HTTP server to 0.0.0.0. Runtime reachability is not checked.", port)}
 }
 
 func doctorImageHealthcheck(hc *oci.ImageHealthcheck) doctorCheck {
 	if hc == nil || len(hc.Test) == 0 || hc.Test[0] == "NONE" {
 		return doctorCheck{Name: "healthcheck", Status: "skipped", Reason: "No enabled image HEALTHCHECK; application readiness still needs runtime verification."}
+	}
+	if hc.ImageTiming != nil {
+		if err := hc.ImageTiming.Validate(); err != nil {
+			return doctorCheck{Name: "healthcheck", Status: "warn", Hint: err.Error(), Fix: "Use zero for runtime defaults or durations of at least one millisecond."}
+		}
 	}
 	validCommand := (hc.Test[0] == "CMD" && len(hc.Test) > 1 && hc.Test[1] != "") || (hc.Test[0] == "CMD-SHELL" && len(hc.Test) == 2 && strings.TrimSpace(hc.Test[1]) != "")
 	if !validCommand || hc.IntervalS < 0 || hc.TimeoutS < 0 || hc.StartPeriodS < 0 || hc.Retries < 0 {
@@ -188,13 +222,14 @@ func describeDoctorImage(result oci.ImageInspection) *doctorImage {
 	m := &doctorImage{Reference: result.Reference, Digest: result.Digest, OS: cfg.OS, Architecture: cfg.Architecture, Entrypoint: cfg.Entrypoint, Command: cfg.Cmd, EffectiveArgv: append(append([]string{}, cfg.Entrypoint...), cfg.Cmd...), User: cfg.User, WorkingDir: cfg.WorkingDir, StopSignal: cfg.StopSignal}
 	m.InputReference, m.SourceReference = result.InputReference, result.SourceReference
 	if hc := cfg.Healthcheck; hc != nil {
-		m.Healthcheck = &api.AppManifestHealthcheck{Test: hc.Test, IntervalS: hc.IntervalS, TimeoutS: hc.TimeoutS, Retries: hc.Retries, StartPeriodS: hc.StartPeriodS}
+		m.Healthcheck = &api.AppManifestHealthcheck{Test: hc.Test, IntervalS: hc.IntervalS, TimeoutS: hc.TimeoutS, Retries: hc.Retries, StartPeriodS: hc.StartPeriodS, ImageTiming: hc.ImageTiming}
 	}
 	if m.User == "" || m.User == "1000" {
 		m.User = api.DefaultAppUser
 	}
-	if manifest, err := oci.ManifestFromConfig(oci.Config{Entrypoint: cfg.Entrypoint, Cmd: cfg.Cmd, User: cfg.User}); err == nil {
+	if manifest, err := oci.ManifestFromConfig(oci.Config{Entrypoint: cfg.Entrypoint, Cmd: cfg.Cmd, User: cfg.User, ExposedPorts: cfg.ExposedPorts}); err == nil {
 		m.User = manifest.EffectiveUser()
+		m.ServingPort = manifest.EffectivePort()
 	}
 	if m.WorkingDir == "" {
 		m.WorkingDir = "/"
@@ -206,6 +241,10 @@ func describeDoctorImage(result oci.ImageInspection) *doctorImage {
 		m.ExposedPorts = append(m.ExposedPorts, port)
 	}
 	sort.Strings(m.ExposedPorts)
+	for path := range cfg.Volumes {
+		m.VolumePaths = append(m.VolumePaths, path)
+	}
+	sort.Strings(m.VolumePaths)
 	return m
 }
 
@@ -218,8 +257,37 @@ func renderDoctorImage(w io.Writer, img *doctorImage) {
 		_, _ = fmt.Fprintf(w, "  requested: %q\n  immutable source: %q\n", img.InputReference, img.SourceReference)
 	}
 	_, _ = fmt.Fprintf(w, "  platform: %q\n  entrypoint: %q\n  command: %q\n  effective argv: %q\n  user: %q  working directory: %q\n  stop signal: %q\n  declared ports: %q\n", img.OS+"/"+img.Architecture, img.Entrypoint, img.Command, img.EffectiveArgv, img.User, img.WorkingDir, img.StopSignal, img.ExposedPorts)
+	if img.ServingPort != 0 {
+		_, _ = fmt.Fprintf(w, "  serving port: %d (before deployment overrides)\n", img.ServingPort)
+	}
+	if len(img.VolumePaths) > 0 {
+		_, _ = fmt.Fprintf(w, "  declared volumes: %q (ephemeral; durable storage is not provisioned)\n", img.VolumePaths)
+	}
 	if img.Healthcheck != nil {
 		_, _ = fmt.Fprintf(w, "  healthcheck: %q\n", img.Healthcheck.Test)
+		hc := img.Healthcheck
+		if timing := hc.ImageTiming; timing != nil {
+			_, _ = fmt.Fprintf(w, "    interval: %s  timeout: %s  startup grace: %s  startup interval: %s  retries: %s\n",
+				doctorImageDuration(timing.IntervalNS), doctorImageDuration(timing.TimeoutNS), time.Duration(timing.StartPeriodNS), doctorImageDuration(timing.StartIntervalNS), doctorImageRetries(hc.Retries))
+		} else {
+			_, _ = fmt.Fprintf(w, "    interval: %s  timeout: %s  startup grace: %s  retries: %s\n",
+				doctorImageDuration(int64(hc.IntervalS)*int64(time.Second)), doctorImageDuration(int64(hc.TimeoutS)*int64(time.Second)), time.Duration(hc.StartPeriodS)*time.Second, doctorImageRetries(hc.Retries))
+		}
+
 	}
 	_, _ = fmt.Fprintln(w, "Metadata checks only; no layers downloaded or containers executed. Values precede deployment overrides.")
+}
+
+func doctorImageDuration(ns int64) string {
+	if ns == 0 {
+		return "runtime default"
+	}
+	return time.Duration(ns).String()
+}
+
+func doctorImageRetries(retries int) string {
+	if retries == 0 {
+		return "runtime default"
+	}
+	return fmt.Sprint(retries)
 }

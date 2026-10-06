@@ -146,6 +146,31 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 	if controlOnly != after {
 		t.Fatalf("control-only role invalidated compute contract: before=%s after=%s", after, controlOnly)
 	}
+
+	// Roles include tasks/ by role_path and read their group's committed
+	// group_vars; both used to fall outside the contract, so editing them
+	// never reconverged a compute node.
+	for _, tt := range []struct {
+		path    string
+		changes bool
+	}{
+		{path: "tasks/validate_udp_policy.yml", changes: true},
+		{path: "group_vars/compute_nodes/log_archive.yml", changes: true},
+		{path: "group_vars/control_plane/off_host_backup.yml", changes: false},
+	} {
+		prior, err := joinBootstrapContractHash(ansibleDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeContractTree(t, ansibleDir, map[string]string{tt.path: "# " + tt.path + "\n"})
+		next, err := joinBootstrapContractHash(ansibleDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed := next != prior; changed != tt.changes {
+			t.Fatalf("adding %s changed the compute contract=%v, want %v", tt.path, changed, tt.changes)
+		}
+	}
 }
 
 func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {
@@ -268,6 +293,43 @@ func TestNodeJoinRemovesEmergencyGatewayReleaseOverrideBeforeRestart(t *testing.
 	block := playbook[remove:restart]
 	if !strings.Contains(block, "/etc/systemd/system/faas-gatewayd-internal.service.d/zz-emergency-release.conf") {
 		t.Fatal("node_join emergency override cleanup targets the wrong path")
+	}
+}
+
+// An audit hotfix pins a compute daemon to a binary outside the release with
+// a 98-audit-*-hotfix.conf ExecStart override. A rollout must retire it before
+// the restart, or the daemon keeps running the hotfix build.
+func TestNodeJoinRetiresAuditHotfixOverridesBeforeRestart(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	find := strings.Index(playbook, "Find audit hotfix ExecStart overrides before service activation")
+	retire := strings.Index(playbook, "Retire audit hotfix ExecStart overrides before service activation")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	if find < 0 || retire < 0 || restart < 0 || find >= retire || retire >= restart {
+		t.Fatal("node_join must find and retire audit hotfix overrides before restarting the compute services")
+	}
+	block := playbook[find:restart]
+	for _, token := range []string{
+		`patterns: "*-audit-*-hotfix.conf"`,
+		"/etc/systemd/system/faas-gatewayd-internal.service.d",
+		"faas_join_audit_hotfix_overrides.files",
+		"state: absent",
+	} {
+		if !strings.Contains(block, token) {
+			t.Errorf("audit hotfix retirement missing %q", token)
+		}
+	}
+	// The pattern must match the drop-in the hotfix tool writes.
+	hotfix, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ops", "request_evidence_hotfix_host.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := filepath.Match("*-audit-*-hotfix.conf", "98-audit-request-evidence-hotfix.conf"); !ok ||
+		!strings.Contains(string(hotfix), "98-audit-request-evidence-hotfix.conf") {
+		t.Fatal("the retirement pattern no longer matches the drop-in written by request_evidence_hotfix_host.py")
 	}
 }
 

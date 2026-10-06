@@ -18,6 +18,13 @@ func TestCmdLogsDocumentedArgumentOrder(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			called := false
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/deployments/dep-1" {
+					// logs --deployment checks whether the deployment ever
+					// served before choosing runtime or build logs.
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprint(w, `{"id":"dep-1","status":"live"}`)
+					return
+				}
 				called = true
 				if r.URL.Path != "/v1/apps/myapp/logs" {
 					t.Errorf("path = %s", r.URL.Path)
@@ -201,5 +208,23 @@ func TestCmdLogsDegradedJSONIsRFC7807(t *testing.T) {
 	}
 	if problem["code"] != "app_logs_unavailable" || problem["status"] != float64(http.StatusServiceUnavailable) {
 		t.Fatalf("problem = %#v", problem)
+	}
+}
+
+// Human `gregale logs` printed each event's JSON envelope verbatim, identical
+// to --json and with the guest's trailing carriage return.
+func TestFormatRuntimeLogLineRendersEnvelopeForHumans(t *testing.T) {
+	got := formatRuntimeLogLine(`{"deployment_id":"d","instance":"c3b6eba8-ef86-4c6d-99a4-45b786e807e9","line":"GET /healthz 200\r","seq":1,"stream":"stdout","written_at":"2026-09-30T20:02:14.841676819Z"}`)
+	want := "2026-09-30T20:02:14.841Z c3b6eba8 stdout GET /healthz 200"
+	if got != want {
+		t.Fatalf("formatRuntimeLogLine() = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "\r") {
+		t.Fatalf("formatted line kept a carriage return: %q", got)
+	}
+	for _, raw := range []string{"plain text line", `{"unexpected":true}`} {
+		if got := formatRuntimeLogLine(raw); got != raw {
+			t.Fatalf("formatRuntimeLogLine(%q) = %q, want it unchanged", raw, got)
+		}
 	}
 }

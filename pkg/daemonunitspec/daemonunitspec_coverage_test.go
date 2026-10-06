@@ -424,12 +424,12 @@ func TestUnitS3Gateway_OptionalShape(t *testing.T) {
 }
 
 func TestOptionalRegistry_ExplicitlyConfiguredDataPlanes(t *testing.T) {
-	if len(OptionalRegistry) != 2 || OptionalRegistry[0].Name != "s3-gatewayd" || OptionalRegistry[1].Name != "bridged" {
-		t.Fatalf("optional registry = %+v, want [s3-gatewayd, bridged]", OptionalRegistry)
+	if len(OptionalRegistry) != 3 || OptionalRegistry[0].Name != "s3-gatewayd" || OptionalRegistry[1].Name != "bridged" || OptionalRegistry[2].Name != "apid-clone-worker" {
+		t.Fatalf("optional registry = %+v, want [s3-gatewayd, bridged, apid-clone-worker]", OptionalRegistry)
 	}
 	for _, core := range Registry {
-		if core.Name == "s3-gatewayd" || core.Name == "bridged" {
-			t.Fatal("optional data planes must stay out of the always-on registry")
+		if core.Name == "s3-gatewayd" || core.Name == "bridged" || core.Name == "apid-clone-worker" {
+			t.Fatal("optional workers and data planes must stay out of the always-on registry")
 		}
 	}
 }

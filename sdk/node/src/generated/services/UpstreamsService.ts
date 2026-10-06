@@ -40,7 +40,7 @@ export class UpstreamsService {
     /**
      * ADR-098 amendment (issue #954). Optional server-side filter
      * that narrows the list to one deployment. Omitted = return
-     * all deployments for the app. Same shape as `scope` (3..40
+     * all deployments for the app. Same shape as `scope` (1..40
      * chars, lowercase alnum + dash); empty string is treated as
      * "no filter".
      *
@@ -97,7 +97,7 @@ export class UpstreamsService {
     /**
      * ADR-098 amendment (issue #954). Optional server-side filter
      * that narrows the list to one deployment. Omitted = return
-     * all deployments for the app. Same shape as `scope` (3..40
+     * all deployments for the app. Same shape as `scope` (1..40
      * chars, lowercase alnum + dash); empty string is treated as
      * "no filter".
      *

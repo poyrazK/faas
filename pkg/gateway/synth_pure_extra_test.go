@@ -10,6 +10,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -507,6 +508,56 @@ func TestHandleInvocationDispatchBatch_DispatchesBatch(t *testing.T) {
 		if res.Status != "succeeded" {
 			t.Errorf("status = %q, want succeeded", res.Status)
 		}
+	}
+}
+
+func TestHandleInvocationDispatchBatch_DurableIdentity(t *testing.T) {
+	id := "33333333-3333-3333-3333-333333333333"
+	for _, tc := range []struct {
+		name, source string
+		record       batchDispatchRecord
+		wantID       string
+		wantAttempt  int
+	}{
+		{"durable", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 2}, id, 2},
+		{"replayed", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 2, InvocationReplayGeneration: 3}, id, 2},
+		{"negative generation", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 2, InvocationReplayGeneration: -1}, "", 0},
+		{"generation without identity", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationReplayGeneration: 3}, "", 0},
+		{"broker metadata", "esm", batchDispatchRecord{ItemIdentifier: "broker", Metadata: map[string]any{
+			"invocation_id": id, "invocation_attempt": 2}, Headers: map[string]string{"invocation_id": id}}, "trigger-broker", 0},
+		{"missing attempt", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationID: id}, "", 0},
+		{"missing id", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationAttempt: 2}, "", 0},
+		{"invalid id", "esm", batchDispatchRecord{ItemIdentifier: "invalid", InvocationID: "invalid", InvocationAttempt: 2}, "", 0},
+		{"different item", "esm", batchDispatchRecord{ItemIdentifier: "broker", InvocationID: id, InvocationAttempt: 2}, "", 0},
+		{"wrong source", "cron", batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 2}, "", 0},
+		{"negative attempt", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: -1}, "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, dispatcher := newSynthServer(t)
+			body, err := json.Marshal(batchDispatchRequest{InvocationID: "trigger", AppID: "app", Source: tc.source,
+				TriggerID: "test", Records: []batchDispatchRecord{tc.record}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			srv.handleInvocationDispatchBatch(w, httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch_batch", bytes.NewReader(body)))
+			var response batchDispatchResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != http.StatusOK || len(response.Results) != 1 {
+				t.Fatalf("batch response: status=%d err=%v", w.Code, err)
+			}
+			if tc.wantID == "" {
+				if len(dispatcher.invs) != 0 || response.Results[0].Code != "invocation_identity_invalid" || response.Results[0].Status != "dead_letter" {
+					t.Fatalf("invalid carrier delivered: calls=%d result=%+v", len(dispatcher.invs), response.Results[0])
+				}
+				return
+			}
+			if len(dispatcher.invs) != 1 || dispatcher.invs[0].ID != tc.wantID || dispatcher.invs[0].Attempts != tc.wantAttempt || dispatcher.invs[0].ReplayGeneration != tc.record.InvocationReplayGeneration {
+				t.Fatalf("identity carrier did not survive dispatch: calls=%d", len(dispatcher.invs))
+			}
+			if dispatcher.invs[0].Path != "/_triggers/"+tc.source+"/test" || response.Results[0].Status != "succeeded" {
+				t.Fatal("trigger request contract changed")
+			}
+		})
 	}
 }
 

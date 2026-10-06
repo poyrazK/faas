@@ -126,10 +126,9 @@ type CacheKey struct {
 //	VaryHash | AppID | ':' | DeploymentID | ':' | RuleID |
 //	':' | Method | ':' | NormalizedPath | ':' | Query
 func (k CacheKey) String() string {
-	// Pre-size: 32 (varyhash) + len(fields) + 5 separators.
-	n := 32 + len(k.AppID) + len(k.DeploymentID) + len(k.RuleID) +
-		len(k.Method) + len(k.NormalizedPath) + len(k.Query) + 5
-	b := make([]byte, 0, n)
+	// Append grows the buffer with checked allocation arithmetic, without
+	// summing caller-sized fields into a potentially overflowing capacity.
+	b := make([]byte, 0, len(k.VaryHash))
 	b = append(b, k.VaryHash[:]...)
 	b = append(b, k.AppID...)
 	b = append(b, ':')

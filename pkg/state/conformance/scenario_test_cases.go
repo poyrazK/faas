@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -46,6 +47,24 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 	if got, err := s.ScenarioTestAppByWorkload(ctx, accountID, runID, "worker"); err != nil || got.ID != app.ID {
 		t.Fatalf("ScenarioTestAppByWorkload = (%+v, %v)", got, err)
 	}
+	plan := chaos.Plan{DurationMS: 10_000, Rules: []chaos.Rule{{
+		To: "worker", Kind: chaos.KindHTTPStatus, Percent: 100, StatusCode: 503, Seed: 9,
+	}}}
+	if _, err := s.SetScenarioTestChaosPlan(ctx, accountID, runID, plan); err != nil {
+		t.Fatalf("SetScenarioTestChaosPlan: %v", err)
+	}
+	if _, err := s.SetScenarioTestChaosPlan(ctx, accountID, runID, chaos.Plan{DurationMS: 10_000, Rules: []chaos.Rule{{
+		To: "production", Kind: chaos.KindHTTPStatus, Percent: 100, StatusCode: 503,
+	}}}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("install plan for unregistered workload = %v, want ErrConflict", err)
+	}
+	lease, err := s.ScenarioTestChaosForCall(ctx, runID, app.ID, "worker")
+	if err != nil || lease.CallerWorkload != "worker" || len(lease.Rules) != 1 || lease.Rules[0].StatusCode != 503 {
+		t.Fatalf("ScenarioTestChaosForCall = (%+v, %v)", lease, err)
+	}
+	if lease, err := s.ScenarioTestChaosForCall(ctx, strings.Repeat("b", 32), app.ID, "worker"); err != nil || len(lease.Rules) != 0 {
+		t.Fatalf("cross-run chaos lookup = (%+v, %v), want empty", lease, err)
+	}
 	for _, scope := range [][2]string{{uuid.NewString(), runID}, {accountID, strings.Repeat("b", 32)}} {
 		if _, err := s.ScenarioTestAppByWorkload(ctx, scope[0], scope[1], "worker"); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("cross-scope lookup %v = %v, want ErrNotFound", scope, err)
@@ -71,6 +90,9 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 	}
 	if _, err := s.ScenarioTestMemberByApp(ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("lookup pruned member = %v, want ErrNotFound", err)
+	}
+	if lease, err := s.ScenarioTestChaosForCall(ctx, runID, app.ID, "worker"); err != nil || len(lease.Rules) != 0 {
+		t.Fatalf("lookup pruned chaos plan = (%+v, %v), want empty", lease, err)
 	}
 
 	second := newPreview()

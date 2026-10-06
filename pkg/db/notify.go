@@ -30,8 +30,8 @@ type Notification struct {
 	Channel string
 	Payload string
 	// OutboxID is non-zero when this delivery came from the durable handoff
-	// queue. Consumers acknowledge it after handing the payload to their
-	// idempotent handler; legacy/direct notifications leave it zero.
+	// queue. Renewable consumers claim the row before handling it and complete
+	// their claim afterward; legacy/direct notifications leave it zero.
 	OutboxID int64
 }
 
@@ -455,6 +455,12 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 	return Notify(ctx, p.Pool, channel, payload)
 }
 
+// RuntimeConfigRestartStatus returns the durable status projection used by
+// the customer-facing restart-status endpoint.
+func (p PoolNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (RuntimeConfigRestartStatus, error) {
+	return GetRuntimeConfigRestartStatus(ctx, p.Pool, appID, wakeID)
+}
+
 // NotifyChannels are the pg_notify channel names used across the platform.
 // Keep this list aligned with the LISTEN calls in cmd/schedd, cmd/imaged,
 // cmd/apid (verifier goroutine), and the producer side of every Store
@@ -666,6 +672,13 @@ const (
 	// fabric teardown can converge after the network row is gone.
 	NotifyPrivateNetworkChanged = "private_network_changed"
 	NotifyDeploymentChanged     = "deployment_changed"
+	// NotifyEnvironmentWorkloadImage is a durable apid-to-imaged handoff
+	// for a held GitOps candidate. The deployment row carries its authority;
+	// receiving this event never authorizes priming or live activation.
+	NotifyEnvironmentWorkloadImage = "environment_workload_image"
+	// Qualification work names a prepared graph; it carries no execution
+	// token and cannot be replayed as an ordinary deployment prime.
+	NotifyEnvironmentWorkloadQualify = "environment_workload_qualify"
 	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge
 	// from imaged to every public gateway. It is deliberately separate from
 	// deployment_changed: account SSE subscribers must never receive the token.

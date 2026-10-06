@@ -41,7 +41,9 @@ func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
 						if targetErr != nil {
 							return gateway.ServiceTarget{}, false, fmt.Errorf("resolve test service %q: %w", service, targetErr)
 						}
-						return serviceTargetFromApp(target, true), target.ID != "", nil
+						resolved := serviceTargetFromApp(target, true)
+						resolved.ScenarioTestRunID = member.RunID
+						return resolved, target.ID != "", nil
 					}
 					if !errors.Is(lookupErr, state.ErrNotFound) {
 						return gateway.ServiceTarget{}, false, fmt.Errorf("resolve test caller: %w", lookupErr)

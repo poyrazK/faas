@@ -4,9 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/oci"
 )
 
 // layerEntries lists the tar entries of a gzip layer blob by name -> mode.
@@ -103,3 +107,84 @@ func TestImageVariants_RunHelloServer(t *testing.T) {
 }
 
 func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
+
+func TestHelloImageProcessContractResolves(t *testing.T) {
+	registry := NewFakeRegistry()
+	t.Cleanup(registry.Close)
+	img, _ := HelloImageWithProcessContract("library/process-contract", "hello", "1001:1001")
+	ref := registry.AddImage("library/process-contract", img)
+	client := oci.NewRegistryClient(oci.WithEndpoint("http", registry.Host()))
+	resolved, err := client.ResolveImage(context.Background(), ref, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := resolved.Config
+	if cfg.User != "1001:1001" || cfg.WorkingDir != "/app" || cfg.Env["FIXTURE_MARKER"] != "container-contract" {
+		t.Fatalf("incorrect fixture process config: %+v", cfg)
+	}
+	if len(cfg.Entrypoint) != 1 || cfg.Entrypoint[0] != "/hello-server" || len(cfg.Cmd) != 1 || cfg.Cmd[0] != "-contract" {
+		t.Fatalf("incorrect fixture command: entrypoint=%v cmd=%v", cfg.Entrypoint, cfg.Cmd)
+	}
+	if resolved.Digest != img.manifestDigest {
+		t.Fatal("fixture digest chain changed")
+	}
+}
+
+func TestPortableHelloImageRetainsBodyAndForeignBase(t *testing.T) {
+	img, _ := HelloImageWithoutHealthz("library/portable", "portable-body")
+	var cfg struct {
+		RootFS struct {
+			DiffIDs []string `json:"diff_ids"`
+		} `json:"rootfs"`
+	}
+	if err := json.Unmarshal(img.configBytes, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := oci.LayersAboveBase([]string{helloLayerDiffID}, cfg.RootFS.DiffIDs); !errors.Is(err, oci.ErrLayersNotAboveBase) {
+		t.Fatalf("portable fixture does not force full-rootfs: %v", err)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(img.layerBlobs[0].bytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	tr := tar.NewReader(zr)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			t.Fatal("fixture body missing")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name == "app/hello.txt" {
+			body, err := io.ReadAll(tr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != "portable-body" {
+				t.Fatalf("fixture body=%q", body)
+			}
+			return
+		}
+	}
+}
+
+func TestHelloImageProcessHealthcheckResolves(t *testing.T) {
+	registry := NewFakeRegistry()
+	t.Cleanup(registry.Close)
+	image, _ := HelloImageWithProcessHealthcheck("library/process-health", "hello", "1001:2001")
+	ref := registry.AddImage("library/process-health", image)
+	client := oci.NewRegistryClient(oci.WithEndpoint("http", registry.Host()))
+	resolved, err := client.ResolveImage(context.Background(), ref, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := resolved.Config.Healthcheck
+	if check == nil || len(check.Test) != 3 || check.Test[0] != "CMD" || check.Test[1] != "/hello-server" || check.Test[2] != "-probe-contract" || check.IntervalS != 1 || check.TimeoutS != 3 || check.Retries != 3 {
+		t.Fatalf("incorrect image exec-probe contract: %+v", check)
+	}
+	if resolved.Config.User != "1001:2001" || resolved.Digest != image.manifestDigest {
+		t.Fatalf("identity or digest changed: %+v", resolved)
+	}
+}

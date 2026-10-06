@@ -1,0 +1,26 @@
+[
+  {
+    "seed": "stable",
+    "key": "export",
+    "customer": "00000000-0000-0000-0000-000000000001",
+    "subject": "user-17",
+    "bucket": 5974,
+    "variant_bucket": 7401
+  },
+  {
+    "seed": "stable",
+    "key": "checkout",
+    "customer": "00000000-0000-0000-0000-000000000001",
+    "subject": "user-18",
+    "bucket": 1486,
+    "variant_bucket": 1398
+  },
+  {
+    "seed": "seed",
+    "key": "checkout",
+    "customer": "customer-a",
+    "subject": "subject|42",
+    "bucket": 2560,
+    "variant_bucket": 955
+  }
+]

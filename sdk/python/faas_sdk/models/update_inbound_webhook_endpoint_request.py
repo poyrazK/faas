@@ -13,9 +13,13 @@ T = TypeVar("T", bound="UpdateInboundWebhookEndpointRequest")
 
 @_attrs_define
 class UpdateInboundWebhookEndpointRequest:
-    """Omitted fields remain unchanged. A signing_secret value rotates the provider secret in place."""
+    """Omitted fields remain unchanged. A signing_secret value rotates the provider secret in place; generic secrets must
+    contain at least 32 bytes.
+
+    """
 
     signing_secret: str | Unset = UNSET
+    """Generic provider secrets must contain at least 32 bytes."""
     delivery_path: str | Unset = UNSET
     enabled: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

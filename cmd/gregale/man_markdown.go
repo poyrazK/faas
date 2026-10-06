@@ -49,13 +49,8 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 		}
 		for _, s := range c.Subcommands {
 			_, _ = fmt.Fprintf(w, "### %s %s\n\n%s\n\n", c.Name, s.Name, mdText(s.Short))
-			if len(s.Positionals) > 0 {
-				parts := []string{"gregale", c.Name, s.Name}
-				parts = append(parts, s.Positionals...)
-				for _, f := range s.Flags {
-					parts = append(parts, mdFlagSyntax(f))
-				}
-				_, _ = fmt.Fprintf(w, "`%s`\n\n", strings.Join(parts, " "))
+			if len(s.Positionals) > 0 || len(s.Flags) > 0 || c.SubcommandsAfterPositionals {
+				_, _ = fmt.Fprintf(w, "`%s`\n\n", mdSubSynopsis(c, []string{s.Name}, s.Positionals, s.Flags))
 			}
 			if len(s.Flags) > 0 {
 				mdFlagTable(w, s.Flags)
@@ -64,22 +59,35 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 				writeMarkdownExamples(w, s.Examples)
 			}
 			for _, child := range s.Subcommands {
-				_, _ = fmt.Fprintf(w, "#### %s %s %s\n\n%s\n\n", c.Name, s.Name, child.Name, mdText(child.Short))
-				parts := []string{"gregale", c.Name, s.Name, child.Name}
-				parts = append(parts, child.Positionals...)
-				for _, f := range child.Flags {
-					parts = append(parts, mdFlagSyntax(f))
-				}
-				_, _ = fmt.Fprintf(w, "`%s`\n\n", strings.Join(parts, " "))
-				if len(child.Flags) > 0 {
-					mdFlagTable(w, child.Flags)
-				}
-				if len(child.Examples) > 0 {
-					writeMarkdownExamples(w, child.Examples)
-				}
+				renderMarkdownSubtree(w, c, []string{s.Name}, child, 4)
 			}
 		}
 	}
+}
+
+func renderMarkdownSubtree(w io.Writer, command cliCommand, ancestors []string, child cliSub, depth int) {
+	names := append(append([]string(nil), ancestors...), child.Name)
+	_, _ = fmt.Fprintf(w, "%s %s %s\n\n%s\n\n", strings.Repeat("#", min(depth, 6)), command.Name, strings.Join(names, " "), mdText(child.Short))
+	_, _ = fmt.Fprintf(w, "`%s`\n\n", mdSubSynopsis(command, names, child.Positionals, child.Flags))
+	if len(child.Flags) > 0 {
+		mdFlagTable(w, child.Flags)
+	}
+	if len(child.Examples) > 0 {
+		writeMarkdownExamples(w, child.Examples)
+	}
+	for _, next := range child.Subcommands {
+		renderMarkdownSubtree(w, command, names, next, depth+1)
+	}
+}
+
+func mdSubSynopsis(command cliCommand, names, positionals []string, flags []cliFlag) string {
+	parts := []string{localHelpCommandPath(command)}
+	parts = append(parts, names...)
+	for _, flag := range flags {
+		parts = append(parts, mdFlagSyntax(flag))
+	}
+	parts = append(parts, positionals...)
+	return strings.Join(parts, " ")
 }
 
 func writeMarkdownExamples(w io.Writer, examples []string) {
@@ -158,6 +166,9 @@ func mdFlagLabel(f cliFlag) string {
 }
 
 func mdFlagValue(f cliFlag) string {
+	if f.Bool {
+		return ""
+	}
 	if f.Value != "" {
 		return f.Value
 	}

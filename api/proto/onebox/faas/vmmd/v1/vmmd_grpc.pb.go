@@ -22,49 +22,54 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Vmmd_CreateFromSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
-	Vmmd_CreateColdBoot_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
-	Vmmd_JobColdBoot_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
-	Vmmd_ExecuteExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
-	Vmmd_ExecuteExecutionStream_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
-	Vmmd_RestoreExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
-	Vmmd_RestoreAppTask_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
-	Vmmd_ExecuteAppTask_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
-	Vmmd_ExecuteAppTaskStream_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
-	Vmmd_WaitJobExit_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
-	Vmmd_PauseAndSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
-	Vmmd_WarmSnapshot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
-	Vmmd_ResumeWarmInstance_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/ResumeWarmInstance"
-	Vmmd_WaitBuilderReady_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
-	Vmmd_DeleteWarmSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
-	Vmmd_FrameworkReady_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
-	Vmmd_Destroy_FullMethodName                       = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
-	Vmmd_StopInstance_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
-	Vmmd_Stats_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/Stats"
-	Vmmd_Ping_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/Ping"
-	Vmmd_Heartbeat_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
-	Vmmd_UpdateEgressAllowlist_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
-	Vmmd_AllowResolvedEgress_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/AllowResolvedEgress"
-	Vmmd_UpdateAppCPULimit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppCPULimit"
-	Vmmd_UpdateStaticEgressIP_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
-	Vmmd_UpdateEgressCircuit_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
-	Vmmd_UpdatePrivateNetwork_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
-	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
-	Vmmd_RemovePrivateNetworkFabric_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/RemovePrivateNetworkFabric"
-	Vmmd_SeccompStatus_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
-	Vmmd_Logs_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/Logs"
-	Vmmd_ForwardHTTPStream_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
-	Vmmd_ForwardRawStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardRawStream"
-	Vmmd_ForwardTCPStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardTCPStream"
-	Vmmd_MountParentExt4ReadOnly_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
-	Vmmd_MaterializeParentExt4_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
-	Vmmd_UmountParentExt4_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
-	Vmmd_MountOverlayParent_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/MountOverlayParent"
-	Vmmd_UmountOverlayParent_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UmountOverlayParent"
-	Vmmd_PrepareLiveMigration_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/PrepareLiveMigration"
-	Vmmd_AdoptMigratedInstance_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
-	Vmmd_AcknowledgeMigration_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
-	Vmmd_CancelLiveMigration_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
+	Vmmd_CreateFromSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
+	Vmmd_CreateColdBoot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
+	Vmmd_CreateEnvironmentQualification_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/CreateEnvironmentQualification"
+	Vmmd_RetireEnvironmentQualification_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/RetireEnvironmentQualification"
+	Vmmd_CaptureEnvironmentQualification_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/CaptureEnvironmentQualification"
+	Vmmd_JobColdBoot_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
+	Vmmd_ExecuteExecution_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
+	Vmmd_ExecuteExecutionStream_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
+	Vmmd_ExecuteExecutionBrokerStream_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionBrokerStream"
+	Vmmd_RestoreExecution_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
+	Vmmd_RestoreAppTask_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
+	Vmmd_ExecuteAppTask_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
+	Vmmd_ExecuteAppTaskStream_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
+	Vmmd_WaitJobExit_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
+	Vmmd_PauseAndSnapshot_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
+	Vmmd_WarmSnapshot_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
+	Vmmd_ResumeWarmInstance_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ResumeWarmInstance"
+	Vmmd_WaitBuilderReady_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
+	Vmmd_DeleteWarmSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
+	Vmmd_FrameworkReady_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
+	Vmmd_Destroy_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
+	Vmmd_StopInstance_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
+	Vmmd_Stats_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/Stats"
+	Vmmd_Ping_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/Ping"
+	Vmmd_Heartbeat_FullMethodName                       = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
+	Vmmd_UpdateEgressAllowlist_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
+	Vmmd_AllowResolvedEgress_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/AllowResolvedEgress"
+	Vmmd_UpdateAppCPULimit_FullMethodName               = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppCPULimit"
+	Vmmd_UpdateStaticEgressIP_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
+	Vmmd_UpdateEgressCircuit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
+	Vmmd_UpdatePrivateNetwork_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
+	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
+	Vmmd_RemovePrivateNetworkFabric_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/RemovePrivateNetworkFabric"
+	Vmmd_SeccompStatus_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
+	Vmmd_Logs_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/Logs"
+	Vmmd_ForwardHTTPStream_FullMethodName               = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
+	Vmmd_ForwardRawStream_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ForwardRawStream"
+	Vmmd_ForwardTCPStream_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ForwardTCPStream"
+	Vmmd_ForwardUDPStream_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ForwardUDPStream"
+	Vmmd_MountParentExt4ReadOnly_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
+	Vmmd_MaterializeParentExt4_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
+	Vmmd_UmountParentExt4_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
+	Vmmd_MountOverlayParent_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/MountOverlayParent"
+	Vmmd_UmountOverlayParent_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/UmountOverlayParent"
+	Vmmd_PrepareLiveMigration_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/PrepareLiveMigration"
+	Vmmd_AdoptMigratedInstance_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
+	Vmmd_AcknowledgeMigration_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
+	Vmmd_CancelLiveMigration_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -82,6 +87,14 @@ type VmmdClient interface {
 	// CreateColdBoot primes an instance with no snapshot — the deploy-pipeline
 	// first-boot path (M2). Equivalent to Wake with Snapshot == nil.
 	CreateColdBoot(ctx context.Context, in *CreateColdBootRequest, opts ...grpc.CallOption) (*WakeResponse, error)
+	// ADR-568: these methods carry one immutable private qualification attempt.
+	// Generic boot/destroy never substitutes for either operation. Host journal
+	// ownership must be configured before creation or retirement is available.
+	CreateEnvironmentQualification(ctx context.Context, in *CreateEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CreateEnvironmentQualificationResponse, error)
+	RetireEnvironmentQualification(ctx context.Context, in *RetireEnvironmentQualificationRequest, opts ...grpc.CallOption) (*RetireEnvironmentQualificationResponse, error)
+	// Captures the original VM in a vmmd-chosen immutable namespace. This
+	// acknowledges capture only, never smoke/restore or graph qualification.
+	CaptureEnvironmentQualification(ctx context.Context, in *CaptureEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CaptureEnvironmentQualificationResponse, error)
 	// JobColdBoot starts a non-listening job-task VM. Jobs own their image,
 	// command, environment, and timeout, so they use a dedicated flat wire
 	// shape instead of AppSpec and never enter the snapshot/readiness path.
@@ -95,6 +108,12 @@ type VmmdClient interface {
 	// It carries bounded stdout/stderr chunks as they arrive, followed by one
 	// terminal response. The unary RPC remains available for older schedulers.
 	ExecuteExecutionStream(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteExecutionEvent], error)
+	// ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
+	// the one-shot execution exchange. The first client frame must be start;
+	// subsequent client frames carry responses to host-authorized outbound
+	// calls. Signed identity assertions are emitted only to schedd, never to the
+	// guest.
+	ExecuteExecutionBrokerStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent], error)
 	// RestoreExecution creates a fresh, networkless disposable execution VM.
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
@@ -362,6 +381,10 @@ type VmmdClient interface {
 	// first frame addresses a live instance and guest listener; the client
 	// half-closes the gRPC stream to half-close the guest socket.
 	ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error)
+	// ForwardUDPStream carries one datagram per frame for an admitted peer.
+	// The edge validates declared listener ownership before opening the RPC.
+	// Closing the stream ends the peer session; UDP has no half-close.
+	ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error)
 	// MountParentExt4ReadOnly (ADR-053) is the staging-only path that
 	// lets imaged compose the per-runtime base ext4 from a shared
 	// debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -513,6 +536,36 @@ func (c *vmmdClient) CreateColdBoot(ctx context.Context, in *CreateColdBootReque
 	return out, nil
 }
 
+func (c *vmmdClient) CreateEnvironmentQualification(ctx context.Context, in *CreateEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CreateEnvironmentQualificationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateEnvironmentQualificationResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CreateEnvironmentQualification_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) RetireEnvironmentQualification(ctx context.Context, in *RetireEnvironmentQualificationRequest, opts ...grpc.CallOption) (*RetireEnvironmentQualificationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireEnvironmentQualificationResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RetireEnvironmentQualification_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) CaptureEnvironmentQualification(ctx context.Context, in *CaptureEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CaptureEnvironmentQualificationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureEnvironmentQualificationResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CaptureEnvironmentQualification_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) JobColdBoot(ctx context.Context, in *JobColdBootRequest, opts ...grpc.CallOption) (*JobColdBootResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JobColdBootResponse)
@@ -552,6 +605,19 @@ func (c *vmmdClient) ExecuteExecutionStream(ctx context.Context, in *ExecuteExec
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteExecutionStreamClient = grpc.ServerStreamingClient[ExecuteExecutionEvent]
 
+func (c *vmmdClient) ExecuteExecutionBrokerStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_ExecuteExecutionBrokerStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteExecutionBrokerStreamClient = grpc.BidiStreamingClient[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]
+
 func (c *vmmdClient) RestoreExecution(ctx context.Context, in *RestoreExecutionRequest, opts ...grpc.CallOption) (*RestoreExecutionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RestoreExecutionResponse)
@@ -584,7 +650,7 @@ func (c *vmmdClient) ExecuteAppTask(ctx context.Context, in *ExecuteAppTaskReque
 
 func (c *vmmdClient) ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -813,7 +879,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -832,7 +898,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -845,7 +911,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -858,7 +924,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -868,6 +934,19 @@ func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOpti
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse]
+
+func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ForwardUDPRequest, ForwardUDPResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ForwardUDPStreamClient = grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse]
 
 func (c *vmmdClient) MountParentExt4ReadOnly(ctx context.Context, in *MountParentExt4ReadOnlyRequest, opts ...grpc.CallOption) (*MountParentExt4ReadOnlyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -974,6 +1053,14 @@ type VmmdServer interface {
 	// CreateColdBoot primes an instance with no snapshot — the deploy-pipeline
 	// first-boot path (M2). Equivalent to Wake with Snapshot == nil.
 	CreateColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error)
+	// ADR-568: these methods carry one immutable private qualification attempt.
+	// Generic boot/destroy never substitutes for either operation. Host journal
+	// ownership must be configured before creation or retirement is available.
+	CreateEnvironmentQualification(context.Context, *CreateEnvironmentQualificationRequest) (*CreateEnvironmentQualificationResponse, error)
+	RetireEnvironmentQualification(context.Context, *RetireEnvironmentQualificationRequest) (*RetireEnvironmentQualificationResponse, error)
+	// Captures the original VM in a vmmd-chosen immutable namespace. This
+	// acknowledges capture only, never smoke/restore or graph qualification.
+	CaptureEnvironmentQualification(context.Context, *CaptureEnvironmentQualificationRequest) (*CaptureEnvironmentQualificationResponse, error)
 	// JobColdBoot starts a non-listening job-task VM. Jobs own their image,
 	// command, environment, and timeout, so they use a dedicated flat wire
 	// shape instead of AppSpec and never enter the snapshot/readiness path.
@@ -987,6 +1074,12 @@ type VmmdServer interface {
 	// It carries bounded stdout/stderr chunks as they arrive, followed by one
 	// terminal response. The unary RPC remains available for older schedulers.
 	ExecuteExecutionStream(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error
+	// ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
+	// the one-shot execution exchange. The first client frame must be start;
+	// subsequent client frames carry responses to host-authorized outbound
+	// calls. Signed identity assertions are emitted only to schedd, never to the
+	// guest.
+	ExecuteExecutionBrokerStream(grpc.BidiStreamingServer[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]) error
 	// RestoreExecution creates a fresh, networkless disposable execution VM.
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
@@ -1254,6 +1347,10 @@ type VmmdServer interface {
 	// first frame addresses a live instance and guest listener; the client
 	// half-closes the gRPC stream to half-close the guest socket.
 	ForwardTCPStream(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]) error
+	// ForwardUDPStream carries one datagram per frame for an admitted peer.
+	// The edge validates declared listener ownership before opening the RPC.
+	// Closing the stream ends the peer session; UDP has no half-close.
+	ForwardUDPStream(grpc.BidiStreamingServer[ForwardUDPRequest, ForwardUDPResponse]) error
 	// MountParentExt4ReadOnly (ADR-053) is the staging-only path that
 	// lets imaged compose the per-runtime base ext4 from a shared
 	// debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -1391,6 +1488,15 @@ func (UnimplementedVmmdServer) CreateFromSnapshot(context.Context, *CreateFromSn
 func (UnimplementedVmmdServer) CreateColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateColdBoot not implemented")
 }
+func (UnimplementedVmmdServer) CreateEnvironmentQualification(context.Context, *CreateEnvironmentQualificationRequest) (*CreateEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateEnvironmentQualification not implemented")
+}
+func (UnimplementedVmmdServer) RetireEnvironmentQualification(context.Context, *RetireEnvironmentQualificationRequest) (*RetireEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireEnvironmentQualification not implemented")
+}
+func (UnimplementedVmmdServer) CaptureEnvironmentQualification(context.Context, *CaptureEnvironmentQualificationRequest) (*CaptureEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureEnvironmentQualification not implemented")
+}
 func (UnimplementedVmmdServer) JobColdBoot(context.Context, *JobColdBootRequest) (*JobColdBootResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method JobColdBoot not implemented")
 }
@@ -1399,6 +1505,9 @@ func (UnimplementedVmmdServer) ExecuteExecution(context.Context, *ExecuteExecuti
 }
 func (UnimplementedVmmdServer) ExecuteExecutionStream(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteExecutionStream not implemented")
+}
+func (UnimplementedVmmdServer) ExecuteExecutionBrokerStream(grpc.BidiStreamingServer[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]) error {
+	return status.Error(codes.Unimplemented, "method ExecuteExecutionBrokerStream not implemented")
 }
 func (UnimplementedVmmdServer) RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreExecution not implemented")
@@ -1487,6 +1596,9 @@ func (UnimplementedVmmdServer) ForwardRawStream(grpc.BidiStreamingServer[Forward
 func (UnimplementedVmmdServer) ForwardTCPStream(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]) error {
 	return status.Error(codes.Unimplemented, "method ForwardTCPStream not implemented")
 }
+func (UnimplementedVmmdServer) ForwardUDPStream(grpc.BidiStreamingServer[ForwardUDPRequest, ForwardUDPResponse]) error {
+	return status.Error(codes.Unimplemented, "method ForwardUDPStream not implemented")
+}
 func (UnimplementedVmmdServer) MountParentExt4ReadOnly(context.Context, *MountParentExt4ReadOnlyRequest) (*MountParentExt4ReadOnlyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MountParentExt4ReadOnly not implemented")
 }
@@ -1571,6 +1683,60 @@ func _Vmmd_CreateColdBoot_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_CreateEnvironmentQualification_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateEnvironmentQualificationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CreateEnvironmentQualification(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CreateEnvironmentQualification_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CreateEnvironmentQualification(ctx, req.(*CreateEnvironmentQualificationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RetireEnvironmentQualification_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireEnvironmentQualificationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RetireEnvironmentQualification(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RetireEnvironmentQualification_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RetireEnvironmentQualification(ctx, req.(*RetireEnvironmentQualificationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_CaptureEnvironmentQualification_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureEnvironmentQualificationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CaptureEnvironmentQualification(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CaptureEnvironmentQualification_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CaptureEnvironmentQualification(ctx, req.(*CaptureEnvironmentQualificationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_JobColdBoot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(JobColdBootRequest)
 	if err := dec(in); err != nil {
@@ -1617,6 +1783,13 @@ func _Vmmd_ExecuteExecutionStream_Handler(srv interface{}, stream grpc.ServerStr
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteExecutionStreamServer = grpc.ServerStreamingServer[ExecuteExecutionEvent]
+
+func _Vmmd_ExecuteExecutionBrokerStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).ExecuteExecutionBrokerStream(&grpc.GenericServerStream[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteExecutionBrokerStreamServer = grpc.BidiStreamingServer[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]
 
 func _Vmmd_RestoreExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RestoreExecutionRequest)
@@ -2093,6 +2266,13 @@ func _Vmmd_ForwardTCPStream_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ForwardTCPStreamServer = grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]
 
+func _Vmmd_ForwardUDPStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).ForwardUDPStream(&grpc.GenericServerStream[ForwardUDPRequest, ForwardUDPResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ForwardUDPStreamServer = grpc.BidiStreamingServer[ForwardUDPRequest, ForwardUDPResponse]
+
 func _Vmmd_MountParentExt4ReadOnly_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MountParentExt4ReadOnlyRequest)
 	if err := dec(in); err != nil {
@@ -2271,6 +2451,18 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_CreateColdBoot_Handler,
 		},
 		{
+			MethodName: "CreateEnvironmentQualification",
+			Handler:    _Vmmd_CreateEnvironmentQualification_Handler,
+		},
+		{
+			MethodName: "RetireEnvironmentQualification",
+			Handler:    _Vmmd_RetireEnvironmentQualification_Handler,
+		},
+		{
+			MethodName: "CaptureEnvironmentQualification",
+			Handler:    _Vmmd_CaptureEnvironmentQualification_Handler,
+		},
+		{
 			MethodName: "JobColdBoot",
 			Handler:    _Vmmd_JobColdBoot_Handler,
 		},
@@ -2418,6 +2610,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 		{
+			StreamName:    "ExecuteExecutionBrokerStream",
+			Handler:       _Vmmd_ExecuteExecutionBrokerStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
 			StreamName:    "ExecuteAppTaskStream",
 			Handler:       _Vmmd_ExecuteAppTaskStream_Handler,
 			ServerStreams: true,
@@ -2442,6 +2640,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ForwardTCPStream",
 			Handler:       _Vmmd_ForwardTCPStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ForwardUDPStream",
+			Handler:       _Vmmd_ForwardUDPStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

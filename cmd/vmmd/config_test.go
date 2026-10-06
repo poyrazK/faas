@@ -27,7 +27,7 @@ func TestLoadConfigPublicIfaceEnvConfiguresRuntimePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParsePrefix: %v", err)
 	}
-	policy := runtimeHostPolicy(cfg.ComputeNode, bridge)
+	policy := runtimeHostPolicy(cfg.ComputeNode, bridge, false)
 	if policy.PublicIface != "ens4" {
 		t.Fatalf("PublicIface = %q, want ens4", policy.PublicIface)
 	}
@@ -53,13 +53,48 @@ func TestLoadConfigTenantEgressIfaceConfiguresRuntimePolicy(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	bridge := netip.MustParsePrefix(cfg.ComputeNode.HostBridgeCIDR)
-	rendered := runtimeHostPolicy(cfg.ComputeNode, bridge).Render()
+	rendered := runtimeHostPolicy(cfg.ComputeNode, bridge, false).Render()
 	if !strings.Contains(rendered, `oifname "wg-tenant" masquerade`) || strings.Contains(rendered, `iifname "br-tenants" oifname "eth0" accept`) {
 		t.Fatalf("runtime policy did not route tenant egress through wg-tenant:\n%s", rendered)
 	}
 	t.Setenv("FAAS_TENANT_EGRESS_IFACE", `wg"; flush ruleset`)
 	if _, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err == nil || !strings.Contains(err.Error(), "tenant_egress_iface") {
 		t.Fatalf("LoadConfig error = %v, want tenant_egress_iface validation error", err)
+	}
+}
+
+// adr: 576 — the service TCP switch reaches the runtime host policy on the
+// host's own bridge, so wake-time rebuilds keep the service-address NAT.
+func TestLoadConfigServiceTCPConfiguresRuntimePolicy(t *testing.T) {
+	t.Setenv("FAAS_HOST_BRIDGE_CIDR", "10.123.0.0/16")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	bridge := netip.MustParsePrefix(cfg.ComputeNode.HostBridgeCIDR)
+	if off := runtimeHostPolicy(cfg.ComputeNode, bridge, true); off.ServiceTCP != nil {
+		t.Fatal("service TCP is on without FAAS_SERVICE_TCP_ENABLED")
+	}
+
+	t.Setenv("FAAS_SERVICE_TCP_ENABLED", "true")
+	cfg, err = LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	for _, tc := range []struct {
+		https bool
+		ports string
+	}{{false, "{ 10080, 10081 }"}, {true, "{ 443, 10080, 10081 }"}} {
+		rendered := runtimeHostPolicy(cfg.ComputeNode, bridge, tc.https).Render()
+		want := `iifname "br-tenants" ip daddr 198.19.0.0/16 tcp dport ` + tc.ports + ` dnat ip to 10.123.0.1`
+		if !strings.Contains(rendered, want) || !strings.Contains(rendered, "meta l4proto tcp dnat ip to 10.123.0.1:10082") {
+			t.Fatalf("https=%v: runtime policy lacks the service NAT on the host bridge:\n%s", tc.https, rendered)
+		}
+	}
+
+	t.Setenv("FAAS_SERVICE_TCP_ENABLED", "sometimes")
+	if _, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err == nil || !strings.Contains(err.Error(), "FAAS_SERVICE_TCP_ENABLED") {
+		t.Fatalf("LoadConfig error = %v, want FAAS_SERVICE_TCP_ENABLED parse error", err)
 	}
 }
 

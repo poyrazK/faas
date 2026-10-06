@@ -13,6 +13,9 @@
 #   - enable the unit (`systemctl enable --now faas-gatewayd-public`)
 #   - run the daemon (Caddy reverse-proxy upstream is the trigger)
 
+- name: gatewayd_public_service — configure optional TCP certificate directory
+  ansible.builtin.import_tasks: tcp_tls.yml
+
 - name: gatewayd_public_service — install systemd unit
   notify: restart faas-gatewayd-public
   ansible.builtin.copy:
@@ -51,6 +54,18 @@
   ansible.builtin.template:
     src: tcpd.env.j2
     dest: /etc/faas/tcpd.env
+    owner: root
+    group: faas
+    mode: "0640"
+
+- name: gatewayd_public_service — validate shared UDP policy
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/validate_udp_policy.yml"
+
+- name: gatewayd_public_service — render UDP ingress environment
+  notify: restart faas-gatewayd-public
+  ansible.builtin.template:
+    src: udpd.env.j2
+    dest: /etc/faas/udpd.env
     owner: root
     group: faas
     mode: "0640"
@@ -101,6 +116,17 @@
   ansible.builtin.template:
     src: 99-faas-apps-domain.conf.j2
     dest: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-apps-domain.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-public
+
+# ADR-520: rendered unconditionally so turning the feature off removes the
+# ask endpoint on the next converge.
+- name: gatewayd_public_service — install custom-domain TLS drop-in
+  ansible.builtin.template:
+    src: 99-faas-custom-domain-tls.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-custom-domain-tls.conf
     owner: root
     group: root
     mode: "0644"

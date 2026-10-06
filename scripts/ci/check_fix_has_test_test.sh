@@ -61,6 +61,26 @@ git -C "$with_test" commit -q -m 'fix: guard the regression'
 make_event "$with_test" 'ci: enforce regression tests' '' '[]'
 expect_pass 'fix commit with test' "$with_test"
 
+# Shell components have shell regressions, including the CLI installer suite
+# which CI executes directly. They must count without a no-test exception.
+with_shell_test="$test_root/with-shell-test"
+git_init "$with_shell_test"
+mkdir -p "$with_shell_test/scripts"
+printf '#!/bin/sh\nexit 0\n' > "$with_shell_test/scripts/install_test.sh"
+git -C "$with_shell_test" add scripts/install_test.sh
+git -C "$with_shell_test" commit -q -m 'fix: guard installer regression'
+make_event "$with_shell_test" 'fix: select compatible releases' '' '[]'
+expect_pass 'fix commit with a shell regression test' "$with_shell_test"
+
+without_shell_test="$test_root/without-shell-test"
+git_init "$without_shell_test"
+mkdir -p "$without_shell_test/scripts"
+printf '#!/bin/sh\nexit 0\n' > "$without_shell_test/scripts/install.sh"
+git -C "$without_shell_test" add scripts/install.sh
+git -C "$without_shell_test" commit -q -m 'fix: installer without regression'
+make_event "$without_shell_test" 'fix: select compatible releases' '' '[]'
+expect_fail 'production shell script is not a regression test' "$without_shell_test"
+
 # A conformance case counts as a regression test. pkg/state/conformance keeps
 # its cases in ordinary .go files so one case can run against MemStore and
 # PgStore from two entry points; a fix that adds one there is tested, and the

@@ -7,10 +7,70 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestSynthAdapterManagedOperationResultSupportIsHostNegotiated(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "operation-result@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "operation-result", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:result", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, "result-node", uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertExclusiveWorkPolicy(ctx, account.ID, exclusivework.Policy{Name: "orders", Scope: "account", MemberAppIDs: []string{app.ID}, Contention: "queue", LeaseSeconds: 30, MaxAttemptSeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := json.Marshal(api.InvokeRequest{Method: "POST", Path: "/orders", Headers: json.RawMessage(`{"X-Gregale-Operation-Result-Version":"forged"}`)})
+	op, _, err := store.AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{AccountID: account.ID, AppID: app.ID, PolicyName: "orders", Key: json.RawMessage(`"order-1"`), Request: request})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimExclusiveOperation(ctx, account.ID, op.ID, state.ExclusiveIncarnation(instance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []int{0, 1, 2} {
+		t.Run(string(rune('0'+version)), func(t *testing.T) {
+			adapter := &synthAdapter{store: store, forward: func(gateway.Target) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					want := ""
+					if version == 1 {
+						want = "1"
+					}
+					if got := r.Header.Get(api.ManagedOperationResultVersionHeader); got != want {
+						t.Errorf("support header=%q want=%q", got, want)
+					}
+					if got := r.Header.Get(api.ExclusiveOperationIDHeader); got != op.ID {
+						t.Errorf("operation ID=%q", got)
+					}
+					_, _ = w.Write([]byte(`{"ok":true}`))
+				})
+			}}
+			inv := state.Invocation{ID: op.ID, AppID: app.ID, AccountID: account.ID, InstanceID: instance.ID, Source: state.InvocationExclusiveOperation, ExclusiveClaim: &claim, OperationResultVersion: version}
+			_, status, err := adapter.InvokeWithTargetStatus(ctx, app.ID, inv, gateway.Target{InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: dep.ID, WakeID: instance.WakeID})
+			if err != nil || status != 200 {
+				t.Fatalf("invoke=%d %v", status, err)
+			}
+		})
+	}
+}
 
 func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 	ctx := context.Background()
@@ -27,8 +87,25 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	flagContext, err := flags.EncodePropagationHeader(flags.PropagationContext{
+		Version: flags.PropagationContextVersion, CustomerID: tenant.ID,
+		Decisions: []flags.PropagationDecision{{
+			Decision: flags.Decision{Flag: "new-export", Value: true, ConfigVersion: 7, Reason: "default", Source: "configuration"},
+			Origin:   flags.EvidenceOrigin{AppID: uuid.NewString(), EnvironmentID: uuid.NewString()},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocationHeaders, err := json.Marshal(map[string]string{
+		"X-Faas-Platform-Tenant-Id": "forged",
+		api.FlagContextHeader:       flagContext,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	inv, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID, PlatformTenantID: tenant.ID,
-		Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/documents", Payload: []byte(`{}`), Headers: json.RawMessage(`{"X-Faas-Platform-Tenant-Id":"forged"}`), DueAt: time.Now()})
+		Source: state.InvocationQueue, Method: "POST", Path: "/documents", Payload: []byte(`{}`), Headers: invocationHeaders, DueAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,13 +120,27 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 			if r.Header.Get(api.PlatformTenantIDHeader) != tenant.ID {
 				t.Fatalf("worker tenant=%q", r.Header.Get(api.PlatformTenantIDHeader))
 			}
+			if r.Header.Get(api.FlagContextHeader) != flagContext {
+				t.Fatalf("worker flag context=%q, want persisted context", r.Header.Get(api.FlagContextHeader))
+			}
 			if r.URL.Path != "/documents" {
 				t.Fatalf("wire path replaced persisted path: %s", r.URL.Path)
 			}
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})
 	}}
-	target := gateway.Target{InstanceID: "warm", NodeID: "node"}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:tenant"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, "node", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := gateway.Target{InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: dep.ID, WakeID: instance.WakeID}
 	for _, tenantID := range []string{"", "forged"} {
 		wire := inv
 		wire.PlatformTenantID = tenantID
@@ -67,5 +158,57 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 	}
 	if _, _, err := adapter.InvokeWithTargetStatus(ctx, app.ID, inv, target); err == nil || calls != 1 {
 		t.Fatal("cancelled work reached worker")
+	}
+}
+
+func TestSynthAdapterWorkflowTenantAdmissionUsesPersistedRun(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "workflow-tenant-admission@example.test", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "workflow-tenant-admission", Type: state.AppTypeFunction})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := store.CreatePlatformTenant(ctx, account.ID, "workflow-customer", "Workflow customer", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := store.CreateAPIConsumer(ctx, account.ID, app.ID, "workflow-customer", "Workflow customer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkPlatformTenantConsumer(ctx, account.ID, tenant.ID, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "process", Status: state.WorkflowRunStatusRunning,
+		DefinitionSnapshot: json.RawMessage(`{"name":"process","steps":[{"name":"main","path":"/process"}]}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	headers, err := json.Marshal(map[string]string{"X-Faas-Workflow-Run-Id": run.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := state.Invocation{ID: "workflow-request", AppID: app.ID, Source: state.InvocationSource("workflow"),
+		PlatformTenantID: tenant.ID, Headers: headers}
+	if _, err := admitPlatformTenantInvocation(ctx, store, app.ID, inv); err != nil {
+		t.Fatalf("persisted tenant workflow rejected: %v", err)
+	}
+	for _, changed := range []state.Invocation{
+		{ID: inv.ID, AppID: inv.AppID, Source: inv.Source, Headers: inv.Headers},
+		{ID: inv.ID, AppID: inv.AppID, Source: inv.Source, PlatformTenantID: "forged-tenant", Headers: inv.Headers},
+	} {
+		if _, err := admitPlatformTenantInvocation(ctx, store, app.ID, changed); err == nil {
+			t.Fatal("workflow dispatch accepted an omitted or substituted tenant")
+		}
+	}
+	if _, err := store.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admitPlatformTenantInvocation(ctx, store, app.ID, inv); err == nil {
+		t.Fatal("suspended tenant workflow reached dispatch")
 	}
 }

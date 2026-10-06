@@ -42,8 +42,8 @@ func TestWakeSealedEnvFailureReleasesAdmissionImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListInstancesForApp: %v", err)
 	}
-	if len(instances) != 1 || instances[0].State != string(state.StateFailed) {
-		t.Fatalf("instances after sealed-env rejection = %+v, want one failed row", instances)
+	if len(instances) != 0 {
+		t.Fatalf("instances after sealed-env rejection = %+v, want no admission", instances)
 	}
 }
 

@@ -233,6 +233,7 @@ func normalizeVersionAffinityKey(raw string) (string, bool) {
 func setPickerWeights(picker *appPicker, weights []deploymentWeight) {
 	picker.weights = weights
 	picker.cum = buildCumulativeWeights(weights)
+	picker.sequence = smoothWeightSequence(weights)
 	picker.affinityWeights = append(picker.affinityWeights[:0], weights...)
 	sort.Slice(picker.affinityWeights, func(i, j int) bool {
 		return picker.affinityWeights[i].DeploymentID < picker.affinityWeights[j].DeploymentID
@@ -245,6 +246,47 @@ func setPickerWeights(picker *appPicker, weights []deploymentWeight) {
 		namespace.WriteByte(0)
 	}
 	picker.affinityNamespace = namespace.String()
+}
+
+// smoothWeightSequence returns which deployment (an index into weights) serves
+// each of 100 consecutive picks, using smooth weighted round-robin (the nginx
+// algorithm). Every deployment gets exactly its percentage of each 100 picks,
+// spread as evenly as the weights allow. It returns nil unless the weights sum
+// to 100; Pick then uses the cumulative-weight search.
+//
+// The cumulative search alone mapped slot n to whichever deployment owns n's
+// range, so consecutive requests filled one deployment's range before the
+// next. On production-us a 50/50 split answered 99 requests from one deployment
+// and then 81 in a row from the other. A 10% canary got its whole share in one
+// block of 10. Each block switch also woke a scaled-to-zero deployment.
+func smoothWeightSequence(weights []deploymentWeight) []uint8 {
+	if len(weights) == 0 || len(weights) > 255 {
+		return nil
+	}
+	total := 0
+	for _, w := range weights {
+		if w.Percent < 0 {
+			return nil
+		}
+		total += w.Percent
+	}
+	if total != 100 {
+		return nil
+	}
+	current := make([]int, len(weights))
+	sequence := make([]uint8, 100)
+	for slot := range sequence {
+		best := 0
+		for i, w := range weights {
+			current[i] += w.Percent
+			if current[i] > current[best] {
+				best = i
+			}
+		}
+		current[best] -= total
+		sequence[slot] = uint8(best)
+	}
+	return sequence
 }
 
 func affinityDeployment(appID, key string, picker *appPicker) (string, bool) {

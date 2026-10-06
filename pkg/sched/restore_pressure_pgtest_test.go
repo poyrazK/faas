@@ -52,10 +52,14 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 		}
 		dep, err := firstStore.CreateDeployment(ctx, state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:restore-pressure-pg",
-			Status: state.DeployLive,
 		})
 		if err != nil {
 			t.Fatalf("CreateDeployment %d: %v", i, err)
+		}
+		// PgStore creates pending deployment intent; publish it before an
+		// unscoped wake asks for the production serving deployment.
+		if err := firstStore.MarkDeploymentLive(ctx, dep.ID); err != nil {
+			t.Fatalf("MarkDeploymentLive %d: %v", i, err)
 		}
 		snap, err := firstStore.CreateSnapshot(ctx, state.Snapshot{
 			DeploymentID: dep.ID, Tier: state.SnapshotTierInit, FCVersion: "1.10.0",
@@ -93,16 +97,29 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 			results <- wakeResult{result: result, err: err}
 		}()
 	}
+	waitRestore := func(want, reason string) {
+		t.Helper()
+		select {
+		case nodeID := <-vmm.entered:
+			if nodeID != want {
+				t.Fatalf("%s: node = %q, want %q", reason, nodeID, want)
+			}
+		case got := <-results:
+			t.Fatalf("%s: wake returned before restore RPC: result = %#v, err = %v", reason, got.result, got.err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for restore RPC: %s", reason)
+		}
+	}
 
 	// Start the first two restores through independent Engines. Their local
 	// counters cannot see each other; the persisted leases must hold both
 	// placements visible until the gated vmmd calls return.
 	startWake(firstEngine, appIDs[0])
 	startWake(secondEngine, appIDs[1])
-	waitRestorePressureNode(t, vmm.entered, cachedNodeID, "first restore should use snapshot origin")
-	waitRestorePressureNode(t, vmm.entered, cachedNodeID, "second restore should use snapshot origin before watermark")
+	waitRestore(cachedNodeID, "first restore should use snapshot origin")
+	waitRestore(cachedNodeID, "second restore should use snapshot origin before watermark")
 	startWake(firstEngine, appIDs[2])
-	waitRestorePressureNode(t, vmm.entered, peerNodeID, "third restore should use peer after shared watermark")
+	waitRestore(peerNodeID, "third restore should use peer after shared watermark")
 
 	vmm.unblock()
 	for i := 0; i < wakeCount; i++ {

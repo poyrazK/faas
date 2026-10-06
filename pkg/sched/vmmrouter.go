@@ -35,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/executionproto"
@@ -202,13 +203,14 @@ type LiveMigrationPrepare struct {
 
 // LiveMigrationAdopt is the typed return for RoutedVMM::
 // AdoptMigratedInstance. Mirrors vmmdpb.AdoptMigratedInstanceResponse;
-// the network identifiers (HostIP, Netns, GuestUID) are surfaced
-// so the new owner vmmd's logs can correlate, even though schedd
-// doesn't currently persist them on the migration path.
+// Destination network identifiers and the actual boot-path acknowledgement
+// are committed together with the instance's new ownership.
 type LiveMigrationAdopt struct {
 	HostIP   string
 	Netns    string
 	GuestUID int
+	Method   vmmdpb.WakeMethod
+	WakeID   string
 }
 
 // VMMRouter is the dial-once-per-target cache that satisfies
@@ -225,6 +227,9 @@ type VMMRouter struct {
 	targets map[string]string // nodeID -> target_url (filled at construction; lookup before dial)
 	dial    DialFunc
 	tls     *tls.Config
+	// outboundRelay is the schedd-local path to outboundd. It is attached to
+	// every per-node execution stream and never travels to vmmd or the guest.
+	outboundRelay ExecutionOutboundRelay
 }
 
 // NewVMMRouter builds a router pre-populated with the (nodeID →
@@ -246,6 +251,16 @@ func NewVMMRouter(activeNodes []ComputeNodeInfo, dial DialFunc, tlsCfg *tls.Conf
 	}
 	for _, n := range activeNodes {
 		r.targets[n.ID] = n.TargetURL
+	}
+	return r
+}
+
+// WithExecutionOutboundRelay wires the host-only Runs broker to outboundd.
+// The relay may be nil in tests or deployments with the feature disabled;
+// an execution that attempts an outbound call then fails closed.
+func (r *VMMRouter) WithExecutionOutboundRelay(relay ExecutionOutboundRelay) *VMMRouter {
+	if r != nil {
+		r.outboundRelay = relay
 	}
 	return r
 }
@@ -476,6 +491,23 @@ func (r *VMMRouter) ExecuteExecutionWithOutput(ctx context.Context, nodeID, inst
 			"Execution streaming unavailable", "vmmd client does not support live disposable execution output")
 	}
 	return executionClient.ExecuteExecutionWithOutput(ctx, instance, req, receive)
+}
+
+// ExecuteExecutionWithBroker routes the full-duplex execution stream to the
+// node that owns the VM while keeping the outbound relay in schedd.
+func (r *VMMRouter) ExecuteExecutionWithBroker(ctx context.Context, nodeID, instance string, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return executionproto.Result{}, err
+	}
+	executionClient, ok := cli.(interface {
+		ExecuteExecutionWithBroker(context.Context, string, executionproto.Request, executionproto.OutputReceiver, ExecutionOutboundRelay) (executionproto.Result, error)
+	})
+	if !ok {
+		return executionproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Execution broker unavailable", "vmmd client does not support the Runs outbound broker")
+	}
+	return executionClient.ExecuteExecutionWithBroker(ctx, instance, req, receive, r.outboundRelay)
 }
 
 // RestoreExecution routes the payload-free disposable-VM constructor. The

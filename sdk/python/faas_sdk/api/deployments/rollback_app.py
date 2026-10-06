@@ -102,11 +102,19 @@ def sync_detailed(
 
     With `target_deployment_id` in the body, rolls back to the
     named deployment. The id must belong to this app and the row
-    must have `status='superseded'`. Rolling back to the
+    must be superseded or live with zero traffic. Rolling back to the
     already-current live deployment is rejected (409
     `rollback_target_already_live`). A target whose snapshot has
     been garbage-collected is rejected (409
     `rollback_target_snapshot_expired`).
+    With both `target_deployment_id` and `expected_current_deployment_id`,
+    starts an exact checked rollback. The expected deployment must still
+    serve all traffic with no active rollout in this scope. A 202 response
+    includes `rollback_operation`, confirming durable intent. Readiness,
+    artifact and API contract checks precede a zero-traffic activation;
+    fresh binding evidence is checked at the traffic transaction. Service
+    completion also waits for the existing gateway ACK and drain handoff.
+    Stored binding enforcement requires this exact workflow.
 
     Args:
         slug (str):
@@ -152,11 +160,19 @@ def sync(
 
     With `target_deployment_id` in the body, rolls back to the
     named deployment. The id must belong to this app and the row
-    must have `status='superseded'`. Rolling back to the
+    must be superseded or live with zero traffic. Rolling back to the
     already-current live deployment is rejected (409
     `rollback_target_already_live`). A target whose snapshot has
     been garbage-collected is rejected (409
     `rollback_target_snapshot_expired`).
+    With both `target_deployment_id` and `expected_current_deployment_id`,
+    starts an exact checked rollback. The expected deployment must still
+    serve all traffic with no active rollout in this scope. A 202 response
+    includes `rollback_operation`, confirming durable intent. Readiness,
+    artifact and API contract checks precede a zero-traffic activation;
+    fresh binding evidence is checked at the traffic transaction. Service
+    completion also waits for the existing gateway ACK and drain handoff.
+    Stored binding enforcement requires this exact workflow.
 
     Args:
         slug (str):
@@ -197,11 +213,19 @@ async def asyncio_detailed(
 
     With `target_deployment_id` in the body, rolls back to the
     named deployment. The id must belong to this app and the row
-    must have `status='superseded'`. Rolling back to the
+    must be superseded or live with zero traffic. Rolling back to the
     already-current live deployment is rejected (409
     `rollback_target_already_live`). A target whose snapshot has
     been garbage-collected is rejected (409
     `rollback_target_snapshot_expired`).
+    With both `target_deployment_id` and `expected_current_deployment_id`,
+    starts an exact checked rollback. The expected deployment must still
+    serve all traffic with no active rollout in this scope. A 202 response
+    includes `rollback_operation`, confirming durable intent. Readiness,
+    artifact and API contract checks precede a zero-traffic activation;
+    fresh binding evidence is checked at the traffic transaction. Service
+    completion also waits for the existing gateway ACK and drain handoff.
+    Stored binding enforcement requires this exact workflow.
 
     Args:
         slug (str):
@@ -245,11 +269,19 @@ async def asyncio(
 
     With `target_deployment_id` in the body, rolls back to the
     named deployment. The id must belong to this app and the row
-    must have `status='superseded'`. Rolling back to the
+    must be superseded or live with zero traffic. Rolling back to the
     already-current live deployment is rejected (409
     `rollback_target_already_live`). A target whose snapshot has
     been garbage-collected is rejected (409
     `rollback_target_snapshot_expired`).
+    With both `target_deployment_id` and `expected_current_deployment_id`,
+    starts an exact checked rollback. The expected deployment must still
+    serve all traffic with no active rollout in this scope. A 202 response
+    includes `rollback_operation`, confirming durable intent. Readiness,
+    artifact and API contract checks precede a zero-traffic activation;
+    fresh binding evidence is checked at the traffic transaction. Service
+    completion also waits for the existing gateway ACK and drain handoff.
+    Stored binding enforcement requires this exact workflow.
 
     Args:
         slug (str):

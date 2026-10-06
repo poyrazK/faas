@@ -94,9 +94,10 @@ def sync_detailed(
         id (UUID):
         idempotency_key (str | Unset):
         body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
-            customer, hostname, certificate, deployment, reconciliation, and finalized billing events.
-            Example: {'target_url': 'https://billing.example.com/gregale/events', 'webhook_secret':
-            'store-this-secret-before-submitting'}.
+            customer, operation effect, hostname, certificate, deployment, reconciliation, and
+            finalized billing events. Example: {'target_url':
+            'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
+            submitting'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,9 +136,10 @@ def sync(
         id (UUID):
         idempotency_key (str | Unset):
         body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
-            customer, hostname, certificate, deployment, reconciliation, and finalized billing events.
-            Example: {'target_url': 'https://billing.example.com/gregale/events', 'webhook_secret':
-            'store-this-secret-before-submitting'}.
+            customer, operation effect, hostname, certificate, deployment, reconciliation, and
+            finalized billing events. Example: {'target_url':
+            'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
+            submitting'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,9 +173,10 @@ async def asyncio_detailed(
         id (UUID):
         idempotency_key (str | Unset):
         body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
-            customer, hostname, certificate, deployment, reconciliation, and finalized billing events.
-            Example: {'target_url': 'https://billing.example.com/gregale/events', 'webhook_secret':
-            'store-this-secret-before-submitting'}.
+            customer, operation effect, hostname, certificate, deployment, reconciliation, and
+            finalized billing events. Example: {'target_url':
+            'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
+            submitting'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -210,9 +213,10 @@ async def asyncio(
         id (UUID):
         idempotency_key (str | Unset):
         body (CreatePlatformTenantWebhookRequest): Create a receiver for this tenant's supported
-            customer, hostname, certificate, deployment, reconciliation, and finalized billing events.
-            Example: {'target_url': 'https://billing.example.com/gregale/events', 'webhook_secret':
-            'store-this-secret-before-submitting'}.
+            customer, operation effect, hostname, certificate, deployment, reconciliation, and
+            finalized billing events. Example: {'target_url':
+            'https://billing.example.com/gregale/events', 'webhook_secret': 'store-this-secret-before-
+            submitting'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

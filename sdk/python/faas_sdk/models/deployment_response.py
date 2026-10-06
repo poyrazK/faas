@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
     from ..models.log_excerpt import LogExcerpt
+    from ..models.rollback_operation import RollbackOperation
     from ..models.scan_result import ScanResult
     from ..models.secret_scan_result import SecretScanResult
     from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
@@ -84,7 +85,12 @@ class DeploymentResponse:
     created_at: datetime.datetime
     stage_state: DeploymentResponseStageState | Unset = UNSET
     """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
-    rebuilt."""
+    rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code,
+    retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482).
+    last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport
+    failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a
+    promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
+   """
     revision: int | Unset = UNSET
     """Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this
     API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the
@@ -175,7 +181,7 @@ class DeploymentResponse:
     """Per-deployment traffic-split weight (issue #556 PR-A). Summed across live rows for the app = 100 by
     construction."""
     scope: None | str | Unset = UNSET
-    """Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash.
+    """Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
     nil/omitted = `default`."""
     secret_scan: None | SecretScanResult | Unset = UNSET
     """Per-deploy secret-scan audit row (PR-A / ADR-101). Mirrors
@@ -254,6 +260,9 @@ class DeploymentResponse:
     """Wall-clock timestamp at which the rollout was aborted."""
     rollout_aborted_reason: str | Unset = UNSET
     """Operator or orchestrator reason recorded when the rollout is aborted."""
+    rollback_operation: RollbackOperation | Unset = UNSET
+    """Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding
+    evidence or move traffic for another operation."""
     service_rollout_handoff: ServiceRolloutHandoffResponse | Unset = UNSET
     """Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -564,6 +573,10 @@ class DeploymentResponse:
 
         rollout_aborted_reason = self.rollout_aborted_reason
 
+        rollback_operation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollback_operation, Unset):
+            rollback_operation = self.rollback_operation.to_dict()
+
         service_rollout_handoff: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_rollout_handoff, Unset):
             service_rollout_handoff = self.service_rollout_handoff.to_dict()
@@ -688,6 +701,8 @@ class DeploymentResponse:
             field_dict["rollout_aborted_at"] = rollout_aborted_at
         if rollout_aborted_reason is not UNSET:
             field_dict["rollout_aborted_reason"] = rollout_aborted_reason
+        if rollback_operation is not UNSET:
+            field_dict["rollback_operation"] = rollback_operation
         if service_rollout_handoff is not UNSET:
             field_dict["service_rollout_handoff"] = service_rollout_handoff
 
@@ -703,6 +718,7 @@ class DeploymentResponse:
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
         from ..models.log_excerpt import LogExcerpt
+        from ..models.rollback_operation import RollbackOperation
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
         from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
@@ -1245,6 +1261,13 @@ class DeploymentResponse:
 
         rollout_aborted_reason = d.pop("rollout_aborted_reason", UNSET)
 
+        _rollback_operation = d.pop("rollback_operation", UNSET)
+        rollback_operation: RollbackOperation | Unset
+        if isinstance(_rollback_operation, Unset):
+            rollback_operation = UNSET
+        else:
+            rollback_operation = RollbackOperation.from_dict(_rollback_operation)
+
         _service_rollout_handoff = d.pop("service_rollout_handoff", UNSET)
         service_rollout_handoff: ServiceRolloutHandoffResponse | Unset
         if isinstance(_service_rollout_handoff, Unset):
@@ -1313,6 +1336,7 @@ class DeploymentResponse:
             rollout_completed_at=rollout_completed_at,
             rollout_aborted_at=rollout_aborted_at,
             rollout_aborted_reason=rollout_aborted_reason,
+            rollback_operation=rollback_operation,
             service_rollout_handoff=service_rollout_handoff,
         )
 

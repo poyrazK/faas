@@ -1,0 +1,14 @@
+{
+  "headers": {
+    "x-gregale-operation-result-version": "1",
+    "x-gregale-operation-id": "aaaaaaab-1111-4111-8111-aaaaaaaaaaaa",
+    "x-gregale-operation-generation": "1",
+    "x-faas-tenant-id": "bbbbbbbc-2222-4222-8222-bbbbbbbbbbbb",
+    "x-faas-app-id": "cccccccd-3333-4333-8333-cccccccccccc",
+    "x-faas-platform-tenant-id": "ddddddde-4444-4444-8444-dddddddddddd"
+  },
+  "method": "POST",
+  "path": "/orders/fulfill?region=eu",
+  "body_base64": "eyJvcmRlcl9pZCI6MTIzLCJsYWJlbCI6Is+AIn0=",
+  "digest": "1a308587c4a847eac965965e977657921f8bf0dd0d42c2dd111e18c82e1ac0fe"
+}

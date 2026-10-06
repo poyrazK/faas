@@ -15,8 +15,15 @@
 #
 # Install with:
 #   ansible-galaxy collection install -r requirements.yml
+#
+# Exact versions, not floors: CI lints and tests one set, and every path
+# that runs the roles (CI, cd-controlplane, cd-compute, operator laptops)
+# must install that same set. With ">=" floors, CI resolved
+# ansible.posix 2.2.2 / community.postgresql 5.0.0 while the fleet runner
+# applied compute rollouts with apt's 1.5.4 / 3.3.0. ci.yml's Galaxy
+# fallback clones these same tags.
 collections:
   - name: ansible.posix
-    version: ">=1.5.0"
+    version: "2.2.2"
   - name: community.postgresql
-    version: ">=3.0.0"
+    version: "5.0.0"

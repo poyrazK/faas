@@ -44,3 +44,17 @@ func TestContainerDeploymentContract(t *testing.T) {
 		t.Fatalf("LayersAboveBase error = %v, want ErrLayersNotAboveBase", err)
 	}
 }
+
+func TestContainerUserGroupContract(t *testing.T) {
+	for _, user := range []string{"1001:2001", "server:readers", "1000:3000"} {
+		manifest, err := ManifestFromConfig(Config{Cmd: []string{"/app/server"}, User: user})
+		if err != nil || manifest.User != user {
+			t.Fatalf("user %q projected as %q: %v", user, manifest.User, err)
+		}
+	}
+	for _, user := range []string{"1001:", ":2001", "1001:2001:3001", "1001:65535", "-1:2001"} {
+		if _, err := ManifestFromConfig(Config{Cmd: []string{"/app/server"}, User: user}); !errors.Is(err, ErrImageManifestInvalid) {
+			t.Fatalf("invalid user %q accepted: %v", user, err)
+		}
+	}
+}

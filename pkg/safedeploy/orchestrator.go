@@ -348,7 +348,9 @@ func (o *Orchestrator) autoAbort(ctx context.Context, d state.Deployment, elapse
 		d.CanaryStep, d.CanaryTotalSteps, elapsed.Round(time.Second))
 	key := fmt.Sprintf("safedeploy/%s/stuck-abort", d.ID)
 	var recoverErr error
-	if keyed, ok := o.Recovery.(keyedSafeDeployClient); ok {
+	if handled, err := recoverExactCanaryAbort(ctx, o.Recovery, o.Targets, d, reason, key); handled {
+		recoverErr = err
+	} else if keyed, ok := o.Recovery.(keyedSafeDeployClient); ok {
 		_, recoverErr = keyed.RecoverRolloutAndIdempotencyKey(ctx, app.Slug, "abort", reason, key)
 	} else {
 		_, recoverErr = o.Recovery.RecoverRollout(ctx, app.Slug, "abort", reason)

@@ -86,10 +86,14 @@ def sync_detailed(
     """Delete an unused project environment.
 
      Deletes only an unprotected, non-production environment that has no
-    live releases. Configuration and approval history for the registry
-    entry is removed with it. Production, protected environments, and
-    environments still serving a live release return 409. If managed
-    resources cannot be revoked immediately, cleanup is durably queued and
+    live releases. Configuration, approval history, and owned pending or
+    finished asynchronous work are removed atomically. Production, protected
+    environments, and environments still serving a live release return 409.
+    Running work or an unreleased execution reservation returns 409 with
+    code environment_work_busy; wait for completion or claim recovery and
+    retry. Inconsistent work ownership returns environment_work_ownership_conflict
+    without deleting the environment. Cancellation receipts are retained.
+    If managed resources cannot be revoked immediately, cleanup is durably queued and
     retried; the deleted environment returns 202 while cleanup is pending.
 
     Args:
@@ -128,10 +132,14 @@ def sync(
     """Delete an unused project environment.
 
      Deletes only an unprotected, non-production environment that has no
-    live releases. Configuration and approval history for the registry
-    entry is removed with it. Production, protected environments, and
-    environments still serving a live release return 409. If managed
-    resources cannot be revoked immediately, cleanup is durably queued and
+    live releases. Configuration, approval history, and owned pending or
+    finished asynchronous work are removed atomically. Production, protected
+    environments, and environments still serving a live release return 409.
+    Running work or an unreleased execution reservation returns 409 with
+    code environment_work_busy; wait for completion or claim recovery and
+    retry. Inconsistent work ownership returns environment_work_ownership_conflict
+    without deleting the environment. Cancellation receipts are retained.
+    If managed resources cannot be revoked immediately, cleanup is durably queued and
     retried; the deleted environment returns 202 while cleanup is pending.
 
     Args:
@@ -165,10 +173,14 @@ async def asyncio_detailed(
     """Delete an unused project environment.
 
      Deletes only an unprotected, non-production environment that has no
-    live releases. Configuration and approval history for the registry
-    entry is removed with it. Production, protected environments, and
-    environments still serving a live release return 409. If managed
-    resources cannot be revoked immediately, cleanup is durably queued and
+    live releases. Configuration, approval history, and owned pending or
+    finished asynchronous work are removed atomically. Production, protected
+    environments, and environments still serving a live release return 409.
+    Running work or an unreleased execution reservation returns 409 with
+    code environment_work_busy; wait for completion or claim recovery and
+    retry. Inconsistent work ownership returns environment_work_ownership_conflict
+    without deleting the environment. Cancellation receipts are retained.
+    If managed resources cannot be revoked immediately, cleanup is durably queued and
     retried; the deleted environment returns 202 while cleanup is pending.
 
     Args:
@@ -205,10 +217,14 @@ async def asyncio(
     """Delete an unused project environment.
 
      Deletes only an unprotected, non-production environment that has no
-    live releases. Configuration and approval history for the registry
-    entry is removed with it. Production, protected environments, and
-    environments still serving a live release return 409. If managed
-    resources cannot be revoked immediately, cleanup is durably queued and
+    live releases. Configuration, approval history, and owned pending or
+    finished asynchronous work are removed atomically. Production, protected
+    environments, and environments still serving a live release return 409.
+    Running work or an unreleased execution reservation returns 409 with
+    code environment_work_busy; wait for completion or claim recovery and
+    retry. Inconsistent work ownership returns environment_work_ownership_conflict
+    without deleting the environment. Cancellation receipts are retained.
+    If managed resources cannot be revoked immediately, cleanup is durably queued and
     retried; the deleted environment returns 202 while cleanup is pending.
 
     Args:

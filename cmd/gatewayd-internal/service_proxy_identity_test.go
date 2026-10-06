@@ -133,8 +133,11 @@ func TestValidateServiceProxyListen(t *testing.T) {
 		addr string
 		want bool
 	}{
+		{addr: "10.100.0.1:10081", want: true},
 		{addr: "10.100.0.1:10080", want: true},
 		{addr: "172.16.4.1:10080", want: true},
+		{addr: "0.0.0.0:10081"},
+		{addr: "127.0.0.1:10081"},
 		{addr: "0.0.0.0:10080"},
 		{addr: "127.0.0.1:10080"},
 		{addr: "10.100.0.1:8080"},

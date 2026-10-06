@@ -57,6 +57,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/internalsvc"
+	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -426,4 +427,13 @@ func loadOrGenerateSchedKey(keyPath string, log *slog.Logger) (ed25519.PrivateKe
 // internalsvc package-level function explicitly.
 func kidFromPub(pub ed25519.PublicKey) string {
 	return internalsvc.KidFromPub(pub)
+}
+
+// MintWorkflow uses the rotating cluster signer with the workflow-only audience.
+func (a *atomicMinter) MintWorkflow(identity outbound.WorkflowIdentity, request outbound.WorkflowOutboundRequest, body []byte) (string, error) {
+	current := a.state.Load()
+	if current == nil {
+		return "", errors.New("workflow outbound signer unavailable")
+	}
+	return outbound.MintWorkflowIdentity(identity, request, body, current.priv, current.kid, time.Now())
 }

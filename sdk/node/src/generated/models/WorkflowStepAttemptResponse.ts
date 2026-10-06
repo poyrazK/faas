@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationEffectRecord } from './OperationEffectRecord.js';
 /**
  * One durable executor invocation for a workflow step.
  */
@@ -13,5 +14,9 @@ export type WorkflowStepAttemptResponse = {
   finished_at?: string | null;
   next_attempt_at?: string | null;
   error?: string | null;
+  /**
+   * Accepted operation webhook effects and their delivery status.
+   */
+  effects?: Array<OperationEffectRecord>;
 };
 

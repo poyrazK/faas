@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -71,7 +72,9 @@ type Client struct {
 	api *client.API
 	// PlanPriceIDs is the lookup map EnsurePlanProducts populates and
 	// EnsureCustomer reads. key = plan:price-kind (e.g. "hobby:monthly").
-	PlanPriceIDs map[string]string
+	PlanPriceIDs      map[string]string
+	invoiceBaseURL    string
+	invoiceHTTPClient *http.Client
 }
 
 // NewClient wires the facade. apiKey + secret are read from the config;

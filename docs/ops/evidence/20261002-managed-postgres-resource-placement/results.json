@@ -1,0 +1,32 @@
+{
+  "top_level_tests": 41,
+  "total_tests": 98,
+  "skips": 0,
+  "failures": 0,
+  "in_run_leakchecks": 3,
+  "archive_sha256": "d4e6deb166260fc3b36608991c69cbbeeb8cc98073c94c1074414824381f7c0a",
+  "packages": [
+    [
+      "github.com/onebox-faas/faas/pkg/fcvm",
+      "16.239s"
+    ],
+    [
+      "github.com/onebox-faas/faas/cmd/vmmd",
+      "1.136s"
+    ]
+  ],
+  "new_tests": [
+    [
+      "TestMetalResourcePlacementPreparedAlias",
+      "0.02s"
+    ],
+    [
+      "TestMetalResourcePlacementForeignJailMount",
+      "0.01s"
+    ],
+    [
+      "TestMetalResourcePlacementNamespaceReplacement",
+      "0.03s"
+    ]
+  ]
+}

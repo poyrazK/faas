@@ -127,19 +127,29 @@ type domainRequest struct {
 }
 
 type domainResponse struct {
-	Domain           string   `json:"domain"`
-	AppID            string   `json:"app_id"`
-	ChallengeToken   string   `json:"challenge_token,omitempty"`
-	TXTRecord        string   `json:"txt_record,omitempty"`
-	Verified         bool     `json:"verified"`
-	VerifiedAt       string   `json:"verified_at,omitempty"`
-	Default          bool     `json:"default,omitempty"`
-	CertNotAfter     string   `json:"cert_not_after,omitempty"`
-	CertSANs         []string `json:"cert_sans,omitempty"`
-	CertExpiresAt    string   `json:"cert_expires_at,omitempty"`
-	CertLastError    string   `json:"cert_last_error,omitempty"`
-	DNSLastCheckedAt string   `json:"dns_last_checked_at,omitempty"`
-	CertStatus       string   `json:"cert_status,omitempty"`
+	Domain           string            `json:"domain"`
+	AppID            string            `json:"app_id"`
+	ChallengeToken   string            `json:"challenge_token,omitempty"`
+	TXTRecord        string            `json:"txt_record,omitempty"`
+	Verified         bool              `json:"verified"`
+	VerifiedAt       string            `json:"verified_at,omitempty"`
+	Default          bool              `json:"default,omitempty"`
+	CertNotAfter     string            `json:"cert_not_after,omitempty"`
+	CertSANs         []string          `json:"cert_sans,omitempty"`
+	CertExpiresAt    string            `json:"cert_expires_at,omitempty"`
+	CertLastError    string            `json:"cert_last_error,omitempty"`
+	DNSLastCheckedAt string            `json:"dns_last_checked_at,omitempty"`
+	CertStatus       string            `json:"cert_status,omitempty"`
+	DNSRecords       []domainDNSRecord `json:"dns_records,omitempty"`
+}
+
+// domainDNSRecord is one record the customer publishes (ADR-520).
+type domainDNSRecord struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Purpose     string `json:"purpose"`
+	Alternative bool   `json:"alternative,omitempty"`
 }
 
 type alertRuleRequest struct {
@@ -191,33 +201,62 @@ type alertRuleResponse struct {
 }
 
 type cronRequest struct {
-	AppID         string `json:"app_id"`
-	Schedule      string `json:"schedule"`
-	Path          string `json:"path,omitempty"`
-	Enabled       *bool  `json:"enabled,omitempty"`
-	Timezone      string `json:"timezone,omitempty"`
-	SkipIfRunning *bool  `json:"skip_if_running,omitempty"`
+	AppID          string              `json:"app_id"`
+	Schedule       string              `json:"schedule"`
+	Path           string              `json:"path,omitempty"`
+	Enabled        *bool               `json:"enabled,omitempty"`
+	Timezone       string              `json:"timezone,omitempty"`
+	SkipIfRunning  *bool               `json:"skip_if_running,omitempty"`
+	SchedulePolicy *cronSchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules   json.RawMessage     `json:"failure_rules,omitempty"`
 }
 
 type cronPatch struct {
-	Schedule      *string `json:"schedule,omitempty"`
-	Path          *string `json:"path,omitempty"`
-	Enabled       *bool   `json:"enabled,omitempty"`
-	Timezone      *string `json:"timezone,omitempty"`
-	SkipIfRunning *bool   `json:"skip_if_running,omitempty"`
+	Schedule       *string             `json:"schedule,omitempty"`
+	Path           *string             `json:"path,omitempty"`
+	Enabled        *bool               `json:"enabled,omitempty"`
+	Timezone       *string             `json:"timezone,omitempty"`
+	SkipIfRunning  *bool               `json:"skip_if_running,omitempty"`
+	SchedulePolicy *cronSchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules   json.RawMessage     `json:"failure_rules,omitempty"`
 }
 
 type cronResponse struct {
-	ID              string `json:"id"`
-	AppID           string `json:"app_id"`
-	Schedule        string `json:"schedule"`
-	Path            string `json:"path"`
-	Enabled         bool   `json:"enabled"`
-	SuspendedReason string `json:"suspended_reason,omitempty"`
-	Timezone        string `json:"timezone"`
-	SkipIfRunning   bool   `json:"skip_if_running"`
-	CreatedAt       string `json:"created_at"`
-	LastFiredAt     string `json:"last_fired_at,omitempty"`
+	ID              string              `json:"id"`
+	AppID           string              `json:"app_id"`
+	Schedule        string              `json:"schedule"`
+	Path            string              `json:"path"`
+	Enabled         bool                `json:"enabled"`
+	SuspendedReason string              `json:"suspended_reason,omitempty"`
+	Timezone        string              `json:"timezone"`
+	SkipIfRunning   bool                `json:"skip_if_running"`
+	CreatedAt       string              `json:"created_at"`
+	LastFiredAt     string              `json:"last_fired_at,omitempty"`
+	SchedulePolicy  *cronSchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules    json.RawMessage     `json:"failure_rules,omitempty"`
+}
+
+type cronSchedulePolicy struct {
+	Version              int    `json:"version"`
+	Overlap              string `json:"overlap"`
+	StartDeadlineSeconds int    `json:"start_deadline_seconds,omitempty"`
+	MissedRuns           string `json:"missed_runs"`
+}
+
+func (p cronSchedulePolicy) validate() error {
+	if p.Version != 1 {
+		return fmt.Errorf("version must be 1")
+	}
+	if p.Overlap != "allow" && p.Overlap != "skip" && p.Overlap != "replace" {
+		return fmt.Errorf("overlap must be allow, skip, or replace")
+	}
+	if p.StartDeadlineSeconds < 0 || p.StartDeadlineSeconds > 30*24*60*60 {
+		return fmt.Errorf("start_deadline_seconds must be between 0 and 2592000")
+	}
+	if p.MissedRuns != "skip" && p.MissedRuns != "coalesce_latest" {
+		return fmt.Errorf("missed_runs must be skip or coalesce_latest")
+	}
+	return nil
 }
 
 type secretRequest struct {
