@@ -14154,8 +14154,8 @@ WHERE id=sqlc.arg(id)::uuid AND state='ready' AND desired_generation=sqlc.arg(so
 
 -- name: InsertManagedPostgresResize :one
 INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,
-    source_spec,target_class,generation,state,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11) RETURNING *;
+    source_spec,target_class,target_scale_to_zero,generation,state,created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12) RETURNING *;
 
 -- name: ClaimManagedPostgresResize :one
 UPDATE managed_postgres_databases SET lease_token=sqlc.arg(lease_token)::text,lease_until=sqlc.arg(until)::timestamptz,
@@ -14170,7 +14170,7 @@ UPDATE managed_postgres_resizes SET state='succeeded',completed_at=sqlc.arg(at):
 WHERE id=sqlc.arg(id)::uuid AND database_id=sqlc.arg(database)::uuid AND generation=sqlc.arg(generation)::bigint AND state='pending';
 
 -- name: FinishManagedPostgresResizeDatabase :one
-UPDATE managed_postgres_databases SET state='ready',service_class=sqlc.arg(target_class)::text,observed_generation=desired_generation,
+UPDATE managed_postgres_databases SET state='ready',service_class=sqlc.arg(target_class)::text,scale_to_zero=sqlc.arg(target_scale_to_zero)::boolean,observed_generation=desired_generation,
     last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account)::uuid AND state='updating'
     AND desired_generation=sqlc.arg(generation)::bigint AND observed_generation=desired_generation-1

@@ -203,6 +203,7 @@ export type { CancelPendingWorkRequest } from './models/CancelPendingWorkRequest
 export type { CancelPendingWorkResponse } from './models/CancelPendingWorkResponse.js';
 export type { CapabilitiesResponse } from './models/CapabilitiesResponse.js';
 export type { CapabilityStatus } from './models/CapabilityStatus.js';
+export type { ChangeManagedPostgresComputePolicyRequest } from './models/ChangeManagedPostgresComputePolicyRequest.js';
 export type { ChangeMemberRoleRequest } from './models/ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './models/ChangePlanRequest.js';
 export type { CheckRouteRequirementsRequest } from './models/CheckRouteRequirementsRequest.js';
@@ -674,6 +675,7 @@ export type { ManagedPostgresAccountingReconciliationResult } from './models/Man
 export type { ManagedPostgresBinding } from './models/ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './models/ManagedPostgresBindingList.js';
 export type { ManagedPostgresCapabilities } from './models/ManagedPostgresCapabilities.js';
+export type { ManagedPostgresComputePolicyChange } from './models/ManagedPostgresComputePolicyChange.js';
 export type { ManagedPostgresCutover } from './models/ManagedPostgresCutover.js';
 export type { ManagedPostgresCutoverID } from './models/ManagedPostgresCutoverID.js';
 export type { ManagedPostgresCutoverMember } from './models/ManagedPostgresCutoverMember.js';

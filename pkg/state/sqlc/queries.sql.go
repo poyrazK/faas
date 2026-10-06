@@ -372,7 +372,7 @@ func (q *Queries) ActivateRetainedRollbackDeployment(ctx context.Context, db DBT
 }
 
 const activeManagedPostgresResize = `-- name: ActiveManagedPostgresResize :one
-SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending'
+SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending'
 `
 
 type ActiveManagedPostgresResizeParams struct {
@@ -397,6 +397,7 @@ func (q *Queries) ActiveManagedPostgresResize(ctx context.Context, db DBTX, arg 
 		&i.State,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.TargetScaleToZero,
 	)
 	return i, err
 }
@@ -13171,25 +13172,27 @@ func (q *Queries) FinishManagedPostgresLifecycleProvision(ctx context.Context, d
 }
 
 const finishManagedPostgresResizeDatabase = `-- name: FinishManagedPostgresResizeDatabase :one
-UPDATE managed_postgres_databases SET state='ready',service_class=$1::text,observed_generation=desired_generation,
-    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$2::timestamptz,updated_at=$2::timestamptz
-WHERE id=$3::uuid AND account_id=$4::uuid AND state='updating'
-    AND desired_generation=$5::bigint AND observed_generation=desired_generation-1
-    AND lease_token=$6::text AND lease_until>$2::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required
+UPDATE managed_postgres_databases SET state='ready',service_class=$1::text,scale_to_zero=$2::boolean,observed_generation=desired_generation,
+    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$3::timestamptz,updated_at=$3::timestamptz
+WHERE id=$4::uuid AND account_id=$5::uuid AND state='updating'
+    AND desired_generation=$6::bigint AND observed_generation=desired_generation-1
+    AND lease_token=$7::text AND lease_until>$3::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required
 `
 
 type FinishManagedPostgresResizeDatabaseParams struct {
-	TargetClass string
-	At          pgtype.Timestamptz
-	ID          pgtype.UUID
-	Account     pgtype.UUID
-	Generation  int64
-	Token       string
+	TargetClass       string
+	TargetScaleToZero bool
+	At                pgtype.Timestamptz
+	ID                pgtype.UUID
+	Account           pgtype.UUID
+	Generation        int64
+	Token             string
 }
 
 func (q *Queries) FinishManagedPostgresResizeDatabase(ctx context.Context, db DBTX, arg FinishManagedPostgresResizeDatabaseParams) (ManagedPostgresDatabase, error) {
 	row := db.QueryRow(ctx, finishManagedPostgresResizeDatabase,
 		arg.TargetClass,
+		arg.TargetScaleToZero,
 		arg.At,
 		arg.ID,
 		arg.Account,
@@ -14746,7 +14749,7 @@ func (q *Queries) GetManagedPostgresReconciliationLedger(ctx context.Context, db
 }
 
 const getManagedPostgresResize = `-- name: GetManagedPostgresResize :one
-SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at FROM managed_postgres_resizes WHERE account_id=$1 AND id=$2
+SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero FROM managed_postgres_resizes WHERE account_id=$1 AND id=$2
 `
 
 type GetManagedPostgresResizeParams struct {
@@ -14771,6 +14774,7 @@ func (q *Queries) GetManagedPostgresResize(ctx context.Context, db DBTX, arg Get
 		&i.State,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.TargetScaleToZero,
 	)
 	return i, err
 }
@@ -17375,8 +17379,8 @@ func (q *Queries) InsertManagedPostgresReservation(ctx context.Context, db DBTX,
 
 const insertManagedPostgresResize = `-- name: InsertManagedPostgresResize :one
 INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,
-    source_spec,target_class,generation,state,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11) RETURNING id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at
+    source_spec,target_class,target_scale_to_zero,generation,state,created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12) RETURNING id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero
 `
 
 type InsertManagedPostgresResizeParams struct {
@@ -17389,6 +17393,7 @@ type InsertManagedPostgresResizeParams struct {
 	DataResourceID     string
 	SourceSpec         []byte
 	TargetClass        string
+	TargetScaleToZero  pgtype.Bool
 	Generation         int64
 	CreatedAt          pgtype.Timestamptz
 }
@@ -17404,6 +17409,7 @@ func (q *Queries) InsertManagedPostgresResize(ctx context.Context, db DBTX, arg 
 		arg.DataResourceID,
 		arg.SourceSpec,
 		arg.TargetClass,
+		arg.TargetScaleToZero,
 		arg.Generation,
 		arg.CreatedAt,
 	)
@@ -17422,6 +17428,7 @@ func (q *Queries) InsertManagedPostgresResize(ctx context.Context, db DBTX, arg 
 		&i.State,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.TargetScaleToZero,
 	)
 	return i, err
 }
