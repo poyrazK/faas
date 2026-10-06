@@ -140,7 +140,7 @@ func newNativeConnectionClosureFixture(t *testing.T) *nativeConnectionClosureFix
 			writeResponse(t, w, http.StatusOK, endpointsResponse{Endpoints: []endpoint{{ID: "ep-source", ProjectID: "project-source",
 				RegionID: "aws-eu-central-1", BranchID: "br-source", Host: host, Type: "read_write", CurrentState: "active", Disabled: &disabled}}})
 		case "/api/v2/projects/project-source/operations":
-			writeResponse(t, w, http.StatusOK, operationsResponse{})
+			writeResponse(t, w, http.StatusOK, operationsResponse{Operations: []operation{}})
 		case "/api/v2/projects/project-source/connection_uri":
 			q := r.URL.Query()
 			if q.Get("branch_id") != "br-source" || q.Get("database_name") != connectionfence.MaintenanceDatabase || q.Get("role_name") != maintenanceSourceRole || q.Get("pooled") != "false" {
