@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 597
+// adr: 607
 func TestLifecycleProtectionCustomerRecoveryPG(t *testing.T) {
 	var held, deleted atomic.Bool
 	held.Store(true)

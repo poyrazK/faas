@@ -27,6 +27,62 @@ func (q *Queries) AbandonConnections(ctx context.Context, db DBTX, arg AbandonCo
 	return abandoned, err
 }
 
+const checkpointDatabaseNames = `-- name: CheckpointDatabaseNames :many
+SELECT d.datname::text AS database_name FROM pg_catalog.pg_database d
+WHERE d.datname<>$1::text
+ORDER BY d.datname COLLATE "C" LIMIT $2::integer
+`
+
+type CheckpointDatabaseNamesParams struct {
+	MaintenanceDatabase string
+	MaxDatabases        int32
+}
+
+// Inventory the entire source, including templates, databases which refuse
+// connections, and databases owned by another role. Filtering those out would
+// silently omit writers. Only the authenticated private maintenance DB is exempt.
+func (q *Queries) CheckpointDatabaseNames(ctx context.Context, db DBTX, arg CheckpointDatabaseNamesParams) ([]string, error) {
+	rows, err := db.Query(ctx, checkpointDatabaseNames, arg.MaintenanceDatabase, arg.MaxDatabases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var database_name string
+		if err := rows.Scan(&database_name); err != nil {
+			return nil, err
+		}
+		items = append(items, database_name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const checkpointUnselectedDatabaseCount = `-- name: CheckpointUnselectedDatabaseCount :one
+SELECT count(*) FROM pg_catalog.pg_database d
+WHERE d.datname <> $1::text AND NOT EXISTS (
+ SELECT 1 FROM gregale_checkpoint.connection_fence_databases f
+ WHERE f.owner_token=$2::uuid AND f.database_oid=d.oid
+)
+`
+
+type CheckpointUnselectedDatabaseCountParams struct {
+	MaintenanceDatabase string
+	OwnerToken          pgtype.UUID
+}
+
+// Recheck the entire native catalogue against the original OIDs. A database
+// created after selection cannot disappear behind a drained selected subset.
+func (q *Queries) CheckpointUnselectedDatabaseCount(ctx context.Context, db DBTX, arg CheckpointUnselectedDatabaseCountParams) (int64, error) {
+	row := db.QueryRow(ctx, checkpointUnselectedDatabaseCount, arg.MaintenanceDatabase, arg.OwnerToken)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const closeConnections = `-- name: CloseConnections :one
 SELECT gregale_checkpoint.close_connections($1::uuid,$2::text,$3::text[])::boolean AS closed
 `
@@ -330,7 +386,8 @@ func (q *Queries) ReadFence(ctx context.Context, db DBTX, arg ReadFenceParams) (
 
 const readFenceDatabases = `-- name: ReadFenceDatabases :many
 SELECT f.owner_token, f.database_oid, f.database_name, f.owner_oid, f.original_allow_connections,d.oid IS NOT NULL AND d.datname=f.database_name AND d.datdba=f.owner_oid AND NOT d.datallowconn AS identity_closed,
- (SELECT count(*) FROM pg_stat_activity a WHERE a.datid=f.database_oid) AS sessions
+ (SELECT count(*) FROM pg_catalog.pg_stat_activity a WHERE a.datid=f.database_oid) AS sessions,
+ (SELECT count(*) FROM pg_catalog.pg_prepared_xacts p WHERE p.database=f.database_name) AS prepared_transactions
 FROM gregale_checkpoint.connection_fence_databases f LEFT JOIN pg_database d ON d.oid=f.database_oid
 WHERE f.owner_token=$1::uuid ORDER BY f.database_name COLLATE "C"
 `
@@ -343,6 +400,7 @@ type ReadFenceDatabasesRow struct {
 	OriginalAllowConnections bool
 	IdentityClosed           pgtype.Bool
 	Sessions                 int64
+	PreparedTransactions     int64
 }
 
 func (q *Queries) ReadFenceDatabases(ctx context.Context, db DBTX, ownerToken pgtype.UUID) ([]ReadFenceDatabasesRow, error) {
@@ -362,6 +420,7 @@ func (q *Queries) ReadFenceDatabases(ctx context.Context, db DBTX, ownerToken pg
 			&i.OriginalAllowConnections,
 			&i.IdentityClosed,
 			&i.Sessions,
+			&i.PreparedTransactions,
 		); err != nil {
 			return nil, err
 		}

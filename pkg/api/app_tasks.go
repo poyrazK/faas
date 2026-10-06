@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -71,8 +72,8 @@ const (
 )
 
 // CreateAppTaskRequest is the public admission contract. Public requests are
-// always manual. Only reserved binding verification probes may select a live
-// deployment explicitly; other commands use the current manual-task selection.
+// always manual. Reserved binding probes and service smoke commands may select
+// a live deployment explicitly through separate, command-specific selectors.
 // The reserved
 // AppTaskServiceBindingProbeCommand, AppTaskPostgresBindingProbeCommand,
 // AppTaskObjectStorageBindingProbeCommand, and
@@ -81,6 +82,7 @@ const (
 // `gregale bindings smoke`; none is an image executable.
 type CreateAppTaskRequest struct {
 	VerificationDeploymentID string   `json:"verification_deployment_id,omitempty"`
+	SmokeDeploymentID        string   `json:"smoke_deployment_id,omitempty"`
 	Command                  []string `json:"command"`
 	CommandShell             bool     `json:"command_shell,omitempty"`
 	TimeoutSeconds           int      `json:"timeout_seconds,omitempty"`
@@ -91,6 +93,7 @@ type CreateAppTaskRequest struct {
 // suitable for the state admission boundary.
 type ResolvedCreateAppTaskRequest struct {
 	VerificationDeploymentID string
+	SmokeDeploymentID        string
 	Command                  []string
 	CommandShell             bool
 	TimeoutSeconds           int
@@ -99,6 +102,20 @@ type ResolvedCreateAppTaskRequest struct {
 
 // Resolve validates all caller-controlled fields and fills bounded defaults.
 func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem) {
+	if r.VerificationDeploymentID != "" && r.SmokeDeploymentID != "" {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("verification_deployment_id and smoke_deployment_id are mutually exclusive")
+	}
+	smokeDeploymentID := r.SmokeDeploymentID
+	if smokeDeploymentID != "" {
+		parsed, err := uuid.Parse(smokeDeploymentID)
+		if err != nil || parsed == uuid.Nil || !IsServiceBindingSmokeCommand(r.Command, r.CommandShell) {
+			return ResolvedCreateAppTaskRequest{}, appTaskInvalid("smoke_deployment_id requires a deployment UUID and a reserved service binding smoke command")
+		}
+		smokeDeploymentID = parsed.String()
+	}
+	if len(r.Command) > 0 && r.Command[0] == AppTaskServiceBindingSmokeCommand && !IsServiceBindingSmokeCommand(r.Command, r.CommandShell) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid service binding smoke command")
+	}
 	deploymentID := r.VerificationDeploymentID
 	if deploymentID != "" {
 		parsed, err := uuid.Parse(deploymentID)
@@ -153,6 +170,7 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 
 	return ResolvedCreateAppTaskRequest{
 		VerificationDeploymentID: deploymentID,
+		SmokeDeploymentID:        smokeDeploymentID,
 		Command:                  append([]string(nil), r.Command...),
 		CommandShell:             r.CommandShell,
 		TimeoutSeconds:           timeoutSeconds,
@@ -172,6 +190,27 @@ func IsBindingVerificationCommand(command []string, shell bool) bool {
 	default:
 		return false
 	}
+}
+
+// IsServiceBindingSmokeCommand admits only a bounded platform GET with an exact
+// target, canonical service name, origin-form path and explicit status policy.
+func IsServiceBindingSmokeCommand(command []string, shell bool) bool {
+	if shell || len(command) != 5 || command[0] != AppTaskServiceBindingSmokeCommand {
+		return false
+	}
+	names, err := NormalizeServiceBindingTargets([]string{command[1]})
+	if err != nil || len(names) != 1 || names[0] != command[1] {
+		return false
+	}
+	id, err := uuid.Parse(command[2])
+	if err != nil || id == uuid.Nil {
+		return false
+	}
+	if _, err := NormalizeServiceBindingSmokePath(command[3]); err != nil {
+		return false
+	}
+	status, err := strconv.Atoi(command[4])
+	return err == nil && (status == 0 || status >= 200 && status <= 599)
 }
 
 func appTaskInvalid(detail string) *Problem {

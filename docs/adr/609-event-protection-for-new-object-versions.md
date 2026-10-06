@@ -1,8 +1,8 @@
-# ADR-599: Event protection for new object versions
+# ADR-609: Event protection for new object versions
 
 Status: Accepted
 Date: 2026-10-05
-Amends: ADR-596 and ADR-598
+Amends: ADR-606 and ADR-608
 
 ## Context
 
@@ -16,7 +16,7 @@ recovery could settle a version against a different policy.
 Extend the existing immutable write and multipart snapshots to retain event
 policies. Explicit ON requires exactly one positive days or years duration and
 allows a minimum date. Explicit OFF at creation requires a fixed date and omits
-duration; an undated OFF remains an existing-version release in ADR-598.
+duration; an undated OFF remains an existing-version release in ADR-608.
 Omitted retention inherits the captured bucket default, including its event
 period and any fixed minimum. An explicit retention selection overrides that
 default for the created version. Independent legal holds remain unchanged.

@@ -11,12 +11,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 596
+// adr: 606
 func TestProtectedUploadRouteNativeReadback(t *testing.T) {
 	protectedUploadRouteNativeReadback(t, false)
 }
 
-// adr: 599
+// adr: 609
 func TestProtectedEventUploadRouteNativeReadback(t *testing.T) {
 	protectedUploadRouteNativeReadback(t, true)
 }

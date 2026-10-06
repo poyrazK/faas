@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 596
+// adr: 606
 func TestProtectedMultipartPartSpool(t *testing.T) {
 	for _, mode := range []string{"valid", "bad digest", "disk full"} {
 		t.Run(mode, func(t *testing.T) {

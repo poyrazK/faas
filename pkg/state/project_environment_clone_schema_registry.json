@@ -129,6 +129,14 @@
     "kind": "operational"
   },
   {
+    "table": "alert_historical_rollback_claims",
+    "columns": [
+      "deployment_id",
+      "fire_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_presets",
     "columns": [
       "category",
@@ -149,6 +157,17 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "alert_rollback_actions",
+    "columns": [
+      "app_id",
+      "fire_id",
+      "receipt",
+      "status",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_rules",
     "columns": [
       "account_id",
@@ -165,6 +184,7 @@
       "metric",
       "name",
       "org_id",
+      "post_deploy_rollback_window_seconds",
       "state",
       "threshold",
       "updated_at",
@@ -315,9 +335,35 @@
     "columns": [
       "app_id",
       "epoch",
-      "revision"
+      "revision",
+      "service_revision"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "app_binding_release_policies",
+    "columns": [
+      "app_id",
+      "max_age_seconds",
+      "mode",
+      "reason",
+      "require_application_ack",
+      "revision",
+      "scope",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "app_binding_release_policy_history",
+    "columns": [
+      "app_id",
+      "changed_at",
+      "policy",
+      "revision",
+      "scope"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "app_cpu_policy_node_status",
@@ -1906,12 +1952,34 @@
     "kind": "configuration"
   },
   {
+    "table": "deployment_recovery_lineage",
+    "columns": [
+      "deployment_id",
+      "predecessor_deployment_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_revision_pins",
     "columns": [
       "app_id",
       "created_at",
       "deployment_id",
       "expires_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_rollback_operations",
+    "columns": [
+      "app_id",
+      "current_deployment_id",
+      "id",
+      "receipt",
+      "scope",
+      "status",
+      "target_deployment_id",
+      "updated_at"
     ],
     "kind": "operational"
   },

@@ -31,10 +31,10 @@ type Request struct {
 }
 
 type Database struct {
-	OID, OwnerOID            uint32
-	Name                     string
-	OriginalAllowConnections bool
-	Sessions                 int64
+	OID, OwnerOID                  uint32
+	Name                           string
+	OriginalAllowConnections       bool
+	Sessions, PreparedTransactions int64
 }
 
 type Observation struct {
@@ -42,9 +42,12 @@ type Observation struct {
 	State                string
 	ClosedAt, ReleasedAt time.Time
 	Databases            []Database
+	// Point-in-time catalogue omissions outside the original selected OIDs,
+	// excluding only the independently authenticated maintenance database.
+	UnselectedDatabases int64
 	// True only for a closed, independently rechecked selected database set
-	// with no observed sessions. The provider must also justify complete
-	// database/background coverage and its immutable source identity.
+	// with no observed sessions or unresolved prepared transactions. The provider
+	// must also justify complete database/background coverage and source identity.
 	Drained bool
 }
 
@@ -175,33 +178,54 @@ func (c *Controller) Close(ctx context.Context, request Request) (Observation, e
 }
 
 func (c *Controller) Observe(ctx context.Context, identity Identity) (Observation, error) {
-	if c == nil || !validIdentity(identity) {
+	if c == nil || c.pool == nil || !validIdentity(identity) {
 		return Observation{}, pgerrors.ErrInvalid
 	}
-	if err := c.checkInstallation(ctx, c.pool); err != nil {
-		return Observation{}, err
-	}
-	q := sqlc.New()
-	row, err := q.ReadFence(ctx, c.pool, sqlc.ReadFenceParams{OwnerToken: tokenUUID(identity.OwnerToken), SourceResourceID: identity.SourceResourceID})
+	tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return Observation{}, classifyError(err)
 	}
-	dbs, err := q.ReadFenceDatabases(ctx, c.pool, tokenUUID(identity.OwnerToken))
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := c.checkInstallation(ctx, tx); err != nil {
+		return Observation{}, err
+	}
+	q := sqlc.New()
+	row, err := q.ReadFence(ctx, tx, sqlc.ReadFenceParams{OwnerToken: tokenUUID(identity.OwnerToken), SourceResourceID: identity.SourceResourceID})
+	if err != nil {
+		return Observation{}, classifyError(err)
+	}
+	dbs, err := q.ReadFenceDatabases(ctx, tx, tokenUUID(identity.OwnerToken))
 	if err != nil {
 		return Observation{}, classifyError(err)
 	}
 	if len(dbs) != len(row.DatabaseNames) || len(dbs) == 0 && row.State != "abandoned" {
 		return Observation{}, pgerrors.ErrConflict
 	}
-	out := Observation{Identity: identity, State: row.State, ClosedAt: row.ClosedAt.Time, ReleasedAt: row.ReleasedAt.Time, Drained: row.State == "closed"}
+	unselected, err := q.CheckpointUnselectedDatabaseCount(ctx, tx, sqlc.CheckpointUnselectedDatabaseCountParams{
+		MaintenanceDatabase: c.config.MaintenanceDatabase, OwnerToken: tokenUUID(identity.OwnerToken),
+	})
+	if err != nil {
+		return Observation{}, classifyError(err)
+	}
+	out := Observation{Identity: identity, State: row.State, ClosedAt: row.ClosedAt.Time, ReleasedAt: row.ReleasedAt.Time,
+		UnselectedDatabases: unselected, Drained: row.State == "closed"}
 	for i, db := range dbs {
 		if !db.DatabaseOid.Valid || !db.OwnerOid.Valid || db.DatabaseName != row.DatabaseNames[i] ||
 			row.State == "closed" && (!db.IdentityClosed.Valid || !db.IdentityClosed.Bool) {
 			return Observation{}, pgerrors.ErrConflict
 		}
 		out.Databases = append(out.Databases, Database{OID: db.DatabaseOid.Uint32, OwnerOID: db.OwnerOid.Uint32, Name: db.DatabaseName,
-			OriginalAllowConnections: db.OriginalAllowConnections, Sessions: db.Sessions})
-		out.Drained = out.Drained && db.Sessions == 0
+			OriginalAllowConnections: db.OriginalAllowConnections, Sessions: db.Sessions, PreparedTransactions: db.PreparedTransactions})
+		out.Drained = out.Drained && db.Sessions == 0 && db.PreparedTransactions == 0
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Observation{}, classifyError(err)
+	}
+	if err := c.checkInstallation(ctx, c.pool); err != nil {
+		return Observation{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return Observation{}, err
 	}
 	return out, nil
 }

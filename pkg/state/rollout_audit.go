@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -44,6 +45,41 @@ func rolloutAuditData(action, reason string) []byte {
 		return []byte(`{"action":"unknown","reason":""}`)
 	}
 	return payload
+}
+
+// Keep the predecessor and the checked policy/evidence fence in the audit
+// transaction that restores traffic. Public clients cannot supply these fences.
+func rolloutRecoveryAuditData(reason, predecessorID string, fences []BindingPromotionFence) []byte {
+	payload, err := json.Marshal(struct {
+		Action        string                  `json:"action"`
+		Reason        string                  `json:"reason"`
+		PredecessorID string                  `json:"predecessor_deployment_id"`
+		BindingFences []BindingPromotionFence `json:"binding_fences,omitempty"`
+	}{"abort", normalizeRolloutReason(reason), predecessorID, fences})
+	if err != nil {
+		return rolloutAuditData("abort", reason)
+	}
+	return payload
+}
+
+func addRolloutRecoveryAuditFences(data []byte, predecessorID string, fences []BindingPromotionFence) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, fmt.Errorf("decode recovery audit: %w", err)
+	}
+	if fields == nil {
+		fields = map[string]json.RawMessage{}
+	}
+	predecessor, err := json.Marshal(predecessorID)
+	if err != nil {
+		return nil, fmt.Errorf("encode recovery predecessor: %w", err)
+	}
+	checked, err := json.Marshal(fences)
+	if err != nil {
+		return nil, fmt.Errorf("encode recovery fences: %w", err)
+	}
+	fields["predecessor_deployment_id"], fields["binding_fences"] = predecessor, checked
+	return json.Marshal(fields)
 }
 
 // RolloutAuditDataForTest exposes rolloutAuditData to the external state_test

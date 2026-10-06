@@ -1,10 +1,10 @@
 # MCP servers on Gregale
 
-The MCP hosting profile is preview for tool servers that implement `tools/list`.
-Resources-only or prompts-only servers can use ordinary app deployment but do not
-pass this profile's qualification. It uses ordinary HTTP applications and
-stateless Streamable HTTP, with optional stateless legacy compatibility. Builds
-containing ADR-426 provide the commands below; check `gregale mcp --help`.
+The MCP hosting profile is preview for stateless servers that advertise at least
+one MCP catalog: tools, resources (including resource templates), or prompts.
+It uses ordinary HTTP applications and stateless Streamable HTTP, with optional
+stateless legacy compatibility. MCP hosting-enabled builds provide the commands
+below; check `gregale mcp --help`.
 The profile requires a streaming-enabled Hobby, Pro, or Scale account and a
 gateway with streaming enabled.
 
@@ -23,8 +23,17 @@ gregale mcp doctor --url http://127.0.0.1:8080/mcp --legacy --stream-tool stream
 gregale mcp call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
 gregale mcp deploy --path . --name my-mcp --profile small
 gregale mcp tools --app my-mcp
+gregale mcp resources --app my-mcp
+gregale mcp resource-read --app my-mcp --uri 'file:///reports/current'
+gregale mcp prompts --app my-mcp
+gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"period":"week"}'
 gregale mcp config --app my-mcp --name my-mcp
 ```
+
+`mcp resources` and `mcp prompts` return definitions only. Resource reads and
+prompt rendering require the explicit `resource-read --uri` and `prompt-get --prompt`
+commands. Returned resource contents and rendered prompt messages may
+contain private data; review them before saving or forwarding the output.
 
 The starter binds loopback locally and the guest interface on Gregale.
 `gregale.yaml` controls start, port and health. `gregale-mcp.json` controls the
@@ -35,7 +44,7 @@ add exact origins for trusted browser clients.
 
 `mcp deploy` uploads the current worktree, waits for ordinary deployment readiness,
 enables streaming, and opens the platform ingress auth gate for the application's
-client-auth policy. It then verifies tool discovery, Origin rejection and declared
+client-auth policy. It then verifies catalog discovery, Origin rejection and declared
 legacy compatibility. A failed check returns a failing receipt and enables
 maintenance to stop public requests. Review and fix the failure before clearing
 maintenance with `gregale app my-mcp --no-maintenance` and deploying again.
@@ -87,9 +96,9 @@ The CLI sends form responses only after an explicit opt-in and bounds the
 number and size of requests it handles. Calls without either input option keep
 the existing single-request behavior.
 
-## Tool contract snapshots
+## MCP catalog snapshots
 
-Capture a caller-visible tool interface before changing a server:
+Capture caller-visible definitions before changing a server:
 
 ```sh
 gregale mcp lock --app my-mcp --out baseline.json
@@ -97,23 +106,28 @@ gregale mcp lock --url https://candidate.example.com/mcp --out candidate.json
 gregale mcp diff --before baseline.json --after candidate.json --check --json
 ```
 
-`lock` discovers tools without executing them. Its default destination is
+`lock` discovers advertised definitions without executing tools, reading resource
+contents or rendering prompts. Its default destination is
 `gregale-mcp.lock.json`; `--legacy` captures the stateless 2025-11-25 interface.
-Snapshots contain the protocol version, tool names, descriptions, input/output
-schemas and annotations. They omit endpoint URLs, timestamps and client credentials.
-Tool names and JSON object keys are sorted, and schema numbers keep their precision.
+Snapshots contain the protocol version, advertised capabilities, tool definitions,
+resource and resource template metadata, and prompt arguments. They omit resource contents, rendered
+prompt messages, endpoint URLs, timestamps and client credentials. Catalog names
+and JSON object keys are sorted, and schema numbers keep their precision. Contract
+format 2 records capabilities and adds resources, templates and prompts; existing
+format 1 tool-only locks remain readable and compare as advertising tools.
 Discovery that rejects any tool cannot produce a complete snapshot and fails
 without writing a file. Existing snapshots require a new `--out` or explicit
 `--force`; writes are atomic with private file permissions and reject symlinks.
 
 Use the same authorization context for both captures: a caller's scopes can change
-which tools are visible. Review tool metadata before committing it; it is supplied
+which definitions are visible. Review catalog metadata before committing it; it is supplied
 by the server and may contain private information. Snapshots do not record the
 identity or permissions used to capture them.
 
 `diff` reads two local files without making network requests. It reports removed
-tools/properties, new required inputs, narrowed input types/enums, weakened output
-guarantees, metadata changes and changes needing review. Required-field, type-set
+tools/resources/templates/prompts, new required tool or prompt inputs, narrowed
+input types/enums, weakened output guarantees, metadata changes and changes
+needing review. Required-field, type-set
 and enum ordering is ignored. Protocol and annotation changes need review;
 annotations never grant execution permission. Other changed schema keywords,
 including constraints, references and combinators, need review. References are
@@ -125,11 +139,12 @@ conservatively as breaking even where JSON Schema would still permit that key.
 Without `--check`, a successful comparison exits zero and prints its findings.
 With `--check`, breaking changes **or** changes needing review exit one; unchanged
 contracts and informational changes exit zero. Invalid snapshots fail either mode.
-Newly visible tools are informational by default. Add `--strict-catalog` to mark
-each addition as `needs_review`, so `--strict-catalog --check` rejects catalog
-expansion. The receipt includes `strict_catalog: true` when enabled. This applies
-even when the baseline catalog is empty; removals remain breaking. Descriptions
-and other informational changes retain their existing severity.
+Newly visible definitions are informational by default. Add `--strict-catalog`
+to mark each addition as `needs_review`, so `--strict-catalog --check` rejects
+catalog expansion. The receipt includes `strict_catalog: true` when enabled.
+This applies even when the baseline catalog is empty; removals and loss of an
+advertised capability remain breaking. Capability additions need review in strict
+mode. Descriptions and other informational changes retain their existing severity.
 This is an explicit local CI check; it does not switch traffic, enforce platform
 promotion policy or invoke tools.
 

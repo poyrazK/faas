@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -123,5 +125,57 @@ func TestClientManagementResponseIsBounded(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("Stats error = %v, want bounded-response error", err)
+	}
+}
+
+// TestClientDiscardsReviewedCallbackDeadLetter reproduces production-us on
+// 2026-10-05: two realtime.disconnect dead letters from 2026-09-30, for a
+// receiver that no longer exists, kept FaasRealtimeCallbackDeadLettersPresent
+// firing on both compute nodes. Replay would only fail again, and retention
+// evicts nothing until 64 MiB fills, so an operator needs to discard them.
+func TestClientDiscardsReviewedCallbackDeadLetter(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxAttempts: 1})
+	event := testCallbackEvent()
+	if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim = (%v, %v), want claimed", claimed, err)
+	}
+	if err := queue.Fail(event.ID); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	manager := NewManager(Config{}, HTTPHooks{DurableQueue: queue})
+	defer manager.Close()
+	server := httptest.NewServer(manager.HTTPHandler())
+	defer server.Close()
+	client := &Client{BaseURL: server.URL, HTTPClient: server.Client()}
+
+	if err := client.DiscardCallbackDeadLetter(context.Background(), event.ID); err != nil {
+		t.Fatalf("DiscardCallbackDeadLetter: %v", err)
+	}
+	if stats := queue.Stats(); stats.DeadLetterTotal != 0 || stats.DeadLetterBytes != 0 || stats.Pending != 0 || stats.DeadLetterDiscards != 1 {
+		t.Fatalf("outbox after discard = %+v, want no dead letters, nothing pending, one discard", stats)
+	}
+	if _, err := os.Stat(filepath.Join(queue.deadRoot, event.ID+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dead-letter file after discard: %v, want removed", err)
+	}
+	if stats := manager.Stats(); stats.CallbackDeadLetters != 0 || stats.CallbackDeadLetterDiscards != 1 {
+		t.Fatalf("manager stats after discard = %+v, want 0 dead letters and 1 discard", stats)
+	}
+
+	var managementErr *ManagementError
+	err := client.DiscardCallbackDeadLetter(context.Background(), event.ID)
+	if !errors.As(err, &managementErr) || managementErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("repeat DiscardCallbackDeadLetter = %v, want HTTP 404", err)
+	}
+	err = client.DiscardCallbackDeadLetter(context.Background(), "../escape")
+	if !errors.As(err, &managementErr) || managementErr.StatusCode != http.StatusBadRequest && managementErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("DiscardCallbackDeadLetter with a path-like ID = %v, want HTTP 400 or 404", err)
+	}
+	response, err := server.Client().Post(server.URL+"/internal/callbacks/dead-letters/"+event.ID+":purge", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown dead-letter action status = %d, want 404", response.StatusCode)
 	}
 }

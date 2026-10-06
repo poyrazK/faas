@@ -95,7 +95,7 @@ func TestVersionProtectionCLI(t *testing.T) {
 	}
 }
 
-// adr: 598
+// adr: 608
 func TestEventHoldProtectionCLI(t *testing.T) {
 	bucket, version, id := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	until := time.Now().UTC().AddDate(1, 0, 0).Format(time.RFC3339Nano)

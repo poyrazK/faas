@@ -123,7 +123,7 @@ func (f *writeProtectionControlNative) commit(key string, h http.Header) {
 	f.objects[key] = h
 }
 
-// adr: 596
+// adr: 606
 func TestWriteProtectionControlE2EMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	now := time.Now().UTC().Add(-17 * time.Minute)
@@ -153,7 +153,7 @@ func TestWriteProtectionControlE2EPG(t *testing.T) {
 	})
 }
 
-// adr: 599
+// adr: 609
 func TestEventWriteProtectionControlE2EMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	now := time.Now().UTC().Add(-17 * time.Minute)

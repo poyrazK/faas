@@ -33,6 +33,7 @@ func (s *PgStore) PromoteDeploymentWithBindings(ctx context.Context, id string, 
 	if err != nil {
 		return BindingPromotionResult{}, fmt.Errorf("state: read binding promotion deployment: %w", err)
 	}
+	ctx = WithBindingReleaseFences(ctx, []BindingPromotionFence{fence})
 	guard := &bindingTrafficGuard{fence: fence, snapshot: snapshot}
 	var expected []string
 	if serving != "" {

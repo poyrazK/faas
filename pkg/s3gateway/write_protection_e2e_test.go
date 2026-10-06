@@ -158,7 +158,7 @@ func (f *protectedWriteHTTP) commit(key string, obj *protectedWriteHTTPObject) {
 	f.versions[obj.version] = *obj
 }
 
-// adr: 596
+// adr: 606
 func TestWriteProtectionSDKE2EMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC().Add(-17 * time.Minute)
@@ -185,7 +185,7 @@ func TestWriteProtectionSDKE2EPG(t *testing.T) {
 	}, func() time.Time { return time.Now().UTC() })
 }
 
-// adr: 599
+// adr: 609
 func TestEventWriteProtectionSDKE2EMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC().Add(-17 * time.Minute)

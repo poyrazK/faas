@@ -41,7 +41,7 @@ func TestVersionProtectionStrictInput(t *testing.T) {
 	}
 }
 
-// adr: 598
+// adr: 608
 func TestEventHoldProtectionReleaseDecode(t *testing.T) {
 	body := []byte(`<Retention><Mode>COMPLIANCE</Mode><EventHold>OFF</EventHold></Retention>`)
 	request, err := DecodeObjectVersionRetention(body)

@@ -65,7 +65,7 @@ func TestVersionProtectionClient(t *testing.T) {
 	}
 }
 
-// adr: 598
+// adr: 608
 func TestEventHoldProtectionClient(t *testing.T) {
 	day, year := int32(30), int32(1)
 	for _, policy := range []ObjectVersionRetention{

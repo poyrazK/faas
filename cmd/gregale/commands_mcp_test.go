@@ -60,6 +60,8 @@ func TestMCPCLIJourney(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		w.Header().Set("Content-Type", "application/json")
 		switch req.Method {
+		case "server/discover":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":["%s"],"capabilities":{"tools":{}}}}`, req.ID, mcphosting.ProtocolVersion)
 		case "tools/list":
 			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"add","inputSchema":{"type":"object"}}]}}`, req.ID)
 		case "tools/call":
@@ -213,7 +215,7 @@ func TestMCPHelpAndCompletion(t *testing.T) {
 	}
 	var reference bytes.Buffer
 	renderMarkdownReference(&reference, []cliCommand{command})
-	for _, required := range []string{"mcp doctor", "mcp deploy", "mcp lock", "mcp diff", "--before", "--after", "--check", "--strict-catalog", "--force", "--token-env", "--stream-tool", "--arguments-file", "--interactive", "--input-responses-file"} {
+	for _, required := range []string{"mcp doctor", "mcp deploy", "mcp lock", "mcp diff", "mcp resources", "mcp resource-read", "mcp prompts", "mcp prompt-get", "--uri", "--prompt", "--before", "--after", "--check", "--strict-catalog", "--force", "--token-env", "--stream-tool", "--arguments-file", "--interactive", "--input-responses-file"} {
 		if !strings.Contains(reference.String(), required) {
 			t.Errorf("MCP help omitted %q", required)
 		}
@@ -234,10 +236,15 @@ func TestMCPDiscoveryReportsRejectedTools(t *testing.T) {
 			return
 		}
 		var request struct {
-			ID int `json:"id"`
+			ID     int    `json:"id"`
+			Method string `json:"method"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
 		w.Header().Set("Content-Type", "application/json")
+		if request.Method == "server/discover" {
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":["%s"],"capabilities":{"tools":{}}}}`, request.ID, mcphosting.ProtocolVersion)
+			return
+		}
 		_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"bad","inputSchema":{"properties":{"x":{"type":"number","x-mcp-header":"X"}}}},{"name":"good","inputSchema":{"type":"object"}}]}}`, request.ID)
 	}))
 	defer s.Close()

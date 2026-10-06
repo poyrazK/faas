@@ -224,6 +224,11 @@ func (c *Client) ReplayCallbackDeadLetter(ctx context.Context, id string) error 
 	return c.do(ctx, http.MethodPost, "/internal/callbacks/dead-letters/"+pathPart(id)+":replay", nil, nil)
 }
 
+// DiscardCallbackDeadLetter deletes one retained event after operator review.
+func (c *Client) DiscardCallbackDeadLetter(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/internal/callbacks/dead-letters/"+pathPart(id)+":discard", nil, nil)
+}
+
 func encodeMessage(message Message) string {
 	return base64.StdEncoding.EncodeToString(message.Data)
 }

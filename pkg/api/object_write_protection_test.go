@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// adr: 596
+// adr: 606
 func TestObjectWriteProtectionValidation(t *testing.T) {
 	until := time.Date(2027, 1, 2, 3, 4, 5, 123456789, time.UTC)
 	days := int32(30)

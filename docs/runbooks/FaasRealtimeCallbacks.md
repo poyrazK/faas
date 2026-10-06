@@ -99,6 +99,20 @@ removed in the past hour, including during daemon startup.
    HTTP 409 means the pending queue has no capacity or an active delivery
    would violate the connection's callback order; wait for the backlog to
    drain and retry. The outbox does not replay dead letters automatically.
+4. If an event should not be delivered (its receiver was removed, or the
+   application has already handled it), discard it after review:
+
+   ```sh
+   curl --fail --unix-socket /run/faas/realtimed.sock -X POST \
+     'http://localhost/internal/callbacks/dead-letters/<EVENT_ID>:discard'
+   ```
+
+   Discard deletes the retained file and its payload, and increments
+   `realtimed_callback_dead_letter_discards_total`. HTTP 404 means the event
+   is not a retained dead letter: it was already discarded, evicted or
+   replayed. Dead letters never expire on their own, so
+   `FaasRealtimeCallbackDeadLettersPresent` keeps firing until every
+   retained event is replayed or discarded.
 
 The default dead-letter limit is 64 MiB, separate from the 64 MiB pending
 callback limit. Retention removes the oldest files by modification time,

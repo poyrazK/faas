@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 597
+// adr: 607
 func TestLifecycleProtectionWorkerProgressHTTP(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pg=%t", pg), func(t *testing.T) {
@@ -90,7 +90,7 @@ func TestLifecycleProtectionWorkerProgressHTTP(t *testing.T) {
 	}
 }
 
-// adr: 597
+// adr: 607
 func TestLifecycleProtectionCurrentExpirationHTTP(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pg=%t", pg), func(t *testing.T) {

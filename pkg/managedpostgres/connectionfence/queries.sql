@@ -17,6 +17,14 @@ FROM pg_database d WHERE d.datname=current_database();
 -- name: FenceSchemaExists :one
 SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='gregale_checkpoint') AS present;
 
+-- Inventory the entire source, including templates, databases which refuse
+-- connections, and databases owned by another role. Filtering those out would
+-- silently omit writers. Only the authenticated private maintenance DB is exempt.
+-- name: CheckpointDatabaseNames :many
+SELECT d.datname::text AS database_name FROM pg_catalog.pg_database d
+WHERE d.datname<>sqlc.arg(maintenance_database)::text
+ORDER BY d.datname COLLATE "C" LIMIT sqlc.arg(max_databases)::integer;
+
 -- name: FenceSchemaPrivate :one
 SELECT n.nspowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)
  AND NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(n.nspacl,acldefault('n',n.nspowner))) a WHERE a.grantee<>n.nspowner)
@@ -183,6 +191,16 @@ SELECT * FROM gregale_checkpoint.connection_fences WHERE owner_token=sqlc.arg(ow
 
 -- name: ReadFenceDatabases :many
 SELECT f.*,d.oid IS NOT NULL AND d.datname=f.database_name AND d.datdba=f.owner_oid AND NOT d.datallowconn AS identity_closed,
- (SELECT count(*) FROM pg_stat_activity a WHERE a.datid=f.database_oid) AS sessions
+ (SELECT count(*) FROM pg_catalog.pg_stat_activity a WHERE a.datid=f.database_oid) AS sessions,
+ (SELECT count(*) FROM pg_catalog.pg_prepared_xacts p WHERE p.database=f.database_name) AS prepared_transactions
 FROM gregale_checkpoint.connection_fence_databases f LEFT JOIN pg_database d ON d.oid=f.database_oid
 WHERE f.owner_token=sqlc.arg(owner_token)::uuid ORDER BY f.database_name COLLATE "C";
+
+-- Recheck the entire native catalogue against the original OIDs. A database
+-- created after selection cannot disappear behind a drained selected subset.
+-- name: CheckpointUnselectedDatabaseCount :one
+SELECT count(*) FROM pg_catalog.pg_database d
+WHERE d.datname <> sqlc.arg(maintenance_database)::text AND NOT EXISTS (
+ SELECT 1 FROM gregale_checkpoint.connection_fence_databases f
+ WHERE f.owner_token=sqlc.arg(owner_token)::uuid AND f.database_oid=d.oid
+);

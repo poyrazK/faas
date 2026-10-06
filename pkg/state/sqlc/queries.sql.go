@@ -1056,6 +1056,63 @@ func (q *Queries) AppendEvent(ctx context.Context, db DBTX, arg AppendEventParam
 	return err
 }
 
+const appendRolloutRecoveryAudit = `-- name: AppendRolloutRecoveryAudit :one
+INSERT INTO deployment_audit(deployment_id,account_id,alert_rule_id,kind,actor,at,data)
+ VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7::jsonb) RETURNING id
+`
+
+type AppendRolloutRecoveryAuditParams struct {
+	DeploymentID pgtype.UUID
+	AccountID    pgtype.UUID
+	AlertRuleID  pgtype.UUID
+	Kind         string
+	Actor        string
+	At           pgtype.Timestamptz
+	Data         []byte
+}
+
+func (q *Queries) AppendRolloutRecoveryAudit(ctx context.Context, db DBTX, arg AppendRolloutRecoveryAuditParams) (int64, error) {
+	row := db.QueryRow(ctx, appendRolloutRecoveryAudit,
+		arg.DeploymentID,
+		arg.AccountID,
+		arg.AlertRuleID,
+		arg.Kind,
+		arg.Actor,
+		arg.At,
+		arg.Data,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const appendServiceRolloutBindingAudit = `-- name: AppendServiceRolloutBindingAudit :one
+INSERT INTO deployment_audit(deployment_id, account_id, kind, actor, at, data)
+VALUES ($1::uuid, (SELECT account_id FROM apps WHERE id = $2::uuid), $3, $4, clock_timestamp(), $5::jsonb)
+RETURNING id
+`
+
+type AppendServiceRolloutBindingAuditParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	Kind         string
+	Actor        string
+	Data         []byte
+}
+
+func (q *Queries) AppendServiceRolloutBindingAudit(ctx context.Context, db DBTX, arg AppendServiceRolloutBindingAuditParams) (int64, error) {
+	row := db.QueryRow(ctx, appendServiceRolloutBindingAudit,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.Kind,
+		arg.Actor,
+		arg.Data,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const appendUploadBytes = `-- name: AppendUploadBytes :one
 UPDATE upload_sessions
    SET received_bytes = $1,
@@ -1281,6 +1338,28 @@ func (q *Queries) AttachProjectEnvironmentCloneDeployment(ctx context.Context, d
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const authorizeBindingReleaseTraffic = `-- name: AuthorizeBindingReleaseTraffic :one
+SELECT authorize_binding_release_traffic($1::jsonb)::boolean
+`
+
+func (q *Queries) AuthorizeBindingReleaseTraffic(ctx context.Context, db DBTX, fences []byte) (bool, error) {
+	row := db.QueryRow(ctx, authorizeBindingReleaseTraffic, fences)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const authorizeCheckedRollback = `-- name: AuthorizeCheckedRollback :one
+SELECT set_config('faas.checked_rollback_request',$1::text,true)
+`
+
+func (q *Queries) AuthorizeCheckedRollback(ctx context.Context, db DBTX, requestID string) (string, error) {
+	row := db.QueryRow(ctx, authorizeCheckedRollback, requestID)
+	var set_config string
+	err := row.Scan(&set_config)
+	return set_config, err
 }
 
 const authorizeWorkflowOutbound = `-- name: AuthorizeWorkflowOutbound :one
@@ -2087,6 +2166,66 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 	return i_id, err
 }
 
+const checkedRollbackCurrentMatches = `-- name: CheckedRollbackCurrentMatches :one
+SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=$1 AND d.app_id=$2
+ AND d.scope=$3 AND d.status='live' AND d.traffic_percent=100
+ AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps) AND d.rollout_state NOT IN ('pending','rolling_out'))
+ AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=$2 AND d.scope=$3
+ AND d.status='live' AND d.id<>$1 AND d.id<>$4
+ AND (d.traffic_percent>0 OR d.rollout_state IN ('pending','rolling_out')))
+`
+
+type CheckedRollbackCurrentMatchesParams struct {
+	CurrentID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+	TargetID  pgtype.UUID
+}
+
+func (q *Queries) CheckedRollbackCurrentMatches(ctx context.Context, db DBTX, arg CheckedRollbackCurrentMatchesParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, checkedRollbackCurrentMatches,
+		arg.CurrentID,
+		arg.AppID,
+		arg.Scope,
+		arg.TargetID,
+	)
+	var column_1 pgtype.Bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const checkedRollbackForTarget = `-- name: CheckedRollbackForTarget :one
+SELECT receipt FROM deployment_rollback_operations WHERE target_deployment_id=$1
+ AND status NOT IN ('complete','failed') ORDER BY updated_at,id LIMIT 1
+`
+
+func (q *Queries) CheckedRollbackForTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, checkedRollbackForTarget, targetID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
+}
+
+const checkedRollbackTargetFacts = `-- name: CheckedRollbackTargetFacts :one
+SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d.status,'traffic_percent',d.traffic_percent,
+ 'canary_total_steps',d.canary_total_steps,'canary_step',d.canary_step,'rollout_state',d.rollout_state,'rootfs_key',coalesce(d.rootfs_key,''),
+ 'image_digest',d.image_digest,'environment_workload_runtime',d.environment_workload_runtime,
+ 'service_rollout_handoff',d.service_rollout_handoff) FROM deployments d
+ WHERE d.id=$1 AND d.app_id=$2 FOR UPDATE
+`
+
+type CheckedRollbackTargetFactsParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg CheckedRollbackTargetFactsParams) ([]byte, error) {
+	row := db.QueryRow(ctx, checkedRollbackTargetFacts, arg.DeploymentID, arg.AppID)
+	var jsonb_build_object []byte
+	err := row.Scan(&jsonb_build_object)
+	return jsonb_build_object, err
+}
+
 const claimAutomaticRouteCheck = `-- name: ClaimAutomaticRouteCheck :one
 WITH candidate AS (
     SELECT j.deployment_id FROM automatic_route_checks j
@@ -2428,6 +2567,24 @@ func (q *Queries) ClaimEnvironmentWorkloadQualification(ctx context.Context, db 
 		&i.ReservedInstanceID,
 	)
 	return i, err
+}
+
+const claimHistoricalAlertRollback = `-- name: ClaimHistoricalAlertRollback :execrows
+INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
+ VALUES($1,$2) ON CONFLICT(deployment_id) DO NOTHING
+`
+
+type ClaimHistoricalAlertRollbackParams struct {
+	DeploymentID pgtype.UUID
+	FireID       pgtype.UUID
+}
+
+func (q *Queries) ClaimHistoricalAlertRollback(ctx context.Context, db DBTX, arg ClaimHistoricalAlertRollbackParams) (int64, error) {
+	result, err := db.Exec(ctx, claimHistoricalAlertRollback, arg.DeploymentID, arg.FireID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const claimImmediateNotificationForNode = `-- name: ClaimImmediateNotificationForNode :one
@@ -6518,6 +6675,89 @@ func (q *Queries) CreateRoutePolicyRule(ctx context.Context, db DBTX, arg Create
 	return err
 }
 
+const createServiceBindingSmokeTask = `-- name: CreateServiceBindingSmokeTask :one
+INSERT INTO app_tasks (
+ account_id, app_id, deployment_id, kind, command, command_shell,
+ deployment_scope, artifact_key, image_digest, timeout_seconds, max_output_bytes,
+ created_at, updated_at)
+SELECT a.account_id, a.id, d.id, 'manual', $1::text[], false,
+ COALESCE(NULLIF(d.scope, ''), 'default'), d.rootfs_key, d.image_digest,
+ $2, $3, $4, $4
+FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE a.id = $5 AND a.account_id = $6
+ AND a.status <> 'deleted' AND d.id = $7
+ AND d.status = 'live' AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
+FOR SHARE OF a, d
+RETURNING app_tasks.id, app_tasks.account_id, app_tasks.app_id, app_tasks.deployment_id, app_tasks.kind, app_tasks.command, app_tasks.command_shell, app_tasks.deployment_scope, app_tasks.artifact_key, app_tasks.image_digest, app_tasks.status, app_tasks.timeout_seconds, app_tasks.max_output_bytes, app_tasks.lease_token, app_tasks.lease_owner, app_tasks.lease_expires_at, app_tasks.cancel_requested_at, app_tasks.stdout_tail, app_tasks.stderr_tail, app_tasks.output_truncated, app_tasks.exit_code, app_tasks.failure_code, app_tasks.failure_message, app_tasks.started_at, app_tasks.finished_at, app_tasks.created_at, app_tasks.updated_at, app_tasks.cron_id, app_tasks.scheduled_for, app_tasks.retry_max, app_tasks.retry_backoff_seconds, app_tasks.attempt_count, app_tasks.retry_at, app_tasks.failure_rules, app_tasks.occurrence_id, app_tasks.start_deadline_at, app_tasks.work_decision, app_tasks.outcome_code, app_tasks.exclusive_operation_id, app_tasks.exclusive_generation, app_tasks.binding_verification
+`
+
+type CreateServiceBindingSmokeTaskParams struct {
+	Command        []string
+	TimeoutSeconds int32
+	MaxOutputBytes int32
+	CreatedAt      pgtype.Timestamptz
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	DeploymentID   pgtype.UUID
+}
+
+func (q *Queries) CreateServiceBindingSmokeTask(ctx context.Context, db DBTX, arg CreateServiceBindingSmokeTaskParams) (AppTask, error) {
+	row := db.QueryRow(ctx, createServiceBindingSmokeTask,
+		arg.Command,
+		arg.TimeoutSeconds,
+		arg.MaxOutputBytes,
+		arg.CreatedAt,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+	)
+	var i AppTask
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.Kind,
+		&i.Command,
+		&i.CommandShell,
+		&i.DeploymentScope,
+		&i.ArtifactKey,
+		&i.ImageDigest,
+		&i.Status,
+		&i.TimeoutSeconds,
+		&i.MaxOutputBytes,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.StdoutTail,
+		&i.StderrTail,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CronID,
+		&i.ScheduledFor,
+		&i.RetryMax,
+		&i.RetryBackoffSeconds,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.FailureRules,
+		&i.OccurrenceID,
+		&i.StartDeadlineAt,
+		&i.WorkDecision,
+		&i.OutcomeCode,
+		&i.ExclusiveOperationID,
+		&i.ExclusiveGeneration,
+		&i.BindingVerification,
+	)
+	return i, err
+}
+
 const createSession = `-- name: CreateSession :one
 insert into sessions (id, account_id, issued_ip, issued_ua)
 values ($1, $2, nullif($3, '')::inet, nullif($4, ''))
@@ -7063,6 +7303,15 @@ func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, no
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const cutoverCheckedRollbackTarget = `-- name: CutoverCheckedRollbackTarget :exec
+UPDATE deployments SET traffic_percent=100,rollout_state='complete',rollout_completed_at=clock_timestamp() WHERE id=$1
+`
+
+func (q *Queries) CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error {
+	_, err := db.Exec(ctx, cutoverCheckedRollbackTarget, targetID)
+	return err
 }
 
 const deactivateProjectReleaseSets = `-- name: DeactivateProjectReleaseSets :exec
@@ -11427,6 +11676,15 @@ func (q *Queries) FailAutomaticRouteCheck(ctx context.Context, db DBTX, arg Fail
 	return result.RowsAffected(), nil
 }
 
+const failCheckedRollbackTarget = `-- name: FailCheckedRollbackTarget :exec
+UPDATE deployments SET status='superseded',rollout_state='pending' WHERE id=$1 AND traffic_percent=0
+`
+
+func (q *Queries) FailCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error {
+	_, err := db.Exec(ctx, failCheckedRollbackTarget, targetID)
+	return err
+}
+
 const failNotificationClaim = `-- name: FailNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox
@@ -11463,6 +11721,17 @@ func (q *Queries) FailNotificationClaim(ctx context.Context, db DBTX, arg FailNo
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const failedCheckedRollbackTarget = `-- name: FailedCheckedRollbackTarget :one
+SELECT EXISTS(SELECT 1 FROM deployment_rollback_operations WHERE target_deployment_id=$1 AND status='failed')
+`
+
+func (q *Queries) FailedCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, failedCheckedRollbackTarget, targetID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const featureFlagCustomerOwned = `-- name: FeatureFlagCustomerOwned :one
@@ -12697,6 +12966,24 @@ func (q *Queries) GetActiveManagedPostgresCutover(ctx context.Context, db DBTX, 
 		&i.VerifiedAt,
 	)
 	return i, err
+}
+
+const getAlertRollback = `-- name: GetAlertRollback :one
+SELECT r.receipt FROM alert_rollback_actions r JOIN apps a ON a.id=r.app_id
+ WHERE r.fire_id=$1 AND a.id=$2 AND a.account_id=$3 AND r.receipt->>'account_id'=a.account_id::text AND a.status<>'deleted'
+`
+
+type GetAlertRollbackParams struct {
+	FireID    pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) GetAlertRollback(ctx context.Context, db DBTX, arg GetAlertRollbackParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getAlertRollback, arg.FireID, arg.AppID, arg.AccountID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
 }
 
 const getAppEnvironmentSecretIntent = `-- name: GetAppEnvironmentSecretIntent :one
@@ -14620,6 +14907,28 @@ func (q *Queries) InitializeWorkflowForEach(ctx context.Context, db DBTX, arg In
 	return err
 }
 
+const insertAlertRollback = `-- name: InsertAlertRollback :exec
+INSERT INTO alert_rollback_actions(fire_id,app_id,status,receipt)
+ VALUES($1,$2::uuid,$3,$4)
+`
+
+type InsertAlertRollbackParams struct {
+	FireID  pgtype.UUID
+	AppID   pgtype.UUID
+	Status  string
+	Receipt []byte
+}
+
+func (q *Queries) InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAlertRollbackParams) error {
+	_, err := db.Exec(ctx, insertAlertRollback,
+		arg.FireID,
+		arg.AppID,
+		arg.Status,
+		arg.Receipt,
+	)
+	return err
+}
+
 const insertAppErrorRequest = `-- name: InsertAppErrorRequest :exec
 INSERT INTO app_error_requests (
     id, account_id, app_id, fingerprint, request_id, received_at,
@@ -14682,6 +14991,34 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.DeploymentTag,
 		arg.DeploymentCreatedAt,
 		arg.ImageDigest,
+	)
+	return err
+}
+
+const insertCheckedRollback = `-- name: InsertCheckedRollback :exec
+INSERT INTO deployment_rollback_operations(id,app_id,scope,target_deployment_id,current_deployment_id,status,receipt)
+ VALUES($1,$2,$3,$4,$5,$6,$7)
+`
+
+type InsertCheckedRollbackParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+	TargetID  pgtype.UUID
+	CurrentID pgtype.UUID
+	Status    string
+	Receipt   []byte
+}
+
+func (q *Queries) InsertCheckedRollback(ctx context.Context, db DBTX, arg InsertCheckedRollbackParams) error {
+	_, err := db.Exec(ctx, insertCheckedRollback,
+		arg.ID,
+		arg.AppID,
+		arg.Scope,
+		arg.TargetID,
+		arg.CurrentID,
+		arg.Status,
+		arg.Receipt,
 	)
 	return err
 }
@@ -14866,6 +15203,78 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 		arg.Source,
 	)
 	return err
+}
+
+const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
+INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,
+ action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
+VALUES($1,$2,$3,$4,$5,$6,
+ $7,$8,$9,$10,$11,
+ $12,$13,$14,$15)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds
+`
+
+type InsertCustomerAlertRuleParams struct {
+	AccountID                       pgtype.UUID
+	AppID                           pgtype.UUID
+	Name                            string
+	Enabled                         bool
+	Metric                          string
+	Comparison                      string
+	Threshold                       float64
+	WindowSpec                      string
+	FailureSource                   pgtype.Text
+	Action                          string
+	WebhookUrl                      string
+	WebhookSecretSealed             []byte
+	CooldownMinutes                 int32
+	State                           string
+	PostDeployRollbackWindowSeconds int32
+}
+
+func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg InsertCustomerAlertRuleParams) (AlertRule, error) {
+	row := db.QueryRow(ctx, insertCustomerAlertRule,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.Enabled,
+		arg.Metric,
+		arg.Comparison,
+		arg.Threshold,
+		arg.WindowSpec,
+		arg.FailureSource,
+		arg.Action,
+		arg.WebhookUrl,
+		arg.WebhookSecretSealed,
+		arg.CooldownMinutes,
+		arg.State,
+		arg.PostDeployRollbackWindowSeconds,
+	)
+	var i AlertRule
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Enabled,
+		&i.Metric,
+		&i.Comparison,
+		&i.Threshold,
+		&i.WindowSpec,
+		&i.FailureSource,
+		&i.WebhookUrl,
+		&i.WebhookSecretSealed,
+		&i.CooldownMinutes,
+		&i.State,
+		&i.LastFiredAt,
+		&i.LastEvaluatedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OrgID,
+		&i.Action,
+		&i.PostDeployRollbackWindowSeconds,
+	)
+	return i, err
 }
 
 const insertCustomerOperation = `-- name: InsertCustomerOperation :exec
@@ -20807,6 +21216,38 @@ func (q *Queries) ListActiveTCPListeners(ctx context.Context, db DBTX) ([]AppTcp
 	return items, nil
 }
 
+const listAlertRollbacks = `-- name: ListAlertRollbacks :many
+SELECT r.receipt FROM alert_rollback_actions r JOIN apps a ON a.id=r.app_id
+ WHERE a.id=$1 AND a.account_id=$2 AND r.receipt->>'account_id'=a.account_id::text AND a.status<>'deleted'
+ ORDER BY r.updated_at DESC,r.fire_id LIMIT $3
+`
+
+type ListAlertRollbacksParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	BatchSize int32
+}
+
+func (q *Queries) ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlertRollbacksParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listAlertRollbacks, arg.AppID, arg.AccountID, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var receipt []byte
+		if err := rows.Scan(&receipt); err != nil {
+			return nil, err
+		}
+		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllEventsPaged = `-- name: ListAllEventsPaged :many
 select id, at, actor, kind, subject, data
 from events
@@ -21897,6 +22338,106 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 			&i.SkipIfRunning,
 			&i.LastFiredAt,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+ AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
+ ORDER BY r.created_at DESC LIMIT 2
+`
+
+type ListCustomerAlertRulesByPresetParams struct {
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	PresetName string
+}
+
+func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, arg ListCustomerAlertRulesByPresetParams) ([]AlertRule, error) {
+	rows, err := db.Query(ctx, listCustomerAlertRulesByPreset, arg.AccountID, arg.AppID, arg.PresetName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertRule{}
+	for rows.Next() {
+		var i AlertRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Enabled,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.FailureSource,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
+			&i.CooldownMinutes,
+			&i.State,
+			&i.LastFiredAt,
+			&i.LastEvaluatedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Action,
+			&i.PostDeployRollbackWindowSeconds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+`
+
+func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
+	rows, err := db.Query(ctx, listCustomerAlertRulesForAccount, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertRule{}
+	for rows.Next() {
+		var i AlertRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Enabled,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.FailureSource,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
+			&i.CooldownMinutes,
+			&i.State,
+			&i.LastFiredAt,
+			&i.LastEvaluatedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Action,
+			&i.PostDeployRollbackWindowSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -23081,6 +23622,52 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 			&i.SkipIfRunning,
 			&i.LastFiredAt,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds FROM alert_rules WHERE enabled=true ORDER BY account_id
+`
+
+func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error) {
+	rows, err := db.Query(ctx, listEnabledCustomerAlertRules)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertRule{}
+	for rows.Next() {
+		var i AlertRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Enabled,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.FailureSource,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
+			&i.CooldownMinutes,
+			&i.State,
+			&i.LastFiredAt,
+			&i.LastEvaluatedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Action,
+			&i.PostDeployRollbackWindowSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -25184,6 +25771,54 @@ func (q *Queries) ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const listPendingAlertRollbacks = `-- name: ListPendingAlertRollbacks :many
+SELECT receipt FROM alert_rollback_actions WHERE status IN ('pending','blocked') ORDER BY updated_at,fire_id LIMIT $1
+`
+
+func (q *Queries) ListPendingAlertRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error) {
+	rows, err := db.Query(ctx, listPendingAlertRollbacks, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var receipt []byte
+		if err := rows.Scan(&receipt); err != nil {
+			return nil, err
+		}
+		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingCheckedRollbacks = `-- name: ListPendingCheckedRollbacks :many
+SELECT receipt FROM deployment_rollback_operations WHERE status NOT IN ('complete','failed') ORDER BY updated_at,id LIMIT $1
+`
+
+func (q *Queries) ListPendingCheckedRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error) {
+	rows, err := db.Query(ctx, listPendingCheckedRollbacks, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var receipt []byte
+		if err := rows.Scan(&receipt); err != nil {
+			return nil, err
+		}
+		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPlatformTenantCustomerOperations = `-- name: ListPlatformTenantCustomerOperations :many
 SELECT jsonb_build_object(
  'id', o.record->'id',
@@ -26322,6 +26957,30 @@ func (q *Queries) ListSessions(ctx context.Context, db DBTX, accountID pgtype.UU
 	return items, nil
 }
 
+const listSnapshotDeploymentIDs = `-- name: ListSnapshotDeploymentIDs :many
+SELECT DISTINCT deployment_id::text FROM snapshots ORDER BY deployment_id::text
+`
+
+func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, listSnapshotDeploymentIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var deployment_id string
+		if err := rows.Scan(&deployment_id); err != nil {
+			return nil, err
+		}
+		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTCPListenerTLSObservations = `-- name: ListTCPListenerTLSObservations :many
 SELECT listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after
 FROM app_tcp_listener_tls_observations
@@ -26820,6 +27479,53 @@ func (q *Queries) ListWorkflowScheduleCursors(ctx context.Context, db DBTX, appI
 	return items, nil
 }
 
+const lockAlertRollback = `-- name: LockAlertRollback :one
+SELECT receipt FROM alert_rollback_actions WHERE fire_id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockAlertRollback(ctx context.Context, db DBTX, fireID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, lockAlertRollback, fireID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
+}
+
+const lockAlertRollbackFireApp = `-- name: LockAlertRollbackFireApp :many
+SELECT a.id FROM apps a JOIN alert_rules r ON r.app_id=a.id AND r.account_id=a.account_id
+ WHERE r.id=$1 AND r.action='rollback' FOR UPDATE OF a
+`
+
+func (q *Queries) LockAlertRollbackFireApp(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockAlertRollbackFireApp, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAlertRollbackRule = `-- name: LockAlertRollbackRule :one
+SELECT id FROM alert_rules WHERE id=$1 FOR SHARE
+`
+
+func (q *Queries) LockAlertRollbackRule(ctx context.Context, db DBTX, ruleID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockAlertRollbackRule, ruleID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockAppEnvironmentSecretReferenceScope = `-- name: LockAppEnvironmentSecretReferenceScope :one
 SELECT e.id,e.project_id FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
  WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND a.status<>'deleted'
@@ -26933,6 +27639,67 @@ func (q *Queries) LockCanaryRouteGateApp(ctx context.Context, db DBTX, appID str
 	var account_id string
 	err := row.Scan(&account_id)
 	return account_id, err
+}
+
+const lockCheckedRollback = `-- name: LockCheckedRollback :one
+SELECT receipt FROM deployment_rollback_operations WHERE id=$1 AND app_id=$2 FOR UPDATE
+`
+
+type LockCheckedRollbackParams struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
+func (q *Queries) LockCheckedRollback(ctx context.Context, db DBTX, arg LockCheckedRollbackParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockCheckedRollback, arg.ID, arg.AppID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
+}
+
+const lockCheckedRollbackApp = `-- name: LockCheckedRollbackApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status IN ('active','evicted_cold') FOR UPDATE
+`
+
+type LockCheckedRollbackAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockCheckedRollbackApp(ctx context.Context, db DBTX, arg LockCheckedRollbackAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockCheckedRollbackApp, arg.AppID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockCheckedRollbackScope = `-- name: LockCheckedRollbackScope :many
+SELECT id FROM deployments WHERE app_id=$1 AND scope=$2 ORDER BY id FOR UPDATE
+`
+
+type LockCheckedRollbackScopeParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+func (q *Queries) LockCheckedRollbackScope(ctx context.Context, db DBTX, arg LockCheckedRollbackScopeParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockCheckedRollbackScope, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
@@ -30468,6 +31235,16 @@ func (q *Queries) ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, ap
 	return i, err
 }
 
+const markCheckedRollbackReady = `-- name: MarkCheckedRollbackReady :exec
+UPDATE deployments SET status='live',error='',error_code='',traffic_percent=0,
+ rollout_started_at=CASE WHEN rollout_state='rolling_out' THEN clock_timestamp() ELSE NULL END WHERE id=$1
+`
+
+func (q *Queries) MarkCheckedRollbackReady(ctx context.Context, db DBTX, targetID pgtype.UUID) error {
+	_, err := db.Exec(ctx, markCheckedRollbackReady, targetID)
+	return err
+}
+
 const markClaimedTriggerRecordDeadLetter = `-- name: MarkClaimedTriggerRecordDeadLetter :execrows
 UPDATE trigger_records
    SET state = 'dead_letter', attempts = attempts + 1, last_error = $3,
@@ -31576,6 +32353,51 @@ func (q *Queries) NotificationClaimAttempts(ctx context.Context, db DBTX, arg No
 	var attempts int32
 	err := row.Scan(&attempts)
 	return attempts, err
+}
+
+const notifyAlertRollbackTraffic = `-- name: NotifyAlertRollbackTraffic :exec
+SELECT pg_notify('deployment_changed',jsonb_build_object('kind','traffic','app_id',$1::text,'deployment_id',$2::text,'traffic_percent',0)::text)
+`
+
+type NotifyAlertRollbackTrafficParams struct {
+	AppID       string
+	CandidateID string
+}
+
+func (q *Queries) NotifyAlertRollbackTraffic(ctx context.Context, db DBTX, arg NotifyAlertRollbackTrafficParams) error {
+	_, err := db.Exec(ctx, notifyAlertRollbackTraffic, arg.AppID, arg.CandidateID)
+	return err
+}
+
+const notifyAlertServiceRollback = `-- name: NotifyAlertServiceRollback :exec
+SELECT pg_notify('deployment_changed',jsonb_build_object('kind','service_rollout_abort','app_id',$1::text,'deployment_id',$2::text,'status','live')::text)
+`
+
+type NotifyAlertServiceRollbackParams struct {
+	AppID       string
+	CandidateID string
+}
+
+func (q *Queries) NotifyAlertServiceRollback(ctx context.Context, db DBTX, arg NotifyAlertServiceRollbackParams) error {
+	_, err := db.Exec(ctx, notifyAlertServiceRollback, arg.AppID, arg.CandidateID)
+	return err
+}
+
+const notifyCheckedRollbackCutover = `-- name: NotifyCheckedRollbackCutover :exec
+SELECT pg_notify('deployment_changed',jsonb_build_object('kind','service_rollout','app_id',$1::text,'deployment_id',$2::text,'status','live')::text),
+ pg_notify('deployment_changed',jsonb_build_object('app_id',$1::text,'deployment_id',$3::text,'status',
+ (SELECT status FROM deployments WHERE id=$3::uuid))::text)
+`
+
+type NotifyCheckedRollbackCutoverParams struct {
+	AppID     string
+	TargetID  string
+	CurrentID string
+}
+
+func (q *Queries) NotifyCheckedRollbackCutover(ctx context.Context, db DBTX, arg NotifyCheckedRollbackCutoverParams) error {
+	_, err := db.Exec(ctx, notifyCheckedRollbackCutover, arg.AppID, arg.TargetID, arg.CurrentID)
+	return err
 }
 
 const notifyCustomerOperation = `-- name: NotifyCustomerOperation :exec
@@ -39918,6 +40740,26 @@ func (q *Queries) PinProjectEnvironmentClonePostgresCopyTargetDatabase(ctx conte
 	return i, err
 }
 
+const prepareCheckedRollbackTarget = `-- name: PrepareCheckedRollbackTarget :exec
+UPDATE deployments SET status='snapshotting',error='',error_code='',traffic_percent=0,traffic_percent_explicit=true,
+ canary_preset='none',canary_step=0,canary_total_steps=0,canary_stages=null,canary_step_started_at=clock_timestamp(),
+ rollout_state=$1,rollout_started_at=null,rollout_completed_at=null,rollout_aborted_at=null,rollout_aborted_reason='',
+ service_rollout_handoff=$2,api_hosting_receipt='{}'::jsonb,
+ stage_state=jsonb_build_object('current','snapshot_prepare','current_started_at',clock_timestamp(),'history',coalesce(stage_state->'history','[]'::jsonb))
+ WHERE id=$3
+`
+
+type PrepareCheckedRollbackTargetParams struct {
+	RolloutState string
+	Handoff      []byte
+	TargetID     pgtype.UUID
+}
+
+func (q *Queries) PrepareCheckedRollbackTarget(ctx context.Context, db DBTX, arg PrepareCheckedRollbackTargetParams) error {
+	_, err := db.Exec(ctx, prepareCheckedRollbackTarget, arg.RolloutState, arg.Handoff, arg.TargetID)
+	return err
+}
+
 const probeManagedPostgresCredential = `-- name: ProbeManagedPostgresCredential :one
 SELECT session_user::text AS login, current_user::text AS effective_user,
  current_database()::text AS database_name, current_setting('server_version_num')::integer AS version_num,
@@ -42171,6 +43013,38 @@ func (q *Queries) ReadActiveRouteMonitorIncident(ctx context.Context, db DBTX, a
 	return entry, err
 }
 
+const readAlertRollback = `-- name: ReadAlertRollback :one
+SELECT receipt FROM alert_rollback_actions WHERE fire_id=$1
+`
+
+func (q *Queries) ReadAlertRollback(ctx context.Context, db DBTX, fireID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, readAlertRollback, fireID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
+}
+
+const readAlertRollbackFireFacts = `-- name: ReadAlertRollbackFireFacts :one
+SELECT jsonb_build_object('rule_id',r.id,'account_id',r.account_id,'app_id',coalesce(r.app_id::text,''),
+ 'app_account_id',coalesce(a.account_id::text,''),'enabled',r.enabled,'action',r.action,'metric',r.metric,'name',r.name,
+ 'comparison',r.comparison,'threshold',r.threshold,'window_spec',r.window_spec,
+ 'service',coalesce(a.manifest->>'execution_mode'='service',false),'window_seconds',r.post_deploy_rollback_window_seconds,
+ 'deployments',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d.status,
+ 'traffic_percent',d.traffic_percent,'canary_total_steps',d.canary_total_steps,'canary_step',d.canary_step,
+ 'rollout_state',d.rollout_state,'created_at',d.created_at,'completed_at',d.rollout_completed_at,
+ 'recovery_predecessor_id',coalesce((SELECT predecessor_deployment_id::text FROM deployment_recovery_lineage WHERE deployment_id=d.id),''),
+ 'recovered',EXISTS(SELECT 1 FROM deployment_rollback_operations WHERE target_deployment_id=d.id) OR EXISTS(SELECT 1 FROM deployment_audit WHERE kind='deploy.rolled_back' AND (deployment_id=d.id OR data->>'predecessor_deployment_id'=d.id::text)) OR EXISTS(SELECT 1 FROM alert_rollback_actions WHERE receipt->>'predecessor_deployment_id'=d.id::text AND status='complete'),
+ 'predecessor_deployment_id',coalesce(d.service_rollout_handoff->>'predecessor_deployment_id',''))) FROM deployments d WHERE d.app_id=r.app_id AND d.status IN ('live','superseded') AND d.deleted_at IS NULL),'[]'::jsonb))
+ FROM alert_rules r LEFT JOIN apps a ON a.id=r.app_id AND a.status<>'deleted' WHERE r.id=$1 AND r.action='rollback'
+`
+
+func (q *Queries) ReadAlertRollbackFireFacts(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, readAlertRollbackFireFacts, ruleID)
+	var jsonb_build_object []byte
+	err := row.Scan(&jsonb_build_object)
+	return jsonb_build_object, err
+}
+
 const readAppEnvironmentSecretReferenceSnapshot = `-- name: ReadAppEnvironmentSecretReferenceSnapshot :one
 SELECT e.id AS environment_id,environment_scoped_secret_refs(a.id,e.slug)::jsonb AS refs,
  environment_scoped_secret_suppressions(a.id,e.slug)::text[] AS suppressed_keys,
@@ -42429,6 +43303,25 @@ func (q *Queries) ReadBindingPromotionRevision(ctx context.Context, db DBTX, arg
 	return revision, err
 }
 
+const readBindingReleasePolicy = `-- name: ReadBindingReleasePolicy :one
+SELECT COALESCE(to_jsonb(p), '{}'::jsonb)::jsonb AS policy
+FROM apps a LEFT JOIN app_binding_release_policies p ON p.app_id=a.id AND p.scope=$1
+WHERE a.id=$2 AND a.account_id=$3 AND a.status<>'deleted'
+`
+
+type ReadBindingReleasePolicyParams struct {
+	Scope     string
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadBindingReleasePolicy(ctx context.Context, db DBTX, arg ReadBindingReleasePolicyParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readBindingReleasePolicy, arg.Scope, arg.AppID, arg.AccountID)
+	var policy []byte
+	err := row.Scan(&policy)
+	return policy, err
+}
+
 const readBoundOrProductionQueueTriggerInvocation = `-- name: ReadBoundOrProductionQueueTriggerInvocation :one
 SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue' AND i.environment_id IS NULL
  AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
@@ -42544,6 +43437,24 @@ func (q *Queries) ReadCanaryRouteGateOwner(ctx context.Context, db DBTX, deploym
 	return i, err
 }
 
+const readCheckedRollback = `-- name: ReadCheckedRollback :one
+SELECT r.receipt FROM deployment_rollback_operations r JOIN apps a ON a.id=r.app_id
+ WHERE r.id=$1 AND r.app_id=$2 AND a.account_id=$3 AND a.status<>'deleted'
+`
+
+type ReadCheckedRollbackParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadCheckedRollback(ctx context.Context, db DBTX, arg ReadCheckedRollbackParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readCheckedRollback, arg.ID, arg.AppID, arg.AccountID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
+}
+
 const readClonePostgresCheckpointSelection = `-- name: ReadClonePostgresCheckpointSelection :one
 SELECT operation_id, source_database_id, maintenance_id, scope, fingerprint, key_id, ciphertext_sha256, ciphertext, retained_at FROM project_environment_clone_postgres_checkpoint_selections
 WHERE operation_id=$1::uuid AND source_database_id=$2::uuid FOR UPDATE
@@ -42629,6 +43540,39 @@ func (q *Queries) ReadClonePostgresWriteFence(ctx context.Context, db DBTX, arg 
 		&i.ReleasedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds FROM alert_rules WHERE id=$1
+`
+
+func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
+	row := db.QueryRow(ctx, readCustomerAlertRule, id)
+	var i AlertRule
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Enabled,
+		&i.Metric,
+		&i.Comparison,
+		&i.Threshold,
+		&i.WindowSpec,
+		&i.FailureSource,
+		&i.WebhookUrl,
+		&i.WebhookSecretSealed,
+		&i.CooldownMinutes,
+		&i.State,
+		&i.LastFiredAt,
+		&i.LastEvaluatedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OrgID,
+		&i.Action,
+		&i.PostDeployRollbackWindowSeconds,
 	)
 	return i, err
 }
@@ -42974,6 +43918,46 @@ func (q *Queries) ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg Read
 		&i.QuotaReserved,
 		&i.JobID,
 	)
+	return i, err
+}
+
+const readHistoricalAlertDeploymentEvidence = `-- name: ReadHistoricalAlertDeploymentEvidence :one
+SELECT coalesce(sum(count::bigint),0)::bigint AS requests,
+ coalesce(sum(count::bigint) FILTER (WHERE status BETWEEN 500 AND 599),0)::bigint AS server_errors,
+ max(received_at)::timestamptz AS last_sample_at
+FROM request_telemetry
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND deployment_id=$3::uuid
+ AND received_at>=$4::timestamptz AND received_at<$5::timestamptz
+ AND (status BETWEEN 200 AND 299 OR status BETWEEN 500 AND 599)
+`
+
+type ReadHistoricalAlertDeploymentEvidenceParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	WindowStart  pgtype.Timestamptz
+	WindowEnd    pgtype.Timestamptz
+}
+
+type ReadHistoricalAlertDeploymentEvidenceRow struct {
+	Requests     int64
+	ServerErrors int64
+	LastSampleAt pgtype.Timestamptz
+}
+
+// Keep the app alert's 2xx/5xx denominator, weighted by publisher counts.
+// The cutover minute and unfinished ingestion minutes are excluded by callers.
+func (q *Queries) ReadHistoricalAlertDeploymentEvidence(ctx context.Context, db DBTX, arg ReadHistoricalAlertDeploymentEvidenceParams) (ReadHistoricalAlertDeploymentEvidenceRow, error) {
+	row := db.QueryRow(ctx, readHistoricalAlertDeploymentEvidence,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.WindowStart,
+		arg.WindowEnd,
+	)
+	var i ReadHistoricalAlertDeploymentEvidenceRow
+	err := row.Scan(&i.Requests, &i.ServerErrors, &i.LastSampleAt)
 	return i, err
 }
 
@@ -46294,6 +47278,24 @@ func (q *Queries) ReadSavedRouteRequirements(ctx context.Context, db DBTX, arg R
 	var saved []byte
 	err := row.Scan(&saved)
 	return saved, err
+}
+
+const readServiceBindingRevision = `-- name: ReadServiceBindingRevision :one
+SELECT (r.epoch::text || ':' || r.service_revision::text)::text AS revision
+FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=$1 AND a.account_id=$2 AND a.status<>'deleted'
+`
+
+type ReadServiceBindingRevisionParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadServiceBindingRevision(ctx context.Context, db DBTX, arg ReadServiceBindingRevisionParams) (string, error) {
+	row := db.QueryRow(ctx, readServiceBindingRevision, arg.AppID, arg.AccountID)
+	var revision string
+	err := row.Scan(&revision)
+	return revision, err
 }
 
 const readSnapshotGarbageCollection = `-- name: ReadSnapshotGarbageCollection :many
@@ -51035,6 +52037,19 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 	return items, nil
 }
 
+const retainCheckedRollbackPredecessor = `-- name: RetainCheckedRollbackPredecessor :exec
+INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
+ SELECT d.id,d.app_id,clock_timestamp()+((a.manifest->>'revision_pin_ttl_seconds')::integer*interval '1 second')
+ FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$1
+ AND coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer,0) BETWEEN 1 AND 604800
+ ON CONFLICT(deployment_id) DO NOTHING
+`
+
+func (q *Queries) RetainCheckedRollbackPredecessor(ctx context.Context, db DBTX, currentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, retainCheckedRollbackPredecessor, currentID)
+	return err
+}
+
 const retainCustomerOperationBlob = `-- name: RetainCustomerOperationBlob :execrows
 UPDATE customer_operation_result_blobs SET state = 'retained'
 WHERE id = $1::uuid AND state = 'staging' AND expires_at > $2::timestamptz
@@ -51219,6 +52234,25 @@ type RetireAutoRollbackDeploymentSiblingsParams struct {
 
 func (q *Queries) RetireAutoRollbackDeploymentSiblings(ctx context.Context, db DBTX, arg RetireAutoRollbackDeploymentSiblingsParams) error {
 	_, err := db.Exec(ctx, retireAutoRollbackDeploymentSiblings, arg.CurrentDeploymentID, arg.AppID, arg.Scope)
+	return err
+}
+
+const retireCheckedRollbackSiblings = `-- name: RetireCheckedRollbackSiblings :exec
+UPDATE deployments d SET traffic_percent=0,status=CASE WHEN EXISTS(SELECT 1 FROM deployment_revision_pins p
+ WHERE p.deployment_id=d.id AND p.expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM project_release_members rm
+ JOIN project_release_sets rs ON rs.id=rm.release_id WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>clock_timestamp()))
+ THEN 'live' ELSE 'superseded' END
+ WHERE d.app_id=$1 AND d.scope=$2 AND d.status='live' AND d.id<>$3
+`
+
+type RetireCheckedRollbackSiblingsParams struct {
+	AppID    pgtype.UUID
+	Scope    string
+	TargetID pgtype.UUID
+}
+
+func (q *Queries) RetireCheckedRollbackSiblings(ctx context.Context, db DBTX, arg RetireCheckedRollbackSiblingsParams) error {
+	_, err := db.Exec(ctx, retireCheckedRollbackSiblings, arg.AppID, arg.Scope, arg.TargetID)
 	return err
 }
 
@@ -52965,6 +53999,21 @@ func (q *Queries) SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (boo
 	return ready, err
 }
 
+const saveAlertRollback = `-- name: SaveAlertRollback :exec
+UPDATE alert_rollback_actions SET status=$1,receipt=$2,updated_at=clock_timestamp() WHERE fire_id=$3
+`
+
+type SaveAlertRollbackParams struct {
+	Status  string
+	Receipt []byte
+	FireID  pgtype.UUID
+}
+
+func (q *Queries) SaveAlertRollback(ctx context.Context, db DBTX, arg SaveAlertRollbackParams) error {
+	_, err := db.Exec(ctx, saveAlertRollback, arg.Status, arg.Receipt, arg.FireID)
+	return err
+}
+
 const saveAutomation = `-- name: SaveAutomation :exec
 INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8)
@@ -52994,6 +54043,22 @@ func (q *Queries) SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomatio
 		arg.Enabled,
 		arg.UpdatedAt,
 	)
+	return err
+}
+
+const saveCheckedRollback = `-- name: SaveCheckedRollback :exec
+UPDATE deployment_rollback_operations SET status=$1,receipt=$2,updated_at=clock_timestamp()
+ WHERE id=$3
+`
+
+type SaveCheckedRollbackParams struct {
+	Status  string
+	Receipt []byte
+	ID      pgtype.UUID
+}
+
+func (q *Queries) SaveCheckedRollback(ctx context.Context, db DBTX, arg SaveCheckedRollbackParams) error {
+	_, err := db.Exec(ctx, saveCheckedRollback, arg.Status, arg.Receipt, arg.ID)
 	return err
 }
 
@@ -53230,6 +54295,20 @@ func (q *Queries) SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, a
 	return err
 }
 
+const saveServiceRolloutHandoff = `-- name: SaveServiceRolloutHandoff :exec
+UPDATE deployments SET service_rollout_handoff = $1::jsonb WHERE id = $2
+`
+
+type SaveServiceRolloutHandoffParams struct {
+	Handoff      []byte
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error {
+	_, err := db.Exec(ctx, saveServiceRolloutHandoff, arg.Handoff, arg.DeploymentID)
+	return err
+}
+
 const saveWebhookAutomationBinding = `-- name: SaveWebhookAutomationBinding :one
 INSERT INTO workflow_webhook_bindings(endpoint_id,workflow_name,event_type,filter,version)
 VALUES($1,$2,$3,$4,nextval('workflow_webhook_binding_revision_seq'))
@@ -53369,6 +54448,51 @@ func (q *Queries) ServiceRecoveryByApp(ctx context.Context, db DBTX, appID pgtyp
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const serviceRolloutBindingEnforced = `-- name: ServiceRolloutBindingEnforced :one
+SELECT EXISTS (SELECT 1 FROM app_binding_release_policies WHERE app_id = $1 AND scope = $2 AND mode = 'enforce')::boolean
+`
+
+type ServiceRolloutBindingEnforcedParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+func (q *Queries) ServiceRolloutBindingEnforced(ctx context.Context, db DBTX, arg ServiceRolloutBindingEnforcedParams) (bool, error) {
+	row := db.QueryRow(ctx, serviceRolloutBindingEnforced, arg.AppID, arg.Scope)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const serviceRolloutRecipientReady = `-- name: ServiceRolloutRecipientReady :one
+SELECT (count(*) >= CASE WHEN $1::text = 'promote' THEN coalesce((SELECT (a.manifest->'service_replicas'->>'desired')::integer FROM apps a WHERE a.id = $2), 1) ELSE 1 END)::boolean
+FROM (SELECT i.id FROM instances i WHERE i.deployment_id = $3::uuid AND i.mode = 'service' AND i.state = 'running' FOR SHARE) ready
+`
+
+type ServiceRolloutRecipientReadyParams struct {
+	Action       string
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) ServiceRolloutRecipientReady(ctx context.Context, db DBTX, arg ServiceRolloutRecipientReadyParams) (bool, error) {
+	row := db.QueryRow(ctx, serviceRolloutRecipientReady, arg.Action, arg.AppID, arg.DeploymentID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const serviceRolloutRecipientTraffic = `-- name: ServiceRolloutRecipientTraffic :one
+SELECT traffic_percent FROM deployments WHERE id = $1 AND status = 'live'
+`
+
+func (q *Queries) ServiceRolloutRecipientTraffic(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int32, error) {
+	row := db.QueryRow(ctx, serviceRolloutRecipientTraffic, deploymentID)
+	var traffic_percent int32
+	err := row.Scan(&traffic_percent)
+	return traffic_percent, err
 }
 
 const setAppManifest = `-- name: SetAppManifest :exec
@@ -54888,6 +56012,41 @@ func (q *Queries) UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (
 	return i, err
 }
 
+const updateBindingReleasePolicy = `-- name: UpdateBindingReleasePolicy :one
+UPDATE app_binding_release_policies p SET mode=$1,revision=p.revision+1,max_age_seconds=$2,
+ require_application_ack=$3,reason=$4,updated_at=clock_timestamp()
+FROM apps a WHERE p.app_id=a.id AND a.id=$5 AND a.account_id=$6 AND a.status<>'deleted'
+ AND p.scope=$7 AND p.revision=$8
+RETURNING to_jsonb(p)::jsonb AS policy
+`
+
+type UpdateBindingReleasePolicyParams struct {
+	Mode                  string
+	MaxAgeSeconds         int64
+	RequireApplicationAck bool
+	Reason                string
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	Scope                 string
+	ExpectedRevision      int64
+}
+
+func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg UpdateBindingReleasePolicyParams) ([]byte, error) {
+	row := db.QueryRow(ctx, updateBindingReleasePolicy,
+		arg.Mode,
+		arg.MaxAgeSeconds,
+		arg.RequireApplicationAck,
+		arg.Reason,
+		arg.AppID,
+		arg.AccountID,
+		arg.Scope,
+		arg.ExpectedRevision,
+	)
+	var policy []byte
+	err := row.Scan(&policy)
+	return policy, err
+}
+
 const updateBuildStatus = `-- name: UpdateBuildStatus :exec
 update builds set
   status = $2,
@@ -54964,6 +56123,74 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 		&i.SkipIfRunning,
 		&i.LastFiredAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateCustomerAlertRule = `-- name: UpdateCustomerAlertRule :one
+UPDATE alert_rules SET name=coalesce($1::text,name),enabled=coalesce($2::boolean,enabled),
+ metric=coalesce($3::text,metric),comparison=coalesce($4::text,comparison),
+ threshold=coalesce($5::double precision,threshold),window_spec=coalesce($6::text,window_spec),
+ action=coalesce($7::text,action),webhook_url=coalesce($8::text,webhook_url),
+ webhook_secret_sealed=coalesce($9::bytea,webhook_secret_sealed),
+ cooldown_minutes=coalesce($10::integer,cooldown_minutes),
+ post_deploy_rollback_window_seconds=coalesce($11::integer,post_deploy_rollback_window_seconds),updated_at=now()
+WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds
+`
+
+type UpdateCustomerAlertRuleParams struct {
+	Name                            pgtype.Text
+	Enabled                         pgtype.Bool
+	Metric                          pgtype.Text
+	Comparison                      pgtype.Text
+	Threshold                       pgtype.Float8
+	WindowSpec                      pgtype.Text
+	Action                          pgtype.Text
+	WebhookUrl                      pgtype.Text
+	WebhookSecretSealed             []byte
+	CooldownMinutes                 pgtype.Int4
+	PostDeployRollbackWindowSeconds pgtype.Int4
+	ID                              pgtype.UUID
+}
+
+func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg UpdateCustomerAlertRuleParams) (AlertRule, error) {
+	row := db.QueryRow(ctx, updateCustomerAlertRule,
+		arg.Name,
+		arg.Enabled,
+		arg.Metric,
+		arg.Comparison,
+		arg.Threshold,
+		arg.WindowSpec,
+		arg.Action,
+		arg.WebhookUrl,
+		arg.WebhookSecretSealed,
+		arg.CooldownMinutes,
+		arg.PostDeployRollbackWindowSeconds,
+		arg.ID,
+	)
+	var i AlertRule
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Enabled,
+		&i.Metric,
+		&i.Comparison,
+		&i.Threshold,
+		&i.WindowSpec,
+		&i.FailureSource,
+		&i.WebhookUrl,
+		&i.WebhookSecretSealed,
+		&i.CooldownMinutes,
+		&i.State,
+		&i.LastFiredAt,
+		&i.LastEvaluatedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OrgID,
+		&i.Action,
+		&i.PostDeployRollbackWindowSeconds,
 	)
 	return i, err
 }
@@ -56638,6 +57865,44 @@ func (q *Queries) WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype
 		return nil, err
 	}
 	return items, nil
+}
+
+const writeBindingReleasePolicy = `-- name: WriteBindingReleasePolicy :one
+INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason)
+SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6
+FROM apps a WHERE a.id=$7 AND a.account_id=$8 AND a.status<>'deleted'
+ AND $3::bigint=0
+ON CONFLICT(app_id,scope) DO UPDATE SET mode=EXCLUDED.mode,revision=app_binding_release_policies.revision+1,
+ max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,updated_at=clock_timestamp()
+WHERE app_binding_release_policies.revision=$3::bigint
+RETURNING to_jsonb(app_binding_release_policies)::jsonb AS policy
+`
+
+type WriteBindingReleasePolicyParams struct {
+	Scope                 string
+	Mode                  string
+	ExpectedRevision      int64
+	MaxAgeSeconds         int64
+	RequireApplicationAck bool
+	Reason                string
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+}
+
+func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg WriteBindingReleasePolicyParams) ([]byte, error) {
+	row := db.QueryRow(ctx, writeBindingReleasePolicy,
+		arg.Scope,
+		arg.Mode,
+		arg.ExpectedRevision,
+		arg.MaxAgeSeconds,
+		arg.RequireApplicationAck,
+		arg.Reason,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var policy []byte
+	err := row.Scan(&policy)
+	return policy, err
 }
 
 const writeCanaryRouteGate = `-- name: WriteCanaryRouteGate :exec
