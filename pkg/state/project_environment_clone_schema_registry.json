@@ -1695,9 +1695,13 @@
     "table": "customer_operation_executions",
     "columns": [
       "created_at",
+      "execution_id",
+      "execution_kind",
       "generation",
       "invocation_id",
-      "operation_id"
+      "job_run_id",
+      "operation_id",
+      "workflow_run_id"
     ],
     "kind": "operational"
   },
@@ -1772,8 +1776,11 @@
       "account_id",
       "app_id",
       "created_at",
+      "current_execution_id",
       "current_invocation_id",
       "definition_id",
+      "execution_generation",
+      "execution_kind",
       "expires_at",
       "id",
       "platform_tenant_id",
@@ -3719,6 +3726,7 @@
       "job_id",
       "latest_start_at",
       "occurrence_id",
+      "operation_id",
       "parallelism",
       "ram_mb_snapshot",
       "retry_max",
@@ -7558,9 +7566,9 @@
     "columns": [
       "app_id",
       "cancelled_at",
-      "created_at",
       "create_idempotency_key",
       "create_request_fingerprint",
+      "created_at",
       "current_step",
       "definition_snapshot",
       "finished_at",
@@ -7568,6 +7576,7 @@
       "input",
       "last_error",
       "lease_until",
+      "operation_id",
       "output",
       "platform_tenant_id",
       "resume_count",

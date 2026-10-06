@@ -142,7 +142,7 @@ def main():
             raise ValueError(f"state partition {args.partition} failed")
         validate_terminals(selected, (output / "state.log").read_text())
         if args.partition == 0:
-            other = run(["go", "test", "-race", "-count=1", "-p=4", "-timeout=30m", "-covermode=atomic",
+            other = run(["go", "test", "-v", "-race", "-count=1", "-p=4", "-timeout=30m", "-covermode=atomic",
                          parity_coverage_arg(others), "-coverprofile=" + str(output / "others.out"), *others], output / "others.log", os.environ.copy())
             receipt["commands"].append(other)
             if other["exit_code"]:

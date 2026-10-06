@@ -877,9 +877,11 @@ type Querier interface {
 	InsertCustomerOperationDeliveryRetry(ctx context.Context, db DBTX, arg InsertCustomerOperationDeliveryRetryParams) error
 	InsertCustomerOperationEvent(ctx context.Context, db DBTX, arg InsertCustomerOperationEventParams) error
 	InsertCustomerOperationExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationExecutionParams) error
+	InsertCustomerOperationJobExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationJobExecutionParams) (int64, error)
 	InsertCustomerOperationRecovery(ctx context.Context, db DBTX, arg InsertCustomerOperationRecoveryParams) error
 	InsertCustomerOperationReport(ctx context.Context, db DBTX, arg InsertCustomerOperationReportParams) error
 	InsertCustomerOperationStream(ctx context.Context, db DBTX, arg InsertCustomerOperationStreamParams) error
+	InsertCustomerOperationWorkflowExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowExecutionParams) (int64, error)
 	// ---------------------------------------------------------------------------
 	// ADR-098 connection-aware execution (§9.A). Tables live in
 	// migrations/00226_data_upstreams.sql. apid is the only writer to
@@ -1513,6 +1515,7 @@ type Querier interface {
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
 	LockCustomDomainQuotaAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	LockCustomerOperationAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
+	LockCustomerOperationBackendExecution(ctx context.Context, db DBTX, executionID pgtype.UUID) (LockCustomerOperationBackendExecutionRow, error)
 	LockCustomerOperationBlob(ctx context.Context, db DBTX, id pgtype.UUID) (CustomerOperationResultBlob, error)
 	LockCustomerOperationClaim(ctx context.Context, db DBTX, id pgtype.UUID) (LockCustomerOperationClaimRow, error)
 	LockCustomerOperationCodeApp(ctx context.Context, db DBTX, arg LockCustomerOperationCodeAppParams) (pgtype.UUID, error)
@@ -2712,6 +2715,8 @@ type Querier interface {
 	SetCommitSourceConnection(ctx context.Context, db DBTX, arg SetCommitSourceConnectionParams) (int64, error)
 	SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCommitSourceEnabledParams) error
 	SetCustomerOperationExecutionIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationExecutionIdentityParams) error
+	SetCustomerOperationJobIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationJobIdentityParams) (int64, error)
+	SetCustomerOperationWorkflowIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationWorkflowIdentityParams) (int64, error)
 	// ADR-021 (G1, image digest enforcement hardening): durable
 	// carrier for the RFC 7807 failure code that imaged writes when a
 	// deployment transitions to `failed`. pkg/api.SentinelToCode maps
