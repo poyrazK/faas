@@ -60,7 +60,7 @@ func TestNativeRuntimeCgroupChecksActualKernelMountIdentity(t *testing.T) {
 	if _, err := readNativeRuntimeControl(fd, "cgroup.procs"); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"", ".", "..", "../other", "/absolute", "child/../other", "child\\other"} {
+	for _, path := range []string{"", ".", "..", "../other", "/absolute", "child/../other", "child\\scope"} {
 		if child, err := openNativeRuntimeCgroupPath(fd, path); err == nil {
 			_ = unix.Close(child)
 			t.Fatal("cgroup traversal accepted", path)
