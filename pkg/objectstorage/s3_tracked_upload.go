@@ -61,10 +61,10 @@ func (p *S3) confirmTrackedObjectEncrypted(ctx context.Context, bucket, key, rec
 	if out == nil || out.ContentLength == nil || *out.ContentLength != size || out.Metadata[ReservedUploadReceiptMetadataKey] != receipt || !validUploadETag(aws.ToString(out.ETag)) {
 		return UploadResult{}, ErrConflict
 	}
-	if !validEncryptionResponse(out.ResultMetadata, encryption) || !validStoredEncryptionResponse(out.Metadata, out.ResultMetadata, encryption) || !validTrackedProofHeaders(out.ResultMetadata, ReservedUploadReceiptMetadataKey) || !validCopySnapshotVersion(out.ResultMetadata, aws.ToString(out.VersionId), "") || aws.ToBool(out.DeleteMarker) {
+	if !validEncryptionResponse(out.ResultMetadata, encryption) || !validProtectedHead(ctx, out) || !validStoredEncryptionResponse(out.Metadata, out.ResultMetadata, encryption) || !validTrackedProofHeaders(out.ResultMetadata, ReservedUploadReceiptMetadataKey) || !validCopySnapshotVersion(out.ResultMetadata, aws.ToString(out.VersionId), "") || aws.ToBool(out.DeleteMarker) {
 		return UploadResult{}, ErrUnavailable
 	}
-	return UploadResult{Encryption: publicObjectEncryption(encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
+	return UploadResult{VerifiedProtection: capturedWriteProtection(ctx).Proof(), Encryption: publicObjectEncryption(encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
 }
 
 func invalidS3Write(receipt string) error {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,7 +21,7 @@ type versionProtectionClient interface {
 
 func cmdVersionProtection(args []string) int {
 	if err := validateProtectionCLI(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale bucket protection <status app bucket operation-id | retention app bucket key version-id [clear operation-id | GOVERNANCE|COMPLIANCE retain-until operation-id] | legal-hold app bucket key version-id [ON|OFF operation-id]>", "bucket")
+		PrintUsage(osStderr, "usage: gregale bucket protection <status app bucket operation-id | retention app bucket key version-id [clear operation-id | GOVERNANCE|COMPLIANCE retain-until operation-id] | event-hold app bucket key version-id GOVERNANCE|COMPLIANCE ON days|years N|OFF [--retain-until date] operation-id | legal-hold app bucket key version-id [ON|OFF operation-id]>", "bucket")
 		return 1
 	}
 	c, err := authedClient()
@@ -50,6 +51,9 @@ func validateProtectionCLI(args []string) error {
 		return fmt.Errorf("an exact version is required")
 	}
 	switch args[0] {
+	case "event-hold":
+		_, err := eventHoldCLIRequest(args)
+		return err
 	case "retention":
 		if len(args) == 5 {
 			return nil
@@ -87,6 +91,13 @@ func runVersionProtection(ctx context.Context, c versionProtectionClient, args [
 	if args[0] == "status" {
 		return c.GetObjectVersionProtection(ctx, args[1], args[2], args[3])
 	}
+	if args[0] == "event-hold" {
+		in, err := eventHoldCLIRequest(args)
+		if err != nil {
+			return nil, err
+		}
+		return c.PutObjectVersionRetention(ctx, args[1], args[2], args[3], args[4], in)
+	}
 	if args[0] == "legal-hold" {
 		if len(args) == 5 {
 			return c.GetObjectVersionLegalHold(ctx, args[1], args[2], args[3], args[4])
@@ -105,4 +116,43 @@ func runVersionProtection(ctx context.Context, c versionProtectionClient, args [
 		in.Retention = api.ObjectVersionRetention{Mode: args[5], RetainUntilDate: &d}
 	}
 	return c.PutObjectVersionRetention(ctx, args[1], args[2], args[3], args[4], in)
+}
+
+func eventHoldCLIRequest(args []string) (api.ObjectVersionRetentionRequest, error) {
+	var in api.ObjectVersionRetentionRequest
+	if len(args) < 8 || !api.ValidObjectLockMode(args[5]) {
+		return in, fmt.Errorf("an event hold requires a mode, status and operation ID")
+	}
+	in.Retention.Mode, in.Retention.EventHold = args[5], args[6]
+	pos := 7
+	if args[6] == "ON" {
+		if len(args) < 10 || args[7] != "days" && args[7] != "years" {
+			return in, fmt.Errorf("an ON hold requires a duration in days or years")
+		}
+		n, err := strconv.ParseInt(args[8], 10, 32)
+		if err != nil {
+			return in, err
+		}
+		value := int32(n)
+		in.Retention.EventHoldDuration = &api.ObjectRetentionPeriod{}
+		if args[7] == "days" {
+			in.Retention.EventHoldDuration.Days = &value
+		} else {
+			in.Retention.EventHoldDuration.Years = &value
+		}
+		pos = 9
+	}
+	if len(args) == pos+3 && args[pos] == "--retain-until" {
+		d, err := time.Parse(time.RFC3339Nano, args[pos+1])
+		if err != nil {
+			return in, err
+		}
+		in.Retention.RetainUntilDate = &d
+		pos += 2
+	}
+	if len(args) != pos+1 || !state.ValidObjectVersionID(args[pos]) || args[pos] == "null" || !in.Retention.ValidForWrite() {
+		return in, fmt.Errorf("invalid event hold policy or operation ID")
+	}
+	in.ID = args[pos]
+	return in, nil
 }

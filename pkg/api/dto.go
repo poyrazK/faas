@@ -65,9 +65,68 @@ func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
 
 // PublishEventResponse confirms durable acceptance of one event envelope.
 type PublishEventResponse struct {
+	ReceiptURL string    `json:"receipt_url"`
 	ID         string    `json:"id"`
 	AcceptedAt time.Time `json:"accepted_at"`
 	AccountID  string    `json:"account_id"`
+}
+
+// EventStorageUsageResponse describes retained customer publication storage.
+// Pending events remain charged until routing settles and retention expires.
+type EventStorageUsageResponse struct {
+	RetainedEvents  int64              `json:"retained_events"`
+	RetainedBytes   int64              `json:"retained_bytes"`
+	PendingEvents   int64              `json:"pending_events"`
+	OldestPendingAt *time.Time         `json:"oldest_pending_at"`
+	Limits          EventStorageLimits `json:"limits"`
+}
+
+type EventBacklogRecipient struct {
+	EventSource       string     `json:"event_source"`
+	EventID           string     `json:"event_id"`
+	EventType         string     `json:"event_type"`
+	AcceptedAt        time.Time  `json:"accepted_at"`
+	AppID             string     `json:"app_id"`
+	AppSlug           string     `json:"app_slug"`
+	TargetAvailable   bool       `json:"target_available"`
+	SubscriptionID    string     `json:"subscription_id"`
+	RoutingMode       string     `json:"routing_mode"`
+	State             string     `json:"state"`
+	CapacityScope     string     `json:"capacity_scope,omitempty"`
+	Attempts          int        `json:"attempts"`
+	CapacityDeferrals int        `json:"capacity_deferrals"`
+	NextAttemptAt     *time.Time `json:"next_attempt_at,omitempty"`
+	LeaseUntil        *time.Time `json:"lease_until,omitempty"`
+	PendingAgeSeconds float64    `json:"pending_age_seconds"`
+	WaitingReason     string     `json:"waiting_reason"`
+	ReceiptURL        string     `json:"receipt_url"`
+	FanoutHistoryURL  string     `json:"fanout_history_url,omitempty"`
+}
+
+type EventBacklogConsumer struct {
+	AppID                     string    `json:"app_id"`
+	AppSlug                   string    `json:"app_slug"`
+	TargetAvailable           bool      `json:"target_available"`
+	SubscriptionID            string    `json:"subscription_id"`
+	WaitingRecipients         int64     `json:"waiting_recipients"`
+	PendingRecipients         int64     `json:"pending_recipients"`
+	ProcessingRecipients      int64     `json:"processing_recipients"`
+	CapacityWaitingRecipients int64     `json:"capacity_waiting_recipients"`
+	OldestAcceptedAt          time.Time `json:"oldest_accepted_at"`
+	OldestAgeSeconds          float64   `json:"oldest_age_seconds"`
+}
+
+// Counts cover matching live recipients, independently of the recipient page.
+// WindowAt anchors acceptance/age filtering; ObservedAt describes this read.
+type EventBacklogResponse struct {
+	ObservedAt           time.Time               `json:"observed_at"`
+	WindowAt             time.Time               `json:"window_at"`
+	Coverage             string                  `json:"coverage"`
+	Recipients           []EventBacklogRecipient `json:"recipients"`
+	Consumers            []EventBacklogConsumer  `json:"consumers"`
+	UnattributedReceipts int64                   `json:"unattributed_receipts"`
+	NextAfter            string                  `json:"next_after,omitempty"`
+	NextConsumersAfter   string                  `json:"next_consumers_after,omitempty"`
 }
 
 // RegisterEventSchemaRequest installs an immutable JSON Schema version for
@@ -275,28 +334,50 @@ type EventFanoutFailureResponse struct {
 	FailedAt       time.Time `json:"failed_at"`
 }
 
-// EventFanoutAttemptResponse is one immutable routing outcome or explicit
+// EventFanoutAttemptResponse is one immutable, bounded routing outcome or explicit
 // operator replay request for an event recipient.
 type EventFanoutAttemptResponse struct {
-	SubscriptionID string    `json:"subscription_id"`
-	Action         string    `json:"action"`
-	State          string    `json:"state"`
-	AttemptNumber  int       `json:"attempt_number"`
-	FailureCode    string    `json:"failure_code,omitempty"`
-	Retryable      bool      `json:"retryable"`
-	LastError      string    `json:"last_error,omitempty"`
-	OccurredAt     time.Time `json:"occurred_at"`
+	CapacityScope     string    `json:"capacity_scope,omitempty"`
+	CapacityDeferrals int64     `json:"capacity_deferrals,omitempty"`
+	DetailsTruncated  bool      `json:"details_truncated,omitempty"`
+	SubscriptionID    string    `json:"subscription_id"`
+	Action            string    `json:"action"`
+	State             string    `json:"state"`
+	AttemptNumber     int       `json:"attempt_number"`
+	FailureCode       string    `json:"failure_code,omitempty"`
+	Retryable         bool      `json:"retryable"`
+	LastError         string    `json:"last_error,omitempty"`
+	OccurredAt        time.Time `json:"occurred_at"`
 }
 
 // EventFanoutAttemptHistoryResponse contains the bounded attempt timeline for
 // one event identity and app.
 type EventFanoutAttemptHistoryResponse struct {
-	AppSlug        string                       `json:"app_slug"`
-	EventSource    string                       `json:"event_source"`
-	EventID        string                       `json:"event_id"`
-	SubscriptionID string                       `json:"subscription_id,omitempty"`
-	History        []EventFanoutAttemptResponse `json:"history"`
-	NextBefore     string                       `json:"next_before,omitempty"`
+	Coverage       string                              `json:"coverage"`
+	Summaries      []EventFanoutHistorySummaryResponse `json:"summaries"`
+	AppSlug        string                              `json:"app_slug"`
+	EventSource    string                              `json:"event_source"`
+	EventID        string                              `json:"event_id"`
+	SubscriptionID string                              `json:"subscription_id,omitempty"`
+	History        []EventFanoutAttemptResponse        `json:"history"`
+	NextBefore     string                              `json:"next_before,omitempty"`
+}
+
+// EventFanoutHistorySummaryResponse survives detail compaction with its receipt.
+// Counters cover recorded observations, including migration checkpoints only.
+type EventFanoutHistorySummaryResponse struct {
+	SubscriptionID      string     `json:"subscription_id"`
+	ObservedOutcomes    int64      `json:"observed_outcomes"`
+	CapacityDeferrals   int64      `json:"capacity_deferrals"`
+	CoalescedOutcomes   int64      `json:"coalesced_outcomes"`
+	CompactedOutcomes   int64      `json:"compacted_outcomes"`
+	CompactedThroughID  int64      `json:"compacted_through_id,omitempty"`
+	CompactedThroughAt  *time.Time `json:"compacted_through_at,omitempty"`
+	FirstCapacityWaitAt *time.Time `json:"first_capacity_wait_at,omitempty"`
+	LastCapacityWaitAt  *time.Time `json:"last_capacity_wait_at,omitempty"`
+	LastCapacityScope   string     `json:"last_capacity_scope,omitempty"`
+	RetainedRecords     int64      `json:"retained_records"`
+	RetainedBytes       int64      `json:"retained_bytes"`
 }
 
 // EventDeliveryListResponse contains invocation lifecycle rows and terminal
@@ -11739,4 +11820,122 @@ type EgressFlowLogEntry struct {
 type EgressFlowLogResponse struct {
 	Flows     []EgressFlowLogEntry `json:"flows"`
 	Truncated bool                 `json:"truncated"`
+}
+
+// EventReceiptPageMax bounds recipient pages on the event receipt read surface.
+const EventReceiptPageMax = 200
+
+// EventReceiptResponse separates acceptance, routing, and handler execution.
+type EventReceiptResponse struct {
+	EventID          string                          `json:"event_id"`
+	EventSource      string                          `json:"event_source"`
+	EventType        string                          `json:"event_type"`
+	SchemaVersion    string                          `json:"schema_version,omitempty"`
+	AcceptedAt       time.Time                       `json:"accepted_at"`
+	RoutingSettledAt *time.Time                      `json:"routing_settled_at,omitempty"`
+	RetainUntil      *time.Time                      `json:"retain_until,omitempty"`
+	SnapshotCaptured bool                            `json:"snapshot_captured"`
+	RoutingMode      string                          `json:"routing_mode"`
+	RecipientCount   int                             `json:"recipient_count"`
+	RoutingSummary   map[string]int                  `json:"routing_summary"`
+	Recipients       []EventReceiptRecipientResponse `json:"recipients"`
+	NextAfter        string                          `json:"next_after,omitempty"`
+}
+
+type EventReceiptRecipientResponse struct {
+	SubscriptionID       string                            `json:"subscription_id"`
+	AppID                string                            `json:"app_id"`
+	AppSlug              string                            `json:"app_slug,omitempty"`
+	Routing              EventReceiptRoutingResponse       `json:"routing"`
+	Execution            *EventReceiptExecutionResponse    `json:"execution,omitempty"`
+	Recovery             *EventReceiptRecoveryResponse     `json:"recovery,omitempty"`
+	Cancellation         *EventReceiptCancellationResponse `json:"cancellation,omitempty"`
+	ExecutionUnavailable string                            `json:"execution_unavailable,omitempty"`
+	RecoveryActions      []EventReceiptRecoveryAction      `json:"recovery_actions"`
+	FanoutHistoryURL     string                            `json:"fanout_history_url,omitempty"`
+	AttemptHistoryURL    string                            `json:"attempt_history_url,omitempty"`
+}
+
+type EventReceiptRoutingResponse struct {
+	GenerationCapacityDeferrals *int       `json:"generation_capacity_deferrals,omitempty"`
+	CapacityDeferrals           int        `json:"capacity_deferrals"`
+	CapacityScope               string     `json:"capacity_scope,omitempty"`
+	PendingAgeSeconds           *float64   `json:"pending_age_seconds,omitempty"`
+	State                       string     `json:"state"`
+	Attempts                    int        `json:"attempts"`
+	Generation                  *int64     `json:"generation,omitempty"`
+	GenerationAttempts          *int       `json:"generation_attempts,omitempty"`
+	NextAttemptAt               *time.Time `json:"next_attempt_at,omitempty"`
+	LeaseUntil                  *time.Time `json:"lease_until,omitempty"`
+	UpdatedAt                   *time.Time `json:"updated_at,omitempty"`
+	LastError                   string     `json:"last_error,omitempty"`
+	FailureCode                 string     `json:"failure_code,omitempty"`
+	Retryable                   bool       `json:"retryable"`
+	ReplayCount                 int64      `json:"replay_count"`
+	LastReplayedAt              *time.Time `json:"last_replayed_at,omitempty"`
+}
+
+type EventReceiptExecutionResponse struct {
+	InvocationID             string     `json:"invocation_id"`
+	State                    string     `json:"state"`
+	Attempts                 int        `json:"attempts"`
+	ReplayGeneration         int64      `json:"replay_generation"`
+	NextAttemptAt            *time.Time `json:"next_attempt_at,omitempty"`
+	CreatedAt                time.Time  `json:"created_at"`
+	CompletedAt              *time.Time `json:"completed_at,omitempty"`
+	LastError                string     `json:"last_error,omitempty"`
+	ReplayedFromInvocationID string     `json:"replayed_from_invocation_id,omitempty"`
+}
+
+// Recovery describes retained generic replays without replacing the original
+// failure. Counts may decrease as execution records expire independently.
+type EventReceiptRecoveryResponse struct {
+	RetainedReplayCount int64                          `json:"retained_replay_count"`
+	LatestReplay        *EventReceiptExecutionResponse `json:"latest_replay"`
+	HistoryURL          string                         `json:"history_url"`
+}
+
+type EventReceiptReplayHistoryResponse struct {
+	EventSource          string                          `json:"event_source"`
+	EventID              string                          `json:"event_id"`
+	SubscriptionID       string                          `json:"subscription_id"`
+	OriginalInvocationID string                          `json:"original_invocation_id"`
+	Replays              []EventReceiptExecutionResponse `json:"replays"`
+	NextAfter            string                          `json:"next_after,omitempty"`
+}
+
+type InvocationAttemptResponse struct {
+	ID               int64      `json:"id"`
+	InvocationID     string     `json:"invocation_id"`
+	ReplayGeneration int64      `json:"replay_generation"`
+	Attempt          int        `json:"attempt"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	Outcome          string     `json:"outcome"`
+	ErrorDetail      string     `json:"error_detail,omitempty"`
+	NextAttemptAt    *time.Time `json:"next_attempt_at,omitempty"`
+	RetainUntil      time.Time  `json:"retain_until"`
+}
+
+type EventReceiptAttemptHistoryResponse struct {
+	EventSource          string                      `json:"event_source"`
+	EventID              string                      `json:"event_id"`
+	SubscriptionID       string                      `json:"subscription_id"`
+	OriginalInvocationID string                      `json:"original_invocation_id"`
+	Coverage             string                      `json:"coverage"`
+	Attempts             []InvocationAttemptResponse `json:"attempts"`
+	NextAfter            string                      `json:"next_after,omitempty"`
+}
+
+type EventReceiptCancellationResponse struct {
+	ReceiptID      string    `json:"receipt_id"`
+	CancelledCount int64     `json:"cancelled_count"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type EventReceiptRecoveryAction struct {
+	Kind   string                           `json:"kind"`
+	Method string                           `json:"method"`
+	URL    string                           `json:"url"`
+	Body   *ReplayEventFanoutFailureRequest `json:"body,omitempty"`
 }

@@ -94,3 +94,44 @@ func TestVersionProtectionCLI(t *testing.T) {
 		}
 	}
 }
+
+// adr: 608
+func TestEventHoldProtectionCLI(t *testing.T) {
+	bucket, version, id := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	until := time.Now().UTC().AddDate(1, 0, 0).Format(time.RFC3339Nano)
+	for _, tc := range []struct {
+		args        []string
+		status      string
+		days, years int32
+		minimum     bool
+	}{
+		{[]string{"event-hold", "demo", bucket, "key", version, "COMPLIANCE", "ON", "days", "30", id}, "ON", 30, 0, false},
+		{[]string{"event-hold", "demo", bucket, "key", "null", "GOVERNANCE", "ON", "years", "1", "--retain-until", until, id}, "ON", 0, 1, true},
+		{[]string{"event-hold", "demo", bucket, "key", version, "COMPLIANCE", "OFF", id}, "OFF", 0, 0, false},
+		{[]string{"event-hold", "demo", bucket, "key", version, "COMPLIANCE", "OFF", "--retain-until", until, id}, "OFF", 0, 0, true},
+	} {
+		c := &protectionCLIClient{}
+		if _, e := runVersionProtection(t.Context(), c, tc.args); e != nil || c.method != "PUT retention" || c.retention.EventHold != tc.status || c.id != id || (c.retention.RetainUntilDate != nil) != tc.minimum {
+			t.Fatal(tc, c, e)
+		}
+		if tc.status == "ON" {
+			p := c.retention.EventHoldDuration
+			if p == nil || tc.days != 0 && (p.Days == nil || *p.Days != tc.days) || tc.years != 0 && (p.Years == nil || *p.Years != tc.years) {
+				t.Fatal(c)
+			}
+		} else if c.retention.EventHoldDuration != nil {
+			t.Fatal("release sent a duration", c)
+		}
+	}
+	for _, tail := range [][]string{
+		{"COMPLIANCE", "ON", "days", "0", id}, {"COMPLIANCE", "ON", "years", "101", id}, {"COMPLIANCE", "ON", "days", "36501", id},
+		{"COMPLIANCE", "ON", "days", "1.5", id}, {"COMPLIANCE", "OFF", "days", "1", id}, {"COMPLIANCE", "OFF", "null"},
+		{"COMPLIANCE", "ON", "days", "1", "--retain-until", "bad", id}, {"COMPLIANCE", "OFF", "extra", id},
+	} {
+		args := append([]string{"event-hold", "demo", bucket, "key", version}, tail...)
+		c := &protectionCLIClient{}
+		if _, e := runVersionProtection(t.Context(), c, args); e == nil || c.method != "" {
+			t.Fatal("invalid event policy contacted API", args, e)
+		}
+	}
+}

@@ -32,6 +32,7 @@ class ObjectDeletion:
     """Selected public version UUID or new public marker UUID or null when acknowledged; private provider IDs are
     never exposed."""
     last_error_code: ObjectDeletionLastErrorCode | Unset = UNSET
+    """object_protected defers a lifecycle target under retention or a hold until a later scan."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

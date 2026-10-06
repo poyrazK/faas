@@ -2174,7 +2174,7 @@ paths:
     put:
       operationId: putObjectVersionRetention
       summary: Request a durable exact version retention change
-      description: Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      description: Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Separately enrolled event holds support ON with one days or years duration and OFF without a duration. Releasing an active hold preserves its observed retention bound and verifies the provider-calculated final date. Governance bypass is unsupported.
       tags: [storage]
       requestBody:
         required: true
@@ -2223,7 +2223,7 @@ paths:
     put:
       operationId: putObjectVersionLegalHold
       summary: Request a durable exact version legal hold change
-      description: Accept durable legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      description: Accept durable independent ON or OFF legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies exact-version readback without repeating a dispatched PUT. Retention and event hold policies remain independent.
       tags: [storage]
       requestBody:
         required: true
@@ -3321,7 +3321,15 @@ paths:
         different type, schema version, or data returns 409. Older snake_case input attribute
         names remain accepted during migration. API keys require
         `events:publish`, `deploy:write`, or `admin`.
-        Matching and delivery are asynchronous follow-up work.
+        Matching and delivery are asynchronous follow-up work. The Location header
+        and receipt_url point to GET /v1/events/receipt for delivery evidence.
+        Identical identity retries return the original accepted_at timestamp,
+        including when retained customer event storage is full. New identities
+        exceeding the account count or byte budget return 429 with code
+        event_storage_capacity_exhausted, limit/observed and Retry-After. No ledger
+        or receipt is committed on rejection. Storage is released by receipt
+        retention pruning, not by delivery completion. GET /v1/events/storage
+        reports current usage and plan limits.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3343,6 +3351,216 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/backlog:
+    get:
+      tags: [events]
+      operationId: getEventBacklog
+      summary: Discover waiting application event recipients and consumer counts.
+      description: |
+        Requires apps:read or admin. Reads only the authenticated account's
+        captured application recipients in pending or processing routing state,
+        in both whole-event and independent-recipient routing modes. Includes
+        capacity waits before an invocation exists; excludes settled routing and
+        handler execution queues. Returns metadata and receipt/history links,
+        never envelope data. Consumers count all matching recipients, independently
+        of either bounded page. Age is measured from durable event acceptance.
+        Recipient pages are oldest accepted first, then receipt and subscription
+        identity; consumer pages use app and subscription identity. Pass each
+        continuation cursor with the same filters; page sizes may change. Cursors
+        anchor window_at and its age cutoff, while membership and counts remain
+        live on every request. Recovered rows disappear, including cursor rows.
+        Replay behind a cursor requires restarting discovery. This inspection
+        ordering does not guarantee delivery FIFO. A repeatable read keeps each
+        response consistent. Aggregation has a five-second deadline; narrow
+        filters if event_backlog_read_timeout is returned. Responses use
+        Cache-Control no-store. unattributed_receipts counts pending legacy
+        receipts without captured recipients across the account; only the
+        acceptance/age window applies to that count, including with other filters.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: app
+          description: Owned app slug; an unknown or foreign app returns 404.
+          schema: { type: string, maxLength: 256 }
+        - in: query
+          name: subscription_id
+          description: Captured application recipient identifier.
+          schema: { type: string, maxLength: 256 }
+        - in: query
+          name: state
+          description: Restrict current routing state.
+          schema: { type: string, enum: [pending, processing] }
+        - in: query
+          name: capacity_scope
+          description: Restrict currently pending waits by the last recorded capacity scope.
+          schema: { type: string, enum: [consumer, app, account] }
+        - in: query
+          name: min_age_seconds
+          description: Minimum whole seconds since acceptance, relative to window_at.
+          schema: { type: integer, format: int64, minimum: 0, maximum: 31536000, default: 0 }
+        - in: query
+          name: after
+          description: Opaque next_after recipient cursor, bound to account and filters.
+          schema: { type: string, maxLength: 8192 }
+        - in: query
+          name: consumers_after
+          description: Opaque next_consumers_after cursor, bound to account and filters. Both cursors must share window_at.
+          schema: { type: string, maxLength: 8192 }
+        - in: query
+          name: limit
+          description: Maximum waiting recipients in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - in: query
+          name: consumer_limit
+          description: Maximum consumer summaries in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: Matching live backlog metadata and independently paginated consumer counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventBacklogResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/storage:
+    get:
+      tags: [events]
+      operationId: getEventStorageUsage
+      summary: Inspect retained customer event storage and account limits.
+      description: |
+        Requires apps:read or admin. Returns usage only for the authenticated
+        account. Logical UTF-8 JSON bytes include envelope, duplicated event data,
+        and immutable recipient snapshots. Pending and settled receipts remain
+        charged until retention pruning. Reserved gregale.* platform events are
+        exempt. Indexes, TOAST compression, ledger and attempt history are outside
+        this budget. A null oldest_pending_at means no customer routing is pending.
+        Responses use Cache-Control no-store.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current retained storage and plan limits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventStorageUsageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/receipt:
+    get:
+      tags: [events]
+      operationId: getEventReceipt
+      summary: Inspect acceptance, routing, and execution for one event.
+      description: |
+        Requires apps:read or admin. Reads the retained account/source/id receipt
+        and a bounded page of immutable acceptance-time recipients. Routing
+        counts cover the entire snapshot, including recipients without invocations.
+        Enqueued routing does not imply handler success: keyed cancellation can
+        produce a cancellation receipt instead. The original deterministic
+        invocation is shown when retained; trusted generic replay lineage adds
+        the latest replay and a paginated history URL without replacing the
+        original failure. Recovery actions target the latest retained replay
+        when present. Recovery actions require their existing
+        write scopes and are revalidated when called. Legacy receipts without
+        snapshots report snapshot_captured=false and cannot reconstruct recipients.
+        Pages follow acceptance order while outcomes may change between requests.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, description: Published event source paired with the required ID for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Published event ID paired with the required source for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: after, in: query, description: 'Opaque next_after cursor bound to account, source, ID, and retained receipt. Mismatched or stale cursors return 400.', schema: { type: string, maxLength: 8192 } }
+        - { name: limit, in: query, description: Maximum recipients in this page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Current receipt evidence and recipient page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/receipt/replays:
+    get:
+      tags: [events]
+      operationId: getEventReceiptReplays
+      summary: Inspect retained handler replay history for one captured recipient.
+      description: |
+        Requires apps:read or admin. Returns generic invocation replays linked by
+        ledger-owned parent/root identity, newest first by created_at and ID.
+        Original and intermediate execution records may expire independently;
+        surviving descendants remain visible. Legacy replays without trusted
+        lineage cannot be reconstructed from guest headers. Unknown or foreign
+        receipts, recipients and current app owners return 404. Cursors bind the
+        account, source, event ID, subscription and retained receipt identity;
+        mismatched or stale cursors return 400. Cursor anchors remain usable after
+        their execution record expires. Outcomes may change between requests.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, description: Published event source., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Published event ID., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: subscription_id, in: query, required: true, description: Captured consumer identifier whose retained handler replay history is requested., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: after, in: query, description: Opaque next_after cursor for this replay history., schema: { type: string, maxLength: 8192 } }
+        - { name: limit, in: query, description: Maximum retained replays in this page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Retained replay execution evidence and pagination cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptReplayHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/receipt/attempts:
+    get:
+      tags: [events]
+      operationId: getEventReceiptAttempts
+      summary: Inspect retained handler delivery attempts for one captured recipient.
+      description: |
+        Requires apps:read or admin. Includes the original async invocation and
+        trusted child replays, ordered by descending attempt history ID. Each
+        claim records its attempt and replay generation atomically with dispatch.
+        A claim does not prove handler execution. Recovered expired leases have
+        outcome unknown; external side effects still require idempotency.
+        Only attempts recorded after rollout and still retained are available.
+        Closed attempts expire after at most 30 days, earlier when result retention
+        expires or their invocation is deleted. Running attempts are not pruned.
+        Missing history does not establish that no delivery occurred. Unknown or
+        foreign receipts, captured recipients and current app owners return 404.
+        Cursors bind account, source, event ID, recipient and retained receipt;
+        stale or mismatched cursors return 400. New claims do not reorder older
+        pages; a running outcome may settle between reads.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, description: Source of the published event whose dispatch attempts are requested., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Identity within the published source for this dispatch-attempt history., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: subscription_id, in: query, required: true, description: Captured consumer identifier., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: after, in: query, description: Opaque next_after cursor for this attempt history., schema: { type: string, maxLength: 8192 } }
+        - { name: limit, in: query, description: Maximum retained attempts per page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Retained dispatch evidence and pagination cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptAttemptHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/event-schemas:
     post:
@@ -7295,7 +7513,16 @@ paths:
       tags: [platform-tenants]
       operationId: replayPlatformTenantSelfInvocation
       summary: Replay this tenant's failed or dead-lettered invocation.
-      description: Requires a tenant-bound token with platform_tenant:invocations:manage. Replays only this customer's failed or dead-lettered work into a fresh invocation preserving the original tenant and request. Idempotency-Key is scoped to this tenant and original invocation. Foreign, unbound and missing invocations return the same 404.
+      description: |
+        Requires a tenant-bound token with platform_tenant:invocations:manage.
+        Only this customer's failed or dead-lettered unbound unkeyed work is
+        eligible. Preserves the original customer, request, deployment scope,
+        retry policy and trusted parent/root lineage. Each parent has one durable
+        child shared with account-operator replay. Repeated and concurrent
+        requests return it regardless of Idempotency-Key, including after
+        completion; further recovery targets the failed child. A pruned child
+        returns 409 invocation_replay_unavailable. Foreign, unbound and missing
+        invocations return the same 404. Current app ownership is always checked.
       parameters:
         - name: id
           in: path
@@ -7304,7 +7531,7 @@ paths:
           schema: { type: string, format: uuid }
         - name: Idempotency-Key
           in: header
-          description: Optional key scoped to this tenant and original invocation.
+          description: Optional transport key; parent identity deduplicates across keys and account-operator requests.
           schema: { type: string }
       responses:
         '202':
@@ -24295,8 +24522,9 @@ paths:
       description: |
         Requeues only the named failed recipient from the immutable recipient
         snapshot captured when the event was accepted. Other recipients and
-        their outcomes are left untouched. The event must have settled before
-        a failed recipient can be replayed.
+        their outcomes are left untouched. With independent recipient routing,
+        a terminal recipient can be replayed while siblings are active and gets
+        a fresh routing retry budget. Legacy receipts must settle first.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/Slug'
@@ -24327,10 +24555,10 @@ paths:
         Requeues up to 100 terminal recipients for the app whose stable failure
         classification marks them retryable. Optional event_source and event_id
         narrow the action to one published event and must be supplied together.
-        Non-retryable recipients are left alone, and an event being processed
-        by the fanout worker is not modified. A replayed event can accept more
-        recipients while pending; if has_more remains true while the worker is
-        processing it, repeat the request after that event settles.
+        Non-retryable recipients are left alone. Independent recipient routing
+        permits replay while siblings are active and renews each selected
+        recipient's routing retry budget. Legacy receipts with active whole-event
+        claims are skipped; repeat after they settle if has_more remains true.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/Slug'
@@ -24710,20 +24938,31 @@ paths:
       operationId: replayInvocation
       summary: Re-issue a failed or dead_letter invocation.
       description: |
-        Accepts no request body. The replayed row carries the original's
-        payload + headers + method + path verbatim and is enqueued against
-        the same app. The new row's Source is `replay` (issue #315).
+        Accepts no request body. Requires deployment write scope and configured
+        MFA. Only failed or dead-lettered unbound unkeyed work is eligible.
+        The parent and its current app must belong to the caller. The child
+        preserves the original request, deployment scope, customer identity
+        and trusted replay lineage. Trace/version headers and execution/result
+        lifetimes are refreshed; retry policy uses the current app and plan.
 
-        Only invocations whose current state is `failed` or `dead_letter`
-        can be replayed — re-running a successful or in-flight invocation
-        would be a customer bug, not a flow we want to enable by accident.
-        A replay attempt on any other state returns 409
-        `invocation_not_replayable`.
+        Each parent creates at most one durable recovery child. Concurrent and
+        repeated requests return that child regardless of Idempotency-Key,
+        including after completion. A subsequent recovery targets the failed
+        child. If its child has been pruned, the retained parent returns 409
+        `invocation_replay_unavailable` instead of creating another execution.
+        Existing acceptance is returned before checking expired deployment pins.
+        Application delivery and external side effects remain at least once.
+
+        Other parent states return `invocation_not_replayable`. Keyed work
+        returns `keyed_replay_requires_policy`; use `/replay-keyed` for failed
+        keyed work. Queue-bound or named-queue work returns
+        `queue_replay_requires_binding` and requires its app queue dead-letter
+        replay endpoint.
       parameters:
         - $ref: '#/components/parameters/Id32'
       responses:
         '202':
-          description: The new invocation row was enqueued.
+          description: The recovery child was enqueued or already exists.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AsyncInvokeResponse' }
@@ -24731,10 +24970,48 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            The invocation is not in a replayable state. Returns the
-            `invocation_not_replayable` problem code with the current
-            state in the detail field; only `failed` and `dead_letter`
-            invocations can be replayed.
+            The parent is not replayable, requires its policy/binding recovery
+            path, or its durable child is no longer retained
+            (`invocation_replay_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/invocations/{id}/replay-keyed:
+    post:
+      tags: [invocations]
+      operationId: replayKeyedInvocation
+      summary: Recover failed keyed work in its captured policy lane
+      description: |
+        Accepts no request body. Requires deploy write scope and configured MFA.
+        Only failed keyed work without a queue binding is eligible. The child
+        retains the captured policy revision, key, fairness limits, deployment
+        scope, customer identity, payload, retry policy and trusted replay root.
+        It receives the next sequence in the same lane, after previously admitted
+        work. Replay does not supersede pending rows or restart debounce.
+
+        The original pending expiry and start deadline remain effective. A new
+        replay after either elapsed deadline returns `keyed_replay_expired`.
+        Each parent creates at most one child. Repeating a request returns that
+        child, including after completion; a subsequent recovery must target
+        the failed child. If the child has been pruned while its parent remains,
+        the parent returns `keyed_replay_unavailable` instead of executing again.
+        The original failure remains visible in event receipts and retained
+        replay history. Delivery and application side effects remain at least once.
+      parameters:
+        - $ref: '#/components/parameters/Id32'
+      responses:
+        '202':
+          description: The lane-preserving recovery child was admitted or is already retained.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AsyncInvokeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Recovery is ineligible, its pending deadline expired, or its child is no longer retained.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -31261,7 +31538,7 @@ components:
         state: { type: string, enum: [prepared, dispatched, completed, failed] }
         version_id: { type: string, description: Selected public version UUID or new public marker UUID or null when acknowledged; private provider IDs are never exposed. }
         delete_marker: { type: boolean }
-        last_error_code: { type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected] }
+        last_error_code: { type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected, object_protected], description: object_protected defers a lifecycle target under retention or a hold until a later scan. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     ObjectTaggingRequest:
@@ -34527,6 +34804,8 @@ components:
         content_language: { type: string, maxLength: 255, description: Content-Language value for PUT. }
         metadata: { type: object, additionalProperties: { type: string, maxLength: 2048 }, maxProperties: 90, description: PUT-only x-amz-meta-* values. }
         tags: { type: object, additionalProperties: { type: string, maxLength: 256 }, maxProperties: 10, description: PUT-only S3 object tags. }
+        protection:
+          $ref: '#/components/schemas/ObjectWriteProtection'
         encryption: { $ref: '#/components/schemas/ObjectEncryption' }
     ObjectSignedRequest:
       description: Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL dispatches at most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
@@ -34676,10 +34955,19 @@ components:
         encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Verified active default for new implicit writes. }
         desired_encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Requested default awaiting native verification. }
         updated_at: { type: string, format: date-time }
+    ObjectWriteProtection:
+      type: object
+      additionalProperties: false
+      description: Fixed or enrolled event retention and an independent legal hold for a new object version. Omitted retention inherits the immutable admitted bucket default. Event hold ON requires one days or years duration and permits an optional minimum date. Event hold OFF on creation requires an explicit fixed date and no duration. Governance bypass is unsupported.
+      properties:
+        retention:
+          $ref: '#/components/schemas/ObjectVersionRetention'
+        legal_hold:
+          $ref: '#/components/schemas/ObjectVersionLegalHold'
     ObjectVersionRetention:
       type: object
       additionalProperties: false
-      description: Verified native retention, or a fixed-retention intent. An empty object requests a clear; active retention cannot be shortened without bypass, which is unsupported. Event hold fields are observation only for this contract.
+      description: Verified native retention or a retention intent. An empty object requests a clear. Active fixed retention cannot be shortened and active COMPLIANCE cannot be downgraded. Enrolled event hold ON requires one duration; OFF omits duration and lets the provider fix the final date from the existing hold. Observed dates and requested minimum dates are preserved. Governance bypass is unsupported. For new writes, OFF requires a fixed date; an undated OFF is reserved for releasing an existing hold.
       properties:
         mode: { type: string, enum: [GOVERNANCE, COMPLIANCE] }
         retain_until_date: { type: string, format: date-time }
@@ -34694,7 +34982,7 @@ components:
         status: { type: string, enum: [ON, OFF] }
     ObjectVersionRetentionRequest:
       type: object
-      description: Stable identity and fixed retention intent for an owned version.
+      description: Stable identity and fixed or enrolled event hold retention intent for an owned version. ON requires a duration; OFF omits duration and requires a previously active hold unless a fixed date is supplied.
       additionalProperties: false
       required: [id, retention]
       properties:
@@ -34743,12 +35031,14 @@ components:
         updated_at: { type: string, format: date-time }
     ObjectLockCapabilities:
       type: object
-      description: Enrolled bucket configuration, default event holds, fixed version retention and legal-hold capabilities without a native health check.
+      description: Enrolled bucket configuration, default and per-version event holds, fixed version retention and legal-hold capabilities without a native health check.
       additionalProperties: false
-      required: [bucket_configuration, default_event_hold, version_retention, version_legal_hold]
+      required: [bucket_configuration, default_event_hold, version_retention, version_legal_hold, version_event_hold, write_event_hold]
       properties:
         bucket_configuration: { type: boolean }
         default_event_hold: { type: boolean }
+        version_event_hold: { type: boolean, description: Separately enrolled durable per-version event hold mutations. }
+        write_event_hold: { type: boolean, description: Separately enrolled event holds on new writes and captured bucket defaults. }
         version_retention: { type: boolean }
         version_legal_hold: { type: boolean }
     ObjectRetentionPeriod:
@@ -34921,6 +35211,8 @@ components:
         key: { type: string, minLength: 1, maxLength: 1024 }
         size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5497558138880 }
         content_type: { type: string, maxLength: 255 }
+        protection:
+          $ref: '#/components/schemas/ObjectWriteProtection'
         encryption: { $ref: '#/components/schemas/ObjectEncryption' }
     ObjectMultipartPartSignRequest:
       description: Requested lifetime for one exact-length part capability.
@@ -42272,11 +42564,97 @@ components:
       description: Durable acceptance receipt for a published internal event.
       type: object
       additionalProperties: false
-      required: [id, accepted_at, account_id]
+      required: [id, accepted_at, account_id, receipt_url]
       properties:
         id: { type: string }
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
+        receipt_url: { type: string, format: uri-reference, description: Account-authenticated relative URL for this event receipt. }
+
+    EventBacklogResponse:
+      example: { observed_at: "2026-10-05T12:00:00Z", window_at: "2026-10-05T12:00:00Z", coverage: captured_application_recipients, recipients: [], consumers: [], unattributed_receipts: 0 }
+      type: object
+      additionalProperties: false
+      description: Live waiting recipients and exact matching counts, with an anchored acceptance window.
+      required: [observed_at, window_at, coverage, recipients, consumers, unattributed_receipts]
+      properties:
+        observed_at: { type: string, format: date-time, description: Time of this live observation. }
+        window_at: { type: string, format: date-time, description: First-page time anchoring acceptance and minimum-age cutoff across pages. }
+        coverage: { type: string, const: captured_application_recipients }
+        recipients:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventBacklogRecipient' }
+        consumers:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventBacklogConsumer' }
+        unattributed_receipts: { type: integer, format: int64, minimum: 0, description: Account-wide unresolved receipts without a captured snapshot; only the age/acceptance window applies. }
+        next_after: { type: string, description: Opaque continuation for the recipient page. }
+        next_consumers_after: { type: string, description: Opaque continuation for the consumer page. }
+
+    EventBacklogRecipient:
+      type: object
+      additionalProperties: false
+      description: One captured application recipient awaiting routing, without envelope data.
+      required: [event_source, event_id, event_type, accepted_at, app_id, app_slug, target_available, subscription_id, routing_mode, state, attempts, capacity_deferrals, pending_age_seconds, waiting_reason, receipt_url]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        event_type: { type: string }
+        accepted_at: { type: string, format: date-time }
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string, description: Empty when the captured app is no longer owned by this account. }
+        target_available: { type: boolean }
+        subscription_id: { type: string }
+        routing_mode: { type: string, enum: [event, recipient] }
+        state: { type: string, enum: [pending, processing] }
+        capacity_scope: { type: string, enum: [consumer, app, account], description: Last recorded capacity scope for a currently pending recipient. }
+        attempts: { type: integer, minimum: 0 }
+        capacity_deferrals: { type: integer, minimum: 0 }
+        next_attempt_at: { type: string, format: date-time }
+        lease_until: { type: string, format: date-time, description: Recipient lease or shared whole-receipt lease. }
+        pending_age_seconds: { type: number, format: double, minimum: 0, description: "Age from acceptance at observed_at, not time spent at the latest capacity scope." }
+        waiting_reason: { type: string, enum: [capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, ready], description: Recorded capacity takes precedence for pending recipients; receipt_processing refers only to a shared receipt lease. }
+        receipt_url: { type: string, format: uri-reference }
+        fanout_history_url: { type: string, format: uri-reference, description: Present when the captured target still belongs to the account. History coverage is independently bounded. }
+
+    EventBacklogConsumer:
+      type: object
+      additionalProperties: false
+      description: Exact counts over all matching waiting recipients for one captured app/subscription, independent of recipient pagination.
+      required: [app_id, app_slug, target_available, subscription_id, waiting_recipients, pending_recipients, processing_recipients, capacity_waiting_recipients, oldest_accepted_at, oldest_age_seconds]
+      properties:
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string }
+        target_available: { type: boolean }
+        subscription_id: { type: string }
+        waiting_recipients: { type: integer, format: int64, minimum: 0 }
+        pending_recipients: { type: integer, format: int64, minimum: 0 }
+        processing_recipients: { type: integer, format: int64, minimum: 0 }
+        capacity_waiting_recipients: { type: integer, format: int64, minimum: 0 }
+        oldest_accepted_at: { type: string, format: date-time }
+        oldest_age_seconds: { type: number, format: double, minimum: 0 }
+
+    EventStorageUsageResponse:
+      description: Retained customer event counts, logical JSON bytes, pending age and current account budgets.
+      example: { retained_events: 0, retained_bytes: 0, pending_events: 0, oldest_pending_at: null, limits: { retained_events: 16384, retained_bytes: 67108864 } }
+      type: object
+      additionalProperties: false
+      required: [retained_events, retained_bytes, pending_events, oldest_pending_at, limits]
+      properties:
+        retained_events: { type: integer, format: int64, minimum: 0 }
+        retained_bytes: { type: integer, format: int64, minimum: 0 }
+        pending_events: { type: integer, format: int64, minimum: 0 }
+        oldest_pending_at: { type: [string, 'null'], format: date-time }
+        limits:
+          example: { retained_events: 16384, retained_bytes: 67108864 }
+          type: object
+          additionalProperties: false
+          required: [retained_events, retained_bytes]
+          properties:
+            retained_events: { type: integer, format: int64, minimum: 0 }
+            retained_bytes: { type: integer, format: int64, minimum: 0 }
 
     RegisterEventSchemaRequest:
       description: Immutable event schema registration request.
@@ -42448,9 +42826,17 @@ components:
         retryable: { type: boolean }
         last_error: { type: string }
         occurred_at: { type: string, format: date-time }
+        capacity_scope: { type: string, enum: [consumer, app, account], description: Capacity wait scope for this immutable observation. }
+        capacity_deferrals: { type: integer, format: int64, minimum: 0, description: Cumulative deferrals at this observation; summaries provide the current total. }
+        details_truncated: { type: boolean, description: Error or failure code detail was truncated to its UTF-8 byte ceiling. }
 
     EventFanoutAttemptHistoryResponse:
-      description: Bounded immutable routing history for one app-scoped event identity.
+      description: >-
+        Bounded recorded routing outcomes with durable recipient summaries. Repeated capacity waits
+        coalesce; details have row and logical byte caps and thirty-day retention independent of receipt
+        settlement. Latest outcome, failure and replay evidence is prioritized. Summaries describe gaps,
+        not an exhaustive historical audit. IDs remain immutable and cursors remain valid after pruning.
+        Summaries are current observations across the identity, independent of the detail page cursor.
       type: object
       additionalProperties: false
       required: [app_slug, event_source, event_id, history]
@@ -42463,6 +42849,197 @@ components:
           type: array
           items: { $ref: '#/components/schemas/EventFanoutAttemptResponse' }
         next_before: { type: string, description: Opaque cursor bound to the app, event identity, and optional recipient filter. }
+        coverage: { type: string, enum: [bounded_recorded_outcomes], description: Recorded observations only; pre-migration transitions and compacted details are unavailable. }
+        summaries:
+          type: array
+          items: { $ref: '#/components/schemas/EventFanoutHistorySummaryResponse' }
+
+    EventFanoutHistorySummaryResponse:
+      description: Durable recipient counters and detail coverage for the retained receipt.
+      type: object
+      additionalProperties: false
+      required: [subscription_id, observed_outcomes, capacity_deferrals, coalesced_outcomes, compacted_outcomes, retained_records, retained_bytes]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        observed_outcomes: { type: integer, format: int64, minimum: 0, description: Recorded routing and replay observations including coalesced waits. }
+        capacity_deferrals: { type: integer, format: int64, minimum: 0, description: Highest durable cumulative recipient deferral checkpoint. }
+        coalesced_outcomes: { type: integer, format: int64, minimum: 0, description: Repeated waits represented by counters instead of detail rows. }
+        compacted_outcomes: { type: integer, format: int64, minimum: 0, description: Detail rows removed by retention or budgets. }
+        compacted_through_id: { type: integer, format: int64, minimum: 1, description: "Highest removed detail ID; protected older rows can remain, so this is not a contiguous missing prefix." }
+        compacted_through_at: { type: string, format: date-time, description: Latest occurrence time among removed detail rows. }
+        first_capacity_wait_at: { type: string, format: date-time, description: First recorded capacity wait after summary rollout. }
+        last_capacity_wait_at: { type: string, format: date-time }
+        last_capacity_scope: { type: string, enum: [consumer, app, account], description: "Most recent recorded capacity scope, also retained after recovery." }
+        retained_records: { type: integer, format: int64, minimum: 0 }
+        retained_bytes: { type: integer, format: int64, minimum: 0, description: Logical detail bytes including a fixed per-row allowance; excludes physical storage and indexes. }
+
+    EventReceiptResponse:
+      description: Acceptance and routing evidence with a bounded recipient page; execution is a separate lifecycle.
+      type: object
+      additionalProperties: false
+      required: [event_id, event_source, event_type, accepted_at, snapshot_captured, routing_mode, recipient_count, routing_summary, recipients]
+      properties:
+        event_id: { type: string }
+        event_source: { type: string }
+        event_type: { type: string }
+        schema_version: { type: string }
+        accepted_at: { type: string, format: date-time, description: "First durable acceptance time, preserved on identical retries." }
+        routing_settled_at: { type: string, format: date-time, description: "All routing candidates settled, including filtered and failed outcomes; absent while routing is active." }
+        retain_until: { type: string, format: date-time, description: 'Settled receipt retention boundary, 30 days after routing settled. Absent for active routing.' }
+        snapshot_captured: { type: boolean, description: "False means legacy recipient membership is unknown, rather than an empty matching set." }
+        routing_mode: { type: string, enum: [event, recipient], description: Whole-event legacy routing or independent recipient leases. }
+        recipient_count: { type: integer, minimum: 0, description: Total captured candidates across all pages; unknown when snapshot_captured=false. }
+        routing_summary:
+          description: Counts across all captured recipients by current routing checkpoint state.
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        recipients:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventReceiptRecipientResponse' }
+        next_after: { type: string, description: Opaque cursor for the next acceptance-ordered recipient page. }
+
+    EventReceiptRecipientResponse:
+      description: One captured recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, routing, recovery_actions]
+      properties:
+        subscription_id: { type: string, description: Immutable captured subscription or notification identifier. }
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string, description: Current slug when the target still belongs to the authenticated account. }
+        routing: { $ref: '#/components/schemas/EventReceiptRoutingResponse' }
+        execution: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        recovery: { $ref: '#/components/schemas/EventReceiptRecoveryResponse' }
+        cancellation: { $ref: '#/components/schemas/EventReceiptCancellationResponse' }
+        execution_unavailable:
+          type: string
+          enum: [not_enqueued, record_unavailable, cancel_pending]
+          description: No original invocation was found; record_unavailable after enqueue may reflect independent retention and is not a success claim.
+        recovery_actions:
+          type: array
+          items: { $ref: '#/components/schemas/EventReceiptRecoveryAction' }
+          description: Applicable selective recovery requests; empty when no action is currently eligible. Authorization and state are checked again on POST.
+        fanout_history_url: { type: string, format: uri-reference, description: Account-authenticated routing and replay history for this recipient. }
+        attempt_history_url: { type: string, format: uri-reference, description: Account-authenticated handler attempt history including trusted replays. }
+
+    EventReceiptRoutingResponse:
+      description: Recipient routing checkpoint and lifetime attempts; execution attempts are separate.
+      type: object
+      additionalProperties: false
+      required: [state, attempts, retryable, replay_count]
+      properties:
+        state: { type: string, enum: [pending, processing, filtered, enqueued, failed] }
+        attempts: { type: integer, minimum: 0, description: "Lifetime routing attempts, including replay generations." }
+        generation_capacity_deferrals: { type: integer, minimum: 0, description: Capacity waits in this independent routing generation; subtract from generation_attempts for failure-budget use. }
+        capacity_deferrals: { type: integer, minimum: 0, description: Lifetime capacity waits; excluded from the routing failure budget. }
+        capacity_scope: { type: string, enum: [consumer, app, account], description: Active capacity wait reason; absent after admission. }
+        pending_age_seconds: { type: number, minimum: 0, description: Age since event acceptance while routing is pending or processing. }
+        generation: { type: integer, format: int64, minimum: 1, description: Independent routing generation; absent on legacy whole-event receipts. }
+        generation_attempts: { type: integer, minimum: 0, description: "Claims in the current independent generation, including capacity waits; subtract generation_capacity_deferrals for failure-budget use." }
+        next_attempt_at: { type: string, format: date-time, description: "Scheduled pending routing retry, not a dispatch guarantee." }
+        lease_until: { type: string, format: date-time, description: Independent routing claim expiry; no claim token is exposed. }
+        updated_at: { type: string, format: date-time }
+        last_error: { type: string }
+        failure_code: { type: string }
+        retryable: { type: boolean }
+        replay_count: { type: integer, format: int64, minimum: 0 }
+        last_replayed_at: { type: string, format: date-time }
+
+    EventReceiptExecutionResponse:
+      description: Current retained invocation state. The recipient execution is the original deterministic invocation; recovery and history contain trusted generic replay invocations.
+      type: object
+      additionalProperties: false
+      required: [invocation_id, state, attempts, replay_generation, created_at]
+      properties:
+        invocation_id: { type: string, format: uuid }
+        replayed_from_invocation_id: { type: string, format: uuid, description: Trusted immediate parent for a generic replay; its execution record may have expired. }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, superseded, expired, dead_letter] }
+        attempts: { type: integer, minimum: 0 }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: "This invocation's budget generation, updated by in-place dead-letter replay." }
+        next_attempt_at: { type: string, format: date-time, description: Next pending invocation due time; dispatch may be delayed by admission. }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        last_error: { type: string }
+
+    EventReceiptRecoveryResponse:
+      description: Latest retained generic replay and history; original execution remains separate. Completed means this latest replay recovered; counts may decrease as execution records expire. Absence does not prove that no historical replay occurred.
+      type: object
+      additionalProperties: false
+      required: [retained_replay_count, latest_replay, history_url]
+      properties:
+        retained_replay_count: { type: integer, format: int64, minimum: 1 }
+        latest_replay: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        history_url: { type: string, format: uri-reference, description: Account-authenticated paginated replay history for this captured recipient. }
+
+    EventReceiptReplayHistoryResponse:
+      description: A page of retained generic replay executions for one captured event consumer.
+      type: object
+      additionalProperties: false
+      required: [event_source, event_id, subscription_id, original_invocation_id, replays]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        subscription_id: { type: string }
+        original_invocation_id: { type: string, format: uuid, description: Deterministic root delivery ID; its execution record may have expired. }
+        replays:
+          type: array
+          items: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        next_after: { type: string, description: Opaque cursor for the next older page; omit after when starting a fresh history read. }
+
+    InvocationAttemptResponse:
+      description: Recorded invocation claim and its eventual dispatch outcome within one replay generation.
+      type: object
+      additionalProperties: false
+      required: [id, invocation_id, replay_generation, attempt, started_at, outcome, retain_until]
+      properties:
+        id: { type: integer, format: int64, minimum: 1 }
+        invocation_id: { type: string, format: uuid }
+        replay_generation: { type: integer, format: int64, minimum: 0 }
+        attempt: { type: integer, minimum: 1 }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        outcome: { type: string, enum: [running, succeeded, retry, failed, dead_letter, cancelled, unknown], description: Dispatch evidence; unknown does not prove whether the handler ran. }
+        error_detail: { type: string, maxLength: 1024 }
+        next_attempt_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time, description: Closed attempts can expire earlier if their invocation is deleted; running attempts are not pruned. }
+
+    EventReceiptAttemptHistoryResponse:
+      description: Retained dispatch attempts for the original application event delivery and its trusted replay descendants.
+      type: object
+      additionalProperties: false
+      required: [event_source, event_id, subscription_id, original_invocation_id, coverage, attempts]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        subscription_id: { type: string }
+        original_invocation_id: { type: string, format: uuid }
+        coverage: { type: string, enum: [recorded_attempts_only], description: History is not backfilled and may be pruned; absence is not proof of no delivery. }
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/InvocationAttemptResponse' }
+        next_after: { type: string, description: Opaque cursor for the next page of older dispatch attempts for this captured recipient. }
+
+    EventReceiptCancellationResponse:
+      description: Durable work-policy cancel_pending operation receipt, which creates no handler invocation.
+      type: object
+      additionalProperties: false
+      required: [receipt_id, cancelled_count, created_at]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        cancelled_count: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+
+    EventReceiptRecoveryAction:
+      description: Selective recovery request through an existing authorized endpoint. GET receipt inspection never performs this action.
+      type: object
+      additionalProperties: false
+      required: [kind, method, url]
+      properties:
+        kind: { type: string, enum: [routing_replay, handler_replay, keyed_handler_replay, dead_letter_replay] }
+        method: { type: string, enum: [POST] }
+        url: { type: string, format: uri-reference }
+        body: { $ref: '#/components/schemas/ReplayEventFanoutFailureRequest' }
 
     EventDeliveryListResponse:
       description: App-scoped event invocation and fanout failure history, each ordered newest first.

@@ -113,7 +113,7 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.performTrackedUpload(w, r, st, tracked, bucket, completion)
 		return
 	}
-	if !completion.Encryption.Empty() {
+	if !completion.Protection.Empty() || !completion.Encryption.Empty() {
 		uploadProblem(w, http.StatusNotImplemented, "the selected storage provider does not support tracked encrypted uploads")
 		return
 	}
@@ -182,6 +182,10 @@ func (h *uploadHandler) prepareUpload(w http.ResponseWriter, r *http.Request, ap
 }
 func (h *uploadHandler) validateUpload(w http.ResponseWriter, r *http.Request, route state.ObjectUploadRoute, c state.ObjectUploadCompletion) bool {
 	for name := range r.Header {
+		if strings.HasPrefix(strings.ToLower(name), "x-amz-object-lock-") {
+			uploadProblem(w, http.StatusBadRequest, "upload protection is selected by the bucket policy")
+			return false
+		}
 		if strings.HasPrefix(strings.ToLower(name), "x-amz-server-side-encryption") {
 			uploadProblem(w, http.StatusBadRequest, "upload encryption is selected by the route policy")
 			return false
@@ -223,6 +227,21 @@ func (h *uploadHandler) uploadDestination(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		uploadProblem(w, http.StatusServiceUnavailable, "object storage is temporarily unavailable")
 		return bucket, nil, false
+	}
+	if locks, ok := h.buckets.(state.ObjectBucketObjectLockStore); ok {
+		j, e := locks.GetObjectBucketObjectLock(r.Context(), bucket.AccountID, bucket.AppID, bucket.ID)
+		if e != nil {
+			uploadProblem(w, http.StatusServiceUnavailable, "upload protection is temporarily unavailable")
+			return bucket, nil, false
+		}
+		if (j.EnabledRequired || j.NativeEnabledObserved) && !backend.ObjectLock.Enabled {
+			uploadProblem(w, http.StatusNotImplemented, "protected uploads are disabled on this backend")
+			return bucket, nil, false
+		}
+		if j.ObservedConfiguration != nil && j.ObservedConfiguration.DefaultRetention != nil && j.ObservedConfiguration.DefaultRetention.DefaultEventHold != nil && !backend.ObjectLock.EventHolds {
+			uploadProblem(w, http.StatusNotImplemented, "event hold uploads are disabled on this backend")
+			return bucket, nil, false
+		}
 	}
 	writer, ok := backend.Provider.(ObjectWriter)
 	if !ok {

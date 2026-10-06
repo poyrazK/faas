@@ -7,18 +7,21 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // PublishedEventWork is one durable fanout receipt. A claim token prevents a
 // worker whose lease expired from acknowledging another worker's claim.
 type PublishedEventWork struct {
-	ID      int64
-	Payload []byte
+	ID           int64
+	Payload      []byte
+	StorageBytes int64
 	// A nil database snapshot marks a receipt accepted before the snapshot
 	// migration. SnapshotCaptured distinguishes it from an empty recipient set.
 	RecipientSnapshot []PublishedEventRecipient
@@ -31,6 +34,8 @@ type PublishedEventWork struct {
 	LeaseUntil        time.Time
 	Delivered         bool
 	DeliveredAt       time.Time
+	RecipientClaims   bool
+	routingRecipients map[string]*PublishedEventRecipientWork
 }
 
 // PublishedEventRecipient is an immutable source/type candidate captured when
@@ -107,12 +112,15 @@ func (snapshot PublishedEventWorkPolicySnapshot) EffectivePolicy(name string) (w
 // PublishedEventRecipientProgress records scheduler-side fanout progress for
 // one candidate. Invocation execution retries are tracked on the invocation.
 type PublishedEventRecipientProgress struct {
-	State       string    `json:"state"`
-	Attempts    int       `json:"attempts"`
-	FailureCode string    `json:"failure_code,omitempty"`
-	Retryable   bool      `json:"retryable,omitempty"`
-	LastError   string    `json:"last_error,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	CapacityDeferrals int        `json:"capacity_deferrals,omitempty"`
+	CapacityScope     string     `json:"capacity_scope,omitempty"`
+	NextAttemptAt     *time.Time `json:"next_attempt_at,omitempty"`
+	State             string     `json:"state"`
+	Attempts          int        `json:"attempts"`
+	FailureCode       string     `json:"failure_code,omitempty"`
+	Retryable         bool       `json:"retryable,omitempty"`
+	LastError         string     `json:"last_error,omitempty"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // EventFanoutFailure is a terminal routing failure recorded before an
@@ -144,20 +152,24 @@ type EventFanoutFailureCursor struct {
 // request for a captured event recipient. The mutable recipient progress is
 // still the scheduler checkpoint; these rows retain the inspection history.
 type EventFanoutAttempt struct {
-	ID             int64
-	OutboxID       int64
-	AppID          string
-	EventID        string
-	EventSource    string
-	EventType      string
-	SubscriptionID string
-	Action         string
-	State          string
-	Attempts       int
-	FailureCode    string
-	Retryable      bool
-	LastError      string
-	OccurredAt     time.Time
+	ID                int64
+	OutboxID          int64
+	AppID             string
+	EventID           string
+	EventSource       string
+	EventType         string
+	SubscriptionID    string
+	Action            string
+	State             string
+	Attempts          int
+	FailureCode       string
+	Retryable         bool
+	LastError         string
+	OccurredAt        time.Time
+	CapacityScope     string
+	CapacityDeferrals int64
+	DetailsTruncated  bool
+	HistoryBytes      int64
 }
 
 type EventFanoutAttemptCursor struct {
@@ -245,18 +257,12 @@ func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*P
 	var payload []byte
 	var snapshot []byte
 	var progress []byte
-	err := s.pool.QueryRow(ctx, `WITH candidate AS (
-		SELECT id FROM event_fanout_outbox
-		WHERE (state = 'pending' AND available_at <= $1)
-		   OR (state = 'processing' AND lease_until <= $1)
-		ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
-	) UPDATE event_fanout_outbox AS o
-	SET state = 'processing', claim_token = gen_random_uuid(),
-	    lease_until = $1 + interval '5 minutes', attempts = attempts + 1
-	FROM candidate WHERE o.id = candidate.id
-	RETURNING o.id, o.payload, o.recipient_snapshot, o.recipient_progress,
-	          o.claim_token::text, o.attempts, o.lease_until, o.created_at`, now.UTC()).Scan(
-		&work.ID, &payload, &snapshot, &progress, &work.ClaimToken, &work.Attempts, &work.LeaseUntil, &work.CreatedAt)
+	row, err := sqlc.New().EventRoutingClaimReceipt(ctx, s.pool, pgtypeFromTime(now))
+	if err == nil {
+		work.ID, work.ClaimToken, work.Attempts = row.ID, uuidString(row.ClaimToken), int(row.Attempts)
+		work.LeaseUntil, work.CreatedAt = timeFromPgtype(row.LeaseUntil), timeFromPgtype(row.CreatedAt)
+		payload, snapshot, progress = row.Payload, row.RecipientSnapshot, row.RecipientProgress
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -291,30 +297,17 @@ func (s *PgStore) RecordPublishedEventRecipientProgress(ctx context.Context, id 
 		return fmt.Errorf("begin published event recipient progress: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
-	var appID string
-	err = tx.QueryRow(ctx, `UPDATE event_fanout_outbox AS o
-		SET recipient_progress = jsonb_set(o.recipient_progress, ARRAY[$3::text], $4::jsonb, true),
-		    last_error = CASE WHEN $4::jsonb->>'state' = 'failed'
-		        THEN left('subscription ' || $3 || ': ' || coalesce($4::jsonb->>'last_error', 'recipient failed'), 1024)
-		        ELSE o.last_error END
-		WHERE o.id = $1 AND o.claim_token = $2::uuid AND o.state = 'processing'
-		  AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) AS recipients(recipient)
-		              WHERE recipient->>'id' = $3)
-		RETURNING (SELECT recipient->>'app_id'
-		          FROM jsonb_array_elements(o.recipient_snapshot) AS recipients(recipient)
-		          WHERE recipient->>'id' = $3 LIMIT 1)`, id, token, recipientID, encoded).Scan(&appID)
+	q := sqlc.New()
+	appID, err := q.EventRoutingRecordProgress(ctx, tx, sqlc.EventRoutingRecordProgressParams{
+		ID: id, ClaimToken: mustPgUUID(token), SubscriptionID: recipientID, Progress: encoded,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
 	if err != nil {
 		return fmt.Errorf("record published event recipient progress: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO event_fanout_attempt_history
-		(outbox_id, app_id, subscription_id, action, state, attempts,
-		 failure_code, retryable, last_error, occurred_at)
-		VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		id, appID, recipientID, EventFanoutAttemptActionAttempt, progress.State,
-		progress.Attempts, progress.FailureCode, progress.Retryable, progress.LastError, progress.UpdatedAt); err != nil {
+	if err := appendEventRecipientHistory(ctx, q, tx, id, appID, recipientID, EventFanoutAttemptActionAttempt, progress); err != nil {
 		return fmt.Errorf("append published event recipient attempt: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -330,7 +323,7 @@ func validatePublishedEventRecipientProgress(progress PublishedEventRecipientPro
 	default:
 		return fmt.Errorf("state: invalid published event recipient state %q", progress.State)
 	}
-	if progress.Attempts < 0 {
+	if progress.Attempts < 0 || progress.CapacityDeferrals < 0 {
 		return fmt.Errorf("state: published event recipient attempts cannot be negative")
 	}
 	return nil
@@ -350,6 +343,16 @@ func (s *PgStore) FinishPublishedEvent(ctx context.Context, id int64, token stri
 			return err
 		}
 		if result.RowsAffected() == 0 {
+			return ErrConflict
+		}
+		return nil
+	}
+	if errors.Is(routeErr, ErrEventDeliveryCapacity) {
+		n, err := sqlc.New().EventRoutingDeferReceipt(ctx, s.pool, sqlc.EventRoutingDeferReceiptParams{ID: id, ClaimToken: mustPgUUID(token)})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
 			return ErrConflict
 		}
 		return nil
@@ -434,48 +437,17 @@ func (s *PgStore) ListEventFanoutFailuresForApp(ctx context.Context, appID strin
 // replay requests for one event identity. The captured recipient app and
 // outbox account jointly enforce the authenticated app boundary.
 func (s *PgStore) ListEventFanoutAttemptsForApp(ctx context.Context, appID string, limit int, before EventFanoutAttemptCursor, eventSource, eventID, subscriptionID string) ([]EventFanoutAttempt, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	rows, err := s.pool.Query(ctx, `SELECT h.id, h.outbox_id, h.app_id::text,
-		o.event_id, o.source, o.event_type, h.subscription_id, h.action, h.state,
-		h.attempts, h.failure_code, h.retryable, h.last_error, h.occurred_at
-	FROM event_fanout_attempt_history h
-	JOIN event_fanout_outbox o ON o.id = h.outbox_id
-	JOIN apps a ON a.id = h.app_id AND a.account_id = o.account_id
-	WHERE h.app_id = $1::uuid
-	  AND ($2 = '' OR o.source = $2)
-	  AND ($3 = '' OR o.event_id = $3)
-	  AND ($4 = '' OR h.subscription_id = $4)
-	  AND ($5::bigint = 0 OR h.id < $5)
-	ORDER BY h.id DESC
-	LIMIT $6`, appID, eventSource, eventID, subscriptionID, before.ID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	return s.listEventHistory(ctx, appID, limit, before, eventSource, eventID, subscriptionID)
 
-	out := make([]EventFanoutAttempt, 0)
-	for rows.Next() {
-		var attempt EventFanoutAttempt
-		if err := rows.Scan(&attempt.ID, &attempt.OutboxID, &attempt.AppID,
-			&attempt.EventID, &attempt.EventSource, &attempt.EventType, &attempt.SubscriptionID,
-			&attempt.Action, &attempt.State, &attempt.Attempts, &attempt.FailureCode,
-			&attempt.Retryable, &attempt.LastError, &attempt.OccurredAt); err != nil {
-			return nil, err
-		}
-		out = append(out, attempt)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // ReplayFailedPublishedEventRecipientForApp resets only the selected terminal
-// candidate. It requires the receipt to be delivered so an active fanout claim
-// cannot race the operator action. The original recipient snapshot is kept.
+// candidate. Legacy receipts must settle first; recipient-owned receipts allow
+// replay while siblings route. The original recipient snapshot is kept.
 func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context, accountID, appID, eventSource, eventID, subscriptionID string) error {
+	if handled, err := s.replayClaimedEventRecipient(ctx, accountID, appID, eventSource, eventID, subscriptionID); handled || err != nil {
+		return err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin published event recipient replay: %w", err)
@@ -488,7 +460,7 @@ func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context,
 		FROM event_fanout_outbox AS o
 		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
 		WHERE o.account_id = $1::uuid AND o.source = $3 AND o.event_id = $4
-		  AND o.state = 'delivered'
+		  AND NOT o.recipient_claims AND o.state = 'delivered'
 		  AND (o.recipient_progress -> $5)->>'state' = 'failed'
 		  AND r.recipient->>'app_id' = $2::text AND r.recipient->>'id' = $5
 		FOR UPDATE OF o`, accountID, appID, eventSource, eventID, subscriptionID).Scan(&outboxID, &recipientAppID, &priorJSON)
@@ -512,154 +484,14 @@ func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("load published event recipient replay: %w", err)
 	}
-	var previous PublishedEventRecipientProgress
-	if err := json.Unmarshal(priorJSON, &previous); err != nil {
-		return fmt.Errorf("decode published event recipient before replay: %w", err)
-	}
-	now := time.Now().UTC()
-	result, err := tx.Exec(ctx, `UPDATE event_fanout_outbox AS o
-		SET state = 'pending', available_at = now(), delivered_at = NULL,
-		    claim_token = NULL, lease_until = NULL,
-		    recipient_progress = jsonb_set(o.recipient_progress, ARRAY[$5::text],
-		        jsonb_build_object('state', 'pending',
-		            'attempts', COALESCE(NULLIF((o.recipient_progress -> $5)->>'attempts', '')::int, 0),
-		            'updated_at', now()), false),
-		    last_error = (SELECT left('subscription ' || progress.key || ': ' ||
-		        coalesce(progress.outcome->>'last_error', 'recipient failed'), 1024)
-		        FROM jsonb_each(o.recipient_progress) AS progress(key, outcome)
-		        WHERE progress.key <> $5 AND progress.outcome->>'state' = 'failed'
-		        ORDER BY progress.key LIMIT 1)
-		WHERE o.id = $6 AND o.account_id = $1::uuid AND o.source = $3 AND o.event_id = $4
-		  AND o.state = 'delivered'
-		  AND (o.recipient_progress -> $5)->>'state' = 'failed'
-		  AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
-		              WHERE r.recipient->>'app_id' = $2::text AND r.recipient->>'id' = $5)`,
-		accountID, appID, eventSource, eventID, subscriptionID, outboxID)
-	if err != nil {
+	if err := replayEventRecipientTx(ctx, sqlc.New(), tx, outboxID, recipientAppID, subscriptionID, priorJSON, false, time.Now().UTC()); err != nil {
 		return fmt.Errorf("replay published event recipient: %w", err)
 	}
-	if result.RowsAffected() == 0 {
-		return ErrConflict
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO event_fanout_attempt_history
-		(outbox_id, app_id, subscription_id, action, state, attempts,
-		 failure_code, retryable, last_error, occurred_at)
-		VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		outboxID, recipientAppID, subscriptionID, EventFanoutAttemptActionReplay,
-		PublishedEventRecipientPending, previous.Attempts, previous.FailureCode,
-		previous.Retryable, previous.LastError, now); err != nil {
-		return fmt.Errorf("append published event recipient replay: %w", err)
-	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit published event recipient replay: %w", err)
 	}
 	return nil
-}
-
-// ReplayRetryablePublishedEventRecipientsForApp requeues the oldest bounded
-// set of retryable terminal recipients. Candidates are tied to the app's
-// immutable recipient snapshot. Pending receipts can accept additional replay
-// requests; processing receipts remain untouched until their claim settles.
-func (s *PgStore) ReplayRetryablePublishedEventRecipientsForApp(ctx context.Context, accountID, appID, eventSource, eventID string, limit int) (EventFanoutReplayBatch, error) {
-	limit = normalizeEventFanoutReplayLimit(limit)
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("begin event fanout replay batch: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
-
-	rows, err := tx.Query(ctx, `SELECT o.id, p.key, r.recipient->>'app_id', p.outcome
-		FROM event_fanout_outbox AS o
-		JOIN apps AS a ON a.id = $2::uuid AND a.account_id = o.account_id
-		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
-		CROSS JOIN LATERAL jsonb_each(COALESCE(o.recipient_progress, '{}'::jsonb)) AS p(key, outcome)
-		WHERE o.account_id = $1::uuid AND o.state IN ('delivered', 'pending')
-		  AND r.recipient->>'app_id' = a.id::text AND r.recipient->>'id' = p.key
-		  AND p.outcome->>'state' = 'failed'
-		  AND COALESCE(NULLIF(p.outcome->>'retryable', '')::boolean, false)
-		  AND (($3 = '' AND $4 = '') OR (o.source = $3 AND o.event_id = $4))
-		ORDER BY COALESCE(NULLIF(p.outcome->>'updated_at', '')::timestamptz, o.created_at), o.id, p.key
-		LIMIT $5 FOR UPDATE OF o SKIP LOCKED`, accountID, appID, eventSource, eventID, limit)
-	if err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("list retryable event fanout failures: %w", err)
-	}
-	type candidate struct {
-		outboxID       int64
-		subscriptionID string
-		appID          string
-		progress       PublishedEventRecipientProgress
-	}
-	candidates := make([]candidate, 0, limit)
-	for rows.Next() {
-		var item candidate
-		var progressJSON []byte
-		if err := rows.Scan(&item.outboxID, &item.subscriptionID, &item.appID, &progressJSON); err != nil {
-			rows.Close()
-			return EventFanoutReplayBatch{}, fmt.Errorf("scan retryable event fanout failure: %w", err)
-		}
-		if err := json.Unmarshal(progressJSON, &item.progress); err != nil {
-			rows.Close()
-			return EventFanoutReplayBatch{}, fmt.Errorf("decode retryable event fanout failure: %w", err)
-		}
-		candidates = append(candidates, item)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("read retryable event fanout failures: %w", err)
-	}
-	result := EventFanoutReplayBatch{}
-	now := time.Now().UTC()
-	for _, item := range candidates {
-		if _, err := tx.Exec(ctx, `INSERT INTO event_fanout_attempt_history
-			(outbox_id, app_id, subscription_id, action, state, attempts,
-			 failure_code, retryable, last_error, occurred_at)
-			VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			item.outboxID, item.appID, item.subscriptionID, EventFanoutAttemptActionReplay,
-			PublishedEventRecipientPending, item.progress.Attempts, item.progress.FailureCode,
-			item.progress.Retryable, item.progress.LastError, now); err != nil {
-			return EventFanoutReplayBatch{}, fmt.Errorf("append retryable event recipient replay: %w", err)
-		}
-		tag, err := tx.Exec(ctx, `UPDATE event_fanout_outbox AS o
-			SET state = 'pending', available_at = $3::timestamptz, delivered_at = NULL,
-			    claim_token = NULL, lease_until = NULL,
-			    recipient_progress = jsonb_set(o.recipient_progress, ARRAY[$2::text],
-			        ((o.recipient_progress -> $2) - 'failure_code' - 'retryable' - 'last_error') ||
-			            jsonb_build_object('state', 'pending', 'updated_at', $3::timestamptz), false),
-			    last_error = (SELECT left('subscription ' || progress.key || ': ' ||
-			        coalesce(progress.outcome->>'last_error', 'recipient failed'), 1024)
-			        FROM jsonb_each(o.recipient_progress) AS progress(key, outcome)
-			        WHERE progress.key <> $2 AND progress.outcome->>'state' = 'failed'
-			        ORDER BY progress.key LIMIT 1)
-			WHERE o.id = $1 AND o.state IN ('delivered', 'pending')
-			  AND (o.recipient_progress -> $2)->>'state' = 'failed'
-			  AND COALESCE(NULLIF((o.recipient_progress -> $2)->>'retryable', '')::boolean, false)`,
-			item.outboxID, item.subscriptionID, now)
-		if err != nil {
-			return EventFanoutReplayBatch{}, fmt.Errorf("requeue retryable event recipient %s: %w", item.subscriptionID, err)
-		}
-		if tag.RowsAffected() == 0 {
-			return EventFanoutReplayBatch{}, fmt.Errorf("requeue retryable event recipient %s: %w", item.subscriptionID, ErrConflict)
-		}
-		result.Replayed++
-	}
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1
-		FROM event_fanout_outbox AS o
-		JOIN apps AS a ON a.id = $2::uuid AND a.account_id = o.account_id
-		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
-		CROSS JOIN LATERAL jsonb_each(COALESCE(o.recipient_progress, '{}'::jsonb)) AS p(key, outcome)
-		WHERE o.account_id = $1::uuid AND o.state IN ('delivered', 'pending', 'processing')
-		  AND r.recipient->>'app_id' = a.id::text AND r.recipient->>'id' = p.key
-		  AND p.outcome->>'state' = 'failed'
-		  AND COALESCE(NULLIF(p.outcome->>'retryable', '')::boolean, false)
-		  AND (($3 = '' AND $4 = '') OR (o.source = $3 AND o.event_id = $4))
-	)`, accountID, appID, eventSource, eventID).Scan(&result.HasMore); err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("check remaining retryable event fanout failures: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("commit event fanout replay batch: %w", err)
-	}
-	return result, nil
 }
 
 func normalizeEventFanoutReplayLimit(limit int) int {
@@ -697,43 +529,29 @@ func (m *MemStore) appendEventFanoutAttemptLocked(work *PublishedEventWork, reci
 	if appID == "" {
 		return
 	}
-	if m.eventFanoutAttemptNextID == 0 {
-		for _, attempt := range m.eventFanoutAttempts {
-			if attempt.ID > m.eventFanoutAttemptNextID {
-				m.eventFanoutAttemptNextID = attempt.ID
-			}
-		}
-	}
-	m.eventFanoutAttemptNextID++
-	m.eventFanoutAttempts = append(m.eventFanoutAttempts, EventFanoutAttempt{
-		ID: m.eventFanoutAttemptNextID, OutboxID: work.ID, AppID: appID,
-		EventID: event.ID, EventSource: event.Source, EventType: event.Type,
-		SubscriptionID: recipientID, Action: action, State: progress.State,
-		Attempts: progress.Attempts, FailureCode: progress.FailureCode,
-		Retryable: progress.Retryable, LastError: progress.LastError,
-		OccurredAt: progress.UpdatedAt,
-	})
+	m.recordEventFanoutHistoryLocked(work, appID, event, recipientID, action, progress)
+
 }
 
-func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byte, now time.Time) error {
+func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byte, now time.Time) (bool, error) {
 	if subject == nil {
-		return fmt.Errorf("event.published requires an account subject")
+		return false, fmt.Errorf("event.published requires an account subject")
 	}
 	var event publishedEventIdentity
 	if err := json.Unmarshal(payload, &event); err != nil {
-		return err
+		return false, err
 	}
 	if event.Source == "" || event.ID == "" || event.Type == "" || len(event.Data) == 0 {
-		return fmt.Errorf("event.published requires source, id, type and data")
+		return false, fmt.Errorf("event.published requires source, id, type and data")
 	}
 	key := subject.String() + "\x00" + event.Source + "\x00" + event.ID
 	if previous := m.eventFanout[key]; previous != nil {
 		var prior publishedEventIdentity
 		_ = json.Unmarshal(previous.Payload, &prior)
 		if prior.Type != event.Type || prior.SchemaVersion != event.SchemaVersion || !jsonEqual(prior.Data, event.Data) {
-			return ErrConflict
+			return false, ErrConflict
 		}
-		return nil
+		return false, nil
 	}
 	if m.eventFanout == nil {
 		m.eventFanout = make(map[string]*PublishedEventWork)
@@ -771,11 +589,26 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 		recipients = append(recipients, recipient)
 	}
 	recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
+	var storageBytes int64
+	if !strings.HasPrefix(event.Source, "gregale.") {
+		snapshot, err := json.Marshal(recipients)
+		if err != nil {
+			return false, err
+		}
+		storageBytes = eventJSONStorageBytes(payload) + eventJSONStorageBytes(event.Data) + eventJSONStorageBytes(snapshot)
+		usage, err := m.eventStorageUsageLocked(subject.String())
+		if err != nil {
+			return false, err
+		}
+		if err = eventStorageExceeded(usage.Limits, usage.RetainedEvents+1, usage.RetainedBytes+storageBytes); err != nil {
+			return false, err
+		}
+	}
 	m.eventFanoutNextID++
-	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), RecipientSnapshot: recipients,
+	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), StorageBytes: storageBytes, RecipientSnapshot: recipients,
 		SnapshotCaptured: true, RecipientProgress: make(map[string]PublishedEventRecipientProgress),
 		AvailableAt: now, CreatedAt: time.Now().UTC()}
-	return nil
+	return true, nil
 }
 
 func jsonEqual(a, b []byte) bool {
@@ -797,15 +630,31 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 	defer m.mu.Unlock()
 	var chosen *PublishedEventWork
 	for _, work := range m.eventFanout {
-		if work.Delivered || (work.ClaimToken != "" && work.LeaseUntil.After(now)) || work.AvailableAt.After(now) {
+		if work.RecipientClaims || work.Delivered || (work.ClaimToken != "" && work.LeaseUntil.After(now)) || work.AvailableAt.After(now) {
 			continue
 		}
-		if chosen == nil || work.ID < chosen.ID {
+		currentFair := m.eventFairTimeLocked(eventRoutingAccount(work), "")
+		chosenFair := time.Time{}
+		if chosen != nil {
+			chosenFair = m.eventFairTimeLocked(eventRoutingAccount(chosen), "")
+		}
+		consumerFair := m.eventReceiptConsumerFairTimeLocked(work, now)
+		chosenConsumerFair := time.Time{}
+		if chosen != nil {
+			chosenConsumerFair = m.eventReceiptConsumerFairTimeLocked(chosen, now)
+		}
+		if chosen == nil || currentFair.Before(chosenFair) || (currentFair.Equal(chosenFair) && (consumerFair.Before(chosenConsumerFair) || (consumerFair.Equal(chosenConsumerFair) && work.ID < chosen.ID))) {
 			chosen = work
 		}
 	}
 	if chosen == nil {
 		return nil, ErrNotFound
+	}
+	m.recordEventFairClaimLocked(eventRoutingAccount(chosen), "")
+	for _, r := range chosen.RecipientSnapshot {
+		if eventRecipientDue(chosen.RecipientProgress[r.ID], now) {
+			m.recordEventFairClaimLocked(eventRoutingAccount(chosen), r.ID)
+		}
 	}
 	chosen.ClaimToken = uuid.NewString()
 	chosen.LeaseUntil = now.Add(PublishedEventLease)
@@ -847,7 +696,7 @@ func (m *MemStore) RecordPublishedEventRecipientProgress(_ context.Context, id i
 		if work.ID != id {
 			continue
 		}
-		if work.ClaimToken != token || token == "" || work.Delivered {
+		if work.ClaimToken != token || token == "" || work.Delivered || work.RecipientClaims || !work.LeaseUntil.After(time.Now().UTC()) || routingAdmissionRecorded(work.RecipientProgress[recipientID]) || progress.CapacityDeferrals < work.RecipientProgress[recipientID].CapacityDeferrals {
 			return ErrConflict
 		}
 		found := false
@@ -887,6 +736,25 @@ func (m *MemStore) FinishPublishedEvent(_ context.Context, id int64, token strin
 			work.DeliveredAt = time.Now().UTC()
 		} else {
 			work.AvailableAt = time.Now().Add(5 * time.Second)
+			if errors.Is(routeErr, ErrEventDeliveryCapacity) {
+				var next time.Time
+				for _, r := range work.RecipientSnapshot {
+					p := work.RecipientProgress[r.ID]
+					if p.State != PublishedEventRecipientPending && p.State != "" {
+						continue
+					}
+					at := time.Now().Add(5 * time.Second)
+					if p.NextAttemptAt != nil {
+						at = *p.NextAttemptAt
+					}
+					if next.IsZero() || at.Before(next) {
+						next = at
+					}
+				}
+				if !next.IsZero() {
+					work.AvailableAt = next
+				}
+			}
 		}
 		return nil
 	}
@@ -926,6 +794,11 @@ func (m *MemStore) PruneDeliveredPublishedEvents(_ context.Context, before time.
 			}
 		}
 		m.eventFanoutAttempts = attempts
+		for key := range m.eventFanoutHistorySummaries {
+			if _, ok := liveOutboxIDs[key.outboxID]; !ok {
+				delete(m.eventFanoutHistorySummaries, key)
+			}
+		}
 	}
 	return pruned, nil
 }
@@ -994,8 +867,21 @@ func (m *MemStore) ListEventFanoutAttemptsForApp(_ context.Context, appID string
 		limit = 20
 	}
 	out := make([]EventFanoutAttempt, 0)
+	app, exists := m.eventSubscriptionAppLocked(appID)
+	if !exists {
+		return out, nil
+	}
+	owned := make(map[int64]bool)
+	for _, work := range m.eventFanout {
+		for _, r := range work.RecipientSnapshot {
+			if sameMemUUID(r.AppID, appID) && sameMemUUID(r.AccountID, app.AccountID) {
+				owned[work.ID] = true
+				break
+			}
+		}
+	}
 	for _, attempt := range m.eventFanoutAttempts {
-		if !sameMemUUID(attempt.AppID, appID) ||
+		if !owned[attempt.OutboxID] || !sameMemUUID(attempt.AppID, appID) ||
 			(eventSource != "" && attempt.EventSource != eventSource) ||
 			(eventID != "" && attempt.EventID != eventID) ||
 			(subscriptionID != "" && attempt.SubscriptionID != subscriptionID) ||
@@ -1035,7 +921,7 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 		if !failed || progress.State != PublishedEventRecipientFailed {
 			return ErrNotFound
 		}
-		if !work.Delivered {
+		if !work.Delivered && !work.RecipientClaims {
 			return ErrConflict
 		}
 		replay := progress
@@ -1046,8 +932,13 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 		progress.FailureCode = ""
 		progress.Retryable = false
 		progress.LastError = ""
+		progress.CapacityScope = ""
+		progress.NextAttemptAt = nil
 		progress.UpdatedAt = time.Now().UTC()
 		work.RecipientProgress[subscriptionID] = progress
+		if work.RecipientClaims {
+			resetEventRecipientForReplay(work, subscriptionID, progress.UpdatedAt)
+		}
 		work.Delivered = false
 		work.DeliveredAt = time.Time{}
 		work.AvailableAt = time.Now().UTC()
@@ -1112,8 +1003,13 @@ func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Conte
 		progress.FailureCode = ""
 		progress.Retryable = false
 		progress.LastError = ""
+		progress.CapacityScope = ""
+		progress.NextAttemptAt = nil
 		progress.UpdatedAt = now
 		item.work.RecipientProgress[item.subscriptionID] = progress
+		if item.work.RecipientClaims {
+			resetEventRecipientForReplay(item.work, item.subscriptionID, now)
+		}
 		item.work.Delivered = false
 		item.work.DeliveredAt = time.Time{}
 		item.work.AvailableAt = now

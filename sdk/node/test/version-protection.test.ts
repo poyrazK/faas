@@ -48,3 +48,26 @@ test('version protection keeps the caller retry ID and exact owned selector', as
     OpenAPI.TOKEN = oldToken;
   }
 });
+
+test('event holds preserve nested duration and conditional release intent', async () => {
+  const oldFetch = globalThis.fetch;
+  const policies = [
+    {mode:'COMPLIANCE' as const,event_hold:'ON' as const,event_hold_duration:{days:30}},
+    {mode:'GOVERNANCE' as const,event_hold:'ON' as const,event_hold_duration:{years:1}},
+    {mode:'COMPLIANCE' as const,event_hold:'OFF' as const},
+  ];
+  let index = 0;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.searchParams.get('version_id'), 'null');
+    assert.equal(url.searchParams.get('key'), '目录/+ %');
+    assert.deepEqual(JSON.parse(String(init?.body)), {id:'00000000-0000-4000-8000-000000000001',retention:policies[index++]});
+    return Response.json({id:'00000000-0000-4000-8000-000000000001',state:'waiting'}, {status:202});
+  };
+  try {
+    for (const retention of policies) {
+      await StorageService.putObjectVersionRetention({slug:'demo',bucket:'bucket',key:'目录/+ %',versionId:'null',requestBody:{id:'00000000-0000-4000-8000-000000000001',retention}});
+    }
+    assert.equal(index, policies.length);
+  } finally {globalThis.fetch = oldFetch;}
+});

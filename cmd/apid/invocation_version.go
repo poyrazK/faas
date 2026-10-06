@@ -15,6 +15,15 @@ import (
 // enqueueVersionedInvocation captures the selected release when work is
 // accepted. The drain validates it again at delivery, including after retries.
 func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders http.Header, inv state.Invocation, capacityDetail string, work ...*api.InvokeWork) (state.Invocation, *api.Problem) {
+	var problem *api.Problem
+	inv, problem = s.prepareInvocationVersion(ctx, requestHeaders, inv)
+	if problem != nil {
+		return state.Invocation{}, problem
+	}
+	return s.enqueuePreparedInvocation(ctx, inv, capacityDetail, work...)
+}
+
+func (s *server) prepareInvocationVersion(ctx context.Context, requestHeaders http.Header, inv state.Invocation) (state.Invocation, *api.Problem) {
 	var err error
 	inv.Headers, err = mergeInvocationVersionHeaders(inv.Headers, requestHeaders)
 	if err != nil {
@@ -40,6 +49,11 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 			return state.Invocation{}, api.ErrCapacity("resolve invocation version")
 		}
 	}
+	return inv, nil
+}
+
+func (s *server) enqueuePreparedInvocation(ctx context.Context, inv state.Invocation, capacityDetail string, work ...*api.InvokeWork) (state.Invocation, *api.Problem) {
+	var err error
 	var created state.Invocation
 	if len(work) > 0 && work[0] != nil {
 		policyStore, ok := s.store.(state.AppWorkPolicyStore)

@@ -29,12 +29,15 @@ func SupportsNativeObjectLock(p Provider) bool {
 	_, versioning := p.(BucketVersioningProvider)
 	_, inventory := p.(ObjectVersionInventoryProvider)
 	_, history := p.(ObjectVersionLister)
-	return bucket && version && versioning && inventory && history
+	_, writes := p.(ObjectWriteProtectionProvider)
+	_, deletion := p.(ObjectVersionDeleter)
+	_, mutable := p.(MutableObjectDeleter)
+	return bucket && version && versioning && inventory && history && writes && deletion && mutable
 }
 
 func (c ObjectLockConfig) PublicCapabilities(p Provider) api.ObjectLockCapabilities {
 	enabled := c.Enabled && SupportsNativeObjectLock(p)
-	return api.ObjectLockCapabilities{BucketConfiguration: enabled, DefaultEventHold: enabled && c.EventHolds, VersionRetention: enabled, VersionLegalHold: enabled}
+	return api.ObjectLockCapabilities{BucketConfiguration: enabled, DefaultEventHold: enabled && c.EventHolds, VersionEventHold: enabled && c.EventHolds, WriteEventHold: enabled && c.EventHolds, VersionRetention: enabled, VersionLegalHold: enabled}
 }
 
 func (c ObjectLockConfig) ValidateConfiguration(p Provider, v api.ObjectBucketObjectLockConfiguration) error {

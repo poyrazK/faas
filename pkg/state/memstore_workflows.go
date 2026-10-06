@@ -1361,7 +1361,7 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 	threshold := time.Now().UTC().Add(-olderThan)
 	deleted := 0
 	for id, r := range m.workflowRuns {
-		if r.FinishedAt != nil && r.FinishedAt.Before(threshold) {
+		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) {
 			delete(m.workflowRuns, id)
 			delete(m.workflowSteps, id)
 			delete(m.workflowEvents, id)
