@@ -480,6 +480,12 @@
       "filename": "20261006111300001_application_standard_snapshot_resume_receipts.sql",
       "sha256": "409a78218d358e354f2f76e25be5169df1f9cb09fdbac42ebbd05f58f320a54d",
       "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261006160235001,
+      "filename": "20261006160235001_application_standard_environment_review_fences.sql",
+      "sha256": "6c8f85eb7f6a85b8ba69ef2dfe61ca3c0680b004d90aeb7f01ad5e2c03219e70",
+      "postcondition": "ddl-only"
     }
   ]
 }

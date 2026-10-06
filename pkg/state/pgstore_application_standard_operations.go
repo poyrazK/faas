@@ -231,6 +231,13 @@ func lockStandardReviewInputs(ctx context.Context, tx pgx.Tx, orgID, actorID str
 	if !locked {
 		return initial, ErrApplicationStandardReviewBusy
 	}
+	locked, err = q.TryLockApplicationStandardApprovalEnvironmentWorkloads(ctx, tx, apps)
+	if err != nil {
+		return initial, fmt.Errorf("lock approval environment workloads: %w", err)
+	}
+	if !locked {
+		return initial, ErrApplicationStandardReviewBusy
+	}
 	artifacts, err := q.LockApplicationStandardApprovalArtifacts(ctx, tx, apps)
 	if err != nil {
 		return initial, fmt.Errorf("lock approval artifacts: %w", err)

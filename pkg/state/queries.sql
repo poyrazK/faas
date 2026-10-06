@@ -38,6 +38,10 @@ ORDER BY app_id FOR UPDATE NOWAIT;
 SELECT coalesce(bool_and(pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.' || id::text, 0))), true)::boolean AS locked
 FROM (SELECT DISTINCT id FROM unnest(sqlc.arg(app_ids)::uuid[]) id ORDER BY id) controls;
 
+-- name: TryLockApplicationStandardApprovalEnvironmentWorkloads :one
+SELECT coalesce(bool_and(pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.environment-workloads.' || id::text, 0))), true)::boolean AS locked
+FROM (SELECT DISTINCT id FROM unnest(sqlc.arg(app_ids)::uuid[]) id ORDER BY id) owners;
+
 -- name: LockApplicationStandardApprovalArtifacts :many
 SELECT id FROM deployments WHERE app_id = ANY(sqlc.arg(app_ids)::uuid[])
 ORDER BY id FOR UPDATE NOWAIT;
@@ -151,6 +155,23 @@ SELECT jsonb_build_object(
             'resource_id', coalesce((SELECT resource_id::text FROM application_standard_control_bindings b WHERE b.app_id = a.id AND b.field = 'trusted_publishers' AND b.physical_id = s.signer_name), ''),
             'fingerprint', encode(sha256(s.cosign_public_key), 'hex')) ORDER BY s.signer_name)
             FROM app_trusted_signers s WHERE s.app_id = a.id), '[]'::jsonb),
+        'environment_workloads', coalesce((SELECT jsonb_agg(jsonb_build_object(
+            'environment_id', env.id::text, 'scope', env.slug, 'protected', env.protected,
+            'account_id', env.account_id::text, 'project_id', env.project_id::text, 'app_id', spec.app_id::text,
+            'role', binding.role, 'deployment_id', binding.deployment_id, 'deployment_scope', binding.deployment_scope,
+            'spec_id', spec.id::text, 'revision', spec.revision, 'settings_hash', spec.config_hash,
+            'settings_body', spec.settings::text) ORDER BY env.id, binding.role, binding.deployment_id, spec.id)
+            FROM (
+                SELECT h.spec_id, 'desired'::text AS role, ''::text AS deployment_id, ''::text AS deployment_scope
+                FROM project_environment_workload_heads h WHERE h.app_id = a.id
+                UNION ALL
+                SELECT pin.spec_id, 'deployed'::text, d.id::text, d.scope
+                FROM deployments d JOIN project_environment_workload_deployment_specs pin ON pin.deployment_id = d.id
+                WHERE d.app_id = a.id AND (d.status NOT IN ('failed', 'superseded', 'cancelled')
+                    OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.terminal_at IS NULL
+                        AND i.state NOT IN ('stopped', 'failed')))
+            ) binding JOIN project_environment_workload_specs spec ON spec.id = binding.spec_id
+            JOIN project_environments env ON env.id = spec.environment_id), '[]'::jsonb),
         'artifacts', coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id::text, 'scope', d.scope,
             'kind', d.kind, 'status', d.status, 'image_digest', coalesce(d.image_digest, ''),
             'rootfs_key', coalesce(d.rootfs_key, ''), 'parked_reason', coalesce(d.parked_reason, ''),

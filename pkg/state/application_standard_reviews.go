@@ -115,26 +115,27 @@ type standardReviewResource struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 }
 type standardReviewAppSnapshot struct {
-	AppID                       string                           `json:"app_id"`
-	OrgID                       string                           `json:"org_id"`
-	ProjectID                   string                           `json:"project_id"`
-	AccountID                   string                           `json:"account_id"`
-	Slug                        string                           `json:"slug"`
-	Status                      string                           `json:"status"`
-	Type                        string                           `json:"type"`
-	WorkloadClass               string                           `json:"workload_class"`
-	AccountPlan                 api.Plan                         `json:"account_plan"`
-	AccountStatus               string                           `json:"account_status"`
-	AccountEgressAllowlistExtra int                              `json:"account_egress_allowlist_extra,omitempty"`
-	AccountDrainCount           int                              `json:"account_drain_count"`
-	Settings                    appstandards.Settings            `json:"settings"`
-	HasEnrollment               bool                             `json:"has_enrollment"`
-	Enrollment                  standardReviewEnrollment         `json:"enrollment"`
-	Drains                      []standardReviewDrain            `json:"drains"`
-	Signers                     []standardReviewSigner           `json:"signers"`
-	Artifacts                   []standardReviewArtifact         `json:"artifacts"`
-	Exceptions                  []ApplicationStandardException   `json:"exceptions,omitempty"`
-	ArchivedResources           []standardReviewArchivedResource `json:"archived_resources"`
+	AppID                       string                              `json:"app_id"`
+	OrgID                       string                              `json:"org_id"`
+	ProjectID                   string                              `json:"project_id"`
+	AccountID                   string                              `json:"account_id"`
+	Slug                        string                              `json:"slug"`
+	Status                      string                              `json:"status"`
+	Type                        string                              `json:"type"`
+	WorkloadClass               string                              `json:"workload_class"`
+	AccountPlan                 api.Plan                            `json:"account_plan"`
+	AccountStatus               string                              `json:"account_status"`
+	AccountEgressAllowlistExtra int                                 `json:"account_egress_allowlist_extra,omitempty"`
+	AccountDrainCount           int                                 `json:"account_drain_count"`
+	Settings                    appstandards.Settings               `json:"settings"`
+	HasEnrollment               bool                                `json:"has_enrollment"`
+	Enrollment                  standardReviewEnrollment            `json:"enrollment"`
+	Drains                      []standardReviewDrain               `json:"drains"`
+	Signers                     []standardReviewSigner              `json:"signers"`
+	Artifacts                   []standardReviewArtifact            `json:"artifacts"`
+	Exceptions                  []ApplicationStandardException      `json:"exceptions,omitempty"`
+	ArchivedResources           []standardReviewArchivedResource    `json:"archived_resources"`
+	EnvironmentWorkloads        []standardReviewEnvironmentWorkload `json:"environment_workloads,omitempty"`
 }
 type standardReviewArchivedResource struct {
 	Field       appstandards.Field `json:"field"`
@@ -755,11 +756,23 @@ func normalizeStandardReviewSnapshot(s standardReviewSnapshot) (standardReviewSn
 	if err != nil {
 		return s, err
 	}
-	if err := json.Unmarshal(raw, &s); err != nil {
+	var normalized standardReviewSnapshot
+	if err := json.Unmarshal(raw, &normalized); err != nil {
 		return s, err
 	}
+	// A second normalization retains private verification provenance. SQL
+	// readers cannot supply this marker, and settings bodies never enter hashes.
+	for i := range normalized.Applications {
+		for j := range normalized.Applications[i].EnvironmentWorkloads {
+			normalized.Applications[i].EnvironmentWorkloads[j].verified = s.Applications[i].EnvironmentWorkloads[j].verified
+		}
+	}
+	s = normalized
 	for i := range s.Applications {
 		a := &s.Applications[i]
+		if err := normalizeStandardReviewEnvironmentWorkloads(a); err != nil {
+			return s, err
+		}
 		if err := normalizeStandardExceptions(a); err != nil {
 			return s, err
 		}

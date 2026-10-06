@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -222,6 +223,22 @@ func (m *MemStore) standardReviewSnapshotLocked(ctx context.Context, orgID, acto
 				a.ArchivedResources = append(a.ArchivedResources, standardReviewArchivedResource{Field: b.Field, ID: b.ID, ConfigHash: b.ConfigHash, Body: b.Body})
 			}
 		}
+		for key, specID := range m.projectEnvironmentWorkloadHeads {
+			environmentID, ownerAppID, validKey := strings.Cut(key, ":")
+			if !validKey || !sameStandardUUID(ownerAppID, app.ID) {
+				continue
+			}
+			spec, exists := m.projectEnvironmentWorkloadSpecs[specID]
+			if !exists || !sameStandardUUID(spec.AppID, app.ID) || !sameStandardUUID(spec.EnvironmentID, environmentID) {
+				return s, fmt.Errorf("%w: reviewed workload head binding", ErrConflict)
+			}
+			env := m.projectEnvironments[spec.EnvironmentID]
+			workload, err := makeStandardReviewEnvironmentWorkload(spec, env, "desired", "", "")
+			if err != nil {
+				return s, err
+			}
+			a.EnvironmentWorkloads = append(a.EnvironmentWorkloads, workload)
+		}
 		for _, deployment := range m.deployments {
 			retained := !slices.Contains([]string{"failed", "superseded", "cancelled"}, string(deployment.Status))
 			for _, instance := range m.instances {
@@ -231,6 +248,15 @@ func (m *MemStore) standardReviewSnapshotLocked(ctx context.Context, orgID, acto
 			}
 			if !sameStandardUUID(deployment.AppID, app.ID) || !retained {
 				continue
+			}
+			if specID := m.projectEnvironmentWorkloadDeploymentSpecs[deployment.ID]; specID != "" {
+				spec := m.projectEnvironmentWorkloadSpecs[specID]
+				env := m.projectEnvironments[spec.EnvironmentID]
+				workload, err := makeStandardReviewEnvironmentWorkload(spec, env, "deployed", deployment.ID, deployment.Scope)
+				if err != nil {
+					return s, err
+				}
+				a.EnvironmentWorkloads = append(a.EnvironmentWorkloads, workload)
 			}
 			layers := []DeploymentSidecarLayer{}
 			for _, layer := range m.deploymentSidecarLayers {

@@ -92,6 +92,9 @@ func (s *PgStore) materializeStandardTargetAttempt(ctx context.Context, c Applic
 	r := plan.Request
 	r.Scope, r.ScopeID = "application", t.AppID
 	snapshot, err := lockStandardReviewInputs(ctx, tx, o.OrgID, o.ApprovedBy, r)
+	if errors.Is(standardReviewFreshnessError(err), ErrApplicationStandardReviewStale) {
+		return blockStandardMaterialization(ctx, tx, c, o, index, "reviewed_inputs_changed")
+	}
 	if err != nil {
 		return o, err
 	}

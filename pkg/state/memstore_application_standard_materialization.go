@@ -96,6 +96,10 @@ func (m *MemStore) MaterializeNextApplicationStandardTarget(ctx context.Context,
 	r := plan.Request
 	r.Scope, r.ScopeID = "application", t.AppID
 	snapshot, err := m.standardReviewSnapshotLocked(ctx, o.OrgID, o.ApprovedBy, r)
+	if errors.Is(standardReviewFreshnessError(err), ErrApplicationStandardReviewStale) {
+		t.State, t.ErrorCode, t.UpdatedAt = "blocked", "reviewed_inputs_changed", now
+		return m.standardMaterializationCheckpointLocked(c, o, now), nil
+	}
 	if err != nil {
 		return ApplicationStandardOperation{}, err
 	}

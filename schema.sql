@@ -901,6 +901,35 @@ $$;
 
 
 --
+-- Name: application_standard_environment_workload_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_environment_workload_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_ids uuid[] := '{}'; project_ids uuid[] := '{}'; deployment_ids uuid[] := '{}';
+BEGIN
+    IF TG_TABLE_NAME = 'project_environments' THEN
+        IF TG_OP <> 'INSERT' THEN project_ids := array_append(project_ids, OLD.project_id); END IF;
+        IF TG_OP <> 'DELETE' THEN project_ids := array_append(project_ids, NEW.project_id); END IF;
+        SELECT coalesce(array_agg(id), '{}') INTO app_ids FROM apps WHERE project_id = ANY(project_ids);
+    ELSIF TG_TABLE_NAME = 'project_environment_workload_deployment_specs' THEN
+        IF TG_OP <> 'INSERT' THEN deployment_ids := array_append(deployment_ids, OLD.deployment_id); END IF;
+        IF TG_OP <> 'DELETE' THEN deployment_ids := array_append(deployment_ids, NEW.deployment_id); END IF;
+        SELECT coalesce(array_agg(app_id), '{}') INTO app_ids FROM deployments WHERE id = ANY(deployment_ids);
+    ELSE
+        IF TG_OP <> 'INSERT' THEN app_ids := array_append(app_ids, OLD.app_id); END IF;
+        IF TG_OP <> 'DELETE' THEN app_ids := array_append(app_ids, NEW.app_id); END IF;
+    END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.environment-workloads.' || id::text, 0))
+    FROM (SELECT DISTINCT id FROM unnest(app_ids) id WHERE id IS NOT NULL ORDER BY id) owners;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_exception_deadline(jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -37724,6 +37753,34 @@ CREATE TRIGGER application_standard_enroll_app AFTER INSERT ON public.apps FOR E
 --
 
 CREATE TRIGGER application_standard_enrollment_generation_guard BEFORE UPDATE ON public.app_application_standards FOR EACH ROW EXECUTE FUNCTION public.application_standard_enrollment_generation_guard();
+
+
+--
+-- Name: project_environments application_standard_environment_lifetime_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_environment_lifetime_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.application_standard_environment_workload_guard();
+
+
+--
+-- Name: project_environment_workload_specs application_standard_environment_workload_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_environment_workload_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.application_standard_environment_workload_guard();
+
+
+--
+-- Name: project_environment_workload_heads application_standard_environment_workload_head_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_environment_workload_head_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.application_standard_environment_workload_guard();
+
+
+--
+-- Name: project_environment_workload_deployment_specs application_standard_environment_workload_pin_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_environment_workload_pin_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.application_standard_environment_workload_guard();
 
 
 --

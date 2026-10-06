@@ -120,7 +120,7 @@ func standardMaterializationInput(s standardReviewSnapshot, o ApplicationStandar
 	var err error
 	s, err = normalizeStandardReviewSnapshot(s)
 	if err != nil {
-		return app, err
+		return app, standardReviewFreshnessError(err)
 	}
 	if s.DeletedPending || s.OrgStatus != string(OrgStatusActive) || !s.ScopeOwned || len(s.Applications) != 1 {
 		return app, ErrApplicationStandardReviewStale

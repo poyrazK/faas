@@ -2915,3 +2915,43 @@ existing runtime input and publication guards remain in force.
 
 No migration source changes. The remaining onboarding, environment policy,
 operational and native acceptance requirements remain release work.
+
+## Environment revisions in exact-plan review (2026-10-06)
+
+Review freshness now includes each desired environment workload head and each
+retained deployment's pinned workload revision. The application input hash binds
+the original environment ID, scope, protection, account and project ownership,
+specification ID, revision and verified configuration hash. Moving a desired head,
+changing a retained pin, or deleting and recreating an environment invalidates an
+older approval. Restoring identical settings through a new revision does not
+revive it. A change after approval blocks materialization with
+`reviewed_inputs_changed` before controls or persisted adoption change.
+
+Settings bodies are read privately to verify their hashes, then discarded before
+the review input is hashed. PostgreSQL preserves their original JSON text during
+this read so nested numeric representations remain consistent with the workload
+hash. Saved plans and approval inputs contain no environment settings body or
+sealed credential. An internal verification marker cannot be supplied through
+serialized descriptors.
+
+An append-only migration fences specification, head, deployment pin and
+environment lifetime writers with a shared per-application advisory lock. Exact
+approval and materialization try its exclusive side and retry contention without
+adding parent-row waits to legacy writers. This also covers insertion into an
+empty desired-head set. The reviewed recovery manifest includes this new source,
+bringing its explicit filename/version/SHA-256 inventory to 81; previously frozen
+SQL remains unchanged.
+
+This prerequisite binds review to environment intent and retained runtime
+configuration. Per-environment effective policy projection, runtime admission of
+distinct pinned shapes, visible environment exceptions and environment-only
+assignments remain incomplete. Public activation, production snapshot capability
+and dedicated native acceptance retain their existing gates.
+
+Portable verification passes 88 selected MemStore/PostgreSQL automatic enrollment,
+review, approval, local intent and materialization regressions without skips. The
+new cases cover retained pins, desired-head edits, protection and environment
+lifetimes, sealed-body exclusion, corrupted settings, both directions of writer
+contention, empty-set insertion and fresh worker retries. PostgreSQL ledger
+recovery/refusal tests and complete replay of all 82 added PR migrations also
+pass. This evidence does not substitute for dedicated native acceptance.
