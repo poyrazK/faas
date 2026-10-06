@@ -19,6 +19,7 @@ import (
 func cliLatencyInvestigation(t *testing.T, opts api.RouteHealthInvestigationOptions) api.RouteHealthInvestigation {
 	t.Helper()
 	r := cliHealthReport("healthy")
+	r.Routes[0].Method, r.Routes[0].Path = opts.Method, opts.Path
 	r.Routes[0].CheckLatency = true
 	candidate, stable := float64(600), float64(100)
 	for i := range r.Routes[0].Windows {

@@ -54,7 +54,7 @@ func captureMCPContract(ctx context.Context, c *mcphosting.Client, path string, 
 	if err := c.Initialize(ctx); err != nil {
 		return printErr("MCP initialize", err)
 	}
-	tools, discovery, err := c.Tools(ctx)
+	catalog, discovery, err := c.DiscoverCatalog(ctx)
 	if err != nil {
 		return printErr("MCP contract discovery", err)
 	}
@@ -64,7 +64,7 @@ func captureMCPContract(ctx context.Context, c *mcphosting.Client, path string, 
 		}
 		return 1
 	}
-	contract, err := mcphosting.NewContract(c.Version, tools)
+	contract, err := mcphosting.NewCatalogContract(c.Version, catalog)
 	if err != nil {
 		return printErr("MCP contract", err)
 	}
@@ -75,7 +75,10 @@ func captureMCPContract(ctx context.Context, c *mcphosting.Client, path string, 
 	if err := writeMCPContract(path, body, force); err != nil {
 		return printErr("MCP lock file", err)
 	}
-	return jsonOut(writeJSON(map[string]any{"written": true, "path": path, "tools": len(tools), "protocol_version": c.Version}))
+	return jsonOut(writeJSON(map[string]any{
+		"written": true, "path": path, "contract_version": contract.Version, "capabilities": catalog.Capabilities, "tools": len(catalog.Tools), "resources": len(catalog.Resources),
+		"resource_templates": len(catalog.ResourceTemplates), "prompts": len(catalog.Prompts), "protocol_version": c.Version,
+	}))
 }
 
 func cmdMCPDiff(args []string) int {

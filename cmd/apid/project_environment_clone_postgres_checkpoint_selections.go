@@ -79,9 +79,10 @@ func openCloneCheckpointSelection(ctx context.Context, identities []*age.X25519I
 	return selection, nil
 }
 
-// This private worker consumes only retained intent. It returns admission/session
-// evidence, never a common point, source release or stage readiness. Unknown SQL
-// outcomes retain the original control-plane source hold and selection.
+// This private worker consumes only retained intent. It rejects catalogue
+// omissions and returns admission/drain evidence, never a common point, source
+// release or stage readiness. Unresolved prepared transactions remain busy.
+// Unknown SQL outcomes retain the original source hold and selection.
 func (s *server) closeProjectEnvironmentClonePostgresCheckpointConnections(ctx context.Context, l state.ProjectEnvironmentCloneLease, plan capturedProjectEnvironmentDatabasePlan) (state.ProjectEnvironmentCloneLease, managedpostgres.CheckpointConnectionClosure, error) {
 	var zero managedpostgres.CheckpointConnectionClosure
 	if l.Operation.Status != state.CloneOperationCapturing {
@@ -140,7 +141,7 @@ func (s *server) closeProjectEnvironmentClonePostgresCheckpointConnections(ctx c
 	if err != nil {
 		return l, zero, err
 	}
-	if !sameCloneCheckpointConnectionPins(closed, actual) {
+	if !sameCloneCheckpointConnectionPins(closed, actual) || closed.UnselectedDatabases != 0 || actual.UnselectedDatabases != 0 {
 		return l, zero, state.ErrConflict
 	}
 	currentScope, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionScopeForLease(stepCtx, l, plan.source.ID)

@@ -7,12 +7,20 @@
  */
 export type RollbackRequest = {
   /**
-   * The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour).
+   * The UUID or vN of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour).
    */
   target_deployment_id?: string;
   /**
    * SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): when set, the handler stamps the deployment_audit row's alert_rule_id column with this UUID so an operator can cross-link the audit timeline back to /dashboard/alerts/{id}. Wire-additive per ADR-016; the field is ignored when nil/empty. Only privileged in-process callers (meterd ActionDispatcher) set this; the API does not enforce role because the endpoint already requires MFA + ScopesDeployWrite.
    */
   alert_rule_id?: string;
+  /**
+   * Exact current deployment UUID or vN. Together with an explicit target starts the checked asynchronous workflow and returns rollback_operation. Rejects a changed current deployment instead of selecting another one.
+   */
+  expected_current_deployment_id?: string;
+  /**
+   * One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id.
+   */
+  reason?: string;
 };
 

@@ -77,6 +77,13 @@ from .alert_preset_response_category import AlertPresetResponseCategory
 from .alert_preset_response_comparison import AlertPresetResponseComparison
 from .alert_preset_response_minimum_plan import AlertPresetResponseMinimumPlan
 from .alert_preset_response_window_spec import AlertPresetResponseWindowSpec
+from .alert_rollback import AlertRollback
+from .alert_rollback_deployment_evidence import AlertRollbackDeploymentEvidence
+from .alert_rollback_deployment_evidence_status import AlertRollbackDeploymentEvidenceStatus
+from .alert_rollback_deployment_evidence_version import AlertRollbackDeploymentEvidenceVersion
+from .alert_rollback_rollback_phase import AlertRollbackRollbackPhase
+from .alert_rollback_service_phase import AlertRollbackServicePhase
+from .alert_rollback_status import AlertRollbackStatus
 from .alert_rule_response import AlertRuleResponse
 from .alert_rule_response_action import AlertRuleResponseAction
 from .alert_rule_response_comparison import AlertRuleResponseComparison
@@ -340,6 +347,8 @@ from .binding_promotion_response import BindingPromotionResponse
 from .binding_refresh import BindingRefresh
 from .binding_refresh_failure_reason import BindingRefreshFailureReason
 from .binding_refresh_status import BindingRefreshStatus
+from .binding_release_policy import BindingReleasePolicy
+from .binding_release_policy_mode import BindingReleasePolicyMode
 from .binding_runtime_deployment import BindingRuntimeDeployment
 from .binding_runtime_deployment_status import BindingRuntimeDeploymentStatus
 from .binding_runtime_freshness import BindingRuntimeFreshness
@@ -2047,12 +2056,16 @@ from .retry_policy_dto import RetryPolicyDTO
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
+from .rollback_operation import RollbackOperation
+from .rollback_operation_status import RollbackOperationStatus
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
 from .rollout_aborted_webhook_payload_rollout_state import RolloutAbortedWebhookPayloadRolloutState
 from .rollout_completed_webhook_payload import RolloutCompletedWebhookPayload
 from .rollout_completed_webhook_payload_rollout_state import RolloutCompletedWebhookPayloadRolloutState
+from .rollout_recovery_receipt import RolloutRecoveryReceipt
+from .rollout_recovery_receipt_restored_traffic_percent import RolloutRecoveryReceiptRestoredTrafficPercent
 from .rollout_transition_response import RolloutTransitionResponse
 from .rotate_alert_rule_secret_request import RotateAlertRuleSecretRequest
 from .rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
@@ -2322,15 +2335,22 @@ from .service_caller_scopes import ServiceCallerScopes
 from .service_reliability_policies import ServiceReliabilityPolicies
 from .service_reliability_policy import ServiceReliabilityPolicy
 from .service_replicas import ServiceReplicas
+from .service_rollout_binding_gate import ServiceRolloutBindingGate
+from .service_rollout_binding_gate_action import ServiceRolloutBindingGateAction
+from .service_rollout_binding_gate_status import ServiceRolloutBindingGateStatus
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
 from .service_rollout_handoff_response_phase import ServiceRolloutHandoffResponsePhase
+from .service_rollout_recovery_receipt import ServiceRolloutRecoveryReceipt
+from .service_rollout_recovery_receipt_status import ServiceRolloutRecoveryReceiptStatus
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_automation_enabled_request import SetAutomationEnabledRequest
+from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
+from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
 from .set_canary_route_gate_request import SetCanaryRouteGateRequest
 from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
 from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
@@ -2702,6 +2722,13 @@ __all__ = (
     "AlertPresetResponseComparison",
     "AlertPresetResponseMinimumPlan",
     "AlertPresetResponseWindowSpec",
+    "AlertRollback",
+    "AlertRollbackDeploymentEvidence",
+    "AlertRollbackDeploymentEvidenceStatus",
+    "AlertRollbackDeploymentEvidenceVersion",
+    "AlertRollbackRollbackPhase",
+    "AlertRollbackServicePhase",
+    "AlertRollbackStatus",
     "AlertRuleResponse",
     "AlertRuleResponseAction",
     "AlertRuleResponseComparison",
@@ -2965,6 +2992,8 @@ __all__ = (
     "BindingRefresh",
     "BindingRefreshFailureReason",
     "BindingRefreshStatus",
+    "BindingReleasePolicy",
+    "BindingReleasePolicyMode",
     "BindingRuntimeDeployment",
     "BindingRuntimeDeploymentStatus",
     "BindingRuntimeFreshness",
@@ -4606,12 +4635,16 @@ __all__ = (
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
     "RollbackFeatureFlagsRequest",
+    "RollbackOperation",
+    "RollbackOperationStatus",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
     "RolloutAbortedWebhookPayloadRolloutState",
     "RolloutCompletedWebhookPayload",
     "RolloutCompletedWebhookPayloadRolloutState",
+    "RolloutRecoveryReceipt",
+    "RolloutRecoveryReceiptRestoredTrafficPercent",
     "RolloutTransitionResponse",
     "RotateAlertRuleSecretRequest",
     "RotateAlertRuleSecretResponse",
@@ -4875,15 +4908,22 @@ __all__ = (
     "ServiceReliabilityPolicies",
     "ServiceReliabilityPolicy",
     "ServiceReplicas",
+    "ServiceRolloutBindingGate",
+    "ServiceRolloutBindingGateAction",
+    "ServiceRolloutBindingGateStatus",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",
     "ServiceRolloutHandoffResponsePhase",
+    "ServiceRolloutRecoveryReceipt",
+    "ServiceRolloutRecoveryReceiptStatus",
     "SessionInfo",
     "SessionListResponse",
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
     "SetAutomationEnabledRequest",
+    "SetBindingReleasePolicyRequest",
+    "SetBindingReleasePolicyRequestMode",
     "SetCanaryRouteGateRequest",
     "SetCanaryRouteGateRequestMode",
     "SetCommitSourceEnabledBody",

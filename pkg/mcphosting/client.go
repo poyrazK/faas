@@ -31,6 +31,7 @@ type Client struct {
 	Token        string
 	HTTP         *http.Client
 	ExpectedAuth *AuthConfig
+	Capabilities ServerCapabilities
 	nextID       int
 }
 
@@ -229,7 +230,7 @@ func consumeMessage(data []byte, id int, x *Exchange, start time.Time) (bool, er
 		return false, fmt.Errorf("MCP response ID does not match request")
 	}
 	if m.Error != nil {
-		return true, fmt.Errorf("MCP JSON-RPC error %d", m.Error.Code)
+		return true, &RPCError{Code: m.Error.Code}
 	}
 	if m.Result == nil || bytes.Equal(m.Result, []byte("null")) {
 		return true, fmt.Errorf("MCP response has no result")
@@ -280,7 +281,8 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return fmt.Errorf("stateful MCP session detected; use a stateless server for this hosting profile")
 	}
 	var result struct {
-		ProtocolVersion string `json:"protocolVersion"`
+		ProtocolVersion string             `json:"protocolVersion"`
+		Capabilities    ServerCapabilities `json:"capabilities"`
 	}
 	if err := json.Unmarshal(x.Result, &result); err != nil {
 		return fmt.Errorf("decode initialize: %w", err)
@@ -288,6 +290,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if result.ProtocolVersion != c.Version {
 		return fmt.Errorf("server negotiated unsupported protocol %q", result.ProtocolVersion)
 	}
+	c.Capabilities = result.Capabilities
 	_, err = c.request(ctx, "notifications/initialized", nil, nil, true)
 	return err
 }
@@ -488,7 +491,11 @@ func (c *Client) call(ctx context.Context, tool Tool, args map[string]any, progr
 }
 
 func (c *Client) RejectsUntrustedOrigin(ctx context.Context) error {
-	_, err := c.request(ctx, "tools/list", nil, http.Header{"Origin": []string{"https://gregale-mcp-origin-check.invalid"}}, false)
+	method := "server/discover"
+	if c.Version == LegacyProtocolVersion {
+		method = "tools/list"
+	}
+	_, err := c.request(ctx, method, nil, http.Header{"Origin": []string{"https://gregale-mcp-origin-check.invalid"}}, false)
 	var upstream *api.APIError
 	if !errors.As(err, &upstream) || upstream.Problem.Status != http.StatusForbidden {
 		return fmt.Errorf("untrusted Origin must return HTTP 403")

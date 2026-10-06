@@ -62,6 +62,7 @@ type StatsCollector struct {
 	callbackDeadLetterCapacityBytes *prometheus.Desc
 	callbackDeadLetterEvictions     *prometheus.Desc
 	callbackDeadLetterLastEviction  *prometheus.Desc
+	callbackDeadLetterDiscards      *prometheus.Desc
 	authOutcomes                    *prometheus.Desc
 }
 
@@ -127,6 +128,7 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		callbackDeadLetterCapacityBytes: prometheus.NewDesc(subsystem+"_callback_dead_letter_capacity_bytes", "Configured maximum bytes of retained callback dead letters.", nil, nil),
 		callbackDeadLetterEvictions:     prometheus.NewDesc(subsystem+"_callback_dead_letter_evictions_total", "Callback dead letters evicted by byte retention since process start.", nil, nil),
 		callbackDeadLetterLastEviction:  prometheus.NewDesc(subsystem+"_callback_dead_letter_last_eviction_timestamp_seconds", "Unix timestamp of the most recent callback dead-letter eviction, or zero if none.", nil, nil),
+		callbackDeadLetterDiscards:      prometheus.NewDesc(subsystem+"_callback_dead_letter_discards_total", "Callback dead letters discarded by an operator since process start.", nil, nil),
 		authOutcomes:                    prometheus.NewDesc(subsystem+"_auth_outcomes_total", "Realtime client authentication outcomes since process start.", []string{"mode", "outcome"}, nil),
 	}
 }
@@ -173,6 +175,7 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.callbackDeadLetterCapacityBytes, prometheus.GaugeValue, float64(stats.CallbackDeadLetterCapacityBytes))
 	ch <- prometheus.MustNewConstMetric(c.callbackDeadLetterEvictions, prometheus.CounterValue, float64(stats.CallbackDeadLetterEvictions))
 	ch <- prometheus.MustNewConstMetric(c.callbackDeadLetterLastEviction, prometheus.GaugeValue, float64(stats.CallbackDeadLetterLastEvictionUnix))
+	ch <- prometheus.MustNewConstMetric(c.callbackDeadLetterDiscards, prometheus.CounterValue, float64(stats.CallbackDeadLetterDiscards))
 	for mode := authMetricMode(0); mode < authMetricModeCount; mode++ {
 		for outcome := authMetricOutcome(0); outcome < authMetricOutcomeCount; outcome++ {
 			ch <- prometheus.MustNewConstMetric(c.authOutcomes, prometheus.CounterValue,
@@ -209,6 +212,7 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.callbackDeadLetterCapacityBytes,
 		c.callbackDeadLetterEvictions,
 		c.callbackDeadLetterLastEviction,
+		c.callbackDeadLetterDiscards,
 		c.authOutcomes,
 	}
 }

@@ -137,6 +137,12 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	checkedRollbacks            map[string]api.RollbackOperation
+	alertRollbacks              map[string]api.AlertRollback
+	alertHistoricalClaims       map[string]string
+	recoveryPredecessors        map[string]string
+	bindingReleasePolicies      map[bindingReleasePolicyKey]api.BindingReleasePolicy
+	bindingReleasePolicyHistory []api.BindingReleasePolicy
 	operationData               *operationMemory
 	operationCodePins           map[string]time.Time
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
@@ -4934,7 +4940,7 @@ func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, mi
 // critical section as its traffic rebalance and audit insert. The expected
 // step is a compare-and-swap: concurrent meterd workers cannot both advance
 // the same row.
-func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error) {
+func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error) {
 	if params.ExpectedStep < 0 || params.TrafficPercent < 0 || params.TrafficPercent > 100 {
 		return Deployment{}, 0, ErrCanaryStateInvalid
 	}
@@ -5008,6 +5014,14 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 		return Deployment{}, 0, ErrTrafficPercentSumInvalid
 	}
 
+	proposed := map[string]int{id: params.TrafficPercent}
+	weights := RedistributeTraffic(toHelperSiblings(siblings), 100-params.TrafficPercent)
+	for i, sibling := range siblings {
+		proposed[sibling.ID] = weights[i]
+	}
+	if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
+		return Deployment{}, 0, err
+	}
 	d.CanaryStep = persistedStep
 	d.CanaryStepStartedAt = &now
 	d.TrafficPercent = params.TrafficPercent
@@ -5082,7 +5096,7 @@ func (m *MemStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPe
 	return m.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
+func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, ErrInvalidTrafficPercent
 	}
@@ -5124,9 +5138,6 @@ func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPerc
 		}
 	}
 
-	// Stamp target first; sibling weights collected for redistribution.
-	d.TrafficPercent = newPercent
-	m.putDeploymentLocked(id, d)
 	appID := d.AppID
 
 	// Collect siblings (id-ordered for stable tie-break).
@@ -5154,6 +5165,15 @@ func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPerc
 		helperSiblings[i].Prior = s.Prior
 	}
 	newWeights := RedistributeTraffic(helperSiblings, 100-newPercent)
+	proposed := map[string]int{id: newPercent}
+	for i, sibling := range siblings {
+		proposed[sibling.ID] = newWeights[i]
+	}
+	if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
+		return Deployment{}, err
+	}
+	d.TrafficPercent = newPercent
+	m.putDeploymentLocked(id, d)
 	for i, s := range siblings {
 		other := m.deployments[s.ID]
 		other.TrafficPercent = newWeights[i]
@@ -6989,6 +7009,15 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		return Deployment{}, 0, err
 	}
 
+	intended := d.TrafficPercent
+	if intended == 0 && !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !serviceRollout {
+		intended = 100
+	}
+	if intended > 0 {
+		if err := m.rejectUncheckedBindingReleaseLocked(d.AppID, d.Scope); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	// Find the most-recent non-terminal deployment row for this app and
 	// deployment scope. Production and staging are independent rollout
 	// lanes; a staging push must never supersede production.
@@ -7067,6 +7096,7 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	if d.Revision <= 0 {
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
+	m.recordRecoveryPredecessorLocked(d)
 	m.putDeploymentLocked(d.ID, d)
 	if len(cloneInputs) > 0 {
 		m.attachCloneDeploymentLocked(*cloneInputs[0], cloneRecord, d)
@@ -7520,13 +7550,19 @@ func (m *MemStore) RecoverRollout(ctx context.Context, appID string, action, rea
 }
 
 func (m *MemStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
-	if deploymentID == "" || expectedPredecessorID == "" || deploymentID == expectedPredecessorID || action != "abort" {
+	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
 	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason)
 }
 
-func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
+func (m *MemStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.recoverRolloutLocked(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
+}
+
+func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, auditOverride *DeploymentAudit) (Deployment, int64, error) {
 	// Validate action at the store boundary so a direct store
 	// caller (CLI test path) gets the same 422 shape as the
 	// handler. The handler also validates via
@@ -7541,9 +7577,6 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 	// stores disagree, a MemStore test observes a reason the SQL store would
 	// have rewritten, and the divergence goes unnoticed until production.
 	reason = normalizeRolloutReason(reason)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	// Find the active deployment for this app: rollout_state ∈
 	// ('pending','rolling_out') and status='live'. There can be
@@ -7565,6 +7598,11 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 	}
 	if target == nil {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if action != "abort" || expectedPredecessorID == "" {
+		if err := m.rejectUncheckedBindingReleaseLocked(target.AppID, target.Scope); err != nil {
+			return *target, 0, err
+		}
 	}
 	if target.CanaryTotalSteps <= 0 && !IsServiceRollout(*target) {
 		return *target, 0, ErrRolloutStateInvalid
@@ -7590,8 +7628,8 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 			return *target, 0, ErrRolloutStateInvalid
 		}
 		predecessor, exists := m.deployments[expectedPredecessorID]
-		if !exists || predecessor.AppID != appID || predecessor.Status != DeployLive ||
-			normalizedDeploymentScope(predecessor.Scope) != normalizedDeploymentScope(target.Scope) || predecessor.TrafficPercent <= 0 {
+		if !exists || predecessor.ID == target.ID || predecessor.AppID != appID || predecessor.Status != DeployLive ||
+			normalizedDeploymentScope(predecessor.Scope) != normalizedDeploymentScope(target.Scope) || predecessor.TrafficPercent <= 0 || !predecessor.CreatedAt.Before(target.CreatedAt) {
 			return *target, 0, ErrNotFound
 		}
 		for otherID, other := range m.deployments {
@@ -7603,6 +7641,9 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 			if rolloutState == "pending" || rolloutState == "rolling_out" {
 				return *target, 0, ErrRolloutStateInvalid
 			}
+		}
+		if err := m.checkBindingReleaseTrafficLocked(ctx, map[string]int{expectedPredecessorID: 100}); err != nil {
+			return *target, 0, err
 		}
 	}
 	before := *target
@@ -7792,14 +7833,12 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 			predecessor.TrafficPercent = 100
 			m.putDeploymentLocked(expectedPredecessorID, predecessor)
 			m.putDeploymentLocked(target.ID, *target)
-			auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
-				DeploymentID: uuid.MustParse(target.ID),
-				AccountID:    nil,
-				Kind:         DeployRolledBack,
-				Actor:        "operator:cli:recover_rollout",
-				At:           now,
-				Data:         json.RawMessage(rolloutAuditData("abort", reason)),
-			})
+			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: now,
+				Data: json.RawMessage(rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx)))}
+			if auditOverride != nil {
+				entry = *auditOverride
+			}
+			auditID, err := m.appendDeploymentAuditLocked(entry)
 			if err != nil {
 				return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
 			}
@@ -8280,6 +8319,16 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
 		return err
 	}
+	if status == DeployLive && d.Status != DeployLive && d.TrafficPercent > 0 {
+		if err := m.rejectUncheckedBindingReleaseLocked(d.AppID, d.Scope); err != nil {
+			return err
+		}
+	}
+	if status == DeployFailed {
+		if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+			return err
+		}
+	}
 	if !status.IsTerminal() {
 		if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
 			return err
@@ -8407,10 +8456,28 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return err
 	}
+	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
+		return err
+	}
+	if r, ok := m.checkedRollbackForTargetLocked(id); ok && r.Status == "preparing" {
+		return m.markCheckedRollbackReadyLocked(ctx, d, r)
+	}
+
+	for _, operation := range m.checkedRollbacks {
+		if operation.TargetDeploymentID == id && operation.Status == "failed" && d.Status != DeployLive {
+			return ErrCheckedRollbackRequired
+		}
+	}
+
 	proposal := d
 	proposal.Status = DeployLive
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
 		return err
+	}
+	if d.Status != DeployLive && (d.TrafficPercent > 0 || !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !IsServiceRollout(d)) {
+		if err := m.rejectUncheckedBindingReleaseLocked(d.AppID, d.Scope); err != nil {
+			return err
+		}
 	}
 	before := d
 	previousStatus := d.Status
@@ -8503,6 +8570,13 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 			other.TrafficPercent = newWeights[i]
 			updatedSiblings[sibling.ID] = other
 		}
+		proposed := map[string]int{id: d.TrafficPercent}
+		for siblingID, other := range updatedSiblings {
+			proposed[siblingID] = other.TrafficPercent
+		}
+		if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
+			return err
+		}
 		if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
 			return err
 		}
@@ -8577,6 +8651,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		// There is no previous revision to receive the residual. A
 		// first deployment cannot be meaningfully canaried, so make it
 		// a safe 100% completion instead of publishing a broken split.
+		if err := m.rejectUncheckedBindingReleaseLocked(d.AppID, d.Scope); err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		d.Status = DeployLive
 		d.Error = ""
@@ -8608,6 +8685,13 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
 		updatedSiblings[sibling.ID] = other
+	}
+	proposed := map[string]int{id: d.TrafficPercent}
+	for siblingID, other := range updatedSiblings {
+		proposed[siblingID] = other.TrafficPercent
+	}
+	if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
+		return err
 	}
 	if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
 		return err
@@ -9172,6 +9256,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		// No rollback target — succeed as a no-op (mirrors PG path).
 		return "", nil
 	}
+	if err := m.rejectUncheckedBindingReleaseLocked(cur.AppID, cur.Scope); err != nil {
+		return "", err
+	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(m.deployments[targetID])); err != nil {
 		return "", err
 	}
@@ -9235,6 +9322,9 @@ func (m *MemStore) PrepareDeploymentRollback(_ context.Context, appID, targetDep
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.prepareDeploymentRollbackLocked(appID, targetDeploymentID)
+}
+func (m *MemStore) prepareDeploymentRollbackLocked(appID, targetDeploymentID string) (Deployment, error) {
 	target, ok := m.deployments[targetDeploymentID]
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
@@ -10177,6 +10267,9 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
 	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return Deployment{}, err
+	}
 	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", code); err != nil {
 		return Deployment{}, err
 	}
@@ -10225,6 +10318,9 @@ func (m *MemStore) SetDeploymentFailedEx(
 	}
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
+	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return Deployment{}, err
 	}
 	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", code); err != nil {
 		return Deployment{}, err
@@ -10385,6 +10481,9 @@ func (m *MemStore) FailSourceDeployment(_ context.Context, id, message string) e
 		if b.DeploymentID == id {
 			return nil
 		}
+	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return err
 	}
 	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", ""); err != nil {
 		return err
@@ -21582,6 +21681,9 @@ func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]C
 // same field values the PgStore does (default gen_random_uuid +
 // default now() are faked by MemStore with newID/time.Now).
 func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, error) {
+	if !validAlertRollbackWindow(in) {
+		return AlertRule{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {
@@ -21612,6 +21714,9 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 // gates the count + insert. Account-wide rules (AppID == "") skip
 // the per-app branch but still hit the per-account branch.
 func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, limits api.Limits) (AlertRule, error) {
+	if !validAlertRollbackWindow(in) {
+		return AlertRule{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {
@@ -21775,6 +21880,12 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.Action != nil {
 		r.Action = AlertAction(*p.Action)
 	}
+	if p.PostDeployRollbackWindowSeconds != nil {
+		r.PostDeployRollbackWindowSeconds = *p.PostDeployRollbackWindowSeconds
+	}
+	if !validAlertRollbackWindow(r) {
+		return AlertRule{}, ErrInvalidArgument
+	}
 	r.UpdatedAt = time.Now()
 	m.alertRules[id] = r
 	return r, nil
@@ -21787,6 +21898,12 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.alertRules, id)
+	for key, delivery := range m.alertDeliveries {
+		if delivery.RuleID == id {
+			delete(m.alertDeliveries, key)
+			delete(m.alertRollbacks, alertRollbackFireID(delivery.ID))
+		}
+	}
 	return nil
 }
 
@@ -22716,6 +22833,9 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 	if _, dup := m.alertClaimKeys[cacheKey]; dup {
 		return "", false, nil
 	}
+	if r.Action == AlertActionRollback && alertRollbackMetricAllowed(r.Metric) && !api.IsFiniteFloat(observed) {
+		return "", false, ErrInvalidArgument
+	}
 	if r.LastFiredAt.Before(at) || r.LastFiredAt.IsZero() {
 		r.LastFiredAt = at.UTC()
 		m.alertRules[ruleID] = r
@@ -22743,6 +22863,7 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 			ObservedValue:  observed,
 			FiredAt:        at.UTC(),
 		}
+		m.captureAlertRollbackLocked(id, r, observed, at)
 		return id, true, nil
 	}
 	return "", false, nil

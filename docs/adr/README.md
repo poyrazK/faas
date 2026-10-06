@@ -56,6 +56,16 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 596 | [Service binding dependency evidence](596-service-binding-dependency-evidence.md) | accepted | Versioned evidence for service binding dependencies. |
+| 597 | [Exact caller deployment for service smoke tests](597-caller-pinned-service-smoke.md) | accepted | Probe the exact selected caller deployment. |
+| 598 | [Stored binding release policy per deployment scope](598-stored-binding-release-policy.md) | accepted | Persist and enforce binding checks at release transitions. |
+| 599 | [Binding-checked exact canary recovery](599-binding-checked-canary-recovery.md) | accepted | Recover an exact canary pair with fresh binding evidence. |
+| 600 | [Binding-checked service routing and abort handoffs](600-binding-checked-service-handoffs.md) | accepted | Fence service handoff, application ACK and drain completion. |
+| 601 | [Binding-checked historical rollback](601-binding-checked-historical-rollback.md) | accepted | Prepare and restore an exact historical deployment safely. |
+| 602 | [Durable binding-checked alert rollback](602-durable-binding-checked-alert-rollback.md) | accepted | Persist alert-triggered canary recovery and resume retries. |
+| 603 | [Alert-driven service rollback](603-alert-driven-service-rollback.md) | accepted | Resume alert-triggered service recovery through its handoff barriers. |
+| 604 | [Alert-driven rollback after completed releases](604-alert-driven-historical-rollback.md) | accepted | Pin completed-release alert recovery to an eligible predecessor. |
+| 605 | [Deployment evidence for post-release automatic rollback](605-deployment-evidence-for-post-release-rollback.md) | accepted | Require exact post-cutover error evidence before accepting automatic rollback. |
 | 589 | [Versioned business-key and customer routing for Commit](589-commit-customer-routing.md) | accepted; operator qualification only | Versioned customer-scoped business keys route unrelated Commit work independently and serialize matching work |
 | 588 | [In-place retry of a failed workflow step](588-in-place-workflow-step-retry.md) | accepted | Retry a failed step within its existing run while preserving attempt history and managed operation identity |
 | 587 | [Transactional managed HTTP workflow steps](587-transactional-workflow-http-steps.md) | accepted | Reuse customer transaction receipts and durably deliver workflow operation effects |

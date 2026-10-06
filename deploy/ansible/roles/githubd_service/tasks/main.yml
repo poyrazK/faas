@@ -144,20 +144,15 @@
 # drifts after bootstrap. Shape mirrors the host.age assert in
 # roles/control_plane_service/tasks/main.yml.
 #
-# Owner must be the daemon's user (faas per faas-githubd.service);
-# root-owned 0400 would be unreadable by the daemon.
-#
-# REBASE NOTE (2026-08-24): path rewritten from the pre-ADR-127
-# /etc/faas/secrets/github-app.pem to the ADR-127-mandated
-# /etc/faas/secrets/githubd/app.pem. Allowlist (0400/0440/0600/0640)
-# and owner check (pw_name == faas) are unchanged. This assert is a
-# permissive SUPERSET of the ADR-127 PRIVATE bucket rule at
-# deploy/ansible/roles/_shared/tasks/sealed_env_split_perm_asserts.yml
-# (which requires 0400 root:root); for githubd/app.pem the daemon
-# actually runs as User=faas per deploy/ansible/roles/githubd_service/files/
-# faas-githubd.service, so a root-owned 0400 file would be unreadable.
-# A follow-up PR can split a NON_ROOT_DAEMON bucket in the shared
-# perm-asserts file; this rebase does not amend ADR-127.
+# Owner must be root. faas-githubd.service reads the key through
+# LoadCredential=faas_github_app_key_unit, so systemd (as root) opens it
+# and hands the daemon a private copy under $CREDENTIALS_DIRECTORY; the
+# daemon never opens this path. That is also the ADR-127 PRIVATE bucket
+# rule in deploy/ansible/roles/_shared/tasks/sealed_env_split_perm_asserts.yml
+# (0400 root:root), which runs first. This assert used to demand
+# owner faas, from before the unit switched to LoadCredential, so no file
+# could pass both and every control-plane convergence with the key
+# present failed here (production-us, rc.238, 2026-10-05).
 - name: githubd_service — soft assert github-app.pem mode + owner (issue # 603)
   ansible.builtin.stat:
     path: /etc/faas/secrets/githubd/app.pem
@@ -166,4 +161,4 @@
     - >-
       faas_github_app_pem_stat.stat.exists
       and (faas_github_app_pem_stat.stat.mode not in ["0400", "0440", "0600", "0640"]
-           or faas_github_app_pem_stat.stat.pw_name != "faas")
+           or faas_github_app_pem_stat.stat.pw_name != "root")

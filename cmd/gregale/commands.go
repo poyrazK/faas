@@ -678,6 +678,15 @@ func renderAPIError(w io.Writer, e *APIError) {
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
 	}
+	if p.BindingsCheck != nil {
+		for _, blocker := range p.BindingsCheck.Blockers {
+			_, _ = fmt.Fprintf(w, "  %s: %s", blocker.Code, blocker.Message)
+			if blocker.Binding != "" {
+				_, _ = fmt.Fprintf(w, " (binding=%s scope=%s)", blocker.Binding, blocker.Scope)
+			}
+			_, _ = fmt.Fprintln(w)
+		}
+	}
 	if p.RetryAfterSeconds != nil {
 		retryAfter := time.Duration(*p.RetryAfterSeconds) * time.Second
 		_, _ = fmt.Fprintf(w, "  Retry after: %s (%d seconds)\n", retryAfter, *p.RetryAfterSeconds)
