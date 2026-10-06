@@ -17,11 +17,16 @@ type resizeHTTPFixture struct {
 	mu                                                                      sync.Mutex
 	patches                                                                 int
 	maximum                                                                 float64
+	suspendTimeout                                                          int64
+	policy                                                                  bool
 	pending, changedDefault, duplicatePrimary, drift, lostResponse, delayed bool
 }
 
 func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 	t.Helper()
+	if f.suspendTimeout == 0 {
+		f.suspendTimeout = 300
+	}
 	if f.maximum == 0 {
 		f.maximum = 2
 	}
@@ -43,7 +48,7 @@ func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 			}
 			writeResponse(t, w, 200, map[string]any{"branches": branches})
 		case root + "/endpoints":
-			endpoints := []map[string]any{{"id": "ep-main-123", "branch_id": "br-main-123", "type": "read_write", "current_state": "idle", "autoscaling_limit_min_cu": 0.25, "autoscaling_limit_max_cu": f.maximum, "suspend_timeout_seconds": 300}}
+			endpoints := []map[string]any{{"id": "ep-main-123", "branch_id": "br-main-123", "type": "read_write", "current_state": "idle", "autoscaling_limit_min_cu": 0.25, "autoscaling_limit_max_cu": f.maximum, "suspend_timeout_seconds": f.suspendTimeout}}
 			if f.duplicatePrimary {
 				endpoints = append(endpoints, endpoints[0])
 			}
@@ -63,12 +68,19 @@ func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 				t.Error(err)
 			}
 			compute := payload["endpoint"]
-			if len(payload) != 1 || len(compute) != 2 || compute["autoscaling_limit_min_cu"] != 0.25 || compute["autoscaling_limit_max_cu"] != 1 {
+			if !f.policy && (len(payload) != 1 || len(compute) != 2 || compute["autoscaling_limit_min_cu"] != 0.25 || compute["autoscaling_limit_max_cu"] != 1) {
 				t.Error("resize changed fields outside compute", payload)
+			}
+			if f.policy && (len(payload) != 1 || len(compute) != 1 || (compute["suspend_timeout_seconds"] != -1 && compute["suspend_timeout_seconds"] != 300)) {
+				t.Error("policy changed compute capacity", payload)
 			}
 			f.patches++
 			if !f.delayed {
-				f.maximum = compute["autoscaling_limit_max_cu"]
+				if f.policy {
+					f.suspendTimeout = int64(compute["suspend_timeout_seconds"])
+				} else {
+					f.maximum = compute["autoscaling_limit_max_cu"]
+				}
 			}
 			if f.lostResponse {
 				f.lostResponse = false
@@ -104,7 +116,7 @@ func TestResizeAdoptsAppliedConfigurationAfterLostResponse(t *testing.T) {
 	}
 }
 func TestResizeFailsClosedBeforeMutation(t *testing.T) {
-	for _, kind := range []string{"changed default", "duplicate primary", "configuration drift", "pending operation", "different project", "different branch", "nonclass mutation"} {
+	for _, kind := range []string{"changed default", "duplicate primary", "configuration drift", "pending operation", "different project", "different branch", "mixed compute mutation"} {
 		t.Run(kind, func(t *testing.T) {
 			f := &resizeHTTPFixture{}
 			p := resizeHTTPProvider(t, f)
@@ -122,7 +134,7 @@ func TestResizeFailsClosedBeforeMutation(t *testing.T) {
 				r.DataResourceID = "other-project-123/br-main-123"
 			case "different branch":
 				r.ResourceID = "quiet-river-12345678/br-other-123"
-			case "nonclass mutation":
+			case "mixed compute mutation":
 				r.Spec.ScaleToZero = false
 			}
 			observed, err := p.Update(context.Background(), r)

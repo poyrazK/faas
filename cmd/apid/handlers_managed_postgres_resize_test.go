@@ -18,6 +18,7 @@ type resizeAPIProvider struct{ capabilityOnlyProvider }
 func (resizeAPIProvider) Capabilities() managedpostgres.Capabilities {
 	c := capabilityOnlyProvider{}.Capabilities()
 	c.ClassResize = true
+	c.ScaleToZeroUpdate = true
 	return c
 }
 func (resizeAPIProvider) Provision(_ context.Context, r managedpostgres.ProvisionRequest) (managedpostgres.ObservedDatabase, error) {

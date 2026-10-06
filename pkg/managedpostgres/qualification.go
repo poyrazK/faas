@@ -90,6 +90,8 @@ type QualificationReport struct {
 	CredentialAccess     []CredentialAccess           `json:"credential_access"`
 	ReadOnlyCredentials  *ReadOnlyCredentialEvidence  `json:"read_only_credentials,omitempty"`
 	ClassResize          bool                         `json:"class_resize"`
+	ScaleToZeroUpdate    bool                         `json:"scale_to_zero_update"`
+	ComputePolicy        *ComputePolicyEvidence       `json:"compute_policy,omitempty"`
 	Resize               *ResizeEvidence              `json:"resize,omitempty"`
 }
 
@@ -103,7 +105,7 @@ type LifecycleQualificationReport struct {
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 5
+const QualificationArtifactVersion = 6
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
@@ -286,6 +288,14 @@ func ValidateQualificationReport(report QualificationReport) error {
 	} else if report.Resize != nil {
 		return ErrInvalid
 	}
+	if report.ScaleToZeroUpdate {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "compute_policy_probe")
+		if report.ComputePolicy == nil || report.ComputePolicy.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.ComputePolicy != nil {
+		return ErrInvalid
+	}
 	if report.Restore != nil {
 		requiredChecks = append(append([]string(nil), requiredChecks...), restoreQualificationChecks[:]...)
 	}
@@ -457,6 +467,10 @@ func (r *Registry) VerifyQualificationArtifact(artifact QualificationArtifact, e
 		readiness.Reasons = append(readiness.Reasons, "resize_capabilities_mismatch")
 		readiness.Ready = false
 	}
+	if backend.Capabilities.ScaleToZeroUpdate != artifact.Report.ScaleToZeroUpdate {
+		readiness.Reasons = append(readiness.Reasons, "compute_policy_capabilities_mismatch")
+		readiness.Ready = false
+	}
 	return readiness
 }
 
@@ -537,7 +551,7 @@ type QualificationOptions struct {
 	PollInterval time.Duration
 }
 
-const defaultQualificationTimeout = 10 * time.Minute
+const defaultQualificationTimeout = 20 * time.Minute
 
 const qualificationCleanupTimeout = 2 * time.Minute
 
@@ -599,6 +613,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	capabilities := provider.Capabilities()
 	report.CredentialAccess = append([]CredentialAccess(nil), capabilities.CredentialAccess...)
 	report.ClassResize = capabilities.ClassResize
+	report.ScaleToZeroUpdate = capabilities.ScaleToZeroUpdate
 	if err := capabilities.Validate(); !record("capabilities_valid", err) {
 		return report, resultErr
 	}
@@ -808,6 +823,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			probeErr = evidence.Validate()
 		}
 		if !record("compute_resize_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if capabilities.ScaleToZeroUpdate {
+		prober, ok := provider.(ComputePolicyProber)
+		if !ok {
+			record("compute_policy_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeComputePolicy(ctx, providerResourceID, options.Spec)
+		report.ComputePolicy = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("compute_policy_probe", probeErr) {
 			return report, resultErr
 		}
 	}

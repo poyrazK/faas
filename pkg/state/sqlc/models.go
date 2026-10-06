@@ -3560,6 +3560,7 @@ type ManagedPostgresResize struct {
 	State              string
 	CreatedAt          pgtype.Timestamptz
 	CompletedAt        pgtype.Timestamptz
+	TargetScaleToZero  pgtype.Bool
 }
 
 type ManagedPostgresRestoreProof struct {
