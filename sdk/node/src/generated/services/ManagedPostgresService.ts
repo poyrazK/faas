@@ -12,6 +12,7 @@ import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgr
 import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresRecoveryStatus } from '../models/ManagedPostgresRecoveryStatus.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
@@ -390,7 +391,36 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Read live managed PostgreSQL recovery limits
+   * Requires PostgreSQL read scope and MFA for interactive sessions. Reads
+   * metadata for the pinned source without connecting to SQL or waking
+   * compute. limits_known reports necessary limits, not guaranteed recovery
+   * of every timestamp. Missing or uncertain evidence is reported explicitly.
+   * Available independently of new-provisioning admission.
+   *
+   * @returns ManagedPostgresRecoveryStatus Current recovery observation; Cache-Control no-store
+   * @returns Problem Authentication, unknown database, or invalid request
+   * @throws ApiError
+   */
+  public static getManagedPostgresRecoveryStatus({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresRecoveryStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/recovery',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
    * Restore a database into a new managed PostgreSQL database
+   * New requests read the pinned source identity and current provider recovery limits before reservation. Necessary limits do not guarantee every timestamp is recoverable. Retries of an existing matching restore receipt bypass new retention checks while admission remains enabled.
    * @returns Problem Invalid point in time, plan limit, or provider error
    * @returns ManagedPostgresDatabase Restore accepted or ready
    * @throws ApiError

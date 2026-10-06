@@ -2581,6 +2581,7 @@ var cliCommands = []cliCommand{
 				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
 			}},
 			{Name: "get", Short: "Show one managed PostgreSQL database"},
+			{Name: "recovery", Short: "Read live recovery limits; complete retained history may be unconfirmed", Positionals: []string{"<database>"}, Examples: []string{"gregale postgres recovery orders --json"}},
 			{Name: "delete", Short: "Delete a managed PostgreSQL database"},
 			{Name: "resize", Short: "Durably resize compute; clients may disconnect", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "class", Short: "target service class", Req: true, Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},

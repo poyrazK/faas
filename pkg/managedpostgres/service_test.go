@@ -21,9 +21,23 @@ type fakeProvider struct {
 	lastDelete      DeleteRequest
 	restoreCalls    int
 	lastRestore     RestoreRequest
+	restoreLineages map[string]RestoreLineage
 }
 
-func (p *fakeProvider) Capabilities() Capabilities { return p.capabilities }
+func (p *fakeProvider) Capabilities() Capabilities {
+	c := p.capabilities
+	c.RestorePreflight = c.PointInTimeRestore
+	return c
+}
+
+func (p *fakeProvider) ObserveRestoreSource(_ context.Context, d RestoreSourceDefinition) (RestoreSourceObservation, error) {
+	out := RestoreSourceObservation{ProviderResourceID: d.ProviderResourceID, DataResourceID: d.DataResourceID,
+		Status: ProviderStatusReady, RetentionSeconds: d.Spec.RestoreWindowSeconds, HistoryNotBefore: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}
+	if lineage, ok := p.restoreLineages[d.ProviderResourceID]; ok {
+		out.Lineage = &lineage
+	}
+	return out, nil
+}
 
 func (p *fakeProvider) Provision(_ context.Context, request ProvisionRequest) (ObservedDatabase, error) {
 	p.provisionCalls++
@@ -32,6 +46,7 @@ func (p *fakeProvider) Provision(_ context.Context, request ProvisionRequest) (O
 	}
 	return ObservedDatabase{
 		ProviderResourceID: "upstream-" + request.ResourceID,
+		DataResourceID:     "upstream-" + request.ResourceID,
 		Status:             p.provisionStatus,
 		Spec:               request.Spec,
 	}, nil
@@ -44,12 +59,16 @@ func (p *fakeProvider) Restore(_ context.Context, request RestoreRequest) (Obser
 	if p.provisionErr != nil {
 		return ObservedDatabase{}, p.provisionErr
 	}
-	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, Status: p.provisionStatus, Spec: request.Spec}, nil
+	if p.restoreLineages == nil {
+		p.restoreLineages = make(map[string]RestoreLineage)
+	}
+	p.restoreLineages["restored-"+request.ResourceID] = RestoreLineage{SourceResourceID: request.SourceResourceID, PointInTime: request.PointInTime}
+	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, DataResourceID: "restored-" + request.ResourceID, Status: p.provisionStatus, Spec: request.Spec}, nil
 }
 
 func (p *fakeProvider) Inspect(_ context.Context, providerResourceID string) (ObservedDatabase, error) {
 	p.inspectCalls++
-	return ObservedDatabase{ProviderResourceID: providerResourceID, Status: p.inspectStatus, Spec: testSpec()}, nil
+	return ObservedDatabase{ProviderResourceID: providerResourceID, DataResourceID: providerResourceID, Status: p.inspectStatus, Spec: testSpec()}, nil
 }
 
 func (*fakeProvider) Discover(_ context.Context, request ResourceDiscoveryRequest) (string, error) {

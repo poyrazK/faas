@@ -69,6 +69,10 @@ def sync_detailed(
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Restore a database into a new managed PostgreSQL database
 
+     New requests read the pinned source identity and current provider recovery limits before
+    reservation. Necessary limits do not guarantee every timestamp is recoverable. Retries of an
+    existing matching restore receipt bypass new retention checks while admission remains enabled.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
@@ -105,6 +109,10 @@ def sync(
 ) -> ManagedPostgresDatabase | Problem | None:
     """Restore a database into a new managed PostgreSQL database
 
+     New requests read the pinned source identity and current provider recovery limits before
+    reservation. Necessary limits do not guarantee every timestamp is recoverable. Retries of an
+    existing matching restore receipt bypass new retention checks while admission remains enabled.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
@@ -135,6 +143,10 @@ async def asyncio_detailed(
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Restore a database into a new managed PostgreSQL database
+
+     New requests read the pinned source identity and current provider recovery limits before
+    reservation. Necessary limits do not guarantee every timestamp is recoverable. Retries of an
+    existing matching restore receipt bypass new retention checks while admission remains enabled.
 
     Args:
         id (str):
@@ -169,6 +181,10 @@ async def asyncio(
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedPostgresDatabase | Problem | None:
     """Restore a database into a new managed PostgreSQL database
+
+     New requests read the pinned source identity and current provider recovery limits before
+    reservation. Necessary limits do not guarantee every timestamp is recoverable. Retries of an
+    existing matching restore receipt bypass new retention checks while admission remains enabled.
 
     Args:
         id (str):

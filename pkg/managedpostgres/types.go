@@ -570,6 +570,7 @@ type Capabilities struct {
 	PointInTimeRestore bool
 	ClassResize        bool
 	ScaleToZeroUpdate  bool
+	RestorePreflight   bool
 	// RestoreUsageIsolated means a provider can meter a restored target
 	// independently of its source. It must not also be counted in the source
 	// resource's Usage response.
@@ -591,6 +592,9 @@ func (c Capabilities) Validate() error {
 		return ErrInvalid
 	}
 	if c.ScaleToZeroUpdate && !c.ScaleToZero {
+		return ErrInvalid
+	}
+	if c.RestorePreflight && !c.PointInTimeRestore {
 		return ErrInvalid
 	}
 	if c.ClassResize && len(c.ServiceClasses) < 2 {

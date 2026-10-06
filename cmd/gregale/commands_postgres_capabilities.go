@@ -38,6 +38,7 @@ func cmdPostgresCapabilities(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  pooled_connections:   %t\n", result.PooledConnections)
 	_, _ = fmt.Fprintf(osStdout, "  class_resize:         %t\n", result.ClassResize)
 	_, _ = fmt.Fprintf(osStdout, "  point_in_time_restore: %t\n", result.PointInTimeRestore)
+	_, _ = fmt.Fprintf(osStdout, "  restore_preflight:     %t\n", result.RestorePreflight)
 	_, _ = fmt.Fprintf(osStdout, "  storage_limit:        %s\n", formatPostgresStorage(result.StorageLimitBytes))
 	_, _ = fmt.Fprintf(osStdout, "  restore_window:       %s\n", formatPostgresDuration(result.RestoreWindowSeconds))
 	return 0

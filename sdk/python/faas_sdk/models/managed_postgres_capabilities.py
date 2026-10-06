@@ -42,6 +42,9 @@ class ManagedPostgresCapabilities:
     always_on: bool
     pooled_connections: bool
     point_in_time_restore: bool
+    restore_preflight: bool
+    """New restores validate current metadata for the exact pinned source before reservation. Necessary limits
+    alone do not certify retained history."""
     scale_to_zero_update: bool
     """Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires
     always_on plan entitlement; reservations require the pinned backend and admission."""
@@ -86,6 +89,8 @@ class ManagedPostgresCapabilities:
 
         point_in_time_restore = self.point_in_time_restore
 
+        restore_preflight = self.restore_preflight
+
         scale_to_zero_update = self.scale_to_zero_update
 
         class_resize = self.class_resize
@@ -110,6 +115,7 @@ class ManagedPostgresCapabilities:
                 "always_on": always_on,
                 "pooled_connections": pooled_connections,
                 "point_in_time_restore": point_in_time_restore,
+                "restore_preflight": restore_preflight,
                 "scale_to_zero_update": scale_to_zero_update,
                 "class_resize": class_resize,
                 "storage_limit_bytes": storage_limit_bytes,
@@ -163,6 +169,8 @@ class ManagedPostgresCapabilities:
 
         point_in_time_restore = d.pop("point_in_time_restore")
 
+        restore_preflight = d.pop("restore_preflight")
+
         scale_to_zero_update = d.pop("scale_to_zero_update")
 
         class_resize = d.pop("class_resize")
@@ -184,6 +192,7 @@ class ManagedPostgresCapabilities:
             always_on=always_on,
             pooled_connections=pooled_connections,
             point_in_time_restore=point_in_time_restore,
+            restore_preflight=restore_preflight,
             scale_to_zero_update=scale_to_zero_update,
             class_resize=class_resize,
             storage_limit_bytes=storage_limit_bytes,

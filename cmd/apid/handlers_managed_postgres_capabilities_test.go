@@ -22,7 +22,7 @@ func (capabilityOnlyProvider) Capabilities() managedpostgres.Capabilities {
 		PostgresMajors: []int{17, 16}, ServiceClasses: []managedpostgres.ServiceClass{managedpostgres.ClassProduction, managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable},
 		Availability:     []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
 		CredentialAccess: []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
-		ScaleToZero:      true, PooledConnections: true, PointInTimeRestore: true, RestoreUsageIsolated: true,
+		ScaleToZero:      true, PooledConnections: true, PointInTimeRestore: true, RestorePreflight: true, RestoreUsageIsolated: true,
 		MaxStorageBytes: 1 << 30, MaxRestoreWindowSeconds: 3600, UsageMeters: []managedpostgres.Meter{managedpostgres.MeterComputeUnitSeconds},
 	}
 }
@@ -61,7 +61,7 @@ func TestManagedPostgresCapabilitiesRoute(t *testing.T) {
 	limits, _ := api.ManagedPostgresLimitsFor(api.PlanHobby)
 	if out.ContractVersion != managedpostgres.CapabilityContractVersion || out.Region != "us-east-1" || !out.ProvisioningEnabled || out.DatabaseLimit != min(2, limits.DatabasesMax) ||
 		!slices.Equal(out.ServiceClasses, []string{"development"}) || !slices.Equal(out.PostgresMajors, []int{16, 17}) ||
-		!slices.Contains(out.CredentialAccess, "read_only") || out.StorageLimitBytes != 1<<30 || out.RestoreWindowSeconds != 3600 || out.AlwaysOn {
+		!slices.Contains(out.CredentialAccess, "read_only") || out.StorageLimitBytes != 1<<30 || out.RestoreWindowSeconds != 3600 || !out.RestorePreflight || !out.PointInTimeRestore || out.AlwaysOn {
 		t.Fatalf("effective capabilities=%+v", out)
 	}
 	for _, secret := range []string{"private-backend", "private-namespace", "private-secret", "fingerprint", "provider"} {

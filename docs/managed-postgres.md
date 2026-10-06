@@ -37,7 +37,7 @@ Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=4`,
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=7`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` must be a future RFC3339 timestamp,
 and the exact qualified backend ID and fingerprint must be supplied through
 `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` and
@@ -122,13 +122,13 @@ attempts cleanup after an intermediate failure and emits a JSON report with
 only stable check codes and restore evidence (without provider IDs). The
 command also emits a versioned `approval`
 envelope, an `approval_env` block when all rollout checks pass, and a
-machine-readable `readiness` result. Version 5 requires SQL permission probes,
+machine-readable `readiness` result. Version 7 requires SQL permission probes,
 data recovery, rejection of inherited source logins on the restore target,
 and read-only credential evidence when the adapter advertises that access mode.
 Reader qualification exercises existing and future object access, write/DDL
 denials with client read-only settings disabled, RLS, password recovery on retry,
 data-preserving rotation, and rejection of retired sessions and fresh logins.
-Versions 1–4 must be replaced by a new qualification run.
+Versions 1–6 must be replaced by a new qualification run.
 The approval is bound to the report digest, exact backend fingerprint, expiry,
 and the current canary allowlist. A provider-only run remains useful evidence
 but is not rollout-ready until the lifecycle smoke has passed.
@@ -991,8 +991,47 @@ are blocked. Published environment-clone targets and legacy databases without
 a recorded dataset identity are currently unsupported. No automatic rollback or
 zero-downtime promise is made.
 
-Version 5 qualification requires a live compute resize, unchanged dataset and
+Version 7 qualification requires a live compute resize, unchanged dataset and
 marker, reconnection with existing writer/reader credentials, stable request
 replay and restoration of the original class whenever resizing is advertised.
 Requalify Neon before reopening provisioning; prior approvals cannot prove this
 new capability. Local tests do not replace live Neon qualification.
+
+## Recovery limits and new restore preflight (ADR-625)
+
+```sh
+gregale postgres recovery DATABASE
+gregale postgres recovery DATABASE --json
+```
+
+The read-only recovery API (`GET /v1/postgres/databases/{id}/recovery`) observes
+current metadata on the database's pinned backend. It is available when new
+provisioning admission is closed. It does not connect to SQL or wake compute;
+ordinary database GET/list still use catalog data only.
+
+`limits_known` means the exact source identity and necessary retention/history
+limits were validated. Neon currently returns this status with
+`history_bounds_known: false`: its documented API does not establish the
+complete retained WAL interval. `earliest_possible_time` and
+`latest_possible_time` are necessary limits, not a guarantee that every point
+will restore. A provider can report `available` only with authoritative history
+bounds. Missing evidence is `unknown`; known disabled retention, missing source
+or unready source is `unavailable`; absent preflight support or immutable data
+identity is `unsupported`. Failed observations clear previous limits and emit
+only stable diagnostics.
+
+New restores, including internal PITR clone reservations, validate current
+provider retention, source identity and restored-source lineage before target
+reservation. The effective limit is the smaller catalog/provider retention.
+Missing/invalid evidence rejects the request without creating a target.
+Providers can still reject a timestamp within the possible range or lose its
+history after preflight. Existing matching restore receipts skip new metadata
+and expiry checks, preserving durable recovery while existing rollout admission
+remains in force. Retained snapshot forks have their own proof contract.
+
+Capability contract v4 exposes `restore_preflight` separately. Qualification v7
+requires this declaration to match the configured backend and connects the
+metadata probe to actual restored SQL data and credential isolation. Run a fresh
+live qualification before enabling Neon intents; versions 1–6 cannot authorize
+this release. Go, Node and Python SDKs expose `getManagedPostgresRecoveryStatus`
+(or their language equivalent). See [ADR-625](adr/625-managed-postgres-restore-preflight.md).

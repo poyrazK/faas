@@ -19,6 +19,10 @@ export type ManagedPostgresCapabilities = {
   pooled_connections: boolean;
   point_in_time_restore: boolean;
   /**
+   * New restores validate current metadata for the exact pinned source before reservation. Necessary limits alone do not certify retained history.
+   */
+  restore_preflight: boolean;
+  /**
    * Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires always_on plan entitlement; reservations require the pinned backend and admission.
    */
   scale_to_zero_update: boolean;

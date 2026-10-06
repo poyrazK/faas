@@ -1460,12 +1460,38 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/databases/{id}/recovery:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getManagedPostgresRecoveryStatus
+      summary: Read live managed PostgreSQL recovery limits
+      description: |
+        Requires PostgreSQL read scope and MFA for interactive sessions. Reads
+        metadata for the pinned source without connecting to SQL or waking
+        compute. limits_known reports necessary limits, not guaranteed recovery
+        of every timestamp. Missing or uncertain evidence is reported explicitly.
+        Available independently of new-provisioning admission.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Current recovery observation; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresRecoveryStatus' }
+        default:
+          description: Authentication, unknown database, or invalid request
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases/{id}/restore:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       operationId: restoreManagedPostgresDatabase
       summary: Restore a database into a new managed PostgreSQL database
+      description: New requests read the pinned source identity and current provider recovery limits before reservation. Necessary limits do not guarantee every timestamp is recoverable. Retries of an existing matching restore receipt bypass new retention checks while admission remains enabled.
       tags: [managed_postgres]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -34280,7 +34306,7 @@ components:
     ManagedPostgresCapabilities:
       description: Versioned PostgreSQL support for the default backend in a region, intersected with customer plan limits. Provider identities, costs, endpoints and credentials are excluded. Capabilities remain visible while the rollout gate is closed.
       type: object
-      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, scale_to_zero_update, storage_limit_bytes, restore_window_seconds]
+      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, restore_preflight, class_resize, scale_to_zero_update, storage_limit_bytes, restore_window_seconds]
       properties:
         contract_version: { type: integer, minimum: 1 }
         region: { type: string }
@@ -34294,10 +34320,25 @@ components:
         always_on: { type: boolean }
         pooled_connections: { type: boolean }
         point_in_time_restore: { type: boolean }
+        restore_preflight: { type: boolean, description: "New restores validate current metadata for the exact pinned source before reservation. Necessary limits alone do not certify retained history." }
         scale_to_zero_update: { type: boolean, description: "Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires always_on plan entitlement; reservations require the pinned backend and admission." }
         class_resize: { type: boolean, description: "Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresRecoveryStatus:
+      description: Live metadata recovery observation. limits_known establishes necessary limits only; available additionally requires authoritative provider history bounds. Neither is an atomic guarantee of a later restore. Private provider identifiers and credentials are excluded.
+      type: object
+      required: [database_id, status, fresh, history_bounds_known, retention_seconds]
+      properties:
+        database_id: { type: string }
+        status: { type: string, enum: [limits_known, available, unavailable, unknown, unsupported] }
+        fresh: { type: boolean, description: "True only when current source metadata was successfully validated." }
+        history_bounds_known: { type: boolean, description: "True only when the provider supplies authoritative retained history bounds. Neon currently supplies necessary limits only." }
+        retention_seconds: { type: integer, format: int64, minimum: 0, description: "Effective observed retention intersected with catalog limits; zero when unconfirmed or disabled." }
+        checked_at: { type: string, format: date-time, description: "Completion time of the latest provider observation attempt." }
+        earliest_possible_time: { type: string, format: date-time, description: "Necessary lower limit; does not by itself prove retained WAL begins here." }
+        latest_possible_time: { type: string, format: date-time, description: "Necessary upper limit; new restore points must also precede checked_at." }
+        last_error_code: { type: string, description: "Stable non-sensitive diagnostic; no provider response text." }
     ChangeManagedPostgresComputePolicyRequest:
       description: Canonical UUID request for a scale-to-zero change on an existing managed PostgreSQL database.
       type: object

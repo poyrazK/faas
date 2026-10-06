@@ -169,6 +169,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		ScaleToZero:                  true,
 		PooledConnections:            true,
 		PointInTimeRestore:           p.maxRestoreWindow > 0,
+		RestorePreflight:             p.maxRestoreWindow > 0,
 		RestoreUsageIncludedInSource: p.maxRestoreWindow > 0,
 		MaxRestoreWindowSeconds:      p.maxRestoreWindow,
 		MaxStorageBytes:              p.maxStorageBytes,

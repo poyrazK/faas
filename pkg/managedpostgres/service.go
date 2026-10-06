@@ -290,6 +290,17 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if err != nil {
 		return Database{}, false, err
 	}
+	// A frozen clone spec must not widen today's catalog retention, including
+	// time spent reading provider metadata before reservation.
+	recoverySource := source
+	recoverySource.Spec.RestoreWindowSeconds = min(currentRestoreWindow, source.Spec.RestoreWindowSeconds)
+	recovery, err := s.observeRecovery(ctx, recoverySource)
+	if err != nil {
+		return Database{}, false, err
+	}
+	if err := recovery.admits(request.PointInTime); err != nil {
+		return Database{}, false, err
+	}
 	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
 		AccountID:               request.AccountID,
@@ -327,8 +338,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 // AdmitRestoreReservation validates operator rollout, account admission,
 // provider capabilities and entitlements without provider IO. Internal clone
 // writers must separately authenticate their capture and atomically reserve
-// the target with its owner and live source lineage. This grants no access to
-// an existing private database.
+// the target with its owner and live source lineage. New PITR writers also call
+// PreflightRestore; retained snapshot forks use their separate snapshot proof.
+// This grants no access to an existing private database.
 func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string, definition RestoreSourceDefinition) (int, error) {
 	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
 		return 0, ErrUnavailable

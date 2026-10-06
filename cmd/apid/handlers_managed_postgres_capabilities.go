@@ -67,12 +67,13 @@ func managedPostgresCapabilitiesView(d managedpostgres.CapabilityDiscovery, limi
 	if c.MaxStorageBytes > 0 {
 		out.StorageLimitBytes = min(out.StorageLimitBytes, c.MaxStorageBytes)
 	}
-	if c.PointInTimeRestore {
+	if c.PointInTimeRestore && c.RestorePreflight {
 		out.RestoreWindowSeconds = limits.RestoreWindowSeconds
 		if c.MaxRestoreWindowSeconds > 0 {
 			out.RestoreWindowSeconds = min(out.RestoreWindowSeconds, c.MaxRestoreWindowSeconds)
 		}
 	}
 	out.PointInTimeRestore = out.RestoreWindowSeconds > 0
+	out.RestorePreflight = c.RestorePreflight && out.PointInTimeRestore
 	return out
 }

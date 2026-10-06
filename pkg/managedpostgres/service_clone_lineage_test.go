@@ -134,14 +134,17 @@ func TestCloneRestoreRequiresProviderLineageBeforeAdoptionAndReadiness(t *testin
 	}
 }
 
-type storeWithoutCloneRestoreProofs struct{ Store }
+type storeWithoutCloneRestoreProofs struct {
+	Store
+	DataResourceProvisionStore
+}
 
 func TestCloneRestoreRejectsStoreWithoutAtomicReceiptCapability(t *testing.T) {
 	for _, status := range []State{StateProvisioning, StateReady} {
 		t.Run(string(status), func(t *testing.T) {
 			provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
 			store := NewMemoryStore()
-			service := testService(t, testRegistry(t, provider, nil), storeWithoutCloneRestoreProofs{Store: store})
+			service := testService(t, testRegistry(t, provider, nil), storeWithoutCloneRestoreProofs{Store: store, DataResourceProvisionStore: store})
 			source, err := service.Create(t.Context(), CreateRequest{AccountID: "account-a", Name: "source", Spec: testSpec()})
 			if err != nil {
 				t.Fatal(err)
