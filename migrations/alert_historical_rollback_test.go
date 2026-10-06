@@ -15,6 +15,7 @@ func TestAlertHistoricalRollbackMigrationRoundTrip(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	defer pool.Close()
 	ctx := t.Context()
+	migrateUpOnce(ctx, t, pool)
 	account := seedAccount(t, ctx, pool)
 	app := seedApp(t, ctx, pool, account)
 	prior, candidate := uuid.NewString(), uuid.NewString()

@@ -15,6 +15,7 @@ func TestBindingReleasePolicyMigrationRoundTrip(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	defer pool.Close()
 	ctx := context.Background()
+	migrateUpOnce(ctx, t, pool)
 	account := seedAccount(t, ctx, pool)
 	app := seedApp(t, ctx, pool, account)
 	_, err := pool.Exec(ctx, `INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds) VALUES($1,'production','enforce',1,600)`, app)
