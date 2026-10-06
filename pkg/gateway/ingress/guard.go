@@ -25,11 +25,12 @@ type Dialer interface {
 type Authorize func(context.Context, Identity) error
 
 type Guard struct {
-	dialer    Dialer
-	token     string
-	authorize Authorize
-	h1        *http.Transport
-	h2        *http2.Transport
+	dialer     Dialer
+	token      string
+	authorize  Authorize
+	admissions AdmissionBegin
+	h1         *http.Transport
+	h2         *http2.Transport
 }
 
 func New(dialer Dialer, transport http.RoundTripper, token string, authorize Authorize) (*Guard, error) {
@@ -112,6 +113,16 @@ func (g *Guard) probeConnection(ctx context.Context, target string) (net.Conn, c
 // DialContext protects the raw HTTP/1 upgrade path. The proof and upgraded
 // request use this SAME connection; no second lookup/dial can change peers.
 func (g *Guard) DialContext(ctx context.Context, target string) (net.Conn, error) {
+	authorize, done, err := g.beginAdmission()
+	if err != nil {
+		return nil, err
+	}
+	retained := false
+	defer func() {
+		if !retained {
+			done()
+		}
+	}()
 	conn, probeCtx, finish, err := g.probeConnection(ctx, target)
 	if err != nil {
 		return nil, err
@@ -137,14 +148,36 @@ func (g *Guard) DialContext(ctx context.Context, target string) (net.Conn, error
 	if err != nil || reader.Buffered() != 0 {
 		return nil, ErrUnverified
 	}
-	if err := g.authorize(probeCtx, identity); err != nil {
+	if err := authorize(probeCtx, identity); err != nil {
 		return nil, fmt.Errorf("%w: membership: %w", ErrUnverified, err)
 	}
 	if err := finish(); err != nil {
 		return nil, err
 	}
 	ok = true
-	return conn, nil
+	retained = true
+	if g.admissions == nil {
+		return conn, nil
+	}
+	return retainAdmissionConnection(conn, done), nil
+}
+
+type admissionConnection struct {
+	net.Conn
+	once sync.Once
+	done func()
+	err  error
+}
+
+func retainAdmissionConnection(conn net.Conn, done func()) net.Conn {
+	// Dial contexts are routinely cancelled immediately after dialing. The
+	// HTTP/upgrade caller owns cancellation of the established connection.
+	return &admissionConnection{Conn: conn, done: done}
+}
+
+func (c *admissionConnection) Close() error {
+	c.once.Do(func() { c.err = c.Conn.Close(); c.done() })
+	return c.err
 }
 
 // singleConnectionDialer prevents the transport from retrying the actual

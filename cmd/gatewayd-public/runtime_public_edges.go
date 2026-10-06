@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/gatewayconfirmation"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -33,6 +34,9 @@ type runtimePublicEdgeConfig struct {
 
 func publicEdgeConfig(mode internalUpstreamMode, h2c bool, listen string, trusted []netip.Prefix, getenv func(string) string) runtimePublicEdgeConfig {
 	c := runtimePublicEdgeConfig{Protocol: "adr612/guard-v1", ListenAddress: listen, NodeName: strings.TrimSpace(getenv("FAAS_NODE_NAME")), H2C: h2c, TrustedIngressCIDRs: make([]string, 0, len(trusted))}
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") == "1" {
+		c.Protocol = "adr614/generation-v1"
+	}
 	switch mode {
 	case internalUpstreamDatabase:
 		c.UpstreamMode, c.UpstreamTarget = "database", "compute_gateway_pool"
@@ -57,13 +61,18 @@ func publicEdgeConfig(mode internalUpstreamMode, h2c bool, listen string, truste
 }
 
 type runtimePublicEdgeObserver struct {
-	member state.RuntimeUpgradePublicEdgeMember
-	store  state.RuntimeUpgradePublicEdgeGuardStore
-	log    *slog.Logger
+	member        state.RuntimeUpgradePublicEdgeMember
+	store         state.RuntimeUpgradePublicEdgeGuardStore
+	log           *slog.Logger
+	activity      *ingress.ActivityTracker
+	activityStore state.RuntimeUpgradePublicEdgeActivityStore
 }
 
 func prepareRuntimePublicEdgeObserver(proxy *gateway.InternalReverseProxy, store state.RuntimeUpgradePublicEdgeGuardStore, config runtimePublicEdgeConfig, getenv func(string) string, log *slog.Logger) (*runtimePublicEdgeObserver, error) {
 	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_CONFIRMATION") != "1" {
+		if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") == "1" {
+			return nil, fmt.Errorf("public ingress activity requires public edge confirmation")
+		}
 		return nil, nil
 	}
 	dialer, dialOK := proxy.Dialer.(runtimeIngressProxy)
@@ -75,14 +84,69 @@ func prepareRuntimePublicEdgeObserver(proxy *gateway.InternalReverseProxy, store
 	if err := gatewayconfirmation.ValidateIdentity(slot, session); err != nil {
 		return nil, err
 	}
+	// Bind the fingerprint to the mode actually installed below, even if a
+	// private caller supplied an incomplete startup configuration descriptor.
+	config.Protocol = "adr612/guard-v1"
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") == "1" {
+		config.Protocol = "adr614/generation-v1"
+	}
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		return nil, fmt.Errorf("encode public edge startup config: %w", err)
 	}
 	digest := sha256.Sum256(encoded)
 	member := state.RuntimeUpgradePublicEdgeMember{SlotID: slot, SessionID: session, ConfigSHA256: hex.EncodeToString(digest[:])}
+	o := &runtimePublicEdgeObserver{member: member, store: store, log: log}
+	if err := o.configureActivity(proxy, getenv); err != nil {
+		return nil, err
+	}
 	log.Info("private public edge guard awaits inventory review", "public_edge_slot_id", slot, "public_edge_session_id", session, "config_sha256", member.ConfigSHA256)
-	return &runtimePublicEdgeObserver{member: member, store: store, log: log}, nil
+	return o, nil
+}
+
+func (o *runtimePublicEdgeObserver) configureActivity(proxy *gateway.InternalReverseProxy, getenv func(string) string) error {
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") != "1" {
+		return nil
+	}
+	store, ok := o.store.(state.RuntimeUpgradePublicEdgeActivityStore)
+	if !ok {
+		return fmt.Errorf("public ingress activity requires PostgreSQL generation store")
+	}
+	o.activity, o.activityStore = ingress.NewActivityTracker(), store
+	guard := proxy.Dialer.(runtimeIngressProxy).Guard
+	tracked, err := guard.WithAdmissions(func() (ingress.Authorize, func(), error) {
+		a, err := o.activity.Begin()
+		if err != nil {
+			return nil, nil, err
+		}
+		authorize := func(ctx context.Context, identity ingress.Identity) error {
+			b, err := store.AuthorizeRuntimeUpgradePublicEdgeIngress(ctx, o.member, identity.SlotID, identity.SessionID)
+			if err != nil {
+				return err
+			}
+			if b.SlotID != identity.SlotID || b.SessionID != identity.SessionID || b.GatewayRevision != b.GatewayRosterRevision || b.ValidForSeconds < 1 || b.ValidForSeconds > int(api.RuntimeUpgradeGatewayHeartbeatMaxAge/time.Second) {
+				return state.ErrConflict
+			}
+			return a.Bind(ingress.Generation{PublicRevision: b.PublicRevision, GatewayRevision: b.GatewayRevision})
+		}
+		return authorize, a.Finish, nil
+	})
+	if err != nil {
+		return err
+	}
+	protected := runtimeIngressProxy{tracked}
+	proxy.Dialer, proxy.Transport = protected, protected
+	return nil
+}
+
+func (o *runtimePublicEdgeObserver) recordActivity(ctx context.Context) error {
+	if o.activity == nil {
+		return nil
+	}
+	return o.activityStore.RecordRuntimeUpgradePublicEdgeActivity(ctx, o.member, func(g state.RuntimeUpgradeIngressGeneration) state.RuntimeUpgradePublicEdgeActivity {
+		a := o.activity.Snapshot(ingress.Generation{PublicRevision: g.PublicRevision, GatewayRevision: g.GatewayRevision})
+		return state.RuntimeUpgradePublicEdgeActivity{Version: a.Version, Known: a.Known, Pending: a.Pending, Current: a.Current, Previous: a.Previous}
+	})
 }
 
 // Attach starts facts only when Serve has acquired the real listener. Stop on
@@ -103,6 +167,9 @@ func (o *runtimePublicEdgeObserver) run(ctx context.Context) {
 	for ctx.Err() == nil {
 		poll, cancel := context.WithTimeout(ctx, api.RuntimeUpgradeGatewayRepairTimeout)
 		err := o.store.RecordRuntimeUpgradePublicEdgeGuard(poll, o.member)
+		if err == nil {
+			err = o.recordActivity(poll)
+		}
 		cancel()
 		if err != nil && ctx.Err() == nil {
 			o.log.Warn("private public edge guard pending review or retry")

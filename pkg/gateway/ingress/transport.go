@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -38,6 +39,16 @@ func (g *Guard) RoundTrip(r *http.Request) (*http.Response, error) {
 			_ = r.Body.Close()
 		}
 	}()
+	authorize, done, err := g.beginAdmission()
+	if err != nil {
+		return nil, err
+	}
+	retained := false
+	defer func() {
+		if !retained {
+			done()
+		}
+	}()
 	if r.URL == nil || r.URL.Scheme != "http" || r.URL.Host == "" || r.URL.User != nil {
 		return nil, ErrUnverified
 	}
@@ -67,7 +78,7 @@ func (g *Guard) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := g.authorize(probeCtx, identity); err != nil {
+	if err := authorize(probeCtx, identity); err != nil {
 		return nil, fmt.Errorf("%w: membership: %w", ErrUnverified, err)
 	}
 	if err := finish(); err != nil {
@@ -81,8 +92,16 @@ func (g *Guard) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp.Body = &connectionBody{ReadCloser: resp.Body, closeConnection: closeConnection}
+	if g.admissions != nil {
+		var once sync.Once
+		release := func() { once.Do(func() { closeConnection(); done() }) }
+		stop := context.AfterFunc(r.Context(), release)
+		resp.Body = &connectionBody{ReadCloser: resp.Body, closeConnection: func() { stop(); release() }}
+	} else {
+		resp.Body = &connectionBody{ReadCloser: resp.Body, closeConnection: closeConnection}
+	}
 	ok = true
+	retained = true
 	return resp, nil
 }
 

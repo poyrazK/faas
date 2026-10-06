@@ -82,6 +82,9 @@ func (s *PgStore) ReviewRuntimeUpgradePublicEdgeRoster(ctx context.Context, expe
 	if err := q.ResetRuntimeUpgradePublicEdgeGuards(ctx, tx); err != nil {
 		return RuntimeUpgradePublicEdgeRoster{}, fmt.Errorf("reset public guard observations: %w", err)
 	}
+	if err := q.ResetRuntimeUpgradePublicEdgeActivity(ctx, tx); err != nil {
+		return RuntimeUpgradePublicEdgeRoster{}, fmt.Errorf("reset public ingress activity: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return RuntimeUpgradePublicEdgeRoster{}, fmt.Errorf("commit public edge review: %w", err)
 	}

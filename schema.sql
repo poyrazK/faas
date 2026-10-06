@@ -5462,6 +5462,26 @@ END $$;
 
 
 --
+-- Name: guard_runtime_upgrade_public_edge_activity_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_activity_version() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.public_session_id=NEW.public_session_id AND OLD.public_roster_revision=NEW.public_roster_revision AND (
+  NEW.activity_version < OLD.activity_version
+  OR (NOT OLD.coverage_known AND NEW.coverage_known)
+  OR (NEW.activity_version=OLD.activity_version AND
+   (NEW.coverage_known,NEW.pending_forwards,NEW.current_forwards,NEW.previous_forwards)
+   IS DISTINCT FROM (OLD.coverage_known,OLD.pending_forwards,OLD.current_forwards,OLD.previous_forwards))) THEN
+  RAISE EXCEPTION 'public ingress activity cannot rewind or restore unknown coverage' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_runtime_upgrade_public_edge_fact(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19427,6 +19447,37 @@ CREATE TABLE public.runtime_upgrade_operations (
 
 
 --
+-- Name: runtime_upgrade_public_edge_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_activity (
+    slot_id uuid NOT NULL,
+    public_session_id uuid NOT NULL,
+    public_roster_revision uuid NOT NULL,
+    config_sha256 text NOT NULL,
+    guard_enabled boolean NOT NULL,
+    activity_version bigint NOT NULL,
+    coverage_known boolean NOT NULL,
+    pending_forwards integer NOT NULL,
+    current_forwards integer NOT NULL,
+    previous_forwards integer NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_activity_activity_version_check CHECK ((activity_version > 0)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_check CHECK ((isfinite(expires_at) AND (expires_at = (observed_at + '00:01:00'::interval)))),
+    CONSTRAINT runtime_upgrade_public_edge_activity_check1 CHECK ((((pending_forwards + current_forwards) + previous_forwards) <= 65536)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_config_sha256_check CHECK ((config_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_current_forwards_check CHECK (((current_forwards >= 0) AND (current_forwards <= 65536))),
+    CONSTRAINT runtime_upgrade_public_edge_activity_guard_enabled_check CHECK (guard_enabled),
+    CONSTRAINT runtime_upgrade_public_edge_activity_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_pending_forwards_check CHECK (((pending_forwards >= 0) AND (pending_forwards <= 65536))),
+    CONSTRAINT runtime_upgrade_public_edge_activity_previous_forwards_check CHECK (((previous_forwards >= 0) AND (previous_forwards <= 65536))),
+    CONSTRAINT runtime_upgrade_public_edge_activity_public_session_id_check CHECK ((public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: runtime_upgrade_public_edge_guards; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25261,6 +25312,14 @@ ALTER TABLE ONLY public.runtime_upgrade_operations
 
 ALTER TABLE ONLY public.runtime_upgrade_operations
     ADD CONSTRAINT runtime_upgrade_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_activity runtime_upgrade_public_edge_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_activity
+    ADD CONSTRAINT runtime_upgrade_public_edge_activity_pkey PRIMARY KEY (slot_id);
 
 
 --
@@ -33685,6 +33744,20 @@ CREATE TRIGGER runtime_upgrade_pin_traffic_fence BEFORE INSERT ON public.deploym
 
 
 --
+-- Name: runtime_upgrade_public_edge_activity runtime_upgrade_public_edge_activity_membership_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_activity_membership_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_public_edge_activity FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_fact();
+
+
+--
+-- Name: runtime_upgrade_public_edge_activity runtime_upgrade_public_edge_activity_version_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_activity_version_guard BEFORE UPDATE ON public.runtime_upgrade_public_edge_activity FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_activity_version();
+
+
+--
 -- Name: runtime_upgrade_public_edge_guards runtime_upgrade_public_edge_fact_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -40061,6 +40134,14 @@ ALTER TABLE ONLY public.runtime_upgrade_operations
 
 ALTER TABLE ONLY public.runtime_upgrade_operations
     ADD CONSTRAINT runtime_upgrade_operations_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_activity runtime_upgrade_public_edge_activit_public_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_activity
+    ADD CONSTRAINT runtime_upgrade_public_edge_activit_public_roster_revision_fkey FOREIGN KEY (public_roster_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
 
 
 --

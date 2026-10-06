@@ -6062,6 +6062,21 @@ type RuntimeUpgradeOperation struct {
 	SourcePath                string
 }
 
+type RuntimeUpgradePublicEdgeActivity struct {
+	SlotID               pgtype.UUID
+	PublicSessionID      pgtype.UUID
+	PublicRosterRevision pgtype.UUID
+	ConfigSha256         string
+	GuardEnabled         bool
+	ActivityVersion      int64
+	CoverageKnown        bool
+	PendingForwards      int32
+	CurrentForwards      int32
+	PreviousForwards     int32
+	ObservedAt           pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+}
+
 type RuntimeUpgradePublicEdgeGuard struct {
 	SlotID               pgtype.UUID
 	PublicSessionID      pgtype.UUID

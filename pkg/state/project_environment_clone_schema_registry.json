@@ -6842,6 +6842,24 @@
     "kind": "operational"
   },
   {
+    "table": "runtime_upgrade_public_edge_activity",
+    "columns": [
+      "activity_version",
+      "config_sha256",
+      "coverage_known",
+      "current_forwards",
+      "expires_at",
+      "guard_enabled",
+      "observed_at",
+      "pending_forwards",
+      "previous_forwards",
+      "public_roster_revision",
+      "public_session_id",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "runtime_upgrade_public_edge_guards",
     "columns": [
       "config_sha256",

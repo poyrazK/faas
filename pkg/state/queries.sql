@@ -14361,3 +14361,21 @@ ON CONFLICT (slot_id) DO UPDATE SET public_session_id=EXCLUDED.public_session_id
 
 -- name: ReadRuntimeUpgradePublicEdgeGuards :many
 SELECT * FROM runtime_upgrade_public_edge_guards WHERE public_roster_revision=$1 ORDER BY slot_id LIMIT $2;
+
+-- name: ResetRuntimeUpgradePublicEdgeActivity :exec
+DELETE FROM runtime_upgrade_public_edge_activity;
+
+-- name: LockRuntimeUpgradePublicEdgeActivityTable :exec
+LOCK TABLE runtime_upgrade_public_edge_activity IN ROW EXCLUSIVE MODE;
+
+-- name: LockRuntimeUpgradePublicEdgeActivityRow :many
+SELECT slot_id FROM runtime_upgrade_public_edge_activity WHERE slot_id=$1 FOR UPDATE;
+
+-- name: RecordRuntimeUpgradePublicEdgeActivity :execrows
+WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+INSERT INTO runtime_upgrade_public_edge_activity(slot_id,public_session_id,public_roster_revision,config_sha256,guard_enabled,activity_version,coverage_known,pending_forwards,current_forwards,previous_forwards,observed_at,expires_at)
+SELECT sqlc.arg(slot_id)::uuid,sqlc.arg(public_session_id)::uuid,sqlc.arg(public_roster_revision)::uuid,sqlc.arg(config_sha256)::text,true,sqlc.arg(activity_version)::bigint,sqlc.arg(coverage_known)::boolean,sqlc.arg(pending_forwards)::int,sqlc.arg(current_forwards)::int,sqlc.arg(previous_forwards)::int,o.observed_at,o.observed_at+make_interval(secs=>sqlc.arg(lease_seconds)::int) FROM observation o
+ON CONFLICT (slot_id) DO UPDATE SET public_session_id=EXCLUDED.public_session_id,public_roster_revision=EXCLUDED.public_roster_revision,config_sha256=EXCLUDED.config_sha256,guard_enabled=EXCLUDED.guard_enabled,activity_version=EXCLUDED.activity_version,coverage_known=EXCLUDED.coverage_known,pending_forwards=EXCLUDED.pending_forwards,current_forwards=EXCLUDED.current_forwards,previous_forwards=EXCLUDED.previous_forwards,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at;
+
+-- name: ReadRuntimeUpgradePublicEdgeActivity :many
+SELECT * FROM runtime_upgrade_public_edge_activity WHERE public_roster_revision=$1 ORDER BY slot_id LIMIT $2;
