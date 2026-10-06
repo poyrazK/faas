@@ -31,6 +31,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -261,25 +262,28 @@ func runBundleCreate(args []string) error {
 	// disk is exactly the one built. The control plane verifies the installed
 	// bundle again before anything in it runs, and deployctl deploy verifies
 	// it before activation.
-	written, err := releasebundle.Read(args[0])
-	if err != nil {
+	if err := confirmWrittenManifest(args[0], manifest); err != nil {
 		return err
-	}
-	if err := releasebundle.ValidateManifest(written); err != nil {
-		return err
-	}
-	want, err := json.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-	got, err := json.Marshal(written)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(want, got) {
-		return fmt.Errorf("written release manifest does not match the built manifest")
 	}
 	fmt.Printf("release bundle %s created (%d files)\n", manifest.ReleaseID, len(manifest.Files))
+	return nil
+}
+
+// confirmWrittenManifest proves the manifest on disk under root decodes,
+// validates, and is exactly built.
+func confirmWrittenManifest(root string, built releasebundle.Manifest) error {
+	written, err := releasebundle.Read(root)
+	if err != nil {
+		return err
+	}
+	want, wantErr := json.Marshal(built)
+	got, gotErr := json.Marshal(written)
+	if err := errors.Join(wantErr, gotErr); err != nil {
+		return fmt.Errorf("encode release manifest: %w", err)
+	}
+	if !bytes.Equal(want, got) {
+		return errors.New("written release manifest does not match the built manifest")
+	}
 	return nil
 }
 
