@@ -14,6 +14,8 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -21,15 +23,26 @@ import (
 // launch journal, this claim survives reboot. It never grants launch, lease,
 // permission-transition, output publication or capture authority.
 type nativeDiskImageClaim struct {
-	Version   int                     `json:"version"`
-	Directory nativeLoopIdentity      `json:"directory"`
-	JailBase  string                  `json:"jail_base"`
-	Anchor    string                  `json:"anchor"`
-	Source    nativeImageSourceRecord `json:"source"`
+	Version   int                         `json:"version"`
+	Directory nativeLoopIdentity          `json:"directory"`
+	JailBase  string                      `json:"jail_base"`
+	Anchor    string                      `json:"anchor"`
+	Source    nativeImageSourceRecord     `json:"source"`
+	Backing   *nativeSnapshotBackingImage `json:"backing,omitempty"`
 }
 
 func (c *nativeDiskImageClaim) UnmarshalJSON(data []byte) error {
-	fields, err := nativeJournalObjectFields(data, []string{"version", "directory", "jail_base", "anchor", "source"})
+	var profile struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &profile); err != nil {
+		return err
+	}
+	names := []string{"version", "directory", "jail_base", "anchor", "source"}
+	if profile.Version == 2 {
+		names = append(names, "backing")
+	}
+	fields, err := nativeJournalObjectFields(data, names)
 	if err != nil {
 		return err
 	}
@@ -109,16 +122,24 @@ func validateNativeDiskImageClaimRoot(root string, claim nativeDiskImageClaim) e
 	if err := r.validate(r.KernelBoot); err != nil {
 		return err
 	}
-	if claim.Version != 1 || !canonicalNativeHelperID(r.KernelBoot) || identity != claim.Directory || identity.Device != r.Identity.Device || !filepath.IsAbs(claim.JailBase) || filepath.Clean(claim.JailBase) != claim.JailBase || claim.JailBase == "/" || claim.Anchor != filepath.Join(claim.JailBase, ".native-processes", "image-sources", "points", r.Epoch) || len(r.References) != 1 || r.Ready || r.Removed || r.Placeholder != (nativeLoopIdentity{}) || r.MountID != 0 {
+	if claim.Version != 1 && claim.Version != 2 || claim.Version == 1 && claim.Backing != nil || !canonicalNativeHelperID(r.KernelBoot) || identity != claim.Directory || identity.Device != r.Identity.Device || !filepath.IsAbs(claim.JailBase) || filepath.Clean(claim.JailBase) != claim.JailBase || claim.JailBase == "/" || claim.Anchor != filepath.Join(claim.JailBase, ".native-processes", "image-sources", "points", r.Epoch) || len(r.References) != 1 || r.Ready || r.Removed || r.Placeholder != (nativeLoopIdentity{}) || r.MountID != 0 {
 		return errors.New("native disk staging: persistent claim identity or initial intent changed")
 	}
 	ref := r.References[0]
 	if ref.Link || ref.Ready || ref.Removed || ref.TargetRemoved || ref.Target != (nativeLoopIdentity{}) || ref.MountID != 0 || filepath.Dir(filepath.Dir(filepath.Dir(ref.Root))) != claim.JailBase || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(ref.Root))), "firecracker") {
 		return errors.New("native disk staging: claim does not own one original anonymous private source")
 	}
-	// Read-only anonymous staging is restricted to receipt input clones. It
-	// must remain exclusive: no sharing, hardlink grant or arbitrary name.
-	if ref.ReadOnly && (ref.Name != memSnapshotName && ref.Name != vmstateSnapshotName || ref.AddPerms != 0o044 || r.Original.Mode != 0o600 || r.Original.UID != uint32(os.Geteuid())) {
+	backing := false
+	if claim.Version == 2 {
+		image := claim.Backing
+		if image == nil || image.validate() != nil || !ref.ReadOnly || image.Name != ref.Name || image.Epoch == r.Epoch || image.ReferenceID == ref.ID || image.Identity == r.Identity {
+			return errors.New("native disk staging: backing clone lost its distinct captured image evidence")
+		}
+		backing = true
+	}
+	// v1 retains its fixed receipt-input names. v2 permits only an explicitly
+	// verified captured backing name; both profiles remain exclusive clones.
+	if ref.ReadOnly && (!backing && ref.Name != memSnapshotName && ref.Name != vmstateSnapshotName || ref.AddPerms != 0o044 || r.Original.Mode != 0o600 || r.Original.UID != uint32(os.Geteuid())) {
 		return errors.New("native disk staging: read-only claim is not one private snapshot input clone")
 	}
 	return nil
@@ -134,7 +155,7 @@ func readNativeDiskImageClaim(root, epoch string) (claim nativeDiskImageClaim, e
 		return claim, err
 	}
 	var stat unix.Stat_t
-	if err := unix.Fstat(int(file.Fd()), &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o077 != 0 || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 || stat.Size <= 0 || stat.Size > 2<<20 {
+	if err := unix.Fstat(int(file.Fd()), &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o077 != 0 || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 || stat.Size <= 0 || stat.Size > api.NativeSnapshotPublicationRecordMaxBytes {
 		return claim, errors.Join(err, file.Close(), errors.New("native disk staging: claim must be one bounded private regular file"))
 	}
 	decoder := json.NewDecoder(file)
@@ -173,6 +194,10 @@ func (p *linuxNativeImagePreparation) OwnAnonymousSource(record nativeImageSourc
 	// its references, rather than sharing that mutable backing array.
 	record.References = append([]nativeImageReference(nil), record.References...)
 	claim := nativeDiskImageClaim{Version: 1, Directory: identity, JailBase: filepath.Dir(filepath.Dir(filepath.Dir(p.root.Name()))), Anchor: point, Source: record}
+	if p.restoreBacking != nil {
+		image := *p.restoreBacking
+		claim.Version, claim.Backing = 2, &image
+	}
 	if err := validateNativeDiskImageClaimRoot(p.diskRoot, claim); err != nil {
 		return err
 	}

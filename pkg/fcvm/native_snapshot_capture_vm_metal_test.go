@@ -250,6 +250,7 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	if err != nil {
 		t.Fatal("original capture completion missing:", err)
 	}
+	nativeMetalCaptureVMRestoreBackings(t, ctx, v, incoming, completed, [2]string{kernel, base}, disk)
 	err = withNativeSnapshotRestoreInputs(ctx, r.publications.(nativeSnapshotRestoreReceiptJournal), canonical, completed, images, func(inputs nativeSnapshotRestoreInputs) (result error) {
 		// Only this disposable acceptance fixture names the verified copies.
 		// Production inputs stay anonymous and need native staging ownership.
@@ -300,6 +301,105 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 		t.Fatal("VM acceptance opened production native qualification capture")
 	}
 	t.Logf("actual native capture: memory=%d device-state=%d allocated-total=%d; original resumed, retired and receipt-verified cohort restored", info.MemBytes, info.VMStateBytes, info.StoredBytes)
+}
+
+// The actual producer has retired. This separate native target verifies and
+// stages the original kernel/base names under its own image epochs, then
+// proves its own cleanup. It does not load or grant guest/graph readiness.
+func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, v *JailerVMM, incoming nativeQualificationRecord, completed nativeQualificationCaptureRecord, paths [2]string, disk string) {
+	t.Helper()
+	r := v.nativeRecovery
+	q := r.journal.qualifications(incoming.Execution.NodeID)
+	backings, err := q.readBackings(completed)
+	if err != nil {
+		t.Fatal("real capture backing evidence:", err)
+	}
+	frame := incoming.Execution
+	frame.InstanceID, frame.WakeID, frame.CleanupToken, frame.CaptureInstanceID = uuid.NewString(), uuid.NewString(), uuid.NewString(), frame.InstanceID
+	target, err := q.restores().claim(ctx, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = nativeQualificationRestoreContext(ctx, target)
+	lease := leaseForSlot(frame.InstanceID, MaxSlots-2)
+	lease.Plan, lease.MemoryMaxMiB, lease.CPUMillicores = api.PlanHobby, api.BillableRAMMB(frame.RAMMB), 1000
+	if err := q.owner.prepare(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := q.owner.read(frame.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.remember(owner)
+	retire := func(cleanup context.Context) error {
+		_, err := q.restores().revoke(cleanup, frame)
+		if err == nil {
+			err = v.Kill(cleanup, lease)
+		}
+		if err == nil {
+			var physical nativeLaunchRecord
+			physical, err = q.owner.read(frame.InstanceID)
+			if err == nil {
+				err = q.owner.confirmResourcesRemoved(cleanup, physical)
+			}
+		}
+		return err
+	}
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer stop()
+		if err := retire(cleanup); err != nil {
+			t.Error("native restore backing target retains original ownership:", err)
+		}
+	})
+	root, err := v.mkChrootForOwner(ctx, owner, frame.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A content candidate's current basename must not choose the captured drive path.
+	alias := filepath.Join(disk, "candidate-base-any-name.ext4")
+	if err := os.Link(paths[1], alias); err != nil {
+		t.Fatal(err)
+	}
+	paths[1] = alias
+	if err := v.stageNativeQualificationRestoreBackings(ctx, owner, paths); err != nil {
+		t.Fatal("real backing staging:", err)
+	}
+	images := nativeImageSourceJournal{owner: q.owner, backend: r.imageSources}
+	staged, err := images.records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, image := range backings.Images {
+		file, err := os.Open(filepath.Join(root, image.Name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stat unix.Stat_t
+		err = errors.Join(unix.Fstat(int(file.Fd()), &stat), verifyNativeRestoreDigest(ctx, file, image.LogicalBytes, image.SHA256), file.Close())
+		if err != nil || stat.Nlink != 0 || (nativeLoopIdentity{Device: uint64(stat.Dev), Inode: stat.Ino}) == image.Identity {
+			t.Fatal("real restored backing aliases or differs from source:", err)
+		}
+		found := false
+		for _, source := range staged {
+			for _, ref := range source.References {
+				if sameNativeImageOwner(ref, owner) && ref.Name == image.Name && source.Epoch != image.Epoch && ref.ReadOnly && ref.Ready {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatal("real restored backing lacks target's own read-only epoch", image.Name)
+		}
+	}
+	if err := retire(ctx); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := q.restores().retirement(ctx, frame)
+	if err != nil || proof.NativeGeneration != owner.Generation || proof.NativeGeneration == completed.NativeGeneration {
+		t.Fatal("real backing target borrowed source retirement:", err)
+	}
+	t.Log("actual captured kernel/base: anonymous verified native target epochs retained original jail names and retired independently; target load remains gated")
 }
 
 // Invoke the internal original producer without overriding the public support

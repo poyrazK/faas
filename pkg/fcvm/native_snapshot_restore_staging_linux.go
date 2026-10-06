@@ -102,11 +102,15 @@ func nativeRestoreImageName(name string) bool {
 }
 
 func requireNativeRestoreDescriptor(file *os.File, receipt storage.ExclusiveArtifactReceipt) error {
-	if file == nil {
-		return errors.New("native snapshot restore: original anonymous input descriptor is required")
-	}
 	if err := receipt.Validate(); err != nil {
 		return err
+	}
+	return requireNativeSealedRestoreDescriptor(file, receipt.LogicalBytes)
+}
+
+func requireNativeSealedRestoreDescriptor(file *os.File, size int64) error {
+	if file == nil {
+		return errors.New("native snapshot restore: original anonymous input descriptor is required")
 	}
 	var stat unix.Stat_t
 	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
@@ -118,7 +122,7 @@ func requireNativeRestoreDescriptor(file *os.File, receipt storage.ExclusiveArti
 		return err
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o7777 != 0o400 || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 0 ||
-		stat.Size <= 0 || stat.Size != receipt.LogicalBytes || flags&unix.O_ACCMODE != unix.O_RDONLY || descriptorFlags&unix.FD_CLOEXEC == 0 {
+		stat.Size <= 0 || stat.Size != size || flags&unix.O_ACCMODE != unix.O_RDONLY || descriptorFlags&unix.FD_CLOEXEC == 0 {
 		return errors.New("native snapshot restore: input is not the private sealed receipt-sized descriptor")
 	}
 	return nil
@@ -128,13 +132,23 @@ func requireNativeRestoreDescriptor(file *os.File, receipt storage.ExclusiveArti
 // the verified input. No caller-supplied path or canonical object lookup occurs.
 // The sole writable clone descriptor joins before stageRestoreInput returns.
 func (b linuxNativeImageSources) PrepareRestoreInput(ctx context.Context, owner nativeLaunchRecord, root string, input *os.File, name string, receipt storage.ExclusiveArtifactReceipt) (prepared nativeImagePreparation, result error) {
+	if !nativeRestoreImageName(name) {
+		return nil, errors.New("native snapshot restore: receipt input name is unsupported")
+	}
+	if err := receipt.Validate(); err != nil {
+		return nil, err
+	}
+	return b.prepareVerifiedRestoreImage(ctx, owner, root, input, name, receipt.LogicalBytes, receipt.SHA256)
+}
+
+func (b linuxNativeImageSources) prepareVerifiedRestoreImage(ctx context.Context, owner nativeLaunchRecord, root string, input *os.File, name string, size int64, digest string) (prepared nativeImagePreparation, result error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if owner.Authorized || owner.Revoked || owner.ExitConfirmed || owner.ResourcesRemoved || owner.Lease.IsBuilder || !nativeRestoreImageName(name) || b.diskStagingRoot == "" {
+	if owner.Authorized || owner.Revoked || owner.ExitConfirmed || owner.ResourcesRemoved || owner.Lease.IsBuilder || b.diskStagingRoot == "" {
 		return nil, errors.New("native snapshot restore: clone requires an original prepared target and persistent staging root")
 	}
-	if err := requireNativeRestoreDescriptor(input, receipt); err != nil {
+	if err := requireNativeSealedRestoreDescriptor(input, size); err != nil {
 		return nil, err
 	}
 	directory, err := nativeDiskImageRootIdentity(b.diskStagingRoot)
@@ -168,7 +182,7 @@ func (b linuxNativeImageSources) PrepareRestoreInput(ctx context.Context, owner 
 	source := os.NewFile(uintptr(fd), "native-original-restore-input")
 	defer func() { result = errors.Join(result, source.Close()) }()
 	reopened, _, err := nativeImageFileMetadata(source)
-	if err := errors.Join(err, requireNativeRestoreDescriptor(source, receipt)); err != nil || reopened != identity {
+	if err := errors.Join(err, requireNativeSealedRestoreDescriptor(source, size)); err != nil || reopened != identity {
 		return nil, errors.Join(err, errors.New("native snapshot restore: original input descriptor changed"))
 	}
 	p.source, err = cloneNativeStagedImage(ctx, source, b.diskStagingRoot)
@@ -177,7 +191,7 @@ func (b linuxNativeImageSources) PrepareRestoreInput(ctx context.Context, owner 
 	}
 	// Copy completion alone is insufficient: recheck the clone's original
 	// receipt digest before any source epoch, name, mount or metadata grant.
-	if err := verifyNativeRestoreInputDigest(ctx, p.source, receipt); err != nil {
+	if err := verifyNativeRestoreDigest(ctx, p.source, size, digest); err != nil {
 		return nil, err
 	}
 	p.identity, _, err = nativeImageFileMetadata(p.source)
@@ -195,9 +209,20 @@ func (b linuxNativeImageSources) PrepareRestoreInput(ctx context.Context, owner 
 }
 
 func verifyNativeRestoreInputDigest(ctx context.Context, file *os.File, receipt storage.ExclusiveArtifactReceipt) error {
+	return verifyNativeRestoreDigest(ctx, file, receipt.LogicalBytes, receipt.SHA256)
+}
+
+func verifyNativeRestoreDigest(ctx context.Context, file *os.File, size int64, digest string) error {
+	if file == nil {
+		return storage.ErrArtifactReceiptMismatch
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || size <= 0 || info.Size() != size {
+		return errors.Join(err, storage.ErrArtifactReceiptMismatch)
+	}
 	hash := sha256.New()
-	n, err := io.CopyBuffer(hash, nativeImageCopyReader{ctx: ctx, source: io.NewSectionReader(file, 0, receipt.LogicalBytes)}, make([]byte, 128*1024))
-	if err != nil || n != receipt.LogicalBytes || hex.EncodeToString(hash.Sum(nil)) != receipt.SHA256 {
+	n, err := io.CopyBuffer(hash, nativeImageCopyReader{ctx: ctx, source: io.NewSectionReader(file, 0, size)}, make([]byte, 128*1024))
+	if err != nil || n != size || hex.EncodeToString(hash.Sum(nil)) != digest {
 		return errors.Join(err, storage.ErrArtifactReceiptMismatch)
 	}
 	return ctx.Err()

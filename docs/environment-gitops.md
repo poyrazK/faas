@@ -234,10 +234,16 @@ profile substitution, changed capture evidence and generic cold fallback are
 refused. The target owns a distinct native generation and retirement receipt.
 Its first live producer can read the four original receipts and stage private
 image epochs while holding target authority through the complete operation.
-Recovered records grant cleanup and allocation evidence only. This profile and
-staging path are internal and do not yet have a scheduler dispatch or RPC/load
-entry point. The dedicated native restore operation must still validate
-format/backing at load and prove isolated smoke and fresh readiness. The internal producer begins
+Recovered records grant cleanup and allocation evidence only. Capture also
+retains the original kernel/base jail names, digests, sizes and native source
+references. The target's first producer verifies both backing copies as private
+anonymous disk descriptors before staging separate read-only image epochs with
+those captured names. Current candidate paths supply bytes only. Missing or
+changed evidence, partial staging replay and additional read-only workload
+drives are refused. This profile and staging path are internal and do not yet
+have a scheduler dispatch or RPC/load entry point. The dedicated native restore
+operation must still validate format/backing at load and prove isolated smoke
+and fresh readiness. The internal producer begins
 intent before output preparation and publishes memory, device state, the frozen
 private drive and backing identity. Actual buffered snapshot writes require the
 existing temporary snapshot headroom policy. The producer pins and journals the

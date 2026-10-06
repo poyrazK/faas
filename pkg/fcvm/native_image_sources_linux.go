@@ -20,15 +20,16 @@ func newNativeImageSourceBackend(base string) nativeImageSourceBackend {
 }
 
 type linuxNativeImagePreparation struct {
-	source    *os.File
-	root      *os.File
-	identity  nativeLoopIdentity
-	namespace nativeLoopIdentity
-	link      bool
-	owner     nativeLaunchRecord
-	staging   string // original epoch owns this temporary link before creation
-	diskRoot  string
-	diskClaim *nativeDiskImageClaim
+	source         *os.File
+	root           *os.File
+	identity       nativeLoopIdentity
+	namespace      nativeLoopIdentity
+	link           bool
+	owner          nativeLaunchRecord
+	staging        string // original epoch owns this temporary link before creation
+	diskRoot       string
+	diskClaim      *nativeDiskImageClaim
+	restoreBacking *nativeSnapshotBackingImage
 	// Live capture attaches these original disk outputs to a namespace that
 	// already exists. Keep their owned link until that joined handoff finishes.
 	retainDiskClaim bool

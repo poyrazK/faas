@@ -98,6 +98,9 @@ const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
 // Refuse oversized metadata before any restore input is materialized.
 const NativeSnapshotBackingRecordMaxBytes = 4096
 
+// Captured kernel/base paths are single Linux jail filenames, never host paths.
+const NativeSnapshotBackingNameMaxBytes = 255
+
 // Native snapshot retirement can scan the unified hierarchy to distinguish a
 // removed original inode from a retained cgroup. Exceeding these parser bounds
 // retains ownership; these are diagnostic limits, not tenant quotas.

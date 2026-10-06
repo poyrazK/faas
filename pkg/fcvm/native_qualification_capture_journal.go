@@ -125,6 +125,9 @@ func (j *nativeQualificationJournal) validateCaptures(ctx context.Context) error
 		return err
 	}
 	for _, entry := range entries {
+		if entry.Name() == "backings" && entry.IsDir() {
+			continue
+		}
 		if strings.HasPrefix(entry.Name(), ".launch-") {
 			continue
 		}
@@ -145,5 +148,5 @@ func (j *nativeQualificationJournal) validateCaptures(ctx context.Context) error
 			return err
 		}
 	}
-	return ctx.Err()
+	return errors.Join(j.validateBackings(ctx), ctx.Err())
 }

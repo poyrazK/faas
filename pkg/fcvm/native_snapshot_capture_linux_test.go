@@ -5,6 +5,8 @@ package fcvm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,19 +18,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 type nativeCaptureSequenceFixture struct {
 	nativeCaptureOutputFixture
-	events  []string
-	fail    string
-	after   func(string) error
-	drive   *os.File
-	frozen  *os.File
-	store   *nativeCaptureSequenceStore
-	backing BackingIdentity
-	t       *testing.T
+	events       []string
+	fail         string
+	after        func(string) error
+	drive        *os.File
+	backingFiles []*os.File
+	frozen       *os.File
+	store        *nativeCaptureSequenceStore
+	backing      BackingIdentity
+	t            *testing.T
 }
 
 func (f *nativeCaptureSequenceFixture) step(name string) error {
@@ -128,6 +132,15 @@ func (b *nativeCaptureSequenceImages) OpenSnapshotInput(record nativeImageSource
 	var err error
 	b.f.drive, err = os.Open(point)
 	return b.f.drive, err
+}
+
+func (b *nativeCaptureSequenceImages) OpenSnapshotBacking(record nativeImageSourceRecord, ref nativeImageReference, point string) (*os.File, error) {
+	if err := errors.Join(b.CheckReference(record, ref), b.CheckAnchor(record, point)); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(point)
+	b.f.backingFiles = append(b.f.backingFiles, file)
+	return file, err
 }
 
 func (b *nativeCaptureSequenceImages) FreezeSnapshotDrive(_ context.Context, input *os.File, directory string) (*os.File, error) {
@@ -254,6 +267,33 @@ func nativeCaptureSequence(t *testing.T) *nativeCaptureSequenceFixture {
 		}); err != nil {
 		t.Fatal(err)
 	}
+	for i, name := range []string{"original-vmlinux", "original-base.ext4"} {
+		if _, err := f.j.stagePrepared(f.ctx, prepared, f.root, name, true, 0o044,
+			func(owner nativeLaunchRecord) (nativeImagePreparation, error) {
+				return b.prepare(f.ctx, owner, f.root, f.directory, name)
+			}); err != nil {
+			t.Fatal(err)
+		}
+		records, err := f.j.records()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := []byte("captured-backing-" + name)
+		hash := sha256.Sum256(body)
+		digest := "sha256:" + hex.EncodeToString(hash[:])
+		if i == 0 {
+			f.backing.Kernel = digest
+		} else {
+			f.backing.Base = digest
+		}
+		for _, record := range records {
+			if record.References[0].Name == name {
+				if err := os.WriteFile(f.j.anchor(record), body, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
 	if err := f.q.owner.write(f.owner); err != nil {
 		t.Fatal(err)
 	}
@@ -265,6 +305,67 @@ func nativeCaptureSequence(t *testing.T) *nativeCaptureSequenceFixture {
 		t.Fatal(err)
 	}
 	return f
+}
+
+func TestNativeSnapshotBackingCaptureRefusesChangedOrAmbiguousSourceBeforeEffects(t *testing.T) {
+	for _, change := range []string{"original", "changed_boot_digest", "changed_bytes", "incomplete_reference", "ambiguous_reference", "missing_source", "recovered", "revoked"} {
+		t.Run(change, func(t *testing.T) {
+			f := nativeCaptureSequence(t)
+			switch change {
+			case "changed_boot_digest":
+				f.backing.Base = "sha256:" + strings.Repeat("c", 64)
+			case "recovered":
+				delete(f.v.nativeRecovery.owned, f.owner.Lease.Instance)
+			case "revoked":
+				owner := f.owner
+				owner.Revoked = true
+				if err := f.q.owner.write(owner); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				records, err := f.j.records()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, record := range records {
+					if record.References[0].Name != "original-base.ext4" {
+						continue
+					}
+					switch change {
+					case "changed_bytes":
+						if err := os.WriteFile(f.j.anchor(record), []byte("changed-content"), 0o600); err != nil {
+							t.Fatal(err)
+						}
+					case "incomplete_reference":
+						record.References[0].Ready = false
+					case "ambiguous_reference":
+						ref := record.References[0]
+						ref.ID = uuid.NewString()
+						record.References = append(record.References, ref)
+					case "missing_source":
+						if err := os.Remove(f.j.anchor(record)); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := f.j.write(record); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			err := f.v.captureNativeSnapshotBackings(f.ctx, f.owner.Lease, f.backing)
+			if (err == nil) != (change == "original") {
+				t.Fatal("changed source supplied original backing evidence", change, err)
+			}
+			if len(f.events) != 0 || len(f.store.blobs) != 0 {
+				t.Fatal("backing verification reached snapshot or publication effects")
+			}
+			_, receiptErr := f.q.readBackings(f.capture)
+			if (receiptErr == nil) != (change == "original") {
+				t.Fatal("failed source verification retained a usable backing receipt", receiptErr)
+			}
+			assertNativeCaptureSequenceClosed(t, f)
+		})
+	}
 }
 
 func TestNativeCaptureSequencePublishesOnlyAfterFreezeAndResume(t *testing.T) {
@@ -287,7 +388,7 @@ func TestNativeCaptureSequencePublishesOnlyAfterFreezeAndResume(t *testing.T) {
 
 func assertNativeCaptureSequenceClosed(t *testing.T, f *nativeCaptureSequenceFixture) {
 	t.Helper()
-	for _, file := range []*os.File{f.drive, f.frozen, f.b.output} {
+	for _, file := range append([]*os.File{f.drive, f.frozen, f.b.output}, f.backingFiles...) {
 		if file != nil {
 			if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
 				t.Fatal("capture retained a producer descriptor", err)

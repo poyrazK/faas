@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"golang.org/x/sys/unix"
@@ -112,7 +114,7 @@ func TestMetalNativeDiskImageStagingRecovery(t *testing.T) {
 	if err := os.WriteFile(source, []byte("original-native-disk-layer"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"drive", "output", "restore-mem", "restore-state", "restore-drive"} {
+	for _, kind := range []string{"drive", "output", "restore-mem", "restore-state", "restore-drive", "restore-kernel", "restore-base"} {
 		for _, phase := range []string{"source", "anchor", "binding"} {
 			instance := fmt.Sprintf("disk-%s-%s", kind, phase)
 			lease := leaseForSlot(instance, len(owners))
@@ -141,7 +143,7 @@ func TestMetalNativeDiskImageStagingRecovery(t *testing.T) {
 		}
 	}
 	records, err := images.records()
-	if err != nil || len(records) != 15 {
+	if err != nil || len(records) != 21 {
 		t.Fatal("disk producer death lost original image epochs", len(records), err)
 	}
 	if err := images.inventory(ctx, owners); err != nil {
@@ -305,6 +307,14 @@ func nativeMetalDiskStagingCrashChild(t *testing.T, ctx context.Context, base st
 		// qualification/capture authority has separate acceptance coverage.
 		_, err = images.stagePrepared(ctx, owner, root, name, false, 0, func(original nativeLaunchRecord) (nativeImagePreparation, error) {
 			return backend.PrepareSnapshotOutput(ctx, original, root, backend.diskStagingRoot, name)
+		})
+	} else if kind == "restore-kernel" || kind == "restore-base" {
+		input, receipt := nativeMetalSealedRestoreStagingInput(t, backend.diskStagingRoot)
+		defer input.Close()
+		image := nativeSnapshotBackingImage{Epoch: uuid.NewString(), ReferenceID: uuid.NewString(), Identity: nativeLoopIdentity{Device: 11, Inode: 12},
+			Name: "captured-" + kind, LogicalBytes: receipt.LogicalBytes, SHA256: receipt.SHA256}
+		_, err = images.stagePrepared(ctx, owner, root, image.Name, true, 0o044, func(original nativeLaunchRecord) (nativeImagePreparation, error) {
+			return backend.PrepareRestoreBacking(ctx, original, root, input, image)
 		})
 	} else {
 		name := map[string]string{"restore-mem": memSnapshotName, "restore-state": vmstateSnapshotName, "restore-drive": layerImageName}[kind]

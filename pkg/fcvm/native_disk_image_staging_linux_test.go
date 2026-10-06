@@ -90,6 +90,80 @@ func TestNativeDiskStagingRequiresDurableClaimBeforeLink(t *testing.T) {
 	}
 }
 
+func TestNativeDiskStagingCapturedBackingProfileCannotBorrowOrdinaryNames(t *testing.T) {
+	for _, change := range []string{"original", "missing_evidence", "changed_name", "alias_inode", "alias_epoch", "invalid_digest", "writable", "hardlink", "missing_json", "v1_with_backing"} {
+		t.Run(change, func(t *testing.T) {
+			p, b, record, point := nativeDiskStagingFixture(t)
+			ref := &record.References[0]
+			ref.Name, ref.ReadOnly, ref.AddPerms = "captured-base.ext4", true, 0o044
+			image := nativeSnapshotBackingImage{Epoch: uuid.NewString(), ReferenceID: uuid.NewString(), Identity: nativeLoopIdentity{Device: 11, Inode: 12}, Name: ref.Name, LogicalBytes: 17, SHA256: strings.Repeat("a", 64)}
+			p.restoreBacking = &image
+			switch change {
+			case "missing_evidence":
+				p.restoreBacking = nil
+			case "changed_name":
+				image.Name = "another-base.ext4"
+			case "alias_inode":
+				image.Identity = record.Identity
+			case "alias_epoch":
+				image.Epoch = record.Epoch
+			case "invalid_digest":
+				image.SHA256 = "unknown"
+			case "writable":
+				ref.ReadOnly, ref.AddPerms = false, 0
+			case "hardlink":
+				ref.Link = true
+			}
+			var err error
+			record.Desired, err = desiredNativeImageMetadata(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = p.OwnAnonymousSource(record, point)
+			valid := change == "original" || change == "missing_json" || change == "v1_with_backing"
+			if (err == nil) != valid {
+				t.Fatal("changed captured backing acquired persistent claim", change, err)
+			}
+			if valid {
+				path := nativeDiskImageClaimPath(b.diskStagingRoot, record.Epoch)
+				body, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				original := append([]byte(nil), body...)
+				if change == "missing_json" || change == "v1_with_backing" {
+					var data map[string]any
+					if err := json.Unmarshal(body, &data); err != nil {
+						t.Fatal(err)
+					}
+					if change == "missing_json" {
+						delete(data, "backing")
+					} else {
+						data["version"] = 1
+					}
+					body, err = json.Marshal(data)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, body, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				claim, err := readNativeDiskImageClaim(b.diskStagingRoot, record.Epoch)
+				if (err == nil) != (change == "original") || change == "original" && (claim.Version != 2 || claim.Backing == nil || *claim.Backing != image) {
+					t.Fatal("changed persistent profile was accepted", change, err)
+				}
+				if err := os.WriteFile(path, original, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := p.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestNativeDiskStagingLiveHandoffKeepsOnlyOriginalLinkAfterInputClosure(t *testing.T) {
 	for _, change := range []string{"original", "alias", "changed_claim"} {
 		t.Run(change, func(t *testing.T) {

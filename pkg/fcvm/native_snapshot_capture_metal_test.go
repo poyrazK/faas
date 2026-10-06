@@ -6,6 +6,8 @@ package fcvm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -184,6 +186,24 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 	if _, err := images.stageWritable(ctx, owner, root, source, layerImageName); err != nil {
 		t.Fatal(err)
 	}
+	backing := BackingIdentity{Version: 1}
+	for i, name := range []string{"protocol-kernel", "protocol-base.ext4"} {
+		body := []byte("original-" + name)
+		path := filepath.Join(disk, name)
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := images.stage(ctx, owner, root, path, name, true, 0o044, true); err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.Sum256(body)
+		digest := "sha256:" + hex.EncodeToString(hash[:])
+		if i == 0 {
+			backing.Kernel = digest
+		} else {
+			backing.Base = digest
+		}
+	}
 	// Copy a static test peer into this disposable jail before handing the
 	// directory to the original guest UID. It has no guest workload or KVM.
 	input, err := os.Open(peer)
@@ -280,7 +300,7 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 			t.Fatal("foreign process gained original live output preparation:", change)
 		}
 	}
-	info, captureErr := v.captureEnvironmentQualificationSnapshot(ctx, lease, BackingIdentity{Version: 1, Kernel: "fixture-kernel", Base: "fixture-base"})
+	info, captureErr := v.captureEnvironmentQualificationSnapshot(ctx, lease, backing)
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}

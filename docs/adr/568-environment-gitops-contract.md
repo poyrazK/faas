@@ -3245,3 +3245,66 @@ tests use modeled source evidence and its guest load/resume is not implemented.
 The VM regression's scan sidecar remains modeled. Exact inventory and hashes
 matched all 8,312 Go files; no Go source changed after those checks. No production
 gate or PR was opened by this checkpoint.
+
+### Original backing paths and descriptor custody (2026-10-06)
+
+Qualification capture now records the original native kernel/base reference
+names, content digests, sizes, inode identities and source epochs before its
+publication intent or snapshot effects. It hashes pinned read-only source
+anchors while retaining the source epoch and original incoming/physical
+locks; ordinary key resolution and current jail paths cannot supply that
+evidence. Both observed image digests must match the backing identity of the
+running workload. The current internal profile accepts exactly the kernel and
+base read-only bindings; additional workload drives need their own complete
+path/content contract before qualification restore can support them.
+
+This separate, bounded private record leaves the existing capture journal,
+publication intent and three-field backing sidecar formats unchanged. It is
+written once; an uncertain first publication cannot be overwritten or adopted.
+Recovery validates the original capture relationship and strict JSON shape
+without granting producer authority. Captures predating this evidence remain
+retained but cannot supply the dedicated backing staging operation.
+
+The first restore target producer now stages the kernel and base using the
+captured names. Caller paths supply candidate bytes only. Both candidates are
+opened as pinned regular-file descriptors, streamed into anonymous files on
+the configured private disk, checked against the original sizes and digests,
+then sealed; candidate and writable descriptors close before target image
+effects. Only verified copies reach the native staging backend. A candidate may
+live on another filesystem or have a different basename; neither changes the
+captured drive path. Changed bytes,
+missing evidence, source-reference substitution, expired/revoked targets and
+recovered owners fail closed. Partial native epochs block replay.
+
+A v2 persistent disk claim carries the exact captured backing witness for each
+new exclusive read-only clone. The v1 read-only disk claim remains restricted
+to its fixed memory/device-state names. Both profiles retain the target's own
+native image epoch before a temporary disk name or permission grant, and
+recovery/retirement never borrow the source capture's inode or generation.
+All record and filename parser bounds remain in `pkg/api/limits.go`.
+
+Dedicated snapshot load/resume, snapshot format compatibility, restored
+readiness/entropy, scoped binding delivery and graph/serving evidence remain
+outstanding. This checkpoint does not open qualification dispatch, capture,
+activation or enforcement, and the combined PR remains deferred.
+
+The final backing custody race selection passed locally on Darwin (4.124 s)
+and on the approved nested Linux node (6.363 s), with Go 1.25.13. The broader
+Linux native/qualification/restore race selection passed (43.373 s); regressions
+passed for fcvm (53.035 s), qualification wire (0.028 s), vmmd RPC (0.063 s)
+and scheduler (24.087 s). Full normal Linux fcvm lint and changed-code metal
+lint reported zero issues. These checks matched the exact inventory and hashes
+of all 8,318 Go files. The existing Darwin linker warning and unrelated
+full-metal lint findings remain unchanged.
+
+`make test-metal` passed the expanded native selection (94.503 s), including
+21 disk producer-death cases and actual capture/resume/source retirement,
+separate target backing staging and target retirement. `make leakcheck` found
+no leaked resources. The actual VM regression passed in 19.70 s child / 20.79 s
+parent, with 134,217,728 logical / 64,663,552 allocated memory bytes,
+13,696 logical / 16,384 allocated device-state bytes, 67,108,864 logical /
+86,016 allocated private-drive bytes and 64,765,952 stored bytes. The backing
+sidecar remains excluded from the stored total. That target has its own native
+generation, slot, UID, IP, wake and cleanup identity; it does not load the
+snapshot. The separate receipt-verified ordinary restore regression also
+passed with fresh guest UUIDs. Scan evidence remains modeled in this fixture.

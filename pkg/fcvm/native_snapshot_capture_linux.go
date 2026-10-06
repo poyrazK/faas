@@ -71,6 +71,9 @@ func (v *JailerVMM) captureEnvironmentQualificationSnapshot(ctx context.Context,
 	}
 	ctx, cancel := context.WithDeadline(ctx, permit.Incoming.Deadline)
 	defer cancel()
+	if err := v.captureNativeSnapshotBackings(ctx, lease, backing); err != nil {
+		return info, err
+	}
 	ctx, err = v.beginNativeSnapshotPublication(ctx, lease)
 	if err != nil {
 		return info, err
@@ -190,12 +193,13 @@ func (v *JailerVMM) preflightNativeSnapshotCapture(ctx context.Context, lease Le
 		return permit, errors.New("native snapshot capture: original native producer is unavailable")
 	}
 	_, input := r.imageSources.(nativeSnapshotInputBackend)
+	_, backingInput := r.imageSources.(nativeSnapshotBackingInputBackend)
 	_, output := r.imageSources.(nativeSnapshotOutputBackend)
 	_, reader := r.imageSources.(nativeSnapshotOutputInputBackend)
 	_, frozen := r.imageSources.(nativeSnapshotFrozenDriveBackend)
 	_, handoff := r.imageSources.(nativeSnapshotOutputHandoffBackend)
 	disk, preflight := r.imageSources.(nativeSnapshotCapturePreflightBackend)
-	if !input || !output || !reader || !frozen || !preflight || !handoff {
+	if !input || !backingInput || !output || !reader || !frozen || !preflight || !handoff {
 		return permit, errors.New("native snapshot capture: complete native source adapters are required")
 	}
 	if err := r.imageSources.(nativeSnapshotOutputHandoffBackend).CheckSnapshotOutputHandoff(ctx, v); err != nil {
