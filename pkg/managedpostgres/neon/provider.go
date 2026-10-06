@@ -564,22 +564,12 @@ func (p *Provider) restoreBranchName(resourceID string) string {
 }
 
 func (p *Provider) findBranch(ctx context.Context, projectID, name string) (branch, error) {
-	path := "/projects/" + url.PathEscape(projectID) + "/branches"
-	var response branchesResponse
-	if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
-		return branch{}, err
+	actual, err := p.findOwnedBranch(ctx, projectID, "", name)
+	if errors.Is(err, managedpostgres.ErrNotFound) {
+		// Preserve the ordinary restore/discovery seam's absence convention.
+		return branch{}, nil
 	}
-	var match branch
-	for _, candidate := range response.Branches {
-		if candidate.Name != name {
-			continue
-		}
-		if match.ID != "" || !validProviderID.MatchString(candidate.ID) {
-			return branch{}, managedpostgres.ErrConflict
-		}
-		match = candidate
-	}
-	return match, nil
+	return actual, err
 }
 
 func (p *Provider) findProject(ctx context.Context, name string) (string, error) {

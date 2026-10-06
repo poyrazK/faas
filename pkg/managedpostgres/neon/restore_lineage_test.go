@@ -169,7 +169,7 @@ func TestDeleteRecoveryRequiresVerifiedRestoreLineage(t *testing.T) {
 					}
 					branches := []branch{target}
 					if fault == "absent" {
-						branches = nil
+						branches = []branch{}
 					}
 					writeResponse(t, w, http.StatusOK, map[string]any{"branches": branches})
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v2/projects/quiet-river-12345678/branches/br-stage" && fault == "missing_point":
@@ -189,7 +189,11 @@ func TestDeleteRecoveryRequiresVerifiedRestoreLineage(t *testing.T) {
 			if fault == "missing_request_point" {
 				request.RestorePointInTime = time.Time{}
 			}
-			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			timeout := 5 * time.Second
+			if fault == "missing_point" {
+				timeout = 250 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
 			defer cancel()
 			result, err := provider.Delete(ctx, request)
 			if fault == "valid" || fault == "absent" {

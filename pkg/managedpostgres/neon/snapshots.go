@@ -45,7 +45,7 @@ func (p *Provider) CaptureSnapshot(ctx context.Context, request managedpostgres.
 		var accepted snapshotResponse
 		err = p.doJSON(ctx, http.MethodPost, path, query, nil, &accepted, http.StatusOK)
 		if err == nil {
-			actual, err = p.awaitSnapshotMetadata(ctx, source, name, request.PointInTime, accepted.Snapshot)
+			actual = accepted.Snapshot
 		} else if errors.Is(err, managedpostgres.ErrUnavailable) && ctx.Err() == nil {
 			// One discovery recovers a lost POST acknowledgement. Never repeat
 			// the creation request in this call or adopt a different point.
@@ -56,6 +56,12 @@ func (p *Provider) CaptureSnapshot(ctx context.Context, request managedpostgres.
 			}
 		}
 	}
+	if err != nil {
+		return managedpostgres.DatabaseSnapshot{}, err
+	}
+	// Creation, replay and lost-response discovery share the same bounded
+	// observation path. A discovered identity can still be initializing.
+	actual, err = p.awaitSnapshotMetadata(ctx, source, name, request.PointInTime, actual)
 	if err != nil {
 		return managedpostgres.DatabaseSnapshot{}, err
 	}
@@ -83,6 +89,9 @@ func (p *Provider) awaitSnapshotMetadata(ctx context.Context, source resourceRef
 		// Independently observe even an apparently complete acknowledgement.
 		observed, err := p.findSnapshot(ctx, source.projectID, accepted.ID, "")
 		if err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
+			if ctx.Err() != nil {
+				err = managedpostgres.ErrUnavailable
+			}
 			return snapshot{}, err
 		}
 		if err == nil {
@@ -298,6 +307,17 @@ func observedSnapshot(projectID string, actual snapshot) (managedpostgres.Databa
 }
 
 func validateOwnedSnapshot(source resourceRef, name string, point time.Time, actual snapshot) (managedpostgres.DatabaseSnapshot, error) {
+	// Do not let an omitted expiry or timestamp hide contradictory ownership
+	// already reported by the provider and then adopt a later substitution.
+	if actual.Name != "" && actual.Name != name || actual.SourceBranchID != "" && actual.SourceBranchID != source.branchID {
+		return managedpostgres.DatabaseSnapshot{}, managedpostgres.ErrConflict
+	}
+	if actual.Timestamp != "" {
+		at, err := time.Parse(time.RFC3339Nano, actual.Timestamp)
+		if err == nil && !at.Equal(point) {
+			return managedpostgres.DatabaseSnapshot{}, managedpostgres.ErrConflict
+		}
+	}
 	observed, err := observedSnapshot(source.projectID, actual)
 	if err != nil {
 		return observed, err

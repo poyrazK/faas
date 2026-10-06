@@ -64,6 +64,25 @@ the accepted snapshot until its complete metadata is available before adopting
 it or changing retention. Missing or conflicting final metadata remains a
 blocker. These diagnostics do not authorize enabling the production service.
 
+Snapshot capture replay and lost-response discovery use the same bounded reads
+as fresh creation. Missing metadata can settle; a reported conflicting owner,
+source or capture point stops recovery even when other fields are missing.
+Private snapshot restore also hydrates only the original target branch, including
+temporary absence after acknowledgement. It independently reads readiness and
+never finalizes the preview or substitutes a matching display name for a known
+target identity. An unavailable observation remains retryable; it is not proof
+that the provider-side resource was never created.
+
+Restore discovery, replay and cleanup read all bounded branch pages before
+creating a target or declaring it absent. Discovery pins creation-time ordering
+and rejects missing lists, overlapping identities, duplicate owner names and
+cursor cycles. An incomplete provider listing cannot authorize another create
+or report cleanup complete.
+Lifecycle inspection, read-only health observation and default-source selection
+use the same complete branch inventory, so a later-page branch is not reported
+missing. A missing or null branch list is unknown; an explicit empty list can
+establish absence after pagination completes.
+
 ```sh
 FAAS_ENVIRONMENT=staging \
 FAAS_MANAGED_POSTGRES_CONFIG=/etc/faas/managed-postgres.json \
