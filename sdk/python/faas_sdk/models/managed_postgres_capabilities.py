@@ -42,6 +42,9 @@ class ManagedPostgresCapabilities:
     always_on: bool
     pooled_connections: bool
     point_in_time_restore: bool
+    scale_to_zero_update: bool
+    """Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires
+    always_on plan entitlement; reservations require the pinned backend and admission."""
     class_resize: bool
     """Compute-class resizing supported by the configured regional backend. Reservations still require admission
     and the database pinned backend."""
@@ -83,6 +86,8 @@ class ManagedPostgresCapabilities:
 
         point_in_time_restore = self.point_in_time_restore
 
+        scale_to_zero_update = self.scale_to_zero_update
+
         class_resize = self.class_resize
 
         storage_limit_bytes = self.storage_limit_bytes
@@ -105,6 +110,7 @@ class ManagedPostgresCapabilities:
                 "always_on": always_on,
                 "pooled_connections": pooled_connections,
                 "point_in_time_restore": point_in_time_restore,
+                "scale_to_zero_update": scale_to_zero_update,
                 "class_resize": class_resize,
                 "storage_limit_bytes": storage_limit_bytes,
                 "restore_window_seconds": restore_window_seconds,
@@ -157,6 +163,8 @@ class ManagedPostgresCapabilities:
 
         point_in_time_restore = d.pop("point_in_time_restore")
 
+        scale_to_zero_update = d.pop("scale_to_zero_update")
+
         class_resize = d.pop("class_resize")
 
         storage_limit_bytes = d.pop("storage_limit_bytes")
@@ -176,6 +184,7 @@ class ManagedPostgresCapabilities:
             always_on=always_on,
             pooled_connections=pooled_connections,
             point_in_time_restore=point_in_time_restore,
+            scale_to_zero_update=scale_to_zero_update,
             class_resize=class_resize,
             storage_limit_bytes=storage_limit_bytes,
             restore_window_seconds=restore_window_seconds,

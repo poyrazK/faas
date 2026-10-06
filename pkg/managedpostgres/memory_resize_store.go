@@ -14,7 +14,7 @@ func (s *MemoryStore) ReserveResize(_ context.Context, expected Database, operat
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.resizes[operation.ID]; ok {
-		if existing.AccountID != operation.AccountID || existing.DatabaseID != operation.DatabaseID || existing.TargetClass != operation.TargetClass {
+		if existing.AccountID != operation.AccountID || !sameComputeChangeRequest(existing, operation) {
 			return ResizeOperation{}, ErrConflict
 		}
 		return s.resizeView(existing), nil
@@ -82,7 +82,7 @@ func (s *MemoryStore) FinishResize(_ context.Context, expected Database, operati
 	defer s.mu.Unlock()
 	database, ok := s.databases[expected.ID]
 	actual, found := s.resizes[operation.ID]
-	if !ok || !found || validateResizeObservation(actual, observed) != nil || actual.State != ResizePending || actual.Generation != operation.Generation || actual.TargetSpec() != operation.TargetSpec() ||
+	if !ok || !found || validateResizeObservation(actual, observed) != nil || !sameComputeChangeRequest(actual, operation) || actual.State != ResizePending || actual.Generation != operation.Generation || actual.TargetSpec() != operation.TargetSpec() ||
 		!resizeSourceMatches(database, actual) || !resizeSourceMatches(expected, actual) || database.State != StateUpdating ||
 		database.DesiredGeneration != actual.Generation || expected.DesiredGeneration != actual.Generation ||
 		database.ObservedGeneration != actual.Generation-1 || database.LeaseToken == "" || database.LeaseToken != expected.LeaseToken ||
