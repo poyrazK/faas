@@ -88,8 +88,11 @@ func TestEnforceBudgetDoesNotEvictForSharedBlocks(t *testing.T) {
 				if err := cache.Put(context.Background(), key, bytes.NewReader(body)); err != nil {
 					t.Fatal(err)
 				}
-				path, ok, err := cache.LocalPath(key)
-				if err != nil || !ok {
+				// cacheFileFor, not LocalPath: LocalPath queues an
+				// asynchronous LRU touch that would race the mtimes set
+				// below and reorder eviction.
+				path, _ := cache.cacheFileFor(key)
+				if _, err := os.Stat(path); err != nil {
 					t.Fatalf("%s not cached: %v", key, err)
 				}
 				paths[path] = key
