@@ -49,6 +49,13 @@ func openNativeSnapshotMemoryCgroup(owner nativeLaunchRecord) (*os.File, nativeH
 }
 
 func openNativeSnapshotMemoryIO(ctx context.Context, owner nativeLaunchRecord) (p *linuxNativeSnapshotMemoryIO, result error) {
+	return openNativeSnapshotMemoryIOWithMode(ctx, owner, unix.O_RDWR)
+}
+
+func openNativeSnapshotMemoryIOWithMode(ctx context.Context, owner nativeLaunchRecord, access int) (p *linuxNativeSnapshotMemoryIO, result error) {
+	if access != unix.O_RDONLY && access != unix.O_RDWR {
+		return nil, errors.New("native snapshot memory: unsupported descriptor access")
+	}
 	if !liveNativeSnapshotOwner(owner) {
 		return nil, errors.New("native snapshot memory: live original process required")
 	}
@@ -71,7 +78,7 @@ func openNativeSnapshotMemoryIO(ctx context.Context, owner nativeLaunchRecord) (
 	if err != nil {
 		return p, err
 	}
-	fd, err := unix.Openat(int(p.directory.Fd()), "memory.max", unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(int(p.directory.Fd()), "memory.max", access|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return p, err
 	}

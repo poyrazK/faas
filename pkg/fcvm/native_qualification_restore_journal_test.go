@@ -54,6 +54,30 @@ func nativeQualificationRestoreFixture(t *testing.T) (*nativeQualificationRestor
 	return q.restores(), target, ctx
 }
 
+func TestNativeQualificationRestoreBindingRequiresExactGuestRAMBeforePublication(t *testing.T) {
+	for _, delta := range []int{-1, 1, 8} {
+		t.Run(fmt.Sprintf("delta_%d", delta), func(t *testing.T) {
+			j, frame, ctx := nativeQualificationRestoreFixture(t)
+			r, err := j.claim(ctx, frame)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lease := qualificationLease(frame.InstanceID)
+			lease.MemoryMaxMiB = frame.RAMMB + delta
+			if err := j.incoming.owner.prepare(nativeQualificationRestoreContext(ctx, r), lease); err == nil {
+				t.Fatal("restore admitted a different guest RAM reservation")
+			}
+			retained, err := j.read(frame.InstanceID)
+			if err != nil || retained.NativeGeneration != "" || retained.NativeLease != (Lease{}) {
+				t.Fatal("RAM refusal published a physical binding", err)
+			}
+			if _, err := j.incoming.owner.read(frame.InstanceID); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("RAM refusal published a physical owner", err)
+			}
+		})
+	}
+}
+
 func TestNativeQualificationRestoreDistinctBindingAndRetirement(t *testing.T) {
 	j, frame, ctx := nativeQualificationRestoreFixture(t)
 	r, err := j.claim(ctx, frame)

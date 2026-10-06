@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -11,10 +12,32 @@ import (
 
 type nativeQualificationRestoreContextKey struct{}
 
+type nativeQualificationRestoreLoadContextKey struct{}
+type nativeQualificationRestoreLoadPermit struct {
+	instance, generation string
+	used                 atomic.Bool
+}
+
 // This internal capability belongs to the first incoming restore delivery.
 // Recovered records retain cleanup/allocation evidence, never a producer permit.
 func nativeQualificationRestoreContext(ctx context.Context, record nativeQualificationRestoreRecord) context.Context {
-	return context.WithValue(ctx, nativeQualificationRestoreContextKey{}, record)
+	ctx = context.WithValue(ctx, nativeQualificationRestoreContextKey{}, record)
+	permit, _ := ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
+	if permit == nil || permit.instance != record.Execution.InstanceID || permit.generation != record.Generation {
+		permit = &nativeQualificationRestoreLoadPermit{instance: record.Execution.InstanceID, generation: record.Generation}
+	}
+	return context.WithValue(ctx, nativeQualificationRestoreLoadContextKey{}, permit)
+}
+
+// Consume before the first journal publication. The original live call cannot
+// replay after journal damage or a lost write acknowledgement. Inventory never
+// reconstructs this process-local capability from a retained target record.
+func consumeNativeQualificationRestoreLoad(ctx context.Context, target nativeQualificationRestoreRecord) error {
+	permit, _ := ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
+	if permit == nil || permit.instance != target.Execution.InstanceID || permit.generation != target.Generation || !permit.used.CompareAndSwap(false, true) {
+		return errors.New("native restore load: original one-shot producer was consumed or is unavailable")
+	}
+	return nil
 }
 
 type nativeQualificationProducer struct {
@@ -42,6 +65,9 @@ func (j *nativeQualificationRestoreJournal) bindNative(ctx context.Context, r na
 	}
 	if err := validateNativeQualificationLease(r.Execution, lease); err != nil {
 		return r, err
+	}
+	if lease.MemoryMaxMiB != r.Execution.RAMMB {
+		return r, errors.New("native qualification restore: target guest RAM differs from original captured reservation")
 	}
 	if _, err := j.requireCapture(ctx, r); err != nil {
 		return r, err

@@ -11,7 +11,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
 | Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Production capture, isolated smoke and native qualification restore |
-| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume, exclusive four-object publication, durable writer receipts, verified anonymous restore inputs and descriptor-backed native staging | Production adapter wiring, artifact retirement, native qualification restore and bare-metal acceptance |
+| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, verified anonymous restore inputs and a private load/resume/entropy-hook sequence | Manager/RPC dispatch, original Firecracker provenance, restored channel identity, artifact retirement and bare-metal acceptance |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -141,12 +141,14 @@ advances the applied Git revision.
 
 Production qualification polling, graph activation and continuous enforcement are not enabled by this preview. Native process recovery remains an explicit vmmd opt-in (`native_process_recovery`, default `false`). The native capture backend rejects unsupported snapshot publication before pause or capture effects.
 
-The user-authorized internal nested KVM node now passes actual Firecracker
-capture, original-VM resume and retirement, and ordinary restoration of the
-published artifacts into a fresh guest. Ownership/recovery fixtures and
-leakcheck also pass. This is scoped nested-node evidence; native qualification
-restore, artifact retirement, complete graph smoke/readiness and serving
-convergence remain outstanding. Production gates stay closed.
+The user-authorized internal nested KVM node passes actual Firecracker capture,
+original-VM resume/retirement, and a private dedicated target's paused load,
+resume, entropy hook and independent retirement under its normal RAM fence.
+The separate ordinary restore regression, ownership/recovery fixtures and
+leakcheck also pass. This is scoped nested-node evidence. Manager/RPC restore
+dispatch, original Firecracker provenance, restored channel identity, artifact
+retirement, complete graph smoke/readiness and serving convergence remain
+outstanding. Production gates stay closed.
 
 Private writable drives and capture outputs default to requiring their data and
 native journal on the same filesystem. An explicit startup-only disk adapter,
@@ -241,9 +243,22 @@ anonymous disk descriptors before staging separate read-only image epochs with
 those captured names. Current candidate paths supply bytes only. Missing or
 changed evidence, partial staging replay and additional read-only workload
 drives are refused. This profile and staging path are internal and do not yet
-have a scheduler dispatch or RPC/load entry point. The dedicated native restore
-operation must still validate format/backing at load and prove isolated smoke
-and fresh readiness. The internal producer begins
+have a scheduler dispatch or RPC entry point. Its internal loader verifies all
+five target-owned image epochs and original content receipts, loads paused,
+then records separate resume and mandatory entropy/clock-hook effects. Lost
+responses and recovered records cannot replay those effects. Its original live
+context carries a one-shot load permit; losing the journal cannot reset it.
+Verified target clones retain a v3 disk claim after dropping their temporary
+source names. Same-boot inventory preserves that claim until the original
+anchor retires and cannot recreate missing native authority from it.
+The loader retains read-only descriptors for the original target cgroup and
+normal RAM limit, and checks exact process membership and credentials before
+each effect. A replacement cgroup or raised limit stops the sequence. The load
+journal supplies no qualification, serving or graph readiness. Original Firecracker
+provenance, restored channel identity, scoped bindings and isolated graph smoke
+remain outstanding.
+
+The internal capture producer begins
 intent before output preparation and publishes memory, device state, the frozen
 private drive and backing identity. Actual buffered snapshot writes require the
 existing temporary snapshot headroom policy. The producer pins and journals the

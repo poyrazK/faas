@@ -2417,6 +2417,10 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 }
 
 func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
+	return v.triggerResumeHookOnceWithPeer(ctx, l, hostTimeUnixNano, nil)
+}
+
+func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, validatePeer func(net.Conn) error) error {
 	// Defense-in-depth: refuse to dial with a half-built VMM or empty instance.
 	// Without this guard, a refactor that passes an uninitialised JailerVMM
 	// (test seam, future caller) would dial a malformed UDS path and return a
@@ -2451,6 +2455,12 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 		attempts++
 		c, err = net.DialTimeout("unix", sock, 20*time.Millisecond)
 		if err == nil {
+			if validatePeer != nil {
+				if err := validatePeer(c); err != nil {
+					_ = c.Close()
+					return err
+				}
+			}
 			_ = c.SetDeadline(time.Now().Add(500 * time.Millisecond))
 			// Step 1: FC CONNECT-port handshake. "CONNECT <port>\n" — ASCII,
 			// newline-terminated. Guest listens on port VsockResumePort (1024).
@@ -2530,6 +2540,11 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgResume)
 	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
 	copy(msg[8:], body)
+	if validatePeer != nil {
+		if err := validatePeer(conn); err != nil {
+			return err
+		}
+	}
 	if _, err := conn.Write(msg); err != nil {
 		return fmt.Errorf("vmm: write resume request: %w", err)
 	}
@@ -2546,6 +2561,11 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 			return fmt.Errorf("vmm: %w (ack=%d)", ErrAfterRestoreHook, ack[0])
 		}
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
+	}
+	if validatePeer != nil {
+		if err := validatePeer(conn); err != nil {
+			return err
+		}
 	}
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.

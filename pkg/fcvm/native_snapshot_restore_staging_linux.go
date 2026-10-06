@@ -163,7 +163,7 @@ func (b linuxNativeImageSources) prepareVerifiedRestoreImage(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	p := &linuxNativeImagePreparation{root: rootFile, owner: owner, diskRoot: b.diskStagingRoot}
+	p := &linuxNativeImagePreparation{root: rootFile, owner: owner, diskRoot: b.diskStagingRoot, restoreClone: true}
 	defer func() {
 		if prepared == nil || result != nil {
 			result = errors.Join(result, rootFile.Close())

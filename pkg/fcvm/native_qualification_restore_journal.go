@@ -96,7 +96,7 @@ func (r nativeQualificationRestoreRecord) validate(nodeID string) error {
 			return errors.New("native qualification restore: target lease has no generation")
 		}
 	} else if !r.CreateStarted || !canonicalNativeHelperID(r.NativeGeneration) || r.NativeGeneration == r.Generation ||
-		r.NativeGeneration == r.Capture.NativeGeneration || validateNativeQualificationLease(r.Execution, r.NativeLease) != nil {
+		r.NativeGeneration == r.Capture.NativeGeneration || validateNativeQualificationLease(r.Execution, r.NativeLease) != nil || r.NativeLease.MemoryMaxMiB != r.Execution.RAMMB {
 		return errors.New("native qualification restore: target physical binding is invalid")
 	}
 	return nil
@@ -330,6 +330,12 @@ func (j *nativeQualificationRestoreJournal) recoveryLeases(ctx context.Context, 
 	}
 	var leases []Lease
 	for _, entry := range entries {
+		if entry.Name() == "loads" {
+			if !entry.IsDir() {
+				return nil, errors.New("native qualification restore: effect evidence directory changed")
+			}
+			continue
+		}
 		if strings.HasPrefix(entry.Name(), ".launch-") {
 			continue
 		}
@@ -346,7 +352,7 @@ func (j *nativeQualificationRestoreJournal) recoveryLeases(ctx context.Context, 
 			leases = append(leases, lease)
 		}
 	}
-	return leases, ctx.Err()
+	return leases, errors.Join(j.loads().validateInventory(ctx), ctx.Err())
 }
 
 func (j *nativeQualificationRestoreJournal) recoverLease(ctx context.Context, instance string, physical []nativeLaunchRecord) (lease Lease, planned bool, result error) {

@@ -101,6 +101,9 @@ const NativeSnapshotBackingRecordMaxBytes = 4096
 // Captured kernel/base paths are single Linux jail filenames, never host paths.
 const NativeSnapshotBackingNameMaxBytes = 255
 
+// Restore effect evidence contains five fixed image witnesses and six phases.
+const NativeQualificationRestoreLoadRecordMaxBytes = 8192
+
 // Native snapshot retirement can scan the unified hierarchy to distinguish a
 // removed original inode from a retained cgroup. Exceeding these parser bounds
 // retains ownership; these are diagnostic limits, not tenant quotas.

@@ -3308,3 +3308,97 @@ sidecar remains excluded from the stored total. That target has its own native
 generation, slot, UID, IP, wake and cleanup identity; it does not load the
 snapshot. The separate receipt-verified ordinary restore regression also
 passed with fresh guest UUIDs. Scan evidence remains modeled in this fixture.
+
+### Dedicated restore effect boundary (2026-10-06)
+
+The internal native restore loader joins the original completed capture and
+publication receipts to five exclusive target image epochs: captured kernel
+and base names, fixed memory/device-state names and the writable private drive.
+Before its first effect it opens their original anchors, verifies inode identity,
+size and complete content digest, and closes each descriptor under its source
+lock. Linux additionally requires the original anonymous disk claim; backing
+claims retain the exact original capture witness. Missing, substituted, extra
+or aliased bindings cannot reach a load effect. Logical memory must equal the
+original target RAM reservation. Ordinary storage/path lookup and cold fallback
+cannot supply this operation.
+
+The restore binding requires guest RAM to equal the captured execution's
+reservation before physical publication. The existing cgroup policy adds its
+billable overhead once. An oversized lease, including a lease that already
+includes that overhead, cannot manufacture a larger normal restore fence.
+
+Verified restore clones use a separate v3 disk-claim profile. Their original
+staging capability removes its exact temporary source link while retaining
+the immutable pre-anchor claim, including the captured backing witness where
+applicable. Same-boot inventory requires the original image epoch and preserves
+this custody until original anchor retirement; missing native authority is
+quarantined. The claim grants neither staging replay nor load authority. Older
+v1/v2 transient staging behavior is unchanged, and a transient or missing claim
+cannot be adopted by the loader. Different-boot cleanup retains the existing
+original disk identity and exclusion checks.
+
+A separate bounded `qualifications/restores/loads/<target>.json` record binds
+the target incoming generation, original PID/start time, native generation and
+kernel boot to exact hashes of its incoming/capture/backing evidence and all
+five target image witnesses. Six ordered phases persist intent before load,
+resume and the mandatory guest hook, then acknowledgement afterwards. The
+loader holds target incoming and physical locks throughout. Any uncertain
+effect or journal acknowledgement stops the sequence; another delivery or
+recovered record cannot load, resume or run the hook again. Recovery validates
+the retained source/target relationship and image epochs without granting
+producer or readiness authority. Target revocation and independent retirement
+retain the original evidence.
+
+The original incoming context also retains a process-local one-shot load permit.
+It is consumed before the first load journal publication, and rebuilding that
+same context cannot reset it. Even a lost or damaged journal file cannot let
+the original live caller replay a load. Inventory cannot recreate this permit.
+The loader also retains read-only original cgroup, limit and pidfd descriptors
+throughout all effects. Its record binds the original cgroup inode and path;
+every phase checks exact process membership, credentials, original inode and
+normal billable RAM limit. Restore cannot request capture headroom or adopt a
+replacement cgroup. All these descriptors close under the physical lock.
+
+The fixed native API adapter pins the original target pidfd and Unix peer for
+each single request. Load explicitly leaves the guest paused; only its durable
+load acknowledgement permits a separately recorded resume. The native resume
+hook uses the existing entropy/clock payload once, with original PID/start-time
+and Unix peer checks before handshake, before payload and after acknowledgement.
+Ordinary serving keeps its existing resume transport and fallback behavior.
+The effect record supplies no graph, serving, scoped binding or activation
+evidence. Scheduler/RPC integration and qualification readiness remain gated.
+
+Firecracker 1.7's load API has no vsock override. The captured guest CID therefore
+needs a scoped channel identity contract before integration with Manager's
+fresh slot index; a separate jail and pinned peer alone cannot supply that
+contract. Explicit original Firecracker binary/version provenance, scoped
+binding delivery and isolated graph evidence remain outstanding. Firecracker
+itself checks snapshot format compatibility at the synchronous load boundary;
+a rejected load cannot enter ordinary fallback. The combined PR remains
+deferred until the agreed implementation pieces are ready.
+
+The final portable restore journal/capability/exact-RAM race selection passed
+on Darwin (5.340 s). The expanded Linux restore, custody, control and resume
+race selection passed on the approved nested KVM node (91.651 s), with Go
+1.25.13. Broader regressions passed for fcvm (142.234 s), qualification wire
+(0.024 s), vmmd RPC (0.162 s) and scheduler (1.966 s). Full normal Linux fcvm
+lint and changed-code metal lint reported zero issues. Exact inventory and
+hashes matched all 8,332 Go files; no Go source changed after those checks.
+The existing Darwin linker warning and unrelated full-metal lint findings
+remain unchanged.
+
+`make test-metal` passed the expanded native selection (161.926 s), and
+`make leakcheck` reported no leaked resources. Actual source capture/resume/
+retirement, dedicated target load/resume/entropy hook/independent retirement,
+and the separate receipt-verified ordinary restore passed in 27.77 s child /
+28.88 s parent. Original memory was 134,217,728 logical / 64,937,984 allocated
+bytes, device state 13,696 logical / 16,384 allocated bytes, and private drive
+67,108,864 logical / 86,016 allocated bytes; stored total was 65,040,384 bytes,
+excluding the backing sidecar. The dedicated target retained five anonymous
+exclusive image epochs and original v3 claims across same-boot inventory. It
+used a read-only pinned normal RAM fence, received fresh guest entropy, had
+distinct UID, IP and netns, rejected load replay and retired under its own
+physical generation. Scan evidence remains modeled in this fixture. These
+checks supply scoped nested-node VM evidence; they grant no production dispatch,
+graph qualification, serving convergence, activation or enforcement. No PR was
+opened by this checkpoint.

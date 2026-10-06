@@ -29,8 +29,9 @@ import (
 
 // This opt-in boots a real native-owned Firecracker VM, captures through the
 // internal producer and restores receipt-verified bytes through an isolated
-// ordinary lifecycle fixture. It does not grant native qualification restore, object cleanup
-// or graph activation evidence, and never opens the production capture gate.
+// ordinary lifecycle fixture and a separate native restore target. It does not
+// grant scoped binding, object cleanup or graph activation evidence, and never
+// opens the production qualification dispatch/capture gates.
 func TestMetalNativeCaptureVM(t *testing.T) {
 	if os.Getenv("FAAS_NATIVE_CAPTURE_VM") != "1" {
 		t.Skip("set FAAS_NATIVE_CAPTURE_VM=1 on the authorized isolated KVM node")
@@ -250,7 +251,7 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	if err != nil {
 		t.Fatal("original capture completion missing:", err)
 	}
-	nativeMetalCaptureVMRestoreBackings(t, ctx, v, incoming, completed, [2]string{kernel, base}, disk)
+	nativeMetalCaptureVMRestoreBackings(t, ctx, m, v, incoming, completed, [2]string{kernel, base}, disk, originalUUID)
 	err = withNativeSnapshotRestoreInputs(ctx, r.publications.(nativeSnapshotRestoreReceiptJournal), canonical, completed, images, func(inputs nativeSnapshotRestoreInputs) (result error) {
 		// Only this disposable acceptance fixture names the verified copies.
 		// Production inputs stay anonymous and need native staging ownership.
@@ -304,9 +305,11 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 }
 
 // The actual producer has retired. This separate native target verifies and
-// stages the original kernel/base names under its own image epochs, then
-// proves its own cleanup. It does not load or grant guest/graph readiness.
-func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, v *JailerVMM, incoming nativeQualificationRecord, completed nativeQualificationCaptureRecord, paths [2]string, disk string) {
+// stages the original kernel/base names and receipt-bound inputs under its own
+// image epochs. It loads paused, resumes and reseeds through pinned original
+// control peers, then proves fresh entropy and its own complete retirement.
+// This does not grant scheduler/serving or scoped graph readiness.
+func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *Manager, v *JailerVMM, incoming nativeQualificationRecord, completed nativeQualificationCaptureRecord, paths [2]string, disk, originalUUID string) {
 	t.Helper()
 	r := v.nativeRecovery
 	q := r.journal.qualifications(incoming.Execution.NodeID)
@@ -322,7 +325,7 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, v *J
 	}
 	ctx = nativeQualificationRestoreContext(ctx, target)
 	lease := leaseForSlot(frame.InstanceID, MaxSlots-2)
-	lease.Plan, lease.MemoryMaxMiB, lease.CPUMillicores = api.PlanHobby, api.BillableRAMMB(frame.RAMMB), 1000
+	lease.Plan, lease.MemoryMaxMiB, lease.CPUMillicores = api.PlanHobby, frame.RAMMB, 1000
 	if err := q.owner.prepare(ctx, lease); err != nil {
 		t.Fatal(err)
 	}
@@ -331,17 +334,12 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, v *J
 		t.Fatal(err)
 	}
 	r.remember(owner)
+	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+	nc.TapUID = lease.UID
 	retire := func(cleanup context.Context) error {
 		_, err := q.restores().revoke(cleanup, frame)
 		if err == nil {
-			err = v.Kill(cleanup, lease)
-		}
-		if err == nil {
-			var physical nativeLaunchRecord
-			physical, err = q.owner.read(frame.InstanceID)
-			if err == nil {
-				err = q.owner.confirmResourcesRemoved(cleanup, physical)
-			}
+			err = m.cleanup(cleanup, lease, nc, nil)
 		}
 		return err
 	}
@@ -392,6 +390,89 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, v *J
 			t.Fatal("real restored backing lacks target's own read-only epoch", image.Name)
 		}
 	}
+	if err := v.stageNativeQualificationRestore(ctx, owner); err != nil {
+		t.Fatal("real receipt-bound target staging:", err)
+	}
+	staged, err = images.records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.imageSources.(linuxNativeImageSources).inventoryDiskStaging(staged); err != nil {
+		t.Fatal("real target custody did not survive same-boot inventory:", err)
+	}
+	for _, source := range staged {
+		for _, ref := range source.References {
+			if !sameNativeImageOwner(ref, owner) {
+				continue
+			}
+			claim, err := readNativeDiskImageClaim(v.nativeImageStagingRoot, source.Epoch)
+			if err != nil || claim.Version != 3 || !sameNativeDiskImageSource(claim, source) {
+				t.Fatal("real target lost original restore descriptor custody:", err)
+			}
+			if _, err := os.Lstat(nativeDiskImageSourcePath(v.nativeImageStagingRoot, source.Epoch)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("real target retained a temporary source name:", err)
+			}
+		}
+	}
+	if err := m.setupNetwork(ctx, nc); err != nil {
+		t.Fatal("separate native target network:", err)
+	}
+	if err := v.ownChrootRoot(root, lease); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.prepareRegisteredGuestVsockListeners(lease); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.stageMountHelper(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.bindTunSourceForOwner(ctx, owner, root, lease.Instance); err != nil {
+		t.Fatal(err)
+	}
+	_ = v.registerRing(lease.Instance)
+	if err := v.startJailer(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.bindTunDeviceInJailerForOwner(ctx, owner, root, lease.Instance, lease.UID, lease.GID); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.applyPreBootCgroupFence(lease, nil); err != nil {
+		t.Fatal(err)
+	}
+	liveOwner, err := q.owner.read(lease.Instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fenceProbe, err := (linuxNativeQualificationRestoreFenceBackend{}).Pin(ctx, liveOwner)
+	if err != nil {
+		t.Fatal("real restore fence cannot pin original target:", err)
+	}
+	flags, flagErr := unix.FcntlInt(fenceProbe.(*linuxNativeQualificationRestoreFence).input.limit.Fd(), unix.F_GETFL, 0)
+	if err := errors.Join(flagErr, fenceProbe.Require(ctx), fenceProbe.Close()); err != nil || flags&unix.O_ACCMODE != unix.O_RDONLY {
+		t.Fatal("real restore fence acquired write authority or lost original target:", err)
+	}
+	loaded, err := v.loadNativeQualificationRestore(ctx, lease)
+	if err != nil {
+		t.Fatal("real dedicated native load/resume/hook:", err)
+	}
+	if loaded.Phases[nativeRestoreHookCompleted].IsZero() {
+		t.Fatal("real target lacks hook acknowledgement")
+	}
+	if err := v.waitReadyWithProbe(ctx, lease, "", false, "", 0); err != nil {
+		t.Fatal("separate native target did not become ready:", err)
+	}
+	if got := fetchV6UUID(t, lease.HostIP.String()); got == "" || got == originalUUID {
+		t.Fatal("dedicated native restore lacks fresh entropy", got)
+	}
+	if lease.UID == incoming.NativeLease.UID || lease.HostIP == incoming.NativeLease.HostIP || lease.Netns == incoming.NativeLease.Netns || lease.Slot == incoming.NativeLease.Slot {
+		t.Fatal("native restore borrowed source allocation or network")
+	}
+	if limit := nativeCaptureVMMemoryLimit(t, filepath.Join(cgroupRoot, ParentCgroupFor(lease.Plan), PerInstanceScope(lease.Instance))); limit != uint64(api.BillableRAMMB(frame.RAMMB))<<20 {
+		t.Fatal("native restore changed billable target memory fence", limit)
+	}
+	if _, err := v.loadNativeQualificationRestore(ctx, lease); err == nil {
+		t.Fatal("completed real restore was replayed")
+	}
 	if err := retire(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +480,10 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, v *J
 	if err != nil || proof.NativeGeneration != owner.Generation || proof.NativeGeneration == completed.NativeGeneration {
 		t.Fatal("real backing target borrowed source retirement:", err)
 	}
-	t.Log("actual captured kernel/base: anonymous verified native target epochs retained original jail names and retired independently; target load remains gated")
+	if err := q.restores().loads().validateInventory(ctx); err != nil {
+		t.Fatal("retired native target lost original load evidence:", err)
+	}
+	t.Log("actual native restore: five anonymous target-owned epochs loaded paused, resumed and reseeded with fresh UUID, UID, IP and netns; independently retired under its normal billable fence")
 }
 
 // Invoke the internal original producer without overriding the public support

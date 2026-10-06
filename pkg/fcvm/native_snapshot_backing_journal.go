@@ -41,9 +41,16 @@ func (image *nativeSnapshotBackingImage) UnmarshalJSON(body []byte) error {
 }
 
 func (image nativeSnapshotBackingImage) validate() error {
+	if !nativeSnapshotBackingName(image.Name) {
+		return errors.New("native snapshot backing: original image name is invalid")
+	}
+	return image.validateContentIdentity()
+}
+
+func (image nativeSnapshotBackingImage) validateContentIdentity() error {
 	digest, err := hex.DecodeString(image.SHA256)
 	if !canonicalNativeHelperID(image.Epoch) || !canonicalNativeHelperID(image.ReferenceID) || image.Identity.Device == 0 || image.Identity.Inode == 0 ||
-		!nativeSnapshotBackingName(image.Name) || image.LogicalBytes <= 0 || err != nil || len(digest) != 32 || hex.EncodeToString(digest) != image.SHA256 {
+		image.LogicalBytes <= 0 || err != nil || len(digest) != 32 || hex.EncodeToString(digest) != image.SHA256 {
 		return errors.New("native snapshot backing: original image identity is incomplete")
 	}
 	return nil

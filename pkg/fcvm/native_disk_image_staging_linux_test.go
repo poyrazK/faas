@@ -457,3 +457,96 @@ func TestNativeDiskStagingRuntimeRefusesLostDaemonOwnership(t *testing.T) {
 		t.Fatal("recovery reused lost ownership instead of refusing it")
 	}
 }
+
+func TestNativeDiskStagingRestoreHandoffRetainsOriginalCustodyWithoutNamedSource(t *testing.T) {
+	for _, name := range []string{memSnapshotName, vmstateSnapshotName, layerImageName, "captured-base.ext4"} {
+		t.Run(name, func(t *testing.T) {
+			p, b, record, point := nativeDiskStagingFixture(t)
+			p.restoreClone = true
+			ref := &record.References[0]
+			ref.Name, ref.ReadOnly = name, name != layerImageName
+			if ref.ReadOnly {
+				ref.AddPerms = 0o044
+			}
+			if name == "captured-base.ext4" {
+				p.restoreBacking = &nativeSnapshotBackingImage{Epoch: uuid.NewString(), ReferenceID: uuid.NewString(), Identity: nativeLoopIdentity{Device: 11, Inode: 12},
+					Name: name, LogicalBytes: 17, SHA256: strings.Repeat("a", 64)}
+			}
+			var err error
+			record.Desired, err = desiredNativeImageMetadata(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := p.OwnAnonymousSource(record, point); err != nil {
+				t.Fatal(err)
+			}
+			claim := *p.diskClaim
+			if claim.Version != 3 {
+				t.Fatal("verified restore clone borrowed a transient claim")
+			}
+			if err := p.linkAnonymousSource(point); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(nativeDiskImageSourcePath(b.diskStagingRoot, record.Epoch)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("restore handoff retained a temporary source name", err)
+			}
+			retained, err := readNativeDiskImageClaim(b.diskStagingRoot, record.Epoch)
+			if err != nil || !reflect.DeepEqual(retained, claim) {
+				t.Fatal("restore handoff lost its immutable custody", err)
+			}
+			if err := b.inventoryDiskStaging([]nativeImageSourceRecord{record}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readNativeDiskImageClaim(b.diskStagingRoot, record.Epoch); err != nil {
+				t.Fatal("same-boot inventory discarded live restore custody", err)
+			}
+			if err := b.inventoryDiskStaging(nil); err == nil {
+				t.Fatal("retained claim recreated missing native authority")
+			}
+			if err := finishNativeRestoreDiskImageHandoff(b.diskStagingRoot, claim); err != nil {
+				t.Fatal("original handoff could not join a lost close acknowledgement", err)
+			}
+			retired := record
+			retired.Removed = true // Original anchor retirement, modeled here.
+			if err := b.inventoryDiskStaging([]nativeImageSourceRecord{retired}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(nativeDiskImageClaimPath(b.diskStagingRoot, record.Epoch)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("original anchor retirement retained restore custody", err)
+			}
+		})
+	}
+}
+
+func TestNativeDiskStagingRestoreHandoffRefusesChangedClaim(t *testing.T) {
+	p, b, record, point := nativeDiskStagingFixture(t)
+	p.restoreClone = true
+	if err := p.OwnAnonymousSource(record, point); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.linkAnonymousSource(point); err != nil {
+		t.Fatal(err)
+	}
+	claim := *p.diskClaim
+	changed := claim
+	changed.Source.References = append([]nativeImageReference(nil), claim.Source.References...)
+	changed.Source.References[0].Owner.Generation = uuid.NewString()
+	if err := writeNativeJournalValue(nativeDiskImageClaimPath(b.diskStagingRoot, record.Epoch), changed); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Close(); err == nil {
+		t.Fatal("changed custody authorized original handoff")
+	}
+	if _, err := os.Lstat(p.staging); err != nil {
+		t.Fatal("changed custody caused source deletion", err)
+	}
+	if err := writeNativeJournalValue(nativeDiskImageClaimPath(b.diskStagingRoot, record.Epoch), claim); err != nil {
+		t.Fatal(err)
+	}
+	if err := retireNativeDiskImageClaim(b.diskStagingRoot, claim); err != nil {
+		t.Fatal(err)
+	}
+}

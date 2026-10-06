@@ -13,21 +13,24 @@ import (
 )
 
 type nativeProcessRecoveryRuntime struct {
-	journal         *nativeLaunchJournal
-	retirer         nativeProcessRetirer
-	support         func() error
-	resources       func(Lease, netns.Config) error
-	startTime       func(int) (uint64, error)
-	mounts          func(string) ([]string, error)
-	unmount         func(context.Context, string) error
-	inventory       func([]Lease) error
-	helperGroups    nativeHostHelperGroups
-	loopMounts      nativeLoopMountBackend
-	imageSources    nativeImageSourceBackend
-	publications    nativeSnapshotPublicationJournal
-	snapshotMemory  nativeSnapshotMemoryBackend
-	snapshotControl nativeSnapshotControlBackend // startup/test wiring; never selected by an RPC
-	tunBinds        nativeTunBindBackend
+	journal          *nativeLaunchJournal
+	retirer          nativeProcessRetirer
+	support          func() error
+	resources        func(Lease, netns.Config) error
+	startTime        func(int) (uint64, error)
+	mounts           func(string) ([]string, error)
+	unmount          func(context.Context, string) error
+	inventory        func([]Lease) error
+	helperGroups     nativeHostHelperGroups
+	loopMounts       nativeLoopMountBackend
+	imageSources     nativeImageSourceBackend
+	publications     nativeSnapshotPublicationJournal
+	snapshotMemory   nativeSnapshotMemoryBackend
+	snapshotControl  nativeSnapshotControlBackend // startup/test wiring; never selected by an RPC
+	restoreResume    nativeQualificationRestoreResumeBackend
+	restoreFence     nativeQualificationRestoreFenceBackend
+	restoreLoadWrite func(string, nativeQualificationRestoreLoadRecord) error // test-only effect journal fault injection
+	tunBinds         nativeTunBindBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
 	helper     string
@@ -59,6 +62,8 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 		imageSources:    images,
 		publications:    newNativeSnapshotPublicationJournal(v.nativeSnapshotPublicationRoot, v.chrootBase, v.nativeImageStagingRoot),
 		snapshotControl: newNativeSnapshotControlBackend(),
+		restoreResume:   newNativeQualificationRestoreResumeBackend(),
+		restoreFence:    newNativeQualificationRestoreFenceBackend(),
 		snapshotMemory:  newNativeSnapshotMemoryBackend(),
 		tunBinds:        tun,
 		support: func() error {

@@ -30,6 +30,9 @@ type linuxNativeImagePreparation struct {
 	diskRoot       string
 	diskClaim      *nativeDiskImageClaim
 	restoreBacking *nativeSnapshotBackingImage
+	// Verified restore clones retain their immutable claim after dropping the
+	// temporary link. Only their original anchor retirement removes it.
+	restoreClone bool
 	// Live capture attaches these original disk outputs to a namespace that
 	// already exists. Keep their owned link until that joined handoff finishes.
 	retainDiskClaim bool
@@ -50,6 +53,8 @@ func (p *linuxNativeImagePreparation) Close() error {
 	if p.diskClaim != nil {
 		if p.retainDiskClaim {
 			err = checkRetainedNativeDiskImageClaim(p.diskRoot, *p.diskClaim)
+		} else if p.restoreClone {
+			err = finishNativeRestoreDiskImageHandoff(p.diskRoot, *p.diskClaim)
 		} else {
 			err = retireNativeDiskImageClaim(p.diskRoot, *p.diskClaim)
 		}

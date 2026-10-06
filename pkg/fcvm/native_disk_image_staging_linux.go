@@ -33,14 +33,18 @@ type nativeDiskImageClaim struct {
 
 func (c *nativeDiskImageClaim) UnmarshalJSON(data []byte) error {
 	var profile struct {
-		Version int `json:"version"`
+		Version int             `json:"version"`
+		Backing json.RawMessage `json:"backing"`
 	}
 	if err := json.Unmarshal(data, &profile); err != nil {
 		return err
 	}
 	names := []string{"version", "directory", "jail_base", "anchor", "source"}
-	if profile.Version == 2 {
+	if profile.Version == 2 || profile.Version == 3 && len(profile.Backing) != 0 {
 		names = append(names, "backing")
+	}
+	if profile.Version == 3 && bytes.Equal(bytes.TrimSpace(profile.Backing), []byte("null")) {
+		return errors.New("native disk staging: null restore backing witness")
 	}
 	fields, err := nativeJournalObjectFields(data, names)
 	if err != nil {
@@ -122,7 +126,7 @@ func validateNativeDiskImageClaimRoot(root string, claim nativeDiskImageClaim) e
 	if err := r.validate(r.KernelBoot); err != nil {
 		return err
 	}
-	if claim.Version != 1 && claim.Version != 2 || claim.Version == 1 && claim.Backing != nil || !canonicalNativeHelperID(r.KernelBoot) || identity != claim.Directory || identity.Device != r.Identity.Device || !filepath.IsAbs(claim.JailBase) || filepath.Clean(claim.JailBase) != claim.JailBase || claim.JailBase == "/" || claim.Anchor != filepath.Join(claim.JailBase, ".native-processes", "image-sources", "points", r.Epoch) || len(r.References) != 1 || r.Ready || r.Removed || r.Placeholder != (nativeLoopIdentity{}) || r.MountID != 0 {
+	if claim.Version != 1 && claim.Version != 2 && claim.Version != 3 || claim.Version == 1 && claim.Backing != nil || !canonicalNativeHelperID(r.KernelBoot) || identity != claim.Directory || identity.Device != r.Identity.Device || !filepath.IsAbs(claim.JailBase) || filepath.Clean(claim.JailBase) != claim.JailBase || claim.JailBase == "/" || claim.Anchor != filepath.Join(claim.JailBase, ".native-processes", "image-sources", "points", r.Epoch) || len(r.References) != 1 || r.Ready || r.Removed || r.Placeholder != (nativeLoopIdentity{}) || r.MountID != 0 {
 		return errors.New("native disk staging: persistent claim identity or initial intent changed")
 	}
 	ref := r.References[0]
@@ -130,12 +134,15 @@ func validateNativeDiskImageClaimRoot(root string, claim nativeDiskImageClaim) e
 		return errors.New("native disk staging: claim does not own one original anonymous private source")
 	}
 	backing := false
-	if claim.Version == 2 {
+	if claim.Version == 2 || claim.Backing != nil {
 		image := claim.Backing
 		if image == nil || image.validate() != nil || !ref.ReadOnly || image.Name != ref.Name || image.Epoch == r.Epoch || image.ReferenceID == ref.ID || image.Identity == r.Identity {
 			return errors.New("native disk staging: backing clone lost its distinct captured image evidence")
 		}
 		backing = true
+	}
+	if claim.Version == 3 && !backing && (!nativeRestoreImageName(ref.Name) || ref.ReadOnly != (ref.Name != layerImageName)) {
+		return errors.New("native disk staging: restore claim lost its fixed input profile")
 	}
 	// v1 retains its fixed receipt-input names. v2 permits only an explicitly
 	// verified captured backing name; both profiles remain exclusive clones.
@@ -197,6 +204,9 @@ func (p *linuxNativeImagePreparation) OwnAnonymousSource(record nativeImageSourc
 	if p.restoreBacking != nil {
 		image := *p.restoreBacking
 		claim.Version, claim.Backing = 2, &image
+	}
+	if p.restoreClone {
+		claim.Version = 3
 	}
 	if err := validateNativeDiskImageClaimRoot(p.diskRoot, claim); err != nil {
 		return err
@@ -265,6 +275,21 @@ func checkRetainedNativeDiskImageClaim(root string, expected nativeDiskImageClai
 		return errors.New("native disk staging: persistent claim changed before handoff")
 	}
 	return inspectNativeDiskImageSource(root, claim)
+}
+
+// The original staging capability can drop its exact temporary dentry while
+// retaining immutable descriptor custody. This grants no replay or load permit.
+func finishNativeRestoreDiskImageHandoff(root string, expected nativeDiskImageClaim) error {
+	if expected.Version != 3 {
+		return errors.New("native disk staging: retained restore custody requires its original profile")
+	}
+	if err := checkRetainedNativeDiskImageClaim(root, expected); err != nil {
+		return err
+	}
+	if err := removeNativeImageStagingSource(nativeDiskImageSourcePath(root, expected.Source.Epoch), expected.Source.Identity); err != nil {
+		return err
+	}
+	return checkRetainedNativeDiskImageClaim(root, expected)
 }
 
 func retireNativeDiskImageClaim(root string, expected nativeDiskImageClaim) error {
@@ -377,7 +402,7 @@ func (b linuxNativeImageSources) inventoryDiskStaging(records []nativeImageSourc
 		if err := inspectNativeDiskImageSourceRecord(b.diskStagingRoot, claim, original); err != nil {
 			return err
 		}
-		if _, err := os.Lstat(nativeDiskImageSourcePath(b.diskStagingRoot, epoch)); errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Lstat(nativeDiskImageSourcePath(b.diskStagingRoot, epoch)); errors.Is(err, os.ErrNotExist) && (claim.Version != 3 || original.Removed) {
 			retire = append(retire, claim) // Crash after unlink, before claim removal.
 		}
 	}
