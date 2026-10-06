@@ -7033,6 +7033,32 @@ func (c *Client) SendWorkflowEvent(ctx context.Context, runID, eventName string,
 	return resp, err
 }
 
+// ListPlatformTenantSelfWorkflowCallbacks lists callback waits for a run owned
+// by the authenticated platform tenant.
+func (c *Client) ListPlatformTenantSelfWorkflowCallbacks(ctx context.Context, runID string) (ListWorkflowCallbacksResponse, error) {
+	var out ListWorkflowCallbacksResponse
+	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(runID) + "/callbacks"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// CompletePlatformTenantSelfWorkflowCallback supplies the JSON value for one
+// callback wait owned by the authenticated platform tenant.
+func (c *Client) CompletePlatformTenantSelfWorkflowCallback(ctx context.Context, runID, callbackID string, payload json.RawMessage) (CompleteWorkflowCallbackResponse, error) {
+	var out CompleteWorkflowCallbackResponse
+	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID)
+	return out, c.do(ctx, http.MethodPost, path, payload, &out)
+}
+
+// SendPlatformTenantSelfWorkflowEvent injects an event into a run owned by the
+// authenticated platform tenant. Reuse idempotencyKey when retrying an
+// uncertain request.
+func (c *Client) SendPlatformTenantSelfWorkflowEvent(ctx context.Context, runID, eventName string, payload json.RawMessage, idempotencyKey string) (InjectWorkflowEventResponse, error) {
+	var out InjectWorkflowEventResponse
+	request := InjectWorkflowEventRequest{EventName: eventName, Payload: payload}
+	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(runID) + "/events"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
 // PublishEvent durably accepts one tenant-scoped internal event envelope.
 // Matching and delivery are asynchronous consumers of the accepted event.
 func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (PublishEventResponse, error) {

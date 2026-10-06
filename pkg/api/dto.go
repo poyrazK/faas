@@ -65,10 +65,11 @@ func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
 
 // PublishEventResponse confirms durable acceptance of one event envelope.
 type PublishEventResponse struct {
-	ReceiptURL string    `json:"receipt_url"`
-	ID         string    `json:"id"`
-	AcceptedAt time.Time `json:"accepted_at"`
-	AccountID  string    `json:"account_id"`
+	ReceiptURL    string    `json:"receipt_url"`
+	ID            string    `json:"id"`
+	ClientEventID string    `json:"client_event_id,omitempty"`
+	AcceptedAt    time.Time `json:"accepted_at"`
+	AccountID     string    `json:"account_id,omitempty"`
 }
 
 // EventStorageUsageResponse describes retained customer publication storage.
@@ -11828,6 +11829,7 @@ const EventReceiptPageMax = 200
 // EventReceiptResponse separates acceptance, routing, and handler execution.
 type EventReceiptResponse struct {
 	EventID          string                          `json:"event_id"`
+	ClientEventID    string                          `json:"client_event_id,omitempty"`
 	EventSource      string                          `json:"event_source"`
 	EventType        string                          `json:"event_type"`
 	SchemaVersion    string                          `json:"schema_version,omitempty"`
@@ -11844,6 +11846,9 @@ type EventReceiptResponse struct {
 
 type EventReceiptRecipientResponse struct {
 	SubscriptionID       string                            `json:"subscription_id"`
+	WorkflowName         string                            `json:"workflow_name,omitempty"`
+	WorkflowRunID        string                            `json:"workflow_run_id,omitempty"`
+	WorkflowRunStatus    string                            `json:"workflow_run_status,omitempty"`
 	AppID                string                            `json:"app_id"`
 	AppSlug              string                            `json:"app_slug,omitempty"`
 	Routing              EventReceiptRoutingResponse       `json:"routing"`

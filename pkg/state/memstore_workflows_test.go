@@ -494,17 +494,17 @@ func TestMemStore_WorkflowRunListFilters(t *testing.T) {
 	ctx := context.Background()
 	ms := state.NewMemStore()
 
-	first := &state.WorkflowRun{AppID: "app-run-filters", WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
+	first := &state.WorkflowRun{AppID: "app-run-filters", PlatformTenantID: "tenant-a", WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
 	if err := ms.CreateWorkflowRun(ctx, first); err != nil {
 		t.Fatalf("CreateWorkflowRun(first): %v", err)
 	}
 	time.Sleep(time.Millisecond)
-	other := &state.WorkflowRun{AppID: first.AppID, WorkflowName: "refund", DefinitionSnapshot: json.RawMessage(`{"name":"refund"}`)}
+	other := &state.WorkflowRun{AppID: first.AppID, PlatformTenantID: "tenant-b", WorkflowName: "refund", DefinitionSnapshot: json.RawMessage(`{"name":"refund"}`)}
 	if err := ms.CreateWorkflowRun(ctx, other); err != nil {
 		t.Fatalf("CreateWorkflowRun(other): %v", err)
 	}
 	time.Sleep(time.Millisecond)
-	last := &state.WorkflowRun{AppID: first.AppID, WorkflowName: first.WorkflowName, DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
+	last := &state.WorkflowRun{AppID: first.AppID, PlatformTenantID: "tenant-a", WorkflowName: first.WorkflowName, DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
 	if err := ms.CreateWorkflowRun(ctx, last); err != nil {
 		t.Fatalf("CreateWorkflowRun(last): %v", err)
 	}
@@ -519,6 +519,12 @@ func TestMemStore_WorkflowRunListFilters(t *testing.T) {
 	})
 	if err != nil || total != 2 || len(runs) != 1 || runs[0].WorkflowName != first.WorkflowName {
 		t.Fatalf("filtered list = %#v, total=%d, err=%v; want one paged charge run from two matches", runs, total, err)
+	}
+	tenantRuns, tenantTotal, err := ms.ListWorkflowRuns(ctx, first.AppID, state.ListWorkflowRunsOpts{
+		PlatformTenantID: "tenant-a", Limit: 1, Offset: 1,
+	})
+	if err != nil || tenantTotal != 2 || len(tenantRuns) != 1 || tenantRuns[0].ID != first.ID || tenantRuns[0].PlatformTenantID != "tenant-a" {
+		t.Fatalf("tenant-filtered list = %#v, total=%d, err=%v; want only tenant-a's second page", tenantRuns, tenantTotal, err)
 	}
 
 	if _, _, err := ms.ListWorkflowRuns(ctx, first.AppID, state.ListWorkflowRunsOpts{

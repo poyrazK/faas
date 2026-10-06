@@ -206,13 +206,18 @@ type Loop struct {
 
 	// workflowsDispatched is the FAAS_WORKFLOWS_ENABLED opt-in for the
 	// workflow dispatch tick (ADR-081).
-	workflowsDispatched      bool
-	workflowScheduleMinute   int64
-	workflowScheduleAfter    string
-	workflowScheduleComplete bool
-	workflowScheduleFailed   bool
-	workflowOrch             *WorkflowOrchestrator
-	workflowRetention        *WorkflowRetention
+	workflowsDispatched               bool
+	workflowScheduleMinute            int64
+	workflowScheduleAfter             string
+	workflowScheduleComplete          bool
+	workflowScheduleFailed            bool
+	tenantWorkflowScheduleMinute      int64
+	tenantWorkflowScheduleAfterApp    string
+	tenantWorkflowScheduleAfterTenant string
+	tenantWorkflowScheduleComplete    bool
+	tenantWorkflowScheduleFailed      bool
+	workflowOrch                      *WorkflowOrchestrator
+	workflowRetention                 *WorkflowRetention
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {

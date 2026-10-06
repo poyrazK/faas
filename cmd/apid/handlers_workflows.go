@@ -179,18 +179,6 @@ func (s *server) cancelPlatformTenantSelfWorkflowRun(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, workflowRunResponse(run))
 }
 
-func tenantWorkflowDefinitionSupported(definition api.WorkflowSpec) bool {
-	for _, step := range definition.Steps {
-		// Event waits and callbacks accept externally supplied continuations and
-		// still need tenant-scoped admission. Outbound steps use the persisted run
-		// identity, a fixed app-bound integration, and live tenant-link checks.
-		if step.WaitForEvent != "" || step.WaitForCallback {
-			return false
-		}
-	}
-	return true
-}
-
 func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Request, acct state.Account, tenantID string) {
 	slug := r.PathValue("slug")
 	workflowName := r.PathValue("name")
@@ -314,10 +302,6 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
 		return
 	}
-	if tenantID != "" && !tenantWorkflowDefinitionSupported(*definition) {
-		api.WriteProblem(w, api.ErrValidation("tenant-scoped workflow runs currently do not support event waits or callbacks"))
-		return
-	}
 	defSnapshot, err := json.Marshal(definition)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("failed to snapshot workflow definition"))
@@ -388,51 +372,10 @@ func (s *server) listWorkflowRuns(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
-	query := r.URL.Query()
-	opts := state.ListWorkflowRunsOpts{
-		Limit:  50,
-		Offset: 0,
-		Status: query.Get("status"),
-	}
-	if !api.ValidWorkflowRunStatus(opts.Status) {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid workflow status", "status must be pending, running, awaiting_event, succeeded, failed, or dead"))
+	opts, validationProblem := workflowRunListOptionsFromQuery(r.URL.Query())
+	if validationProblem != nil {
+		api.WriteProblem(w, validationProblem)
 		return
-	}
-	if query.Has("workflow_name") {
-		opts.WorkflowName = query.Get("workflow_name")
-		if opts.WorkflowName == "" || len(opts.WorkflowName) > api.WorkflowWebhookNameMaxBytes {
-			api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("workflow_name must contain 1 to %d bytes", api.WorkflowWebhookNameMaxBytes)))
-			return
-		}
-	}
-	var err error
-	if opts.CreatedAfter, err = parseWorkflowRunTimeFilter(query, "created_after"); err != nil {
-		api.WriteProblem(w, api.ErrValidation("created_after must be an RFC3339 timestamp"))
-		return
-	}
-	if opts.CreatedBefore, err = parseWorkflowRunTimeFilter(query, "created_before"); err != nil {
-		api.WriteProblem(w, api.ErrValidation("created_before must be an RFC3339 timestamp"))
-		return
-	}
-	if opts.CreatedAfter != nil && opts.CreatedBefore != nil && opts.CreatedAfter.After(*opts.CreatedBefore) {
-		api.WriteProblem(w, api.ErrValidation("created_after must be earlier than or equal to created_before"))
-		return
-	}
-
-	if limStr := r.URL.Query().Get("limit"); limStr != "" {
-		if lim, err := strconv.Atoi(limStr); err == nil && lim > 0 {
-			if lim > 100 {
-				lim = 100
-			}
-			opts.Limit = lim
-		}
-	}
-
-	if offStr := r.URL.Query().Get("offset"); offStr != "" {
-		if off, err := strconv.Atoi(offStr); err == nil && off >= 0 {
-			opts.Offset = off
-		}
 	}
 
 	runs, total, err := s.store.ListWorkflowRuns(r.Context(), app.ID, opts)
@@ -451,6 +394,76 @@ func (s *server) listWorkflowRuns(w http.ResponseWriter, r *http.Request, acct s
 		Runs:  res,
 		Total: total,
 	})
+}
+
+func (s *server) listPlatformTenantSelfWorkflowRuns(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	tenantID, app, ok := s.platformTenantEventApp(w, r, acct)
+	if !ok {
+		return
+	}
+	opts, validationProblem := workflowRunListOptionsFromQuery(r.URL.Query())
+	if validationProblem != nil {
+		api.WriteProblem(w, validationProblem)
+		return
+	}
+	opts.PlatformTenantID = tenantID
+	runs, total, err := s.store.ListWorkflowRuns(r.Context(), app.ID, opts)
+	if err != nil {
+		s.log.Error("list platform tenant workflow runs failed", "app_id", app.ID, "platform_tenant_id", tenantID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("failed to list workflow runs"))
+		return
+	}
+	response := api.ListWorkflowRunsResponse{Runs: make([]api.WorkflowRunResponse, len(runs)), Total: total}
+	for i, run := range runs {
+		response.Runs[i] = workflowRunResponse(run)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, response)
+}
+
+func workflowRunListOptionsFromQuery(query map[string][]string) (state.ListWorkflowRunsOpts, *api.Problem) {
+	opts := state.ListWorkflowRunsOpts{Limit: 50}
+	opts.Status = ""
+	if values, ok := query["status"]; ok && len(values) > 0 {
+		opts.Status = values[0]
+	}
+	if !api.ValidWorkflowRunStatus(opts.Status) {
+		return opts, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid workflow status",
+			"status must be pending, running, awaiting_event, succeeded, failed, or dead")
+	}
+	if values, ok := query["workflow_name"]; ok {
+		opts.WorkflowName = ""
+		if len(values) > 0 {
+			opts.WorkflowName = values[0]
+		}
+		if opts.WorkflowName == "" || len(opts.WorkflowName) > api.WorkflowWebhookNameMaxBytes {
+			return opts, api.ErrValidation(fmt.Sprintf("workflow_name must contain 1 to %d bytes", api.WorkflowWebhookNameMaxBytes))
+		}
+	}
+	var err error
+	if opts.CreatedAfter, err = parseWorkflowRunTimeFilter(query, "created_after"); err != nil {
+		return opts, api.ErrValidation("created_after must be an RFC3339 timestamp")
+	}
+	if opts.CreatedBefore, err = parseWorkflowRunTimeFilter(query, "created_before"); err != nil {
+		return opts, api.ErrValidation("created_before must be an RFC3339 timestamp")
+	}
+	if opts.CreatedAfter != nil && opts.CreatedBefore != nil && opts.CreatedAfter.After(*opts.CreatedBefore) {
+		return opts, api.ErrValidation("created_after must be earlier than or equal to created_before")
+	}
+	if values, ok := query["limit"]; ok && len(values) > 0 {
+		if limit, err := strconv.Atoi(values[0]); err == nil && limit > 0 {
+			if limit > 100 {
+				limit = 100
+			}
+			opts.Limit = limit
+		}
+	}
+	if values, ok := query["offset"]; ok && len(values) > 0 {
+		if offset, err := strconv.Atoi(values[0]); err == nil && offset >= 0 {
+			opts.Offset = offset
+		}
+	}
+	return opts, nil
 }
 
 func parseWorkflowRunTimeFilter(query map[string][]string, name string) (*time.Time, error) {
@@ -566,7 +579,18 @@ func (s *server) injectWorkflowEvent(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
 		return
 	}
+	s.injectWorkflowEventForRun(w, r, run)
+}
 
+func (s *server) injectPlatformTenantSelfWorkflowEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	run, ok := s.loadPlatformTenantSelfWorkflowRun(w, r, acct)
+	if !ok {
+		return
+	}
+	s.injectWorkflowEventForRun(w, r, run)
+}
+
+func (s *server) injectWorkflowEventForRun(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun) {
 	var req api.InjectWorkflowEventRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
@@ -601,7 +625,26 @@ func (s *server) injectWorkflowEvent(w http.ResponseWriter, r *http.Request, acc
 	if key := r.Header.Get("Idempotency-Key"); key != "" {
 		evt.ID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(run.ID+"\x00"+key)).String()
 	}
-	if err := s.store.InsertWorkflowEvent(r.Context(), evt); err != nil {
+	var err error
+	if run.PlatformTenantID != "" {
+		continuations, ok := s.store.(state.TenantWorkflowContinuationStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("tenant workflow continuation store unavailable"))
+			return
+		}
+		err = continuations.InsertTenantWorkflowEvent(r.Context(), run.PlatformTenantID, evt)
+	} else {
+		err = s.store.InsertWorkflowEvent(r.Context(), evt)
+	}
+	if err != nil {
+		if errors.Is(err, state.ErrWorkflowRunNotFound) {
+			api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+			return
+		}
+		if errors.Is(err, state.ErrWorkflowNotRunning) {
+			api.WriteProblem(w, api.ErrWorkflowNotRunning())
+			return
+		}
 		s.log.Error("record workflow event failed", "run_id", run.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("failed to record workflow event"))
 		return
@@ -647,6 +690,18 @@ func (s *server) listWorkflowCallbacks(w http.ResponseWriter, r *http.Request, a
 	if !ok {
 		return
 	}
+	s.writeWorkflowCallbacks(w, r, run)
+}
+
+func (s *server) listPlatformTenantSelfWorkflowCallbacks(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	run, ok := s.loadPlatformTenantSelfWorkflowRun(w, r, acct)
+	if !ok {
+		return
+	}
+	s.writeWorkflowCallbacks(w, r, run)
+}
+
+func (s *server) writeWorkflowCallbacks(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun) {
 	callbacks, err := workflowCallbackSpecs(run)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("workflow definition snapshot is invalid"))
@@ -682,6 +737,18 @@ func (s *server) completeWorkflowCallback(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	s.completeWorkflowCallbackForRun(w, r, run)
+}
+
+func (s *server) completePlatformTenantSelfWorkflowCallback(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	run, ok := s.loadPlatformTenantSelfWorkflowRun(w, r, acct)
+	if !ok {
+		return
+	}
+	s.completeWorkflowCallbackForRun(w, r, run)
+}
+
+func (s *server) completeWorkflowCallbackForRun(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun) {
 	callbacks, err := workflowCallbackSpecs(run)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("workflow definition snapshot is invalid"))
@@ -705,10 +772,24 @@ func (s *server) completeWorkflowCallback(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	duplicate, err := s.store.CompleteWorkflowCallback(r.Context(), run.ID, selected.Name,
-		api.WorkflowCallbackEventName(run.ID, selected.Name), r.PathValue("callback_id"), selected.Timeout, payload)
+	eventName := api.WorkflowCallbackEventName(run.ID, selected.Name)
+	var duplicate bool
+	if run.PlatformTenantID != "" {
+		continuations, ok := s.store.(state.TenantWorkflowContinuationStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("tenant workflow continuation store unavailable"))
+			return
+		}
+		duplicate, err = continuations.CompleteTenantWorkflowCallback(r.Context(), run.PlatformTenantID, run.ID, selected.Name,
+			eventName, r.PathValue("callback_id"), selected.Timeout, payload)
+	} else {
+		duplicate, err = s.store.CompleteWorkflowCallback(r.Context(), run.ID, selected.Name,
+			eventName, r.PathValue("callback_id"), selected.Timeout, payload)
+	}
 	if err != nil {
 		switch {
+		case errors.Is(err, state.ErrWorkflowRunNotFound):
+			api.WriteProblem(w, api.ErrWorkflowRunNotFound())
 		case errors.Is(err, state.ErrWorkflowCallbackExpired):
 			api.WriteProblem(w, api.ErrWorkflowCallbackExpired())
 		case errors.Is(err, state.ErrWorkflowCallbackClosed):
