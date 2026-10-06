@@ -4,10 +4,13 @@
 /* eslint-disable */
 import type { ProjectEnvironmentPromotionReleaseGraphResponse } from './ProjectEnvironmentPromotionReleaseGraphResponse.js';
 import type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './ProjectEnvironmentPromotionStatusWorkloadResponse.js';
+import type { ProjectReleaseCheckResponse } from './ProjectReleaseCheckResponse.js';
 /**
  * Durable status for a project environment promotion operation.
  */
 export type ProjectEnvironmentPromotionStatusResponse = {
+  bindings_required?: boolean;
+  bindings_check?: ProjectReleaseCheckResponse;
   promotion_id: string;
   project_slug: string;
   from_environment: string;

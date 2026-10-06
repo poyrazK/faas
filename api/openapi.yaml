@@ -20696,6 +20696,58 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/promote-with-bindings:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose graph will receive a checked promotion.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Destination scope for the binding-checked release graph.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Admission key retaining the same checked operation and candidate IDs on replay.
+        schema: { type: string, minLength: 1, maxLength: 255 }
+    post:
+      tags: [projects]
+      operationId: promoteProjectEnvironmentWithBindings
+      summary: Admit a durable binding-checked environment promotion.
+      description: |
+        Requires graph mode. Admits an idempotent operation, reserves exact dark
+        candidates and rechecks their pinned binding configuration in a leased
+        backend worker. Status GETs never advance the operation or run probes.
+        Graph, config, audit and success receipt commit atomically after fresh
+        evidence passes. Blockers remain in bindings_check until resolved.
+        This dedicated route fails closed on older servers. Enabled environment
+        queues require dispatch proof; prepared consumers cannot qualify them.
+        Checked rollback is a later capability; use a new checked promotion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoteProjectEnvironmentRequest' }
+      responses:
+        '200':
+          description: Terminal checked promotion receipt returned on admission replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionResponse' }
+        '202':
+          description: Accepted; poll the promotion status GET for blockers and completion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/promotions:
     parameters:
       - name: slug
@@ -46335,6 +46387,7 @@ components:
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
         promotion_token: { type: string, minLength: 1, description: Exact promotion token returned by the preview endpoint. }
         approval_token: { type: string, minLength: 1, description: Short-lived approval for a protected target environment. }
+        require_bindings: { type: boolean, description: Use the dedicated promote-with-bindings route for compatibility with older servers. }
 
     ProjectEnvironmentPromotionWorkloadResponse:
       description: Result for one workload in an environment promotion.
@@ -46345,7 +46398,7 @@ components:
         workload_name: { type: string }
         status:
           type: string
-          enum: [promoted, unchanged]
+          enum: [pending, promoted, unchanged, failed]
         source_deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         target_deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
 
@@ -46354,6 +46407,9 @@ components:
       type: object
       required: [promotion_id, project_slug, from_environment, to_environment, promotion_hash, workloads]
       properties:
+        bindings_required: { type: boolean }
+        bindings_check: { $ref: '#/components/schemas/ProjectReleaseCheckResponse' }
+        status: { type: string, enum: [running, succeeded, failed] }
         promotion_id: { type: string, minLength: 1 }
         project_slug: { type: string }
         from_environment: { type: string }
@@ -46407,6 +46463,8 @@ components:
       type: object
       required: [promotion_id, project_slug, from_environment, to_environment, promotion_hash, status, created_at, updated_at, workloads]
       properties:
+        bindings_required: { type: boolean }
+        bindings_check: { $ref: '#/components/schemas/ProjectReleaseCheckResponse' }
         promotion_id: { type: string, minLength: 1 }
         project_slug: { type: string }
         from_environment: { type: string }

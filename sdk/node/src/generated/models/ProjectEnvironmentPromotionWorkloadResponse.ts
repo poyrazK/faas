@@ -8,7 +8,7 @@
 export type ProjectEnvironmentPromotionWorkloadResponse = {
   workload_slug: string;
   workload_name: string;
-  status: 'promoted' | 'unchanged';
+  status: 'pending' | 'promoted' | 'unchanged' | 'failed';
   source_deployment_id?: string;
   target_deployment_id?: string;
 };

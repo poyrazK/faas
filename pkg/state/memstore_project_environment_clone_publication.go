@@ -124,7 +124,7 @@ func (m *MemStore) verifyClonePublicationLocked(op ProjectEnvironmentCloneOperat
 	return validateCloneFeatureFlagsProof(config.FeatureFlags, m.latestFeatureFlagsLocked(FeatureFlagScope{AccountID: op.AccountID, ProjectID: op.ProjectID, EnvironmentID: target.ID}))
 }
 
-func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(_ context.Context, accountID, projectID, operationID string, revision int64, ttl int) (ProjectReleaseSet, error) {
+func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(ctx context.Context, accountID, projectID, operationID string, revision int64, ttl int) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	op, ok := m.projectEnvironmentCloneOperations[operationID]
@@ -156,7 +156,7 @@ func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(_ context.Context, a
 	for _, record := range m.projectEnvironmentCloneWorkloads[op.ID] {
 		members = append(members, ProjectReleaseMember{AppID: record.AppID, DeploymentID: record.TargetDeploymentID})
 	}
-	release, err := m.publishProjectReleaseSetLocked(accountID, projectID, op.TargetEnvironment, ttl, members)
+	release, err := m.publishProjectReleaseSetLocked(ctx, accountID, projectID, op.TargetEnvironment, ttl, members)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}

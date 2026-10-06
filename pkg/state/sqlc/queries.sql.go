@@ -1046,6 +1046,23 @@ func (q *Queries) AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, a
 	return err
 }
 
+const appendBindingCheckedProjectPromotionAudit = `-- name: AppendBindingCheckedProjectPromotionAudit :exec
+INSERT INTO audit_log(id,kind,account_id,account_email,actor,received_at,data)
+SELECT $1::uuid,'project.environment.promoted',a.id,a.email,'apid',clock_timestamp(),$2::jsonb
+FROM accounts a WHERE a.id=$3::uuid
+`
+
+type AppendBindingCheckedProjectPromotionAuditParams struct {
+	ID        pgtype.UUID
+	Data      []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) AppendBindingCheckedProjectPromotionAudit(ctx context.Context, db DBTX, arg AppendBindingCheckedProjectPromotionAuditParams) error {
+	_, err := db.Exec(ctx, appendBindingCheckedProjectPromotionAudit, arg.ID, arg.Data, arg.AccountID)
+	return err
+}
+
 const appendCheckedProjectReleaseAudit = `-- name: AppendCheckedProjectReleaseAudit :exec
 INSERT INTO audit_log(id,kind,account_id,account_email,actor,received_at,data)
 SELECT $1::uuid,'project.release_set_checked',a.id,a.email,'apid',clock_timestamp(),$2::jsonb
@@ -2186,6 +2203,29 @@ func (q *Queries) CaptureProjectEnvironmentCloneWorkPolicies(ctx context.Context
 	return i, err
 }
 
+const checkBindingProjectPromotionMembers = `-- name: CheckBindingProjectPromotionMembers :one
+SELECT NOT EXISTS (
+ SELECT 1 FROM project_environment_promotion_workloads w
+ JOIN project_environment_promotions p ON p.id=w.promotion_id
+ LEFT JOIN apps a ON a.account_id=p.account_id AND a.project_id=p.project_id AND a.slug=w.workload_slug
+ LEFT JOIN jsonb_to_recordset($1::jsonb) AS m(app_id text, deployment_id text)
+ ON m.app_id=a.id::text AND m.deployment_id=w.target_deployment_id
+ WHERE p.id=$2 AND (w.status NOT IN ('promoted','unchanged') OR m.app_id IS NULL)
+) AND (SELECT count(*) FROM project_environment_promotion_workloads WHERE promotion_id=$2) = jsonb_array_length($1::jsonb) AS valid
+`
+
+type CheckBindingProjectPromotionMembersParams struct {
+	Members     []byte
+	PromotionID pgtype.UUID
+}
+
+func (q *Queries) CheckBindingProjectPromotionMembers(ctx context.Context, db DBTX, arg CheckBindingProjectPromotionMembersParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, checkBindingProjectPromotionMembers, arg.Members, arg.PromotionID)
+	var valid pgtype.Bool
+	err := row.Scan(&valid)
+	return valid, err
+}
+
 const checkExclusiveWorkRuntime = `-- name: CheckExclusiveWorkRuntime :one
 SELECT i.id::text FROM instances i JOIN apps a ON a.id=i.app_id
 WHERE i.id=$1::text::uuid AND i.wake_id=$2::text::uuid
@@ -2275,6 +2315,38 @@ func (q *Queries) CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg C
 	return jsonb_build_object, err
 }
 
+const checkpointBindingProjectPromotionTarget = `-- name: CheckpointBindingProjectPromotionTarget :execrows
+UPDATE project_environment_promotion_workloads w SET status='promoted',error='',updated_at=clock_timestamp()
+FROM project_environment_promotions p,deployments d
+WHERE w.id=$1::uuid AND w.promotion_id=p.id AND p.id=$2::uuid
+ AND p.account_id=$3::uuid AND p.binding_worker_token=$4::uuid
+ AND p.binding_worker_until>clock_timestamp() AND p.bindings_required AND p.status='running'
+ AND p.target_release_set_id IS NULL AND w.status='pending'
+ AND d.id::text=w.target_deployment_id AND d.scope=p.to_environment AND d.status='live'
+ AND coalesce(d.rootfs_key,'')<>'' AND coalesce(d.image_digest,'')<>''
+ AND EXISTS(SELECT 1 FROM apps a WHERE a.id=d.app_id AND a.project_id=p.project_id AND a.account_id=p.account_id AND a.slug=w.workload_slug)
+`
+
+type CheckpointBindingProjectPromotionTargetParams struct {
+	WorkloadID  pgtype.UUID
+	PromotionID pgtype.UUID
+	AccountID   pgtype.UUID
+	Token       pgtype.UUID
+}
+
+func (q *Queries) CheckpointBindingProjectPromotionTarget(ctx context.Context, db DBTX, arg CheckpointBindingProjectPromotionTargetParams) (int64, error) {
+	result, err := db.Exec(ctx, checkpointBindingProjectPromotionTarget,
+		arg.WorkloadID,
+		arg.PromotionID,
+		arg.AccountID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimAutomaticRouteCheck = `-- name: ClaimAutomaticRouteCheck :one
 WITH candidate AS (
     SELECT j.deployment_id FROM automatic_route_checks j
@@ -2307,6 +2379,72 @@ func (q *Queries) ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg Cla
 	var claim []byte
 	err := row.Scan(&claim)
 	return claim, err
+}
+
+const claimBindingProjectPromotion = `-- name: ClaimBindingProjectPromotion :one
+WITH next AS (
+ SELECT id FROM project_environment_promotions WHERE bindings_required AND status='running'
+ AND target_release_set_id IS NULL AND (binding_check_next_at IS NULL OR binding_check_next_at<=clock_timestamp())
+ AND (binding_worker_until IS NULL OR binding_worker_until<=clock_timestamp())
+ ORDER BY binding_check_next_at NULLS FIRST,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE project_environment_promotions p SET binding_worker_token=$1::uuid,
+ binding_worker_until=clock_timestamp()+($2::integer * interval '1 second')
+FROM next WHERE p.id=next.id RETURNING p.id, p.account_id, p.project_id, p.project_slug, p.from_environment, p.to_environment, p.promotion_hash, p.idempotency_key, p.status, p.error, p.created_at, p.updated_at, p.completed_at, p.rollback_status, p.rollback_idempotency_key, p.rollback_error, p.rollback_started_at, p.rollback_completed_at, p.verification_status, p.verification_error, p.verification_started_at, p.verification_completed_at, p.release_graph_mode, p.source_release_set_id, p.previous_target_release_set_id, p.target_release_set_id, p.restored_target_release_set_id, p.release_ttl_seconds, p.sync_config, p.source_config_hash, p.previous_target_config_hash, p.source_config_snapshot, p.previous_target_config_snapshot, p.target_config_version, p.rollback_config_version, p.source_qualification_id, p.bindings_required, p.bindings_check, p.binding_check_next_at, p.binding_worker_token, p.binding_worker_until
+`
+
+type ClaimBindingProjectPromotionParams struct {
+	Token        pgtype.UUID
+	LeaseSeconds int32
+}
+
+func (q *Queries) ClaimBindingProjectPromotion(ctx context.Context, db DBTX, arg ClaimBindingProjectPromotionParams) (ProjectEnvironmentPromotion, error) {
+	row := db.QueryRow(ctx, claimBindingProjectPromotion, arg.Token, arg.LeaseSeconds)
+	var i ProjectEnvironmentPromotion
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.ProjectSlug,
+		&i.FromEnvironment,
+		&i.ToEnvironment,
+		&i.PromotionHash,
+		&i.IdempotencyKey,
+		&i.Status,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.RollbackStatus,
+		&i.RollbackIdempotencyKey,
+		&i.RollbackError,
+		&i.RollbackStartedAt,
+		&i.RollbackCompletedAt,
+		&i.VerificationStatus,
+		&i.VerificationError,
+		&i.VerificationStartedAt,
+		&i.VerificationCompletedAt,
+		&i.ReleaseGraphMode,
+		&i.SourceReleaseSetID,
+		&i.PreviousTargetReleaseSetID,
+		&i.TargetReleaseSetID,
+		&i.RestoredTargetReleaseSetID,
+		&i.ReleaseTtlSeconds,
+		&i.SyncConfig,
+		&i.SourceConfigHash,
+		&i.PreviousTargetConfigHash,
+		&i.SourceConfigSnapshot,
+		&i.PreviousTargetConfigSnapshot,
+		&i.TargetConfigVersion,
+		&i.RollbackConfigVersion,
+		&i.SourceQualificationID,
+		&i.BindingsRequired,
+		&i.BindingsCheck,
+		&i.BindingCheckNextAt,
+		&i.BindingWorkerToken,
+		&i.BindingWorkerUntil,
+	)
+	return i, err
 }
 
 const claimClonePostgresMaintenanceDispatch = `-- name: ClaimClonePostgresMaintenanceDispatch :one
@@ -4756,6 +4894,47 @@ func (q *Queries) CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const completeBindingProjectPromotion = `-- name: CompleteBindingProjectPromotion :execrows
+UPDATE project_environment_promotions SET bindings_check=$1::jsonb,error='',status='succeeded',
+ completed_at=clock_timestamp(),updated_at=clock_timestamp(),verification_status='verified',verification_error='',
+ verification_started_at=clock_timestamp(),verification_completed_at=clock_timestamp(),
+ binding_worker_token=NULL,binding_worker_until=NULL,binding_check_next_at=NULL
+WHERE id=$2::uuid AND account_id=$3::uuid
+ AND binding_worker_token=$4::uuid AND binding_worker_until>clock_timestamp()
+ AND bindings_required AND status='running' AND target_release_set_id=$5::uuid
+`
+
+type CompleteBindingProjectPromotionParams struct {
+	Report      []byte
+	PromotionID pgtype.UUID
+	AccountID   pgtype.UUID
+	Token       pgtype.UUID
+	ReleaseID   pgtype.UUID
+}
+
+func (q *Queries) CompleteBindingProjectPromotion(ctx context.Context, db DBTX, arg CompleteBindingProjectPromotionParams) (int64, error) {
+	result, err := db.Exec(ctx, completeBindingProjectPromotion,
+		arg.Report,
+		arg.PromotionID,
+		arg.AccountID,
+		arg.Token,
+		arg.ReleaseID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeBindingProjectPromotionWorkloads = `-- name: CompleteBindingProjectPromotionWorkloads :exec
+UPDATE project_environment_promotion_workloads SET verification_status='verified', verification_error='', updated_at=clock_timestamp() WHERE promotion_id=$1
+`
+
+func (q *Queries) CompleteBindingProjectPromotionWorkloads(ctx context.Context, db DBTX, promotionID pgtype.UUID) error {
+	_, err := db.Exec(ctx, completeBindingProjectPromotionWorkloads, promotionID)
+	return err
 }
 
 const completeCustomerOperationBlobCleanup = `-- name: CompleteCustomerOperationBlobCleanup :execrows
@@ -8478,6 +8657,25 @@ func (q *Queries) EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg
 	var column_1 []byte
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const enableBindingCheckedProjectPromotion = `-- name: EnableBindingCheckedProjectPromotion :execrows
+UPDATE project_environment_promotions SET bindings_required=true
+WHERE id=$1::uuid AND account_id=$2::uuid
+ AND status='running' AND release_graph_mode AND target_release_set_id IS NULL
+`
+
+type EnableBindingCheckedProjectPromotionParams struct {
+	PromotionID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) EnableBindingCheckedProjectPromotion(ctx context.Context, db DBTX, arg EnableBindingCheckedProjectPromotionParams) (int64, error) {
+	result, err := db.Exec(ctx, enableBindingCheckedProjectPromotion, arg.PromotionID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const enqueueEnvironmentGitOps = `-- name: EnqueueEnvironmentGitOps :exec
@@ -28025,6 +28223,42 @@ func (q *Queries) LockAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const lockBindingProjectPromotion = `-- name: LockBindingProjectPromotion :one
+SELECT bindings_required,status,account_id,project_id,coalesce(target_release_set_id::text,'')::text AS target_release_id,
+ binding_worker_until FROM project_environment_promotions
+WHERE id=$1::uuid AND account_id=$2::uuid
+ AND binding_worker_token=$3::uuid FOR UPDATE
+`
+
+type LockBindingProjectPromotionParams struct {
+	PromotionID pgtype.UUID
+	AccountID   pgtype.UUID
+	Token       pgtype.UUID
+}
+
+type LockBindingProjectPromotionRow struct {
+	BindingsRequired   bool
+	Status             string
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	TargetReleaseID    string
+	BindingWorkerUntil pgtype.Timestamptz
+}
+
+func (q *Queries) LockBindingProjectPromotion(ctx context.Context, db DBTX, arg LockBindingProjectPromotionParams) (LockBindingProjectPromotionRow, error) {
+	row := db.QueryRow(ctx, lockBindingProjectPromotion, arg.PromotionID, arg.AccountID, arg.Token)
+	var i LockBindingProjectPromotionRow
+	err := row.Scan(
+		&i.BindingsRequired,
+		&i.Status,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.TargetReleaseID,
+		&i.BindingWorkerUntil,
+	)
+	return i, err
+}
+
 const lockBindingPromotionRevision = `-- name: LockBindingPromotionRevision :one
 SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
 FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
@@ -43753,6 +43987,42 @@ func (q *Queries) ReadBindingApplicationAdoption(ctx context.Context, db DBTX, a
 	return items, nil
 }
 
+const readBindingProjectPromotionDeploymentIntent = `-- name: ReadBindingProjectPromotionDeploymentIntent :one
+SELECT p.id,p.account_id,p.bindings_required,p.to_environment,w.target_deployment_id::text,w.status
+FROM project_environment_promotions p
+JOIN apps a ON a.project_id=p.project_id AND a.account_id=p.account_id AND a.id=$1::uuid
+JOIN project_environment_promotion_workloads w ON w.promotion_id=p.id AND w.workload_slug=a.slug
+WHERE p.id=$2::uuid FOR UPDATE OF p
+`
+
+type ReadBindingProjectPromotionDeploymentIntentParams struct {
+	AppID       pgtype.UUID
+	PromotionID pgtype.UUID
+}
+
+type ReadBindingProjectPromotionDeploymentIntentRow struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	BindingsRequired    bool
+	ToEnvironment       string
+	WTargetDeploymentID string
+	Status              string
+}
+
+func (q *Queries) ReadBindingProjectPromotionDeploymentIntent(ctx context.Context, db DBTX, arg ReadBindingProjectPromotionDeploymentIntentParams) (ReadBindingProjectPromotionDeploymentIntentRow, error) {
+	row := db.QueryRow(ctx, readBindingProjectPromotionDeploymentIntent, arg.AppID, arg.PromotionID)
+	var i ReadBindingProjectPromotionDeploymentIntentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BindingsRequired,
+		&i.ToEnvironment,
+		&i.WTargetDeploymentID,
+		&i.Status,
+	)
+	return i, err
+}
+
 const readBindingPromotionRevision = `-- name: ReadBindingPromotionRevision :one
 SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
 FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
@@ -52240,6 +52510,56 @@ func (q *Queries) ReserveAccountCreditConsumption(ctx context.Context, db DBTX, 
 	return id, err
 }
 
+const reserveBindingProjectPromotionTarget = `-- name: ReserveBindingProjectPromotionTarget :one
+UPDATE project_environment_promotion_workloads w SET
+ target_deployment_id=CASE WHEN w.target_deployment_id='' THEN $1::text ELSE w.target_deployment_id END,
+ updated_at=clock_timestamp()
+FROM project_environment_promotions p
+WHERE w.id=$2::uuid AND w.promotion_id=p.id AND p.id=$3::uuid
+ AND p.account_id=$4::uuid AND p.binding_worker_token=$5::uuid
+ AND p.binding_worker_until>clock_timestamp() AND p.bindings_required AND p.status='running'
+ AND p.target_release_set_id IS NULL AND w.status='pending' RETURNING w.id, w.promotion_id, w.workload_slug, w.workload_name, w.source_deployment_id, w.previous_target_deployment_id, w.target_deployment_id, w.status, w.error, w.created_at, w.updated_at, w.rollback_status, w.restored_target_deployment_id, w.rollback_error, w.verification_status, w.verification_error, w.previous_target_traffic_percent
+`
+
+type ReserveBindingProjectPromotionTargetParams struct {
+	DeploymentID string
+	WorkloadID   pgtype.UUID
+	PromotionID  pgtype.UUID
+	AccountID    pgtype.UUID
+	Token        pgtype.UUID
+}
+
+func (q *Queries) ReserveBindingProjectPromotionTarget(ctx context.Context, db DBTX, arg ReserveBindingProjectPromotionTargetParams) (ProjectEnvironmentPromotionWorkload, error) {
+	row := db.QueryRow(ctx, reserveBindingProjectPromotionTarget,
+		arg.DeploymentID,
+		arg.WorkloadID,
+		arg.PromotionID,
+		arg.AccountID,
+		arg.Token,
+	)
+	var i ProjectEnvironmentPromotionWorkload
+	err := row.Scan(
+		&i.ID,
+		&i.PromotionID,
+		&i.WorkloadSlug,
+		&i.WorkloadName,
+		&i.SourceDeploymentID,
+		&i.PreviousTargetDeploymentID,
+		&i.TargetDeploymentID,
+		&i.Status,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RollbackStatus,
+		&i.RestoredTargetDeploymentID,
+		&i.RollbackError,
+		&i.VerificationStatus,
+		&i.VerificationError,
+		&i.PreviousTargetTrafficPercent,
+	)
+	return i, err
+}
+
 const reserveEnvironmentQueueDeliveryQuota = `-- name: ReserveEnvironmentQueueDeliveryQuota :one
 UPDATE account_async_quota SET current_inflight=current_inflight+1,updated_at=now()
 WHERE account_id=$1 AND current_inflight<max_inflight RETURNING current_inflight
@@ -56492,6 +56812,43 @@ func (q *Queries) UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const updateBindingProjectPromotionCheck = `-- name: UpdateBindingProjectPromotionCheck :execrows
+UPDATE project_environment_promotions SET bindings_check=$1::jsonb,error=$2::text,
+ status=CASE WHEN $3::boolean THEN 'failed' ELSE 'running' END,
+ completed_at=CASE WHEN $3::boolean THEN clock_timestamp() ELSE NULL END,
+ binding_worker_token=NULL,binding_worker_until=NULL,
+ binding_check_next_at=clock_timestamp()+($4::integer * interval '1 second'),updated_at=clock_timestamp()
+WHERE id=$5::uuid AND account_id=$6::uuid
+ AND binding_worker_token=$7::uuid AND binding_worker_until>clock_timestamp()
+ AND bindings_required AND status='running' AND target_release_set_id IS NULL
+`
+
+type UpdateBindingProjectPromotionCheckParams struct {
+	Report       []byte
+	Message      string
+	Failed       bool
+	RetrySeconds int32
+	PromotionID  pgtype.UUID
+	AccountID    pgtype.UUID
+	Token        pgtype.UUID
+}
+
+func (q *Queries) UpdateBindingProjectPromotionCheck(ctx context.Context, db DBTX, arg UpdateBindingProjectPromotionCheckParams) (int64, error) {
+	result, err := db.Exec(ctx, updateBindingProjectPromotionCheck,
+		arg.Report,
+		arg.Message,
+		arg.Failed,
+		arg.RetrySeconds,
+		arg.PromotionID,
+		arg.AccountID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateBindingReleasePolicy = `-- name: UpdateBindingReleasePolicy :one

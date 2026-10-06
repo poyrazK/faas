@@ -5488,6 +5488,11 @@ type ProjectEnvironmentPromotion struct {
 	TargetConfigVersion          int64
 	RollbackConfigVersion        int64
 	SourceQualificationID        pgtype.UUID
+	BindingsRequired             bool
+	BindingsCheck                []byte
+	BindingCheckNextAt           pgtype.Timestamptz
+	BindingWorkerToken           pgtype.UUID
+	BindingWorkerUntil           pgtype.Timestamptz
 }
 
 type ProjectEnvironmentPromotionFeatureFlag struct {

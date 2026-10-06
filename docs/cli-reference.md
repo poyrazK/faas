@@ -6904,10 +6904,11 @@ Plan a promotion
 
 Promote workloads
 
-`gregale projects environments promote --from <ENV> --to <ENV> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS>]`
+`gregale projects environments promote [--require-bindings] --from <ENV> --to <ENV> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--require-bindings` | wait for exact candidate binding evidence before atomic activation |  |
 | `--from <ENV>` | source environment | required |
 | `--to <ENV>` | target environment | required |
 | `--sync-config` | copy source non-secret environment configuration to the target |  |
@@ -6921,7 +6922,13 @@ Promote workloads
 
 Inspect a promotion
 
-`gregale projects environments status`
+`gregale projects environments status [--wait] [--progress] [--timeout <SECONDS>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait with status GETs only |  |
+| `--progress` | print changed checkpoints and binding blockers |  |
+| `--timeout <SECONDS>` | wait deadline |  |
 
 #### projects environments rollback
 

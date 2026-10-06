@@ -8778,3 +8778,10 @@ const (
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
+
+// Bounded APID work for durable binding-checked project promotions.
+const (
+	ProjectBindingPromotionLeaseSeconds         = 120
+	ProjectBindingPromotionCheckIntervalSeconds = 5
+	ProjectBindingPromotionCheckBatchSize       = 4
+)

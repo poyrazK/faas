@@ -53,6 +53,7 @@ type Querier interface {
 	AppQueueBindingConsumerInventory(ctx context.Context, db DBTX, arg AppQueueBindingConsumerInventoryParams) ([]AppQueueBindingConsumerInventoryRow, error)
 	AppRuntimeConfigChangedAtInScope(ctx context.Context, db DBTX, arg AppRuntimeConfigChangedAtInScopeParams) (pgtype.Timestamptz, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
+	AppendBindingCheckedProjectPromotionAudit(ctx context.Context, db DBTX, arg AppendBindingCheckedProjectPromotionAuditParams) error
 	AppendCheckedProjectReleaseAudit(ctx context.Context, db DBTX, arg AppendCheckedProjectReleaseAuditParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
 	AppendRolloutRecoveryAudit(ctx context.Context, db DBTX, arg AppendRolloutRecoveryAuditParams) (int64, error)
@@ -141,11 +142,14 @@ type Querier interface {
 	CancelWorkflowOutboundAttempts(ctx context.Context, db DBTX, arg CancelWorkflowOutboundAttemptsParams) error
 	CaptureProjectEnvironmentCloneQueues(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneQueuesParams) (CaptureProjectEnvironmentCloneQueuesRow, error)
 	CaptureProjectEnvironmentCloneWorkPolicies(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneWorkPoliciesParams) (CaptureProjectEnvironmentCloneWorkPoliciesRow, error)
+	CheckBindingProjectPromotionMembers(ctx context.Context, db DBTX, arg CheckBindingProjectPromotionMembersParams) (pgtype.Bool, error)
 	CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg CheckExclusiveWorkRuntimeParams) (string, error)
 	CheckedRollbackCurrentMatches(ctx context.Context, db DBTX, arg CheckedRollbackCurrentMatchesParams) (pgtype.Bool, error)
 	CheckedRollbackForTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) ([]byte, error)
 	CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg CheckedRollbackTargetFactsParams) ([]byte, error)
+	CheckpointBindingProjectPromotionTarget(ctx context.Context, db DBTX, arg CheckpointBindingProjectPromotionTargetParams) (int64, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
+	ClaimBindingProjectPromotion(ctx context.Context, db DBTX, arg ClaimBindingProjectPromotionParams) (ProjectEnvironmentPromotion, error)
 	ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error)
 	ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg ClaimCustomerOperationBlobCleanupParams) (CustomerOperationResultBlob, error)
 	ClaimEnvironmentGitOpsJob(ctx context.Context, db DBTX, arg ClaimEnvironmentGitOpsJobParams) (EnvironmentGitopsJob, error)
@@ -204,6 +208,8 @@ type Querier interface {
 	CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error)
 	CommitTenantAppScope(ctx context.Context, db DBTX, arg CommitTenantAppScopeParams) (string, error)
 	CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg CompleteAutomaticRouteCheckParams) (int64, error)
+	CompleteBindingProjectPromotion(ctx context.Context, db DBTX, arg CompleteBindingProjectPromotionParams) (int64, error)
+	CompleteBindingProjectPromotionWorkloads(ctx context.Context, db DBTX, promotionID pgtype.UUID) error
 	CompleteCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg CompleteCustomerOperationBlobCleanupParams) (int64, error)
 	CompleteEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg CompleteEnvironmentGitOpsEffectParams) (int64, error)
 	CompleteEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, arg CompleteEnvironmentGitOpsRuntimeParams) (int64, error)
@@ -446,6 +452,7 @@ type Querier interface {
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
 	DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error)
 	EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg EffectiveWorkflowDefinitionsParams) ([]byte, error)
+	EnableBindingCheckedProjectPromotion(ctx context.Context, db DBTX, arg EnableBindingCheckedProjectPromotionParams) (int64, error)
 	EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitOpsParams) error
 	EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, arg EnqueueExclusiveWebhookEffectParams) error
 	EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error)
@@ -1473,6 +1480,7 @@ type Querier interface {
 	LockAlertRollbackRule(ctx context.Context, db DBTX, ruleID pgtype.UUID) (pgtype.UUID, error)
 	LockAppEnvironmentSecretReferenceScope(ctx context.Context, db DBTX, arg LockAppEnvironmentSecretReferenceScopeParams) (LockAppEnvironmentSecretReferenceScopeRow, error)
 	LockAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg LockAppSecretRuntimeProcessParams) (LockAppSecretRuntimeProcessRow, error)
+	LockBindingProjectPromotion(ctx context.Context, db DBTX, arg LockBindingProjectPromotionParams) (LockBindingProjectPromotionRow, error)
 	LockBindingPromotionRevision(ctx context.Context, db DBTX, arg LockBindingPromotionRevisionParams) (string, error)
 	LockBoundOrProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg LockBoundOrProductionQueueTriggerInvocationParams) (pgtype.UUID, error)
 	LockCanaryRouteGateApp(ctx context.Context, db DBTX, appID string) (string, error)
@@ -2085,6 +2093,7 @@ type Querier interface {
 	// One statement reads current managed versions, the complete authorized
 	// resident workload roster and independently versioned application receipts.
 	ReadBindingApplicationAdoption(ctx context.Context, db DBTX, arg ReadBindingApplicationAdoptionParams) ([]ReadBindingApplicationAdoptionRow, error)
+	ReadBindingProjectPromotionDeploymentIntent(ctx context.Context, db DBTX, arg ReadBindingProjectPromotionDeploymentIntentParams) (ReadBindingProjectPromotionDeploymentIntentRow, error)
 	ReadBindingPromotionRevision(ctx context.Context, db DBTX, arg ReadBindingPromotionRevisionParams) (string, error)
 	ReadBindingReleasePolicy(ctx context.Context, db DBTX, arg ReadBindingReleasePolicyParams) ([]byte, error)
 	ReadBoundOrProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg ReadBoundOrProductionQueueTriggerInvocationParams) (Invocation, error)
@@ -2449,6 +2458,7 @@ type Querier interface {
 	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg RequeueWorkflowRunForRetryParams) (WorkflowRun, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
+	ReserveBindingProjectPromotionTarget(ctx context.Context, db DBTX, arg ReserveBindingProjectPromotionTargetParams) (ProjectEnvironmentPromotionWorkload, error)
 	ReserveEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
 	ResetCustomerOperationDelivery(ctx context.Context, db DBTX, arg ResetCustomerOperationDeliveryParams) (int64, error)
@@ -2708,6 +2718,7 @@ type Querier interface {
 	UpdateAccountPlan(ctx context.Context, db DBTX, arg UpdateAccountPlanParams) error
 	UpdateAccountStatus(ctx context.Context, db DBTX, arg UpdateAccountStatusParams) error
 	UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (UpdateAppRow, error)
+	UpdateBindingProjectPromotionCheck(ctx context.Context, db DBTX, arg UpdateBindingProjectPromotionCheckParams) (int64, error)
 	UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg UpdateBindingReleasePolicyParams) ([]byte, error)
 	UpdateBuildStatus(ctx context.Context, db DBTX, arg UpdateBuildStatusParams) error
 	UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams) (UpdateCronRow, error)

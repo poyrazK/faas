@@ -2859,6 +2859,7 @@ var cliCommands = []cliCommand{
 					{Name: "sync-config", Short: "include non-secret source config in the promotion preview"},
 				}},
 				{Name: "promote", Short: "Promote workloads", Flags: []cliFlag{
+					{Name: "require-bindings", Short: "wait for exact candidate binding evidence before atomic activation"},
 					{Name: "from", Short: "source environment", Value: "ENV", Req: true},
 					{Name: "to", Short: "target environment", Value: "ENV", Req: true},
 					{Name: "sync-config", Short: "copy source non-secret environment configuration to the target"},
@@ -2868,7 +2869,7 @@ var cliCommands = []cliCommand{
 					{Name: "progress", Short: "print promotion transitions while waiting (human output only)"},
 					{Name: "timeout", Short: "maximum seconds to wait for promotion completion", Value: "SECONDS"},
 				}},
-				{Name: "status", Short: "Inspect a promotion"},
+				{Name: "status", Short: "Inspect a promotion", Flags: []cliFlag{{Name: "wait", Short: "wait with status GETs only"}, {Name: "progress", Short: "print changed checkpoints and binding blockers"}, {Name: "timeout", Value: "SECONDS", Short: "wait deadline"}}},
 				{Name: "rollback", Short: "Roll back a promotion"},
 			}},
 			{Name: "update", Short: "Update repository or production branch", Positionals: []string{"<slug>"}, Flags: []cliFlag{

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -229,7 +230,7 @@ func (m *MemStore) validateProjectReleaseFallbackLocked(projectID, environment s
 
 var _ ProjectReleaseSetPromotionStore = (*MemStore)(nil)
 
-func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) publishProjectReleaseSetLocked(ctx context.Context, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
 		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
@@ -279,7 +280,7 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 	if count != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
 	}
-	if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
+	if err := m.checkProjectReleaseBindingsLocked(ctx, projectID, environment, members); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	key := releaseKey(projectID, environment)
@@ -306,12 +307,58 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 	return release, nil
 }
 
-func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectReleaseSet{}, ErrNotFound
+	}
+	report, checked := bindingProjectPromotionReport(ctx)
+	var reportJSON []byte
+	if checked {
+		if _, err := json.Marshal(bindingReleaseFences(ctx)); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		var err error
+		reportJSON, err = json.Marshal(report)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+	if promotion.BindingsRequired {
+		if !checked || !checkedProjectRelease(ctx) {
+			return ProjectReleaseSet{}, ErrBindingReleaseRequired
+		}
+		if err := m.validBindingProjectPromotionClaimLocked(bindingProjectPromotionClaim(ctx)); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := validateBindingProjectPromotionReport(promotion, ttlSeconds, members, report, bindingReleaseFences(ctx)); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	} else if checked {
+		return ProjectReleaseSet{}, ErrConflict
+	}
+	if checked {
+		rows := m.projectEnvironmentPromotionWorkloads[promotionID]
+		if len(rows) != len(members) {
+			return ProjectReleaseSet{}, ErrConflict
+		}
+		for _, w := range rows {
+			appID := ""
+			for _, app := range m.apps {
+				if app.AccountID == accountID && app.ProjectID == promotion.ProjectID && app.Slug == w.WorkloadSlug {
+					appID = app.ID
+				}
+			}
+			found := false
+			for _, member := range members {
+				found = found || member.AppID == appID && member.DeploymentID == w.TargetDeploymentID
+			}
+			if !found || (w.Status != "promoted" && w.Status != "unchanged") {
+				return ProjectReleaseSet{}, ErrConflict
+			}
+		}
 	}
 	key := releaseKey(promotion.ProjectID, promotion.ToEnvironment)
 	activeID := m.activeProjectReleaseSets[key]
@@ -367,7 +414,12 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
-	release, err := m.publishProjectReleaseSetLocked(accountID, promotion.ProjectID, promotion.ToEnvironment, ttlSeconds, members)
+	if checked {
+		if err := m.validBindingProjectPromotionClaimLocked(bindingProjectPromotionClaim(ctx)); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+	release, err := m.publishProjectReleaseSetLocked(ctx, accountID, promotion.ProjectID, promotion.ToEnvironment, ttlSeconds, members)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
@@ -377,17 +429,45 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 	if promotion.SyncConfig {
 		promotion.TargetConfigVersion = m.appendProjectEnvironmentPromotionConfigLocked(promotion, false)
 	}
+	if checked {
+		now := time.Now().UTC()
+		promotion.Status = "succeeded"
+		promotion.Error = ""
+		promotion.CompletedAt = &now
+		promotion.VerificationStatus = "verified"
+		promotion.VerificationError = ""
+		promotion.VerificationStartedAt = &now
+		promotion.VerificationCompletedAt = &now
+		promotion.BindingWorkerToken = ""
+		promotion.BindingWorkerUntil = nil
+		promotion.BindingCheckNextAt = nil
+		promotion.BindingsCheck = reportJSON
+		rows := m.projectEnvironmentPromotionWorkloads[promotionID]
+		for i := range rows {
+			rows[i].VerificationStatus = "verified"
+			rows[i].VerificationError = ""
+			rows[i].UpdatedAt = now
+		}
+		m.projectEnvironmentPromotionWorkloads[promotionID] = rows
+
+		data, _ := json.Marshal(map[string]any{"promotion_id": promotion.ID, "project_id": promotion.ProjectID, "from_environment": promotion.FromEnvironment, "to_environment": promotion.ToEnvironment, "release_id": release.ID, "bindings_check": report, "binding_fences": bindingReleaseFences(ctx)})
+		accountUUID := uuid.MustParse(accountID)
+		m.appendAuditLogLocked(AuditLog{ID: uuid.New(), Kind: "project.environment.promoted", AccountID: &accountUUID, AccountEmail: m.accounts[accountID].Email, Actor: "apid", ReceivedAt: now, Data: data})
+	}
 	promotion.UpdatedAt = time.Now().UTC()
 	m.projectEnvironmentPromotions[promotionID] = promotion
 	return cloneProjectReleaseSet(release), nil
 }
 
-func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectReleaseSet{}, ErrNotFound
+	}
+	if promotion.BindingsRequired {
+		return ProjectReleaseSet{}, ErrBindingReleaseRequired
 	}
 	if promotion.PreviousTargetReleaseSetID == "" || promotion.TargetReleaseSetID == "" {
 		return ProjectReleaseSet{}, ErrConflict
@@ -427,7 +507,7 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
-	release, err := m.publishProjectReleaseSetLocked(accountID, promotion.ProjectID, promotion.ToEnvironment, ttlSeconds, members)
+	release, err := m.publishProjectReleaseSetLocked(ctx, accountID, promotion.ProjectID, promotion.ToEnvironment, ttlSeconds, members)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}

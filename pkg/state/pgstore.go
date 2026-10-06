@@ -6782,6 +6782,28 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	checkedPromotion, err := bindingProjectPromotionDeploymentTx(ctx, tx, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
+	if checkedPromotion {
+		existing, readErr := scanDeploymentWithRootfs(tx.QueryRow(ctx, `select `+deploymentSelectColumnsWithRootfs+` from deployments where id=$1`, d.ID))
+		if readErr == nil {
+			if existing.AppID != d.AppID || existing.Scope != d.Scope || existing.Reason != d.Reason || existing.ImageDigest != d.ImageDigest {
+				return Deployment{}, 0, ErrConflict
+			}
+			if checkedPromotion && !bindingProjectPromotionClaim(ctx).Until.After(time.Now()) {
+				return Deployment{}, 0, ErrBindingProjectPromotionLease
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return Deployment{}, 0, mapErr(err)
+			}
+			return existing, 0, nil
+		}
+		if !errors.Is(readErr, ErrNotFound) {
+			return Deployment{}, 0, readErr
+		}
+	}
 	var cloneOperation ProjectEnvironmentCloneOperation
 	var cloneRecord projectCloneWorkloadRecord
 	if len(cloneInputs) > 0 {
@@ -6860,6 +6882,9 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 			if !matched || existing.Scope != d.Scope || (existing.Status != DeployPending && existing.Status != DeployLive) ||
 				capture.SourceHash != promotionInput.SourceHash || capture.PreviousHash != promotionInput.PreviousTargetHash {
 				return Deployment{}, 0, ErrConflict
+			}
+			if checkedPromotion && !bindingProjectPromotionClaim(ctx).Until.After(time.Now()) {
+				return Deployment{}, 0, ErrBindingProjectPromotionLease
 			}
 			if err := tx.Commit(ctx); err != nil {
 				return Deployment{}, 0, mapErr(err)
@@ -7098,6 +7123,9 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		if err != nil {
 			return Deployment{}, 0, err
 		}
+	}
+	if checkedPromotion && !bindingProjectPromotionClaim(ctx).Until.After(time.Now()) {
+		return Deployment{}, 0, ErrBindingProjectPromotionLease
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: commit create deployment: %w", err)
@@ -9264,6 +9292,12 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	if checked, err := bindingProjectPromotionMutationTx(ctx, tx, id); err != nil {
+		return err
+	} else if checked {
+		return ErrBindingReleaseRequired
+	}
+
 	// CreateDeployment takes the app lock before touching deployment rows.
 	// Use the same order here so two ready candidates cannot race through
 	// stable cutover and so create-versus-promote cannot deadlock.
@@ -10712,7 +10746,16 @@ func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string,
 	// always leaves the row with both fields non-empty. The legacy
 	// rootfs_path is preserved for back-compat paths (apic dump, audit
 	// logs, the `appsRoot` filesystem cleanup pass).
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	checked, err := bindingProjectPromotionMutationTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
 		`update deployments
 		    set rootfs_path = $2, rootfs_key = $3, rootfs_bytes = $4
 		  where id = $1`,
@@ -10723,7 +10766,10 @@ func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string,
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if err := bindingProjectPromotionMutationDeadline(ctx, checked); err != nil {
+		return err
+	}
+	return mapErr(tx.Commit(ctx))
 }
 
 // SetDeploymentRootfsIfActive is the status-fenced publication primitive for
@@ -11500,6 +11546,10 @@ func (s *PgStore) SetDeploymentSidecarLayer(ctx context.Context, l DeploymentSid
 		return DeploymentSidecarLayer{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	checked, err := bindingProjectPromotionMutationTx(ctx, tx, l.DeploymentID)
+	if err != nil {
+		return DeploymentSidecarLayer{}, err
+	}
 	// Reserve the parent before a sidecar row/key, matching live publication.
 	if _, err := new(sqlc.Queries).LockLayerArtifactDeployment(ctx, tx, mustPgUUID(l.DeploymentID)); err != nil {
 		return DeploymentSidecarLayer{}, mapErr(err)
@@ -11519,6 +11569,9 @@ func (s *PgStore) SetDeploymentSidecarLayer(ctx context.Context, l DeploymentSid
 	if err := row.Scan(&got.DeploymentID, &got.SidecarName, &got.StorageKey,
 		&got.Bytes, &got.ContentDigest, &got.CreatedAt, &got.UpdatedAt); err != nil {
 		return DeploymentSidecarLayer{}, fmt.Errorf("state: sidecar layer upsert: %w", mapErr(err))
+	}
+	if err := bindingProjectPromotionMutationDeadline(ctx, checked); err != nil {
+		return DeploymentSidecarLayer{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return DeploymentSidecarLayer{}, err

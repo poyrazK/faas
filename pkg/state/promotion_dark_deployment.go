@@ -22,6 +22,10 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	checked, err := bindingProjectPromotionMutationTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	var appID string
 	if err := tx.QueryRow(ctx, `select app_id from deployments where id = $1`, id).Scan(&appID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -48,6 +52,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 		return err
 	}
 	if dep.Status == DeployLive && dep.TrafficPercent == 0 && dep.TrafficPercentExplicit {
+		if err := bindingProjectPromotionMutationDeadline(ctx, checked); err != nil {
+			return err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("state: mark dark deployment idempotent commit: %w", err)
 		}
@@ -60,8 +67,10 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `update crons set suspended_reason = '' where app_id = $1 and suspended_reason <> ''`, appID); err != nil {
-		return fmt.Errorf("state: reactivate dark deployment crons: %w", err)
+	if !checked {
+		if _, err := tx.Exec(ctx, `update crons set suspended_reason = '' where app_id = $1 and suspended_reason <> ''`, appID); err != nil {
+			return fmt.Errorf("state: reactivate dark deployment crons: %w", err)
+		}
 	}
 	if _, err := tx.Exec(ctx, `update deployments set status = 'live', error = '', rollout_state = 'complete',
 		rollout_completed_at = coalesce(rollout_completed_at, now()) where id = $1`, id); err != nil {
@@ -73,6 +82,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	}
 	if err := persistDeploymentSnapshotsDBTX(ctx, tx, snap, policySnap, dep.Status != DeployLive); err != nil {
 		return fmt.Errorf("state: persist dark deployment snapshots: %w", err)
+	}
+	if err := bindingProjectPromotionMutationDeadline(ctx, checked); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: mark dark deployment live commit: %w", err)
@@ -86,6 +98,9 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	dep, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if _, _, err := m.bindingProjectPromotionDeploymentLocked(ctx, dep); err != nil {
+		return err
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(dep)); err != nil {
 		return err

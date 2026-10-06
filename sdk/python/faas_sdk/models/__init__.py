@@ -1874,6 +1874,7 @@ from .project_environment_promotion_list_response import ProjectEnvironmentPromo
 from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
 from .project_environment_promotion_release_graph_response import ProjectEnvironmentPromotionReleaseGraphResponse
 from .project_environment_promotion_response import ProjectEnvironmentPromotionResponse
+from .project_environment_promotion_response_status import ProjectEnvironmentPromotionResponseStatus
 from .project_environment_promotion_status_response import ProjectEnvironmentPromotionStatusResponse
 from .project_environment_promotion_status_response_rollback_status import (
     ProjectEnvironmentPromotionStatusResponseRollbackStatus,
@@ -4510,6 +4511,7 @@ __all__ = (
     "ProjectEnvironmentPromotionPreviewResponse",
     "ProjectEnvironmentPromotionReleaseGraphResponse",
     "ProjectEnvironmentPromotionResponse",
+    "ProjectEnvironmentPromotionResponseStatus",
     "ProjectEnvironmentPromotionStatusResponse",
     "ProjectEnvironmentPromotionStatusResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusResponseStatus",

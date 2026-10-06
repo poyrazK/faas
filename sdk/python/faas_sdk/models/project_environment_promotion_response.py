@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.project_environment_promotion_response_status import (
+    ProjectEnvironmentPromotionResponseStatus,
+    check_project_environment_promotion_response_status,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -13,6 +17,7 @@ if TYPE_CHECKING:
         ProjectEnvironmentPromotionReleaseGraphResponse,
     )
     from ..models.project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
+    from ..models.project_release_check_response import ProjectReleaseCheckResponse
 
 
 T = TypeVar("T", bound="ProjectEnvironmentPromotionResponse")
@@ -28,6 +33,11 @@ class ProjectEnvironmentPromotionResponse:
     to_environment: str
     promotion_hash: str
     workloads: list[ProjectEnvironmentPromotionWorkloadResponse]
+    bindings_required: bool | Unset = UNSET
+    bindings_check: ProjectReleaseCheckResponse | Unset = UNSET
+    """Observation of the complete exact deployment graph and its binding evidence. Publication evaluates fresh
+    evidence and compares the active predecessor again."""
+    status: ProjectEnvironmentPromotionResponseStatus | Unset = UNSET
     sync_config: bool | Unset = UNSET
     """Whether this promotion copied the source's non-secret configuration."""
     release_graph: ProjectEnvironmentPromotionReleaseGraphResponse | Unset = UNSET
@@ -50,6 +60,16 @@ class ProjectEnvironmentPromotionResponse:
             workloads_item = workloads_item_data.to_dict()
             workloads.append(workloads_item)
 
+        bindings_required = self.bindings_required
+
+        bindings_check: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.bindings_check, Unset):
+            bindings_check = self.bindings_check.to_dict()
+
+        status: str | Unset = UNSET
+        if not isinstance(self.status, Unset):
+            status = self.status
+
         sync_config = self.sync_config
 
         release_graph: dict[str, Any] | Unset = UNSET
@@ -68,6 +88,12 @@ class ProjectEnvironmentPromotionResponse:
                 "workloads": workloads,
             }
         )
+        if bindings_required is not UNSET:
+            field_dict["bindings_required"] = bindings_required
+        if bindings_check is not UNSET:
+            field_dict["bindings_check"] = bindings_check
+        if status is not UNSET:
+            field_dict["status"] = status
         if sync_config is not UNSET:
             field_dict["sync_config"] = sync_config
         if release_graph is not UNSET:
@@ -81,6 +107,7 @@ class ProjectEnvironmentPromotionResponse:
             ProjectEnvironmentPromotionReleaseGraphResponse,
         )
         from ..models.project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
+        from ..models.project_release_check_response import ProjectReleaseCheckResponse
 
         d = dict(src_dict)
         promotion_id = d.pop("promotion_id")
@@ -100,6 +127,22 @@ class ProjectEnvironmentPromotionResponse:
 
             workloads.append(workloads_item)
 
+        bindings_required = d.pop("bindings_required", UNSET)
+
+        _bindings_check = d.pop("bindings_check", UNSET)
+        bindings_check: ProjectReleaseCheckResponse | Unset
+        if isinstance(_bindings_check, Unset):
+            bindings_check = UNSET
+        else:
+            bindings_check = ProjectReleaseCheckResponse.from_dict(_bindings_check)
+
+        _status = d.pop("status", UNSET)
+        status: ProjectEnvironmentPromotionResponseStatus | Unset
+        if isinstance(_status, Unset):
+            status = UNSET
+        else:
+            status = check_project_environment_promotion_response_status(_status)
+
         sync_config = d.pop("sync_config", UNSET)
 
         _release_graph = d.pop("release_graph", UNSET)
@@ -116,6 +159,9 @@ class ProjectEnvironmentPromotionResponse:
             to_environment=to_environment,
             promotion_hash=promotion_hash,
             workloads=workloads,
+            bindings_required=bindings_required,
+            bindings_check=bindings_check,
+            status=status,
             sync_config=sync_config,
             release_graph=release_graph,
         )

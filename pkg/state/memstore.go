@@ -6902,16 +6902,16 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // the new row. The race-free supersede closes the same TOCTOU the
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
-func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
-	created, _, err := m.createDeployment(d, nil, nil)
+func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	created, _, err := m.createDeployment(ctx, d, nil, nil)
 	return created, err
 }
 
-func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
-	return m.createDeployment(d, &activity, nil)
+func (m *MemStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	return m.createDeployment(ctx, d, &activity, nil)
 }
 
-func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
 	if d.EnvironmentWorkloadHeld() {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
@@ -6923,6 +6923,11 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if _, existing, err := m.bindingProjectPromotionDeploymentLocked(ctx, d); err != nil {
+		return Deployment{}, 0, err
+	} else if existing.ID != "" {
+		return existing, 0, nil
 	}
 	var cloneRecord projectCloneWorkloadRecord
 	if len(cloneInputs) > 0 {
@@ -8464,6 +8469,11 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	if !ok {
 		return ErrNotFound
 	}
+	if checked, _, err := m.bindingProjectPromotionDeploymentLocked(ctx, d); err != nil {
+		return err
+	} else if checked {
+		return ErrBindingReleaseRequired
+	}
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return err
 	}
@@ -9379,7 +9389,7 @@ func (m *MemStore) prepareDeploymentRollbackLocked(appID, targetDeploymentID str
 	return target, nil
 }
 
-func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, bytes int64) error {
+func (m *MemStore) SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
@@ -9389,6 +9399,9 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	// Issue #96 / ADR-025 axis 2 (PR #116): mirror PgStore — both
 	// rootfs_path and rootfs_key are stamped on the same mutation so
 	// the in-memory store tracks Postgres' column-pair contract.
+	if _, _, err := m.bindingProjectPromotionDeploymentLocked(ctx, m.deployments[id]); err != nil {
+		return err
+	}
 	if key != "" {
 		if err := m.requireLayerArtifactsRetainedLocked([]string{key}); err != nil {
 			return err
@@ -10190,11 +10203,14 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 // "\x00" + sidecarName) gives the same uniqueness. Defers to
 // SetDeploymentRootfs's "deployment row must exist" check so a
 // caller can't strand rows against a missing deployment.
-func (m *MemStore) SetDeploymentSidecarLayer(_ context.Context, l DeploymentSidecarLayer) (DeploymentSidecarLayer, error) {
+func (m *MemStore) SetDeploymentSidecarLayer(ctx context.Context, l DeploymentSidecarLayer) (DeploymentSidecarLayer, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.deployments[l.DeploymentID]; !ok {
 		return DeploymentSidecarLayer{}, ErrNotFound
+	}
+	if _, _, err := m.bindingProjectPromotionDeploymentLocked(ctx, m.deployments[l.DeploymentID]); err != nil {
+		return DeploymentSidecarLayer{}, err
 	}
 	if l.StorageKey != "" {
 		if err := m.requireLayerArtifactsRetainedLocked([]string{l.StorageKey}); err != nil {

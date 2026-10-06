@@ -4,10 +4,14 @@
 /* eslint-disable */
 import type { ProjectEnvironmentPromotionReleaseGraphResponse } from './ProjectEnvironmentPromotionReleaseGraphResponse.js';
 import type { ProjectEnvironmentPromotionWorkloadResponse } from './ProjectEnvironmentPromotionWorkloadResponse.js';
+import type { ProjectReleaseCheckResponse } from './ProjectReleaseCheckResponse.js';
 /**
  * Result of a guarded project environment promotion.
  */
 export type ProjectEnvironmentPromotionResponse = {
+  bindings_required?: boolean;
+  bindings_check?: ProjectReleaseCheckResponse;
+  status?: 'running' | 'succeeded' | 'failed';
   promotion_id: string;
   project_slug: string;
   from_environment: string;

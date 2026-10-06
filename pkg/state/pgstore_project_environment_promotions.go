@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const projectEnvironmentPromotionSelectColumns = `id, account_id, project_id, project_slug, from_environment, to_environment,
@@ -17,7 +18,7 @@ const projectEnvironmentPromotionSelectColumns = `id, account_id, project_id, pr
 	release_graph_mode, coalesce(source_release_set_id::text, ''), coalesce(source_qualification_id::text, ''), coalesce(previous_target_release_set_id::text, ''),
 	coalesce(target_release_set_id::text, ''), coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
 	sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot,
-	previous_target_config_snapshot, target_config_version, rollback_config_version`
+	previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until`
 
 func scanProjectEnvironmentPromotion(row pgx.Row) (ProjectEnvironmentPromotion, error) {
 	var promotion ProjectEnvironmentPromotion
@@ -37,6 +38,7 @@ func scanProjectEnvironmentPromotion(row pgx.Row) (ProjectEnvironmentPromotion, 
 		&promotion.SyncConfig, &promotion.SourceConfigHash, &promotion.PreviousTargetConfigHash,
 		&sourceConfigSnapshot, &previousTargetConfigSnapshot, &promotion.TargetConfigVersion,
 		&promotion.RollbackConfigVersion,
+		&promotion.BindingsRequired, &promotion.BindingsCheck, &promotion.BindingCheckNextAt, &promotion.BindingWorkerToken, &promotion.BindingWorkerUntil,
 	); err != nil {
 		return ProjectEnvironmentPromotion{}, mapErr(err)
 	}
@@ -96,6 +98,16 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 	if err != nil {
 		return ProjectEnvironmentPromotion{}, nil, err
 	}
+	if promotion.BindingsRequired {
+		count, err := sqlc.New().EnableBindingCheckedProjectPromotion(ctx, tx, sqlc.EnableBindingCheckedProjectPromotionParams{PromotionID: mustPgUUID(created.ID), AccountID: mustPgUUID(created.AccountID)})
+		if err != nil || count != 1 {
+			if err != nil {
+				return ProjectEnvironmentPromotion{}, nil, mapErr(err)
+			}
+			return ProjectEnvironmentPromotion{}, nil, ErrConflict
+		}
+		created.BindingsRequired = true
+	}
 	if promotion.SyncConfig {
 		if err := lockPromotionWorkloadEnvironmentsTx(ctx, tx, created.ID); err != nil {
 			return ProjectEnvironmentPromotion{}, nil, err
@@ -108,6 +120,9 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 
 	createdWorkloads := make([]ProjectEnvironmentPromotionWorkload, 0, len(workloads))
 	for _, workload := range workloads {
+		if promotion.BindingsRequired && (workload.Status == "pending" || workload.Status == "") {
+			workload.TargetDeploymentID = ""
+		}
 		row := tx.QueryRow(ctx, `
 			insert into project_environment_promotion_workloads
 				(promotion_id, workload_slug, workload_name, source_deployment_id,
@@ -144,7 +159,7 @@ func (s *PgStore) ProjectEnvironmentPromotionByID(ctx context.Context, accountID
 		       coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
 		       coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
 		       sync_config, source_config_hash, previous_target_config_hash,
-		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
+		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until
 		  from project_environment_promotions
 		 where id = $1 and account_id = $2 and project_slug = $3 and to_environment = $4
 	`, id, accountID, projectSlug, targetEnvironment))
@@ -169,7 +184,7 @@ func (s *PgStore) ProjectEnvironmentPromotionByIdempotencyKey(ctx context.Contex
 		       coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
 		       coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
 		       sync_config, source_config_hash, previous_target_config_hash,
-		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
+		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until
 		  from project_environment_promotions
 		 where account_id = $1 and project_slug = $2 and idempotency_key = $3
 	`, accountID, projectSlug, idempotencyKey))
@@ -221,7 +236,7 @@ func (s *PgStore) ListProjectEnvironmentPromotionsBefore(ctx context.Context, ac
 	                 coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
 	                 coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
 		       sync_config, source_config_hash, previous_target_config_hash,
-		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
+		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until
 	            from project_environment_promotions
 	           where ` + strings.Join(conditions, " and ") + `
 	           order by created_at desc, id desc`
@@ -281,7 +296,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotion(ctx context.Context, account
 	return scanProjectEnvironmentPromotion(s.pool.QueryRow(ctx, `
 		update project_environment_promotions
 		   set status = $3, error = $4, updated_at = now(), completed_at = $5
-		 where id = $1 and account_id = $2
+		 where id = $1 and account_id = $2 and not bindings_required
 		returning id, account_id, project_id, project_slug, from_environment, to_environment,
 		          promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		          rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
@@ -289,7 +304,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotion(ctx context.Context, account
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''), coalesce(source_qualification_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until
 	`, id, accountID, status, errorMessage, completedAt))
 }
 
@@ -310,13 +325,16 @@ func (s *PgStore) StartProjectEnvironmentPromotionRollback(ctx context.Context, 
 		       coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
 		       coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds,
 		       sync_config, source_config_hash, previous_target_config_hash,
-		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
+		       source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until
 		  from project_environment_promotions
 		 where id = $1 and account_id = $2
 		 for update
 	`, id, accountID))
 	if err != nil {
 		return ProjectEnvironmentPromotion{}, err
+	}
+	if current.BindingsRequired {
+		return ProjectEnvironmentPromotion{}, ErrConflict
 	}
 	if current.RollbackIdempotencyKey != "" && current.RollbackIdempotencyKey != idempotencyKey {
 		return ProjectEnvironmentPromotion{}, ErrConflict
@@ -343,7 +361,7 @@ func (s *PgStore) StartProjectEnvironmentPromotionRollback(ctx context.Context, 
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''), coalesce(source_qualification_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until
 	`, id, accountID, idempotencyKey)
 	updated, err := scanProjectEnvironmentPromotion(returning)
 	if err != nil {
@@ -359,7 +377,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionRollback(ctx context.Context,
 	return scanProjectEnvironmentPromotion(s.pool.QueryRow(ctx, `
 		update project_environment_promotions
 		   set rollback_status = $3, rollback_error = $4, updated_at = now(), rollback_completed_at = $5
-		 where id = $1 and account_id = $2
+		 where id = $1 and account_id = $2 and not bindings_required
 		returning id, account_id, project_id, project_slug, from_environment, to_environment,
 		          promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		          rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
@@ -367,7 +385,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionRollback(ctx context.Context,
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''), coalesce(source_qualification_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until
 	`, id, accountID, status, errorMessage, completedAt))
 }
 
@@ -378,7 +396,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionWorkload(ctx context.Context,
 		 where w.id = $1 and w.promotion_id = $2
 		   and exists (
 				select 1 from project_environment_promotions p
-				 where p.id = w.promotion_id and p.account_id = $3
+				 where p.id = w.promotion_id and p.account_id = $3 and not p.bindings_required
 		   )
 		returning w.id, w.promotion_id, w.workload_slug, w.workload_name,
 		          w.source_deployment_id, w.previous_target_deployment_id,
@@ -398,7 +416,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionRollbackWorkload(ctx context.
 		 where w.id = $1 and w.promotion_id = $2
 		   and exists (
 				select 1 from project_environment_promotions p
-				 where p.id = w.promotion_id and p.account_id = $3
+				 where p.id = w.promotion_id and p.account_id = $3 and not p.bindings_required
 		   )
 		returning w.id, w.promotion_id, w.workload_slug, w.workload_name,
 		          w.source_deployment_id, w.previous_target_deployment_id,
@@ -416,7 +434,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionVerification(ctx context.Cont
 		   set verification_status = $3, verification_error = $4,
 		       verification_started_at = coalesce($5, verification_started_at),
 		       verification_completed_at = $6, updated_at = now()
-		 where id = $1 and account_id = $2
+		 where id = $1 and account_id = $2 and not bindings_required
 		returning id, account_id, project_id, project_slug, from_environment, to_environment,
 		          promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		          rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
@@ -424,7 +442,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionVerification(ctx context.Cont
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''), coalesce(source_qualification_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until
 	`, id, accountID, status, errorMessage, startedAt, completedAt))
 }
 
@@ -435,7 +453,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionVerificationWorkload(ctx cont
 		 where w.id = $1 and w.promotion_id = $2
 		   and exists (
 				select 1 from project_environment_promotions p
-				 where p.id = w.promotion_id and p.account_id = $3
+				 where p.id = w.promotion_id and p.account_id = $3 and not p.bindings_required
 		   )
 		returning w.id, w.promotion_id, w.workload_slug, w.workload_name,
 		          w.source_deployment_id, w.previous_target_deployment_id,
@@ -453,7 +471,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionReleaseSets(ctx context.Conte
 		   set target_release_set_id = coalesce(nullif($3, '')::uuid, target_release_set_id),
 		       restored_target_release_set_id = coalesce(nullif($4, '')::uuid, restored_target_release_set_id),
 		       updated_at = now()
-		 where id = $1 and account_id = $2
+		 where id = $1 and account_id = $2 and not bindings_required
 		returning id, account_id, project_id, project_slug, from_environment, to_environment,
 		          promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		          rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
@@ -461,6 +479,6 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionReleaseSets(ctx context.Conte
 		          verification_started_at, verification_completed_at,
 		          release_graph_mode, coalesce(source_release_set_id::text, ''), coalesce(source_qualification_id::text, ''),
 		          coalesce(previous_target_release_set_id::text, ''), coalesce(target_release_set_id::text, ''),
-		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version
+		          coalesce(restored_target_release_set_id::text, ''), release_ttl_seconds, sync_config, source_config_hash, previous_target_config_hash, source_config_snapshot, previous_target_config_snapshot, target_config_version, rollback_config_version, bindings_required, bindings_check, binding_check_next_at, coalesce(binding_worker_token::text, ''), binding_worker_until
 	`, id, accountID, targetReleaseSetID, restoredTargetReleaseSetID))
 }

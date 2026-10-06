@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -153,4 +154,40 @@ func applyConsumerInventory(item *api.AppBindingInventoryItem, enabled bool, con
 	if item.ConsumerLiveness != "not_observed" {
 		item.RuntimeStatus = item.ConsumerLiveness
 	}
+}
+
+// Pinned collections are authoritative. Prepared consumers and global health do
+// not establish dispatch readiness for an environment deployment.
+func pinnedQueueBindingInventory(book state.ProjectEnvironmentQueueSettings, scope string) bindingInventorySection {
+	var section bindingInventorySection
+	for _, b := range book.Bindings {
+		config := "disabled"
+		if b.Enabled {
+			config = "enabled"
+		}
+		item := inventoryItem(api.BindingTypeQueue, b.QueueName, b.Name, scope, b.Mode, config)
+		item.ConsumerState, item.ConsumerLiveness = "unknown", "unknown"
+		section.items = append(section.items, item)
+		if b.Enabled && len(section.issues) == 0 {
+			section.issues = bindingInventoryUnavailable(api.BindingTypeQueue, "environment_queue_activation_unavailable", "error", "Exact deployment queue dispatch evidence is unavailable; prepared consumers and global health cannot qualify this environment.").issues
+		}
+	}
+	return section
+}
+
+func (s *server) queueDeploymentBindingInventory(ctx context.Context, accountID string, app state.App, scope, deploymentID string, now time.Time) bindingInventorySection {
+	if deploymentID != "" {
+		if reader, ok := s.store.(state.DeploymentWorkloadSpecReader); ok {
+			spec, err := reader.ProjectEnvironmentWorkloadSpecForDeployment(ctx, accountID, app.ProjectID, deploymentID)
+			if err == nil && spec.Settings.QueueBindings != nil {
+				return pinnedQueueBindingInventory(*spec.Settings.QueueBindings, scope)
+			}
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return bindingInventoryUnavailable(api.BindingTypeQueue, "deployment_configuration_unavailable", "error", "Pinned queue configuration could not be read.")
+			}
+		} else {
+			return bindingInventoryUnavailable(api.BindingTypeQueue, "deployment_configuration_unavailable", "error", "Pinned queue configuration is unavailable.")
+		}
+	}
+	return s.queueBindingInventory(ctx, accountID, app.ID, now)
 }

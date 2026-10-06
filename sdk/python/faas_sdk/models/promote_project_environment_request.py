@@ -20,6 +20,8 @@ class PromoteProjectEnvironmentRequest:
     """Exact promotion token returned by the preview endpoint."""
     approval_token: str | Unset = UNSET
     """Short-lived approval for a protected target environment."""
+    require_bindings: bool | Unset = UNSET
+    """Use the dedicated promote-with-bindings route for compatibility with older servers."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -28,6 +30,8 @@ class PromoteProjectEnvironmentRequest:
         promotion_token = self.promotion_token
 
         approval_token = self.approval_token
+
+        require_bindings = self.require_bindings
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -39,6 +43,8 @@ class PromoteProjectEnvironmentRequest:
         )
         if approval_token is not UNSET:
             field_dict["approval_token"] = approval_token
+        if require_bindings is not UNSET:
+            field_dict["require_bindings"] = require_bindings
 
         return field_dict
 
@@ -51,10 +57,13 @@ class PromoteProjectEnvironmentRequest:
 
         approval_token = d.pop("approval_token", UNSET)
 
+        require_bindings = d.pop("require_bindings", UNSET)
+
         promote_project_environment_request = cls(
             from_environment=from_environment,
             promotion_token=promotion_token,
             approval_token=approval_token,
+            require_bindings=require_bindings,
         )
 
         promote_project_environment_request.additional_properties = d

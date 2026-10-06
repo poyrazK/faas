@@ -6955,6 +6955,11 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
+	BindingsRequired             bool
+	BindingsCheck                json.RawMessage
+	BindingCheckNextAt           *time.Time
+	BindingWorkerToken           string
+	BindingWorkerUntil           *time.Time
 	ID                           string
 	AccountID                    string
 	ProjectID                    string

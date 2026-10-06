@@ -583,6 +583,9 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if strings.HasSuffix(r.URL.Path, "/promote-with-bindings") {
+		req.RequireBindings = true
+	}
 	fromEnvironment := strings.TrimSpace(req.FromEnvironment)
 	promotionToken := strings.TrimSpace(req.PromotionToken)
 	if promotionToken == "" {
@@ -602,9 +605,13 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 	}
 	if lookupErr == nil {
 		if existing.ProjectID != wire.ProjectID || existing.FromEnvironment != fromEnvironment ||
-			existing.ToEnvironment != toEnvironment || existing.PromotionHash != wire.PromotionHash {
+			existing.ToEnvironment != toEnvironment || existing.PromotionHash != wire.PromotionHash || existing.BindingsRequired != req.RequireBindings {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Idempotency-Key already used", "use a new key for a different environment promotion"))
+			return
+		}
+		if existing.BindingsRequired {
+			writeBindingProjectPromotionAdmission(w, existing, existingWorkloads)
 			return
 		}
 		if existing.Status == "succeeded" {
@@ -669,6 +676,10 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.RequireBindings && !plan.ReleaseGraphMode {
+		api.WriteProblem(w, api.ErrValidation("require_bindings requires a graph-aware promotion; configure revision retention and preview again"))
+		return
+	}
 	if plan.Preview.ApprovalRequired {
 		approvalToken := strings.TrimSpace(req.ApprovalToken)
 		if approvalToken == "" {
@@ -695,7 +706,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		AccountID: acct.ID, ProjectID: plan.ProjectID, ProjectSlug: projectSlug,
 		FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
 		PromotionHash: plan.Preview.PromotionHash, IdempotencyKey: idempotencyKey, Status: "running",
-		VerificationStatus: "pending", ReleaseGraphMode: plan.ReleaseGraphMode,
+		VerificationStatus: "pending", ReleaseGraphMode: plan.ReleaseGraphMode, BindingsRequired: req.RequireBindings,
 		SourceReleaseSetID:         projectEnvironmentPromotionReleaseSetID(plan.FromReleaseSet),
 		SourceQualificationID:      projectEnvironmentPromotionQualificationID(plan.Qualification),
 		PreviousTargetReleaseSetID: projectEnvironmentPromotionReleaseSetID(plan.ToReleaseSet),
@@ -727,9 +738,13 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if promotion.ProjectID != wire.ProjectID || promotion.FromEnvironment != fromEnvironment ||
-			promotion.ToEnvironment != toEnvironment || promotion.PromotionHash != wire.PromotionHash {
+			promotion.ToEnvironment != toEnvironment || promotion.PromotionHash != wire.PromotionHash || promotion.BindingsRequired != req.RequireBindings {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Idempotency-Key already used", "use a new key for a different environment promotion"))
+			return
+		}
+		if promotion.BindingsRequired {
+			writeBindingProjectPromotionAdmission(w, promotion, workloads)
 			return
 		}
 		if promotion.Status == "succeeded" {
@@ -748,6 +763,10 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, problem)
 			return
 		}
+	}
+	if promotion.BindingsRequired {
+		writeBindingProjectPromotionAdmission(w, promotion, workloads)
+		return
 	}
 	response, problem := s.executeProjectEnvironmentPromotion(r.Context(), acct, promotion, workloads, plan)
 	if problem != nil {
@@ -789,6 +808,10 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 	if promotion.Status == "running" {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Promotion is still running", "wait for the promotion to finish before requesting a rollback"))
+		return
+	}
+	if promotion.BindingsRequired {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Checked rollback required", "Use a new binding-checked promotion to restore the desired source environment. Automatic promotion rollback is unavailable for binding-checked operations."))
 		return
 	}
 	started, err := s.store.StartProjectEnvironmentPromotionRollback(r.Context(), acct.ID, promotion.ID, idempotencyKey)
@@ -1572,6 +1595,7 @@ func projectEnvironmentPromotionResponse(promotion state.ProjectEnvironmentPromo
 		})
 	}
 	return api.ProjectEnvironmentPromotionResponse{
+		Status: promotion.Status, BindingsRequired: promotion.BindingsRequired, BindingsCheck: projectPromotionBindingsReport(promotion),
 		PromotionID: promotion.ID, ProjectSlug: promotion.ProjectSlug,
 		FromEnvironment: promotion.FromEnvironment, ToEnvironment: promotion.ToEnvironment,
 		SyncConfig: promotion.SyncConfig, PromotionHash: promotion.PromotionHash,
@@ -1606,6 +1630,7 @@ func projectEnvironmentPromotionStatusResponse(promotion state.ProjectEnvironmen
 		})
 	}
 	return api.ProjectEnvironmentPromotionStatusResponse{
+		BindingsRequired: promotion.BindingsRequired, BindingsCheck: projectPromotionBindingsReport(promotion),
 		PromotionID: promotion.ID, ProjectSlug: promotion.ProjectSlug,
 		FromEnvironment: promotion.FromEnvironment, ToEnvironment: promotion.ToEnvironment,
 		SyncConfig:    promotion.SyncConfig,
@@ -1699,7 +1724,7 @@ func promoteProjectEnvironmentDeploymentDark(ctx context.Context, store state.St
 func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store state.Store, source state.Deployment, targetEnvironment, promotionID string, dark bool, configuration ...state.ProjectEnvironmentPromotionWorkloadSpecInput) (state.Deployment, error) {
 	rootfsPath, rootfsKey, rootfsBytes := source.RootfsPath, source.RootfsKey, source.RootfsBytes
 	candidate := source
-	candidate.ID = ""
+	candidate.ID = state.BindingProjectPromotionTargetID(ctx, promotionID)
 	candidate.BuildID = ""
 	candidate.Scope = targetEnvironment
 	candidate.SourcePath = ""

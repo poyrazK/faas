@@ -141,9 +141,9 @@ func (m *MemStore) ProjectEnvironmentCloneWorkloads(_ context.Context, accountID
 	return cloneWorkloadViews(m.projectEnvironmentCloneWorkloads[operationID]), nil
 }
 
-func (m *MemStore) CreateDeploymentForEnvironmentClone(_ context.Context, accountID, projectID, operationID string, revision int64, appID, targetSettingsHash string) (Deployment, error) {
+func (m *MemStore) CreateDeploymentForEnvironmentClone(ctx context.Context, accountID, projectID, operationID string, revision int64, appID, targetSettingsHash string) (Deployment, error) {
 	input := projectEnvironmentCloneDeploymentInput{AccountID: accountID, ProjectID: projectID, OperationID: operationID, Revision: revision, AppID: appID, TargetSettingsHash: targetSettingsHash}
-	created, _, err := m.createDeployment(Deployment{AppID: appID}, nil, nil, &input)
+	created, _, err := m.createDeployment(ctx, Deployment{AppID: appID}, nil, nil, &input)
 	return created, err
 }
 

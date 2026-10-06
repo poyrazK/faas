@@ -14341,3 +14341,91 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
 
 -- name: ListSnapshotDeploymentIDs :many
 SELECT DISTINCT deployment_id::text FROM snapshots ORDER BY deployment_id::text;
+
+-- name: EnableBindingCheckedProjectPromotion :execrows
+UPDATE project_environment_promotions SET bindings_required=true
+WHERE id=sqlc.arg(promotion_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+ AND status='running' AND release_graph_mode AND target_release_set_id IS NULL;
+
+-- name: ClaimBindingProjectPromotion :one
+WITH next AS (
+ SELECT id FROM project_environment_promotions WHERE bindings_required AND status='running'
+ AND target_release_set_id IS NULL AND (binding_check_next_at IS NULL OR binding_check_next_at<=clock_timestamp())
+ AND (binding_worker_until IS NULL OR binding_worker_until<=clock_timestamp())
+ ORDER BY binding_check_next_at NULLS FIRST,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE project_environment_promotions p SET binding_worker_token=sqlc.arg(token)::uuid,
+ binding_worker_until=clock_timestamp()+(sqlc.arg(lease_seconds)::integer * interval '1 second')
+FROM next WHERE p.id=next.id RETURNING p.*;
+
+-- name: LockBindingProjectPromotion :one
+SELECT bindings_required,status,account_id,project_id,coalesce(target_release_set_id::text,'')::text AS target_release_id,
+ binding_worker_until FROM project_environment_promotions
+WHERE id=sqlc.arg(promotion_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+ AND binding_worker_token=sqlc.arg(token)::uuid FOR UPDATE;
+
+-- name: ReserveBindingProjectPromotionTarget :one
+UPDATE project_environment_promotion_workloads w SET
+ target_deployment_id=CASE WHEN w.target_deployment_id='' THEN sqlc.arg(deployment_id)::text ELSE w.target_deployment_id END,
+ updated_at=clock_timestamp()
+FROM project_environment_promotions p
+WHERE w.id=sqlc.arg(workload_id)::uuid AND w.promotion_id=p.id AND p.id=sqlc.arg(promotion_id)::uuid
+ AND p.account_id=sqlc.arg(account_id)::uuid AND p.binding_worker_token=sqlc.arg(token)::uuid
+ AND p.binding_worker_until>clock_timestamp() AND p.bindings_required AND p.status='running'
+ AND p.target_release_set_id IS NULL AND w.status='pending' RETURNING w.*;
+
+-- name: CheckpointBindingProjectPromotionTarget :execrows
+UPDATE project_environment_promotion_workloads w SET status='promoted',error='',updated_at=clock_timestamp()
+FROM project_environment_promotions p,deployments d
+WHERE w.id=sqlc.arg(workload_id)::uuid AND w.promotion_id=p.id AND p.id=sqlc.arg(promotion_id)::uuid
+ AND p.account_id=sqlc.arg(account_id)::uuid AND p.binding_worker_token=sqlc.arg(token)::uuid
+ AND p.binding_worker_until>clock_timestamp() AND p.bindings_required AND p.status='running'
+ AND p.target_release_set_id IS NULL AND w.status='pending'
+ AND d.id::text=w.target_deployment_id AND d.scope=p.to_environment AND d.status='live'
+ AND coalesce(d.rootfs_key,'')<>'' AND coalesce(d.image_digest,'')<>''
+ AND EXISTS(SELECT 1 FROM apps a WHERE a.id=d.app_id AND a.project_id=p.project_id AND a.account_id=p.account_id AND a.slug=w.workload_slug);
+
+-- name: UpdateBindingProjectPromotionCheck :execrows
+UPDATE project_environment_promotions SET bindings_check=sqlc.arg(report)::jsonb,error=sqlc.arg(message)::text,
+ status=CASE WHEN sqlc.arg(failed)::boolean THEN 'failed' ELSE 'running' END,
+ completed_at=CASE WHEN sqlc.arg(failed)::boolean THEN clock_timestamp() ELSE NULL END,
+ binding_worker_token=NULL,binding_worker_until=NULL,
+ binding_check_next_at=clock_timestamp()+(sqlc.arg(retry_seconds)::integer * interval '1 second'),updated_at=clock_timestamp()
+WHERE id=sqlc.arg(promotion_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+ AND binding_worker_token=sqlc.arg(token)::uuid AND binding_worker_until>clock_timestamp()
+ AND bindings_required AND status='running' AND target_release_set_id IS NULL;
+
+-- name: CompleteBindingProjectPromotion :execrows
+UPDATE project_environment_promotions SET bindings_check=sqlc.arg(report)::jsonb,error='',status='succeeded',
+ completed_at=clock_timestamp(),updated_at=clock_timestamp(),verification_status='verified',verification_error='',
+ verification_started_at=clock_timestamp(),verification_completed_at=clock_timestamp(),
+ binding_worker_token=NULL,binding_worker_until=NULL,binding_check_next_at=NULL
+WHERE id=sqlc.arg(promotion_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+ AND binding_worker_token=sqlc.arg(token)::uuid AND binding_worker_until>clock_timestamp()
+ AND bindings_required AND status='running' AND target_release_set_id=sqlc.arg(release_id)::uuid;
+
+-- name: ReadBindingProjectPromotionDeploymentIntent :one
+SELECT p.id,p.account_id,p.bindings_required,p.to_environment,w.target_deployment_id::text,w.status
+FROM project_environment_promotions p
+JOIN apps a ON a.project_id=p.project_id AND a.account_id=p.account_id AND a.id=sqlc.arg(app_id)::uuid
+JOIN project_environment_promotion_workloads w ON w.promotion_id=p.id AND w.workload_slug=a.slug
+WHERE p.id=sqlc.arg(promotion_id)::uuid FOR UPDATE OF p;
+
+-- name: AppendBindingCheckedProjectPromotionAudit :exec
+INSERT INTO audit_log(id,kind,account_id,account_email,actor,received_at,data)
+SELECT sqlc.arg(id)::uuid,'project.environment.promoted',a.id,a.email,'apid',clock_timestamp(),sqlc.arg(data)::jsonb
+FROM accounts a WHERE a.id=sqlc.arg(account_id)::uuid;
+
+
+-- name: CheckBindingProjectPromotionMembers :one
+SELECT NOT EXISTS (
+ SELECT 1 FROM project_environment_promotion_workloads w
+ JOIN project_environment_promotions p ON p.id=w.promotion_id
+ LEFT JOIN apps a ON a.account_id=p.account_id AND a.project_id=p.project_id AND a.slug=w.workload_slug
+ LEFT JOIN jsonb_to_recordset(sqlc.arg(members)::jsonb) AS m(app_id text, deployment_id text)
+ ON m.app_id=a.id::text AND m.deployment_id=w.target_deployment_id
+ WHERE p.id=sqlc.arg(promotion_id) AND (w.status NOT IN ('promoted','unchanged') OR m.app_id IS NULL)
+) AND (SELECT count(*) FROM project_environment_promotion_workloads WHERE promotion_id=sqlc.arg(promotion_id)) = jsonb_array_length(sqlc.arg(members)::jsonb) AS valid;
+
+-- name: CompleteBindingProjectPromotionWorkloads :exec
+UPDATE project_environment_promotion_workloads SET verification_status='verified', verification_error='', updated_at=clock_timestamp() WHERE promotion_id=$1;

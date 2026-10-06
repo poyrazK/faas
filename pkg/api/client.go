@@ -1914,7 +1914,17 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentApprovalsApproval(ctx con
 func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
+	if req.RequireBindings {
+		path += "-with-bindings"
+	}
 	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// PromoteProjectEnvironmentWithBindings uses a dedicated route that older
+// servers reject rather than silently accepting an unchecked promotion.
+func (c *Client) PromoteProjectEnvironmentWithBindings(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
+	req.RequireBindings = true
+	return c.PromoteProjectEnvironment(ctx, projectSlug, targetEnvironment, req)
 }
 
 // PromoteProjectEnvironmentWithIdempotencyKey executes a promotion with an

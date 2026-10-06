@@ -2199,6 +2199,64 @@ export class ProjectsService {
     });
   }
   /**
+   * Admit a durable binding-checked environment promotion.
+   * Requires graph mode. Admits an idempotent operation, reserves exact dark
+   * candidates and rechecks their pinned binding configuration in a leased
+   * backend worker. Status GETs never advance the operation or run probes.
+   * Graph, config, audit and success receipt commit atomically after fresh
+   * evidence passes. Blockers remain in bindings_check until resolved.
+   * This dedicated route fails closed on older servers. Enabled environment
+   * queues require dispatch proof; prepared consumers cannot qualify them.
+   * Checked rollback is a later capability; use a new checked promotion.
+   *
+   * @returns ProjectEnvironmentPromotionResponse Terminal checked promotion receipt returned on admission replay.
+   * @throws ApiError
+   */
+  public static promoteProjectEnvironmentWithBindings({
+    slug,
+    environment,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Project whose graph will receive a checked promotion.
+     */
+    slug: string,
+    /**
+     * Destination scope for the binding-checked release graph.
+     */
+    environment: string,
+    /**
+     * Admission key retaining the same checked operation and candidate IDs on replay.
+     */
+    idempotencyKey: string,
+    requestBody: PromoteProjectEnvironmentRequest,
+  }): CancelablePromise<ProjectEnvironmentPromotionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/promote-with-bindings',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * List project environment promotion history.
    * Returns newest-first compact promotion history. Use the promotion status endpoint for per-workload checkpoints.
    * @returns ProjectEnvironmentPromotionListResponse Cursor-paginated promotion history.

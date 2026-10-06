@@ -278,6 +278,7 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"POST /v1/projects/{slug}/environments/{environment}/promote-with-bindings": "PromoteProjectEnvironmentWithBindings",
 	// ADR-566: financial preview routes use financial-domain client names.
 	"GET /v1/billing/costs":                                                    "GetFinancialCosts",
 	"GET /v1/billing/forecast":                                                 "GetFinancialForecast",

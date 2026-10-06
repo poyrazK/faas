@@ -15,5 +15,9 @@ export type PromoteProjectEnvironmentRequest = {
    * Short-lived approval for a protected target environment.
    */
   approval_token?: string;
+  /**
+   * Use the dedicated promote-with-bindings route for compatibility with older servers.
+   */
+  require_bindings?: boolean;
 };
 

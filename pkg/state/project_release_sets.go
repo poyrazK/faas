@@ -508,8 +508,11 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 	if err := tx.QueryRow(ctx, `select 1 from project_environments where project_id = $1 and slug = $2`, projectID, environment).Scan(&found); err != nil {
 		return ProjectReleaseSet{}, mapErr(err)
 	}
+	var activeID string
+	if checkedProjectRelease(ctx) && expectedActiveID == nil {
+		return ProjectReleaseSet{}, ErrInvalidArgument
+	}
 	if expectedActiveID != nil {
-		var activeID string
 		err := tx.QueryRow(ctx, `select id::text from project_release_sets where project_id = $1 and environment_slug = $2 and active for update`, projectID, environment).Scan(&activeID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			activeID = ""
@@ -593,18 +596,37 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
 	}
-	if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
-		return ProjectReleaseSet{}, err
+	if !checkedProjectRelease(ctx) {
+		if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 	}
 	release := ProjectReleaseSet{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true, TTLSeconds: ttlSeconds, Members: append([]ProjectReleaseMember(nil), members...)}
-	if err := tx.QueryRow(ctx, `insert into project_release_sets (account_id, project_id, environment_slug, active, ttl_seconds)
-		values ($1, $2, $3, true, $4)
-		returning id, created_at`, accountID, projectID, environment, ttlSeconds).Scan(&release.ID, &release.CreatedAt); err != nil {
-		return ProjectReleaseSet{}, err
+	inserted, err := sqlc.New().InsertProjectReleaseSet(ctx, tx, sqlc.InsertProjectReleaseSetParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), Environment: environment, Active: !checkedProjectRelease(ctx), TtlSeconds: int32(ttlSeconds)})
+	if err != nil {
+		return ProjectReleaseSet{}, mapErr(err)
 	}
+	release.ID = uuidString(inserted.ID)
+	release.CreatedAt = inserted.CreatedAt.Time.UTC()
+
 	for _, member := range members {
 		if _, err := tx.Exec(ctx, `insert into project_release_members (release_id, app_id, deployment_id) values ($1, $2, $3)`, release.ID, member.AppID, member.DeploymentID); err != nil {
 			return ProjectReleaseSet{}, err
+		}
+	}
+	if checkedProjectRelease(ctx) {
+		if err := pgAuthorizeProjectRelease(ctx, tx, release.ID, activeID); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		count, err := sqlc.New().ActivateCheckedProjectReleaseSet(ctx, tx, mustPgUUID(release.ID))
+		if err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		if count != 1 {
+			return ProjectReleaseSet{}, ErrConflict
 		}
 	}
 	return release, nil
@@ -630,6 +652,33 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 		  from project_environment_promotions where id = $1 and account_id = $2 for update`, promotionID, accountID))
 	if err != nil {
 		return ProjectReleaseSet{}, err
+	}
+	report, checked := bindingProjectPromotionReport(ctx)
+	if promotion.BindingsRequired {
+		if !checked || !checkedProjectRelease(ctx) {
+			return ProjectReleaseSet{}, ErrBindingReleaseRequired
+		}
+		if err := lockBindingProjectPromotionClaim(ctx, tx, bindingProjectPromotionClaim(ctx)); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := validateBindingProjectPromotionReport(promotion, ttlSeconds, members, report, bindingReleaseFences(ctx)); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	} else if checked {
+		return ProjectReleaseSet{}, ErrConflict
+	}
+	if checked {
+		rawMembers, err := json.Marshal(members)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		valid, err := sqlc.New().CheckBindingProjectPromotionMembers(ctx, tx, sqlc.CheckBindingProjectPromotionMembersParams{PromotionID: mustPgUUID(promotionID), Members: rawMembers})
+		if err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		if !valid.Valid || !valid.Bool {
+			return ProjectReleaseSet{}, ErrConflict
+		}
 	}
 	if err := lockPromotionWorkloadEnvironmentsTx(ctx, tx, promotion.ID); err != nil {
 		return ProjectReleaseSet{}, err
@@ -671,6 +720,13 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 			return ProjectReleaseSet{}, err
 		}
 	}
+	// Validate all original catalog revisions before applying the captured settings.
+	// Only the writes below may change the tokens while these locks remain held.
+	if checked {
+		if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
 	if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, false, false); err != nil {
 		return ProjectReleaseSet{}, err
 	}
@@ -681,6 +737,17 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 	if err := promotionWorkloadActivationsTx(ctx, tx, promotion, members, false, false); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if checked {
+		rebased := append([]BindingPromotionFence(nil), bindingReleaseFences(ctx)...)
+		for i, f := range rebased {
+			revision, err := sqlc.New().ReadBindingPromotionRevision(ctx, tx, sqlc.ReadBindingPromotionRevisionParams{AccountID: mustPgUUID(f.AccountID), AppID: mustPgUUID(f.AppID)})
+			if err != nil {
+				return ProjectReleaseSet{}, mapErr(err)
+			}
+			rebased[i].Revision = revision
+		}
+		ctx = WithBindingReleaseFences(ctx, rebased)
+	}
 	release, err := s.publishProjectReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment,
 		ttlSeconds, members, &promotion.PreviousTargetReleaseSetID)
 	if err != nil {
@@ -688,6 +755,30 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 	}
 	if _, err := tx.Exec(ctx, `update project_environment_promotions set target_release_set_id = $2, target_config_version = $3, updated_at = now() where id = $1`, promotionID, release.ID, targetConfigVersion); err != nil {
 		return ProjectReleaseSet{}, err
+	}
+	if checked {
+		raw, err := json.Marshal(report)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		claim := bindingProjectPromotionClaim(ctx)
+		count, err := sqlc.New().CompleteBindingProjectPromotion(ctx, tx, sqlc.CompleteBindingProjectPromotionParams{Report: raw, PromotionID: mustPgUUID(promotion.ID), AccountID: mustPgUUID(accountID), Token: mustPgUUID(claim.Token), ReleaseID: mustPgUUID(release.ID)})
+		if err := bindingProjectPromotionRows(count, err); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := sqlc.New().CompleteBindingProjectPromotionWorkloads(ctx, tx, mustPgUUID(promotionID)); err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		data, err := json.Marshal(map[string]any{"promotion_id": promotion.ID, "project_id": promotion.ProjectID, "from_environment": promotion.FromEnvironment, "to_environment": promotion.ToEnvironment, "release_id": release.ID, "bindings_check": report, "binding_fences": bindingReleaseFences(ctx)})
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := sqlc.New().AppendBindingCheckedProjectPromotionAudit(ctx, tx, sqlc.AppendBindingCheckedProjectPromotionAuditParams{ID: mustPgUUID(uuid.NewString()), AccountID: mustPgUUID(accountID), Data: data}); err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		if !claim.Until.After(time.Now()) {
+			return ProjectReleaseSet{}, ErrBindingProjectPromotionLease
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ProjectReleaseSet{}, err
@@ -744,6 +835,9 @@ func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Cont
 		  from project_environment_promotions where id = $1 and account_id = $2 for update`, promotionID, accountID))
 	if err != nil {
 		return ProjectReleaseSet{}, err
+	}
+	if promotion.BindingsRequired {
+		return ProjectReleaseSet{}, ErrBindingReleaseRequired
 	}
 	if promotion.PreviousTargetReleaseSetID == "" || promotion.TargetReleaseSetID == "" {
 		return ProjectReleaseSet{}, ErrConflict

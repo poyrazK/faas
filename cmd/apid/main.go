@@ -719,6 +719,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runServiceRolloutBindingWorker(ctx)
 		go srv.runCheckedRollbackWorker(ctx)
+		go srv.runBindingProjectPromotionWorker(ctx)
 		go srv.runAlertRollbackWorker(ctx)
 		go srv.runOperationArtifactCleanup(ctx)
 		go srv.runObjectStorageRecovery(ctx)

@@ -556,6 +556,7 @@ type PromoteProjectEnvironmentRequest struct {
 	FromEnvironment string `json:"from_environment"`
 	PromotionToken  string `json:"promotion_token"`
 	ApprovalToken   string `json:"approval_token,omitempty"`
+	RequireBindings bool   `json:"require_bindings,omitempty"`
 }
 
 // ProjectEnvironmentPromotionWorkloadResponse reports one workload's
@@ -573,14 +574,17 @@ type ProjectEnvironmentPromotionWorkloadResponse struct {
 // ProjectEnvironmentPromotionResponse is returned after a guarded promotion
 // has applied all changed workloads in the current preview.
 type ProjectEnvironmentPromotionResponse struct {
-	PromotionID     string                                           `json:"promotion_id"`
-	ProjectSlug     string                                           `json:"project_slug"`
-	FromEnvironment string                                           `json:"from_environment"`
-	ToEnvironment   string                                           `json:"to_environment"`
-	SyncConfig      bool                                             `json:"sync_config,omitempty"`
-	PromotionHash   string                                           `json:"promotion_hash"`
-	ReleaseGraph    *ProjectEnvironmentPromotionReleaseGraphResponse `json:"release_graph,omitempty"`
-	Workloads       []ProjectEnvironmentPromotionWorkloadResponse    `json:"workloads"`
+	Status           string                                           `json:"status,omitempty"`
+	BindingsRequired bool                                             `json:"bindings_required,omitempty"`
+	BindingsCheck    *ProjectReleaseCheckResponse                     `json:"bindings_check,omitempty"`
+	PromotionID      string                                           `json:"promotion_id"`
+	ProjectSlug      string                                           `json:"project_slug"`
+	FromEnvironment  string                                           `json:"from_environment"`
+	ToEnvironment    string                                           `json:"to_environment"`
+	SyncConfig       bool                                             `json:"sync_config,omitempty"`
+	PromotionHash    string                                           `json:"promotion_hash"`
+	ReleaseGraph     *ProjectEnvironmentPromotionReleaseGraphResponse `json:"release_graph,omitempty"`
+	Workloads        []ProjectEnvironmentPromotionWorkloadResponse    `json:"workloads"`
 }
 
 // ProjectEnvironmentPromotionReleaseGraphResponse reports the immutable
@@ -613,6 +617,8 @@ type ProjectEnvironmentPromotionStatusWorkloadResponse struct {
 // ProjectEnvironmentPromotionStatusResponse is the durable status view for
 // one promotion operation.
 type ProjectEnvironmentPromotionStatusResponse struct {
+	BindingsRequired        bool                                                `json:"bindings_required,omitempty"`
+	BindingsCheck           *ProjectReleaseCheckResponse                        `json:"bindings_check,omitempty"`
 	PromotionID             string                                              `json:"promotion_id"`
 	ProjectSlug             string                                              `json:"project_slug"`
 	FromEnvironment         string                                              `json:"from_environment"`

@@ -6286,6 +6286,11 @@
     "table": "project_environment_promotions",
     "columns": [
       "account_id",
+      "binding_check_next_at",
+      "binding_worker_token",
+      "binding_worker_until",
+      "bindings_check",
+      "bindings_required",
       "completed_at",
       "created_at",
       "error",

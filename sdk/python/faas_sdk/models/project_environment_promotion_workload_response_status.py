@@ -1,10 +1,12 @@
 from typing import Literal
 
-ProjectEnvironmentPromotionWorkloadResponseStatus = Literal["promoted", "unchanged"]
+ProjectEnvironmentPromotionWorkloadResponseStatus = Literal["failed", "pending", "promoted", "unchanged"]
 
 PROJECT_ENVIRONMENT_PROMOTION_WORKLOAD_RESPONSE_STATUS_VALUES: set[
     ProjectEnvironmentPromotionWorkloadResponseStatus
 ] = {
+    "failed",
+    "pending",
     "promoted",
     "unchanged",
 }

@@ -14,6 +14,9 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(_ context.Context, promotio
 			return ProjectEnvironmentPromotion{}, nil, ErrConflict
 		}
 	}
+	if promotion.BindingsRequired && !promotion.ReleaseGraphMode {
+		return ProjectEnvironmentPromotion{}, nil, ErrInvalidArgument
+	}
 	if promotion.ID == "" {
 		promotion.ID = newID()
 	}
@@ -41,6 +44,9 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(_ context.Context, promotio
 	m.projectEnvironmentPromotions[promotion.ID] = promotion
 	items := make([]ProjectEnvironmentPromotionWorkload, len(workloads))
 	for i, workload := range workloads {
+		if promotion.BindingsRequired && (workload.Status == "pending" || workload.Status == "") {
+			workload.TargetDeploymentID = ""
+		}
 		if workload.ID == "" {
 			workload.ID = newID()
 		}
@@ -68,6 +74,9 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionVerification(_ context.Conte
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
 	}
+	if promotion.BindingsRequired {
+		return ProjectEnvironmentPromotion{}, ErrConflict
+	}
 	promotion.VerificationStatus = status
 	promotion.VerificationError = errorMessage
 	promotion.UpdatedAt = time.Now().UTC()
@@ -90,6 +99,9 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionVerificationWorkload(_ conte
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
 	}
+	if promotion.BindingsRequired {
+		return ProjectEnvironmentPromotionWorkload{}, ErrConflict
+	}
 	items := m.projectEnvironmentPromotionWorkloads[promotionID]
 	for i, workload := range items {
 		if workload.ID != workloadID {
@@ -111,6 +123,9 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionReleaseSets(_ context.Contex
 	promotion, ok := m.projectEnvironmentPromotions[id]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
+	}
+	if promotion.BindingsRequired {
+		return ProjectEnvironmentPromotion{}, ErrConflict
 	}
 	if targetReleaseSetID != "" {
 		promotion.TargetReleaseSetID = targetReleaseSetID
@@ -187,6 +202,9 @@ func (m *MemStore) StartProjectEnvironmentPromotionRollback(_ context.Context, a
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
 	}
+	if promotion.BindingsRequired {
+		return ProjectEnvironmentPromotion{}, ErrConflict
+	}
 	if promotion.RollbackIdempotencyKey != "" && promotion.RollbackIdempotencyKey != idempotencyKey {
 		return ProjectEnvironmentPromotion{}, ErrConflict
 	}
@@ -213,6 +231,9 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionRollback(_ context.Context, 
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
 	}
+	if promotion.BindingsRequired {
+		return ProjectEnvironmentPromotion{}, ErrConflict
+	}
 	promotion.RollbackStatus = status
 	promotion.RollbackError = errorMessage
 	promotion.UpdatedAt = time.Now().UTC()
@@ -230,6 +251,9 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionRollbackWorkload(_ context.C
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
+	}
+	if promotion.BindingsRequired {
+		return ProjectEnvironmentPromotionWorkload{}, ErrConflict
 	}
 	items := m.projectEnvironmentPromotionWorkloads[promotionID]
 	for i, workload := range items {
@@ -254,6 +278,9 @@ func (m *MemStore) UpdateProjectEnvironmentPromotion(_ context.Context, accountI
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
 	}
+	if promotion.BindingsRequired {
+		return ProjectEnvironmentPromotion{}, ErrConflict
+	}
 	promotion.Status = status
 	promotion.Error = errorMessage
 	promotion.UpdatedAt = time.Now().UTC()
@@ -272,6 +299,9 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionWorkload(_ context.Context, 
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
 	}
+	if promotion.BindingsRequired {
+		return ProjectEnvironmentPromotionWorkload{}, ErrConflict
+	}
 	items := m.projectEnvironmentPromotionWorkloads[promotionID]
 	for i, workload := range items {
 		if workload.ID != workloadID {
@@ -289,6 +319,15 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionWorkload(_ context.Context, 
 }
 
 func cloneProjectEnvironmentPromotion(promotion ProjectEnvironmentPromotion) ProjectEnvironmentPromotion {
+	promotion.BindingsCheck = append([]byte(nil), promotion.BindingsCheck...)
+	if promotion.BindingCheckNextAt != nil {
+		stamp := *promotion.BindingCheckNextAt
+		promotion.BindingCheckNextAt = &stamp
+	}
+	if promotion.BindingWorkerUntil != nil {
+		stamp := *promotion.BindingWorkerUntil
+		promotion.BindingWorkerUntil = &stamp
+	}
 	promotion.SourceConfigSnapshot = append([]byte(nil), promotion.SourceConfigSnapshot...)
 	promotion.PreviousTargetConfigSnapshot = append([]byte(nil), promotion.PreviousTargetConfigSnapshot...)
 	if promotion.CompletedAt != nil {

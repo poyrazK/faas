@@ -103,7 +103,7 @@ func (s *server) collectBindingInventory(parent context.Context, r *http.Request
 			return s.objectStorageBindingInventory(ctx, acct.ID, app.ID, scope)
 		}},
 		{api.BindingTypeQueue, api.ScopesReadSurface, func(ctx context.Context) bindingInventorySection {
-			return s.queueBindingInventory(ctx, acct.ID, app.ID, inventory.GeneratedAt)
+			return s.queueDeploymentBindingInventory(ctx, acct.ID, app, scope, inventory.RequestedDeploymentID, inventory.GeneratedAt)
 		}},
 		{api.BindingTypeOutbound, api.ScopesReadSurface, func(ctx context.Context) bindingInventorySection {
 			return s.outboundBindingInventory(ctx, acct.ID, app.ID)

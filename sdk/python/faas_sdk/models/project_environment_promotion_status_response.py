@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ..models.project_environment_promotion_status_workload_response import (
         ProjectEnvironmentPromotionStatusWorkloadResponse,
     )
+    from ..models.project_release_check_response import ProjectReleaseCheckResponse
 
 
 T = TypeVar("T", bound="ProjectEnvironmentPromotionStatusResponse")
@@ -46,6 +47,10 @@ class ProjectEnvironmentPromotionStatusResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     workloads: list[ProjectEnvironmentPromotionStatusWorkloadResponse]
+    bindings_required: bool | Unset = UNSET
+    bindings_check: ProjectReleaseCheckResponse | Unset = UNSET
+    """Observation of the complete exact deployment graph and its binding evidence. Publication evaluates fresh
+    evidence and compares the active predecessor again."""
     sync_config: bool | Unset = UNSET
     """Config sync was enabled for this promotion."""
     error: str | Unset = UNSET
@@ -83,6 +88,12 @@ class ProjectEnvironmentPromotionStatusResponse:
         for workloads_item_data in self.workloads:
             workloads_item = workloads_item_data.to_dict()
             workloads.append(workloads_item)
+
+        bindings_required = self.bindings_required
+
+        bindings_check: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.bindings_check, Unset):
+            bindings_check = self.bindings_check.to_dict()
 
         sync_config = self.sync_config
 
@@ -139,6 +150,10 @@ class ProjectEnvironmentPromotionStatusResponse:
                 "workloads": workloads,
             }
         )
+        if bindings_required is not UNSET:
+            field_dict["bindings_required"] = bindings_required
+        if bindings_check is not UNSET:
+            field_dict["bindings_check"] = bindings_check
         if sync_config is not UNSET:
             field_dict["sync_config"] = sync_config
         if error is not UNSET:
@@ -174,6 +189,7 @@ class ProjectEnvironmentPromotionStatusResponse:
         from ..models.project_environment_promotion_status_workload_response import (
             ProjectEnvironmentPromotionStatusWorkloadResponse,
         )
+        from ..models.project_release_check_response import ProjectReleaseCheckResponse
 
         d = dict(src_dict)
         promotion_id = d.pop("promotion_id")
@@ -198,6 +214,15 @@ class ProjectEnvironmentPromotionStatusResponse:
             workloads_item = ProjectEnvironmentPromotionStatusWorkloadResponse.from_dict(workloads_item_data)
 
             workloads.append(workloads_item)
+
+        bindings_required = d.pop("bindings_required", UNSET)
+
+        _bindings_check = d.pop("bindings_check", UNSET)
+        bindings_check: ProjectReleaseCheckResponse | Unset
+        if isinstance(_bindings_check, Unset):
+            bindings_check = UNSET
+        else:
+            bindings_check = ProjectReleaseCheckResponse.from_dict(_bindings_check)
 
         sync_config = d.pop("sync_config", UNSET)
 
@@ -275,6 +300,8 @@ class ProjectEnvironmentPromotionStatusResponse:
             created_at=created_at,
             updated_at=updated_at,
             workloads=workloads,
+            bindings_required=bindings_required,
+            bindings_check=bindings_check,
             sync_config=sync_config,
             error=error,
             completed_at=completed_at,
