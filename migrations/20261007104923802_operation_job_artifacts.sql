@@ -2,8 +2,9 @@
 -- +goose StatementBegin
 -- ADR-646: native Job file receipts survive owner/run deletion for cleanup.
 ALTER TABLE customer_operation_result_blobs
-    ADD COLUMN job_run_id uuid,
-    DROP CONSTRAINT operation_blob_execution_family,
+    ADD COLUMN IF NOT EXISTS job_run_id uuid,
+    DROP CONSTRAINT IF EXISTS operation_blob_execution_family;
+ALTER TABLE customer_operation_result_blobs
     ADD CONSTRAINT operation_blob_execution_family CHECK (
         (execution_id IS NOT NULL AND workflow_run_id IS NULL AND workflow_step IS NULL AND job_run_id IS NULL)
         OR (execution_id IS NULL AND workflow_run_id IS NOT NULL AND workflow_step IS NOT NULL AND job_run_id IS NULL
