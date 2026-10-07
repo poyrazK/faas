@@ -1570,6 +1570,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// returns an empty list.
 	grpcHandler := scheddgrpc.NewWithStats(engine, reader, ops, log).
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
+		WithAppOwnership(engine.OwnsApp).
 		WithForeignReportRelay(engine)
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a
 	// typed nil *PGNodeVerifier as the resolver still creates a non-nil

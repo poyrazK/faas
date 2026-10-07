@@ -100,6 +100,40 @@ func authorizeInstance(ctx context.Context, owner OwnerNodeID, resolver AppResol
 	return ins, nil
 }
 
+// authorizeApp applies the ownership guard for this server. An owner-less
+// server with an ownership rule refuses apps the rule says another schedd
+// owns; lookup failures fall through to the engine, which reports a missing
+// app itself.
+func (s *Server) authorizeApp(ctx context.Context, appID string) (state.App, error) {
+	if s.owner != "" || s.owns == nil || s.resolver == nil {
+		return authorizeApp(ctx, s.owner, s.resolver, appID)
+	}
+	app, err := s.resolver.AppByID(ctx, appID)
+	if err != nil {
+		return state.App{}, nil
+	}
+	if !s.owns(app) {
+		return state.App{}, status.Errorf(codes.FailedPrecondition,
+			"app %s is owned by node id=%s (this schedd owns no compute node)", appID, app.NodeID)
+	}
+	return app, nil
+}
+
+// authorizeInstance is authorizeApp for an instance's parent app.
+func (s *Server) authorizeInstance(ctx context.Context, instanceID string) (state.Instance, error) {
+	if s.owner != "" || s.owns == nil || s.resolver == nil {
+		return authorizeInstance(ctx, s.owner, s.resolver, instanceID)
+	}
+	ins, err := s.resolver.InstanceByID(ctx, instanceID)
+	if err != nil {
+		return state.Instance{}, nil
+	}
+	if _, err := s.authorizeApp(ctx, ins.AppID); err != nil {
+		return state.Instance{}, err
+	}
+	return ins, nil
+}
+
 // String is a defensive accessor so log lines render the empty
 // case as "<legacy single-box>" rather than as a blank, which is
 // ambiguous when grepping for owner-related log entries.
