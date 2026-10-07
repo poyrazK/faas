@@ -7650,3 +7650,49 @@ GET fixtures, missing observations, malformed pages and denied journal
 authority. Pinned golangci-lint v2.4.0 reports zero issues for object storage;
 text encoding, shell quoting and ADR numbering checks pass. No live-provider
 drainage qualification was performed.
+
+### Durable common-checkpoint coordinator intent (2026-10-07)
+
+A private coordinator step now pins one checkpoint request to the captured
+source revision, held configuration generation and complete frozen database/
+bucket roster. The plan includes original backend fingerprints and physical
+source identities. It contains no credentials, worker tokens or caller-selected
+timestamp. A qualified driver is required before any source hold is acquired.
+
+The coordinator composes the existing stable configuration and data barriers,
+waits for tracked writers, and rejects unselected native PostgreSQL databases.
+It commits a `data_checkpoint` intent before committing dispatch. Only the
+worker that durably claims the planned-to-capturing transition may invoke
+capture. An uncertain dispatch is recovered through independent observation
+of the original request, never another capture call. Missing evidence remains
+blocked, including a dispatch claim whose commit reply was lost before IO.
+
+The optional driver contract requires authenticated complete native/background
+writer coverage and retained immutable capture identities for every original
+source under one common boundary. Zero instrumented writers cannot satisfy
+that contract. The independent receipt must match the operation and canonical
+plan hash, contain the exact source roster, and provide a common UTC point no
+earlier than the held configuration. The coordinator rechecks host admission,
+worker authority, configuration and the complete held roster around provider IO.
+
+A separate receipt digest preserves all original source capture identities as
+well as the common point. A changed source identity under the same aggregate
+checkpoint ID is rejected on recovery. The PostgreSQL intent write checks the
+exact worker token, operation revision, live lease and held configuration in
+the committing transaction. Lost commit replies are recovered by the next
+worker against the retained intent/receipt, without recapturing the sources.
+
+Both checkpoint journal resource kinds remain unsupported publication
+strategies. This step does not release source holds, populate subordinate
+snapshot/manifest journals, enter copying, publish a stage, or enable public
+full-clone admission. No built-in qualified driver is installed. Native
+provider implementations, independent capture-identity adoption into the
+existing PostgreSQL/object workers, verified source-hold release and full
+publication remain necessary. Live R2/OVH qualification remains deferred.
+
+Validation: focused PostgreSQL tests pass for original-capture recovery,
+worker takeover before commit, lost intent/capture/receipt replies, incomplete
+or rewritten evidence, and the existing stable capture barriers. SQLC parity,
+text encoding, shell quoting and ADR numbering checks pass. These are local
+contract tests with a test driver, not native-provider qualification.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.

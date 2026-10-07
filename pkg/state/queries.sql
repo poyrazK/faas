@@ -14868,3 +14868,17 @@ WHERE c.account_id=sqlc.arg(account_id)::uuid
             AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
             AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
             AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point)));
+
+-- name: AdvanceProjectEnvironmentCloneCheckpointIntent :execrows
+UPDATE project_environment_clone_operations o
+SET resources=sqlc.arg(resources)::jsonb, revision=revision+1, updated_at=clock_timestamp()
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::uuid
+  AND o.project_id=sqlc.arg(project_id)::uuid AND o.status='capturing'
+  AND o.revision=sqlc.arg(expected_revision)::bigint
+  AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()
+  AND EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g
+    WHERE g.project_id=o.project_id AND g.account_id=o.account_id AND g.operation_id=o.id
+      AND g.state='held' AND g.source_environment=o.source_environment AND g.source_revision_hash=o.source_revision_hash)
+  AND (EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=o.id)
+    OR EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state='held'))
+  AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state<>'held');

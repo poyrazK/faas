@@ -607,6 +607,45 @@ func (q *Queries) AdvanceImagePreparation(ctx context.Context, db DBTX, arg Adva
 	return result.RowsAffected(), nil
 }
 
+const advanceProjectEnvironmentCloneCheckpointIntent = `-- name: AdvanceProjectEnvironmentCloneCheckpointIntent :execrows
+UPDATE project_environment_clone_operations o
+SET resources=$1::jsonb, revision=revision+1, updated_at=clock_timestamp()
+WHERE o.id=$2::uuid AND o.account_id=$3::uuid
+  AND o.project_id=$4::uuid AND o.status='capturing'
+  AND o.revision=$5::bigint
+  AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+  AND EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g
+    WHERE g.project_id=o.project_id AND g.account_id=o.account_id AND g.operation_id=o.id
+      AND g.state='held' AND g.source_environment=o.source_environment AND g.source_revision_hash=o.source_revision_hash)
+  AND (EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=o.id)
+    OR EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state='held'))
+  AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state<>'held')
+`
+
+type AdvanceProjectEnvironmentCloneCheckpointIntentParams struct {
+	Resources        []byte
+	OperationID      pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) AdvanceProjectEnvironmentCloneCheckpointIntent(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneCheckpointIntentParams) (int64, error) {
+	result, err := db.Exec(ctx, advanceProjectEnvironmentCloneCheckpointIntent,
+		arg.Resources,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const advanceProjectEnvironmentCloneConfigurationClock = `-- name: AdvanceProjectEnvironmentCloneConfigurationClock :one
 UPDATE project_environment_clone_configuration_clock SET generation = generation + 1
 WHERE singleton AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
