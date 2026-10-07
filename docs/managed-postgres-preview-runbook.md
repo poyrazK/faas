@@ -155,7 +155,7 @@ does not provide per-database restore cost attribution. Do not enable guarded
 restores for a provider whose qualification reports neither accounting mode.
 
 Neon may publish a parent WAL position while its timestamp is absent or refers
-to an earlier rounded commit. ADR-645 requires a matching independently routed
+to an earlier rounded commit. ADR-677 requires a matching independently routed
 historical source position before publishing the requested restore point.
 Gregale pins the source branch and endpoint, uses verified TLS, rejects writable
 or current-primary connections, and rechecks the exact target after reading the
@@ -349,7 +349,7 @@ policy history exists so completed receipts cannot silently disappear.
 ## Failed creation custody and compensation
 
 Apply `20261007112111335_managed_postgres_creation_receipts.sql` before deploying
-creation-custody recovery (ADR-644). The private creation journal is separate
+creation-custody recovery (ADR-638). The private creation journal is separate
 from verified restore proofs and retained snapshot receipts. Its requested point
 is an intent fence; it is never evidence of restored contents or retention.
 

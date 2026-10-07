@@ -1,8 +1,7 @@
-# ADR-644: Managed PostgreSQL creation custody before data verification
+# ADR-638: Managed PostgreSQL creation custody before data verification
 
 - **Status:** accepted
 - **Date:** 2026-10-07
-- **History:** originally ADR-638; renumbered after a concurrent subscription-replay decision claimed that number. The landed creation-receipt migration retains its original historical citation.
 - **Decision:** Persist an immutable, private creation acknowledgement before
   waiting for restore lineage or snapshot retention metadata. Creation custody
   records the exact provider ID, independently reported source and creation
