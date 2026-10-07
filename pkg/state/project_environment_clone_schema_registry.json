@@ -1762,6 +1762,19 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_workflow_claims",
+    "kind": "operational",
+    "columns": [
+      "attempt",
+      "capability_digest",
+      "execution_kind",
+      "generation",
+      "lease_until",
+      "operation_id",
+      "workflow_run_id"
+    ]
+  },
+  {
     "table": "customer_operations",
     "columns": [
       "account_id",
