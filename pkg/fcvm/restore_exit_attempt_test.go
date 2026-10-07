@@ -70,6 +70,9 @@ func TestWakeRestoreExitDoesNotRejectHealthyColdBoot(t *testing.T) {
 			if err != nil || instance.Method != WakeColdBoot {
 				t.Fatalf("healthy fallback rejected: instance=%+v err=%v", instance, err)
 			}
+			if instance.Lease.processGeneration != vmm.bootGeneration {
+				t.Fatal("published lease retained the retired restore process attempt")
+			}
 			t.Cleanup(func() { _ = manager.Destroy(context.Background(), name) })
 			manager.ProcessExitedAttempt(name, vmm.restoreGeneration, 1)
 			if relayed != 0 {

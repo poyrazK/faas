@@ -626,6 +626,20 @@ original decision. Read delivery status separately. Business results and
 execution generations are unaffected. The legacy retry method remains available.
 
 
+
+### Application standards
+
+The public `OrgsService` exposes `previewApplicationStandardAssignment`,
+`getApplicationStandardReview`, `getApplicationStandardOperation`,
+`getApplicationStandardEnrollment`, and `listApplicationStandardExceptions`.
+Configure authentication with `new FaaSClient(baseURL, { token })` before calling
+these generated methods. A preview saves affected applications and blockers
+without activating an assignment. Progress preserves the distinction between
+persisted and observed settings. Enrollment includes the installed exception
+expiry deadline; history includes active, expired or revoked status evaluated
+at the server's `as_of` timestamp and an exclusive UUID cursor. Activation and
+exception mutation APIs remain gated pending runtime acceptance.
+
 ## Object version protection
 
 The Storage API supports typed retention/legal-hold reads and mutations, plus

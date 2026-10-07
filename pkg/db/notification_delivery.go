@@ -20,6 +20,9 @@ import (
 // The handler is cancelled and the row remains available for lease recovery.
 var ErrNotificationLeaseLost = errors.New("db: notification lease lost")
 
+// Deferred work retains its retry budget, for example during an operator pause.
+var ErrNotificationDeferred = errors.New("db: notification deferred")
+
 type notificationDelivery int
 
 const (
@@ -139,6 +142,13 @@ func deliverNotificationClaim(ctx context.Context, pool *pgxpool.Pool, item Noti
 }
 
 func settleNotificationClaim(ctx context.Context, pool *pgxpool.Pool, item NotificationOutboxItem, handlerErr error) (notificationDelivery, error) {
+	if errors.Is(handlerErr, ErrNotificationDeferred) {
+		rows, err := sqlc.New().DeferNotificationClaim(ctx, pool, sqlc.DeferNotificationClaimParams{ID: item.ID, ClaimToken: item.ClaimToken, RetryMilliseconds: notificationOutboxRetry.Milliseconds()})
+		if err != nil {
+			return notificationSkipped, fmt.Errorf("db: defer notification %d: %w", item.ID, err)
+		}
+		return notificationSkipped, notificationClaimUpdated(item.ID, rows)
+	}
 	if errors.Is(handlerErr, ErrNotificationNotOwned) {
 		rows, err := sqlc.New().ReleaseUnownedNotification(ctx, pool, sqlc.ReleaseUnownedNotificationParams{ID: item.ID, ClaimToken: item.ClaimToken})
 		if err != nil {

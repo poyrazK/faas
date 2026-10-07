@@ -40,7 +40,6 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestNewMigrationsAreReplaySafe(t *testing.T) {
@@ -54,7 +53,7 @@ func TestNewMigrationsAreReplaySafe(t *testing.T) {
 		t.Skip("no parseable versions in FAAS_REPLAY_CHECK_VERSIONS")
 	}
 	ctx := context.Background()
-	pool := pgtest.Open(t) // t.Skip-friendly when Postgres is absent
+	pool := newMigrationReplayPool(t, versions)
 
 	// 1. Bring the schema fully up, the way CI always has.
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -73,8 +72,10 @@ func TestNewMigrationsAreReplaySafe(t *testing.T) {
 			"what was applied, so this test would prove only part of the diff", got, versions, want)
 	}
 
-	// 3. Re-apply. Every migration this PR added must tolerate its own
-	//    effects already being present.
+	// Frozen issued standards SQL uses the explicit, schema-verified recovery
+	// path. Every other added migration still has to replay through Goose.
+	recoverFrozenStandardsForReplay(t, pool, versions)
+	// 3. Re-apply all remaining migrations against their existing effects.
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf(`migration set %v is not replay-safe: %v
 

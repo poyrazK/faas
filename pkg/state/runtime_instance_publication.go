@@ -5,6 +5,7 @@ import (
 	"net/netip"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
 // RuntimeInstancePublication is authored by schedd from the admitted boot or
@@ -17,6 +18,7 @@ type RuntimeInstancePublication struct {
 	Fence                                        RuntimeAppSecretFence
 	ConfigFence                                  RuntimeAppConfigFence
 	Inputs                                       *RuntimeConfigInputs
+	AdmissionReceipt, PromotionReceipt           *runtimeadmission.Receipt
 }
 
 type RuntimeInstancePublicationStore interface {
@@ -25,6 +27,9 @@ type RuntimeInstancePublicationStore interface {
 }
 
 func validateRuntimeInstancePublication(p RuntimeInstancePublication) error {
+	if err := validateOwnedNativeReceipt(p); err != nil {
+		return err
+	}
 	if p.Fence.empty() || !validRuntimeAppSecretFence(p.Fence) || !validRuntimeAppConfigFence(p.ConfigFence) || p.Netns == "" || p.GuestUID <= 0 ||
 		!validRuntimePublicationTransition(p.ExpectedState, p.targetState()) {
 		return ErrInvalidArgument

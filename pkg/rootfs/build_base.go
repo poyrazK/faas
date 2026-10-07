@@ -55,9 +55,12 @@ type BaseBuildInput struct {
 
 // BaseBuildResult reports the produced base image.
 type BaseBuildResult struct {
-	ImageKey  string // set when Storage + StorageKey was used
-	ImagePath string // set when OutImage was used
-	SizeBytes int64
+	ImageKey        string // set when Storage + StorageKey was used
+	ImagePath       string // set when OutImage was used
+	SizeBytes       int64  // staged content, not complete ext4 size
+	ArtifactDigest  string
+	ArtifactBytes   int64
+	GuestInitDigest string // actual injected /sbin/init bytes; empty without injection
 }
 
 // MkdirBaseStaging creates a fresh temp dir for a base-image staging
@@ -291,7 +294,7 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: open layer 0: %w", err)
 		}
-		err = ApplyLayerGzWithResolver(staging, f, nil)
+		err = ApplyLayerGzWithResolver(staging, forwardLayerVerification(f, in.Layers[0]), nil)
 		_ = f.Close()
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (pre-parse): %w", err)
@@ -308,7 +311,7 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: reopen layer 0: %w", err)
 		}
-		err = ApplyLayerGzWithResolver(staging, f, resolver)
+		err = ApplyLayerGzWithResolver(staging, forwardLayerVerification(f, in.Layers[0]), resolver)
 		_ = f.Close()
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (resolved): %w", err)
@@ -445,15 +448,18 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	// Full-rootfs: stageAppUpper is NOT applied (the full rootfs
 	// is the produced drive — drive0+vda, not drive1). The guest
 	// sees drive0 as root directly; no overlayfs assembly.
-	if err := b.publishExt4FullRootfs(ctx, in, staging, sizeMB); err != nil {
+	identity, err := b.publishExt4FullRootfs(ctx, in, staging, sizeMB)
+	if err != nil {
 		return BuildResult{}, err
 	}
 
 	res := BuildResult{
-		SizeMB:       sizeMB,
-		ContentBytes: stats.ContentBytes,
-		SBOMKey:      sbomKey,
-		RunnerDigest: runnerDigest,
+		SizeMB:         sizeMB,
+		ContentBytes:   stats.ContentBytes,
+		ArtifactDigest: identity.Digest,
+		ArtifactBytes:  identity.Bytes,
+		SBOMKey:        sbomKey,
+		RunnerDigest:   runnerDigest,
 	}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
@@ -714,49 +720,50 @@ func (b *Builder) emitFullRootfsSBOM(ctx context.Context, in BuildFullRootfsInpu
 // publishExt4FullRootfs is the full-rootfs sibling of publishExt4.
 // Same mkfs.ext4 + Storage.Put pipeline; no drive1 wrapper, no
 // overlayfs staging.
-func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsInput, staging string, sizeMB int) error {
+func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsInput, staging string, sizeMB int) (ArtifactIdentity, error) {
 	if in.OutImage != "" {
 		if err := os.MkdirAll(filepath.Dir(in.OutImage), 0o755); err != nil {
-			return fmt.Errorf("rootfs: mkdir full-rootfs out dir: %w", err)
+			return ArtifactIdentity{}, fmt.Errorf("rootfs: mkdir full-rootfs out dir: %w", err)
 		}
 		if err := b.run.Run(ctx, MkfsCommand(staging, in.OutImage, sizeMB)); err != nil {
-			return fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
+			return ArtifactIdentity{}, fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
 		}
-		return nil
+		return artifactIdentityFromPath(ctx, in.OutImage)
 	}
 	// Keep the mkfs output beside the staging directory. This avoids
 	// copying a growing ext4 file into the staging tree when mkfs.ext4
 	// walks -d, and mirrors publishExt4's atomic Storage.Put flow.
 	tmp, err := os.CreateTemp(filepath.Dir(staging), "faas-fullrootfs-mkfs-*.ext4")
 	if err != nil {
-		return fmt.Errorf("rootfs: create full-rootfs tmp ext4: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: create full-rootfs tmp ext4: %w", err)
 	}
 	tmpPath := tmp.Name()
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rootfs: close full-rootfs tmp ext4: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: close full-rootfs tmp ext4: %w", err)
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 	if err := b.run.Run(ctx, MkfsCommand(staging, tmpPath, sizeMB)); err != nil {
-		return fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
 	}
 	// tmpPath was created in the builder-owned temporary directory above;
 	// it is not a customer-controlled path.
 	f, err := os.Open(tmpPath) //nolint:forbidigo
 	if err != nil {
-		return fmt.Errorf("rootfs: open full-rootfs mkfs output: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: open full-rootfs mkfs output: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	if err := in.Storage.Put(ctx, in.StorageKey, f); err != nil {
-		return fmt.Errorf("rootfs: publish full-rootfs %q: %w", in.StorageKey, err)
+	identity, err := publishArtifactIdentity(ctx, in.Storage, in.StorageKey, f)
+	if err != nil {
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: publish full-rootfs %q: %w", in.StorageKey, err)
 	}
 	if b.signer != nil {
 		sigKey := "sigs/" + in.StorageKey + ".sig"
 		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
-			return fmt.Errorf("rootfs: sign full-rootfs %q: %w", in.StorageKey, err)
+			return ArtifactIdentity{}, fmt.Errorf("rootfs: sign full-rootfs %q: %w", in.StorageKey, err)
 		}
 	}
-	return nil
+	return identity, nil
 }
 
 // validateFullRootfsOutputTarget mirrors validateOutputTarget for
@@ -816,12 +823,21 @@ func (b *Builder) buildBaseFromStaging(ctx context.Context, staging string, in B
 	if err != nil {
 		return BaseBuildResult{}, err
 	}
+	guestDigest := ""
+	if in.GuestInitPath != "" {
+		guest, err := artifactIdentityFromPath(ctx, filepath.Join(staging, "sbin", "init"))
+		if err != nil {
+			return BaseBuildResult{}, fmt.Errorf("rootfs: hash injected guest-init: %w", err)
+		}
+		guestDigest = guest.Digest
+	}
 
-	if err := b.publishBaseExt4(ctx, in, staging, BasePaddedSizeMB(stats.ContentBytes, stats.SmallRatio)); err != nil {
+	identity, err := b.publishBaseExt4(ctx, in, staging, BasePaddedSizeMB(stats.ContentBytes, stats.SmallRatio))
+	if err != nil {
 		return BaseBuildResult{}, err
 	}
 
-	res := BaseBuildResult{SizeBytes: stats.ContentBytes}
+	res := BaseBuildResult{SizeBytes: stats.ContentBytes, ArtifactDigest: identity.Digest, ArtifactBytes: identity.Bytes, GuestInitDigest: guestDigest}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
 	} else {
@@ -833,22 +849,22 @@ func (b *Builder) buildBaseFromStaging(ctx context.Context, staging string, in B
 // publishBaseExt4 mirrors Builder.publishExt4 but writes via the base
 // path: mkfs into a tmp file, Put under StorageKey. The legacy OutImage
 // path mkfs-es directly into OutImage (matches the pre-#96 behaviour).
-func (b *Builder) publishBaseExt4(ctx context.Context, in BaseBuildInput, staging string, sizeMB int) error {
+func (b *Builder) publishBaseExt4(ctx context.Context, in BaseBuildInput, staging string, sizeMB int) (ArtifactIdentity, error) {
 	if in.OutImage != "" {
 		if err := b.runBaseMkfs(ctx, staging, in.OutImage, sizeMB); err != nil {
-			return fmt.Errorf("rootfs: base mkfs: %w", err)
+			return ArtifactIdentity{}, fmt.Errorf("rootfs: base mkfs: %w", err)
 		}
-		return nil
+		return artifactIdentityFromPath(ctx, in.OutImage)
 	}
 	// mkfs's -d flag populates the new image from `staging`; the output file
 	// must therefore live outside that tree and its tmpfs staging budget.
 	tmpPath, err := createBaseTemp("faas-base-mkfs-*.ext4")
 	if err != nil {
-		return err
+		return ArtifactIdentity{}, err
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 	if err := b.runBaseMkfs(ctx, staging, tmpPath, sizeMB); err != nil {
-		return fmt.Errorf("rootfs: base mkfs: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: base mkfs: %w", err)
 	}
 	return b.publishBaseFile(ctx, in.Storage, in.StorageKey, tmpPath)
 }
@@ -876,17 +892,19 @@ func createBaseTemp(pattern string) (string, error) {
 	return tmpPath, nil
 }
 
-// publishBaseFile Puts a finished base image under key and signs it.
-func (b *Builder) publishBaseFile(ctx context.Context, be storage.StorageBackend, key, path string) error {
+// publishBaseFile publishes a finished base image, records its complete
+// artifact identity and signs it.
+func (b *Builder) publishBaseFile(ctx context.Context, be storage.StorageBackend, key, path string) (ArtifactIdentity, error) {
 	// nolint:forbidigo // path is a daemon-internal scratch file from
 	// createBaseTemp that the builder just wrote. Not a customer path.
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("rootfs: open base image: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: open base image: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	if err := be.Put(ctx, key, f); err != nil {
-		return fmt.Errorf("rootfs: publish base %q: %w", key, err)
+	identity, err := publishArtifactIdentity(ctx, be, key, f)
+	if err != nil {
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: publish base %q: %w", key, err)
 	}
 	// ADR-038: mirror publishExt4's sign call. The base sig lives
 	// at sigs/<StorageKey>.sig — same convention as the app-layer
@@ -898,10 +916,10 @@ func (b *Builder) publishBaseFile(ctx context.Context, be storage.StorageBackend
 	if b.signer != nil {
 		sigKey := "sigs/" + key + ".sig"
 		if err := b.signer.Sign(ctx, key, sigKey); err != nil {
-			return fmt.Errorf("rootfs: sign base %q: %w", key, err)
+			return ArtifactIdentity{}, fmt.Errorf("rootfs: sign base %q: %w", key, err)
 		}
 	}
-	return nil
+	return identity, nil
 }
 
 const (

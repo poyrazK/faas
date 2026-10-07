@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1039,17 +1038,17 @@ func TestV1AuthLogin_UnboundEmail_Returns401(t *testing.T) {
 	}
 }
 
-// TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths — the spec §11
-// anti-enumeration closure. The unbound-email and wrong-password
-// paths both run one Argon2id verify against identical parameters
-// (the no-row path against DummyPHC), so the timing observation
-// cannot distinguish "no such email" from "wrong password". Bound
-// is generous to keep the test CI-friendly; the test is a regression
-// tripwire, not a measurement.
-func TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths(t *testing.T) {
+// TestV1AuthLogin_FailurePathsUseEqualCostPasswordVerification pins the
+// anti-enumeration work directly. Wall-clock bounds are noisy on shared,
+// race-enabled runners; the security invariant is one verification with the
+// same Argon2 parameters on every failure path. Separate endpoint tests pin
+// the 401 response shape.
+func TestV1AuthLogin_FailurePathsUseEqualCostPasswordVerification(t *testing.T) {
 	srv, _, store := v1AuthTestHarness(t)
-	h := srv.handler()
-
+	oauthAcct, err := store.CreateAccount(context.Background(), "oauth-only@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
 	acct, err := store.CreateAccount(context.Background(), "timing@example.com", api.PlanFree)
 	if err != nil {
 		t.Fatal(err)
@@ -1062,42 +1061,41 @@ func TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const (
-		samples    = 5
-		upperBound = 500 * time.Millisecond
-		maxRatio   = 2.0
-	)
-	runOnce := func(path, body string) time.Duration {
-		start := time.Now()
-		rec := v1AuthJSONRequest(t, h, path, body)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401", rec.Code)
-		}
-		return time.Since(start)
+	const password = "wrong-password-1234567890"
+	dummyParams := strings.Split(auth.DummyPHC, "$")[3]
+	cases := []struct {
+		name, email, wantPHC string
+	}{
+		{name: "unbound", email: "ghost@example.com", wantPHC: auth.DummyPHC},
+		{name: "OAuth-only", email: oauthAcct.Email, wantPHC: auth.DummyPHC},
+		{name: "wrong password", email: acct.Email, wantPHC: phc},
 	}
-	median := func(values []time.Duration) time.Duration {
-		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
-		return values[len(values)/2]
-	}
-	unboundSamples := make([]time.Duration, 0, samples)
-	wrongSamples := make([]time.Duration, 0, samples)
-	for i := 0; i < samples; i++ {
-		// Interleave the paths so CPU frequency and neighbouring runner load
-		// affect both distributions rather than one whole cohort.
-		unboundSamples = append(unboundSamples, runOnce("/v1/auth/login", `{"email":"ghost@example.com","password":"correct-horse-battery-staple"}`))
-		wrongSamples = append(wrongSamples, runOnce("/v1/auth/login", `{"email":"timing@example.com","password":"wrong-password-1234567890"}`))
-	}
-	unbound := median(unboundSamples)
-	wrong := median(wrongSamples)
-	fastest, slowest := unbound, wrong
-	if wrong < unbound {
-		fastest, slowest = wrong, unbound
-	}
-	if fastest == 0 || float64(slowest)/float64(fastest) > maxRatio {
-		t.Errorf("unbound median=%v wrong median=%v — failure paths differ by more than %.1fx", unbound, wrong, maxRatio)
-	}
-	if unbound > upperBound || wrong > upperBound {
-		t.Errorf("unbound median=%v wrong median=%v — both must be <= %v (Argon2id cost regression)", unbound, wrong, upperBound)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			var gotPHC, gotPassword string
+			verify := func(phc, plaintext string) (bool, error) {
+				calls++
+				gotPHC, gotPassword = phc, plaintext
+				return false, nil
+			}
+			if _, ok := srv.verifyPasswordOrPadWith(context.Background(), tc.email, password, verify); ok {
+				t.Fatal("failure path returned ok=true")
+			}
+			if calls != 1 {
+				t.Fatalf("password verifier called %d times, want exactly once", calls)
+			}
+			if gotPHC != tc.wantPHC {
+				t.Errorf("verifier received unexpected password hash")
+			}
+			parts := strings.Split(gotPHC, "$")
+			if len(parts) < 5 || parts[3] != dummyParams {
+				t.Errorf("verifier hash parameters = %q, want %q", gotPHC, dummyParams)
+			}
+			if gotPassword != password {
+				t.Errorf("verifier password = %q, want supplied password", gotPassword)
+			}
+		})
 	}
 }
 

@@ -930,6 +930,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		// New services install their pinned company intent before staging or
+		// consuming deploy rate. The ordinary deployment fence still applies.
+		var standardError string
+		app, standardError = s.prepareProjectApplicationStandard(ctx, app)
+		if standardError != "" {
+			res.Error = standardError
+			out = append(out, res)
+			continue
+		}
 		workload := workloadByName[strings.ToLower(app.WorkloadName)]
 		kind := state.DeploymentKindTarball
 		if app.Manifest.BuildDockerfile != "" {

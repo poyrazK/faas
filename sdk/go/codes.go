@@ -13,6 +13,9 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // can be added server-side without migration. Adding a sentinel
 // (errors.go) is the one piece that requires an SDK release.
 const (
+	CodeApplicationStandardVersionStale = api.CodeApplicationStandardVersionStale
+	CodeApplicationStandardsPending     = api.CodeApplicationStandardsPending
+
 	CodeBindingReleaseRequired               = api.CodeBindingReleaseRequired
 	CodeBindingReleasePolicyChanged          = api.CodeBindingReleasePolicyChanged
 	CodePlanLimitApps                        = api.CodePlanLimitApps

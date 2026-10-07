@@ -288,6 +288,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// after recovery so cleanup makes progress on frequently updated nodes.
 	go l.runGCTick(ctx, l.now())
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
+	go l.runProducedEvidenceRenewal(ctx)
 	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
 	go l.reconcileSecuritySignatures(ctx, l.now())
 

@@ -19,6 +19,10 @@ import (
 // Park, this path never asks vmmd to write a snapshot.
 func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID string) (CoordOutcome, error) {
 	refreshScope, _ := ctx.Value(runtimeRefreshScopeKey{}).(string)
+	_, standardRefresh := ctx.Value(applicationStandardRefreshKey{}).(state.ApplicationStandardRuntimeRefreshRequest)
+	if err := e.checkApplicationStandardRefresh(ctx); err != nil {
+		return CoordOutcome{}, err
+	}
 	release := e.lockApp(appID)
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
@@ -43,6 +47,9 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list initial instances for %s: %w", appID, err)
 	}
 	selected := make(map[string]bool)
+	if applicationStandardRefreshLifecycleBusy(ctx, instances) {
+		return CoordOutcome{}, state.ErrApplicationStandardRefreshDeferred
+	}
 	deploymentScopes := make(map[string]string)
 	for _, deployment := range deployments {
 		selected[deployment.ID] = refreshScope == "" || normalizedDeploymentScope(deployment.Scope) == refreshScope
@@ -54,15 +61,21 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 			resident[instance.DeploymentID] = true
 		}
 	}
-	if refreshScope != "" && len(resident) == 0 {
+	if (refreshScope != "" || standardRefresh) && len(resident) == 0 {
 		return CoordOutcome{}, nil
 	}
 	live := make([]state.Deployment, 0, len(deployments))
 	liveByID := make(map[string]state.Deployment)
+	deployedApps := make(map[string]state.App)
 	for _, deployment := range deployments {
-		if deployment.Status == state.DeployLive && selected[deployment.ID] && (refreshScope == "" || resident[deployment.ID]) {
+		if deployment.Status == state.DeployLive && selected[deployment.ID] && (refreshScope == "" && !standardRefresh || resident[deployment.ID]) {
+			deployedApp, err := state.ResolveAppForDeployment(ctx, e.store, app, deployment)
+			if err != nil {
+				return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: deployed settings for %s: %w", deployment.ID, err)
+			}
 			live = append(live, deployment)
 			liveByID[deployment.ID] = deployment
+			deployedApps[deployment.ID] = deployedApp
 		}
 	}
 	if len(live) == 0 {
@@ -82,9 +95,24 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	if !ok {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: unknown account plan %q", account.Plan)
 	}
-	maxConcurrency := effectiveMaxConcurrency(app, limits)
+	var serviceDeployments []state.Deployment
+	for _, deployment := range live {
+		if deployedApps[deployment.ID].Manifest.ExecutionMode == api.ExecutionModeService {
+			serviceDeployments = append(serviceDeployments, deployment)
+		}
+	}
+	serviceTargets := make(map[string]int)
+	if len(serviceDeployments) > 0 {
+		serviceTargets, err = e.serviceReplicaTargets(ctx, app, serviceDeployments)
+		if err != nil {
+			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: deployed replica targets: %w", err)
+		}
+	}
 
 	readBoundary := func() (time.Time, bool, error) {
+		if standardRefresh {
+			return time.Unix(0, 0).UTC(), true, nil // Receipt checks retain each environment's own intent.
+		}
 		if refreshScope != "" {
 			return state.RuntimeConfigChangedAtForScope(ctx, e.store, appID, refreshScope)
 		}
@@ -107,7 +135,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		}
 	}
 	staleInputs := func(instance state.Instance) bool {
-		return e.runtimeConfigReceiptStale(ctx, instance, changedAt, deploymentScopes[instance.DeploymentID])
+		return e.standardRefreshInstanceStale(ctx, instance) || e.runtimeConfigReceiptStale(ctx, instance, changedAt, deploymentScopes[instance.DeploymentID])
 	}
 
 	// Clear stale non-serving VMs within the selected environment. An
@@ -126,14 +154,13 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 
 	var firstReady *CoordInstance
 	for _, deployment := range live {
-		target := 1
-		if app.Manifest.ExecutionMode == api.ExecutionModeService {
-			target = desiredServiceReplicas(app.Manifest)
-			if target < 1 {
-				target = 1
-			}
-		}
+		deployedApp := deployedApps[deployment.ID]
+		target := runtimeConfigRefreshTarget(deployedApp, serviceTargets[deployment.ID])
+		maxConcurrency := effectiveMaxConcurrency(deployedApp, limits)
 		for {
+			if err := e.checkApplicationStandardRefresh(ctx); err != nil {
+				return CoordOutcome{}, err
+			}
 			currentApp, appErr := e.store.AppByID(ctx, appID)
 			if appErr != nil {
 				return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: reload app %s: %w", appID, appErr)
@@ -228,8 +255,11 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 			}
 
 			candidateCtx := withRequestedWakeID(WithScope(ctx, deployment.Scope), wakeID)
+			if err := e.checkApplicationStandardRefresh(ctx); err != nil {
+				return CoordOutcome{}, err
+			}
 			result, wakeErr := e.admitAndDispatchWithOptions(candidateCtx, appID, deployment.ID,
-				instanceModeForApp(app), TriggerRuntimeConfigRestart, false, true)
+				instanceModeForApp(deployedApp), TriggerRuntimeConfigRestart, false, true)
 			if wakeErr != nil {
 				return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: boot replacement for deployment %s: %w", deployment.ID, wakeErr)
 			}
@@ -273,13 +303,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	// have their configured fresh serving capacity.
 	firstReady = nil
 	for _, deployment := range live {
-		target := 1
-		if app.Manifest.ExecutionMode == api.ExecutionModeService {
-			target = desiredServiceReplicas(app.Manifest)
-			if target < 1 {
-				target = 1
-			}
-		}
+		target := runtimeConfigRefreshTarget(deployedApps[deployment.ID], serviceTargets[deployment.ID])
 		ready := 0
 		for _, instance := range instances {
 			stale := staleInputs(instance)
@@ -301,6 +325,13 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	return CoordOutcome{Instance: firstReady}, nil
 }
 
+func runtimeConfigRefreshTarget(app state.App, serviceTarget int) int {
+	if app.Manifest.ExecutionMode == api.ExecutionModeService && serviceTarget > 1 {
+		return serviceTarget
+	}
+	return 1
+}
+
 func runtimeConfigInstanceStale(instance state.Instance, boundary time.Time) bool {
 	return !runtimeConfigResolvedAt(instance).After(boundary)
 }
@@ -315,6 +346,9 @@ func runtimeConfigResident(instance state.Instance) bool {
 }
 
 func (e *Engine) destroyStaleRuntimeConfigInstance(ctx context.Context, instance state.Instance) error {
+	if err := e.checkApplicationStandardRefresh(ctx); err != nil {
+		return err
+	}
 	release := e.lockApp(instance.AppID)
 	defer release()
 	fresh, err := e.store.InstanceByID(ctx, instance.ID)
@@ -370,6 +404,9 @@ func (e *Engine) waitForRuntimeConfigCandidate(ctx context.Context, instanceID s
 }
 
 func (e *Engine) retireRuntimeConfigInstance(ctx context.Context, appID, deploymentID string, instance state.Instance) error {
+	if err := e.checkApplicationStandardRefresh(ctx); err != nil {
+		return err
+	}
 	// Serialize against park/snapshot so we never destroy a VM while another
 	// lifecycle operation is capturing or resuming it.
 	release := e.lockApp(appID)
@@ -414,6 +451,9 @@ func (e *Engine) retireRuntimeConfigInstance(ctx context.Context, appID, deploym
 		if err := e.waitForRuntimeConfigInstanceDrain(ctx, appID, fresh.ID, acknowledgedAt); err != nil {
 			return err
 		}
+	}
+	if err := e.checkApplicationStandardRefresh(ctx); err != nil {
+		return err
 	}
 	if err := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
 		return fmt.Errorf("sched: runtime config restart: destroy withdrawn instance %s: %w", fresh.ID, err)

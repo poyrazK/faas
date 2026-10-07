@@ -28,6 +28,12 @@ type nativeQualificationCaptureRecord struct {
 	Backing          BackingIdentity `json:"backing"`
 }
 
+func (r nativeQualificationCaptureRecord) Equal(other nativeQualificationCaptureRecord) bool {
+	return r.Version == other.Version && r.InstanceID == other.InstanceID && r.CaptureID == other.CaptureID &&
+		r.NativeGeneration == other.NativeGeneration && r.KernelBootID == other.KernelBootID &&
+		r.StartedAt.Equal(other.StartedAt) && r.CompletedAt.Equal(other.CompletedAt) && r.Info.Equal(other.Info) && r.Backing == other.Backing
+}
+
 func (r *nativeQualificationCaptureRecord) UnmarshalJSON(data []byte) error {
 	fields, err := nativeJournalObjectFields(data, nativeQualificationJSONFields(reflect.TypeOf(*r)))
 	if err != nil {
@@ -46,13 +52,18 @@ func (r *nativeQualificationCaptureRecord) UnmarshalJSON(data []byte) error {
 }
 
 func (r nativeQualificationCaptureRecord) validate(incoming nativeQualificationRecord) error {
+	// Version 1 has only the three byte counters; it cannot carry standards
+	// lineage without a separately versioned producer and publication session.
+	if !r.Info.Capture.IsZero() {
+		return errors.New("native qualification: version 1 cannot carry standards capture evidence")
+	}
 	if r.Version != 1 || r.InstanceID != incoming.Execution.InstanceID || r.CaptureID != incoming.Generation ||
 		r.NativeGeneration == "" || r.NativeGeneration != incoming.NativeGeneration || r.KernelBootID != incoming.KernelBootID ||
 		r.StartedAt.Before(incoming.AcceptedAt) || !r.StartedAt.Before(incoming.Deadline) {
 		return errors.New("native qualification: capture differs from original incoming authority")
 	}
 	if r.CompletedAt.IsZero() {
-		if r.Info != (SnapshotInfo{}) || r.Backing != (BackingIdentity{}) {
+		if !r.Info.IsZero() || r.Backing != (BackingIdentity{}) {
 			return errors.New("native qualification: incomplete capture carries completion evidence")
 		}
 	} else if r.CompletedAt.Before(r.StartedAt) || !r.CompletedAt.Before(incoming.Deadline) ||

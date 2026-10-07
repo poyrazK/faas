@@ -22,7 +22,7 @@ func TestParseMapsLine(t *testing.T) {
 	if !ok {
 		t.Fatal("valid line rejected")
 	}
-	want := mapsVMA{start: 0x7f0000000000, end: 0x7f0040000000, offset: 0x1000, major: 0xfd, minor: 2, inode: 131}
+	want := mapsVMA{start: 0x7f0000000000, end: 0x7f0040000000, offset: 0x1000, major: 0xfd, minor: 2, inode: 131, permissions: "rw-p"}
 	if v != want {
 		t.Fatalf("parsed %+v, want %+v", v, want)
 	}

@@ -120,7 +120,7 @@ func (j *nativeImageSourceJournal) captureOutputAuthority(ctx context.Context, e
 	if err != nil {
 		return err
 	}
-	if capture != permit.Capture {
+	if !capture.Equal(permit.Capture) {
 		return errors.New("native snapshot output: original capture start changed")
 	}
 	return ctx.Err()

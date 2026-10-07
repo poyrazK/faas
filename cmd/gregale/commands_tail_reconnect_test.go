@@ -46,7 +46,27 @@ func TestGregaleTail_ReconnectsWhenStreamEnds(t *testing.T) {
 	stdout, restore := captureStdout(t)
 	defer restore()
 	done := make(chan int, 1)
-	go func() { done <- cmdTail(nil) }()
+	finished := make(chan struct{})
+	go func() {
+		code := cmdTail(nil)
+		// Publish completion before the result: receiving done must guarantee
+		// cleanup cannot send another SIGINT after cmdTail stopped handling it.
+		close(finished)
+		done <- code
+	}()
+	defer func() {
+		select {
+		case <-finished:
+			return
+		default:
+		}
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+			t.Error("cmdTail remained active during cleanup")
+		}
+	}()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && !strings.Contains(stdout.String(), "i-3 a1 completed") {

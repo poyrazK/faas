@@ -253,7 +253,7 @@ func TestNativeSnapshotOutputsRefuseChangedCaptureBeforeProduction(t *testing.T)
 					t.Fatal(err)
 				}
 			}
-			if capture != f.capture {
+			if !capture.Equal(f.capture) {
 				if err := f.q.writeCapture(f.incoming, capture); err != nil {
 					t.Fatal(err)
 				}

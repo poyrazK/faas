@@ -7432,6 +7432,11 @@ type Sidecar struct {
 // Returns nil on success or a *Problem with RFC 7807 status 400
 // (or 403 for stateful image). The handler maps this directly to
 // api.WriteProblem; no further error wrapping needed.
+// ValidSidecarName is shared by the API and private artifact storage boundary.
+func ValidSidecarName(name string) bool {
+	return name != "main" && sidecarNameRe.MatchString(name)
+}
+
 func (s *Sidecar) Validate(limits Limits) *Problem {
 	if s == nil {
 		return nil

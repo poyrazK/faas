@@ -3509,7 +3509,7 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 		    and state = 'running'`,
 		instanceID, currentNodeID, leaseToken)
 	if err != nil {
-		return fmt.Errorf("state: mark instance migrating: %w", err)
+		return fmt.Errorf("state: mark instance migrating: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		// Peer rollback / owner change / row gone. The migration
@@ -17328,7 +17328,7 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 		`update instances set netns = $2, host_ip = $3::inet, guest_uid = $4, started_at = now()
 		 where id = $1`, id, netns, hostIP, guestUID)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -17484,21 +17484,7 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 	return createSnapshotWithQuerier(ctx, s.pool, snap)
 }
 
-type snapshotQuerier interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-func createSnapshotWithQuerier(ctx context.Context, q snapshotQuerier, snap Snapshot) (Snapshot, error) {
-	// StorageKey is required. The migration's `NOT NULL DEFAULT ''`
-	// is a safety net for any path we miss, but the contract here is
-	// that the caller populates it explicitly (production: imaged
-	// copies it from the snapshot_written payload; tests: call
-	// sched.SnapshotMemKey(deploymentID) at the fixture's
-	// CreateSnapshot site — see pkg/sched/paths.go). An empty value
-	// used to silently default to the legacy-path form, which masked
-	// bugs in callers that forgot the field — that loophole is now
-	// closed. pkg/state can't import pkg/sched (cycle: sched →
-	// state), so the helper lives in sched and callers wire it.
+func createSnapshotWithQuerier(ctx context.Context, q sqlc.DBTX, snap Snapshot) (Snapshot, error) {
 	if snap.StorageKey == "" {
 		return Snapshot{}, fmt.Errorf("state: CreateSnapshot: storage_key required (populate via state.SnapMemKey at the call site)")
 	}
@@ -17506,20 +17492,21 @@ func createSnapshotWithQuerier(ctx context.Context, q snapshotQuerier, snap Snap
 	if tier == "" {
 		tier = SnapshotTierInit
 	}
-	row := q.QueryRow(ctx,
-		`insert into snapshots (deployment_id, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, tier)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 returning id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, delete_pending, created_at, tier`,
-		snap.DeploymentID, snap.FCVersion, snap.BaseImageVersion, snap.MemBytes, snap.DiskBytes, snap.StoredBytes, snap.StorageKey, snap.Stale, tier)
-	out, err := scanSnapshot(row)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
-			return Snapshot{}, ErrConflict
+	if snap.ApplicationStandardCaptureToken != "" {
+		token, err := uuid.Parse(snap.ApplicationStandardCaptureToken)
+		if err != nil || token == uuid.Nil || token.String() != snap.ApplicationStandardCaptureToken {
+			return Snapshot{}, ErrInvalidArgument
 		}
+	}
+	row, err := sqlc.New().CreateSnapshot(ctx, q, sqlc.CreateSnapshotParams{
+		DeploymentID: mustPgUUID(snap.DeploymentID), FcVersion: snap.FCVersion, BaseImageVersion: snap.BaseImageVersion,
+		MemBytes: snap.MemBytes, DiskBytes: snap.DiskBytes, StoredBytes: snap.StoredBytes, StorageKey: snap.StorageKey,
+		Stale: snap.Stale, Tier: tier, ApplicationStandardCaptureToken: mustPgUUID(snap.ApplicationStandardCaptureToken),
+	})
+	if err != nil {
 		return Snapshot{}, mapErr(err)
 	}
-	return out, nil
+	return snapshotFromSQLC(row), nil
 }
 
 // LatestSnapshot returns the freshest non-stale snapshot for a deployment
@@ -17531,11 +17518,11 @@ func createSnapshotWithQuerier(ctx context.Context, q snapshotQuerier, snap Snap
 // instead of this helper — LatestSnapshot is kept for legacy callers
 // (dashboard queries, snapshot dashboards, manual SQL ops).
 func (s *PgStore) LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error) {
-	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, delete_pending, created_at, tier
-		 from snapshots where deployment_id = $1 and stale = false
-		 order by (tier = 'warm') desc, created_at desc limit 1`, deploymentID)
-	return scanSnapshot(row)
+	row, err := sqlc.New().LatestSnapshot(ctx, s.pool, mustPgUUID(deploymentID))
+	if err != nil {
+		return Snapshot{}, mapErr(err)
+	}
+	return snapshotFromSQLC(row), nil
 }
 
 // LatestSnapshotForTier returns the freshest non-stale snapshot for a
@@ -17550,11 +17537,13 @@ func (s *PgStore) LatestSnapshotForTier(ctx context.Context, deploymentID, tier 
 	if tier == "" {
 		tier = SnapshotTierInit
 	}
-	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, delete_pending, created_at, tier
-		 from snapshots where deployment_id = $1 and tier = $2 and stale = false
-		 order by created_at desc limit 1`, deploymentID, tier)
-	return scanSnapshot(row)
+	row, err := sqlc.New().LatestSnapshotForTier(ctx, s.pool, sqlc.LatestSnapshotForTierParams{
+		DeploymentID: mustPgUUID(deploymentID), Tier: tier,
+	})
+	if err != nil {
+		return Snapshot{}, mapErr(err)
+	}
+	return snapshotFromSQLC(row), nil
 }
 
 // MarkSnapshotStale flags a snapshot unusable after a failed restore (ADR-005):
@@ -23808,7 +23797,7 @@ func (s *PgStore) UpsertAppTrustedSigner(ctx context.Context, accountID, appID, 
 		 returning added_at, (xmax = 0) AS is_new`,
 		accountID, appID, signerName, pubKey, addedByAccountID).Scan(&addedAt, &isNewRow)
 	if err != nil {
-		return time.Time{}, false, err
+		return time.Time{}, false, mapErr(err)
 	}
 	// isNewRow=true means inserted now; rotated = !isNewRow.
 	return addedAt, !isNewRow, nil
@@ -23822,7 +23811,7 @@ func (s *PgStore) DeleteAppTrustedSigner(ctx context.Context, accountID, appID, 
 		`delete from app_trusted_signers where account_id = $1 and app_id = $2 and signer_name = $3`,
 		accountID, appID, signerName)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -24994,25 +24983,13 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 	return out, rows.Err()
 }
 
-func scanSnapshot(row pgx.Row) (Snapshot, error) {
-	s := Snapshot{}
-	// The 12th column is tier (issue #470 / ADR-055). Every query
-	// in this file now selects the tier column explicitly; the
-	// scan returns "init" if the column is NULL (legacy rows from
-	// before migration 00110 applied).
-	var tier *string
-	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.BaseImageVersion, &s.MemBytes, &s.DiskBytes, &s.StoredBytes, &s.StorageKey, &s.Stale, &s.DeletePending, &s.CreatedAt, &tier); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Snapshot{}, ErrNotFound
-		}
-		return Snapshot{}, err
+func snapshotFromSQLC(row sqlc.Snapshot) Snapshot {
+	return Snapshot{
+		ID: pgUUIDString(row.ID), DeploymentID: pgUUIDString(row.DeploymentID), FCVersion: row.FcVersion,
+		BaseImageVersion: row.BaseImageVersion, MemBytes: row.MemBytes, DiskBytes: row.DiskBytes, StoredBytes: row.StoredBytes,
+		StorageKey: row.StorageKey, Tier: row.Tier, Stale: row.Stale, DeletePending: row.DeletePending, CreatedAt: row.CreatedAt.Time,
+		ApplicationStandardCaptureToken: pgUUIDString(row.ApplicationStandardCaptureToken),
 	}
-	if tier != nil && *tier != "" {
-		s.Tier = *tier
-	} else {
-		s.Tier = SnapshotTierInit
-	}
-	return s, nil
 }
 
 // --- error mapping -----------------------------------------------------------
@@ -25066,6 +25043,23 @@ var checkViolationMappedToInvalid = map[string]struct{}{
 }
 
 func mapErr(err error) error {
+	var admission *pgconn.PgError
+	if errors.As(err, &admission) {
+		switch admission.ConstraintName {
+		case "application_standard_runtime_stale", "application_standard_boot_receipt":
+			return ErrApplicationStandardRuntimeStale
+		case "application_standard_boot_conflict":
+			return ErrConflict
+		case "application_standard_runtime_busy":
+			return ErrApplicationStandardRuntimeBusy
+		case "application_standard_runtime_identity", "application_standard_boot_immutable":
+			return ErrInvalidArgument
+		}
+	}
+	var managed *pgconn.PgError
+	if errors.As(err, &managed) && managed.ConstraintName == "application_standard_managed_control" {
+		return ErrApplicationStandardManagedControl
+	}
 	if err == nil {
 		return nil
 	}
@@ -25094,6 +25088,10 @@ func mapErr(err error) error {
 			return err
 		case pgerrcode.CheckViolation:
 			switch pgErr.ConstraintName {
+			case "application_standards_pending":
+				return ErrApplicationStandardsPending
+			case "application_standard_scope_owner":
+				return ErrInvalidArgument
 			case "event_delivery_capacity":
 				return &EventDeliveryCapacityError{Scope: pgErr.Detail}
 			case "checked_rollback_required":
@@ -28065,17 +28063,19 @@ func (s *PgStore) ListAuditLog(ctx context.Context, filter AuditLogFilter) ([]Au
 	for rows.Next() {
 		var a AuditLog
 		var rawData []byte
+		var accountEmail, actor pgtype.Text // Anonymous audit events retain no contact data.
 		if err := rows.Scan(
 			&a.ID,
 			&a.Kind,
 			&a.AccountID,
-			&a.AccountEmail,
-			&a.Actor,
+			&accountEmail,
+			&actor,
 			&a.ReceivedAt,
 			&rawData,
 		); err != nil {
 			return nil, err
 		}
+		a.AccountEmail, a.Actor = accountEmail.String, actor.String
 		if len(rawData) > 0 {
 			a.Data = json.RawMessage(rawData)
 		}

@@ -2497,6 +2497,36 @@ var cliCommands = []cliCommand{
 		DocSlug: "orgs",
 		Short:   "Manage orgs, members, and workspace activity",
 		Subcommands: []cliSub{
+			{Name: "standards", Short: "Manage versioned application standards", Subcommands: []cliSub{
+				{Name: "assignments", Short: "Inspect current versions and revisions, including inactive assignments", Subcommands: standardAssignmentCLIHelp(), Examples: []string{"gregale orgs standards assignments list --org acme --limit 100", "gregale orgs standards assignments show --org acme --id ASSIGNMENT_UUID"}},
+				{Name: "reviews", Short: "Preview assignment changes and inspect saved reviews", Subcommands: standardReviewCLIHelp()},
+				{Name: "operation", Short: "Inspect rollout progress or apply gated operator controls", Flags: standardInspectionCLIHelp("operation UUID"), Subcommands: standardOperationCLIHelp()},
+				{Name: "exceptions", Short: "Inspect history or manage bounded exceptions", Flags: standardExceptionCLIHelp(), Subcommands: standardExceptionMutationCLIHelp()},
+				{Name: "local-intent", Short: "Replace permitted local settings with revision checks; release gated", Flags: standardMutationCLIHelp(false)},
+				{Name: "application", Short: "Inspect application adoption and installed standards", Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "app", Short: "application UUID", Value: "UUID", Req: true},
+				}},
+				{Name: "destinations", Short: "Manage immutable logging destination references", Subcommands: standardResourceCLIHelp()},
+				{Name: "publishers", Short: "Manage immutable trusted publisher references", Subcommands: standardResourceCLIHelp()},
+				{Name: "list", Short: "List the organization's latest standard versions", Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "after", Short: "last standard slug from the previous page", Value: "SLUG"},
+					{Name: "limit", Short: "page size (1..100)", Value: "N"},
+				}},
+				{Name: "show", Short: "Inspect an immutable standard version", Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "standard", Short: "standard slug", Value: "SLUG", Req: true},
+					{Name: "version", Short: "version; omitted reads the latest", Value: "N"},
+				}},
+				{Name: "publish", Short: "Publish a candidate version; does not activate it", Examples: []string{"gregale orgs standards publish --org acme --standard production-baseline --file standard.json --expected-version 0"}, Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "standard", Short: "standard slug", Value: "SLUG", Req: true},
+					{Name: "file", Short: "standard definition JSON file", Value: "PATH", Req: true},
+					{Name: "expected-version", Short: "current version; 0 creates a new standard", Value: "N", Req: true},
+					{Name: "description", Short: "version description", Value: "TEXT"},
+				}},
+			}},
 			{Name: "ls", Short: "List orgs"},
 			{Name: "create", Short: "Create an org", Flags: []cliFlag{
 				{Name: "slug", Short: "org slug (lowercase alphanumeric + dashes)", Value: "SLUG", Req: true},

@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"net/netip"
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -22,13 +21,7 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
 		return Instance{}, err
 	}
-	address, _ := netip.ParseAddr(p.HostIP) // validated before opening the transaction
-	row, err := sqlc.New().PublishOwnedInstanceRuntime(ctx, tx, sqlc.PublishOwnedInstanceRuntimeParams{
-		InstanceID: mustPgUUID(p.InstanceID), AppID: mustPgUUID(p.AppID), DeploymentID: mustPgUUID(p.Fence.DeploymentID),
-		NodeID: mustPgUUID(p.NodeID), WakeID: mustPgUUID(p.WakeID), ExpectedState: p.ExpectedState, TargetState: p.targetState(),
-		Netns: p.Netns, HostIp: address, GuestUid: int32(p.GuestUID),
-		ConfigFingerprint: p.ConfigFence.Fingerprint,
-	})
+	instance, err := publishOwnedRuntimeRow(ctx, tx, p)
 	if err != nil {
 		return Instance{}, runtimeSecretFenceError(err)
 	}
@@ -46,7 +39,7 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	if err := tx.Commit(ctx); err != nil {
 		return Instance{}, err
 	}
-	return instanceFromRuntimePublication(row), nil
+	return instance, nil
 }
 
 func (s *PgStore) InstanceRuntimeConfigFence(ctx context.Context, accountID, appID, instanceID string) (RuntimeAppConfigFence, error) {

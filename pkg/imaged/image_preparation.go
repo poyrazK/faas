@@ -25,6 +25,8 @@ type imagePreparationClaim struct {
 type imagePublication struct {
 	deploymentID, path, key string
 	bytes                   int64
+	source                  *state.SourceBuildRootfsInput
+	registry                *state.DeploymentRegistryRootfsInput
 }
 
 // Defer the rootfs stamp until the entire layer assembly (including sidecars
@@ -163,7 +165,7 @@ func (h *Handler) prepareImageLayer(ctx context.Context, images state.Deployment
 	if publication.path == "" || publication.key == "" {
 		return errors.New("imaged: image assembly did not produce a rootfs publication")
 	}
-	if err := images.PublishImagePreparationLayer(ctx, dep.ID, p.ClaimToken, publication.path, publication.key, publication.bytes); err != nil {
+	if err := h.publishPreparedImage(ctx, images, p, publication); err != nil {
 		return imageRecoveryError(err)
 	}
 	return nil
@@ -196,14 +198,11 @@ func (h *Handler) buildSnapshotBootLayer(ctx context.Context, app state.App, dep
 	switch dep.Kind {
 	case state.DeploymentKindImage:
 		if app.Type == state.AppTypeFunction {
-			return h.buildFunctionLayer(ctx, app, dep, acct)
+			return h.buildFunctionLayer(ctx, app, dep, acct, nil)
 		}
 		return h.buildImageLayer(ctx, app, dep, acct)
 	case state.DeploymentKindTarball, state.DeploymentKindDockerfile, state.DeploymentKindGitHub, state.DeploymentKindPreview:
-		if app.Type == state.AppTypeFunction || app.Runtime != "" {
-			return h.buildFunctionLayer(ctx, app, dep, acct)
-		}
-		return h.buildLocalOCIAppLayer(ctx, app, dep, acct)
+		return h.consumeSourceBuild(ctx, app, dep, acct)
 	default:
 		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
 	}

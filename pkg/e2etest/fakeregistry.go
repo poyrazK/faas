@@ -135,7 +135,7 @@ func helloImageWithProcessContract(repo, body, user string, healthcheck bool) (f
 }
 
 // HelloImageAboveBase returns an image identical to HelloImage except it has
-// TWO layers: the hardcoded helloLayerDiffID (matching BaseLayerImage's
+// TWO layers: the actual base layer diff ID (matching BaseLayerImage's
 // layer) followed by an additional layer whose diff_id is computed from the
 // tar blob. Use this with BaseLayerImage as the deploy-time base — the base's
 // single layer prefixes the app's two layers, so oci.LayersAboveBase puts
@@ -198,9 +198,9 @@ func WedgedLoopImage(repo string) (fakeImage, string) {
 // adding command-shape branches to the ordinary image builder.
 func layeredHelloImageWithCmd(repo string, cmd []string) (fakeImage, string) {
 	// Layer shape identical to layeredHelloImage (one base layer with
-	// the hardcoded diff_id; no above-base layer — pairs with the
+	// the same diff_id; no above-base layer — pairs with the
 	// shared deploy-base via the same prefix trick). Re-use
-	// buildHelloLayer("") so the diff_id stays helloLayerDiffID.
+	// buildHelloLayer("") so the base diff_id stays identical.
 	baseBlob := buildHelloLayer("")
 	baseSum := sha256.Sum256(baseBlob)
 	baseDigest := "sha256:" + hex.EncodeToString(baseSum[:])
@@ -216,7 +216,7 @@ func layeredHelloImageWithCmd(repo string, cmd []string) (fakeImage, string) {
 		},
 		"rootfs": map[string]any{
 			"type":     "layers",
-			"diff_ids": []string{helloLayerDiffID},
+			"diff_ids": []string{fixtureLayerDiffID(baseBlob)},
 		},
 	}
 	cfgBytes, _ := json.Marshal(cfg)
@@ -258,12 +258,8 @@ func layeredHelloImageOnPort(repo, helloBody string, aboveBase bool, port int) (
 }
 
 func layeredHelloImageOnPortWithCmd(repo, helloBody string, aboveBase bool, port int, cmd []string) (fakeImage, string) {
-	// Optimized two-layer fixtures advertise helloLayerDiffID to match
-	// BaseLayerImage. Portable single-layer fixtures use a foreign digest
-	// and retain their body in that sole layer. The above-base layer is the
-	// hello.txt content; its diff_id is whatever sha256(uncompressed tar)
-	// yields, which doesn't need to match anything because LayersAboveBase
-	// only compares prefixes, not tails.
+	// Optimized fixtures share the base bytes; standalone images use their
+	// complete body and retain its actual layer identity.
 	baseBody := ""
 	if !aboveBase {
 		baseBody = helloBody
@@ -277,41 +273,17 @@ func layeredHelloImageOnPortWithCmd(repo, helloBody string, aboveBase bool, port
 		digest string
 		diffID string
 	}
-	baseDiffID := helloLayerDiffID
-	if !aboveBase {
-		// Portable images must not advertise the fake optimized-base prefix:
-		// doing so bypasses full-rootfs dispatch and drops their only layer.
-		zr, err := gzip.NewReader(bytes.NewReader(baseBlob))
-		if err != nil {
-			panic(err)
-		}
-		hash := sha256.New()
-		size, err := io.Copy(hash, io.LimitReader(zr, api.MaxExportedLayerBytes+1))
-		if err != nil {
-			panic(err)
-		}
-		if size > api.MaxExportedLayerBytes {
-			panic("portable fixture exceeds exported layer byte cap")
-		}
-		if err := zr.Close(); err != nil {
-			panic(err)
-		}
-		baseDiffID = "sha256:" + hex.EncodeToString(hash.Sum(nil))
-	}
+	baseDiffID := fixtureLayerDiffID(baseBlob)
 	layers := []layerRec{{blob: baseBlob, digest: baseDigest, diffID: baseDiffID}}
 
 	if aboveBase {
 		appBlob := buildHelloLayer(helloBody)
 		appSum := sha256.Sum256(appBlob)
 		appDigest := "sha256:" + hex.EncodeToString(appSum[:])
-		// diff_ids are rootfs-level (uncompressed-tar sha256), not
-		// blob-level (compressed). We don't actually compute the
-		// uncompressed sha256 because LayersAboveBase only checks
-		// string equality of the listed diff_ids — picking a unique
-		// label per call is enough.
+		// OCI diff IDs bind the actual uncompressed tar bytes.
 		layers = append(layers, layerRec{
 			blob: appBlob, digest: appDigest,
-			diffID: "sha256:" + hex.EncodeToString(appSum[:]) + "a", // unique marker
+			diffID: fixtureLayerDiffID(appBlob),
 		})
 	}
 
@@ -385,12 +357,26 @@ func layeredHelloImageOnPortWithCmd(repo, helloBody string, aboveBase bool, port
 	return img, ref
 }
 
-// helloLayerDiffID is the uncompressed-tar (diff_id) of the single layer
-// HelloImage and BaseLayerImage advertise. Both helpers use buildHelloLayer
-// to construct the gzip'd tar blob, so the diff_id is identical — and that
-// is the property oci.LayersAboveBase relies on for the deploy-time base
-// prefix test.
-const helloLayerDiffID = "sha256:" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+// fixtureLayerDiffID hashes the actual uncompressed layer, so fixture claims
+// survive the same complete-read verification as production OCI images.
+func fixtureLayerDiffID(blob []byte) string {
+	zr, err := gzip.NewReader(bytes.NewReader(blob))
+	if err != nil {
+		panic(err)
+	}
+	hash := sha256.New()
+	size, err := io.Copy(hash, io.LimitReader(zr, api.MaxExportedLayerBytes+1))
+	if err != nil {
+		panic(err)
+	}
+	if size > api.MaxExportedLayerBytes {
+		panic("fixture exceeds exported layer byte cap")
+	}
+	if err := zr.Close(); err != nil {
+		panic(err)
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
 
 // buildHelloLayer returns the gzipped tar blob that HelloImage and
 // BaseLayerImage serve as their single layer. Centralising the encoder
@@ -460,7 +446,7 @@ func BaseLayerImage(repo, body string) (fakeImage, string) {
 		"config":       map[string]any{"Entrypoint": []string{"/bin/true"}, "Env": []string{}},
 		"rootfs": map[string]any{
 			"type":     "layers",
-			"diff_ids": []string{"sha256:" + repeat("b", 64)}, // == helloLayerDiffID
+			"diff_ids": []string{fixtureLayerDiffID(layerBytes)},
 		},
 	}
 	cfgBytes, _ := json.Marshal(cfg)

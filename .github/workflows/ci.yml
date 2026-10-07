@@ -195,10 +195,10 @@ jobs:
           GOMAXPROCS: 2
         with:
           version: v2.4.0
-          # The expanded repository exceeded the twenty-minute cold-cache
-          # deadline under these memory bounds. Retain every rule and give
-          # the complete analysis a bounded thirty-minute deadline.
-          args: --timeout=30m
+          # Cold analysis of the combined branch exceeded twenty minutes
+          # under these memory bounds. Retain every rule and give the full
+          # repository analysis a bounded thirty-minute deadline.
+          args: --timeout=30m --max-same-issues=0 --max-issues-per-linter=0
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
           skip-cache: true
@@ -373,6 +373,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update -qq
           sudo apt-get install -y -qq nftables logrotate rsyslog
       - name: egress check (Go renderer ↔ Jinja2 + nft syntax + bridge-name guard)
@@ -590,6 +591,8 @@ jobs:
             fi
           done
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -621,18 +624,26 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm run build
+      - name: install PostgreSQL 16 recovery runtime
+        run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
       - name: unit tests (pg shard 1)
-        # APID test DWARF generation exceeds hosted-runner memory on cold builds.
-        # Omit test debug metadata and serialize its backend; keep optimization.
+        # Bound cold APID race compilation while retaining the recovery boundary.
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
+        # Ledger recovery requires the local Unix-socket/UTC authority boundary.
+        # All tests and coverage still run; the private cluster supplies it.
         run: |
+          scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'PG_TESTS'
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
           go test -race -count=1 -p 4 -timeout=30m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          PG_TESTS
 
       - name: sdk-check
         run: make sdk-check
@@ -691,6 +702,8 @@ jobs:
       GREGALE_GITOPS_ACCEPTANCE: "1"
     steps:
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -712,10 +725,19 @@ jobs:
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
           go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -check -list-file=coverage/state-inventory.txt
+      - name: install PostgreSQL 16 recovery runtime
+        run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
       - name: state tests (shard ${{ matrix.shard }})
         run: |
+          # Recovery with an actual serving receipt requires local database
+          # authority, just like the db and migration recovery suites.
+          scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
           STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -shard=${{ matrix.shard }})
           go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+          STATE_TESTS
       - name: upload state coverage
         uses: actions/upload-artifact@v4
         with:
@@ -813,6 +835,8 @@ jobs:
             fi
           done
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -954,7 +978,9 @@ jobs:
   # while its original state/PostgreSQL inventory runs in parallel above.
   unit-tests-pg-2a-gate:
     name: unit tests (pg shard 2a — state/reconcile/reposcan)
-    if: always()
+    # Report failed prerequisites, but let superseded PR runs cancel so the
+    # next head is not held in the workflow concurrency queue.
+    if: always() && !cancelled()
     needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1134,7 +1160,9 @@ jobs:
   container-contract:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Both strict suites passed before the old deadline, but cache save and
+    # artifact upload consumed the remaining budget and canceled the job.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -1184,23 +1212,50 @@ jobs:
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
     runs-on: ubuntu-latest
-    # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
-    # retain time for the remaining SQLC, vulnerability and Ansible gates.
-    timeout-minutes: 30
+    # Allow the complete contract and infrastructure gates on a cold cache.
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
       GOVULNCHECK_VERSION: "1.7.0"
-      # Several contract gates compile the APID test package.
-      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      # The API and CLI test binaries compile the large state package.
+      # Serialize package builds and bound each compiler on hosted runners.
+      GOFLAGS: '-p=1 "-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOMAXPROCS: "2"
+      GOGC: "10"
       GOMEMLIMIT: 2GiB
-      GOGC: 10
-      GOMAXPROCS: 2
     steps:
       - uses: actions/checkout@v7
         with:
           # PR-4b compares changed core-path tests against the event base SHA.
           fetch-depth: 0
+      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
+      # whole workflow and saves only on a miss, so the first (smallest) job
+      # to finish after a go.sum bump wins and every later job restores its
+      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
+      # family restores the newest snapshot for today, then for this go.sum,
+      # then anything; each ref saves at most one snapshot per day.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-
+      # Restore the module cache before setup-go downloads the requested
+      # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
+      # a cache hit untar over the toolchain's existing files and can hang the
+      # runner with "Cannot open: File exists". Earlier checker gates can invoke
+      # Go too, so finish cache restore and setup before running any gate.
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false  # managed by the restore/save steps below
       # S4 PR-4b: tests in scheduler, gateway, meter, billing, and Firecracker
       # paths must name the spec section or ADR that defines their behavior.
       - name: spec-cited core-path tests
@@ -1231,32 +1286,6 @@ jobs:
       - name: synthetic-canary alert payload tests
         run: make canary-alert-test
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
-      # Per-job-family Go cache. setup-go keys one cache on go.sum for the
-      # whole workflow and saves only on a miss, so the first (smallest) job
-      # to finish after a go.sum bump wins and every later job restores its
-      # near-empty snapshot — measured at 7 KB on run 34166672535. Each
-      # family restores the newest snapshot for today, then for this go.sum,
-      # then anything; pushes to main save at most one snapshot per day.
-      - id: cache-date
-        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
-          restore-keys: |
-            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-checks-${{ runner.os }}-
-      # Restore the module cache before setup-go downloads the requested
-      # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
-      # a cache hit untar over the toolchain's existing files and can hang the
-      # runner with "Cannot open: File exists".
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false  # managed by the restore/save steps below
       - name: complete E2E shard inventory
         run: go run ./scripts/ci/e2eshard -check -shards=4
       - name: generate Gregale workflow lint fixtures
@@ -1660,7 +1689,7 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && !cancelled()
         uses: actions/cache/save@v4
         with:
           path: |
@@ -1759,6 +1788,8 @@ jobs:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     steps:
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -1794,6 +1825,7 @@ jobs:
   flags-acceptance:
     name: flags (customer release + request evidence)
     runs-on: ubuntu-latest
+    # A cold API and CLI build must finish before the full acceptance suite.
     timeout-minutes: 30
     permissions:
       contents: read
@@ -1812,12 +1844,31 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
+      GOMAXPROCS: "2"
+      GOGC: "50"
+      GOMEMLIMIT: 2GiB
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     steps:
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Flags acceptance Go cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-flags-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-flags-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-flags-${{ runner.os }}-
+            go-customer-platform-${{ runner.os }}-${{ hashFiles('go.sum') }}-
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: '22.10.0'
@@ -1832,6 +1883,14 @@ jobs:
           GOGC: 10
           GOMAXPROCS: 2
         run: make test-flags
+      - name: save Flags acceptance Go cache
+        if: always() && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-flags-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:
@@ -2024,6 +2083,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -2116,7 +2177,11 @@ jobs:
       - name: migrations replay-safety (new migrations only)
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
-        run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+        run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
+          scripts/ci/check-migration-replay.sh
 
       - name: migration full-suite impact checker tests
         run: scripts/ci/migration-full-suite-needed_test.sh
@@ -2222,6 +2287,8 @@ jobs:
       FAAS_SKIP_PG_TESTS: ""
     steps:
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -2287,6 +2354,8 @@ jobs:
             fi
           done
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -2315,6 +2384,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -2379,6 +2449,8 @@ jobs:
             fi
           done
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -2407,6 +2479,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -2456,6 +2529,8 @@ jobs:
             fi
           done
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -2484,6 +2559,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -2533,6 +2609,8 @@ jobs:
             fi
           done
       - uses: actions/checkout@v7
+      - name: size PostgreSQL test lock table
+        run: scripts/ci/configure-pg-test-locks.sh "${{ job.services.postgres.id }}"
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -2561,6 +2639,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)

@@ -17,6 +17,12 @@ option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1;v
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 service Vmmd {
+  // Distinct methods fail closed on older nodes before allocating a VM.
+  rpc RuntimeAdmissionIdentity(RuntimeAdmissionIdentityRequest) returns (RuntimeAdmissionIdentityResponse);
+  rpc CreateAdmittedRuntime(CreateAdmittedRuntimeRequest) returns (CreateAdmittedRuntimeResponse);
+  rpc PromoteAdmittedRuntime(PromoteAdmittedRuntimeRequest) returns (PromoteAdmittedRuntimeResponse);
+  // A distinct method refuses older nodes before they can pause a managed VM.
+  rpc CaptureAdmittedRuntime(CaptureAdmittedRuntimeRequest) returns (CaptureAdmittedRuntimeResponse);
   // CreateFromSnapshot wakes an instance by restoring a previously-parked
   // snapshot. Falls back to cold boot if the snapshot is stale, missing, or
   // fails to load (ADR-005: cold boot always works).
@@ -226,6 +232,11 @@ service Vmmd {
   // uses pg_notify as the delivery mechanism (cmd/schedd egress
   // drift subscriber, pkg/sched/egress_drift.go).
   rpc UpdateEgressAllowlist(UpdateEgressAllowlistRequest) returns (UpdateEgressAllowlistAck);
+  // A separate method makes old nodes refuse revision-aware updates before
+  // touching the network. Acknowledgments echo the successfully applied revision.
+  rpc UpdateAppEgressPolicy(UpdateAppEgressPolicyRequest) returns (UpdateAppEgressPolicyAck);
+  // Strict current-process acknowledgment for inherited standards.
+  rpc UpdateAdmittedAppEgressPolicy(UpdateAdmittedAppEgressPolicyRequest) returns (UpdateAdmittedAppEgressPolicyAck);
   // AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
   // addresses a guest just resolved; vmmd lets that guest open TCP to them
   // for the answer's TTL before the resolver replies. source_ip is the
@@ -410,6 +421,14 @@ service Vmmd {
   // canonical parent-base key.  Empty/foreign paths are InvalidArgument and
   // a missing storage key is NotFound.
   rpc MaterializeParentExt4(MaterializeParentExt4Request) returns (MaterializeParentExt4Response);
+
+  // ADR-435: separate capability; old servers refuse instead of ignoring the
+  // expected complete artifact identity. Receipt follows copy and cleanup.
+  rpc MaterializeVerifiedParentExt4(MaterializeVerifiedParentExt4Request) returns (MaterializeVerifiedParentExt4Response);
+
+  // ADR-435: verified distinct drives, actual read-only composition and bounded
+  // scanner projections. Receipt follows native cleanup; it grants no approval.
+  rpc MaterializeRuntimeScan(MaterializeRuntimeScanRequest) returns (MaterializeRuntimeScanResponse);
 
   // UmountParentExt4 (ADR-053) releases a mount vmmd previously
   // returned from MountParentExt4ReadOnly. Idempotent on an
@@ -1168,6 +1187,51 @@ message SnapshotResponse {
   // Explicit ACK for an opt-in terminal callback. A new schedd rejects an
   // older vmmd that ignored before_checkpoint on the request.
   bool before_checkpoint_completed = 4;
+  // Versioned native byte evidence. This is neither current publisher/scan
+  // approval nor a restore grant. Legacy captures leave it absent.
+  RuntimeSnapshotCapture capture = 5;
+}
+
+message RuntimeCapturedArtifact {
+  string storage_key = 1;
+  string digest = 2;
+  int64 bytes = 3;
+}
+
+message RuntimeSnapshotCapture {
+  uint32 version = 1;
+  RuntimeBootReceipt parent = 2;
+  RuntimeCapturedArtifact memory = 3;
+  RuntimeCapturedArtifact vmstate = 4;
+  RuntimeCapturedArtifact private_drive = 5;
+  int64 captured_at_unix_nano = 6;
+}
+
+message RuntimeSnapshotGrant {
+  uint32 version = 1;
+  string token = 2;
+  RuntimeBootReceipt parent = 3;
+  string memory_key = 4;
+  string vmstate_key = 5;
+  string private_drive_key = 6;
+  string fc_version = 7;
+  string mode = 8;
+  bool before_checkpoint = 9;
+  int64 source_started_at_unix_nano = 10;
+  int64 issued_at_unix_nano = 11;
+  int64 expires_at_unix_nano = 12;
+}
+
+message RuntimeSnapshotAcknowledgment {
+  RuntimeSnapshotGrant grant = 1;
+  RuntimeSnapshotCapture capture = 2;
+  int64 completed_at_unix_nano = 3;
+}
+
+message CaptureAdmittedRuntimeRequest { RuntimeSnapshotGrant grant = 1; }
+message CaptureAdmittedRuntimeResponse {
+  SnapshotResponse snapshot = 1;
+  RuntimeSnapshotAcknowledgment acknowledgment = 2;
 }
 
 // WarmSnapshotRequest (issue #470 / PR #470-FU-A) is the input
@@ -1695,6 +1759,49 @@ message MaterializeParentExt4Request {
 
 // MaterializeParentExt4Response is the empty success envelope.
 message MaterializeParentExt4Response {}
+
+message MaterializeVerifiedParentExt4Request {
+  string storage_key = 1;
+  string target_dir = 2;
+  string artifact_digest = 3;
+  int64 artifact_bytes = 4;
+}
+
+message MaterializeVerifiedParentExt4Response {
+  string storage_key = 1;
+  string target_dir = 2;
+  string artifact_digest = 3;
+  int64 artifact_bytes = 4;
+}
+
+message MaterializeRuntimeScanRequest {
+  uint32 version = 1;
+  string input_hash = 2;
+  repeated RuntimeArtifactSource sources = 3;
+  string target_dir = 4;
+}
+
+message RuntimeScanTree {
+  uint32 version = 1;
+  string digest = 2;
+  string projection_digest = 3;
+  int64 entries = 4;
+  int64 bytes = 5;
+}
+
+message RuntimeScanView {
+  string workload_name = 1;
+  RuntimeScanTree source_tree = 2;
+  RuntimeScanTree projection_tree = 3;
+}
+
+message MaterializeRuntimeScanResponse {
+  uint32 version = 1;
+  string input_hash = 2;
+  string sources_hash = 3;
+  string target_dir = 4;
+  repeated RuntimeScanView views = 5;
+}
 
 // UmountParentExt4Request is the input to UmountParentExt4.
 // mountpoint is the path MountParentExt4ReadOnly previously
@@ -2419,6 +2526,157 @@ message AllowResolvedEgressAck {
   bool matched = 1;
 }
 
+// Complete app CIDR/extra-port projection, ordered on the node by revision.
+message UpdateAppEgressPolicyRequest {
+  string app_id = 1;
+  int64 revision = 2;
+  repeated string egress_allowlist = 3;
+  repeated uint32 egress_ports = 4;
+}
+
+message UpdateAppEgressPolicyAck { int64 revision = 1; }
+
+// Process identity is produced by the native manager, not echoed from callers.
+message RuntimeAdmissionIdentityRequest {}
+message RuntimeAdmissionIdentityResponse {
+  uint32 protocol_version = 1;
+  string node_id = 2;
+  string incarnation = 3;
+  // Zero means measured snapshot restore is unavailable. Boot protocol stays 2.
+  uint32 snapshot_restore_version = 4;
+}
+
+// Internal schedd grant. Hashes bind private captured inputs and the complete
+// delivered boot envelope; neither secrets nor logging credentials are returned.
+message RuntimeBootBinding {
+  uint32 protocol_version = 1;
+  string token = 2;
+  string instance_id = 3;
+  string app_id = 4;
+  string deployment_id = 5;
+  string account_id = 6;
+  string node_id = 7;
+  string incarnation = 8;
+  int64 desired_revision = 9;
+  string effective_hash = 10;
+  string captured_input_hash = 11;
+  string payload_hash = 12;
+  int64 egress_revision = 13;
+  int64 issued_at_unix_nano = 14;
+  int64 expires_at_unix_nano = 15;
+  // Protocol 2 binds the complete canonical producer source set.
+  string artifact_sources_hash = 16;
+  // Optional coupled pair. Historical capture needs fresh scoped authorization.
+  string snapshot_capture_token = 17;
+  string snapshot_evidence_hash = 18;
+}
+
+message CreateAdmittedRuntimeRequest {
+  RuntimeBootBinding binding = 1;
+  oneof boot {
+    CreateColdBootRequest cold_boot = 2;
+    CreateFromSnapshotRequest restore = 3;
+  }
+  // Complete approved producer blobs. The boot payload hash covers this set.
+  // These are source identities, not snapshot or guest-overlay approval.
+  repeated RuntimeArtifactSource artifact_sources = 4;
+  // Included in the boot payload hash; never authority without its saved grant.
+  RuntimeSnapshotRestoreEvidence snapshot_restore = 5;
+}
+
+message RuntimeSnapshotRestoreEvidence {
+  uint32 version = 1;
+  string capture_token = 2;
+  string fc_version = 3;
+  RuntimeSnapshotCapture capture = 4;
+}
+
+message RuntimeArtifactSource {
+  string kind = 1;
+  string workload_name = 2;
+  string storage_key = 3;
+  string digest = 4;
+  int64 bytes = 5;
+}
+
+// Native boot receipt, not image, log-delivery or live-egress convergence proof.
+message RuntimeBootReceipt {
+  RuntimeBootBinding binding = 1;
+  string native_input_hash = 2;
+  string netns = 3;
+  string host_ip = 4;
+  int32 lease_uid = 5;
+  WakeMethod method = 6;
+  bool paused = 7;
+  int64 completed_at_unix_nano = 8;
+  // Protocol 1 never gains artifact authority from this field.
+  RuntimeArtifactConsumption artifact_consumption = 9;
+  // Shares artifact_consumption's process and exact snapshot load command.
+  RuntimeSnapshotConsumption snapshot_consumption = 10;
+  // Original paused load plus the measured resume under a fresh promotion.
+  RuntimeSnapshotResumeEvidence snapshot_resume_evidence = 11;
+}
+
+message RuntimeSnapshotConsumption {
+  uint32 version = 1;
+  string capture_token = 2;
+  string evidence_hash = 3;
+  RuntimeCapturedArtifact memory = 4;
+  RuntimeCapturedArtifact vmstate = 5;
+  RuntimeCapturedArtifact private_drive = 6;
+  int64 mapped_memory_bytes = 7;
+}
+
+// Nonrecursive lineage: reconstruct the paused parent from these historical
+// identity fields and the serving receipt's unchanged native consumption.
+message RuntimeSnapshotResumeEvidence {
+  uint32 version = 1;
+  RuntimeBootBinding binding = 2;
+  string parent_receipt_hash = 3;
+  string resume_command_hash = 4;
+  string resume_hook_payload_hash = 5;
+  int64 command_completed_at_unix_nano = 6;
+  int64 host_time_unix_nano = 7;
+  int64 hook_completed_at_unix_nano = 8;
+  int64 completed_at_unix_nano = 9;
+  RuntimeBootBinding parent_binding = 10;
+  int64 parent_completed_at_unix_nano = 11;
+}
+
+message RuntimeArtifactConsumption {
+  string config_hash = 1;
+  uint32 process_pid = 2;
+  string process_start = 3;
+  repeated RuntimeConsumedDrive drives = 4;
+}
+
+message RuntimeConsumedDrive {
+  RuntimeArtifactSource source = 1;
+  string drive_id = 2;
+  bool read_only = 3;
+  bool root_device = 4;
+  string producer_digest = 5;
+  int64 producer_bytes = 6;
+  string injected_digest = 7;
+  int64 injected_bytes = 8;
+}
+
+message CreateAdmittedRuntimeResponse {
+  WakeResponse runtime = 1;
+  RuntimeBootReceipt receipt = 2;
+}
+
+// A fresh promotion grant binds the exact paused native lease. The historical
+// boot receipt identifies that lease; it is never fresh resume authority.
+message PromoteAdmittedRuntimeRequest {
+  RuntimeBootBinding binding = 1;
+  RuntimeBootReceipt parent = 2;
+}
+
+message PromoteAdmittedRuntimeResponse {
+  RuntimeBootReceipt receipt = 1;
+}
+
 // ForwardUDPRequestInit targets one admitted instance-local UDP listener.
 // Optional caps may tighten the receiver defaults; they cannot raise them.
 message ForwardUDPRequestInit {
@@ -2446,4 +2704,16 @@ message ForwardUDPResponse {
     ForwardUDPResponseInit init = 1;
     bytes datagram = 2;
   }
+}
+
+// The native backend must apply the exact complete tuple in this process.
+message UpdateAdmittedAppEgressPolicyRequest {
+  RuntimeAdmissionIdentityResponse identity = 1;
+  UpdateAppEgressPolicyRequest policy = 2;
+}
+message UpdateAdmittedAppEgressPolicyAck {
+  RuntimeAdmissionIdentityResponse identity = 1;
+  string app_id = 2;
+  int64 revision = 3;
+  string policy_hash = 4;
 }

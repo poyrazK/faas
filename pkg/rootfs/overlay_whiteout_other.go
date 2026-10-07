@@ -11,10 +11,14 @@ import (
 // nodes or xattrs. Materialize the whiteout instead; this preserves the
 // historical staging semantics for local tests while production Linux builds
 // use the real marker implementation.
-func applyOverlayWhiteout(parent, victimName, _ string) error {
+func applyOverlayWhiteout(parent, victimName string) error {
 	return os.RemoveAll(filepath.Join(parent, victimName))
 }
 
 func applyOverlayOpaque(dir string) error {
 	return clearDir(dir)
+}
+
+func replaceOverlayWhiteout(string, bool) error {
+	return nil
 }

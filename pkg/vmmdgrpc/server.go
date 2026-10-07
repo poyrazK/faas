@@ -636,8 +636,8 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 	if s.streamBridges == nil {
 		s.streamBridges = newStreamBridgeManager(s.log)
 	}
-	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) { //nolint:contextcheck // The persistent bridge follows vmmd's lifecycle, not the short wake RPC.
-		s.streamBridges.prewarm(&vmmdpb.ForwardHTTPRequestInit{
+	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
+		s.streamBridges.prewarm(ctx, &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,
@@ -879,6 +879,7 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		VmstateBytes:              info.VMStateBytes,
 		StoredBytes:               info.StoredBytes,
 		BeforeCheckpointCompleted: req.GetBeforeCheckpoint(),
+		Capture:                   info.Capture.ToProto(),
 	}, nil
 }
 
@@ -928,6 +929,7 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		MemBytes:     info.MemBytes,
 		VmstateBytes: info.VMStateBytes,
 		StoredBytes:  info.StoredBytes,
+		Capture:      info.Capture.ToProto(),
 	}, nil
 }
 
@@ -1844,7 +1846,7 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.MountParentExt4ReadOnlyResponse{Mountpoint: mp}, nil
 }
@@ -1886,7 +1888,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 				WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 			return nil, grpcerr.ToStatus(p)
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.MaterializeParentExt4Response{}, nil
 }
@@ -1910,7 +1912,7 @@ func (s *Server) UmountParentExt4(ctx context.Context, req *vmmdpb.UmountParentE
 	}
 	if err := s.vmm.UmountParentExt4(ctx, req.GetMountpoint()); err != nil {
 		s.ops.Observe(op, time.Since(start), err)
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.UmountParentExt4Response{}, nil
@@ -1957,7 +1959,7 @@ func (s *Server) MountOverlayParent(ctx context.Context, req *vmmdpb.MountOverla
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.MountOverlayParentResponse{}, nil
 }
@@ -1988,7 +1990,7 @@ func (s *Server) UmountOverlayParent(ctx context.Context, req *vmmdpb.UmountOver
 			// blocker.
 			return &vmmdpb.UmountOverlayParentResponse{}, nil
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.UmountOverlayParentResponse{}, nil
 }

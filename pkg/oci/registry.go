@@ -507,6 +507,10 @@ func parseImageConfig(b []byte) (ImageConfig, error) {
 // callers that don't thread auth continue to work via the
 // nil-delegating wrapper above.
 func (c *RegistryClient) fetchManifestJSONWithAuth(ctx context.Context, url string, auth *BasicAuth) ([]byte, string, error) {
+	return c.fetchManifestJSONWithAuthLimit(ctx, url, auth, api.OCIManifestMaxBytes)
+}
+
+func (c *RegistryClient) fetchManifestJSONWithAuthLimit(ctx context.Context, url string, auth *BasicAuth, maxBytes int64) ([]byte, string, error) {
 	resp, err := c.getManifest(ctx, url, "")
 	if err != nil {
 		return nil, "", err
@@ -531,9 +535,12 @@ func (c *RegistryClient) fetchManifestJSONWithAuth(ctx context.Context, url stri
 		}
 		return nil, "", fmt.Errorf("oci: manifest returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("oci: read manifest: %w", err)
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, "", fmt.Errorf("%w: manifest exceeds size limit", ErrImageManifestInvalid)
 	}
 	return body, resp.Header.Get("Content-Type"), nil
 }
@@ -551,7 +558,14 @@ func (c *RegistryClient) fetchBlobWithAuth(ctx context.Context, r Reference, dig
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	return io.ReadAll(io.LimitReader(rc, 1<<20)) // 1 MiB cap — config blobs are tiny
+	body, err := io.ReadAll(io.LimitReader(rc, api.OCIConfigMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > api.OCIConfigMaxBytes {
+		return nil, fmt.Errorf("%w: config exceeds size limit", ErrImageManifestInvalid)
+	}
+	return body, nil
 }
 
 // fetchBlobStream opens a blob as a streaming ReadCloser. The caller is

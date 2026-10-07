@@ -14,8 +14,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const nativeImageRootMarker = ".gregale-image-owner.json"
-
 type nativeImageMetadata struct {
 	Mode uint32 `json:"mode"`
 	UID  uint32 `json:"uid"`

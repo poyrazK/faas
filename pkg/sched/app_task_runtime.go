@@ -44,6 +44,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if app.AccountID != request.AccountID || app.Status == state.AppDeleted {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
 	dep, err := e.store.DeploymentByID(ctx, request.DeploymentID)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task deployment: %w", err)

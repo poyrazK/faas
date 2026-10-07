@@ -156,10 +156,7 @@ func BaseKey(runtime string) string {
 //   - runtime == "": "base/base-<arch>.ext4"
 //   - runtime != "": "base/runner-<runtime>-<arch>.ext4"
 func BaseKeyForArch(runtime, arch string) string {
-	if runtime == "" {
-		return "base/base-" + arch + ".ext4"
-	}
-	return "base/runner-" + runtime + "-" + arch + ".ext4"
+	return state.RuntimeBaseKeyForArch(runtime, arch)
 }
 
 // ParentBaseRuntime is the synthetic runtime name pkg/imaged uses for

@@ -6271,6 +6271,318 @@ Manage orgs, members, and workspace activity
 
 `gregale orgs [<subcommand>]`
 
+### orgs standards
+
+Manage versioned application standards
+
+#### orgs standards assignments
+
+Inspect current versions and revisions, including inactive assignments
+
+`gregale orgs standards assignments`
+
+Examples:
+
+```sh
+gregale orgs standards assignments list --org acme --limit 100
+gregale orgs standards assignments show --org acme --id ASSIGNMENT_UUID
+```
+
+##### orgs standards assignments list
+
+Page retained organization assignments
+
+`gregale orgs standards assignments list --org <SLUG> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--after <UUID>` | last assignment UUID from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+##### orgs standards assignments show
+
+Read the current assignment revision and admission version
+
+`gregale orgs standards assignments show --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | assignment UUID | required |
+
+#### orgs standards reviews
+
+Preview assignment changes and inspect saved reviews
+
+`gregale orgs standards reviews`
+
+##### orgs standards reviews preview
+
+Save affected applications and blockers without activating a change
+
+`gregale orgs standards reviews preview --org <SLUG> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--file <PATH>` | assignment review JSON file | required |
+
+##### orgs standards reviews show
+
+Inspect a saved review and its expiry
+
+`gregale orgs standards reviews show --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | review UUID | required |
+
+##### orgs standards reviews approve
+
+Approve the exact saved review; admin only, release gated
+
+`gregale orgs standards reviews approve --org <SLUG> --id <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | review UUID | required |
+| `--file <PATH>` | approval_hash JSON file | required |
+
+#### orgs standards operation
+
+Inspect rollout progress or apply gated operator controls
+
+`gregale orgs standards operation --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | operation UUID | required |
+
+##### orgs standards operation pause
+
+Pause outstanding rollout targets; admin only, release gated
+
+`gregale orgs standards operation pause --org <SLUG> --id <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | operation UUID | required |
+| `--file <PATH>` | expected_updated_at JSON file | required |
+
+##### orgs standards operation resume
+
+Resume a paused rollout; admin only, release gated
+
+`gregale orgs standards operation resume --org <SLUG> --id <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | operation UUID | required |
+| `--file <PATH>` | expected_updated_at JSON file | required |
+
+##### orgs standards operation abort
+
+Stop outstanding targets and retain installed settings; admin only, release gated
+
+`gregale orgs standards operation abort --org <SLUG> --id <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | operation UUID | required |
+| `--file <PATH>` | expected_updated_at JSON file | required |
+
+#### orgs standards exceptions
+
+Inspect history or manage bounded exceptions
+
+`gregale orgs standards exceptions --org <SLUG> --app <UUID> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--after <UUID>` | last exception UUID from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+##### orgs standards exceptions approve
+
+Approve one field with a reason and expiry; admin only, release gated
+
+`gregale orgs standards exceptions approve --org <SLUG> --app <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--file <PATH>` | complete mutation JSON including expected_revision | required |
+
+##### orgs standards exceptions revoke
+
+Revoke an exception and retain its history; admin only, release gated
+
+`gregale orgs standards exceptions revoke --org <SLUG> --app <UUID> --file <PATH> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--file <PATH>` | complete mutation JSON including expected_revision | required |
+| `--id <UUID>` | exception UUID | required |
+
+#### orgs standards local-intent
+
+Replace permitted local settings with revision checks; release gated
+
+`gregale orgs standards local-intent --org <SLUG> --app <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--file <PATH>` | complete mutation JSON including expected_revision | required |
+
+#### orgs standards application
+
+Inspect application adoption and installed standards
+
+`gregale orgs standards application --org <SLUG> --app <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+
+#### orgs standards destinations
+
+Manage immutable logging destination references
+
+`gregale orgs standards destinations`
+
+##### orgs standards destinations list
+
+List organization resources
+
+`gregale orgs standards destinations list --org <SLUG> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--after <UUID>` | last resource UUID from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+##### orgs standards destinations show
+
+Inspect an immutable resource; credentials are omitted
+
+`gregale orgs standards destinations show --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | resource UUID | required |
+
+##### orgs standards destinations create
+
+Create an immutable resource from JSON
+
+`gregale orgs standards destinations create --org <SLUG> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--file <PATH>` | resource JSON file; credentials are sealed server-side | required |
+
+#### orgs standards publishers
+
+Manage immutable trusted publisher references
+
+`gregale orgs standards publishers`
+
+##### orgs standards publishers list
+
+List organization resources
+
+`gregale orgs standards publishers list --org <SLUG> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--after <UUID>` | last resource UUID from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+##### orgs standards publishers show
+
+Inspect an immutable resource; credentials are omitted
+
+`gregale orgs standards publishers show --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | resource UUID | required |
+
+##### orgs standards publishers create
+
+Create an immutable resource from JSON
+
+`gregale orgs standards publishers create --org <SLUG> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--file <PATH>` | resource JSON file; credentials are sealed server-side | required |
+
+#### orgs standards list
+
+List the organization&#39;s latest standard versions
+
+`gregale orgs standards list --org <SLUG> [--after <SLUG>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--after <SLUG>` | last standard slug from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+#### orgs standards show
+
+Inspect an immutable standard version
+
+`gregale orgs standards show --org <SLUG> --standard <SLUG> [--version <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--standard <SLUG>` | standard slug | required |
+| `--version <N>` | version; omitted reads the latest |  |
+
+#### orgs standards publish
+
+Publish a candidate version; does not activate it
+
+`gregale orgs standards publish --org <SLUG> --standard <SLUG> --file <PATH> --expected-version <N> [--description <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--standard <SLUG>` | standard slug | required |
+| `--file <PATH>` | standard definition JSON file | required |
+| `--expected-version <N>` | current version; 0 creates a new standard | required |
+| `--description <TEXT>` | version description |  |
+
+Examples:
+
+```sh
+gregale orgs standards publish --org acme --standard production-baseline --file standard.json --expected-version 0
+```
+
 ### orgs ls
 
 List orgs

@@ -275,6 +275,22 @@ original decision. Read delivery status separately. Business results and
 execution generations are unaffected. The legacy retry method remains available.
 
 
+
+### Application standards
+
+The generated `faas_sdk.api.orgs` modules include
+`preview_application_standard_assignment`, `get_application_standard_review`,
+`get_application_standard_operation`, `get_application_standard_enrollment`,
+and `list_application_standard_exceptions`. Use their typed request/response
+models through the authenticated client's `inner` transport.
+
+Preview saves affected applications and blockers without activating an
+assignment. Progress preserves desired, persisted and observed state.
+Enrollment includes the installed exception deadline, while exception history
+retains approval/revocation details, server `as_of` time and an exclusive UUID
+cursor. Activation and exception mutation APIs remain gated pending runtime
+acceptance.
+
 ## Object version protection
 
 The Storage API supports typed retention/legal-hold reads and mutations, plus

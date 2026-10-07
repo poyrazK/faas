@@ -20,6 +20,113 @@ import (
 	"time"
 )
 
+// Application standards preview safeguards, independent of billing quotas.
+const (
+	ApplicationStandardMaxDefinitionBytes             = 64 << 10
+	ApplicationStandardMaxResourceNameBytes           = 128
+	ApplicationStandardMaxDestinationURLBytes         = 2048
+	ApplicationStandardMaxSealedCredentialBytes       = 8192
+	ApplicationStandardMaxPublisherKeyBytes           = 1024
+	ApplicationStandardMaxSetEntries                  = 64
+	ApplicationStandardMaxLayers                      = 64
+	ApplicationStandardMaxDescriptionBytes            = 512
+	ApplicationStandardLogReceiptTimeout              = 2 * time.Second
+	ApplicationStandardLogInventoryFreshness          = 90 * time.Second
+	ApplicationStandardLogHealthFreshness             = 90 * time.Second
+	ApplicationStandardMaxLogHealthEvent        int64 = 9223372036854775807
+	ApplicationStandardEgressFreshness                = 90 * time.Second
+	ApplicationStandardEgressBatchLimit               = 500
+	ApplicationStandardMaxLogSequence           int64 = 9223372036854775807
+	ApplicationStandardMaxActiveExceptions            = 64
+	ApplicationStandardMaxExceptionTTL                = 30 * 24 * time.Hour
+	ApplicationStandardMaxRolloutBatch                = 100
+	ApplicationStandardReviewTTL                      = 30 * time.Minute
+	ApplicationStandardWorkerLease                    = 30 * time.Second
+	ApplicationStandardWorkerInterval                 = 5 * time.Second
+	ApplicationStandardObservationInterval            = 5 * time.Second
+	ApplicationStandardRuntimeRefreshWakeDelay        = 5 * time.Second
+	ApplicationStandardWorkerPassTimeout              = 10 * time.Second
+	ApplicationStandardWorkerReleaseTimeout           = 2 * time.Second
+	ApplicationStandardWorkerPassLimit                = 16
+	ApplicationStandardBlockedRetry                   = 30 * time.Second
+	ApplicationStandardMaxWorkerOwnerBytes            = 128
+	ApplicationStandardApprovalLockAttempts           = 6
+	ApplicationStandardApprovalLockRetry              = 20 * time.Millisecond
+	ApplicationStandardMaxListPage                    = 100
+	ApplicationStandardMaxVersion               int64 = 9007199254740991
+)
+
+// Native application-standard boot grants are separate from worker leases.
+// The TTL covers the maximum 300-second startup plus restore/fallback and
+// transport; a grant never supplies consumer observation.
+const (
+	ApplicationStandardRuntimeAdmissionTTL         = 10 * time.Minute
+	ApplicationStandardRuntimeAdmissionClockSkew   = 5 * time.Second
+	ApplicationStandardRuntimeAdmissionReplayLimit = 10000
+	ApplicationStandardRuntimeCleanupTimeout       = 5 * time.Second
+	// Bounded full streams for measured native snapshot lineage. This is a
+	// safety ceiling, not a tenant memory or disk entitlement.
+	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30
+	ApplicationStandardSnapshotMaxFCVersionBytes       = 128
+)
+
+// Private artifact scans are fresh evidence about one retained producer.
+const (
+	ApplicationStandardArtifactScanTTL        = 5 * time.Minute
+	ApplicationStandardArtifactScanRenewEvery = 2 * time.Minute
+	ApplicationStandardScannerDBMaxAge        = 30 * 24 * time.Hour
+	ApplicationStandardArtifactScanTimeout    = 5 * time.Minute
+	ApplicationStandardScanMaxReportBytes     = 8 << 20
+	ApplicationStandardScanMaxOutputBytes     = 16 << 20
+	ApplicationStandardScanMaxErrorBytes      = 64 << 10
+	ApplicationStandardScanMaxFindings        = 100000
+	ApplicationStandardScanMaxMetadataBytes   = 256
+	ApplicationStandardScanMaxPathBytes       = 4096
+	ApplicationStandardScanMaxPaths           = 128
+	// Safety bounds for a complete filesystem projection handed to Grype.
+	// These are separate from the tenant's rootfs/disk entitlements.
+	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
+	ApplicationStandardRuntimeScanMaxEntries               = 1_000_000
+	ApplicationStandardRuntimeScanMaxManifestBytes         = 64 << 20
+	ApplicationStandardRuntimeScanMaxSymlinkHops           = 40
+	ApplicationStandardRuntimeScanDirectoryReadBatch       = 512
+)
+
+// Source-build OCI verification bounds the intermediate image, including its
+// builder base. Final app layers still obey the creating account's plan limit.
+const (
+	LocalOCIMaxIndexBytes                   int64 = 1 << 20
+	LocalOCIMaxManifestBytes                int64 = 8 << 20
+	LocalOCIMaxConfigBytes                  int64 = 16 << 20
+	LocalOCIMaxArchiveBytes                 int64 = (16 << 30) + (32 << 20)
+	LocalOCIMaxCompressedLayerBytes         int64 = 16 << 30
+	LocalOCIMaxUncompressedLayerBytes       int64 = 64 << 30
+	LocalOCIMaxLayers                             = 1024
+	BuildExportMaxPublicationPayloadBytes         = 8 << 10
+	BuildExportMaxPublicationSignatureBytes       = 80
+	BuildExportPublicationVerificationTTL         = 24 * time.Hour
+)
+
+// Registry image verification bounds both retained metadata and consumed layers.
+// Signature attachment bounds cover the supported keyed simple-signing format.
+// Final converted app layers remain subject to the creating account's plan.
+const (
+	OCIManifestMaxBytes                       int64 = 8 << 20
+	OCIConfigMaxBytes                         int64 = 1 << 20
+	OCIImageMaxLayers                               = 1024
+	OCIImageMaxCompressedLayerBytes           int64 = 16 << 30
+	OCIImageMaxUncompressedLayerBytes         int64 = 64 << 30
+	ApplicationStandardBaseMaxArtifactBytes   int64 = 16 << 30
+	ApplicationStandardBaseMaxStorageKeyBytes       = 512
+	ApplicationStandardBaseMaxPathBytes             = 2048
+	ImageSignatureMaxManifestBytes            int64 = 1 << 20
+	ImageSignatureMaxPayloadBytes             int64 = 64 << 10
+	ImageSignatureMaxEntries                        = 64
+	ImageSignatureMaxDERBytes                       = 80
+	ImageSignatureMaxJSONDepth                      = 32
+	ImageSignatureVerificationTTL                   = 24 * time.Hour
+)
+
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (

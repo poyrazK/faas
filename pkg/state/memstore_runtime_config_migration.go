@@ -7,7 +7,7 @@ import (
 
 var _ RuntimeConfigMigrationStore = (*MemStore)(nil)
 
-func (m *MemStore) MigrateInstanceOwnerWithRuntimeConfig(_ context.Context, id, from, to, leaseToken string, input RuntimeConfigMigration) error {
+func (m *MemStore) MigrateInstanceOwnerWithRuntimeConfig(ctx context.Context, id, from, to, leaseToken string, input RuntimeConfigMigration) error {
 	if err := validateRuntimeConfigMigration(input); err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ func (m *MemStore) MigrateInstanceOwnerWithRuntimeConfig(_ context.Context, id, 
 	if input.GuestUID > 0 {
 		instance.GuestUID = input.GuestUID
 	}
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], instance); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], instance); err != nil {
 		return err
 	}
 	m.instances[id] = instance

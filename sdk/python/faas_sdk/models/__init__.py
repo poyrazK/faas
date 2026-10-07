@@ -251,6 +251,68 @@ from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilte
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
+from .application_standard_adoption import ApplicationStandardAdoption
+from .application_standard_assignment import ApplicationStandardAssignment
+from .application_standard_assignment_list import ApplicationStandardAssignmentList
+from .application_standard_assignment_scope import ApplicationStandardAssignmentScope
+from .application_standard_cidr_rule import ApplicationStandardCIDRRule
+from .application_standard_cidr_rule_mode import ApplicationStandardCIDRRuleMode
+from .application_standard_cidr_rule_override import ApplicationStandardCIDRRuleOverride
+from .application_standard_definition import ApplicationStandardDefinition
+from .application_standard_effective import ApplicationStandardEffective
+from .application_standard_effective_sources import ApplicationStandardEffectiveSources
+from .application_standard_enrollment import ApplicationStandardEnrollment
+from .application_standard_enrollment_materialized_fields_item import (
+    ApplicationStandardEnrollmentMaterializedFieldsItem,
+)
+from .application_standard_enrollment_state import ApplicationStandardEnrollmentState
+from .application_standard_exception import ApplicationStandardException
+from .application_standard_exception_field import ApplicationStandardExceptionField
+from .application_standard_exception_list import ApplicationStandardExceptionList
+from .application_standard_exception_status import ApplicationStandardExceptionStatus
+from .application_standard_exception_value_type_1 import ApplicationStandardExceptionValueType1
+from .application_standard_extra_port_rule import ApplicationStandardExtraPortRule
+from .application_standard_extra_port_rule_mode import ApplicationStandardExtraPortRuleMode
+from .application_standard_extra_port_rule_override import ApplicationStandardExtraPortRuleOverride
+from .application_standard_list import ApplicationStandardList
+from .application_standard_log_destination import ApplicationStandardLogDestination
+from .application_standard_log_destination_kind import ApplicationStandardLogDestinationKind
+from .application_standard_log_destination_list import ApplicationStandardLogDestinationList
+from .application_standard_log_destination_rule import ApplicationStandardLogDestinationRule
+from .application_standard_log_destination_rule_mode import ApplicationStandardLogDestinationRuleMode
+from .application_standard_log_destination_rule_override import ApplicationStandardLogDestinationRuleOverride
+from .application_standard_operation import ApplicationStandardOperation
+from .application_standard_operation_state import ApplicationStandardOperationState
+from .application_standard_operation_target import ApplicationStandardOperationTarget
+from .application_standard_operation_target_state import ApplicationStandardOperationTargetState
+from .application_standard_publisher import ApplicationStandardPublisher
+from .application_standard_publisher_list import ApplicationStandardPublisherList
+from .application_standard_publisher_rule import ApplicationStandardPublisherRule
+from .application_standard_publisher_rule_mode import ApplicationStandardPublisherRuleMode
+from .application_standard_publisher_rule_override import ApplicationStandardPublisherRuleOverride
+from .application_standard_review import ApplicationStandardReview
+from .application_standard_review_blocker import ApplicationStandardReviewBlocker
+from .application_standard_review_blocker_field import ApplicationStandardReviewBlockerField
+from .application_standard_review_blocker_scope import ApplicationStandardReviewBlockerScope
+from .application_standard_review_request import ApplicationStandardReviewRequest
+from .application_standard_review_request_scope import ApplicationStandardReviewRequestScope
+from .application_standard_reviewed_app import ApplicationStandardReviewedApp
+from .application_standard_reviewed_app_changed_fields_item import ApplicationStandardReviewedAppChangedFieldsItem
+from .application_standard_security_policy_rule import ApplicationStandardSecurityPolicyRule
+from .application_standard_security_policy_rule_mode import ApplicationStandardSecurityPolicyRuleMode
+from .application_standard_security_policy_rule_override import ApplicationStandardSecurityPolicyRuleOverride
+from .application_standard_security_policy_rule_value import ApplicationStandardSecurityPolicyRuleValue
+from .application_standard_settings import ApplicationStandardSettings
+from .application_standard_settings_security_policy import ApplicationStandardSettingsSecurityPolicy
+from .application_standard_signature_rule import ApplicationStandardSignatureRule
+from .application_standard_signature_rule_mode import ApplicationStandardSignatureRuleMode
+from .application_standard_signature_rule_override import ApplicationStandardSignatureRuleOverride
+from .application_standard_source import ApplicationStandardSource
+from .application_standard_source_mode import ApplicationStandardSourceMode
+from .application_standard_source_override import ApplicationStandardSourceOverride
+from .application_standard_source_scope import ApplicationStandardSourceScope
+from .application_standard_version import ApplicationStandardVersion
+from .application_standard_violation import ApplicationStandardViolation
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
 from .apply_platform_tenant_consumer_request import ApplyPlatformTenantConsumerRequest
@@ -277,6 +339,12 @@ from .apply_platform_tenant_surface_response_cert_state import ApplyPlatformTena
 from .apply_platform_tenant_surface_response_status import ApplyPlatformTenantSurfaceResponseStatus
 from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
+from .approve_application_standard_exception_request import ApproveApplicationStandardExceptionRequest
+from .approve_application_standard_exception_request_field import ApproveApplicationStandardExceptionRequestField
+from .approve_application_standard_exception_request_value_type_1 import (
+    ApproveApplicationStandardExceptionRequestValueType1,
+)
+from .approve_application_standard_review_request import ApproveApplicationStandardReviewRequest
 from .approve_environment_git_revision_request import ApproveEnvironmentGitRevisionRequest
 from .approve_environment_git_revision_response import ApproveEnvironmentGitRevisionResponse
 from .apps_metrics_response import AppsMetricsResponse
@@ -412,6 +480,7 @@ from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
+from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
 from .cors_preset_list_response import CorsPresetListResponse
 from .cors_preset_response import CorsPresetResponse
 from .create_account_release_webhook_request import CreateAccountReleaseWebhookRequest
@@ -445,6 +514,10 @@ from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
 from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetryPolicy
+from .create_application_standard_log_destination_request import CreateApplicationStandardLogDestinationRequest
+from .create_application_standard_log_destination_request_kind import CreateApplicationStandardLogDestinationRequestKind
+from .create_application_standard_publisher_request import CreateApplicationStandardPublisherRequest
+from .create_application_standard_version_request import CreateApplicationStandardVersionRequest
 from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
@@ -2121,6 +2194,7 @@ from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
+from .revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
@@ -2416,6 +2490,7 @@ from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
+from .set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
 from .set_automation_enabled_request import SetAutomationEnabledRequest
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
 from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
@@ -2845,6 +2920,66 @@ __all__ = (
     "AppErrorsSummaryResponse",
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
+    "ApplicationStandardAdoption",
+    "ApplicationStandardAssignment",
+    "ApplicationStandardAssignmentList",
+    "ApplicationStandardAssignmentScope",
+    "ApplicationStandardCIDRRule",
+    "ApplicationStandardCIDRRuleMode",
+    "ApplicationStandardCIDRRuleOverride",
+    "ApplicationStandardDefinition",
+    "ApplicationStandardEffective",
+    "ApplicationStandardEffectiveSources",
+    "ApplicationStandardEnrollment",
+    "ApplicationStandardEnrollmentMaterializedFieldsItem",
+    "ApplicationStandardEnrollmentState",
+    "ApplicationStandardException",
+    "ApplicationStandardExceptionField",
+    "ApplicationStandardExceptionList",
+    "ApplicationStandardExceptionStatus",
+    "ApplicationStandardExceptionValueType1",
+    "ApplicationStandardExtraPortRule",
+    "ApplicationStandardExtraPortRuleMode",
+    "ApplicationStandardExtraPortRuleOverride",
+    "ApplicationStandardList",
+    "ApplicationStandardLogDestination",
+    "ApplicationStandardLogDestinationKind",
+    "ApplicationStandardLogDestinationList",
+    "ApplicationStandardLogDestinationRule",
+    "ApplicationStandardLogDestinationRuleMode",
+    "ApplicationStandardLogDestinationRuleOverride",
+    "ApplicationStandardOperation",
+    "ApplicationStandardOperationState",
+    "ApplicationStandardOperationTarget",
+    "ApplicationStandardOperationTargetState",
+    "ApplicationStandardPublisher",
+    "ApplicationStandardPublisherList",
+    "ApplicationStandardPublisherRule",
+    "ApplicationStandardPublisherRuleMode",
+    "ApplicationStandardPublisherRuleOverride",
+    "ApplicationStandardReview",
+    "ApplicationStandardReviewBlocker",
+    "ApplicationStandardReviewBlockerField",
+    "ApplicationStandardReviewBlockerScope",
+    "ApplicationStandardReviewedApp",
+    "ApplicationStandardReviewedAppChangedFieldsItem",
+    "ApplicationStandardReviewRequest",
+    "ApplicationStandardReviewRequestScope",
+    "ApplicationStandardSecurityPolicyRule",
+    "ApplicationStandardSecurityPolicyRuleMode",
+    "ApplicationStandardSecurityPolicyRuleOverride",
+    "ApplicationStandardSecurityPolicyRuleValue",
+    "ApplicationStandardSettings",
+    "ApplicationStandardSettingsSecurityPolicy",
+    "ApplicationStandardSignatureRule",
+    "ApplicationStandardSignatureRuleMode",
+    "ApplicationStandardSignatureRuleOverride",
+    "ApplicationStandardSource",
+    "ApplicationStandardSourceMode",
+    "ApplicationStandardSourceOverride",
+    "ApplicationStandardSourceScope",
+    "ApplicationStandardVersion",
+    "ApplicationStandardViolation",
     "AppliedBuild",
     "AppLogDrainAnalyticsBucket",
     "AppLogDrainAnalyticsResponse",
@@ -2933,6 +3068,10 @@ __all__ = (
     "AppRestartResponse",
     "AppRoutesResponse",
     "AppRoutesResponseSource",
+    "ApproveApplicationStandardExceptionRequest",
+    "ApproveApplicationStandardExceptionRequestField",
+    "ApproveApplicationStandardExceptionRequestValueType1",
+    "ApproveApplicationStandardReviewRequest",
     "ApproveEnvironmentGitRevisionRequest",
     "ApproveEnvironmentGitRevisionResponse",
     "AppSecretExportResponse",
@@ -3129,6 +3268,7 @@ __all__ = (
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
+    "ControlApplicationStandardOperationRequest",
     "CorsPresetListResponse",
     "CorsPresetResponse",
     "CreateAccountReleaseWebhookRequest",
@@ -3144,6 +3284,10 @@ __all__ = (
     "CreateAPIConsumerRateCardRequest",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
+    "CreateApplicationStandardLogDestinationRequest",
+    "CreateApplicationStandardLogDestinationRequestKind",
+    "CreateApplicationStandardPublisherRequest",
+    "CreateApplicationStandardVersionRequest",
     "CreateAppLogDrainRequest",
     "CreateAppLogDrainRequestKind",
     "CreateAppRequest",
@@ -4770,6 +4914,7 @@ __all__ = (
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
+    "RevokeApplicationStandardExceptionRequest",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
     "RollbackFeatureFlagsRequest",
@@ -5058,6 +5203,7 @@ __all__ = (
     "SessionListResponse",
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
+    "SetApplicationStandardLocalIntentRequest",
     "SetAppStaticEgressIPRequest",
     "SetAutomationEnabledRequest",
     "SetBindingReleasePolicyRequest",

@@ -1,5 +1,8 @@
 package imaged
 
+// ADR-435: signature attachment errors preserve missing/invalid/unavailable
+// distinctions and the exact scoped transport evidence.
+
 // handler_coverage_test.go: covers 11 zero-coverage helpers on
 // pkg/imaged/handler.go that the existing test files do not reach.
 // These are all pure-logic setters / cache helpers / puller adapters;
@@ -8,7 +11,6 @@ package imaged
 // drop the load-bearing branches.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -197,9 +199,9 @@ func TestEmitSignatureAudit_WithNotifierWritesChannel(t *testing.T) {
 }
 
 // stubPuller satisfies oci.Puller so we can drive ResolveDigest /
-// FetchSignature without bringing in the network. PullImageConfig /
+// signature attachments without bringing in the network. PullImageConfig /
 // PullLayers return errors — they're not exercised by these paths
-// (the verify hook only calls PullDigest + (on ManifestPuller) PullBlob).
+// (image build readers are separate from attachment readers).
 type stubPuller struct {
 	digest      string
 	digestErr   error
@@ -211,8 +213,6 @@ type stubPuller struct {
 	manifestErr error
 	blob        io.ReadCloser
 	blobErr     error
-
-	manifestPuller bool
 }
 
 func (s *stubPuller) PullDigest(_ context.Context, _ string) (string, error) {
@@ -231,91 +231,85 @@ func (s *stubPuller) PullBlob(_ context.Context, _, _ string) (io.ReadCloser, er
 	return s.blob, s.blobErr
 }
 
-// TestResolveDigest_DelegatesToPuller — ociImageSignaturePuller.ResolveDigest
-// is a one-line pass-through to PullDigest. Pin it so a future refactor
-// that injects a wrapper doesn't silently drop the ref / ctx.
-func TestResolveDigest_DelegatesToPuller(t *testing.T) {
-	const want = "sha256:deadbeefcafebabe"
-	stub := &stubPuller{digest: want, manifestPuller: false}
-	p := &ociImageSignaturePuller{oci: stub}
-	got, err := p.ResolveDigest(context.Background(), "ghcr.io/me/app:latest")
-	if err != nil {
-		t.Fatalf("ResolveDigest: %v", err)
+// Unsupported attachment transports fail closed without pretending a registry
+// returned a 404. Network/authentication failures remain distinct from missing.
+func TestSignatureAttachmentAdapterErrors(t *testing.T) {
+	ctx := context.Background()
+	p := &ociImageSignaturePuller{oci: onlyPullerStub{}}
+	if _, err := p.FetchSignatureAttachments(ctx, "ghcr.io/me/app", "sha256:abc"); err == nil || errors.Is(err, cosign.ErrSignatureMissing) {
+		t.Fatalf("unsupported attachment transport: %v", err)
 	}
-	if got != want {
-		t.Errorf("ResolveDigest = %q, want %q", got, want)
+	for _, tc := range []struct {
+		name         string
+		source, want error
+	}{
+		{"missing", oci.ErrImageSignatureMissing, cosign.ErrSignatureMissing},
+		{"malformed", oci.ErrImageManifestInvalid, cosign.ErrSignatureInvalid},
+		{"network", io.ErrUnexpectedEOF, io.ErrUnexpectedEOF},
+		{"cancelled", context.Canceled, context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &ociImageSignaturePuller{oci: &attachmentPullerStub{err: tc.source}}
+			_, err := p.FetchSignatureAttachments(ctx, "ghcr.io/me/app", "sha256:abc")
+			if !errors.Is(err, tc.want) || !errors.Is(err, tc.source) {
+				t.Fatalf("classification lost: %v", err)
+			}
+			if tc.name != "missing" && errors.Is(err, cosign.ErrSignatureMissing) {
+				t.Fatal("non-404 misclassified as missing")
+			}
+		})
 	}
 }
 
-// TestFetchSignature_NonManifestPullerReturnsErrSignatureMissing —
-// FetchSignature with a non-ManifestPuller puller returns
-// cosign.ErrSignatureMissing (the verify-path surfaces a
-// "no signature" reason rather than a generic type-assertion panic).
-func TestFetchSignature_NonManifestPullerReturnsErrSignatureMissing(t *testing.T) {
-	p := &ociImageSignaturePuller{oci: onlyPullerStub{digest: "sha256:abc"}}
-	_, err := p.FetchSignature(context.Background(), "ghcr.io/me/app", "sha256:abc")
-	if err == nil {
-		t.Fatal("FetchSignature with non-ManifestPuller = nil; want cosign.ErrSignatureMissing")
-	}
-	if !errors.Is(err, cosign.ErrSignatureMissing) {
-		t.Errorf("FetchSignature err = %v; want cosign.ErrSignatureMissing", err)
-	}
-}
-
-// onlyPullerStub satisfies ONLY oci.Puller — deliberately omits the
-// ManifestPuller methods so the FetchSignature type assertion
-// fails and the ErrSignatureMissing branch fires.
 type onlyPullerStub struct {
 	digest    string
 	digestErr error
 }
 
-func (o onlyPullerStub) PullDigest(_ context.Context, _ string) (string, error) {
+func (o onlyPullerStub) PullDigest(context.Context, string) (string, error) {
 	return o.digest, o.digestErr
 }
-func (o onlyPullerStub) PullImageConfig(_ context.Context, _ string) (oci.ImageConfig, error) {
+func (o onlyPullerStub) PullImageConfig(context.Context, string) (oci.ImageConfig, error) {
 	return oci.ImageConfig{}, nil
 }
-func (o onlyPullerStub) PullLayers(_ context.Context, _ string) (oci.PullLayersResult, error) {
+func (o onlyPullerStub) PullLayers(context.Context, string) (oci.PullLayersResult, error) {
 	return oci.PullLayersResult{}, nil
 }
 
-// TestFetchSignature_ManifestPullerPropagatesBlobError — when the
-// ManifestPuller.PullBlob errors, FetchSignature wraps with
-// cosign.ErrSignatureMissing via errors.Join so the verify path
-// reasons about the absence rather than the underlying network.
-func TestFetchSignature_ManifestPullerPropagatesBlobError(t *testing.T) {
-	blobErr := io.ErrUnexpectedEOF
-	stub := &stubPuller{digest: "sha256:abc", manifestPuller: true, blobErr: blobErr}
-	p := &ociImageSignaturePuller{oci: stub}
-	_, err := p.FetchSignature(context.Background(), "ghcr.io/me/app", "sha256:abc")
-	if err == nil {
-		t.Fatal("FetchSignature with blob error = nil; want wrapped error")
+type attachmentPullerStub struct {
+	onlyPullerStub
+	err         error
+	attachments []oci.ImageSignatureAttachment
+	ctx         context.Context
+	ref, digest string
+	auth        *oci.BasicAuth
+}
+
+func (p *attachmentPullerStub) PullImageSignatureAttachments(ctx context.Context, ref, digest string, auth *oci.BasicAuth) ([]oci.ImageSignatureAttachment, error) {
+	p.ctx, p.ref, p.digest, p.auth = ctx, ref, digest, auth
+	return p.attachments, p.err
+}
+
+func TestSignatureAttachmentAdapterPreservesScopeAndEvidence(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	auth := &oci.BasicAuth{Username: "user", Password: "secret"}
+	a := oci.ImageSignatureAttachment{ManifestDigest: "manifest", PayloadDigest: "payload", Payload: []byte("claim"), Signature: []byte("sig")}
+	stub := &attachmentPullerStub{attachments: []oci.ImageSignatureAttachment{a}}
+	p := &ociImageSignaturePuller{oci: stub, auth: auth}
+	got, err := p.FetchSignatureAttachments(ctx, "ghcr.io/me/app", "subject")
+	if err != nil || len(got) != 1 || got[0].ManifestDigest != a.ManifestDigest || got[0].PayloadDigest != a.PayloadDigest || string(got[0].Payload) != string(a.Payload) || string(got[0].Signature) != string(a.Signature) {
+		t.Fatalf("evidence: %+v %v", got, err)
 	}
-	if !errors.Is(err, cosign.ErrSignatureMissing) {
-		t.Errorf("FetchSignature err = %v; want wraps cosign.ErrSignatureMissing", err)
-	}
-	if !errors.Is(err, blobErr) {
-		t.Errorf("FetchSignature err = %v; want wraps blob error %v", err, blobErr)
+	if stub.ctx != ctx || stub.ref != "ghcr.io/me/app" || stub.digest != "subject" || stub.auth != auth {
+		t.Fatal("attachment read lost authority context")
 	}
 }
 
-// TestFetchSignature_ManifestPullerReadsBody — happy path: a working
-// ManifestPuller returns the bytes from PullBlob verbatim.
-func TestFetchSignature_ManifestPullerReadsBody(t *testing.T) {
-	want := []byte("signature-bytes-here")
-	stub := &stubPuller{
-		digest:         "sha256:abc",
-		manifestPuller: true,
-		blob:           io.NopCloser(bytes.NewReader(want)),
-	}
-	p := &ociImageSignaturePuller{oci: stub}
-	got, err := p.FetchSignature(context.Background(), "ghcr.io/me/app", "sha256:abc")
-	if err != nil {
-		t.Fatalf("FetchSignature: %v", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("FetchSignature = %q, want %q", got, want)
+func TestSignatureAttachmentResolveError(t *testing.T) {
+	p := &ociImageSignaturePuller{oci: onlyPullerStub{digestErr: context.Canceled}}
+	if _, err := p.ResolveDigest(context.Background(), "ghcr.io/me/app:latest"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("resolve: %v", err)
 	}
 }
 

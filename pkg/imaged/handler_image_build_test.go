@@ -50,7 +50,10 @@ type fakeManifestPuller struct {
 	failOn map[string]error
 }
 
-func (f *fakeManifestPuller) PullDigest(_ context.Context, _ string) (string, error) {
+func (f *fakeManifestPuller) PullDigest(_ context.Context, ref string) (string, error) {
+	if parsed, err := oci.ParseReference(ref); err == nil && parsed.Digest != "" {
+		return parsed.Digest, nil
+	}
 	return f.digest, nil
 }
 
@@ -88,7 +91,9 @@ func (f *fakeManifestPuller) PullManifest(_ context.Context, ref string) (oci.Ma
 	if sm, ok := f.sidecarManifests[ref]; ok {
 		return sm, nil
 	}
-	if ref == f.appRef || strings.HasPrefix(ref, "ghcr.io/onebox-faas/app:") || strings.Contains(ref, "/app:") {
+	actual, actualErr := oci.ParseReference(ref)
+	expected, expectedErr := oci.ParseReference(f.appRef)
+	if ref == f.appRef || actualErr == nil && expectedErr == nil && actual.Registry == expected.Registry && actual.Repository == expected.Repository || strings.HasPrefix(ref, "ghcr.io/onebox-faas/app:") || strings.Contains(ref, "/app:") || strings.Contains(ref, "/app@") {
 		return f.appManifest, nil
 	}
 	return f.baseManifest, nil
@@ -331,7 +336,7 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 	baseDiff2 := "sha256:" + strings.Repeat("3", 64)
 	mp := &fakeManifestPuller{
 		digest:       "ghcr.io/org/app@sha256:" + strings.Repeat("9", 64),
-		appRef:       dep.ImageDigest,
+		appRef:       "ghcr.io/org/app@sha256:" + strings.Repeat("9", 64),
 		appManifest:  oci.Manifest{Config: oci.Descriptor{Digest: appConfigDigest}, Layers: []oci.Descriptor{{Digest: appLayer, Size: 100}}},
 		appConfig:    oci.Config{Entrypoint: []string{"/bin/sh"}, Cmd: []string{"-c", "echo ok"}, DiffIDs: []string{appDiff}},
 		baseManifest: oci.Manifest{Config: oci.Descriptor{Digest: baseConfigDigest}},
@@ -348,7 +353,8 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 
 	b := &fakeBuilder{}
 	notif := &fakeNotifier{}
-	h := New(store, notif, mp, b, "/tmp/guest-init", t.TempDir(), silentLogger()).WithSyftRun(
+	resolved := &fullRootfsResolvedTestPuller{fakeManifestPuller: mp, input: dep.ImageDigest, selected: mp.appRef}
+	h := New(store, notif, resolved, b, "/tmp/guest-init", t.TempDir(), silentLogger()).WithSyftRun(
 		func(context.Context, string) ([]byte, error) {
 			t.Fatal("source-build SBOM runner called for direct OCI deployment")
 			return nil, nil
@@ -372,6 +378,9 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 	}
 	if findNotify(notif, db.NotifySnapshotPrime) == nil {
 		t.Fatal("expected snapshot_prime notification")
+	}
+	if got.ImageDigest != dep.ImageDigest || resolved.mutableReads != 0 {
+		t.Fatalf("conversion reread or overwrote intent: stored=%q reads=%d", got.ImageDigest, resolved.mutableReads)
 	}
 	if len(b.fullRootfsCalls) != 1 {
 		t.Fatalf("full-rootfs calls = %d, want 1", len(b.fullRootfsCalls))
@@ -744,4 +753,35 @@ func envMapToSlice(env map[string]string) []string {
 		out = append(out, k+"="+env[k])
 	}
 	return out
+}
+
+// adr: 435
+// Resolves main and sidecar references independently and rejects all later
+// main-image reads of the mutable customer tag, including full-rootfs fallback.
+type fullRootfsResolvedTestPuller struct {
+	*fakeManifestPuller
+	input, selected string
+	mutableReads    int
+}
+
+func (p *fullRootfsResolvedTestPuller) ResolveImage(_ context.Context, ref string, _ *oci.BasicAuth) (oci.ImageResolution, error) {
+	if ref == p.input {
+		parsed, err := oci.ParseReference(p.selected)
+		if err != nil {
+			return oci.ImageResolution{}, err
+		}
+		return oci.ImageResolution{SourceReference: p.selected, SourceDigest: parsed.Digest, Reference: p.selected, Digest: parsed.Digest}, nil
+	}
+	parsed, err := oci.ParseReference(ref)
+	if err != nil {
+		return oci.ImageResolution{}, err
+	}
+	return oci.ImageResolution{SourceReference: ref, SourceDigest: parsed.Digest, Reference: ref, Digest: parsed.Digest}, nil
+}
+func (p *fullRootfsResolvedTestPuller) PullManifestWithAuth(ctx context.Context, ref string, auth *oci.BasicAuth) (oci.Manifest, error) {
+	if ref == p.input {
+		p.mutableReads++
+		return oci.Manifest{}, errors.New("full-rootfs reread mutable tag")
+	}
+	return p.fakeManifestPuller.PullManifestWithAuth(ctx, ref, auth)
 }

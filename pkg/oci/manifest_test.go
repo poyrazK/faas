@@ -1,6 +1,9 @@
 package oci
 
+// adr: 435
+
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,7 +11,45 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestRegistryConfigMustReadCompleteBoundedBlob(t *testing.T) {
+	for _, mode := range []string{"exact limit", "overflow", "changed trailing padding", "trailing object", "trailing garbage"} {
+		t.Run(mode, func(t *testing.T) {
+			config := []byte(`{"Cmd":["/app"]}`)
+			switch mode {
+			case "exact limit", "changed trailing padding":
+				config = append(config, bytes.Repeat([]byte(" "), int(api.OCIConfigMaxBytes)-len(config))...)
+			case "overflow":
+				config = append(config, bytes.Repeat([]byte(" "), int(api.OCIConfigMaxBytes)+1-len(config))...)
+			case "trailing object":
+				config = append(config, []byte(` {"Cmd":["other"]}`)...)
+			case "trailing garbage":
+				config = append(config, '!')
+			}
+			f := newFakeRegistry(t)
+			manifestDigest := f.withImageManifest(t, config, []byte("unused layer"))
+			if mode == "changed trailing padding" {
+				changed := bytes.Clone(config)
+				changed[len(changed)-1] = '\n'
+				f.layerBlobs[digestOf(config)] = changed
+			}
+			pulled, err := f.client().PullLayers(t.Context(), "ghcr.io/org/app@"+manifestDigest)
+			for _, reader := range pulled.Layers {
+				_ = reader.Close()
+			}
+			if mode == "exact limit" {
+				if err != nil {
+					t.Fatalf("exact config bound refused: %v", err)
+				}
+			} else if err == nil {
+				t.Fatalf("accepted %s after parsing the valid JSON prefix", mode)
+			}
+		})
+	}
+}
 
 func TestRegistryPullManifest_DecodesLayersAndConfig(t *testing.T) {
 	f := newFakeRegistry(t)

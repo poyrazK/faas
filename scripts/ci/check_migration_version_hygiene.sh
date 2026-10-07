@@ -96,11 +96,31 @@ fi
 # Legacy 1..590 versions predate the timestamp scheme; only apply this to
 # the timestamp namespace.
 min_timestamp_version=20260904000000000
+
+# These two IDs were already issued and applied before the shape gate ran.
+# Preserve their ledger identities only with the exact original SQL bytes.
+# They still participate in the open-PR collision check below.
+is_frozen_issued_round_timestamp() {
+  local path="$1" expected actual
+  case "${path}" in
+    migrations/20261003210400000_application_standard_source_build_rootfs.sql)
+      expected=7ddafc93c75c5aba21379ad1c0c495c087d2b25a45286078d9e331ff9ac8b17d ;;
+    migrations/20261003212646000_application_standard_source_rootfs_fences.sql)
+      expected=12d2153c4a83c000d96f8af94b701fa1aa258ebf96bda2e7606c0b7ad1185298 ;;
+    *) return 1 ;;
+  esac
+  actual="$(git show "${head_sha}:${path}" | shasum -a 256)" || return 1
+  [[ "${actual%% *}" == "${expected}" ]]
+}
+
 bad_ms=()
-for version in "${mine[@]}"; do
+while IFS= read -r path; do
+  version="$(sed -nE 's|.*/([0-9]+)_.*\.sql$|\1|p' <<<"${path}")"
+  [[ -n "${version}" ]] || continue
   ((10#${version} >= min_timestamp_version)) || continue
-  [[ "${version: -3}" == "000" ]] && bad_ms+=("${version}")
-done
+  [[ "${version: -3}" == "000" ]] || continue
+  is_frozen_issued_round_timestamp "${path}" || bad_ms+=("${version}")
+done <<<"${added}"
 if ((${#bad_ms[@]} > 0)); then
   echo "::error::migration-version-hygiene: version(s) end in 000 milliseconds, which means they were typed rather than generated" >&2
   printf '  %s\n' "${bad_ms[@]}" >&2
@@ -116,7 +136,7 @@ repo="${GITHUB_REPOSITORY:-}"
 token="${GITHUB_TOKEN:-}"
 if [[ -z "${repo}" || -z "${token}" ]]; then
   echo "migration-version-hygiene: no API credentials; skipped the open-pull-request collision check"
-  echo "migration-version-hygiene: OK — generator-shaped versions: ${mine[*]}"
+  echo "migration-version-hygiene: OK — generated or frozen issued versions: ${mine[*]}"
   exit 0
 fi
 
@@ -154,4 +174,4 @@ if ((conflicts != 0)); then
   exit 1
 fi
 
-echo "migration-version-hygiene: OK — ${#mine[@]} version(s) generator-shaped and unclaimed: ${mine[*]}"
+echo "migration-version-hygiene: OK — ${#mine[@]} generated or frozen issued version(s) unclaimed: ${mine[*]}"

@@ -216,6 +216,9 @@ func (m *Manager) joinForTeardown(ctx context.Context, instance string) error {
 	if held {
 		return fmt.Errorf("stop %s: %w", instance, ErrRestartQuarantine)
 	}
+	if err := m.cancelRuntimeAdmissionFlight(ctx, instance); err != nil {
+		return err
+	}
 	if err := m.cancelInFlightInstance(ctx, instance); err != nil {
 		return err
 	}

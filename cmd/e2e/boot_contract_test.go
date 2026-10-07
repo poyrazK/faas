@@ -3,13 +3,11 @@ package e2e_test
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,9 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
-	imagedpkg "github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/renderer"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -301,9 +297,7 @@ func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
 	writeBootKey(t, signKeyPath, privPEM, 0o400)
 
 	storageRoot := filepath.Join(fixtureRoot, "storage")
-	seedBootContractBuilderBase(t, storageRoot, guestInitBody)
-	registry := httptest.NewServer(http.NotFoundHandler())
-	t.Cleanup(registry.Close)
+	builderRef := seedBootContractBuilderBase(t, pool, storageRoot, guestInitBody)
 	fakeBin := filepath.Join(fixtureRoot, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
 		t.Fatalf("make boot-contract bin dir: %v", err)
@@ -324,9 +318,8 @@ func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
 		"FAAS_GUEST_INIT=" + guestInitPath,
 		"FAAS_OCI_INSECURE=1",
 		"FAAS_OCI_PULL_TIMEOUT_SECONDS=1",
-		// A local 404 makes the normal registry-outage fallback deterministic;
-		// imaged must accept the already-provisioned base.
-		"FAAS_BUILDER_BASE_REF=" + strings.TrimPrefix(registry.URL, "http://") + "/builder-base@sha256:" + strings.Repeat("0", 64),
+		// Reuse the staged artifact through its matching producer record.
+		"FAAS_BUILDER_BASE_REF=" + builderRef,
 	}
 	env = append(env, renderedImagedUnitEnvironment(t, unit, fixtureRoot, hostAgePath, fleetAgePath)...)
 
@@ -531,24 +524,6 @@ func requiredUnitEnvironmentValue(t *testing.T, unit daemonunit.Unit, key string
 		t.Fatalf("rendered unit is missing non-empty %s", key)
 	}
 	return value
-}
-
-func seedBootContractBuilderBase(t *testing.T, storageRoot string, guestInit []byte) {
-	t.Helper()
-	baseKey := sched.BaseKeyForArch("builder", imagedpkg.BuilderArch())
-	basePath := filepath.Join(storageRoot, filepath.FromSlash(baseKey))
-	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
-		t.Fatalf("make builder base fixture dir: %v", err)
-	}
-	if err := os.WriteFile(basePath, []byte("boot-contract ext4 placeholder\n"), 0o600); err != nil {
-		t.Fatalf("write builder base fixture: %v", err)
-	}
-	digest := sha256.Sum256(guestInit)
-	sidecar := "boot-contract\nguest-init-sha256=" + hex.EncodeToString(digest[:]) + "\n"
-	digestPath := filepath.Join(storageRoot, filepath.FromSlash(sched.BaseDigestKeyForArch("builder", imagedpkg.BuilderArch())))
-	if err := os.WriteFile(digestPath, []byte(sidecar), 0o600); err != nil {
-		t.Fatalf("write builder base sidecar fixture: %v", err)
-	}
 }
 
 func relocateRenderedDBURL(t *testing.T, configPath, dsn string) {

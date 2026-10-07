@@ -36,11 +36,14 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
@@ -110,14 +113,20 @@ type liveRunner struct{}
 func (liveRunner) envLookup(key string) string { return os.Getenv(key) }
 
 func (liveRunner) pgDump(ctx context.Context, dsn string) ([]byte, error) {
-	return exec.CommandContext(ctx, "pg_dump",
+	cmd := exec.CommandContext(ctx, "pg_dump",
 		"-s", "--no-owner", "--no-privileges",
 		"--no-sync", "--no-tablespaces", dsn,
-	).Output()
+	)
+	cmd.Env = append(os.Environ(), "PGTZ=UTC")
+	return cmd.Output()
 }
 
 func (liveRunner) openPool(ctx context.Context) (poolCloser, error) {
-	pool, err := db.OpenWithAppName(ctx, "", "faas-schema-dump")
+	dsn, err := migrationDSNUTC(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return nil, err
+	}
+	pool, err := db.OpenWithAppName(ctx, dsn, "faas-schema-dump")
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +139,33 @@ func (liveRunner) openPool(ctx context.Context) (poolCloser, error) {
 		return nil, err
 	}
 	return pool, nil
+}
+
+// Pin migration sessions as well as pg_dump: partition boundaries computed by
+// migrations must have the same UTC instants on every developer and CI host.
+func migrationDSNUTC(dsn string) (string, error) {
+	if dsn == "" {
+		return "", fmt.Errorf("DATABASE_URL not set")
+	}
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return "", fmt.Errorf("invalid PostgreSQL DATABASE_URL")
+		}
+		query, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			return "", fmt.Errorf("invalid PostgreSQL DATABASE_URL query")
+		}
+		for key := range query {
+			if strings.EqualFold(key, "timezone") {
+				query.Del(key)
+			}
+		}
+		query.Set("timezone", "UTC")
+		u.RawQuery = query.Encode()
+		return u.String(), nil
+	}
+	return dsn + " timezone=UTC", nil
 }
 
 func run(outPath string, r runner) error {
@@ -165,8 +201,22 @@ func run(outPath string, r runner) error {
 	if err := os.WriteFile(outPath, filtered, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
 	}
+	if err := writeSourceDigest(outPath); err != nil {
+		return err
+	}
 	lines := bytes.Count(filtered, []byte{'\n'}) + 1
 	fmt.Fprintf(os.Stderr, "schema-dump: %s regenerated (%d lines)\n", outPath, lines)
+	return nil
+}
+
+func writeSourceDigest(outPath string) error {
+	digest, err := migrations.SourceDigest()
+	if err != nil {
+		return fmt.Errorf("migration source digest: %w", err)
+	}
+	if err := os.WriteFile(outPath+".migrations.sha256", []byte(digest+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write migration source digest: %w", err)
+	}
 	return nil
 }
 

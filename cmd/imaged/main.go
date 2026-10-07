@@ -493,6 +493,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// "scan-critical" failure rather than the supply-chain
 		// installation gap it actually is.
 		WithGrypeRun(makeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
+		WithRuntimeGrypeRun(makeRuntimeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
 		WithSyftRun(makeSyftRunner(os.Getenv("FAAS_SYFT_BIN"))).
 		// PR-A: layer-side secret-scan walker. Wired
 		// unconditionally so the default in
@@ -1032,6 +1033,15 @@ func makeGrypeRunner(bin string) func(ctx context.Context, dir string) (*imaged.
 			return imaged.RunGrypeAt(ctx, bin, dir)
 		}
 		return imaged.RunGrype(ctx, dir)
+	}
+}
+
+func makeRuntimeGrypeRunner(bin string) func(context.Context, string) (*imaged.ScanResult, error) {
+	if bin == "" {
+		bin = "grype"
+	}
+	return func(ctx context.Context, dir string) (*imaged.ScanResult, error) {
+		return imaged.RunRuntimeGrypeAt(ctx, bin, dir)
 	}
 }
 

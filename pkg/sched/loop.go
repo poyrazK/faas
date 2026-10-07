@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
@@ -2055,9 +2056,10 @@ func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification)
 
 func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification) error {
 	var payload struct {
-		AppID  string `json:"app_id"`
-		WakeID string `json:"wake_id"`
-		Scope  string `json:"scope"`
+		AppID    string                                   `json:"app_id"`
+		WakeID   string                                   `json:"wake_id"`
+		Scope    string                                   `json:"scope"`
+		Standard *state.ApplicationStandardRuntimeRefresh `json:"application_standard"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
 		return fmt.Errorf("sched: decode runtime config restart payload: %w", err)
@@ -2067,7 +2069,12 @@ func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification
 	}
 	var out CoordOutcome
 	var err error
-	if payload.Scope != "" {
+	if payload.Standard != nil {
+		out, err = l.engine.RefreshApplicationStandard(ctx, state.ApplicationStandardRuntimeRefreshRequest{AppID: payload.AppID, WakeID: payload.WakeID, Standard: *payload.Standard})
+		if errors.Is(err, state.ErrApplicationStandardRefreshDeferred) {
+			err = errors.Join(db.ErrNotificationDeferred, err)
+		}
+	} else if payload.Scope != "" {
 		out, err = l.engine.RefreshRuntimeConfigForEnvironment(ctx, payload.AppID, payload.WakeID, payload.Scope)
 	} else {
 		out, err = l.engine.RefreshRuntimeConfig(ctx, payload.AppID, payload.WakeID)
@@ -3939,7 +3946,7 @@ func (l *Loop) runJobsReaperTick(ctx context.Context) {
 func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	l.submitWork(workWorkflowSchedules, "tick", func() {
 		if err := l.runWorkflowSchedulesTick(ctx); err != nil && l.log != nil {
-			l.log.Warn("schedd: workflow schedule tick failed", "error_type", fmt.Sprintf("%T", err))
+			l.log.Warn("schedd: workflow schedule tick failed", "error_type", logsanitize.Field(fmt.Sprintf("%T", err)))
 		}
 	})
 	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)

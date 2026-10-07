@@ -92,7 +92,8 @@ func (b *Builder) WithSigner(s Signer) *Builder {
 
 // BuildInput is one app-layer build.
 type BuildInput struct {
-	// Layers are the above-base OCI layers, bottom-to-top, gzip-compressed.
+	// Layers are the above-base OCI layers for main, or all OCI layers for
+	// an independent sidecar, bottom-to-top and gzip-compressed.
 	Layers []io.Reader
 	// Manifest is the /etc/faas/app.json contract to inject.
 	Manifest api.AppManifest
@@ -181,9 +182,11 @@ type BuildResult struct {
 	ImageKey string
 	// ImagePath is the on-disk path the ext4 was written to, when
 	// OutImage was used. Empty when Storage published the file.
-	ImagePath    string
-	SizeMB       int
-	ContentBytes int64
+	ImagePath      string
+	SizeMB         int
+	ContentBytes   int64
+	ArtifactDigest string
+	ArtifactBytes  int64
 	// SBOMKey is the storage key the CycloneDX SBOM was published
 	// under (issue #299 / ADR-038 Phase 3). Empty when the build
 	// did not configure SBOMRun + SBOMStorageKey, or when the
@@ -193,6 +196,8 @@ type BuildResult struct {
 	// runner bytes copied to /usr/local/bin/faas-runner. Empty when no
 	// function runner was injected.
 	RunnerDigest string
+	// GuestInitDigest covers the exact bytes injected into this app layer.
+	GuestInitDigest string
 }
 
 // Build runs the pipeline. It stages into a temp dir that is always removed.
@@ -238,17 +243,15 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
+	opaqueRoot := false
 	for i, layer := range in.Layers {
-		// The app artifact becomes overlayfs' upper directory after
-		// stageAppUpper. Preserve OCI whiteouts as overlayfs markers so a
-		// deletion can hide a path supplied by the shared base drive. The
-		// shared base owns guest pseudo-filesystems, so filter image entries
-		// below /dev, /proc, /sys, and /tmp before they can become mounted
-		// staging paths.
-		if err := applyLayerGzForApp(staging, layer); err != nil {
+		// The main workload overlays the shared base; a sidecar consumes all
+		// OCI layers as an independent root. Preserve whiteouts only for main.
+		if err := applyLayerGzForBuild(staging, layer, in.WorkloadManifest != nil, &opaqueRoot); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 		}
 	}
+
 	// A customer image must not be able to smuggle the full-rootfs marker
 	// into the optimized two-drive artifact and make guest-init bypass the
 	// shared base. Only BuildFullRootfs writes the marker after all layers
@@ -306,7 +309,8 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 			return BuildResult{}, err
 		}
 	}
-	if err := InjectGuestInit(staging, in.GuestInitPath); err != nil {
+	guestInitDigest, err := injectGuestInitWithDigest(staging, in.GuestInitPath)
+	if err != nil {
 		return BuildResult{}, err
 	}
 	if err := InjectManifest(staging, in.Manifest); err != nil {
@@ -385,20 +389,23 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	// carry the assembled app tree under /upper; Linux cannot see drive1's
 	// files until guest-init mounts it, so a root-level app.json would be
 	// invisible after the overlay is assembled.
-	if err := stageAppUpper(staging); err != nil {
+	if err := stageAppUpper(staging, opaqueRoot); err != nil {
 		return BuildResult{}, err
 	}
 
-	sizeMB, err = b.publishExt4(ctx, in, staging, sizeMB, limits)
+	sizeMB, identity, err := b.publishExt4(ctx, in, staging, sizeMB, limits)
 	if err != nil {
 		return BuildResult{}, err
 	}
 
 	res := BuildResult{
-		SizeMB:       sizeMB,
-		ContentBytes: stats.ContentBytes,
-		SBOMKey:      sbomKey,
-		RunnerDigest: runnerDigest,
+		SizeMB:          sizeMB,
+		ContentBytes:    stats.ContentBytes,
+		ArtifactDigest:  identity.Digest,
+		ArtifactBytes:   identity.Bytes,
+		SBOMKey:         sbomKey,
+		RunnerDigest:    runnerDigest,
+		GuestInitDigest: guestInitDigest,
 	}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
@@ -412,34 +419,31 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 // consumed by guest-init's overlay assembly. It preserves a customer image's
 // own top-level "upper" path by treating it as normal app content at
 // /upper/upper inside the artifact.
-func stageAppUpper(staging string) error {
-	upper := filepath.Join(staging, "upper")
-	legacyUpper := filepath.Join(staging, ".faas-app-upper-source")
-	if _, err := os.Lstat(upper); err == nil {
-		if err := os.Rename(upper, legacyUpper); err != nil {
-			return fmt.Errorf("rootfs: preserve app upper path: %w", err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("rootfs: inspect app upper path: %w", err)
-	}
-	if err := os.Mkdir(upper, 0o755); err != nil {
-		return fmt.Errorf("rootfs: create app upper path: %w", err)
-	}
+func stageAppUpper(staging string, opaqueRoot bool) error {
 	entries, err := os.ReadDir(staging)
 	if err != nil {
 		return fmt.Errorf("rootfs: read app staging: %w", err)
 	}
-	for _, entry := range entries {
-		if entry.Name() == "upper" {
-			continue
-		}
-		src := filepath.Join(staging, entry.Name())
-		dst := filepath.Join(upper, entry.Name())
-		if err := os.Rename(src, dst); err != nil {
-			return fmt.Errorf("rootfs: move %s into app upper: %w", entry.Name(), err)
+	upper, err := os.MkdirTemp(staging, ".faas-upper-wrapper-")
+	if err != nil {
+		return fmt.Errorf("rootfs: create app upper wrapper: %w", err)
+	}
+	if err := os.Chmod(upper, 0o755); err != nil {
+		return fmt.Errorf("rootfs: set app upper wrapper mode: %w", err)
+	}
+	if opaqueRoot {
+		// Set metadata while the wrapper is empty; clearing it later would
+		// discard the application content we are about to move.
+		if err := applyOverlayOpaque(upper); err != nil {
+			return fmt.Errorf("rootfs: preserve root opacity: %w", err)
 		}
 	}
-	return nil
+	for _, entry := range entries {
+		if err := os.Rename(filepath.Join(staging, entry.Name()), filepath.Join(upper, entry.Name())); err != nil {
+			return fmt.Errorf("rootfs: move app entry into upper: %w", err)
+		}
+	}
+	return os.Rename(upper, filepath.Join(staging, "upper"))
 }
 
 // ensureWorkloadMountpoints creates the mount targets needed by a sidecar
@@ -502,22 +506,27 @@ func ensureRuntimeDirectory(staging, rel string) error {
 //
 // The temp file is removed before returning; the caller sees no scratch
 // left behind even on error.
-func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string, sizeMB int, limits api.Limits) (int, error) {
+func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string, sizeMB int, limits api.Limits) (int, ArtifactIdentity, error) {
 	if in.OutImage != "" {
 		// Legacy path. Mkfs writes directly to OutImage; the caller's
 		// filesystem already provides atomicity (or it doesn't, and we
 		// honour that — pre-#96 production). Kept for the integration
 		// test.
 		if err := os.MkdirAll(filepath.Dir(in.OutImage), 0o755); err != nil {
-			return 0, fmt.Errorf("rootfs: mkdir out dir: %w", err)
+			return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: mkdir out dir: %w", err)
 		}
-		return b.runAppMkfs(ctx, staging, in.OutImage, sizeMB, limits)
+		sizeMB, err := b.runAppMkfs(ctx, staging, in.OutImage, sizeMB, limits)
+		if err != nil {
+			return 0, ArtifactIdentity{}, err
+		}
+		identity, err := artifactIdentityFromPath(ctx, in.OutImage)
+		return sizeMB, identity, err
 	}
 	// Storage path. Mkfs into a sibling temp file, then Put the bytes
 	// under StorageKey and remove the temp.
 	tmp, err := os.CreateTemp(filepath.Dir(staging), "faas-mkfs-*.ext4")
 	if err != nil {
-		return 0, fmt.Errorf("rootfs: create tmp ext4: %w", err)
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: create tmp ext4: %w", err)
 	}
 	tmpPath := tmp.Name()
 	closed := false
@@ -528,23 +537,24 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 		_ = os.Remove(tmpPath)
 	}()
 	if err := tmp.Close(); err != nil {
-		return 0, fmt.Errorf("rootfs: close tmp ext4: %w", err)
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: close tmp ext4: %w", err)
 	}
 	sizeMB, err = b.runAppMkfs(ctx, staging, tmpPath, sizeMB, limits)
 	if err != nil {
-		return 0, err
+		return 0, ArtifactIdentity{}, err
 	}
 	// nolint:forbidigo // tmpPath is from os.MkdirTemp at the top of
 	// this function — a daemon-internal scratch file the builder just
 	// wrote via MkfsCommand. Not a customer path.
 	f, err := os.Open(tmpPath)
 	if err != nil {
-		return 0, fmt.Errorf("rootfs: open mkfs output: %w", err)
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: open mkfs output: %w", err)
 	}
 	closed = true // release the open file before Put; storage Put closes the file via defer elsewhere
 	defer func() { _ = f.Close() }()
-	if err := in.Storage.Put(ctx, in.StorageKey, f); err != nil {
-		return 0, fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
+	identity, err := publishArtifactIdentity(ctx, in.Storage, in.StorageKey, f)
+	if err != nil {
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
 	}
 	// ADR-038: sign the published ext4 so schedd's cold-boot verify
 	// (pkg/cosign.LocalVerifier) can detect tampering. Signing
@@ -557,10 +567,10 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	if b.signer != nil {
 		sigKey := "sigs/" + in.StorageKey + ".sig"
 		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
-			return 0, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
+			return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
 		}
 	}
-	return sizeMB, nil
+	return sizeMB, identity, nil
 }
 
 // emitSBOM runs the injected SBOM subprocess against the staging
@@ -691,28 +701,33 @@ func validateWorkloadManifestName(name string) error {
 // InjectGuestInit copies the guest-init binary into staging as /sbin/init (PID 1,
 // spec §4.8), executable.
 func InjectGuestInit(staging, guestInitPath string) error {
+	_, err := injectGuestInitWithDigest(staging, guestInitPath)
+	return err
+}
+
+func injectGuestInitWithDigest(staging, guestInitPath string) (string, error) {
 	if guestInitPath == "" {
-		return fmt.Errorf("rootfs: empty guest-init path")
+		return "", fmt.Errorf("rootfs: empty guest-init path")
 	}
 	data, err := os.ReadFile(guestInitPath)
 	if err != nil {
-		return fmt.Errorf("rootfs: read guest-init: %w", err)
+		return "", fmt.Errorf("rootfs: read guest-init: %w", err)
 	}
 	dst := filepath.Join(staging, "sbin", "init")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	// OCI base images commonly ship /sbin/init as a symlink (for example
 	// Alpine points it at /bin/busybox). Remove the link before writing the
 	// platform PID-1 binary; os.WriteFile follows a symlink and would
 	// overwrite the link target while leaving /sbin/init pointing at it.
 	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("rootfs: remove existing init: %w", err)
+		return "", fmt.Errorf("rootfs: remove existing init: %w", err)
 	}
 	if err := os.WriteFile(dst, data, 0o755); err != nil {
-		return fmt.Errorf("rootfs: write guest-init: %w", err)
+		return "", fmt.Errorf("rootfs: write guest-init: %w", err)
 	}
-	return nil
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(data)), nil
 }
 
 // ApplyTarball unpacks a customer source tarball at /app. Archives produced

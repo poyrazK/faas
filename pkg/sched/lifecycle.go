@@ -132,7 +132,14 @@ func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App,
 	}
 	desired := 0
 	if instanceModeForApp(app) == string(state.InstanceModeService) {
-		desired = desiredServiceReplicas(app.Manifest)
+		targets, err := e.serviceReplicaTargets(ctx, app, deployments)
+		if err != nil {
+			e.log.Warn("sched: observe deployed service targets", "app", app.ID, "err", err)
+			return
+		}
+		for _, target := range targets {
+			desired += target
+		}
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
@@ -363,13 +370,49 @@ func (e *Engine) serviceReplicaTargets(ctx context.Context, app state.App, deplo
 	}
 
 	targets := make(map[string]int, len(deployments))
-	desired := desiredServiceReplicas(app.Manifest)
 	for _, scoped := range byScope {
+		deployedApp, active, err := e.serviceReplicaTargetApp(ctx, app, scoped)
+		if err != nil {
+			return nil, err
+		}
+		desired := 0
+		if active && instanceModeForApp(deployedApp) == string(state.InstanceModeService) {
+			desired = desiredServiceReplicas(deployedApp.Manifest)
+		}
 		for deploymentID, target := range allocateServiceReplicaTargets(scoped, desired) {
 			targets[deploymentID] = target
 		}
 	}
 	return targets, nil
+}
+
+// Select the deployed settings through the same active release/traffic lane
+// as wakes. A newer dark generation or desired head cannot replace them.
+func (e *Engine) serviceReplicaTargetApp(ctx context.Context, app state.App, deployments []state.Deployment) (state.App, bool, error) {
+	scope := normalizedDeploymentScope(deployments[0].Scope)
+	selected, err := state.ResolveEnvironmentDeployment(ctx, e.store, app.ID, scope)
+	if errors.Is(err, state.ErrNotFound) {
+		// Retain the established repair fallback for all-zero legacy traffic.
+		for _, deployment := range deployments {
+			if deployment.TrafficPercent > 0 {
+				return state.App{}, false, err
+			}
+		}
+		selected, err = deployments[0], nil
+	}
+	if err != nil {
+		return state.App{}, false, err
+	}
+	if normalizedDeploymentScope(selected.Scope) != scope {
+		return state.App{}, false, nil // The other production alias owns traffic.
+	}
+	for _, deployment := range deployments {
+		if deployment.ID == selected.ID {
+			resolved, err := state.ResolveAppForDeployment(ctx, e.store, app, deployment)
+			return resolved, true, err
+		}
+	}
+	return state.App{}, false, state.ErrConflict
 }
 
 func serviceRolloutScope(dep state.Deployment) string {

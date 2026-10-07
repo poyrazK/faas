@@ -223,7 +223,8 @@ func TestEventReceiptLegacyAndForeignTargetPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "UPDATE apps SET account_id=$1, slug='new-owner-private-name' WHERE id=$2", other.ID, app); err != nil {
+	seedLegacyForeignCreatingAccount(t, ctx, pool, app, other.ID)
+	if _, err := pool.Exec(ctx, "UPDATE apps SET slug='new-owner-private-name' WHERE id=$1", app); err != nil {
 		t.Fatal(err)
 	}
 	receipt, err := store.EventReceipt(ctx, account, "orders", "evt-three-consumers", state.EventReceiptCursor{}, 10)

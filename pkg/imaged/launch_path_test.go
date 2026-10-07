@@ -148,7 +148,7 @@ func TestFullRootfsInvalidLaunchPersistsDeploymentFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, nil)
+	err = h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, nil, preparedContainerWorkload{ImageResolution: oci.ImageResolution{Reference: dep.ImageDigest}})
 	if !errors.Is(err, oci.ErrImageManifestInvalid) {
 		t.Fatalf("build error = %v", err)
 	}

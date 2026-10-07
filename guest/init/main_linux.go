@@ -27,6 +27,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
 
@@ -2059,7 +2060,16 @@ func assembleOverlay() (string, error) {
 			return "", err
 		}
 	}
-	opts := "lowerdir=/" +
+	lower, err := overlaymetadata.GuestLowerDirectory(layerMount+"/upper", "/", layerMount+"/empty-lower")
+	if err != nil {
+		return "", fmt.Errorf("inspect app root opacity: %w", err)
+	}
+	if lower != "/" {
+		if err := overlaymetadata.EnsureEmptyLowerDirectory(lower); err != nil {
+			return "", fmt.Errorf("prepare opaque root lower: %w", err)
+		}
+	}
+	opts := "lowerdir=" + lower +
 		",upperdir=" + layerMount + "/upper" +
 		",workdir=" + layerMount + "/work"
 	if err := syscall.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {

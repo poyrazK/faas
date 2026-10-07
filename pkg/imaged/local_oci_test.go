@@ -7,9 +7,8 @@
 //   - readLocalOCIEntry — tar archive reader; success path, miss path,
 //     oversize-cap path, premature EOF path, archive-not-found path.
 //
-//   - extractLocalOCIBlobs — layer extractor; success path writes to
-//     pre-opened files in layer-order, duplicate layer name errors,
-//     config-not-found errors, layer-not-found errors.
+// Integrity regressions, including layer substitution and archive ambiguity,
+// live in local_oci_integrity_test.go.
 //
 //   - loadLocalOCIArchive — end-to-end round-trip via t.TempDir + tar
 //     writer: well-formed index → config → 2 gzip layers → readers
@@ -99,14 +98,10 @@ func gzipBytes(t *testing.T, payload []byte) []byte {
 
 // minimalConfigBytes returns a minimal valid OCI config JSON blob that
 // oci.ParseConfig accepts.
-func minimalConfigBytes(count ...int) []byte {
-	layers := 1
-	if len(count) > 0 {
-		layers = count[0]
-	}
-	diffIDs := make([]string, layers)
-	for i := range diffIDs {
-		diffIDs[i] = fmt.Sprintf("sha256:%064x", i+1)
+func minimalConfigBytes(layers ...[]byte) []byte {
+	diffIDs := make([]string, len(layers))
+	for i, layer := range layers {
+		diffIDs[i] = fmt.Sprintf("sha256:%x", sha256.Sum256(layer))
 	}
 	cfg := map[string]any{
 		"architecture": "amd64",
@@ -120,59 +115,30 @@ func minimalConfigBytes(count ...int) []byte {
 	return b
 }
 
-// minimalManifestBytes returns a manifest JSON blob for the given
-// config + layer digests.
-func minimalManifestBytes(configDigest string, layerDigests []string) []byte {
-	type desc struct {
-		MediaType string `json:"mediaType"`
-		Digest    string `json:"digest"`
-		Size      int    `json:"size"`
-	}
-	m := struct {
-		SchemaVersion int    `json:"schemaVersion"`
-		MediaType     string `json:"mediaType"`
-		Config        desc   `json:"config"`
-		Layers        []desc `json:"layers"`
-	}{
+func localOCITestDescriptor(mediaType string, body []byte) oci.Descriptor {
+	return oci.Descriptor{MediaType: mediaType, Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), Size: int64(len(body))}
+}
+
+// Descriptor digests and sizes match the actual fixture bytes, just as in a
+// BuildKit export. DiffIDs above hash uncompressed streams, not gzip blobs.
+func minimalManifestBytes(config []byte, layers ...[]byte) []byte {
+	m := oci.Manifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.manifest.v1+json",
-		Config: desc{
-			MediaType: "application/vnd.oci.image.config.v1+json",
-			Digest:    configDigest,
-			Size:      100,
-		},
-		Layers: nil,
+		Config:        localOCITestDescriptor("application/vnd.oci.image.config.v1+json", config),
 	}
-	for _, d := range layerDigests {
-		m.Layers = append(m.Layers, desc{
-			MediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
-			Digest:    d,
-			Size:      100,
-		})
+	for _, layer := range layers {
+		m.Layers = append(m.Layers, localOCITestDescriptor("application/vnd.oci.image.layer.v1.tar+gzip", layer))
 	}
 	b, _ := json.Marshal(m)
 	return b
 }
 
-// minimalIndexBytes returns the index.json bytes for a single manifest.
-func minimalIndexBytes(manifestDigest string) []byte {
-	type desc struct {
-		MediaType string `json:"mediaType"`
-		Digest    string `json:"digest"`
-		Size      int    `json:"size"`
-	}
-	idx := struct {
-		SchemaVersion int    `json:"schemaVersion"`
-		MediaType     string `json:"mediaType"`
-		Manifests     []desc `json:"manifests"`
-	}{
+func minimalIndexBytes(manifest []byte) []byte {
+	idx := localOCIIndex{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",
-		Manifests: []desc{{
-			MediaType: "application/vnd.oci.image.manifest.v1+json",
-			Digest:    manifestDigest,
-			Size:      100,
-		}},
+		Manifests:     []oci.Descriptor{localOCITestDescriptor("application/vnd.oci.image.manifest.v1+json", manifest)},
 	}
 	b, _ := json.Marshal(idx)
 	return b
@@ -306,7 +272,7 @@ func TestReadLocalOCIEntry_ArchiveMissing(t *testing.T) {
 
 func TestLoadLocalOCIArchive_HappyTwoLayers(t *testing.T) {
 	// Construct a valid OCI layout archive end-to-end.
-	cfg := minimalConfigBytes(2)
+	cfg := minimalConfigBytes([]byte("layer0-payload"), []byte("layer1-payload"))
 	layer0 := gzipBytes(t, []byte("layer0-payload"))
 	layer1 := gzipBytes(t, []byte("layer1-payload"))
 
@@ -314,9 +280,9 @@ func TestLoadLocalOCIArchive_HappyTwoLayers(t *testing.T) {
 	layer0Digest := digestFor(t, layer0)
 	layer1Digest := digestFor(t, layer1)
 
-	manifest := minimalManifestBytes(cfgDigest, []string{layer0Digest, layer1Digest})
+	manifest := minimalManifestBytes(cfg, layer0, layer1)
 	manifestDigest := digestFor(t, manifest)
-	index := minimalIndexBytes(manifestDigest)
+	index := minimalIndexBytes(manifest)
 
 	archive := buildLocalOCIArchive(t, map[string][]byte{
 		"index.json":             index,
@@ -371,14 +337,14 @@ func TestBuildFunctionLayer_UsesSourceBuildOCIForGoRuntimes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := minimalConfigBytes()
+			cfg := minimalConfigBytes([]byte("compiled /app/server layer"))
 			layer := gzipBytes(t, []byte("compiled /app/server layer"))
 			cfgDigest := digestFor(t, cfg)
 			layerDigest := digestFor(t, layer)
-			manifest := minimalManifestBytes(cfgDigest, []string{layerDigest})
+			manifest := minimalManifestBytes(cfg, layer)
 			manifestDigest := digestFor(t, manifest)
 			archive := buildLocalOCIArchive(t, map[string][]byte{
-				"index.json":             minimalIndexBytes(manifestDigest),
+				"index.json":             minimalIndexBytes(manifest),
 				blobPath(manifestDigest): manifest,
 				blobPath(cfgDigest):      cfg,
 				blobPath(layerDigest):    layer,
@@ -388,7 +354,7 @@ func TestBuildFunctionLayer_UsesSourceBuildOCIForGoRuntimes(t *testing.T) {
 			h.dep.RootfsPath = archive
 			handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 			tc.wire(handler)
-			if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+			if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil); err != nil {
 				t.Fatalf("buildFunctionLayer: %v", err)
 			}
 			if len(h.bld.calls) != 1 {
@@ -472,8 +438,8 @@ func TestLoadLocalOCIArchive_ZeroManifests(t *testing.T) {
 func TestLoadLocalOCIArchive_ManifestMissing(t *testing.T) {
 	// index.json points at a manifest blob that isn't in the
 	// archive → "read OCI manifest: entry ... not found" path.
-	manifestDigest := digestFor(t, []byte("placeholder"))
-	index := minimalIndexBytes(manifestDigest)
+	manifest := []byte("placeholder")
+	index := minimalIndexBytes(manifest)
 	archive := buildLocalOCIArchive(t, map[string][]byte{
 		"index.json": index,
 		// no manifest entry
@@ -486,11 +452,12 @@ func TestLoadLocalOCIArchive_ManifestMissing(t *testing.T) {
 
 func TestLoadLocalOCIArchive_BadManifestJSON(t *testing.T) {
 	// Manifest entry exists but isn't valid JSON.
-	manifestDigest := digestFor(t, []byte("x"))
-	index := minimalIndexBytes(manifestDigest)
+	manifest := []byte("not json")
+	manifestDigest := digestFor(t, manifest)
+	index := minimalIndexBytes(manifest)
 	archive := buildLocalOCIArchive(t, map[string][]byte{
 		"index.json":             index,
-		blobPath(manifestDigest): []byte("not json"),
+		blobPath(manifestDigest): manifest,
 	})
 	_, _, _, err := loadLocalOCIArchive(archive)
 	if err == nil {
@@ -503,11 +470,10 @@ func TestLoadLocalOCIArchive_BadManifestJSON(t *testing.T) {
 
 func TestLoadLocalOCIArchive_BadConfigDigest(t *testing.T) {
 	// Manifest references a config whose digest is invalid
-	// (not "sha256:..."). The digest validator rejects before
-	// the archive is opened.
-	manifestDigest := digestFor(t, []byte("manifest"))
-	index := minimalIndexBytes(manifestDigest)
-	manifest := minimalManifestBytes("not-a-real-digest", nil)
+	// (not "sha256:..."). Reject before reading its config or layers.
+	manifest, _ := json.Marshal(oci.Manifest{SchemaVersion: 2, MediaType: "application/vnd.oci.image.manifest.v1+json", Config: oci.Descriptor{MediaType: "application/vnd.oci.image.config.v1+json", Digest: "not-a-real-digest"}})
+	manifestDigest := digestFor(t, manifest)
+	index := minimalIndexBytes(manifest)
 	archive := buildLocalOCIArchive(t, map[string][]byte{
 		"index.json":             index,
 		blobPath(manifestDigest): manifest,
@@ -536,13 +502,13 @@ func TestLoadLocalOCIArchive_ArchiveMissing(t *testing.T) {
 func TestLoadLocalOCIArchive_CleanupReleasesFiles(t *testing.T) {
 	// After cleanup, the temp dir referenced by readers must be
 	// gone (the files become invalid). Pin the cleanup contract.
-	cfg := minimalConfigBytes()
+	cfg := minimalConfigBytes([]byte("x"))
 	layer0 := gzipBytes(t, []byte("x"))
 	cfgDigest := digestFor(t, cfg)
 	layer0Digest := digestFor(t, layer0)
-	manifest := minimalManifestBytes(cfgDigest, []string{layer0Digest})
+	manifest := minimalManifestBytes(cfg, layer0)
 	manifestDigest := digestFor(t, manifest)
-	index := minimalIndexBytes(manifestDigest)
+	index := minimalIndexBytes(manifest)
 	archive := buildLocalOCIArchive(t, map[string][]byte{
 		"index.json":             index,
 		blobPath(manifestDigest): manifest,

@@ -18,6 +18,18 @@ func TestWriteDeploymentCreateError(t *testing.T) {
 		wantCode   string
 	}{
 		{
+			name:       "inherited controls pending",
+			err:        errors.Join(errors.New("create deployment"), state.ErrApplicationStandardsPending),
+			wantStatus: http.StatusConflict,
+			wantCode:   api.CodeApplicationStandardsPending,
+		},
+		{
+			name:       "dependency release review required",
+			err:        errors.Join(errors.New("create deployment"), state.ErrBindingReleaseRequired),
+			wantStatus: http.StatusConflict,
+			wantCode:   api.CodeBindingReleaseRequired,
+		},
+		{
 			name:       "terminal app",
 			err:        errors.Join(errors.New("create deployment"), state.ErrNotFound),
 			wantStatus: http.StatusNotFound,

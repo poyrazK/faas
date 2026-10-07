@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,6 +54,9 @@ func TestBuildFullRootfsPublishesAllLayers(t *testing.T) {
 	}
 	if !bytes.Equal(body, run.fill) {
 		t.Fatalf("published image = %q, want %q", body, run.fill)
+	}
+	if res.ArtifactDigest != fmt.Sprintf("sha256:%x", sha256.Sum256(body)) || res.ArtifactBytes != int64(len(body)) {
+		t.Fatalf("full-rootfs returned a different byte identity: %+v", res)
 	}
 	if len(run.argv) == 0 || run.argv[0] != "mkfs.ext4" {
 		t.Fatalf("mkfs was not invoked: %v", run.argv)

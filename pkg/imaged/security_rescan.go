@@ -49,36 +49,48 @@ func (l *Loop) reconcileSecurityScans(ctx context.Context, now time.Time, every 
 		if app.Status != state.AppActive {
 			continue
 		}
-		previousStatus := dep.ScanStatus
-		previous := decodeScanEvidence(dep.ScanResult)
-		if err := l.handler.runDeployScan(ctx, app, dep); err != nil {
-			l.log.Warn("imaged: security re-scan failed", "deployment", dep.ID, "app", app.Slug, "err", err)
+		l.rescanLiveDeployment(ctx, app, dep)
+	}
+}
+
+func (l *Loop) rescanLiveDeployment(ctx context.Context, app state.App, dep state.Deployment) {
+	if l.rescanProducedRuntime(ctx, app, dep) {
+		return
+	}
+	previousStatus := dep.ScanStatus
+	previous := decodeScanEvidence(dep.ScanResult)
+	scanErr := l.handler.runDeployScan(ctx, app, dep)
+	if scanErr != nil {
+		l.log.Warn("imaged: security re-scan failed", "deployment", dep.ID, "app", app.Slug, "err", scanErr)
+	}
+	if producedEvidenceBusy(scanErr) || ctx.Err() != nil {
+		return
+	}
+	current, readErr := l.store.DeploymentByID(ctx, dep.ID)
+	if readErr != nil {
+		l.log.Warn("imaged: read security re-scan result", "deployment", dep.ID, "err", readErr)
+		return
+	}
+	currentResult := decodeScanEvidence(current.ScanResult)
+	if app.SecurityPolicy != api.AppSecurityPolicyEnforce || scanErr == nil && !securityScanNeedsQuarantine(current.ScanStatus, currentResult) {
+		return
+	}
+	if securityScanRegression(previousStatus, previous, current.ScanStatus, currentResult) {
+		if auditErr := l.appendSecurityScanRegression(ctx, app, dep, previousStatus, previous, current.ScanStatus, currentResult); auditErr != nil {
+			l.log.Warn("imaged: append security scan regression audit", "deployment", dep.ID, "err", auditErr)
 		}
-		current, readErr := l.store.DeploymentByID(ctx, dep.ID)
-		if readErr != nil {
-			l.log.Warn("imaged: read security re-scan result", "deployment", dep.ID, "err", readErr)
-			continue
-		}
-		currentResult := decodeScanEvidence(current.ScanResult)
-		if app.SecurityPolicy != api.AppSecurityPolicyEnforce || !securityScanNeedsQuarantine(current.ScanStatus, currentResult) {
-			continue
-		}
-		if securityScanRegression(previousStatus, previous, current.ScanStatus, currentResult) {
-			if auditErr := l.appendSecurityScanRegression(ctx, app, dep, previousStatus, previous, current.ScanStatus, currentResult); auditErr != nil {
-				l.log.Warn("imaged: append security scan regression audit", "deployment", dep.ID, "err", auditErr)
-			}
-		}
-		if quarantineErr := l.quarantineSecurityRegression(ctx, app, dep); quarantineErr != nil {
-			l.log.Warn("imaged: quarantine security regression", "deployment", dep.ID, "app", app.ID, "err", quarantineErr)
-		}
+	}
+	if quarantineErr := l.quarantineSecurityRegression(ctx, app, dep); quarantineErr != nil {
+		l.log.Warn("imaged: quarantine security regression", "deployment", dep.ID, "app", app.ID, "err", quarantineErr)
 	}
 }
 
 // reconcileSecurityLeases is the cheap safety net between full scanner runs.
 // A complete scan is evidence about one exact live deployment, not a permanent
 // allow-list. Once that evidence expires, or its digest/metadata no longer
-// matches the deployment row, enforce-mode traffic is parked before the next
-// request can use the stale app route. The scanner sweep remains responsible
+// matches the deployment row, the worker requests durable quarantine. Cached
+// routes and in-flight requests still require consumer revocation evidence.
+// The scanner sweep remains responsible
 // for refreshing otherwise-valid evidence and for discovering newly published
 // vulnerabilities.
 func (l *Loop) reconcileSecurityLeases(ctx context.Context, now time.Time, scanEvery time.Duration) {
@@ -105,19 +117,29 @@ func (l *Loop) reconcileSecurityLeases(ctx context.Context, now time.Time, scanE
 		if app.Status != state.AppActive || app.SecurityPolicy != api.AppSecurityPolicyEnforce {
 			continue
 		}
-		reason := securityScanLeaseFailure(dep, now.UTC(), scanEvery)
-		if reason == "" {
-			continue
+		l.reconcileDeploymentSecurityLease(ctx, app, dep, now.UTC(), scanEvery)
+		if ctx.Err() != nil {
+			return
 		}
-		if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
-			continue
-		}
-		if auditErr := l.appendSecurityScanLeaseAudit(ctx, app, dep, reason, now.UTC()); auditErr != nil {
-			l.log.Warn("imaged: append security evidence lease audit", "deployment", dep.ID, "err", auditErr)
-		}
-		if quarantineErr := l.quarantineSecurity(ctx, app, dep, reason); quarantineErr != nil {
-			l.log.Warn("imaged: quarantine expired security evidence", "deployment", dep.ID, "app", app.ID, "reason", reason, "err", quarantineErr)
-		}
+	}
+}
+
+func (l *Loop) reconcileDeploymentSecurityLease(ctx context.Context, app state.App, dep state.Deployment, now time.Time, scanEvery time.Duration) {
+	private, reason, readErr := l.privateSecurityLeaseFailure(ctx, app, dep)
+	if ctx.Err() != nil || producedEvidenceBusy(readErr) {
+		return
+	}
+	if !private {
+		reason = securityScanLeaseFailure(dep, now, scanEvery)
+	}
+	if reason == "" || dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+		return
+	}
+	if auditErr := l.appendSecurityScanLeaseAudit(ctx, app, dep, reason, now); auditErr != nil {
+		l.log.Warn("imaged: append security evidence lease audit", "deployment", dep.ID, "err", auditErr)
+	}
+	if quarantineErr := l.quarantineSecurity(ctx, app, dep, reason); quarantineErr != nil {
+		l.log.Warn("imaged: quarantine expired security evidence", "deployment", dep.ID, "app", app.ID, "reason", reason, "err", quarantineErr)
 	}
 }
 
@@ -148,25 +170,35 @@ func (l *Loop) reconcileSecuritySignatures(ctx context.Context, now time.Time) {
 		if app.Status != state.AppActive || (!app.RequireSigned && !app.SecurityPolicy.RequiresSignedImage()) {
 			continue
 		}
-		_, verifyErr := l.handler.checkImageSignature(ctx, app, dep.ImageDigest)
+		handled, verifyErr := l.handler.renewProducedDeploymentSignatures(ctx, app, dep)
+		if !handled {
+			_, verifyErr = l.handler.checkImageSignature(ctx, app, dep.ImageDigest)
+		}
 		if verifyErr == nil {
 			continue
 		}
+		if ctx.Err() != nil {
+			return
+		}
+		if producedEvidenceBusy(verifyErr) {
+			continue
+		}
 
-		reason := "security_signature_unavailable"
-		auditKind := "app.signature_invalid"
-		switch {
-		case errors.Is(verifyErr, cosign.ErrSignatureMissing):
-			reason = "security_signature_missing"
-			auditKind = "app.signature_missing"
-		case errors.Is(verifyErr, cosign.ErrSignatureInvalid):
-			reason = "security_signature_revoked"
-			auditKind = "app.signature_revoked"
-		}
-		l.handler.emitSignatureAudit(ctx, auditKind, app, dep, dep.ImageDigest, "")
-		if quarantineErr := l.quarantineSecurity(ctx, app, dep, reason); quarantineErr != nil {
-			l.log.Warn("imaged: quarantine signature regression", "deployment", dep.ID, "app", app.ID, "reason", reason, "observed_at", now.UTC(), "err", quarantineErr)
-		}
+		l.quarantineSignatureFailure(ctx, app, dep, verifyErr, now)
+	}
+}
+
+func (l *Loop) quarantineSignatureFailure(ctx context.Context, app state.App, dep state.Deployment, verifyErr error, now time.Time) {
+	reason, auditKind := "security_signature_unavailable", "app.signature_invalid"
+	switch {
+	case errors.Is(verifyErr, cosign.ErrSignatureMissing):
+		reason, auditKind = "security_signature_missing", "app.signature_missing"
+	case errors.Is(verifyErr, cosign.ErrSignatureInvalid):
+		reason, auditKind = "security_signature_revoked", "app.signature_revoked"
+	}
+	l.handler.emitSignatureAudit(ctx, auditKind, app, dep, dep.ImageDigest, "")
+	if err := l.quarantineSecurity(ctx, app, dep, reason); err != nil {
+		l.log.Warn("imaged: quarantine signature regression", "deployment", dep.ID, "app", app.ID, "reason", reason, "observed_at", now.UTC(), "err", err)
 	}
 }
 

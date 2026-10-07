@@ -1,20 +1,20 @@
 // verify_test.go — pkg/cosign.VerifyImageSignature + TrustedPublishersFromDir
-// round-trip (issue #472 / ADR-054). Pins the wire shape so a future
-// change to the deploy-time verify hook doesn't silently invalidate
-// the operator-trust surface.
+// round-trip of ADR-058's legacy raw primitive and mirrored keys. Registry
+// deployment verification now uses ADR-435 simple-signing attachments, tested
+// in attached_image_test.go; these raw signatures are not that wire format.
 //
 // The shape under test:
 //   - manifest digest  → 32-byte raw SHA-256 bytes
 //   - signature payload → 64 bytes (P-256 r||s) over those 32 bytes
 //   - trusted publisher  → ECDSA P-256 *ecdsa.PublicKey loaded from
 //     a .pem on disk (mode 0444)
-//   - missing sig at the registry  → ErrSignatureMissing
+//   - missing signature from the supplied puller → ErrSignatureMissing
 //   - wrong key / no match          → ErrSignatureInvalid
 //
 // What this file does NOT cover:
 //   - LocalVerifier (build-side cold-boot) — covered by cosign_test.go
 //   - LocalSigner — same file
-//   - The OCI side of the puller — covered by the imaged package
+//   - Registry transport — covered by oci and imaged attachment tests
 package cosign
 
 import (

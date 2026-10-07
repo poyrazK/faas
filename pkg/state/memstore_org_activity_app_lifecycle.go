@@ -28,6 +28,8 @@ func (m *MemStore) CreateAppIfUnderQuotaWithActivity(_ context.Context, app App,
 	entry, err = bindOrgActivityToApp(entry, created)
 	if err != nil {
 		delete(m.apps, created.ID)
+		delete(m.applicationStandardEnrollments, created.ID)
+		m.eraseStandardAppExceptionsLocked(created.ID)
 		return App{}, 0, err
 	}
 	return created, m.enqueueOrgActivityOutboxLocked(entry), nil

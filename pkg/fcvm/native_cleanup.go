@@ -24,6 +24,7 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	if lease.UID != 0 && !sameNativeJournalLease(owned.Lease, lease) {
 		return errors.New("vmm: native stop lease differs from launch ownership")
 	}
+	v.cancelNativeSnapshot(lease.Instance)
 	v.cancelStartupCPUBoostTail(lease.Instance)
 	v.closeGuestVsockListeners(lease.Instance)
 	v.unregisterRing(lease.Instance)

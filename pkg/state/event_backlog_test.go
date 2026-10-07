@@ -137,7 +137,8 @@ func TestPgEventBacklogBackfillUnattributedAndForeignTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "UPDATE apps SET account_id=$1,slug='private-new-owner' WHERE id=$2", other.ID, app); err != nil {
+	seedLegacyForeignCreatingAccount(t, ctx, pool, app, other.ID)
+	if _, err := pool.Exec(ctx, "UPDATE apps SET slug='private-new-owner' WHERE id=$1", app); err != nil {
 		t.Fatal(err)
 	}
 	r, err = store.EventBacklog(ctx, account, state.EventBacklogQuery{})

@@ -241,6 +241,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
+        409: `code: application_standards_pending. Inherited application controls must be persisted before this service accepts a deployment. Retry after enrollment completes.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -408,7 +409,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `code: not_found`,
-        409: `code: dev_source_base_missing. Retry with a complete source snapshot.`,
+        409: `code: dev_source_base_missing | application_standards_pending. A missing source base requires a complete snapshot; pending inherited controls require enrollment to finish.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -477,7 +478,8 @@ export class DeploymentsService {
         (code: github_install_not_found).
         `,
         409: `code: source_ref_stale. source_branch no longer points at the
-        requested immutable commit SHA.
+        requested immutable commit SHA. A service awaiting inherited
+        controls instead returns code: application_standards_pending.
         `,
         413: `code: source_too_large`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -588,6 +590,7 @@ export class DeploymentsService {
         on the CLI path is the symptom of a misconfigured
         --name pointing at a row the caller doesn't own.
         `,
+        409: `code: application_standards_pending. Inherited application controls must be persisted before this service accepts a deployment. Retry after enrollment completes.`,
         413: `code: source_too_large`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

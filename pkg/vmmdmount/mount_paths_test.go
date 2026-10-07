@@ -69,8 +69,8 @@ func TestUmountExt4_RefusesEmptyArg(t *testing.T) {
 // TestRegistry_Umount_UnknownMountKind pins the default branch
 // of the MountKind switch in Registry.Umount. An entry with a
 // out-of-band MountKind (here: MountKind(0), the zero value) is
-// rejected with an "unknown MountKind" error; the entry is
-// already deleted by the time we hit the switch.
+// rejected with an "unknown MountKind" error; ownership remains
+// available for an operator to inspect and repair.
 //
 // We construct the entry directly via the whitebox `r.entries`
 // field to simulate a future MountKind that hasn't been wired
@@ -97,10 +97,9 @@ func TestRegistry_Umount_UnknownMountKind(t *testing.T) {
 	if !contains(err.Error(), "unknown MountKind") {
 		t.Errorf("err = %v, want substring 'unknown MountKind'", err)
 	}
-	// The entry was forgotten at the top of Umount BEFORE the
-	// switch, so it should NOT be in the registry anymore.
-	if _, ok := r.Lookup(mp); ok {
-		t.Error("entry should be forgotten after Umount, even on the default-branch path")
+	// Refusing dispatch does not prove that the kernel resource was released.
+	if entry, ok := r.Lookup(mp); !ok || entry.Kind != MountKind(0) || entry.SrcPath != "/s" {
+		t.Error("unknown mount cleanup lost its exact ownership record")
 	}
 }
 

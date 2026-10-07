@@ -275,6 +275,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// override per-builder via the toml field.
 		BuilderNodeID: cfg.BuilderNodeID,
 	}, log).WithOpsMetrics(ops).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage)
+	publisher, err := loadBuildPublisher()
+	if err != nil {
+		return err
+	}
+	b.WithBuildPublisher(publisher)
 	notifCh, err := db.SubscribeWithReconnect(ctx, pool, builderNotificationChannels(), log)
 	if err != nil {
 		return err

@@ -8,6 +8,9 @@ import (
 )
 
 const (
+	CodeApplicationStandardVersionStale = "application_standard_version_stale"
+	CodeApplicationStandardsPending     = "application_standards_pending"
+
 	CodeConsumerAuthModeInvalid              = "consumer_auth_mode_invalid"
 	CodeConsumerKeysNotAllowed               = "consumer_keys_not_allowed"
 	CodePlatformTenantRequired               = "platform_tenant_required"
@@ -471,7 +474,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
-	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
+	case CodeApplicationStandardVersionStale, CodeApplicationStandardsPending, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
 	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity

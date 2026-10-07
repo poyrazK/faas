@@ -46,14 +46,31 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
+      GOMAXPROCS: "2"
+      GOGC: "50"
+      GOMEMLIMIT: 2GiB
       DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
       CUSTOMER_MIGRATION_DATABASE_URL: postgres://customer_migration:customer_migration_test@127.0.0.1:5432/customer_platform?sslmode=disable
       CUSTOMER_DATABASE_URL: postgres://customer_app:customer_test@127.0.0.1:5432/customer_platform?sslmode=disable
     steps:
       - uses: actions/checkout@v7
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore customer-platform Go build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-customer-platform-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-customer-platform-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-customer-platform-${{ runner.os }}-
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -77,6 +94,14 @@ jobs:
           GOGC: 10
           GOMAXPROCS: 2
         run: make test-customer-platform
+      - name: Save customer-platform Go build cache
+        if: always() && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-customer-platform-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   mcp-task-postgres:
     name: MCP durable Tasks PostgreSQL integration

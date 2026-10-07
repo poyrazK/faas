@@ -274,9 +274,7 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	}
 	currentApps, err := s.store.AppsForProject(r.Context(), acct.ID, insertedProject.ID)
 	if err != nil {
-		writeCustomerInternalProblem(w, r, s.log, "load apps after applying project",
-			"Gregale could not finish loading the project after applying the changes.",
-			"Reload the project before retrying the operation.", err)
+		s.writeProjectApplyLoadError(w, r, err)
 		return
 	}
 	appIDs := make([]appSummary, 0, len(currentApps))

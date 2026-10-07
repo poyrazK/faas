@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"mime"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/imagechain"
 )
 
 // Production images target the x86_64 fleet, independent of the CLI host.
 const ImageOS = "linux"
-const ImageArchitecture = "amd64"
+const ImageArchitecture = imagechain.ImageArchitecture
 
 // PlatformSelectionError carries only platform metadata, never registry bodies
 // or credentials. It remains an ErrImageManifestInvalid for deployment errors.
@@ -49,6 +51,8 @@ type imageIndex struct {
 type resolvedImageManifest struct {
 	manifest     imageManifest
 	body         []byte
+	sourceBody   []byte
+	configBody   []byte
 	sourceDigest string
 	digest       string
 	config       *ImageConfig // verified when selected through an index
@@ -83,6 +87,7 @@ func (c *RegistryClient) resolveImageManifest(ctx context.Context, r Reference, 
 		return result, fmt.Errorf("%w: decode manifest: %w", ErrImageManifestInvalid, err)
 	}
 	result.body, result.sourceDigest, result.digest = body, imageContentDigest(body), imageContentDigest(body)
+	result.sourceBody = body
 	if r.Digest != "" && r.Digest != result.sourceDigest {
 		return result, fmt.Errorf("%w: manifest content does not match requested digest", ErrImageManifestInvalid)
 	}
@@ -113,7 +118,7 @@ func (c *RegistryClient) resolveImageManifest(ctx context.Context, r Reference, 
 	if !isImageManifest(childCT, m.MediaType) || m.SchemaVersion != 2 {
 		return result, fmt.Errorf("%w: selected descriptor is not an image manifest", ErrImageManifestInvalid)
 	}
-	cfg, err := c.verifiedImageConfig(ctx, r, m, auth)
+	cfg, configBody, err := c.verifiedImageConfigBytes(ctx, r, m, auth)
 	if err != nil {
 		return result, err
 	}
@@ -121,6 +126,7 @@ func (c *RegistryClient) resolveImageManifest(ctx context.Context, r Reference, 
 		return result, &PlatformSelectionError{Reason: "selected config disagrees with index platform", Available: []string{cfg.OS + "/" + cfg.Architecture}}
 	}
 	result.manifest, result.body, result.digest, result.config = m, childBody, child.Digest, &cfg
+	result.configBody = configBody
 	return result, nil
 }
 
@@ -167,30 +173,30 @@ func selectImagePlatform(body []byte) (Descriptor, error) {
 	return selected, nil
 }
 
-func (c *RegistryClient) verifiedImageConfig(ctx context.Context, r Reference, m imageManifest, auth *BasicAuth) (ImageConfig, error) {
+func (c *RegistryClient) verifiedImageConfigBytes(ctx context.Context, r Reference, m imageManifest, auth *BasicAuth) (ImageConfig, []byte, error) {
 	if m.SchemaVersion != 2 || len(m.Layers) == 0 {
-		return ImageConfig{}, fmt.Errorf("%w: expected schemaVersion 2 and at least one filesystem layer", ErrImageManifestInvalid)
+		return ImageConfig{}, nil, fmt.Errorf("%w: expected schemaVersion 2 and at least one filesystem layer", ErrImageManifestInvalid)
 	}
 	if err := validateDigest(m.Config.Digest); err != nil {
-		return ImageConfig{}, fmt.Errorf("%w: invalid config descriptor", ErrImageManifestInvalid)
+		return ImageConfig{}, nil, fmt.Errorf("%w: invalid config descriptor", ErrImageManifestInvalid)
 	}
 	for _, layer := range m.Layers {
 		if err := validateDigest(layer.Digest); err != nil {
-			return ImageConfig{}, fmt.Errorf("%w: invalid layer descriptor", ErrImageManifestInvalid)
+			return ImageConfig{}, nil, fmt.Errorf("%w: invalid layer descriptor", ErrImageManifestInvalid)
 		}
 	}
 	config, err := c.fetchBlobWithAuth(ctx, r, m.Config.Digest, auth)
 	if err != nil {
-		return ImageConfig{}, err
+		return ImageConfig{}, nil, err
 	}
 	if imageContentDigest(config) != m.Config.Digest {
-		return ImageConfig{}, fmt.Errorf("%w: config content does not match its digest", ErrImageManifestInvalid)
+		return ImageConfig{}, nil, fmt.Errorf("%w: config content does not match its digest", ErrImageManifestInvalid)
 	}
 	cfg, err := parseImageConfig(config)
 	if err != nil {
-		return ImageConfig{}, fmt.Errorf("%w: invalid image config: %w", ErrImageManifestInvalid, err)
+		return ImageConfig{}, nil, fmt.Errorf("%w: invalid image config: %w", ErrImageManifestInvalid, err)
 	}
-	return cfg, nil
+	return cfg, config, nil
 }
 
 // SupportsProductionPlatform reports compatibility with the baseline x86 fleet.

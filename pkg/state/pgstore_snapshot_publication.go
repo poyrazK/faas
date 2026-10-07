@@ -88,6 +88,9 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 	} else if required || changed && !sourceStartedAt.After(changedAt) {
 		return Snapshot{}, ErrSnapshotRuntimeStale
 	}
+	if err := checkStandardSnapshotRuntimeFresh(ctx, tx, snap, sourceInstanceID, sourceStartedAt); err != nil {
+		return Snapshot{}, err
+	}
 	stored, err := createSnapshotWithQuerier(ctx, tx, snap)
 	if err != nil {
 		return Snapshot{}, err

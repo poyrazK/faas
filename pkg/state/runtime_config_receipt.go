@@ -224,14 +224,22 @@ func (m *MemStore) RecordInstanceRuntimeConfigReceipt(_ context.Context, instanc
 
 func (m *MemStore) recordInstanceRuntimeConfigReceiptLocked(instanceID, wakeID string, inputs RuntimeConfigInputs) error {
 	instance, exists := m.instances[instanceID]
-	deployment := m.deployments[instance.DeploymentID]
-	if !exists || instance.WakeID != wakeID || instance.State != string(StateRunning) || normalizedDeploymentScope(deployment.Scope) != inputs.Scope {
+	if !exists {
 		return ErrConflict
 	}
-	if m.instanceRuntimeConfigReceipts == nil {
-		m.instanceRuntimeConfigReceipts = map[string]instanceRuntimeConfigReceipt{}
+	if err := m.checkInstanceRuntimeConfigReceiptLocked(instance, wakeID, inputs); err != nil {
+		return err
 	}
-	if prior, exists := m.instanceRuntimeConfigReceipts[instanceID]; exists && prior.WakeID == wakeID {
+	m.installInstanceRuntimeConfigReceiptLocked(instanceID, wakeID, inputs)
+	return nil
+}
+
+func (m *MemStore) checkInstanceRuntimeConfigReceiptLocked(instance Instance, wakeID string, inputs RuntimeConfigInputs) error {
+	deployment := m.deployments[instance.DeploymentID]
+	if instance.WakeID != wakeID || instance.State != string(StateRunning) || normalizedDeploymentScope(deployment.Scope) != inputs.Scope {
+		return ErrConflict
+	}
+	if prior, exists := m.instanceRuntimeConfigReceipts[instance.ID]; exists && prior.WakeID == wakeID {
 		if prior.Inputs.Scope != inputs.Scope || !prior.Inputs.Boundary.Equal(inputs.Boundary) || prior.Inputs.AllSecrets != inputs.AllSecrets ||
 			!maps.Equal(prior.Inputs.Variables, inputs.Variables) || !maps.Equal(prior.Inputs.SecretVersions, inputs.SecretVersions) || !maps.Equal(prior.Inputs.SecretRefs, inputs.SecretRefs) ||
 			!maps.Equal(prior.Inputs.SidecarSecretVersions, inputs.SidecarSecretVersions) {
@@ -239,11 +247,17 @@ func (m *MemStore) recordInstanceRuntimeConfigReceiptLocked(instanceID, wakeID s
 		}
 		return nil
 	}
-	m.instanceRuntimeConfigReceipts[instanceID] = instanceRuntimeConfigReceipt{WakeID: wakeID, Inputs: cloneRuntimeConfigInputs(inputs)}
 	return nil
 }
 
-func (m *MemStore) PublishInstanceRuntimeWithConfig(_ context.Context, id, expectedState, netns, hostIP string, uid int, wakeID string, inputs RuntimeConfigInputs) (Instance, error) {
+func (m *MemStore) installInstanceRuntimeConfigReceiptLocked(instanceID, wakeID string, inputs RuntimeConfigInputs) {
+	if m.instanceRuntimeConfigReceipts == nil {
+		m.instanceRuntimeConfigReceipts = map[string]instanceRuntimeConfigReceipt{}
+	}
+	m.instanceRuntimeConfigReceipts[instanceID] = instanceRuntimeConfigReceipt{WakeID: wakeID, Inputs: cloneRuntimeConfigInputs(inputs)}
+}
+
+func (m *MemStore) PublishInstanceRuntimeWithConfig(ctx context.Context, id, expectedState, netns, hostIP string, uid int, wakeID string, inputs RuntimeConfigInputs) (Instance, error) {
 	if err := validateRuntimeConfigInputs(inputs); err != nil {
 		return Instance{}, err
 	}
@@ -259,14 +273,14 @@ func (m *MemStore) PublishInstanceRuntimeWithConfig(_ context.Context, id, expec
 	}
 	prior := instance
 	instance.State, instance.Netns, instance.HostIP, instance.GuestUID, instance.StartedAt = string(StateRunning), netns, hostIP, uid, time.Now().UTC()
-	if err := m.guardInstanceRuntimeTransitionLocked(prior, instance); err != nil {
+	if err := m.checkInstanceRuntimeConfigReceiptLocked(instance, wakeID, inputs); err != nil {
+		return Instance{}, err
+	}
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, prior, instance); err != nil {
 		return Instance{}, err
 	}
 	m.instances[id] = instance
-	if err := m.recordInstanceRuntimeConfigReceiptLocked(id, wakeID, inputs); err != nil {
-		m.instances[id] = prior
-		return Instance{}, err
-	}
+	m.installInstanceRuntimeConfigReceiptLocked(id, wakeID, inputs)
 	return instance, nil
 }
 

@@ -72,17 +72,6 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		return WakeResult{}, false, nil
 	}
 
-	resumer, ok := e.vmm.(WarmResumeVMM)
-	if !ok {
-		// Older vmmd nodes may still own a warm row during a rolling upgrade.
-		// Retire those paused leases so the ordinary wake path can make progress.
-		for _, warm := range candidates {
-			e.discardWarmPromotion(ctx, warm, "resume_capability_unavailable")
-			e.observeWarmResume("stale")
-		}
-		return WakeResult{}, false, nil
-	}
-
 	for _, warm := range candidates {
 		// A paused row without runtime identity cannot be resumed safely;
 		// destroy and park it so it cannot consume resident capacity forever.
@@ -127,9 +116,14 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 
 		resumeStartedAt := time.Now()
 		resumeCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: "warm_pool"}))
-		resumeErr := resumer.ResumeWarmInstance(resumeCtx, e.nodeForRoute(warm.NodeID), warm.ID)
+		receipt, resumeErr := e.resumeWarmWithStandards(resumeCtx, warm)
 		cancel()
 		if resumeErr != nil {
+			if errors.Is(resumeErr, state.ErrConflict) {
+				// A saved attempt or state transition belongs to another caller.
+				// Leave its lease intact; a subsequent request can retry routing.
+				return WakeResult{}, false, resumeErr
+			}
 			if e.discardWarmPromotion(ctx, warm, "resume_failed") {
 				warmCount--
 			}
@@ -144,7 +138,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 
-		fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+		fresh, publishErr := e.publishOwnedWarmWithStandards(ctx, receipt, state.RuntimeInstancePublication{
 			AccountID: acct.ID, AppID: app.ID, InstanceID: warm.ID, NodeID: warm.NodeID, WakeID: warm.WakeID,
 			ExpectedState: string(state.StateWarm), Fence: captured.SecretFence, ConfigFence: captured,
 			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID,
@@ -193,21 +187,21 @@ func (e *Engine) observeWarmResume(outcome string) {
 	}
 }
 
-// discardWarmPromotion destroys a paused lease and moves its row back to
-// PARKED. The conditional state write prevents a stale cleanup from parking a
-// row that another scheduler transition has already claimed.
+// discardWarmPromotion claims cleanup with the WARM -> PARKED CAS before
+// destroying the lease. A delayed caller cannot destroy a committed promotion;
+// the state claim also prevents an in-flight attempt from publishing afterward.
 func (e *Engine) discardWarmPromotion(ctx context.Context, warm state.Instance, reason string) bool {
 	cleanupCtx := context.WithoutCancel(ctx)
-	if err := e.timedDestroy(cleanupCtx, warm.NodeID, warm.ID, DestroyTimeout); err != nil {
-		e.log.Warn("sched: warm pool: destroy stale promotion candidate", "instance", warm.ID, "reason", reason, "err", err)
-	}
-	e.ledger.Release(warm.ID)
 	if err := updateInstanceStateCAS(cleanupCtx, e.store, warm.ID, string(state.StateWarm), string(state.StateParked)); err != nil {
 		if !errors.Is(err, state.ErrConflict) {
 			e.log.Warn("sched: warm pool: park stale promotion candidate", "instance", warm.ID, "reason", reason, "err", err)
 		}
 		return false
 	}
+	if err := e.timedDestroy(cleanupCtx, warm.NodeID, warm.ID, DestroyTimeout); err != nil {
+		e.log.Warn("sched: warm pool: destroy stale promotion candidate", "instance", warm.ID, "reason", reason, "err", err)
+	}
+	e.ledger.Release(warm.ID)
 	e.recordCommittedInstanceTransition(cleanupCtx, warm, state.StateWarm, state.StateParked, warm.AppID, "warm_pool_resume_failed", reason)
 	return true
 }
