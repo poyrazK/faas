@@ -124,7 +124,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 			defer cleanupRelease()
 		}
 		if err := executor.RetireEnvironmentQualificationExecution(cleanupCtx, frame, proof); err != nil {
-			result = errors.Join(result, err)
+			result = errors.Join(result, fmt.Errorf("qualification execution retirement for %s: %w", claimed.Resource, err))
 			return
 		}
 		e.releaseHostPortLeases(cleanupCtx, frame.NodeID, frame.InstanceID)

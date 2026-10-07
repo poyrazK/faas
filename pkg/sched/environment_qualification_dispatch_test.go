@@ -152,6 +152,9 @@ func TestEnvironmentQualificationGraphDispatchClaimsExecutesAndRetiresPrivateCoh
 	if fmt.Sprint(v.retired) != "[workload/api workload/api2]" || e.ledger.ResidentRAM() != 0 {
 		t.Fatal("binding graph runtime was not retired in reverse dependency order", v.retired)
 	}
+	if fmt.Sprint(v.captures) != "[workload/api2 workload/api]" {
+		t.Fatalf("graph capture did not run for every member in dependency order: %v", v.captures)
+	}
 	for _, request := range requests {
 		dep, err := store.DeploymentByID(t.Context(), request.DeploymentID)
 		attempt, ok := claimedInstances[request.Resource]
@@ -159,6 +162,59 @@ func TestEnvironmentQualificationGraphDispatchClaimsExecutesAndRetiresPrivateCoh
 		if !ok || err != nil || instanceErr != nil || !dep.EnvironmentWorkloadHeld() || dep.Status != state.DeploySnapshotting || ins.State != string(state.StateStopped) {
 			t.Fatal("qualification graph execution activated or leaked a member", dep, ins, err, instanceErr)
 		}
+		if _, err := store.EnvironmentQualificationSnapshotReceipt(t.Context(), attempt.ID); err != nil {
+			t.Fatalf("successful graph visit did not persist capture for %s: %v", request.Resource, err)
+		}
+	}
+}
+
+func TestEnvironmentQualificationGraphCaptureFailureKeepsPartialCohortUnqualified(t *testing.T) {
+	store, _, requests := queuedQualificationExecutionFixtureWithBindings(t,
+		map[string]api.EnvironmentServiceBinding{"backend": {Workload: "api2", EnvKey: "BACKEND_URL"}}, api.ExecutionModeRequest, api.ExecutionModeService)
+	var callerID string
+	for _, request := range requests {
+		if request.Resource == "workload/api" {
+			callerID = request.AppID
+		}
+	}
+	captureErr := errors.New("capture publication failed")
+	v := &qualificationGraphVMM{qualificationRuntimeVMM: newQualificationRuntimeVMM(&fakeVMM{}), callerID: callerID,
+		captureFailure: "workload/api", captureErr: captureErr}
+	e := newEngine(t, store, v, &fakeNotifier{}, "test-fc").WithEnvironmentQualificationServiceProxy(
+		func(context.Context, string) (string, error) { return "http://10.100.0.1:10081", nil })
+	instances := map[string]state.Instance{}
+	page, err := e.DispatchEnvironmentWorkloadQualificationGraphs(t.Context(), e.defaultLocalNodeID, "graph-scheduler", "", 1,
+		func(_ context.Context, live map[string]state.Instance) error {
+			instances = live
+			return nil
+		})
+	if !errors.Is(err, captureErr) || page.Executed != 0 || len(v.captures) != 1 || v.captures[0] != "workload/api2" {
+		t.Fatalf("partial capture was accepted as a complete graph: page=%+v captures=%v err=%v", page, v.captures, err)
+	}
+	if fmt.Sprint(v.retired) != "[workload/api workload/api2]" || e.ledger.ResidentRAM() != 0 {
+		t.Fatalf("capture failure did not retire the whole cohort: retired=%v ram=%d", v.retired, e.ledger.ResidentRAM())
+	}
+	if _, err := store.EnvironmentQualificationSnapshotReceipt(t.Context(), instances["workload/api2"].ID); err != nil {
+		t.Fatalf("completed member capture was not retained: %v", err)
+	}
+	if _, err := store.EnvironmentQualificationSnapshotReceipt(t.Context(), instances["workload/api"].ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("failed member received a capture receipt: %v", err)
+	}
+}
+
+func TestEnvironmentQualificationGraphDispatchRequiresCaptureBeforeClaim(t *testing.T) {
+	store, _, requests := queuedQualificationExecutionFixtureWithBindings(t,
+		map[string]api.EnvironmentServiceBinding{"backend": {Workload: "api2", EnvKey: "BACKEND_URL"}}, api.ExecutionModeRequest, api.ExecutionModeService)
+	v := newQualificationRuntimeVMM(&fakeVMM{})
+	e := newEngine(t, store, v, &fakeNotifier{}, "test-fc").WithEnvironmentQualificationServiceProxy(
+		func(context.Context, string) (string, error) { return "http://10.100.0.1:10081", nil })
+	page, err := e.DispatchEnvironmentWorkloadQualificationGraphs(t.Context(), e.defaultLocalNodeID, "graph-scheduler", "", 1,
+		func(context.Context, map[string]state.Instance) error { return nil })
+	ids, listErr := store.ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), e.defaultLocalNodeID, "", 1)
+	if !errors.Is(err, state.ErrConflict) || listErr != nil || len(ids) != 1 || ids[0] != requests[0].GraphID ||
+		page.Examined != 0 || page.Claimed != 0 || page.Executed != 0 || v.coldBoots != 0 || e.ledger.ResidentRAM() != 0 {
+		t.Fatalf("dispatch without durable capture support claimed or booted a graph: page=%+v ids=%v boots=%d ram=%d err=%v listErr=%v",
+			page, ids, v.coldBoots, e.ledger.ResidentRAM(), err, listErr)
 	}
 }
 

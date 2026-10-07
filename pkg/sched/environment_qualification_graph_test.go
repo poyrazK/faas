@@ -17,8 +17,12 @@ import (
 type qualificationGraphVMM struct {
 	*qualificationRuntimeVMM
 	boots, retired []string
+	captures       []string
+	captureProofs  map[string]state.EnvironmentQualificationSnapshot
 	callerSpec     AppSpec
 	callerID       string
+	captureFailure string
+	captureErr     error
 }
 
 func (v *qualificationGraphVMM) CreateEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, spec AppSpec) (*WakeOutcome, error) {
@@ -39,7 +43,30 @@ func (v *qualificationGraphVMM) RetireEnvironmentQualification(ctx context.Conte
 	evidence, err := v.qualificationRuntimeVMM.RetireEnvironmentQualification(ctx, frame)
 	// Each VM has its own native producer and immutable retirement receipt.
 	evidence.Retirement.ReceiptID, evidence.Retirement.NativeGeneration = uuid.NewString(), uuid.NewString()
+	if capture, ok := v.captureProofs[frame.InstanceID]; ok {
+		evidence.Retirement.NativeGeneration = capture.NativeGeneration
+		evidence.Retirement.KernelBootID = capture.KernelBootID
+	}
 	return evidence, err
+}
+
+func (v *qualificationGraphVMM) CaptureEnvironmentQualification(_ context.Context, frame state.EnvironmentQualificationExecution) (EnvironmentQualificationSnapshotEvidence, error) {
+	if frame.Resource == v.captureFailure {
+		return EnvironmentQualificationSnapshotEvidence{}, v.captureErr
+	}
+	v.captures = append(v.captures, frame.Resource)
+	capture := uuid.NewString()
+	snapshot := state.Snapshot{Tier: state.SnapshotTierWarm, StorageKey: state.SnapshotCaptureMemKey(frame.DeploymentID, state.SnapshotTierWarm, capture)}
+	proof := state.EnvironmentQualificationSnapshot{
+		CaptureID: capture, NativeGeneration: uuid.NewString(), KernelBootID: uuid.NewString(), StorageKey: snapshot.StorageKey,
+		VMStateStorageKey: state.SnapshotVMStateKey(snapshot), DriveStorageKey: state.SnapshotDriveKey(snapshot),
+		BackingStorageKey: state.SnapshotBackingKey(snapshot), MemBytes: 1024, VMStateBytes: 128, StoredBytes: 2048,
+	}
+	if v.captureProofs == nil {
+		v.captureProofs = map[string]state.EnvironmentQualificationSnapshot{}
+	}
+	v.captureProofs[frame.InstanceID] = proof
+	return EnvironmentQualificationSnapshotEvidence{Execution: frame, Snapshot: proof}, nil
 }
 
 func claimedQualificationGraphFixture(t *testing.T) (*state.MemStore, []state.EnvironmentWorkloadQualificationRequest) {

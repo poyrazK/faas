@@ -85,14 +85,18 @@ func (e *Engine) DispatchEnvironmentWorkloadQualifications(ctx context.Context, 
 
 // Dispatch service-binding graphs as a single durable cohort. Each graph gets
 // all member attempts atomically before the private dependency-first execution
-// window starts; successful return still does not qualify or activate it.
+// window starts. A successful visitor is followed by durable per-member capture
+// while the cohort is live; success still does not qualify or activate it.
 func (e *Engine) DispatchEnvironmentWorkloadQualificationGraphs(ctx context.Context, nodeID, workerID, afterGraphID string, limit int, visit EnvironmentQualificationGraphVisitor) (page EnvironmentQualificationGraphDispatchPage, result error) {
 	store, ok := e.store.(state.EnvironmentGitOpsQualificationGraphDispatchStore)
 	if !ok || visit == nil || !e.qualificationDispatchArgumentsValid(nodeID, workerID, afterGraphID, limit) {
 		return page, state.ErrInvalidArgument
 	}
 	if !e.qualificationDispatchCapabilitiesAvailable() || e.environmentQualificationServiceURL == nil {
-		return page, fmt.Errorf("qualification graph dispatch requires private binding and attempt-aware retirement adapters: %w", state.ErrConflict)
+		return page, fmt.Errorf("qualification graph dispatch requires private binding, capture and attempt-aware retirement adapters: %w", state.ErrConflict)
+	}
+	if !e.qualificationGraphCaptureCapabilitiesAvailable() {
+		return page, fmt.Errorf("qualification graph dispatch requires durable capture receipts: %w", state.ErrConflict)
 	}
 	if err := ctx.Err(); err != nil {
 		return page, err
@@ -116,7 +120,12 @@ func (e *Engine) DispatchEnvironmentWorkloadQualificationGraphs(ctx context.Cont
 		if err == nil {
 			page.Claimed++
 			graphCtx := context.WithValue(ctx, qualificationGraphDispatchNodeContextKey{}, nodeID)
-			err = e.WithEnvironmentQualificationGraphRuntimes(graphCtx, claimed, visit)
+			err = e.WithEnvironmentQualificationGraphRuntimes(graphCtx, claimed, func(graphCtx context.Context, instances map[string]state.Instance) error {
+				if err := visit(graphCtx, instances); err != nil {
+					return err
+				}
+				return e.CaptureEnvironmentWorkloadQualificationGraph(graphCtx, claimed, instances)
+			})
 			if err == nil {
 				page.Executed++
 			}
@@ -129,6 +138,12 @@ func (e *Engine) DispatchEnvironmentWorkloadQualificationGraphs(ctx context.Cont
 		page.NextCursor = ""
 	}
 	return page, result
+}
+
+func (e *Engine) qualificationGraphCaptureCapabilitiesAvailable() bool {
+	_, store := e.store.(state.EnvironmentQualificationSnapshotStore)
+	_, vmm := e.vmm.(EnvironmentQualificationSnapshotVMM)
+	return store && vmm
 }
 
 func (e *Engine) qualificationDispatchCapabilitiesAvailable() bool {

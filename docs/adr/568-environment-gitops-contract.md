@@ -2910,6 +2910,25 @@ retirement wiring, local retirement, native qualification restore/smoke, generat
 binding delivery and complete graph evidence remain outstanding. The combined PR
 is deferred until the requested scope is ready.
 
+### Capture complete private graph cohorts before retirement (2026-10-07)
+
+After an internal graph visitor succeeds, scheduler dispatch now captures every
+member through the snapshot adapter in dependency-first order while the whole
+private cohort is still live. Durable capture support is checked before the
+graph is claimed. A partial capture failure leaves earlier member receipts
+available for diagnosis, marks dispatch incomplete, and retires the entire
+cohort. Retirement errors now identify the workload whose durable execution
+retirement failed.
+
+Focused scheduler tests cover complete and partial cohorts, exact capture to
+retirement generation matching, capture replay/substitution, and refusal before
+claim when the durable capture adapter is absent. The environment-qualification
+scheduler test family passes on the local development host. This does not lift
+the native capture gate: the vmmd backend still fails closed until artifact
+retirement and qualification restore acceptance are implemented. Qualification
+polling, isolated smoke, restored readiness, graph activation and serving
+convergence remain gated; the combined PR remains deferred.
+
 
 ### Original artifact receipt validation (2026-10-06)
 
