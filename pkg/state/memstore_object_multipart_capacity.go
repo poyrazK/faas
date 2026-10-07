@@ -19,11 +19,15 @@ func (m *MemStore) AdmitObjectMultipartPart(_ context.Context, account, bucket, 
 
 func (m *MemStore) admitMultipartPartLocked(account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
 	now := m.clock().UTC()
+	if _, held := m.objectWriteFences[bucket]; held && token != "" {
+		return ErrObjectBucketWriteFenced
+	}
 	if !validMultipartCapacityUpload(m.objectMultipartUploads[id], account, bucket, false, now) || part < 1 || part > api.MaxMultipartParts || size < 1 || size > api.MaxObjectSinglePutBytes || maxObject < 1 || maxObject > api.MaxObjectUploadBytes {
 		return ErrConflict
 	}
 	transfer, exists := m.objectMultipartTransfers[id][part]
-	if token != "" && transfer.token != "" && transfer.unsafeUntil.After(now) {
+	_, reused := m.objectMultipartPartWriters[multipartPartWriterKey{id, part, token}]
+	if token != "" && (reused || m.multipartPartWriterPendingLocked(id, part) || transfer.token != "" && transfer.unsafeUntil.After(now)) {
 		return ErrConflict
 	}
 	old := m.objectMultipartPartGrants[id][part]
@@ -61,6 +65,9 @@ func (m *MemStore) admitMultipartPartLocked(account, bucket, id, token string, p
 		transfer.tracked = false
 	}
 	m.objectMultipartTransfers[id][part] = transfer
+	if token != "" {
+		m.reserveMultipartPartWriterLocked(id, part, token)
+	}
 	upload := m.objectMultipartUploads[id]
 	upload.PartRevision++
 	upload.UpdatedAt = now

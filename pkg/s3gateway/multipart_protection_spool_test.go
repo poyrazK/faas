@@ -49,3 +49,25 @@ func TestProtectedMultipartPartSpool(t *testing.T) {
 		})
 	}
 }
+
+// adr: 590
+func TestProtectedMultipartSpoolDoesNotProveForwardedBodyCompletion(t *testing.T) {
+	f := newMultipartCopyIntegrationWithProvider(t, state.NewMemStore(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("unexpected provider request") }))
+	r := httptest.NewRequest(http.MethodPut, "http://s3.test/assets/key", strings.NewReader("abc"))
+	incoming, err := newRequestIntegrityReader(r.Body, r.ContentLength, "UNSIGNED-PAYLOAD", r.Header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, _, cleanup, ok := f.handler.stageProtectedMultipartPart(httptest.NewRecorder(), r, requestContext{}, incoming)
+	if !ok {
+		t.Fatal("spool failed")
+	}
+	defer cleanup()
+	forwarded := newMultipartPartBodyReader(file, r.ContentLength, func(string) error { return nil })
+	if incoming.remaining != 0 || forwarded.Completed() {
+		t.Fatal("validated spool invented forwarding completion")
+	}
+	if _, err = io.Copy(io.Discard, forwarded); err != nil || !forwarded.Completed() {
+		t.Fatal("forwarded spool lacked observation", err)
+	}
+}

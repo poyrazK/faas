@@ -11,6 +11,13 @@ import (
 // Lock the environment before reading its flag head. Flag writers take this
 // same lock, so a publication proof remains valid through the graph commit.
 func readCloneFeatureFlagsTx(ctx context.Context, db pgx.Tx, accountID, projectID, environment string) (FeatureFlagVersion, error) {
+	return readCloneFeatureFlagsDB(ctx, db, accountID, projectID, environment, true)
+}
+
+// A false lockEnvironment is private to readers holding the configuration
+// synchronization clock and project guard. They must not lock a config row
+// behind a mutation waiting on that guard.
+func readCloneFeatureFlagsDB(ctx context.Context, db sqlc.DBTX, accountID, projectID, environment string, lockEnvironment bool) (FeatureFlagVersion, error) {
 	account, err := parsePgUUID(accountID)
 	if err != nil {
 		return FeatureFlagVersion{}, err
@@ -30,8 +37,10 @@ func readCloneFeatureFlagsTx(ctx context.Context, db pgx.Tx, accountID, projectI
 	if err != nil {
 		return FeatureFlagVersion{}, err
 	}
-	if _, err := sqlc.New().LockFeatureFlagEnvironment(ctx, db, p); err != nil {
-		return FeatureFlagVersion{}, mapErr(err)
+	if lockEnvironment {
+		if _, err := sqlc.New().LockFeatureFlagEnvironment(ctx, db, p); err != nil {
+			return FeatureFlagVersion{}, mapErr(err)
+		}
 	}
 	return flagPGGet(ctx, db, scope, p, 0)
 }

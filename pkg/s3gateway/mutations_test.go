@@ -27,7 +27,7 @@ func TestGatewayMutationTrackingProviderOutcomes(t *testing.T) {
 	}{
 		{"observed", 200, nil, nil, 0, 200},
 		{"server-error", 503, nil, nil, 1, 503},
-		{"accepted-not-complete", 202, nil, nil, 1, 200},
+		{"accepted-not-complete", 202, nil, nil, 1, 503},
 		{"lost-reply", 0, errors.New("connection lost"), nil, 1, 503},
 		{"completion-record-lost", 200, nil, errors.New("database unavailable"), 1, 503},
 	} {

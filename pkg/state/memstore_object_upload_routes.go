@@ -97,6 +97,9 @@ func (m *MemStore) RecordObjectUploadCompletion(_ context.Context, completion Ob
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, held := m.objectWriteFences[completion.BucketID]; held {
+		return ObjectUploadCompletion{}, ErrObjectBucketWriteFenced
+	}
 	if (!m.objectUploadRoutes[completion.RouteID].Encryption.Empty() || m.objectBucketDefaultRequiresTrackingLocked(completion.BucketID)) && completion.Status != "rejected" {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
@@ -116,6 +119,9 @@ func (m *MemStore) CreateObjectUploadIntent(_ context.Context, intent ObjectUplo
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, held := m.objectWriteFences[intent.BucketID]; held {
+		return ObjectUploadCompletion{}, ErrObjectBucketWriteFenced
+	}
 	if !m.objectUploadRoutes[intent.RouteID].Encryption.Empty() || m.objectBucketDefaultRequiresTrackingLocked(intent.BucketID) {
 		return ObjectUploadCompletion{}, ErrConflict
 	}

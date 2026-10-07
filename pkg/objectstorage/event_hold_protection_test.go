@@ -172,11 +172,29 @@ func TestEventHoldProtectionRecoveryHTTP(t *testing.T) {
 					if e != nil {
 						t.Fatal(e)
 					}
+					fences := f.st.(state.ObjectBucketWriteFenceStore)
+					fence, e := fences.AcquireObjectBucketWriteFence(t.Context(), f.bucket, uuid.NewString())
+					if e != nil || fence.Protections != 1 || fence.Requests != 0 {
+						t.Fatal("prepared protection not counted", fence, e)
+					}
+					freshInput := input
+					freshInput.ID = uuid.NewString()
+					if _, e := svc.Request(t.Context(), f.bucket, freshInput); !errors.Is(e, state.ErrObjectBucketWriteFenced) || puts.Load() != 0 {
+						t.Fatal("capture admitted another mutation", e, puts.Load())
+					}
+					assertCaptureBusy := func() {
+						t.Helper()
+						observed, e := fences.ReadObjectBucketWriteFence(t.Context(), f.bucket, fence.Token)
+						if e != nil || observed.Protections != 1 {
+							t.Fatal("uncertain original protection lost", observed, e)
+						}
+					}
 					svc.EventHolds = false // accepted intent survives enrollment removal before dispatch
 					j, e = svc.Reconcile(t.Context(), f.bucket, j.ID)
 					if e == nil || j.State != "waiting" || !j.Dispatched || j.EventHoldBaseline == nil || puts.Load() != 1 {
 						t.Fatal("lost ACK discarded custody", j, e, puts.Load())
 					}
+					assertCaptureBusy()
 					raw, _ := json.Marshal(state.ViewObjectVersionProtection(j))
 					if !null && strings.Contains(string(raw), native) || strings.Contains(string(raw), "baseline") {
 						t.Fatal("private evidence leaked", string(raw))
@@ -220,6 +238,7 @@ func TestEventHoldProtectionRecoveryHTTP(t *testing.T) {
 					if e == nil || j.State != "waiting" || puts.Load() != 1 {
 						t.Fatal("incomplete readback settled or repeated mutation", j, e)
 					}
+					assertCaptureBusy()
 					mu.Lock()
 					badRead = false
 					mu.Unlock()
@@ -227,6 +246,10 @@ func TestEventHoldProtectionRecoveryHTTP(t *testing.T) {
 					j, e = svc.Reconcile(t.Context(), f.bucket, j.ID)
 					if e != nil || j.State != "ready" || puts.Load() != 1 {
 						t.Fatal("disabled recovery repeated mutation", j, e)
+					}
+					observed, e := fences.ReadObjectBucketWriteFence(t.Context(), f.bucket, fence.Token)
+					if e != nil || observed.Protections != 0 {
+						t.Fatal("settled original protection still counted", observed, e)
 					}
 					replay, e := svc.Request(t.Context(), f.bucket, input)
 					if e != nil || replay.ID != j.ID || replay.State != "ready" {

@@ -19,5 +19,15 @@ func (s *server) abandonProjectEnvironmentCloneObjectWriteFences(ctx context.Con
 	if err != nil {
 		return lease, err
 	}
+	fences, err := store.ProjectEnvironmentCloneObjectWriteFencesForLease(ctx, lease)
+	if err != nil {
+		return lease, err
+	}
+	if len(fences) != 0 {
+		lease, err = s.resumeCloneObjectGrantRetirementsForAbandonment(ctx, lease, fences)
+		if err != nil {
+			return lease, err
+		}
+	}
 	return lease, store.AbandonProjectEnvironmentCloneObjectWriteFences(ctx, lease)
 }

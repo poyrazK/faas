@@ -177,12 +177,18 @@ jobs:
       # repository accumulates baseline coverage; the table identifies tests
       # that are absent or already passing on the base.
       - name: advisory regression pin report
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
           # Bound analysis memory after repeated hosted-runner shutdowns.
           GOMEMLIMIT: 3GiB
           GOGC: 75
@@ -203,6 +209,11 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
       - name: vet
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: go vet ./...
       - name: build
         run: make build
@@ -533,9 +544,8 @@ jobs:
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
-    # A cold race build can consume most of 20m before the handler suite runs.
-    # Retain the per-package test deadline and leave time for upload/cleanup.
-    timeout-minutes: 40
+    # Include cold APID race compilation and the full PostgreSQL API suite.
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -618,13 +628,19 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-16
       - name: unit tests (pg shard 1)
+        # Bound cold APID race compilation while retaining the recovery boundary.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         # Ledger recovery requires the local Unix-socket/UTC authority boundary.
         # All tests and coverage still run; the private cluster supplies it.
         run: |
           scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'PG_TESTS'
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
-          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -race -count=1 -p 4 -timeout=30m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           PG_TESTS
 
       - name: sdk-check
@@ -1201,9 +1217,9 @@ jobs:
       GOVULNCHECK_VERSION: "1.7.0"
       # The API and CLI test binaries compile the large state package.
       # Serialize package builds and bound each compiler on hosted runners.
-      GOFLAGS: "-p=1"
+      GOFLAGS: '-p=1 "-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
       GOMAXPROCS: "2"
-      GOGC: "50"
+      GOGC: "10"
       GOMEMLIMIT: 2GiB
     steps:
       - uses: actions/checkout@v7
@@ -1748,7 +1764,7 @@ jobs:
   operation-sdk-acceptance:
     name: operations (transaction + HTTP recovery + cross-SDK)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     services:
@@ -1791,6 +1807,13 @@ jobs:
           npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
           python -m pip install -e sdk/python -r sdk/commit-tests/requirements.txt
       - name: producer and handler transaction acceptance
+        # APID test DWARF generation exceeds hosted-runner memory on cold builds.
+        # Omit test debug metadata and serialize its backend; keep optimization.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make test-commit-sdk test-operation-sdk
 
   # ADR-377: exercise the actual runtime SDK, control plane, gateway and
@@ -1849,6 +1872,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: sdk/node/package-lock.json
       - name: customer-aware feature flag acceptance
+        # APID test DWARF generation exceeds hosted-runner memory on cold builds.
+        # Omit test debug metadata and serialize its backend; keep optimization.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make test-flags
       - name: save Flags acceptance Go cache
         if: always() && !cancelled()

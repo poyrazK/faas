@@ -5028,7 +5028,10 @@
       "created_at",
       "id",
       "kind",
-      "physical_name"
+      "multipart_part_writer_id",
+      "multipart_upload_id",
+      "physical_name",
+      "upload_id"
     ],
     "kind": "operational"
   },
@@ -5172,6 +5175,36 @@
       "scanned_uploads",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_multipart_initiation_dispatches",
+    "columns": [
+      "dispatch_token",
+      "dispatched",
+      "multipart_upload_id",
+      "provider_upload_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_multipart_part_writers",
+    "columns": [
+      "backend_fingerprint",
+      "backend_id",
+      "body_sha256",
+      "bucket_id",
+      "copy_intent",
+      "dispatched",
+      "id",
+      "managed",
+      "part_number",
+      "physical_name",
+      "put_intent",
+      "settled",
+      "transfer_token",
+      "upload_id"
     ],
     "kind": "operational"
   },
@@ -6227,6 +6260,28 @@
       "configuration_hash",
       "operation_id",
       "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_configuration_clock",
+    "columns": [
+      "generation",
+      "singleton"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_configuration_guards",
+    "columns": [
+      "account_id",
+      "generation",
+      "held_at",
+      "operation_id",
+      "project_id",
+      "source_environment",
+      "source_revision_hash",
+      "state"
     ],
     "kind": "operational"
   },

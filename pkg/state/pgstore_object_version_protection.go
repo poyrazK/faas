@@ -85,6 +85,13 @@ func (s *PgStore) BeginObjectVersionProtection(ctx context.Context, j ObjectVers
 	if !errors.Is(err, ErrNotFound) {
 		return j, err
 	}
+	_, err = q.ObjectBucketWriteFenceRead(ctx, tx, mustPgUUID(j.BucketID))
+	if err == nil {
+		return j, ErrObjectBucketWriteFenced
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return j, mapErr(err)
+	}
 	active, err := q.ObjectVersionProtectionActive(ctx, tx, mustPgUUID(j.BucketID))
 	if err == nil {
 		old, e := readProtection(ctx, tx, pgUUIDString(active))
