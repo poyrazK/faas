@@ -338,7 +338,7 @@ policy history exists so completed receipts cannot silently disappear.
 
 ## Failed creation custody and compensation
 
-Apply `20261007103000000_managed_postgres_creation_receipts.sql` before deploying
+Apply `20261007112111335_managed_postgres_creation_receipts.sql` before deploying
 creation-custody recovery (ADR-638). The private creation journal is separate
 from verified restore proofs and retained snapshot receipts. Its requested point
 is an intent fence; it is never evidence of restored contents or retention.
