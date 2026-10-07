@@ -30,7 +30,25 @@ Public upload-route tests race concurrent dispatches against the same request
 budget and verify that only the remaining admitted request reaches the writer.
 The local wire fixture does not qualify native GCS or production routing.
 
+Native GCS qualification is a separate opt-in journey described in
+[ADR-628](adr/628-gcs-tracked-writes-and-native-generations.md). The provider
+journey covers native receipts, generation-fenced copies and deletions,
+version controls and reads, multipart copy, and managed AES256. The local
+API/gateway journey uses the built CLI against caller-provisioned disposable
+GCS buckets. It covers file upload/download, automatic multipart, receipt and
+session inspection, encryption controls, copy grants, deletion, inventories
+and safety usage. Neither journey qualifies production routing or every CLI
+argument. Object Lock, KMS/DSSE, conditional writes, version-specific tagging
+and checksum-mode version reads remain unsupported by the GCS adapter.
+
 ## Production preparation
+
+The release must include both gateway safety accounting (ADR-627) and the
+native GCS transfer/generation contracts (ADR-628), with their current-head CI
+green. Publish and verify a signed release through the normal release pipeline;
+use `cd-platform.yml` with the environment belonging to the target fleet. For
+the `gregale-prod` GCP fleet that environment is `production-us`. Complete the
+fleet release acceptance gates before object-storage activation.
 
 Keep `s3_enabled=false` while rolling out a reviewed release containing the
 new metering code to apid, s3-gatewayd and gatewayd-public. All three serving
@@ -98,5 +116,8 @@ in this preview until their bypass paths have bounded meters.
 
 On a qualification failure, close the global flag through the same operator API
 and finish cleanup. Do not replace stale evidence with fabricated reports.
+Preserve the upgraded deletion journal: the GCS migration refuses to roll back
+while captured native generation fences exist. Disabling admission preserves
+metadata and cleanup; it does not immediately revoke previously issued URLs.
 Provider-cost reconciliation, exact stored-time billing and a v2 billing cutover
 remain separate work.
