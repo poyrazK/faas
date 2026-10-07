@@ -746,6 +746,10 @@ type Engine struct {
 	// to fast-forward the CapacityFreshness budget without sleeping.
 	now func() time.Time
 
+	// pressurePark is the reaper's latest list of idle instances a wake
+	// refused for fleet capacity may park (ADR-643).
+	pressurePark pressureParkView
+
 	// egressAbuseRecycles is each account's recent ADR-361 egress abuse
 	// recycle times (fan-out or flood), for the escalation to the account
 	// abuse hold. It is per schedd and in memory: a restart forgets it,
@@ -1678,6 +1682,16 @@ type WakeResult struct {
 // skips Phase 1 explicitly so a gateway can demand a new instance
 // even when others are already RUNNING.
 func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
+	res, err := e.wake(ctx, appID, deploymentID, scope, trigger)
+	// ADR-643: a gateway wake refused for fleet capacity parks one idle
+	// instance of another app and retries once.
+	if e.parkForCapacity(ctx, appID, trigger, err) {
+		res, err = e.wake(ctx, appID, deploymentID, scope, trigger)
+	}
+	return res, err
+}
+
+func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	if scope == "" {
 		scope = ScopeFrom(ctx)
 	}
@@ -2375,6 +2389,14 @@ func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string
 // (legacy single-deployment behaviour). Stamped on the ctx via
 // WithScope so resolveApp / loadAPIEnv read the same value.
 func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
+	res, err := e.admitInstance(ctx, appID, deploymentID, scope, trigger)
+	if e.parkForCapacity(ctx, appID, trigger, err) {
+		res, err = e.admitInstance(ctx, appID, deploymentID, scope, trigger)
+	}
+	return res, err
+}
+
+func (e *Engine) admitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	ctx = WithScope(ctx, scope)
 	if trigger == TriggerDeploymentSmoke && deploymentID == "" {
 		return WakeResult{}, errors.New("sched: deployment smoke requires deployment_id")

@@ -2594,6 +2594,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// instance set. The observation is best-effort and never changes the
 	// lifecycle decision if the audit write is unavailable.
 	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
+	l.engine.publishPressureParkCandidates(SelectPressureParkCandidates(now, snapshot), now)
 	resident := l.engine.Ledger().ResidentRAM()
 	// instanceToApp (PR-C review fix): O(N) instance→app map shared
 	// between the idle and aggressive reaper branches. The pre-PR-C
