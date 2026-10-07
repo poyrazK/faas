@@ -32,6 +32,16 @@ complete host/domain coverage and authoritative DNS still require acceptance.
 No daemon starts this collector automatically, and no inventory clears a pending
 withdrawal or grants a retirement lease.
 
+[ADR-618](../adr/618-private-cloudflare-dns-configuration-inventory.md) adds a
+separate private Cloudflare configuration collector for an explicitly reviewed
+zone ID/name, using a DNS Read token. It scans every configured record
+twice, validates complete pagination and brackets the scans with zone-detail
+reads. It preserves DNS-only origins, wildcards, IPv6, aliases and delegations;
+other record types and opaque metadata remain represented by digests. Provider
+configuration is not proof of served DNS, effective CDN/Worker routing, external
+aliases, other zones or native sockets. There is no automatic collection, provider
+write or retirement authority. Keep execution and private deployment flags off.
+
 Caddy must reduce the validated proxy chain to one address because the internal
 gateway deliberately rejects ambiguous `X-Forwarded-For` values. For a
 Cloudflare-fronted origin, configure Caddy with Cloudflare's current published

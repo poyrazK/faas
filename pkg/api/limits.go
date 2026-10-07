@@ -8776,6 +8776,20 @@ const (
 	RuntimeUpgradePublicEdgeCaddyNameMaxBytes   = 128
 )
 
+// Private Cloudflare DNS configuration inventory bounds (ADR-618).
+const (
+	RuntimeUpgradeDNSResponseMaxBytes   = 1 << 20
+	RuntimeUpgradeDNSCollectionMaxBytes = 16 << 20
+	RuntimeUpgradeDNSRecordLimit        = 4096
+	RuntimeUpgradeDNSPageSize           = 100
+	RuntimeUpgradeDNSNameServerLimit    = 16
+	RuntimeUpgradeDNSProviderIDBytes    = 16
+	RuntimeUpgradeDNSRecordTypeMaxBytes = 16
+	RuntimeUpgradeDNSJSONDepthLimit     = 16
+	RuntimeUpgradeDNSAPITokenMaxBytes   = 256
+	RuntimeUpgradeDNSRecordTTLMax       = 86400
+)
+
 // Private runtime qualification collector budgets (ADR-601).
 const (
 	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)
