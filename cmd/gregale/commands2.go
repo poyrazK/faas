@@ -2388,6 +2388,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// source I/O; this prevents a stray token from bypassing --dry-run or
 	// changing the target app.
 	if fs.NArg() != 0 {
+		// Every other command names the app with --app <slug>; here --app is
+		// the shape selector, so `deploy --app my-app` left the slug behind as
+		// a positional (production-us hunt #5, H5-26). Point at --name.
+		if explicitAppFlag(fs) && !strings.HasPrefix(fs.Arg(0), "-") {
+			return printErr("Invalid arguments", fmt.Errorf(
+				"gregale deploy names the app with --name; --app only selects the app shape. Did you mean `gregale deploy --name %s`?",
+				fs.Arg(0)))
+		}
 		return printErr("Invalid arguments", fmt.Errorf(
 			"gregale deploy accepts flags only; unexpected positional arguments: %s",
 			strings.Join(fs.Args(), " ")))
@@ -4703,6 +4711,13 @@ func mergeLeadingSlug(app *string, slug string) error {
 	}
 	*app = slug
 	return nil
+}
+
+// explicitAppFlag reports whether --app was passed to a flag set.
+func explicitAppFlag(fs *flag.FlagSet) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == "app" })
+	return set
 }
 
 // cmdTraffic dispatches the implemented traffic leaves.
