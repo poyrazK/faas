@@ -58,6 +58,7 @@ jobs:
         run: make data-api-acceptance
       - name: Verify credential qualification, lifecycle and CLI integration
         env:
+          FAAS_PGTEST_TEMPLATE_DATABASE: "1"
           GOGC: 30
           GOMEMLIMIT: 2GiB
           GOMAXPROCS: 2
