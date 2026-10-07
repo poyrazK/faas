@@ -105,7 +105,7 @@ type LifecycleQualificationReport struct {
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 6
+const QualificationArtifactVersion = 7
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
@@ -117,7 +117,8 @@ var requiredProviderQualificationChecks = [...]string{
 }
 
 var restoreQualificationChecks = [...]string{
-	"restore_prepare", "restore", "restore_observed", "restore_ready",
+	"restore_source_identity", "restore_prepare", "restore", "restore_lineage", "restore_observed", "restore_ready",
+	"restore_idempotent", "restore_idempotent_lineage",
 	"restore_credentials_issue", "restore_credentials_valid", "restore_data_verified", "restore_credentials_isolated", "restore_credentials_revoke",
 	"restore_delete", "restore_delete_complete", "restore_cleanup",
 }
@@ -646,6 +647,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	restoreAttempted := false
 	restoreDeleted := false
 	restorePointInTime := time.Time{}
+	restoreSourceResourceID := providerResourceID
 	deleted := false
 	credentialIssued := false
 	restoreCredentialIssued := false
@@ -683,7 +685,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			cleanupResult, cleanupErr := qualifyProviderDelete(cleanupCtx, provider, options.PollInterval, DeleteRequest{
 				ResourceID:              restoreResourceID,
 				ProviderResourceID:      restoreTargetProviderResourceID,
-				RestoreSourceResourceID: providerResourceID,
+				RestoreSourceResourceID: restoreSourceResourceID,
 				RestorePointInTime:      restorePointInTime,
 				IdempotencyKey:          qualificationKey("restore-delete", options.ResourceID),
 			})
@@ -741,6 +743,14 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		return report, resultErr
 	}
 	record("inspect_observed", nil)
+	if options.Spec.RestoreWindowSeconds > 0 {
+		if !validDataResourceID(inspected.DataResourceID) {
+			record("restore_source_identity", ErrUnavailable)
+			return report, resultErr
+		}
+		restoreSourceResourceID = inspected.DataResourceID
+		record("restore_source_identity", nil)
+	}
 
 	windowTo := time.Now().UTC().Truncate(time.Hour)
 	usage, usageErr := provider.Usage(ctx, providerResourceID, UsageWindow{From: windowTo.Add(-time.Hour), To: windowTo})
@@ -865,13 +875,14 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		}
 		restorePointInTime = probe.PointInTime
 		restoreAttempted = true
-		restored, restoreErr := provider.Restore(ctx, RestoreRequest{
+		restoreRequest := RestoreRequest{
 			ResourceID:       restoreResourceID,
-			SourceResourceID: providerResourceID,
+			SourceResourceID: restoreSourceResourceID,
 			Spec:             options.Spec,
 			PointInTime:      restorePointInTime,
 			IdempotencyKey:   qualificationKey("restore", options.ResourceID),
-		})
+		}
+		restored, restoreErr := provider.Restore(ctx, restoreRequest)
 		restoreTargetProviderResourceID = restored.ProviderResourceID
 		if !record("restore", restoreErr) {
 			return report, resultErr
@@ -880,14 +891,27 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			record("restore_observed", ErrUnavailable)
 			return report, resultErr
 		}
+		if !record("restore_lineage", validateCloneRestoreObservation(Database{RestoreSourceResourceID: restoreSourceResourceID, RestorePointInTime: restorePointInTime}, restored)) {
+			return report, resultErr
+		}
 		restoreTargetProviderResourceID = restored.ProviderResourceID
 		report.Restore.Restored = true
 		record("restore_observed", nil)
-		ready, readyErr := qualifyProviderReady(ctx, provider, restoreTargetProviderResourceID, options.PollInterval)
+		ready, readyErr := qualifyProviderReadyWithRestore(ctx, provider, restoreTargetProviderResourceID, options.PollInterval, &restoreRequest)
 		if readyErr == nil && (ready.ProviderResourceID != restoreTargetProviderResourceID || ready.Spec != options.Spec) {
 			readyErr = ErrUnavailable
 		}
 		if !record("restore_ready", readyErr) {
+			return report, resultErr
+		}
+		replayed, replayErr := provider.Restore(ctx, restoreRequest)
+		if replayErr == nil && replayed.ProviderResourceID != restoreTargetProviderResourceID {
+			replayErr = ErrConflict
+		}
+		if !record("restore_idempotent", replayErr) {
+			return report, resultErr
+		}
+		if !record("restore_idempotent_lineage", validateCloneRestoreObservation(Database{RestoreSourceResourceID: restoreSourceResourceID, RestorePointInTime: restorePointInTime}, replayed)) {
 			return report, resultErr
 		}
 		restoreCredentialRequest = CredentialRequest{ProviderResourceID: restoreTargetProviderResourceID,
@@ -921,7 +945,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		deletedRestore, deleteRestoreErr := qualifyProviderDelete(ctx, provider, options.PollInterval, DeleteRequest{
 			ResourceID:              restoreResourceID,
 			ProviderResourceID:      restoreTargetProviderResourceID,
-			RestoreSourceResourceID: providerResourceID,
+			RestoreSourceResourceID: restoreSourceResourceID,
 			RestorePointInTime:      restorePointInTime,
 			IdempotencyKey:          qualificationKey("restore-delete", options.ResourceID),
 		})
