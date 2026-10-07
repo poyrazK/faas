@@ -126,7 +126,9 @@ const slow = controllers.map(async controller => {
   process.exitCode = 1;
 });
 `, slowRequests)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Keep the child bounded, but allow Node to start under a busy CI runner.
+	// The test still asserts cancellation and guest latency on the 150 ms signal.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, node, "-e", script, bridge.URL).CombinedOutput()
 	if err != nil {
