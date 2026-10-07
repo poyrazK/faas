@@ -35,9 +35,9 @@ class WorkerScaling:
 
         metric: str = self.metric
 
-        name = self.name
-
         target = self.target
+
+        name = self.name
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -49,7 +49,7 @@ class WorkerScaling:
                 "target": target,
             }
         )
-        if not isinstance(name, Unset):
+        if name is not UNSET:
             field_dict["name"] = name
 
         return field_dict
@@ -63,16 +63,16 @@ class WorkerScaling:
 
         metric = check_worker_scaling_metric(d.pop("metric"))
 
-        name = d.pop("name", UNSET)
-
         target = d.pop("target")
+
+        name = d.pop("name", UNSET)
 
         worker_scaling = cls(
             min_=min_,
             max_=max_,
             metric=metric,
-            name=name,
             target=target,
+            name=name,
         )
 
         worker_scaling.additional_properties = d
