@@ -1846,6 +1846,12 @@ gregale app my-api --no-maintenance --streaming-enabled --websocket-enabled --ro
 gregale app my-api --consumer-auth-mode required --json
 ```
 
+### app health
+
+Explain default-scope serving health and missing evidence
+
+`gregale app <slug> health`
+
 ### app scale
 
 Set max_concurrency / resource profile / RAM / CPU
@@ -3398,6 +3404,24 @@ Examples:
 ```sh
 gregale deployment summary v42 --app my-api
 gregale deployment wait v42 --app my-api
+```
+
+### deployment runtime
+
+Inspect runtime identity or preview a published runtime change
+
+`gregale deployment runtime [--app <SLUG>] [--target <RELEASE_ID>] <ID|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug for a vN revision |  |
+| `--target <RELEASE_ID>` | published runtime release to preview without applying |  |
+
+Examples:
+
+```sh
+gregale deployment runtime v42 --app my-function
+gregale deployment runtime v42 --app my-function --target RELEASE_ID --json
 ```
 
 ### deployment advance

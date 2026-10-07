@@ -145,7 +145,7 @@ func cmdWebhooksAdd(args []string) int {
 	target := fs.String("target-url", "", "HTTPS target URL (required)")
 	secret := fs.String("secret", "", "HMAC-SHA256 secret (optional; auto-minted if empty)")
 	var events multiFlag
-	fs.Var(&events, "event", "event name (repeat for multiple); empty = all events")
+	fs.Var(&events, "event", "event name (repeat for multiple); empty = standard events; select app.health.changed explicitly")
 	policy := fs.String("retry-policy", "default", "retry policy: default|aggressive|none")
 	format := fs.String("delivery-format", "json", "delivery format: json|cloudevents")
 	if err := fs.Parse(args); err != nil {
@@ -479,6 +479,7 @@ var webhookIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-
 var validAppWebhookEvents = map[string]struct{}{
 	"app.parked":                {},
 	"app.woken":                 {},
+	"app.health.changed":        {},
 	"deployment.live":           {},
 	"deployment.failed":         {},
 	"rollout.completed":         {},
@@ -489,6 +490,7 @@ var validAppWebhookEvents = map[string]struct{}{
 
 var webhookEventVocab = []string{
 	"app.parked", "app.woken", "deployment.live", "deployment.failed",
+	"app.health.changed",
 	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",
 }
 

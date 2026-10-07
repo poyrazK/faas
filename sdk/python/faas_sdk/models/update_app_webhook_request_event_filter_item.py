@@ -1,6 +1,7 @@
 from typing import Literal
 
 UpdateAppWebhookRequestEventFilterItem = Literal[
+    "app.health.changed",
     "app.parked",
     "app.woken",
     "debug.regression.detected",
@@ -32,6 +33,7 @@ UpdateAppWebhookRequestEventFilterItem = Literal[
 ]
 
 UPDATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[UpdateAppWebhookRequestEventFilterItem] = {
+    "app.health.changed",
     "app.parked",
     "app.woken",
     "debug.regression.detected",

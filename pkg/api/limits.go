@@ -8842,3 +8842,172 @@ const (
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
+
+// App health is a read-only, bounded evidence projection, not a probe loop.
+const (
+	AppHealthInstanceLimit          = 256
+	AppHealthDeploymentHistoryLimit = 50
+	AppHealthMetricsRange           = "5m"
+	AppHealthMetricsWindow          = 5 * time.Minute
+	AppHealthEvidenceMaxAge         = 2 * time.Minute
+	AppHealthCollectionTimeout      = 10 * time.Second
+	AppHealthFindingLimit           = 64
+	AppHealthMetricsDeploymentLimit = 256
+	AppHealthCounterMinSamples      = 2
+	AppHealthMinRequests            = 50
+	AppHealthMinServerErrors        = 5
+	AppHealthWarningErrorRatePct    = 5.0
+	AppHealthUnhealthyErrorRatePct  = 25.0
+	AppHealthCollectorInterval      = 30 * time.Second
+	AppHealthCollectorIdleInterval  = time.Second
+	AppHealthCollectorLease         = 30 * time.Second
+	AppHealthCollectorBatch         = 20
+	AppHealthHistoryPageSize        = 20
+	AppHealthHistoryMaxPage         = 100
+	AppHealthHistoryMaxEntries      = 100
+	AppHealthHistoryMaxBytes        = 4 * 1024 * 1024
+	AppHealthHistoryEntryMaxBytes   = 64 * 1024
+	AppHealthHistoryMaxAge          = 30 * 24 * time.Hour
+	AppHealthHistoryPruneBatch      = 100
+	AppHealthNotificationCooldown   = 5 * time.Minute
+	AppHealthNotificationStateBytes = 8 * 1024
+	AppHealthNotificationRecipients = 100
+)
+
+// Runtime release catalogue and metadata bounds (ADR-682).
+const (
+	RuntimeReleaseCatalogLimit         = 50
+	RuntimeReleaseArtifactKeyMaxBytes  = 1024
+	RuntimeReleaseLayoutMaxBytes       = 64
+	RuntimeReleaseSidecarMaxBytes      = 4096
+	RuntimeUpgradeSourceFieldMaxBytes  = 4096             // frozen build root or function handler
+	RuntimeUpgradeAcceptanceMaxAge     = 15 * time.Minute // starts at candidate cold-boot dispatch
+	RuntimeUpgradeOperationMaxAge      = 30 * time.Minute // private executor, includes queue and readiness
+	RuntimeUpgradeOperationLease       = 30 * time.Second
+	RuntimeUpgradeOperationInterval    = 5 * time.Second
+	RuntimeUpgradeVerificationMaxAge   = 30 * time.Minute // from cutover, never extended by enrollment/retry
+	RuntimeUpgradeVerificationMaxBytes = 8192             // bounded safe journal evidence
+	RuntimeUpgradeWorkerRetryMax       = 30 * time.Second
+	RuntimeQualificationReportMaxBytes = 64 * 1024
+	RuntimeQualificationLogMaxBytes    = 64 * 1024 * 1024
+	RuntimeQualificationEventMaxBytes  = 256 * 1024
+	RuntimeQualificationJSONMaxDepth   = 16
+)
+
+// Private runtime gateway confirmation bounds (ADR-693).
+const (
+	RuntimeUpgradeGatewayReceiptMaxAge         = time.Minute
+	RuntimeUpgradeGatewayHeartbeatMaxAge       = time.Minute
+	RuntimeUpgradeGatewayRepairInterval        = 15 * time.Second
+	RuntimeUpgradeGatewayRepairTimeout         = 10 * time.Second
+	RuntimeUpgradeGatewayRepairBatch           = 32
+	RuntimeUpgradeGatewaySessionLimit          = 64
+	RuntimeUpgradeActivityKeyLimit             = 4096  // active app/deployment pairs per gateway process (ADR-696)
+	RuntimeUpgradeActivityForwardLimit         = 65536 // tracked concurrent forwards per process (ADR-696)
+	RuntimeUpgradeActivityFenceLimit           = 256   // held predecessor fences per process (ADR-697)
+	RuntimeUpgradeActivityFenceBindingMaxBytes = 73    // operation UUID + ':' + optional roster UUID
+	RuntimeUpgradeDrainDeploymentLimit         = 256   // complete live-row routing snapshot (ADR-697)
+	RuntimeUpgradeDrainReceiptMaxAge           = time.Minute
+	RuntimeUpgradeIngressProbeTimeout          = 2 * time.Second // private connection identity + membership check (ADR-698)
+	RuntimeUpgradeIngressIdentityMaxBytes      = 1024
+	RuntimeUpgradeIngressTokenBytes            = 32
+	RuntimeUpgradePublicEdgeLimit              = 64               // reviewed public processes (ADR-699)
+	RuntimeUpgradePublicEdgeWithdrawalLimit    = 64               // unresolved withdrawn public sessions (ADR-701)
+	RuntimeUpgradePublicEdgeTopologyTimeout    = 10 * time.Second // read-only selected Caddy proxy binding (ADR-702)
+	RuntimeUpgradePublicEdgeProxyMaxBytes      = 64 << 10
+	RuntimeUpgradePublicEdgeConfigPathMaxBytes = 1024
+)
+
+// Private whole declared Caddy inventory bounds (ADR-703).
+const (
+	RuntimeUpgradePublicEdgeCaddyConfigMaxBytes = 1 << 20 // whole declared Caddy config (ADR-703)
+	RuntimeUpgradePublicEdgeCaddyServerLimit    = 32
+	RuntimeUpgradePublicEdgeCaddyListenerLimit  = 128
+	RuntimeUpgradePublicEdgeCaddyRouteLimit     = 512
+	RuntimeUpgradePublicEdgeCaddyHandlerLimit   = 1024
+	RuntimeUpgradePublicEdgeCaddyMatcherLimit   = 1024
+	RuntimeUpgradePublicEdgeCaddyHostLimit      = 1024
+	RuntimeUpgradePublicEdgeCaddyDepthLimit     = 16
+	RuntimeUpgradePublicEdgeCaddyNameMaxBytes   = 128
+)
+
+// Private Cloudflare DNS configuration inventory bounds (ADR-704).
+const (
+	RuntimeUpgradeDNSResponseMaxBytes   = 1 << 20
+	RuntimeUpgradeDNSCollectionMaxBytes = 16 << 20
+	RuntimeUpgradeDNSRecordLimit        = 4096
+	RuntimeUpgradeDNSPageSize           = 100
+	RuntimeUpgradeDNSNameServerLimit    = 16
+	RuntimeUpgradeDNSProviderIDBytes    = 16
+	RuntimeUpgradeDNSRecordTypeMaxBytes = 16
+	RuntimeUpgradeDNSJSONDepthLimit     = 16
+	RuntimeUpgradeDNSAPITokenMaxBytes   = 256
+	RuntimeUpgradeDNSRecordTTLMax       = 86400
+)
+
+// Private selected served-DNS/delegation observation bounds (ADR-705).
+const (
+	RuntimeUpgradeServedDNSQuestionLimit = 32
+	RuntimeUpgradeServedDNSEndpointLimit = 32
+	RuntimeUpgradeServedDNSExchangeLimit = 256
+	RuntimeUpgradeServedDNSWireMaxBytes  = 16 << 10
+	RuntimeUpgradeServedDNSRRLimit       = 128
+	RuntimeUpgradeServedDNSTotalTimeout  = 30 * time.Second
+)
+
+// Private selected native origin/service reconciliation bounds (ADR-706).
+const (
+	RuntimeUpgradeNativeServiceLimit          = 16
+	RuntimeUpgradeNativeListenerLimit         = 256
+	RuntimeUpgradeNativeOriginLimit           = 256
+	RuntimeUpgradeNativeFDLimit               = 16384
+	RuntimeUpgradeNativeTCPRowLimit           = 32768
+	RuntimeUpgradeNativeProcMaxBytes          = 8 << 20
+	RuntimeUpgradeNativeMetadataMaxBytes      = 64 << 10
+	RuntimeUpgradeNativeUnitMaxBytes          = 16 << 10
+	RuntimeUpgradeNativeExecutableMaxBytes    = 256 << 20
+	RuntimeUpgradeNativeInterfaceNameMaxBytes = 15
+	RuntimeUpgradeNativeScopeTimeout          = 30 * time.Second
+	RuntimeUpgradeNativeOriginTimeout         = 90 * time.Second
+	RuntimeUpgradeNativeUnitTimeout           = 2 * time.Second
+	RuntimeUpgradeNativeCommandWaitDelay      = time.Second
+
+	// ADR-711: two retained scope snapshots around a boot-bound public probe,
+	// including enrollment lock waits. Stored evidence is selected inventory.
+	RuntimeUpgradeNativeStartupTimeout          = 90 * time.Second
+	RuntimeUpgradeNativeStartupEvidenceMaxBytes = 1 << 20
+)
+
+// Private selected systemd activation audit bounds (ADR-707).
+const (
+	RuntimeUpgradeNativeActivationSocketLimit = 16
+	RuntimeUpgradeNativeActivationTimeout     = 60 * time.Second
+)
+
+// Private irreversible external host-epoch receipts (ADR-708).
+const (
+	RuntimeUpgradeExternalFenceEnvelopeMaxBytes = 16 << 10
+	RuntimeUpgradeExternalFenceResourceMaxBytes = 256
+	RuntimeUpgradeExternalFenceMaxAge           = 60 * time.Second
+)
+
+// Private authenticated external receipt delivery (ADR-709).
+const (
+	RuntimeUpgradeExternalFenceTLSMaterialMaxBytes = 64 << 10
+	RuntimeUpgradeExternalFenceEndpointMaxBytes    = 2048
+	RuntimeUpgradeExternalFenceHeaderMaxBytes      = 16 << 10
+	RuntimeUpgradeExternalFenceDeliveryTimeout     = 10 * time.Second
+	RuntimeUpgradeExternalFenceDeliveryConnections = 4
+)
+
+// Private runtime qualification collector budgets (ADR-687).
+const (
+	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)
+	RuntimeQualificationSourceArchiveMaxBytes = int64(512 << 20)
+	RuntimeQualificationLockTimeout           = 15 * time.Minute
+	RuntimeQualificationLockPollInterval      = 100 * time.Millisecond
+	RuntimeQualificationBuildTimeout          = 10 * time.Minute
+	RuntimeQualificationTestTimeout           = 3 * time.Minute
+	RuntimeQualificationCleanupTimeout        = 2 * time.Minute
+	RuntimeQualificationCommandWaitDelay      = 5 * time.Second
+)

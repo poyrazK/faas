@@ -77,6 +77,7 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 var AllowedAppWebhookEvents = []string{
 	"operation.effect",
 	"app.parked", "app.woken",
+	"app.health.changed",
 	"deployment.live", "deployment.failed",
 	"rollout.completed", "rollout.aborted",
 	"job.finished",

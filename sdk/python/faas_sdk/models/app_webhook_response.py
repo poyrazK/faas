@@ -48,6 +48,8 @@ class AppWebhookResponse:
     target_url: str
     webhook_secret_sealed_masked: AppWebhookResponseWebhookSecretSealedMasked
     event_filter: list[AppWebhookResponseEventFilterItem]
+    """Subscribed events; an empty filter selects standard platform events. app.health.changed requires explicit
+    selection."""
     retry_policy: AppWebhookResponseRetryPolicy
     delivery_format: AppWebhookResponseDeliveryFormat
     enabled: bool

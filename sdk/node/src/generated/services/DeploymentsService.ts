@@ -17,6 +17,7 @@ import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
 import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
+import type { DeploymentRuntimeResponse } from '../models/DeploymentRuntimeResponse.js';
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
@@ -25,6 +26,7 @@ import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js
 import type { RollbackOperation } from '../models/RollbackOperation.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
+import type { RuntimeUpgradePreviewResponse } from '../models/RuntimeUpgradePreviewResponse.js';
 import type { ScanResult } from '../models/ScanResult.js';
 import type { SecretScanResult } from '../models/SecretScanResult.js';
 import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequest.js';
@@ -1558,6 +1560,80 @@ export class DeploymentsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Inspect immutable runtime base identity.
+   * Read-only artifact evidence for Gregale-managed function runtimes (ADR-682).
+   * Older artifacts return unknown rather than inferring their base from builder
+   * provenance. Published candidates are limited to the same family and architecture,
+   * at most 50 newest publications. Publication does not establish upgrade compatibility.
+   * No VM is booted and no deployment, traffic or environment setting is changed.
+   *
+   * @returns DeploymentRuntimeResponse Current binding and published candidates.
+   * @throws ApiError
+   */
+  public static getDeploymentRuntime({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<DeploymentRuntimeResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/runtime',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Runtime evidence is temporarily unavailable.`,
+      },
+    });
+  }
+  /**
+   * Preview a runtime base change without applying it.
+   * Compares exact published component identities (ADR-682). This planning-only
+   * response cannot authorize an update. Runtime family changes, architecture changes
+   * and unknown current provenance block the plan. Same-family changes still require
+   * native qualification, a rebuilt candidate, fresh readiness and guarded rollout.
+   * Execution is unavailable; publication order does not prove a newer interpreter
+   * patch or a compatible update. Existing health history is advisory evidence.
+   *
+   * @returns RuntimeUpgradePreviewResponse Read-only component comparison and required steps.
+   * @throws ApiError
+   */
+  public static previewRuntimeUpgrade({
+    id,
+    target,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Exact published runtime release identity to compare.
+     */
+    target: string,
+  }): CancelablePromise<RuntimeUpgradePreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/runtime/upgrade-preview',
+      path: {
+        'id': id,
+      },
+      query: {
+        'target': target,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `The runtime preview could not read its evidence.`,
       },
     });
   }
