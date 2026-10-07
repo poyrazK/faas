@@ -45,7 +45,7 @@ func TestCmdRealtimeSendReadsBinarySafeStdin(t *testing.T) {
 
 func TestCmdRealtimePublishUsesChannelRouteAndReportsQueued(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"queued":3}`, http.StatusOK)
+	f := authedFakeAPI(t, `{"queued":3,"subscribers":3}`, http.StatusOK)
 	oldOut := osStdout
 	var out bytes.Buffer
 	osStdout = &out
@@ -57,14 +57,14 @@ func TestCmdRealtimePublishUsesChannelRouteAndReportsQueued(t *testing.T) {
 	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/apps/demo/realtime/endpoints/endpoint-1/channels/room-a/publish" {
 		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
 	}
-	if !strings.Contains(out.String(), "3 connection(s)") {
+	if !strings.Contains(out.String(), "3 of 3 targeted connection(s)") {
 		t.Fatalf("queued count missing: %s", out.String())
 	}
 }
 
 func TestCmdRealtimePublishWarnsOnPartialFleet(t *testing.T) {
 	resetJSONOut(t)
-	_ = authedFakeAPI(t, `{"queued":2,"partial":true,"nodes_queried":1,"nodes_unavailable":1}`, http.StatusOK)
+	_ = authedFakeAPI(t, `{"queued":2,"subscribers":3,"partial":true,"nodes_queried":1,"nodes_unavailable":1}`, http.StatusOK)
 	oldOut, oldErr := osStdout, osStderr
 	var out, errOut bytes.Buffer
 	osStdout, osStderr = &out, &errOut

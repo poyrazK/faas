@@ -6984,12 +6984,8 @@ Publish a message to a channel
 | `--data <DATA>` | message text (or --data-stdin) |  |
 | `--data-stdin` | read the message from stdin |  |
 | `--binary` | send as a binary frame |  |
-| `--delivery <MODE>` | `live` (default) or preview-only `retained`; retained messages are limited to 4 KiB |  |
-| `--idempotency-key <KEY>` | stable key for retrying the exact same message |  |
-
-Retained delivery also requires `--idempotency-key`. Its JSON result includes
-`durable: true` and the committed channel `sequence`; incomplete live fan-out
-is reported as partial while resumable clients can recover from channel history.
+| `--delivery <MODE>` | live by default or preview-only retained (up to 4 KiB) | one of `live` · `retained` |
+| `--idempotency-key <KEY>` | stable retry key; required for retained delivery |  |
 
 ### realtime auth
 
