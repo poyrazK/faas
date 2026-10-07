@@ -184,13 +184,20 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		}
 	}
 	if req.MinInstances == nil {
-		// fall through to the egress allowlist branch
+		// Lowering max_concurrency below the configured floor leaves a floor
+		// the scheduler can never reach.
+		if req.MaxConcurrency != nil && app.MinInstances > appMaxConcurrencyAfter(app, req, limits) {
+			return minInstancesAboveMaxConcurrency(app.MinInstances, appMaxConcurrencyAfter(app, req, limits))
+		}
 	} else {
 		if !acct.Plan.MinInstancesAllowed() {
 			return api.ErrPlanMinInstancesNotAllowed(acct.Plan)
 		}
 		if *req.MinInstances < 0 || *req.MinInstances > limits.MaxConcurrency {
 			return api.ErrInvalidMinInstances(*req.MinInstances, limits.MaxConcurrency)
+		}
+		if appMax := appMaxConcurrencyAfter(app, req, limits); *req.MinInstances > appMax {
+			return minInstancesAboveMaxConcurrency(*req.MinInstances, appMax)
 		}
 		// ADR-071 §Decision 5: per-plan MaxMinInstances cap
 		// (Hobby 1, Pro 3, Scale 10). Tighter than MaxConcurrency
@@ -2779,6 +2786,31 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 
 type appStatusCompareAndSetter interface {
 	CompareAndSetAppStatus(context.Context, string, state.AppStatus, state.AppStatus) (bool, error)
+}
+
+// appMaxConcurrencyAfter is the app's instance ceiling once this update
+// applies: its own max_concurrency, bounded by the plan.
+func appMaxConcurrencyAfter(app state.App, req *api.UpdateAppRequest, limits api.Limits) int {
+	appMax := app.MaxConcurrency
+	if req.MaxConcurrency != nil {
+		appMax = *req.MaxConcurrency
+	}
+	if appMax <= 0 || appMax > limits.MaxConcurrency {
+		appMax = limits.MaxConcurrency
+	}
+	return appMax
+}
+
+// minInstancesAboveMaxConcurrency rejects a floor above the app's own
+// instance ceiling. The plan bound alone accepted min_instances=3 on an app
+// with max_concurrency=1, and the CLI then promised three warm instances
+// (production-us hunt #5, H5-38).
+func minInstancesAboveMaxConcurrency(minInstances, appMax int) *api.Problem {
+	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidMinInstances,
+		"Invalid min_instances",
+		fmt.Sprintf("min_instances (%d) exceeds this app's max_concurrency (%d); raise max_concurrency or lower min_instances.", minInstances, appMax)).
+		WithLimit(int64(appMax), int64(minInstances)).
+		WithDocs("https://gregale.dev/docs/apps#min-instances")
 }
 
 func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool, error) {
