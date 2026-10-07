@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS managed_postgres_creation_receipts (
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN
+    -- Serialize with receipt writers before inspecting whether custody exists.
+    LOCK TABLE managed_postgres_creation_receipts IN ACCESS EXCLUSIVE MODE;
     IF EXISTS (SELECT 1 FROM managed_postgres_creation_receipts) THEN
         RAISE EXCEPTION 'cannot remove retained managed postgres creation custody'
             USING ERRCODE='23514', CONSTRAINT='managed_postgres_creation_custody_retained';
