@@ -62,18 +62,18 @@ func TestOperationRecoveryInspectionAndPreviewFence(t *testing.T) {
 	}))
 	defer server.Close()
 	c := operationClient(t, server)
-	i, err := c.InspectOperationRecovery(t.Context(), "exports", "op")
+	i, err := c.InspectOperationRecovery(context.Background(), "exports", "op")
 	if err != nil || i.InspectionRevision != revision {
 		t.Fatal("inspection DTO", err)
 	}
-	p, err := c.PreviewOperationRecovery(t.Context(), "exports", "op", faas.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "safe_to_retry"})
+	p, err := c.PreviewOperationRecovery(context.Background(), "exports", "op", faas.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "safe_to_retry"})
 	if err != nil || p.Eligible || !p.EvidenceRequired || len(p.ReopenedSteps) != 1 {
 		t.Fatal("preview DTO", err)
 	}
-	if _, err := c.RecoverOperation(t.Context(), "exports", "op", faas.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision}); err != nil || calls != 3 {
+	if _, err := c.RecoverOperation(context.Background(), "exports", "op", faas.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision}); err != nil || calls != 3 {
 		t.Fatal("revision fence wire", err)
 	}
-	decision, err := c.RecoverOperationWithReceipt(t.Context(), "exports", "op", faas.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision})
+	decision, err := c.RecoverOperationWithReceipt(context.Background(), "exports", "op", faas.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision})
 	if err != nil || decision.OperationID != "op" || decision.Generation != 2 || decision.State != faas.OperationAccepted || calls != 4 {
 		t.Fatal("immutable decision wire", decision, err)
 	}
@@ -88,7 +88,7 @@ func TestOperationExecutionControlUsesReadOnlyProof(t *testing.T) {
 		writeOperationJSON(w, http.StatusOK, `{"operation_id":"operation/id","invocation_id":"invocation","attempt":2,"cancellation_requested":true,"deadline_at":"2026-10-05T12:00:00Z","lease_expires_at":"2026-10-05T11:59:00Z","observed_at":"2026-10-05T11:58:00Z","poll_after_ms":1000}`)
 	}))
 	defer server.Close()
-	control, err := operationClient(t, server).GetOperationExecutionControl(t.Context(), "operation/id", faas.OperationRuntimeProof{InvocationID: "invocation", Attempt: 2, Capability: "private-capability"})
+	control, err := operationClient(t, server).GetOperationExecutionControl(context.Background(), "operation/id", faas.OperationRuntimeProof{InvocationID: "invocation", Attempt: 2, Capability: "private-capability"})
 	if err != nil || control.OperationID != "operation/id" || !control.CancellationRequested || !control.LeaseExpiresAt.Before(control.DeadlineAt) {
 		t.Fatalf("control DTO: %+v %v", control, err)
 	}
@@ -228,7 +228,7 @@ func TestOperationCredentialsNeverFollowRedirects(t *testing.T) {
 		_ = body.Close()
 		t.Fatal("stream redirect succeeded")
 	}
-	if _, err := c.RecoverOperationWithReceipt(t.Context(), "exports", "op", faas.OperationRecoveryRequest{}); err == nil {
+	if _, err := c.RecoverOperationWithReceipt(context.Background(), "exports", "op", faas.OperationRecoveryRequest{}); err == nil {
 		t.Fatal("recovery receipt followed redirect")
 	}
 	if targetCalls.Load() != 0 {
@@ -343,11 +343,11 @@ func TestOperationWorkflowArtifactProofAndPrivateReceipt(t *testing.T) {
 	defer server.Close()
 	client := operationClient(t, server)
 	req := faas.OperationArtifactRequest{ReportID: "csv", Name: "export.csv", URI: "obj://app/bucket/key", SizeBytes: 3, SHA256: "digest"}
-	receipt, err := client.ReuseWorkflowOperationArtifact(t.Context(), "operation/id", proof, req)
+	receipt, err := client.ReuseWorkflowOperationArtifact(context.Background(), "operation/id", proof, req)
 	if err != nil || receipt.Available || receipt.Artifact != nil {
 		t.Fatalf("missing receipt=%+v %v", receipt, err)
 	}
-	receipt, err = client.PrepareWorkflowOperationArtifact(t.Context(), "operation/id", proof, req)
+	receipt, err = client.PrepareWorkflowOperationArtifact(context.Background(), "operation/id", proof, req)
 	if err != nil || !receipt.Available || receipt.Artifact == nil || receipt.Artifact.ID != "file" {
 		t.Fatalf("prepared receipt=%+v %v", receipt, err)
 	}
@@ -365,7 +365,7 @@ func TestOperationWorkflowControlWireContract(t *testing.T) {
 		writeOperationJSON(w, http.StatusOK, `{"operation_id":"operation/id","workflow_run_id":"native-run","workflow_step":"collect","generation":2,"attempt":3,"cancellation_requested":false,"deadline_at":"2026-10-06T10:01:00Z","lease_expires_at":"2026-10-06T10:00:30Z","observed_at":"2026-10-06T10:00:00Z","poll_after_ms":1000}`)
 	}))
 	defer server.Close()
-	control, err := operationClient(t, server).GetWorkflowOperationExecutionControl(t.Context(), "operation/id", proof)
+	control, err := operationClient(t, server).GetWorkflowOperationExecutionControl(context.Background(), "operation/id", proof)
 	if err != nil || control.WorkflowRunID != proof.RunID || control.WorkflowStep != proof.StepName || control.Generation != 2 || control.Attempt != 3 || control.CancellationRequested || control.DeadlineAt.IsZero() || control.LeaseExpiresAt.After(control.DeadlineAt) || control.PollAfterMS != 1000 {
 		t.Fatalf("native control response=%+v %v", control, err)
 	}
@@ -404,11 +404,11 @@ func TestOperationSubmissionLookupClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.LookupPlatformTenantSelfOperationSubmission(t.Context(), lookup)
+	got, err := client.LookupPlatformTenantSelfOperationSubmission(context.Background(), lookup)
 	if err != nil || got.State != "accepted" || got.Receipt == nil || got.Receipt.ID != "accepted" || got.AcceptedAt == nil || got.IdempotencyExpiresAt == nil || !got.AcceptedAt.Before(*got.IdempotencyExpiresAt) {
 		t.Fatal("observation", got, err)
 	}
-	_, err = client.StartPlatformTenantSelfOperation(t.Context(), faas.OperationStartRequest{DefinitionID: scope.AppID, Input: []byte(`{"count":1}`), ExpectedIdentity: identity, ExpectedScope: &scope}, lookup.IdempotencyKey)
+	_, err = client.StartPlatformTenantSelfOperation(context.Background(), faas.OperationStartRequest{DefinitionID: scope.AppID, Input: []byte(`{"count":1}`), ExpectedIdentity: identity, ExpectedScope: &scope}, lookup.IdempotencyKey)
 	if err != nil || calls != 2 {
 		t.Fatal("fenced start", calls, err)
 	}

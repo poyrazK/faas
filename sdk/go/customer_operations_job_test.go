@@ -89,11 +89,11 @@ func TestJobOperationFileClientsUseTokenlessNativeProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	proof := faas.OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: strings.Repeat("b", 64)}
-	prepared, err := client.PrepareJobOperationArtifact(t.Context(), "operation", proof, declaration)
+	prepared, err := client.PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration)
 	if err != nil || !prepared.Available || prepared.Artifact.ID != "file" {
 		t.Fatal("prepare", err)
 	}
-	reused, err := client.ReuseJobOperationArtifact(t.Context(), "operation", proof, declaration)
+	reused, err := client.ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration)
 	if err != nil || !reused.Available || reused.Artifact.ID != prepared.Artifact.ID {
 		t.Fatal("replay", err)
 	}
@@ -101,10 +101,10 @@ func TestJobOperationFileClientsUseTokenlessNativeProof(t *testing.T) {
 		t.Fatal("wrong endpoints", paths)
 	}
 	client.SetToken("account-token")
-	if _, err := client.PrepareJobOperationArtifact(t.Context(), "operation", proof, declaration); err == nil {
+	if _, err := client.PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
 		t.Fatal("account credential accepted")
 	}
-	if _, err := client.ReuseJobOperationArtifact(t.Context(), "operation", proof, declaration); err == nil {
+	if _, err := client.ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
 		t.Fatal("account credential accepted")
 	}
 	if len(paths) != 2 {

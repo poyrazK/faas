@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -35,10 +36,10 @@ func TestWorkflowUploadClientUsesWorkloadProofAndRejectsRedirects(t *testing.T) 
 	}))
 	defer host.Close()
 	client := NewClient(host.URL, "workload")
-	if _, err := client.UploadWorkflowOperationArtifact(t.Context(), "operation", proof, declaration, strings.NewReader("csv")); err != nil {
+	if _, err := client.UploadWorkflowOperationArtifact(context.Background(), "operation", proof, declaration, strings.NewReader("csv")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ReuseWorkflowOperationUpload(t.Context(), "operation", proof, declaration); err != nil {
+	if _, err := client.ReuseWorkflowOperationUpload(context.Background(), "operation", proof, declaration); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -52,10 +53,10 @@ func TestWorkflowUploadClientUsesWorkloadProofAndRejectsRedirects(t *testing.T) 
 	}))
 	defer redirect.Close()
 	client = NewClient(redirect.URL, "workload")
-	if _, err := client.UploadWorkflowOperationArtifact(t.Context(), "operation", proof, declaration, strings.NewReader("csv")); err == nil || redirects != 0 {
+	if _, err := client.UploadWorkflowOperationArtifact(context.Background(), "operation", proof, declaration, strings.NewReader("csv")); err == nil || redirects != 0 {
 		t.Fatal("upload followed redirect", err)
 	}
-	if _, err := client.ReuseWorkflowOperationUpload(t.Context(), "operation", proof, declaration); err == nil || redirects != 0 {
+	if _, err := client.ReuseWorkflowOperationUpload(context.Background(), "operation", proof, declaration); err == nil || redirects != 0 {
 		t.Fatal("lookup followed redirect", err)
 	}
 }
