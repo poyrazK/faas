@@ -22,6 +22,16 @@ the private identity flag disabled; see
 [ADR-616](../adr/616-selected-caddy-public-edge-binding.md) for bounds and pending
 native acceptance. A missing identity or unreachable socket remains unverified.
 
+[ADR-617](../adr/617-whole-caddy-http-config-inventory.md) adds a separate whole
+declared HTTP configuration collector. It includes sibling servers, catch-all,
+nested and error routes, and the separate S3 proxy. Full binding review requires
+the whole configuration digest and every reverse proxy path; unknown modules and
+unaccounted services remain unverified. Collection reports configured listeners
+and local matcher predicates. Native sockets, generated HTTPS/ACME routes,
+complete host/domain coverage and authoritative DNS still require acceptance.
+No daemon starts this collector automatically, and no inventory clears a pending
+withdrawal or grants a retirement lease.
+
 Caddy must reduce the validated proxy chain to one address because the internal
 gateway deliberately rejects ambiguous `X-Forwarded-For` values. For a
 Cloudflare-fronted origin, configure Caddy with Cloudflare's current published

@@ -1,5 +1,6 @@
-// Package edgetopology performs private read-only, selected-proxy observations
-// (ADR-616). It grants no topology completeness, drain or retirement authority.
+// Package edgetopology performs private read-only Caddy configuration inventory
+// and backend identity observations (ADR-616/617). It grants no native topology
+// completeness, drain or retirement authority.
 package edgetopology
 
 import (
@@ -48,15 +49,23 @@ type CaddyProbe struct {
 // literal loopback HTTP admin endpoint. No default admin discovery, environment
 // proxy, redirects, DNS resolution or mutating Caddy operation is used.
 func NewCaddyProbe(adminURL, configPath, token string) (*CaddyProbe, error) {
-	u, err := url.Parse(adminURL)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") || !ingress.PublicEdgeAddress(u.Host) {
-		return nil, fmt.Errorf("%w: literal loopback HTTP admin endpoint required", ErrUnverified)
+	u, err := caddyAdminURL(adminURL)
+	if err != nil {
+		return nil, err
 	}
 	if len(configPath) > api.RuntimeUpgradePublicEdgeConfigPathMaxBytes || !proxyPath.MatchString(configPath) || ingress.ValidateToken(token) != nil {
 		return nil, fmt.Errorf("%w: selected handler path and private token required", ErrUnverified)
 	}
 	u.Path = configPath
 	return &CaddyProbe{endpoint: u.String(), path: configPath, token: token}, nil
+}
+
+func caddyAdminURL(adminURL string) (*url.URL, error) {
+	u, err := url.Parse(adminURL)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") || !ingress.PublicEdgeAddress(u.Host) {
+		return nil, fmt.Errorf("%w: literal loopback HTTP admin endpoint required", ErrUnverified)
+	}
+	return u, nil
 }
 
 // Observe compares ALL configured static upstreams of this selected proxy with
@@ -109,7 +118,11 @@ func reviewedBindings(expected []Binding) ([]Binding, error) {
 }
 
 func (p *CaddyProbe) readProxy(ctx context.Context, t *http.Transport) ([]byte, string, error) {
-	r, err := http.NewRequestWithContext(ctx, http.MethodGet, p.endpoint, nil)
+	return readCaddyConfig(ctx, t, p.endpoint, api.RuntimeUpgradePublicEdgeProxyMaxBytes)
+}
+
+func readCaddyConfig(ctx context.Context, t *http.Transport, endpoint string, maxBytes int64) ([]byte, string, error) {
+	r, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, "", ErrUnverified
 	}
@@ -120,11 +133,11 @@ func (p *CaddyProbe) readProxy(ctx context.Context, t *http.Transport) ([]byte, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	etag, valid := selectedETag(resp.Header)
-	if resp.StatusCode != http.StatusOK || resp.ContentLength > api.RuntimeUpgradePublicEdgeProxyMaxBytes || !valid {
+	if resp.StatusCode != http.StatusOK || resp.ContentLength > maxBytes || !valid {
 		return nil, "", fmt.Errorf("%w: selected proxy response", ErrUnverified)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, api.RuntimeUpgradePublicEdgeProxyMaxBytes+1))
-	if err != nil || len(body) > api.RuntimeUpgradePublicEdgeProxyMaxBytes {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil || int64(len(body)) > maxBytes {
 		return nil, "", fmt.Errorf("%w: bounded selected proxy response required", ErrUnverified)
 	}
 	return body, etag, nil

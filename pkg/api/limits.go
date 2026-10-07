@@ -8763,6 +8763,19 @@ const (
 	RuntimeUpgradePublicEdgeConfigPathMaxBytes = 1024
 )
 
+// Private whole declared Caddy inventory bounds (ADR-617).
+const (
+	RuntimeUpgradePublicEdgeCaddyConfigMaxBytes = 1 << 20 // whole declared Caddy config (ADR-617)
+	RuntimeUpgradePublicEdgeCaddyServerLimit    = 32
+	RuntimeUpgradePublicEdgeCaddyListenerLimit  = 128
+	RuntimeUpgradePublicEdgeCaddyRouteLimit     = 512
+	RuntimeUpgradePublicEdgeCaddyHandlerLimit   = 1024
+	RuntimeUpgradePublicEdgeCaddyMatcherLimit   = 1024
+	RuntimeUpgradePublicEdgeCaddyHostLimit      = 1024
+	RuntimeUpgradePublicEdgeCaddyDepthLimit     = 16
+	RuntimeUpgradePublicEdgeCaddyNameMaxBytes   = 128
+)
+
 // Private runtime qualification collector budgets (ADR-601).
 const (
 	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)
