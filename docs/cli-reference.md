@@ -6977,13 +6977,19 @@ Remove one live connection from a channel
 
 Publish a message to a channel
 
-`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id> <channel>`
+`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] [--delivery live|retained] [--idempotency-key <KEY>] <app> <endpoint-id> <channel>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--data <DATA>` | message text (or --data-stdin) |  |
 | `--data-stdin` | read the message from stdin |  |
 | `--binary` | send as a binary frame |  |
+| `--delivery <MODE>` | `live` (default) or preview-only `retained`; retained messages are limited to 4 KiB |  |
+| `--idempotency-key <KEY>` | stable key for retrying the exact same message |  |
+
+Retained delivery also requires `--idempotency-key`. Its JSON result includes
+`durable: true` and the committed channel `sequence`; incomplete live fan-out
+is reported as partial while resumable clients can recover from channel history.
 
 ### realtime auth
 

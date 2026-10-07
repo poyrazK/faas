@@ -23814,7 +23814,36 @@ paths:
     post:
       tags: [realtime]
       operationId: publishManagedRealtimeChannel
-      summary: Publish a message to subscribed live connections.
+      summary: Publish a message to live or resumable channel subscribers.
+      description: >-
+        delivery=live (the default) fans out to live raw-frame subscribers.
+        delivery=retained is preview-only and requires
+        FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid; it accepts at most
+        4096 decoded bytes and requires an Idempotency-Key. Retained delivery
+        commits the message to the ordered channel log before fan-out and
+        returns its sequence. V2 subscribers read the committed log in sequence;
+        a best-effort wake reduces latency while bounded polling recovers missed
+        wakes. The retained log remains authoritative if live fan-out is
+        incomplete. The resume protocol separately requires
+        FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on realtimed.
+
+        A supplied Idempotency-Key binds the publish to delivery mode, decoded
+        payload and binary flag for 24 hours. Replays return the original
+        response and do not retry recipients that missed a partial publish.
+        Reusing a key with a different mode or payload returns 409. An in-flight
+        or uncertain reservation also returns 409 and is not run again while
+        the key is active. Queue admission does not confirm client receipt.
+      parameters:
+        - name: delivery
+          in: query
+          required: false
+          description: Use retained to commit a sequenced message before live fan-out; this is preview-only and requires an Idempotency-Key.
+          schema: { type: string, enum: [live, retained], default: live }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Stable printable-ASCII key for retrying this publish; reuse it only with the same delivery mode, payload, and binary flag.
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[!-~]{1,128}$' }
       requestBody:
         required: true
         content:
@@ -23822,14 +23851,19 @@ paths:
             schema: { $ref: '#/components/schemas/ManagedRealtimeMessageRequest' }
       responses:
         '200':
-          description: Queued recipients and whether every active realtime node accepted the publish.
+          description: Per-recipient queue outcomes; retained publishes also include the committed channel sequence.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ManagedRealtimePublishResponse' }
+          headers:
+            Idempotent-Replayed:
+              description: Present with value true when this response replays a prior result for the supplied key.
+              schema: { type: string, enum: ['true'] }
         '400': { $ref: '#/components/responses/RealtimeInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
@@ -56883,13 +56917,18 @@ components:
 
     ManagedRealtimePublishResponse:
       type: object
-      description: Result of publishing a message to an endpoint-scoped channel.
+      description: Per-recipient queue outcome for publishing to an endpoint-scoped channel. Queue admission does not imply client receipt; retained publishes include their durable channel sequence.
       required: [queued]
       properties:
-        queued: { type: integer, minimum: 0, description: Number of local owner queues that accepted the message. }
-        partial: { type: boolean, description: Whether one or more active realtime nodes did not accept the publish. }
+        queued: { type: integer, minimum: 0, description: Number of live subscriber output queues or retained-resume wake-ups that accepted delivery work. }
+        subscribers: { type: integer, minimum: 0, description: Live and resumable subscribers targeted across reachable nodes. }
+        queue_full: { type: integer, minimum: 0, description: Subscribers whose bounded output queues were full. }
+        failed: { type: integer, minimum: 0, description: Target subscribers that could not be queued for another per-connection reason. }
+        partial: { type: boolean, description: Whether a node or any target subscriber did not accept the publish. }
         nodes_queried: { type: integer, minimum: 0, description: Active realtime nodes that accepted the publish request. }
         nodes_unavailable: { type: integer, minimum: 0, description: Active realtime nodes that did not accept the publish request. }
+        sequence: { type: integer, format: int64, minimum: 1, description: Committed channel sequence; present when durable is true. }
+        durable: { type: boolean, description: Whether this publish was committed to retained channel history before fan-out. }
 
     ManagedRealtimeRetainedMessageRequest:
       type: object

@@ -328,8 +328,9 @@ type server struct {
 	metricsDiscoveryMetrics *metricsDiscoveryMetrics
 	// Source health reads durable fleet aggregates, so replicas do not need to
 	// own a poll lease to expose freshness. Enablement is configured at startup.
-	environmentGitSourceMetrics        *environmentGitSourceMetrics
-	environmentGitSourcePollingEnabled atomic.Bool
+	environmentGitSourceMetrics            *environmentGitSourceMetrics
+	environmentGitSourcePollingEnabled     atomic.Bool
+	managedRealtimePublishIdempotencySweep atomic.Uint64
 	// graceWindowCache (issue #189 / IAM-5) caches the per-account
 	// rotation grace override (accounts.key_grace_window_days). The
 	// bearer-key auth path does NOT read it (the lazy expiry gate
@@ -2615,7 +2616,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.closeManagedRealtimeConnection))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.subscribeManagedRealtimeConnection))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.unsubscribeManagedRealtimeConnection))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeChannel))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotentManagedRealtimePublish(s.publishManagedRealtimeChannel)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appendManagedRealtimeRetainedMessage))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.readManagedRealtimeRetainedMessages))))
 

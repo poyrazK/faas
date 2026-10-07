@@ -691,15 +691,17 @@ export class RealtimeService {
     });
   }
   /**
-   * Publish a message to subscribed live connections.
-   * @returns ManagedRealtimePublishResponse Queued recipients and whether every active realtime node accepted the publish.
+   * Publish a live-only or retained message to channel subscribers.
+   * @returns ManagedRealtimePublishResponse Per-recipient queue outcomes; retained publishes include the committed channel sequence.
    * @throws ApiError
    */
   public static publishManagedRealtimeChannel({
     slug,
     id,
     channel,
+    delivery,
     requestBody,
+    idempotencyKey,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -713,7 +715,15 @@ export class RealtimeService {
      * Channel that receives the published message.
      */
     channel: string,
+    /**
+     * Commit to retained channel history before fan-out. Retained delivery is preview-only and requires an Idempotency-Key.
+     */
+    delivery?: 'live' | 'retained',
     requestBody: ManagedRealtimeMessageRequest,
+    /**
+     * Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
+     */
+    idempotencyKey?: string,
   }): CancelablePromise<ManagedRealtimePublishResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -723,6 +733,12 @@ export class RealtimeService {
         'id': id,
         'channel': channel,
       },
+      query: {
+        'delivery': delivery,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
@@ -730,6 +746,7 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
+        409: `code: conflict — the key is in progress or was reused with a different payload.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
