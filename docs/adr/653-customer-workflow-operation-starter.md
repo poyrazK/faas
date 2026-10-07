@@ -1,4 +1,4 @@
-# ADR-610: Complete customer workflow Operations starter
+# ADR-653: Complete customer workflow Operations starter
 
 ## Status
 
@@ -9,7 +9,7 @@ qualification remain required before activation.
 
 HTTP and Job Operations have CLI starters combining a backend with the customer's
 history, submission, progress, cancellation and download experience. The workflow
-example under ADR-595–598/608 has native action handlers and recovery semantics,
+example under ADR-638–641/651 has native action handlers and recovery semantics,
 but developers still have to assemble its customer feature.
 
 ## Decision

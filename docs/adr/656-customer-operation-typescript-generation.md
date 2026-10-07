@@ -1,4 +1,4 @@
-# ADR-613: Generate TypeScript types for customer Operations
+# ADR-656: Generate TypeScript types for customer Operations
 
 ## Status
 

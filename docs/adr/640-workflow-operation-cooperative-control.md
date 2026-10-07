@@ -1,4 +1,4 @@
-# ADR-597: Cooperative control for workflow Operation handlers
+# ADR-640: Cooperative control for workflow Operation handlers
 
 ## Status
 
@@ -6,8 +6,8 @@ Accepted — 2026-10-06. Production admission remains disabled.
 
 ## Context
 
-ADR-595 fences interrupted native attempts and cancels scheduler HTTP calls.
-ADR-596 retains verified result copies for approved recovery. A disconnected
+ADR-638 fences interrupted native attempts and cancels scheduler HTTP calls.
+ADR-639 retains verified result copies for approved recovery. A disconnected
 HTTP caller does not stop guest computation or the guest's storage requests.
 Workflow handlers need the same cooperative cancellation support as ordinary
 HTTP Operations without borrowing an invocation claim or renewing native leases.
@@ -48,7 +48,7 @@ cancellation. Request cleanup fences detached callbacks. Handler cooperation
 requires checking the signal/checkpoints and yielding during long CPU work.
 Stopping I/O cannot undo an external effect. An uncertain write is not retried;
 a copy verified before interruption stays private and retained for reconciliation
-or approved reuse under ADR-596.
+or approved reuse under ADR-639.
 
 ## Validation and rollout
 

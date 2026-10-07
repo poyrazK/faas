@@ -7838,7 +7838,7 @@ const customerOperationDeploymentWorkflows = `-- name: CustomerOperationDeployme
 SELECT workflows FROM deployments WHERE id=$1::uuid
 `
 
-// ADR-595 workflow customer Operations adapter.
+// ADR-638 workflow customer Operations adapter.
 func (q *Queries) CustomerOperationDeploymentWorkflows(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error) {
 	row := db.QueryRow(ctx, customerOperationDeploymentWorkflows, deploymentID)
 	var workflows []byte
@@ -7867,7 +7867,7 @@ type CustomerOperationJobByNameParams struct {
 	Name      string
 }
 
-// ADR-602 native Job customer Operations.
+// ADR-645 native Job customer Operations.
 func (q *Queries) CustomerOperationJobByName(ctx context.Context, db DBTX, arg CustomerOperationJobByNameParams) (Job, error) {
 	row := db.QueryRow(ctx, customerOperationJobByName, arg.AccountID, arg.Name)
 	var i Job

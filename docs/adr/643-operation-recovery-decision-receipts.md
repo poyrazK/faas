@@ -1,4 +1,4 @@
-# ADR-600: Resumable Customer Operations recovery decisions
+# ADR-643: Resumable Customer Operations recovery decisions
 
 ## Status
 

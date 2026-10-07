@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-602: a Job Operation owns one immutable, single-task run per generation.
+-- ADR-645: a Job Operation owns one immutable, single-task run per generation.
 ALTER TABLE customer_operations ADD COLUMN job_run_id uuid UNIQUE REFERENCES job_runs(id) ON DELETE RESTRICT;
 ALTER TABLE customer_operations DROP CONSTRAINT customer_operations_execution_family_check;
 ALTER TABLE customer_operations ADD CONSTRAINT customer_operations_execution_family_check

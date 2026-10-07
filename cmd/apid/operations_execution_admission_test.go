@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 604 — HTTP qualification cannot grant native execution admission.
+// adr: 647 — HTTP qualification cannot grant native execution admission.
 package main
 
 import (

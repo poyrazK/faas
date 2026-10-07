@@ -1,4 +1,4 @@
-# ADR-609: Native qualification for Customer Workflow Operations
+# ADR-652: Native qualification for Customer Workflow Operations
 
 ## Status
 
@@ -7,11 +7,11 @@ execution and leak receipts are pending.
 
 ## Context
 
-ADR-595–598 and ADR-608 implement workflow ownership, controlled resume,
+ADR-638–641 and ADR-651 implement workflow ownership, controlled resume,
 cooperative execution control and retained private files. Portable state/API
 tests cannot prove that real native dispatch preserves these contracts through
 guest process death, daemon restart and a change to the default deployment.
-Customer Job Operations already have a bounded native lane under ADR-605.
+Customer Job Operations already have a bounded native lane under ADR-648.
 
 ## Decision
 

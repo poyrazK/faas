@@ -1,4 +1,4 @@
-# ADR-603: Verified private files for Job Operations
+# ADR-646: Verified private files for Job Operations
 
 ## Status
 
@@ -6,7 +6,7 @@ Implemented in closed-admission preview — 2026-10-06. Native Job qualification
 
 ## Context
 
-ADR-602 confirms typed results through the native Job task outcome. Customers
+ADR-645 confirms typed results through the native Job task outcome. Customers
 also need verified, private files without another download service. A storage
 write alone cannot confirm a Job's business outcome.
 
@@ -47,9 +47,9 @@ lease and generation fencing, conflicting reports, source ownership/hash,
 publication privacy, delivery failure, explicit recovery and orphan cleanup.
 Apply the migration and update API/SDKs before using these routes. This changes
 no VM lifecycle or admission gate; native Job execution and leak qualification
-from ADR-602 remains required before production admission.
+from ADR-645 remains required before production admission.
 
 Native guest result preparation, lost-ack receipt lookup and private downloads
-are included in [ADR-605](605-customer-job-operations-native-qualification.md).
+are included in [ADR-648](648-customer-job-operations-native-qualification.md).
 The [native qualification guide](../ops/customer-job-operations-native.md) records
 the remaining hardware and provider evidence; qualification is still pending.

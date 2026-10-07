@@ -1,4 +1,4 @@
-"""ADR-596: native proofs and explicit verified-copy availability."""
+"""ADR-639: native proofs and explicit verified-copy availability."""
 
 from typing import get_args
 from uuid import UUID

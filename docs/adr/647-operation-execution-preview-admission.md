@@ -1,4 +1,4 @@
-# ADR-604: Execution-specific Operations preview admission
+# ADR-647: Execution-specific Operations preview admission
 
 ## Status
 

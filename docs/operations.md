@@ -65,7 +65,7 @@ to the resumed attempt without consuming another report or emitting another even
 Current ownership, cancellation, deadline and lease checks fence transfers and
 receipt binding. Generic authorization errors never mean “upload missing.”
 Existing artifact/account quotas, retained downloads and owner-deletion cleanup
-apply. See [ADR-608](adr/608-workflow-operation-direct-artifact-uploads.md).
+apply. See [ADR-651](adr/651-workflow-operation-direct-artifact-uploads.md).
 The [Customer Workflow Operations native lane](ops/customer-workflow-operations-native.md)
 adds real-guest scenarios for these contracts. Its KVM execution and leak receipts
 remain pending; workflow admission stays closed.
@@ -78,8 +78,8 @@ operation actions. Its input generic types submissions and its output generic
 types operation results; server-side JSON Schema validation remains authoritative.
 The lower-level `CustomerOperationAuth` adapter remains available for custom
 lifecycle integrations. The HTTP, Job and workflow starters use the controller
-and the same host adapter contract. See [ADR-611](adr/611-shared-customer-operations-auth.md)
-and [ADR-612](adr/612-customer-operation-feature-controller.md).
+and the same host adapter contract. See [ADR-654](adr/654-shared-customer-operations-auth.md)
+and [ADR-655](adr/655-customer-operation-feature-controller.md).
 
 Run `gregale customer-operations types --dir . --app <slug> --plan <plan>` to
 generate a source-local TypeScript declaration file from the validated input
@@ -89,13 +89,13 @@ the returned operation result. The generator projects schema shapes; server
 validation remains authoritative. Commit the declaration and run the same
 command with `--check` in CI to fail when it is missing or stale; check mode is
 read-only. The starter `npm run typecheck` command also checks browser feature
-code against the generated declarations and SDK types. See [ADR-613](adr/613-customer-operation-typescript-generation.md).
+code against the generated declarations and SDK types. See [ADR-656](adr/656-customer-operation-typescript-generation.md).
 
 The existing `prepareArtifact` helper remains available for managed `obj://`
 sources. It requires a stable source key and checks for a verified copy before
 calling the application's writer. An uncertain external write without a verified
 copy still needs provider evidence before a fresh request may write again. See
-[ADR-596](adr/596-workflow-operation-artifacts.md).
+[ADR-639](adr/639-workflow-operation-artifacts.md).
 Every linear HTTP workflow action can opt into
 `GregaleWorkflowOperations.runCancellableRequest(req.headers, async scope => ...)`.
 The scope reads a current native control proof before entering business code,
@@ -109,15 +109,15 @@ Reads never renew either bound. Cancellation can appear as lost native authority
 because it atomically interrupts the attempt. Expired attempts cannot prepare
 files or commit successful outputs, even with a live lease. Stopping an upload
 does not undo an external write or discard an already verified private copy.
-See [ADR-597](adr/597-workflow-operation-cooperative-control.md).
+See [ADR-640](adr/640-workflow-operation-cooperative-control.md).
 
 Initialize the complete customer feature with
 `gregale init --template customer-operation-workflow-export --path workflow-export`.
 It includes history, reload recovery, step progress, cancellation, private downloads
 and a receipt-backed operator recovery guide. Install the internal packed SDK as
 described in the [workflow export starter](../examples/customer-operation-workflow-export/README.md).
-See [ADR-610](adr/610-customer-workflow-operation-starter.md) and
-[ADR-595](adr/595-workflow-customer-operations.md). Admission remains closed.
+See [ADR-653](adr/653-customer-workflow-operation-starter.md) and
+[ADR-638](adr/638-workflow-customer-operations.md). Admission remains closed.
 
 ## Contract
 
@@ -149,7 +149,7 @@ A committed receipt does not certify platform completion or external effects;
 completion delivery still follows the existing independent path. Install and
 retain the receipt schema explicitly. See [transaction adapter usage and
 acceptance](operation-transactions.md#customer-operations-http-adapter) and
-[ADR-599](adr/599-customer-operation-transaction-receipts.md).
+[ADR-642](adr/642-customer-operation-transaction-receipts.md).
 
 ## Limits
 
@@ -377,7 +377,7 @@ preview to reject changed execution or file-binding evidence before a new decisi
 The revision does not reserve capacity; apply checks current quota and eligibility
 again. An identical accepted recovery request remains replayable with its original
 revision. Completion notification recovery stays independent.
-See [ADR-598](adr/598-operation-recovery-inspection.md).
+See [ADR-641](adr/641-operation-recovery-inspection.md).
 
 ## Bounded preview admission
 
@@ -397,7 +397,7 @@ unique and exact; an empty array or malformed allowlist closes the policy.
 The immutable definition determines its execution type. A source deployment
 with several types requires all of them before registration or build enqueue.
 Update every API and gateway binary before native rollout; older binaries fail
-closed on the new field. See [ADR-604](adr/604-operation-execution-preview-admission.md).
+closed on the new field. See [ADR-647](adr/647-operation-execution-preview-admission.md).
 
 The policy is capped at 64 KiB, ten cohorts, ten customers per cohort and a
 one-hour window. Each admission reads the file again. Missing, unreadable,
@@ -453,7 +453,7 @@ as current business status. Account-only `POST .../{id}/recover-receipt` returns
 `OperationRecoveryDecision`; existing `/recover` remains compatible. Request
 conflicts fail, expired unconfirmed receipts cannot apply, and preview never
 creates receipts. See the [operator examples](ops/customer-operations-cli.md#resume-a-recovery-decision-after-losing-its-response)
-and [ADR-600](adr/600-operation-recovery-decision-receipts.md).
+and [ADR-643](adr/643-operation-recovery-decision-receipts.md).
 
 ## Batch Job Operations (closed preview)
 
@@ -472,7 +472,7 @@ A definition can set `job: export-job` for an active, materialized account-owned
 
 A Node command can use `runJobOperation({ apiURL }, async (input, scope) => result)` from `@gregale/sdk-node`. `scope.progress(...)`, `scope.checkpoint()` and `scope.signal` use the live task capability. Returning the typed result prepares an immutable receipt; successful native exit confirms business success and creates completion delivery independently. No result receipt or an uncertain exit requires reconciliation. Use `scope.uploadArtifact({ report_id, name, data, maxBytes })` to upload bounded text or bytes directly into private result storage. The SDK snapshots data, coalesces matching calls and checks receipts before each interrupted-transfer retry. It never repeats the handler. Reusing a report ID with different content or metadata conflicts. The SDK defaults to an 8 MiB application memory bound, independently of captured server quotas. Existing managed-source `scope.prepareArtifact(...)` and `uploadAndAttach(writer)` remain supported; `attach()` can retain an existing source. Native output-manifest files remain separate Job artifacts.
 
-Account inspection/preview and recovery work across Job generations. An approved `safe_to_retry` decision creates a new run with the original snapshot. Direct Job retry/replay cannot bypass it. Image cleanup protects retained operation snapshots. This preview retains the production admission gate until dedicated native KVM execution and cleanup qualification passes; see [ADR-602](adr/602-job-customer-operations.md).
+Account inspection/preview and recovery work across Job generations. An approved `safe_to_retry` decision creates a new run with the original snapshot. Direct Job retry/replay cannot bypass it. Image cleanup protects retained operation snapshots. This preview retains the production admission gate until dedicated native KVM execution and cleanup qualification passes; see [ADR-645](adr/645-job-customer-operations.md).
 
 Direct Job uploads declare a stable report ID, name, exact byte count and
 SHA-256. Gregale derives an opaque `operation://.../artifacts/...` reference and
@@ -488,5 +488,5 @@ Uncertain exit keeps the copy private and visible in account recovery inspection
 A succeeded preview lists the files it would publish. `safe_to_retry` starts a
 new Job generation with fresh receipts and file declarations; reconcile any
 uncertain business effect before repeating it. Existing artifact quotas, private
-copy cleanup and result retention apply. See [ADR-603](adr/603-job-operation-artifacts.md)
-and [ADR-606](adr/606-job-operation-direct-artifact-uploads.md).
+copy cleanup and result retention apply. See [ADR-646](adr/646-job-operation-artifacts.md)
+and [ADR-649](adr/649-job-operation-direct-artifact-uploads.md).

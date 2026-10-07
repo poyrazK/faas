@@ -1,10 +1,10 @@
-# ADR-608: Direct private artifact uploads for workflow Operations
+# ADR-651: Direct private artifact uploads for workflow Operations
 
 Status: implemented locally in closed admission; native qualification pending.
 
 ## Context
 
-ADR-606/607 remove application bucket writers from Job and ordinary HTTP exports.
+ADR-649/650 remove application bucket writers from Job and ordinary HTTP exports.
 Workflow Operations already retain verified private files across approved resumes,
 but their final action still requires a managed source and provider writer. The
 same direct upload contract can use the workflow ledger without changing its

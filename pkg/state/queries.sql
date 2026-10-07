@@ -14230,7 +14230,7 @@ WHERE id = sqlc.arg(id)::uuid AND account_id = sqlc.arg(account_id)::uuid
 -- name: ResetManagedPostgresReconciliationCoverage :exec
 DELETE FROM managed_postgres_usage_coverage WHERE database_id = $1;
 
--- ADR-595 workflow customer Operations adapter.
+-- ADR-638 workflow customer Operations adapter.
 -- name: CustomerOperationDeploymentWorkflows :one
 SELECT workflows FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid;
 
@@ -14342,7 +14342,7 @@ FROM workflow_steps WHERE run_id=sqlc.arg(run_id) ORDER BY step_name;
 -- name: CustomerOperationRecoveryTenantStatus :one
 SELECT status FROM platform_tenants WHERE id=sqlc.arg(tenant_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
 
--- ADR-602 native Job customer Operations.
+-- ADR-645 native Job customer Operations.
 -- name: CustomerOperationJobByName :one
 SELECT * FROM jobs WHERE account_id=sqlc.arg(account_id)::uuid AND name=sqlc.arg(name)::text AND status <> 'deleted' FOR SHARE;
 
