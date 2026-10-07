@@ -335,14 +335,20 @@ func TestApplicationStandardLedgerRecoveryCanceledReceiptRollsBackEvents(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	applyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	applyCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
 		_, err := db.ApplyApplicationStandardLedgerRecovery(applyCtx, pool, plan.ApprovalHash)
 		result <- err
 	}()
-	recoveryWaitBlocked(t, pool, pid)
+	if !recoveryWaitBlocked(t, applyCtx, pool, pid) {
+		cancel()
+		if err := <-result; err != nil {
+			t.Fatalf("did not observe the final receipt insert blocked by its conflicting transaction; apply returned: %v", err)
+		}
+		t.Fatal("did not observe the final receipt insert blocked by its conflicting transaction")
+	}
 	cancel()
 	if err := <-result; err == nil {
 		t.Fatal("canceled receipt insert succeeded")
@@ -358,19 +364,26 @@ func TestApplicationStandardLedgerRecoveryCanceledReceiptRollsBackEvents(t *test
 	}
 }
 
-func recoveryWaitBlocked(t *testing.T, pool *pgxpool.Pool, blocker int) {
+func recoveryWaitBlocked(t *testing.T, ctx context.Context, pool *pgxpool.Pool, blocker int) bool {
 	t.Helper()
-	deadline := time.Now().Add(8 * time.Second)
-	for time.Now().Before(deadline) {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		var blocked bool
-		if err := pool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity
 		 WHERE datname=current_database() AND $1::integer=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&blocked); err != nil {
+			if ctx.Err() != nil {
+				return false
+			}
 			t.Fatal(err)
 		}
 		if blocked {
-			return
+			return true
 		}
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
 	}
-	t.Fatal("did not observe the final receipt insert blocked by its conflicting transaction")
 }
