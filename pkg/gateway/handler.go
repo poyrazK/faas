@@ -6640,6 +6640,7 @@ haveApp:
 				if admitErr == nil {
 					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
 				}
+				h.logFleetCapacityRefusal(app.ID, admitErr)
 				writeWakeError(w, admitErr)
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
@@ -6765,6 +6766,7 @@ haveApp:
 			// stays smooth, and the alternative (503) loses both
 			// the request AND the wake budget for nothing.
 			h.markHealthFailure(app.ID, err)
+			h.logFleetCapacityRefusal(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
 			}
@@ -8882,11 +8884,42 @@ func writeWakeError(w http.ResponseWriter, err error) {
 				w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
 				w.Header().Set("Cache-Control", "no-store")
 			}
+			if prob.Code == api.CodeCapacity {
+				writeFleetCapacityRefusal(w)
+				return
+			}
 			api.WriteProblem(w, prob)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("wake failed"))
 	}
+}
+
+// fleetCapacityRetryAfterSeconds matches the gateway's own wake-queue
+// refusals: capacity frees as instances park or finish waking.
+const fleetCapacityRetryAfterSeconds = 5
+
+// writeFleetCapacityRefusal answers a wake that schedd refused for fleet
+// capacity (placement, per-node RAM, vCPU or host CPU). schedd's detail names
+// compute nodes, their budgets and compute_nodes columns for operators, so a
+// public caller gets the stable code, a generic detail and a Retry-After
+// instead (production-us hunt #5, H5-30). logFleetCapacityRefusal keeps the
+// operator detail.
+func writeFleetCapacityRefusal(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(fleetCapacityRetryAfterSeconds))
+	w.Header().Set("Cache-Control", "no-store")
+	api.WriteProblem(w, api.ErrCapacity("the platform has no free capacity for this app right now; retry shortly"))
+}
+
+// logFleetCapacityRefusal records the detail writeFleetCapacityRefusal drops.
+// Nothing else logs a placement refusal: schedd returns it to the caller and
+// gateway_wake_admission_total counts it as a reasonless error.
+func (h *Handler) logFleetCapacityRefusal(appID string, err error) {
+	var prob *api.Problem
+	if h.log == nil || !errors.As(err, &prob) || prob.Code != api.CodeCapacity {
+		return
+	}
+	h.log.Warn("gateway: wake refused for fleet capacity", "app_id", appID, "detail", logsanitize.Field(prob.Detail))
 }
 
 func writeWakeInProgress(w http.ResponseWriter, requestID string) {
