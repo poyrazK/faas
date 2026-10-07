@@ -8361,6 +8361,24 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 
 	terminal := terminalStateForReason(reason)
 
+	// appMu is process-local, so the schedd that owns this wake may run on
+	// another node and publish RUNNING while this one tears the VM down.
+	// Claim a WAKING row before Destroy (ADR-635): the owner's publication
+	// expects WAKING and aborts on the lost CAS instead of exposing a RUNNING
+	// row with no VM. COLD_BOOTING still counts RAM, so a failed Destroy
+	// keeps the reservation and the cold-boot sweep retries it (ADR-470).
+	claimed := false
+	if reason == StuckWakingTimeout {
+		if err := e.store.UpdateInstanceStateIf(ctx, instanceID, string(want), string(terminal)); err != nil {
+			if errors.Is(err, state.ErrConflict) {
+				return nil
+			}
+			return fmt.Errorf("sched: KillStuck: claim instance %s: %w", instanceID, err)
+		}
+		claimed = true
+		e.recordCommittedInstanceTransition(ctx, fresh, want, terminal, appID, "watchdog_timeout", string(reason))
+	}
+
 	// Retain both the resident state and reservation until vmmd confirms
 	// teardown. A failed attempt remains visible to the next watchdog sweep
 	// and to SeedLedger after a scheduler restart (ADR-470).
@@ -8388,7 +8406,9 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 			Reason:     string(reason),
 		})
 	}
-	e.transitionWithKind(ctx, instanceID, appID, terminal, "watchdog_timeout", string(reason))
+	if !claimed {
+		e.transitionWithKind(ctx, instanceID, appID, terminal, "watchdog_timeout", string(reason))
+	}
 	if e.ops != nil {
 		e.ops.WatchdogKills(string(reason), string(terminal)).Inc()
 	}

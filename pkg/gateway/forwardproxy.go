@@ -534,7 +534,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				return
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+				// The routed instance has no VM on its node. Say so: a row the
+				// scheduler still calls RUNNING otherwise answers 503 silently.
 				markStaleTarget(r.Context())
+				log.Warn("gateway: forwarder target not found on node; surfacing 503",
+					"node", t.NodeID, "instance", t.InstanceID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
@@ -881,6 +885,8 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 				wsOutcome = WSOutcomeUpstreamUnavailable
 				markStaleTarget(r.Context())
+				log.Warn("gateway: raw forwarder target not found on node; surfacing 503",
+					"node", t.NodeID, "instance", t.InstanceID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
