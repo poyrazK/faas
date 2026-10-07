@@ -8772,8 +8772,6 @@ Print a shell completion script (bash|zsh|fish|powershell)
 
 `gregale completion [<subcommand>]`
 
-Completion scripts read the local cache populated by successful list requests. `projects list` refreshes project slug suggestions, and listing a project's environments refreshes its environment suggestions for positional arguments and `--from`/`--to` in `projects environments` commands.
-
 ### completion bash
 
 Print the bash completion script
