@@ -14882,3 +14882,14 @@ WHERE o.id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::u
   AND (EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=o.id)
     OR EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state='held'))
   AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state<>'held');
+
+-- name: AdoptProjectEnvironmentCloneCheckpointSnapshot :one
+INSERT INTO project_environment_clone_postgres_snapshots(operation_id,source_database_id,source_version,backend_id,backend_fingerprint,
+    source_provider_resource_id,source_data_resource_id,capture_point,provider_snapshot_id,state,snapshot_created_at,observed_at,request_started_at)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(source_version)::text,sqlc.arg(backend_id)::text,
+    sqlc.arg(backend_fingerprint)::text,sqlc.arg(source_provider_resource_id)::text,sqlc.arg(source_data_resource_id)::text,
+    sqlc.arg(capture_point)::timestamptz,sqlc.arg(provider_snapshot_id)::text,'retained',sqlc.arg(snapshot_created_at)::timestamptz,
+    clock_timestamp(),sqlc.arg(request_started_at)::timestamptz
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
+    AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid
+    AND o.lease_until>clock_timestamp()) RETURNING *;

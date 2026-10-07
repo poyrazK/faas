@@ -27,16 +27,9 @@ type cloneCommonCheckpointPlan struct {
 	Sources                                              []cloneCommonCheckpointSource
 }
 
-type cloneCommonCheckpointSourceReceipt struct {
-	Kind, ID, CaptureIdentity string
-}
+type cloneCommonCheckpointSourceReceipt = state.ProjectEnvironmentCloneCheckpointSourceReceipt
 
-type cloneCommonCheckpointReceipt struct {
-	RequestID, PlanSHA256, CheckpointID string
-	CapturedAt                          time.Time
-	CompleteWriterCoverage              bool
-	Sources                             []cloneCommonCheckpointSourceReceipt
-}
+type cloneCommonCheckpointReceipt = state.ProjectEnvironmentCloneCheckpointReceipt
 
 // A qualified driver must authenticate every pinned placement, close ALL
 // native/background writers, and retain immutable capture identities under
@@ -216,7 +209,7 @@ func (s *server) prepareProjectEnvironmentCloneCommonCheckpoint(ctx context.Cont
 		}
 	}
 	resources := lease.Operation.Resources
-	if len(resources) < 1 || len(resources) > 2 || resources[0].Kind != intent.Kind || resources[0].Name != intent.Name ||
+	if len(resources) < 1 || !validCloneCommonCheckpointJournalShape(resources, plan) || resources[0].Kind != intent.Kind || resources[0].Name != intent.Name ||
 		resources[0].SourceID != intent.SourceID || resources[0].SourceVersion != intent.SourceVersion {
 		return lease, zero, state.ErrConflict
 	}
@@ -258,7 +251,7 @@ func (s *server) prepareProjectEnvironmentCloneCommonCheckpoint(ctx context.Cont
 	proof := state.ProjectEnvironmentCloneResource{Kind: "data_checkpoint_receipt", Name: plan.SourceEnvironment,
 		SourceID: receipt.CheckpointID, SourceVersion: cloneCheckpointDigest(receipt), CapturePoint: intent.CapturePoint, Status: "captured"}
 	if lease.Operation.Resources[0].Status == "captured" {
-		if !cloneCoordinatorResourcesEqual(lease.Operation.Resources, []state.ProjectEnvironmentCloneResource{intent, proof}) {
+		if !cloneCoordinatorResourcesEqual(lease.Operation.Resources[:2], []state.ProjectEnvironmentCloneResource{intent, proof}) {
 			return lease, zero, state.ErrConflict
 		}
 	} else {
@@ -293,4 +286,43 @@ func (s *server) advanceCloneCommonCheckpointIntent(ctx context.Context, store c
 		lease.Operation = updated
 	}
 	return lease, err
+}
+
+// Adoption adds only the exact dataset roster and its private digest. Original
+// checkpoint intent/receipt remain the prefix and cannot be replaced on replay.
+func validCloneCommonCheckpointJournalShape(resources []state.ProjectEnvironmentCloneResource, plan cloneCommonCheckpointPlan) bool {
+	if len(resources) == 0 {
+		return false
+	}
+	if len(resources) <= 2 {
+		if resources[0].Status == "captured" {
+			return len(resources) == 2
+		}
+		return len(resources) == 1
+	}
+	if len(resources) != len(plan.Sources)+3 || resources[0].Status != "captured" {
+		return false
+	}
+	proof := resources[len(resources)-1]
+	if proof.Kind != "data_checkpoint_adoption" || proof.Name != plan.SourceEnvironment || proof.SourceID != resources[0].TargetID ||
+		proof.Status != "captured" || proof.TargetID != "" || proof.CapturePoint != resources[0].CapturePoint || !validCloneCheckpointSHA(proof.SourceVersion) {
+		return false
+	}
+	for i, source := range plan.Sources {
+		dataset := resources[i+2]
+		if dataset.Kind != source.Kind || dataset.Name != source.ID || dataset.SourceID != source.ID || dataset.CapturePoint != resources[0].CapturePoint ||
+			dataset.Status != "captured" || !validCloneCheckpointSHA(dataset.SourceVersion) {
+			return false
+		}
+		if source.Kind == "managed_postgres" && (dataset.SourceVersion != source.DefinitionSHA256 || dataset.TargetID != "") ||
+			source.Kind == "object_storage" && (dataset.TargetID == "" || dataset.TargetID == source.ID) {
+			return false
+		}
+	}
+	return true
+}
+
+func validCloneCheckpointSHA(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size && strings.ToLower(value) == value
 }

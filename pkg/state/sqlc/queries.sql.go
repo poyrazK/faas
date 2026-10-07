@@ -459,6 +459,72 @@ func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, pu
 	return i, err
 }
 
+const adoptProjectEnvironmentCloneCheckpointSnapshot = `-- name: AdoptProjectEnvironmentCloneCheckpointSnapshot :one
+INSERT INTO project_environment_clone_postgres_snapshots(operation_id,source_database_id,source_version,backend_id,backend_fingerprint,
+    source_provider_resource_id,source_data_resource_id,capture_point,provider_snapshot_id,state,snapshot_created_at,observed_at,request_started_at)
+SELECT $1::uuid,$2::uuid,$3::text,$4::text,
+    $5::text,$6::text,$7::text,
+    $8::timestamptz,$9::text,'retained',$10::timestamptz,
+    clock_timestamp(),$11::timestamptz
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
+    AND o.status='capturing' AND o.revision=$12::bigint AND o.lease_token=$13::uuid
+    AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, capture_point, provider_snapshot_id, state, snapshot_created_at, observed_at, cleanup_observed_at, created_at, updated_at, request_started_at
+`
+
+type AdoptProjectEnvironmentCloneCheckpointSnapshotParams struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	SourceVersion            string
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	CapturePoint             pgtype.Timestamptz
+	ProviderSnapshotID       string
+	SnapshotCreatedAt        pgtype.Timestamptz
+	RequestStartedAt         pgtype.Timestamptz
+	ExpectedRevision         int64
+	WorkerToken              pgtype.UUID
+}
+
+func (q *Queries) AdoptProjectEnvironmentCloneCheckpointSnapshot(ctx context.Context, db DBTX, arg AdoptProjectEnvironmentCloneCheckpointSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error) {
+	row := db.QueryRow(ctx, adoptProjectEnvironmentCloneCheckpointSnapshot,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.SourceVersion,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.SourceProviderResourceID,
+		arg.SourceDataResourceID,
+		arg.CapturePoint,
+		arg.ProviderSnapshotID,
+		arg.SnapshotCreatedAt,
+		arg.RequestStartedAt,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresSnapshot
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.CapturePoint,
+		&i.ProviderSnapshotID,
+		&i.State,
+		&i.SnapshotCreatedAt,
+		&i.ObservedAt,
+		&i.CleanupObservedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestStartedAt,
+	)
+	return i, err
+}
+
 const adoptProjectEnvironmentClonePostgresSnapshotRestore = `-- name: AdoptProjectEnvironmentClonePostgresSnapshotRestore :one
 UPDATE project_environment_clone_postgres_snapshot_restores r SET state='adopted',adopted_database_id=r.target_owner_id,
     adopted_at=clock_timestamp(),updated_at=clock_timestamp()

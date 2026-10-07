@@ -7696,3 +7696,62 @@ or rewritten evidence, and the existing stable capture barriers. SQLC parity,
 text encoding, shell quoting and ADR numbering checks pass. These are local
 contract tests with a test driver, not native-provider qualification.
 Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+### Original snapshot and manifest adoption (2026-10-07)
+
+A private adoption driver now reads subordinate captures by their original
+common-checkpoint identities. It must independently verify snapshot ownership
+under the existing clone snapshot request (including owner and idempotency
+key), original request start time, immutable creation time and absence of
+automatic expiry. For objects,
+the original capture identity is the canonical version-manifest hash. The
+driver reads that original complete manifest and verifies retention at the
+pinned source through the worker lease deadline; a fresh listing at the same
+timestamp is not adoption evidence. No built-in qualified driver is installed.
+
+The coordinator reobserves the original checkpoint after reading subordinate
+evidence and rechecks configuration, host admission and the complete held
+source roster around IO and commit. Shared private receipt types preserve the
+existing checkpoint proof encoding. Caller-supplied target identities and
+mutable source definitions are not adoption inputs.
+
+One PostgreSQL transaction imports retained snapshot receipts into the existing
+snapshot journal, reserves private object target bucket rows from frozen
+bindings, imports exact version manifests into the existing manifest journal,
+and appends the complete dataset inventory with a private adoption digest.
+The committing write checks the exact worker token, revision, live lease and
+held configuration. A quota failure or invalid receipt rolls back the entire
+adoption, including earlier snapshot imports and bucket reservations. Snapshot
+dispatch claims already see retained state after adoption and cannot authorize
+another capture. Target bucket reservation does not provision a remote bucket.
+
+An append-only migration admits only a manifest-backed private target bucket
+INSERT under the original owned hold and live capturing operation. It locks
+the operation, guard, source and source fence while checking admission. The
+complete original manifest is inserted before its target row in the same
+transaction. Source rows, existing target rows, credentials and policy changes
+retain the project-wide configuration guard; no session-setting bypass is used.
+
+Recovery independently reads the original captures and verifies every imported
+journal and target reservation. A lost commit reply reuses those original
+identities. Missing or rewritten imported evidence stays blocked and cannot
+be repaired by recapture. The adoption digest excludes the independently
+observed object-retention deadline so lease renewal can verify continued
+retention without rebinding immutable manifest content.
+
+Source holds remain owned and closed. This step does not release holds,
+provision targets, copy data, publish a stage or enable public full clones.
+The checkpoint and adoption resource kinds still block copying/publication.
+Native driver implementations and qualification, verified successful hold
+release, target preparation and final configuration/publication inventory are
+still required. Live R2/OVH qualification remains deferred.
+
+Validation: focused PostgreSQL tests pass for lost adoption replies, immutable
+snapshot/manifest identities, missing-journal refusal, quota rollback and held
+configuration admission. Existing common-checkpoint, stable-barrier,
+PostgreSQL snapshot and leased object snapshot tests also pass. The migration's
+Up/Down/reapply SQL and admission query plan were checked in PostgreSQL;
+the full migration chain runs through the new version in the test fixtures.
+SQLC parity, text encoding, shell quoting and ADR numbering checks pass.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+These remain local tests with a test driver, not native-provider qualification.
