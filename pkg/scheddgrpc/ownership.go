@@ -110,7 +110,7 @@ func (s *Server) authorizeApp(ctx context.Context, appID string) (state.App, err
 	}
 	app, err := s.resolver.AppByID(ctx, appID)
 	if err != nil {
-		return state.App{}, nil
+		return state.App{}, nil //nolint:nilerr // the engine reports a missing app itself; the guard refuses only apps it can see are owned elsewhere.
 	}
 	if !s.owns(app) {
 		return state.App{}, status.Errorf(codes.FailedPrecondition,
@@ -126,7 +126,7 @@ func (s *Server) authorizeInstance(ctx context.Context, instanceID string) (stat
 	}
 	ins, err := s.resolver.InstanceByID(ctx, instanceID)
 	if err != nil {
-		return state.Instance{}, nil
+		return state.Instance{}, nil //nolint:nilerr // as in authorizeApp: lookup failures fall through to the engine.
 	}
 	if _, err := s.authorizeApp(ctx, ins.AppID); err != nil {
 		return state.Instance{}, err
