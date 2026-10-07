@@ -38,10 +38,11 @@ func (p *Provider) awaitRestoredBranchWithCreation(ctx context.Context, projectI
 				return managedpostgres.ObservedDatabase{}, custodyErr
 			}
 		}
-		observed, err := restoredBranchObservation(projectID, parentID, name, target, request)
+		observed, err := p.observeRestoredBranch(ctx, projectID, parentID, name, target, request)
 		if err == nil || !errors.Is(err, managedpostgres.ErrUnavailable) || !validProviderID.MatchString(id) || target.Name != name ||
 			(target.ParentID != "" && target.ParentID != parentID) ||
-			(target.ParentID != "" && target.ParentTimestamp != "" && target.ProjectID != "" && target.InitSource != "") {
+			(target.ParentID != "" && target.ProjectID != "" && target.InitSource != "" &&
+				(target.ParentTimestamp != "" && target.ParentLSN == "" || target.ParentLSN != "" && target.CurrentState == "ready" && target.PendingState == "")) {
 			return observed, err
 		}
 		var response struct {

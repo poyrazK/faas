@@ -1882,6 +1882,20 @@ type CustomerOperationWorkflowClaim struct {
 	LeaseUntil       pgtype.Timestamptz
 }
 
+type CustomerOperationWorkflowGuestClaim struct {
+	WorkflowRunID      pgtype.UUID
+	StepName           string
+	StepAttempt        int32
+	OperationID        pgtype.UUID
+	Generation         int32
+	ExecutionKind      string
+	CoordinatorAttempt int32
+	InstanceID         pgtype.UUID
+	CapabilityDigest   string
+	DeadlineAt         pgtype.Timestamptz
+	BoundAt            pgtype.Timestamptz
+}
+
 type DataUpstream struct {
 	ID                             pgtype.UUID
 	AccountID                      pgtype.UUID

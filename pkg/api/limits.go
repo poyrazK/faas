@@ -753,6 +753,8 @@ const (
 	OperationStreamReleaseTimeout  = 2 * time.Second
 	OperationExecutionLeaseMax     = 2 * time.Minute
 	OperationExecutionRenewTimeout = 5 * time.Second
+	// Preserve the native workflow handler default for controlled dispatch.
+	OperationWorkflowHandlerDefaultTimeout = 30 * time.Second
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
