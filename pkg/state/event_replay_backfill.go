@@ -56,7 +56,7 @@ func validateEventReplayBackfillQuery(accountID string, query *EventReplayBackfi
 	}
 	query.AppID, query.SubscriptionID = canonicalMemUUID(query.AppID), canonicalMemUUID(query.SubscriptionID)
 	query.From, query.Until = query.From.UTC(), query.Until.UTC()
-	if err := query.EventReplayBackfillRequest.Validate(); err != nil {
+	if err := query.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", ErrEventReplayBackfillQuery, err)
 	}
 	cutoff := eventReplayBackfillCutoff(query.Until, now.UTC())
