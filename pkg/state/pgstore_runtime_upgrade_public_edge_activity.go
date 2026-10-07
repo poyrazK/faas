@@ -30,6 +30,13 @@ func currentPublicEdgeGeneration(ctx context.Context, tx pgx.Tx, member RuntimeU
 	if roster.GatewayRosterRevision != pgUUIDString(gateway) || !slices.Contains(roster.Members, member) {
 		return RuntimeUpgradeIngressGeneration{}, ErrConflict
 	}
+	withdrawn, err := sqlc.New().RuntimeUpgradePublicEdgeSessionWithdrawn(ctx, tx, mustPgUUID(member.SessionID))
+	if err != nil {
+		return RuntimeUpgradeIngressGeneration{}, err
+	}
+	if withdrawn {
+		return RuntimeUpgradeIngressGeneration{}, ErrConflict
+	}
 	return RuntimeUpgradeIngressGeneration{PublicRevision: roster.Revision, GatewayRevision: roster.GatewayRosterRevision}, nil
 }
 
@@ -120,6 +127,11 @@ func (s *PgStore) ObserveRuntimeUpgradePublicEdgeActivity(ctx context.Context, e
 		return out, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	return runtimeUpgradePublicEdgeActivityDB(ctx, tx, expected)
+}
+
+func runtimeUpgradePublicEdgeActivityDB(ctx context.Context, tx pgx.Tx, expected string) (RuntimeUpgradePublicEdgeActivityObservation, error) {
+	out := RuntimeUpgradePublicEdgeActivityObservation{RuntimeUpgradePublicEdgeObservation: RuntimeUpgradePublicEdgeObservation{Status: "pending", Reason: "public_edge_membership_unreviewed"}}
 	gateway, head, err := lockPublicEdgeHeads(ctx, tx, false)
 	if err != nil {
 		return out, err

@@ -940,6 +940,36 @@ $$;
 
 
 --
+-- Name: capture_runtime_upgrade_public_edge_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_runtime_upgrade_public_edge_withdrawals() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE added bigint;
+BEGIN
+ INSERT INTO runtime_upgrade_public_edge_withdrawals(id,slot_id,public_session_id,config_sha256,roster_revision)
+ SELECT gen_random_uuid(),prior.slot_ids[i],prior.public_sessions[i],prior.config_sha256s[i],prior.revision
+ FROM runtime_upgrade_public_edge_rosters prior, generate_subscripts(prior.public_sessions,1) i
+ WHERE prior.revision=OLD.revision AND NOT EXISTS
+  (SELECT 1 FROM runtime_upgrade_public_edge_rosters next WHERE next.revision=NEW.revision AND prior.public_sessions[i]=ANY(next.public_sessions))
+ ON CONFLICT (public_session_id) DO NOTHING;
+ GET DIAGNOSTICS added=ROW_COUNT;
+ IF added > 0 AND (SELECT count(*) FROM (SELECT 1 FROM runtime_upgrade_public_edge_withdrawals w
+  WHERE NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id) LIMIT 65) pending) > 64 THEN
+  RAISE EXCEPTION 'public edge withdrawal capacity exceeded' USING ERRCODE='23514';
+ END IF;
+ -- Direct head publication must also invalidate current facts. Otherwise a
+ -- topology-only revision round trip could borrow an older zero-activity fact.
+ IF NEW.revision IS DISTINCT FROM OLD.revision THEN
+  DELETE FROM runtime_upgrade_public_edge_guards;
+  DELETE FROM runtime_upgrade_public_edge_activity;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: capture_sidecar_binding_promotion_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5504,6 +5534,33 @@ END $$;
 
 
 --
+-- Name: guard_runtime_upgrade_public_edge_head_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_head_withdrawals() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE next_roster runtime_upgrade_public_edge_rosters;
+BEGIN
+ IF TG_OP='DELETE' OR NEW.revision IS NULL THEN
+  RAISE EXCEPTION 'public edge head cannot erase withdrawal history' USING ERRCODE='23514';
+ END IF;
+ SELECT * INTO next_roster FROM runtime_upgrade_public_edge_rosters WHERE revision=NEW.revision;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=next_roster.gateway_roster_revision FOR SHARE;
+ IF NOT FOUND OR EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_withdrawals w WHERE w.public_session_id=ANY(next_roster.public_sessions)) THEN
+  RAISE EXCEPTION 'public review cannot resurrect a withdrawn process or bind an old internal review' USING ERRCODE='23514';
+ END IF;
+ IF EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters prior, generate_subscripts(prior.public_sessions,1) i
+  WHERE prior.revision=OLD.revision AND prior.public_sessions[i]=ANY(next_roster.public_sessions)
+   AND (prior.slot_ids[i],prior.config_sha256s[i]) IS DISTINCT FROM
+    (next_roster.slot_ids[array_position(next_roster.public_sessions,prior.public_sessions[i])],next_roster.config_sha256s[array_position(next_roster.public_sessions,prior.public_sessions[i])])) THEN
+  RAISE EXCEPTION 'startup session cannot change public slot or configuration' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_runtime_upgrade_public_edge_roster(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5530,6 +5587,52 @@ BEGIN
  END IF;
  RETURN NEW;
 END $_$;
+
+
+--
+-- Name: guard_runtime_upgrade_public_edge_withdrawal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_withdrawal() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP <> 'INSERT' THEN
+  RAISE EXCEPTION 'immutable public edge withdrawal' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ IF EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision WHERE NEW.public_session_id=ANY(r.public_sessions))
+  OR NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters r WHERE r.revision=NEW.roster_revision
+   AND r.public_sessions[array_position(r.slot_ids,NEW.slot_id)]=NEW.public_session_id
+   AND r.config_sha256s[array_position(r.slot_ids,NEW.slot_id)]=NEW.config_sha256) THEN
+  RAISE EXCEPTION 'withdrawal requires exact previously reviewed absent process' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_public_edge_withdrawal_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_withdrawal_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE withdrawn runtime_upgrade_public_edge_withdrawals;
+BEGIN
+ IF TG_OP <> 'INSERT' THEN
+  RAISE EXCEPTION 'immutable public edge withdrawal receipt' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ SELECT * INTO withdrawn FROM runtime_upgrade_public_edge_withdrawals WHERE id=NEW.withdrawal_id FOR SHARE;
+ IF NOT FOUND OR NEW.observed_at < withdrawn.created_at OR NEW.observed_at > clock_timestamp()
+  OR EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision WHERE withdrawn.public_session_id=ANY(r.public_sessions)) THEN
+  RAISE EXCEPTION 'withdrawal receipt requires an absent reviewed process and current clock' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -8083,6 +8186,26 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: seed_runtime_upgrade_public_edge_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.seed_runtime_upgrade_public_edge_withdrawals() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ INSERT INTO runtime_upgrade_public_edge_withdrawals(id,slot_id,public_session_id,config_sha256,roster_revision)
+ SELECT gen_random_uuid(),slot_id,public_session_id,config_sha256,revision FROM (
+  SELECT DISTINCT ON (r.public_sessions[i]) r.slot_ids[i] AS slot_id,r.public_sessions[i] AS public_session_id,r.config_sha256s[i] AS config_sha256,r.revision
+  FROM runtime_upgrade_public_edge_rosters r, generate_subscripts(r.public_sessions,1) i
+  WHERE NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters live JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=live.revision WHERE r.public_sessions[i]=ANY(live.public_sessions))
+  ORDER BY r.public_sessions[i],r.created_at DESC,r.revision DESC
+ ) historical ON CONFLICT (public_session_id) DO NOTHING;
+END $$;
 
 
 --
@@ -19531,6 +19654,46 @@ CREATE TABLE public.runtime_upgrade_public_edge_rosters (
 
 
 --
+-- Name: runtime_upgrade_public_edge_withdrawal_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_withdrawal_receipts (
+    withdrawal_id uuid NOT NULL,
+    fence_id uuid NOT NULL,
+    activity_version bigint NOT NULL,
+    admission_closed boolean NOT NULL,
+    coverage_known boolean NOT NULL,
+    active_forwards integer NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_r_activity_version_check CHECK ((activity_version > 0)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_r_admission_closed_check CHECK (admission_closed),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_re_active_forwards_check CHECK ((active_forwards = 0)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_rec_coverage_known_check CHECK (coverage_known),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_receip_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_receipts_fence_id_check CHECK ((fence_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_withdrawals (
+    id uuid NOT NULL,
+    slot_id uuid NOT NULL,
+    public_session_id uuid NOT NULL,
+    config_sha256 text NOT NULL,
+    roster_revision uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_config_sha256_check CHECK ((config_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_public_session_id_check CHECK ((public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: runtime_upgrade_verifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25344,6 +25507,30 @@ ALTER TABLE ONLY public.runtime_upgrade_public_edge_roster_head
 
 ALTER TABLE ONLY public.runtime_upgrade_public_edge_rosters
     ADD CONSTRAINT runtime_upgrade_public_edge_rosters_pkey PRIMARY KEY (revision);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawal_receipts runtime_upgrade_public_edge_withdrawal_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawal_receipts
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawal_receipts_pkey PRIMARY KEY (withdrawal_id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals runtime_upgrade_public_edge_withdrawals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawals
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals runtime_upgrade_public_edge_withdrawals_public_session_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawals
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawals_public_session_id_key UNIQUE (public_session_id);
 
 
 --
@@ -33765,10 +33952,38 @@ CREATE TRIGGER runtime_upgrade_public_edge_fact_guard BEFORE INSERT OR UPDATE ON
 
 
 --
+-- Name: runtime_upgrade_public_edge_roster_head runtime_upgrade_public_edge_head_withdrawal_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_head_withdrawal_guard BEFORE DELETE OR UPDATE ON public.runtime_upgrade_public_edge_roster_head FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_head_withdrawals();
+
+
+--
 -- Name: runtime_upgrade_public_edge_rosters runtime_upgrade_public_edge_roster_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER runtime_upgrade_public_edge_roster_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_public_edge_rosters FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_roster();
+
+
+--
+-- Name: runtime_upgrade_public_edge_roster_head runtime_upgrade_public_edge_withdrawal_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_withdrawal_capture AFTER UPDATE ON public.runtime_upgrade_public_edge_roster_head FOR EACH ROW EXECUTE FUNCTION public.capture_runtime_upgrade_public_edge_withdrawals();
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals runtime_upgrade_public_edge_withdrawal_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_withdrawal_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_public_edge_withdrawals FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_withdrawal();
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawal_receipts runtime_upgrade_public_edge_withdrawal_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_withdrawal_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_public_edge_withdrawal_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_withdrawal_receipt();
 
 
 --
@@ -40166,6 +40381,22 @@ ALTER TABLE ONLY public.runtime_upgrade_public_edge_rosters
 
 ALTER TABLE ONLY public.runtime_upgrade_public_edge_roster_head
     ADD CONSTRAINT runtime_upgrade_public_edge_roster_head_revision_fkey FOREIGN KEY (revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawal_receipts runtime_upgrade_public_edge_withdrawal_recei_withdrawal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawal_receipts
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawal_recei_withdrawal_id_fkey FOREIGN KEY (withdrawal_id) REFERENCES public.runtime_upgrade_public_edge_withdrawals(id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals runtime_upgrade_public_edge_withdrawals_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawals
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawals_roster_revision_fkey FOREIGN KEY (roster_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
 
 
 --

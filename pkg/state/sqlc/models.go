@@ -6102,6 +6102,25 @@ type RuntimeUpgradePublicEdgeRosterHead struct {
 	Revision  pgtype.UUID
 }
 
+type RuntimeUpgradePublicEdgeWithdrawal struct {
+	ID              pgtype.UUID
+	SlotID          pgtype.UUID
+	PublicSessionID pgtype.UUID
+	ConfigSha256    string
+	RosterRevision  pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+}
+
+type RuntimeUpgradePublicEdgeWithdrawalReceipt struct {
+	WithdrawalID    pgtype.UUID
+	FenceID         pgtype.UUID
+	ActivityVersion int64
+	AdmissionClosed bool
+	CoverageKnown   bool
+	ActiveForwards  int32
+	ObservedAt      pgtype.Timestamptz
+}
+
 type RuntimeUpgradeVerification struct {
 	OperationID           pgtype.UUID
 	GatewaySessions       []pgtype.UUID

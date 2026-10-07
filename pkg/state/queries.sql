@@ -14379,3 +14379,19 @@ ON CONFLICT (slot_id) DO UPDATE SET public_session_id=EXCLUDED.public_session_id
 
 -- name: ReadRuntimeUpgradePublicEdgeActivity :many
 SELECT * FROM runtime_upgrade_public_edge_activity WHERE public_roster_revision=$1 ORDER BY slot_id LIMIT $2;
+
+-- name: RuntimeUpgradePublicEdgeSessionWithdrawn :one
+SELECT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawals WHERE public_session_id=$1);
+
+-- name: LockRuntimeUpgradePublicEdgeWithdrawal :one
+SELECT * FROM runtime_upgrade_public_edge_withdrawals WHERE slot_id=$1 AND public_session_id=$2 AND config_sha256=$3 FOR SHARE;
+
+-- name: RecordRuntimeUpgradePublicEdgeWithdrawalReceipt :execrows
+INSERT INTO runtime_upgrade_public_edge_withdrawal_receipts(withdrawal_id,fence_id,activity_version,admission_closed,coverage_known,active_forwards,observed_at)
+VALUES ($1,$2,$3,true,true,0,clock_timestamp()) ON CONFLICT (withdrawal_id) DO NOTHING;
+
+-- name: ReadRuntimeUpgradePublicEdgeWithdrawalReceipt :one
+SELECT * FROM runtime_upgrade_public_edge_withdrawal_receipts WHERE withdrawal_id=$1;
+
+-- name: ReadPendingRuntimeUpgradePublicEdgeWithdrawals :many
+SELECT w.* FROM runtime_upgrade_public_edge_withdrawals w WHERE NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id) ORDER BY w.id LIMIT $1;

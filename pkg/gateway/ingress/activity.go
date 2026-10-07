@@ -20,11 +20,12 @@ type Activity struct {
 }
 
 type ActivityTracker struct {
-	mu             sync.Mutex
-	version        int64
-	known          bool
-	pending, total int
-	active         map[Generation]int
+	mu                sync.Mutex
+	version           int64
+	known             bool
+	pending, total    int
+	active            map[Generation]int
+	withdrawal, fence string
 }
 
 func NewActivityTracker() *ActivityTracker {
@@ -60,6 +61,9 @@ func (t *ActivityTracker) advance() {
 func (t *ActivityTracker) Begin() (*Admission, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.withdrawal != "" {
+		return nil, ErrUnverified
+	}
 	t.advance()
 	if t.active == nil {
 		t.known = false
@@ -78,7 +82,7 @@ func (a *Admission) Bind(g Generation) error {
 	t := a.tracker
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if a.finished || a.bound || !validGeneration(g) {
+	if t.withdrawal != "" || a.finished || a.bound || !validGeneration(g) {
 		return ErrUnverified
 	}
 	t.advance()

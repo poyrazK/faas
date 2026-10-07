@@ -31189,6 +31189,30 @@ func (q *Queries) LockRuntimeUpgradePublicEdgeRosterHead(ctx context.Context, db
 	return revision, err
 }
 
+const lockRuntimeUpgradePublicEdgeWithdrawal = `-- name: LockRuntimeUpgradePublicEdgeWithdrawal :one
+SELECT id, slot_id, public_session_id, config_sha256, roster_revision, created_at FROM runtime_upgrade_public_edge_withdrawals WHERE slot_id=$1 AND public_session_id=$2 AND config_sha256=$3 FOR SHARE
+`
+
+type LockRuntimeUpgradePublicEdgeWithdrawalParams struct {
+	SlotID          pgtype.UUID
+	PublicSessionID pgtype.UUID
+	ConfigSha256    string
+}
+
+func (q *Queries) LockRuntimeUpgradePublicEdgeWithdrawal(ctx context.Context, db DBTX, arg LockRuntimeUpgradePublicEdgeWithdrawalParams) (RuntimeUpgradePublicEdgeWithdrawal, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradePublicEdgeWithdrawal, arg.SlotID, arg.PublicSessionID, arg.ConfigSha256)
+	var i RuntimeUpgradePublicEdgeWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.SlotID,
+		&i.PublicSessionID,
+		&i.ConfigSha256,
+		&i.RosterRevision,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const lockRuntimeUpgradeTargetApp = `-- name: LockRuntimeUpgradeTargetApp :one
 SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
 WHERE d.id=$1::uuid AND a.status='active' FOR UPDATE OF a
@@ -44741,6 +44765,37 @@ func (q *Queries) ReadManagedWorkflowStepForUpdate(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const readPendingRuntimeUpgradePublicEdgeWithdrawals = `-- name: ReadPendingRuntimeUpgradePublicEdgeWithdrawals :many
+SELECT w.id, w.slot_id, w.public_session_id, w.config_sha256, w.roster_revision, w.created_at FROM runtime_upgrade_public_edge_withdrawals w WHERE NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id) ORDER BY w.id LIMIT $1
+`
+
+func (q *Queries) ReadPendingRuntimeUpgradePublicEdgeWithdrawals(ctx context.Context, db DBTX, limit int32) ([]RuntimeUpgradePublicEdgeWithdrawal, error) {
+	rows, err := db.Query(ctx, readPendingRuntimeUpgradePublicEdgeWithdrawals, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradePublicEdgeWithdrawal{}
+	for rows.Next() {
+		var i RuntimeUpgradePublicEdgeWithdrawal
+		if err := rows.Scan(
+			&i.ID,
+			&i.SlotID,
+			&i.PublicSessionID,
+			&i.ConfigSha256,
+			&i.RosterRevision,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProductionDeadLetterEvent = `-- name: ReadProductionDeadLetterEvent :one
 SELECT d.id, d.account_id, d.app_id, d.source, d.source_id, d.origin, d.trigger_id, d.event_payload, d.headers, d.error_kind, d.error_detail, d.retry_count, d.first_failed_at, d.last_failed_at, d.replayed_at, d.created_at, d.environment_owned FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
 WHERE d.id=$1::uuid
@@ -48212,6 +48267,25 @@ func (q *Queries) ReadRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBT
 	return i, err
 }
 
+const readRuntimeUpgradePublicEdgeWithdrawalReceipt = `-- name: ReadRuntimeUpgradePublicEdgeWithdrawalReceipt :one
+SELECT withdrawal_id, fence_id, activity_version, admission_closed, coverage_known, active_forwards, observed_at FROM runtime_upgrade_public_edge_withdrawal_receipts WHERE withdrawal_id=$1
+`
+
+func (q *Queries) ReadRuntimeUpgradePublicEdgeWithdrawalReceipt(ctx context.Context, db DBTX, withdrawalID pgtype.UUID) (RuntimeUpgradePublicEdgeWithdrawalReceipt, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradePublicEdgeWithdrawalReceipt, withdrawalID)
+	var i RuntimeUpgradePublicEdgeWithdrawalReceipt
+	err := row.Scan(
+		&i.WithdrawalID,
+		&i.FenceID,
+		&i.ActivityVersion,
+		&i.AdmissionClosed,
+		&i.CoverageKnown,
+		&i.ActiveForwards,
+		&i.ObservedAt,
+	)
+	return i, err
+}
+
 const readSavedRouteRequirements = `-- name: ReadSavedRouteRequirements :one
 SELECT jsonb_build_object('app_id', saved.app_id, 'revision', saved.revision, 'sha256', saved.sha256, 'requirements', saved.requirements, 'updated_at', saved.updated_at) AS saved
 FROM saved_route_requirements AS saved JOIN apps AS a ON a.id = saved.app_id
@@ -50463,6 +50537,25 @@ func (q *Queries) RecordRuntimeUpgradePublicEdgeGuard(ctx context.Context, db DB
 		arg.ConfigSha256,
 		arg.LeaseSeconds,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordRuntimeUpgradePublicEdgeWithdrawalReceipt = `-- name: RecordRuntimeUpgradePublicEdgeWithdrawalReceipt :execrows
+INSERT INTO runtime_upgrade_public_edge_withdrawal_receipts(withdrawal_id,fence_id,activity_version,admission_closed,coverage_known,active_forwards,observed_at)
+VALUES ($1,$2,$3,true,true,0,clock_timestamp()) ON CONFLICT (withdrawal_id) DO NOTHING
+`
+
+type RecordRuntimeUpgradePublicEdgeWithdrawalReceiptParams struct {
+	WithdrawalID    pgtype.UUID
+	FenceID         pgtype.UUID
+	ActivityVersion int64
+}
+
+func (q *Queries) RecordRuntimeUpgradePublicEdgeWithdrawalReceipt(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeWithdrawalReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRuntimeUpgradePublicEdgeWithdrawalReceipt, arg.WithdrawalID, arg.FenceID, arg.ActivityVersion)
 	if err != nil {
 		return 0, err
 	}
@@ -55204,6 +55297,17 @@ func (q *Queries) RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg Runtim
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const runtimeUpgradePublicEdgeSessionWithdrawn = `-- name: RuntimeUpgradePublicEdgeSessionWithdrawn :one
+SELECT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawals WHERE public_session_id=$1)
+`
+
+func (q *Queries) RuntimeUpgradePublicEdgeSessionWithdrawn(ctx context.Context, db DBTX, publicSessionID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, runtimeUpgradePublicEdgeSessionWithdrawn, publicSessionID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const safeReleaseWorkerLeaseReady = `-- name: SafeReleaseWorkerLeaseReady :one

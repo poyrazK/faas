@@ -2,12 +2,14 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -74,7 +76,7 @@ func (s *PgStore) ReviewRuntimeUpgradePublicEdgeRoster(ctx context.Context, expe
 	}
 	count, err := q.PublishRuntimeUpgradePublicEdgeRoster(ctx, tx, sqlc.PublishRuntimeUpgradePublicEdgeRosterParams{Revision: r.Revision, ExpectedRevision: head})
 	if err != nil {
-		return RuntimeUpgradePublicEdgeRoster{}, fmt.Errorf("publish public edge review: %w", err)
+		return RuntimeUpgradePublicEdgeRoster{}, fmt.Errorf("publish public edge review: %w", publicEdgeReviewError(err))
 	}
 	if count != 1 {
 		return RuntimeUpgradePublicEdgeRoster{}, ErrConflict
@@ -89,6 +91,16 @@ func (s *PgStore) ReviewRuntimeUpgradePublicEdgeRoster(ctx context.Context, expe
 		return RuntimeUpgradePublicEdgeRoster{}, fmt.Errorf("commit public edge review: %w", err)
 	}
 	return publicEdgeRosterFromRow(r), nil
+}
+
+// Review parameters are already validated. A head-trigger constraint means
+// immutable startup identity, permanent withdrawal or unresolved capacity won.
+func publicEdgeReviewError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23514" {
+		return ErrConflict
+	}
+	return runtimeUpgradeBaselineError(err)
 }
 
 func (s *PgStore) RuntimeUpgradePublicEdgeRoster(ctx context.Context) (RuntimeUpgradePublicEdgeRoster, error) {

@@ -34,9 +34,7 @@ type runtimePublicEdgeConfig struct {
 
 func publicEdgeConfig(mode internalUpstreamMode, h2c bool, listen string, trusted []netip.Prefix, getenv func(string) string) runtimePublicEdgeConfig {
 	c := runtimePublicEdgeConfig{Protocol: "adr612/guard-v1", ListenAddress: listen, NodeName: strings.TrimSpace(getenv("FAAS_NODE_NAME")), H2C: h2c, TrustedIngressCIDRs: make([]string, 0, len(trusted))}
-	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") == "1" {
-		c.Protocol = "adr614/generation-v1"
-	}
+	c.Protocol = publicEdgeProtocol(getenv)
 	switch mode {
 	case internalUpstreamDatabase:
 		c.UpstreamMode, c.UpstreamTarget = "database", "compute_gateway_pool"
@@ -61,14 +59,28 @@ func publicEdgeConfig(mode internalUpstreamMode, h2c bool, listen string, truste
 }
 
 type runtimePublicEdgeObserver struct {
-	member        state.RuntimeUpgradePublicEdgeMember
-	store         state.RuntimeUpgradePublicEdgeGuardStore
-	log           *slog.Logger
-	activity      *ingress.ActivityTracker
-	activityStore state.RuntimeUpgradePublicEdgeActivityStore
+	member          state.RuntimeUpgradePublicEdgeMember
+	store           state.RuntimeUpgradePublicEdgeGuardStore
+	log             *slog.Logger
+	activity        *ingress.ActivityTracker
+	activityStore   state.RuntimeUpgradePublicEdgeActivityStore
+	withdrawalStore state.RuntimeUpgradePublicEdgeWithdrawalStore
+}
+
+func publicEdgeProtocol(getenv func(string) string) string {
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL") == "1" {
+		return "adr615/withdrawal-v1"
+	}
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") == "1" {
+		return "adr614/generation-v1"
+	}
+	return "adr612/guard-v1"
 }
 
 func prepareRuntimePublicEdgeObserver(proxy *gateway.InternalReverseProxy, store state.RuntimeUpgradePublicEdgeGuardStore, config runtimePublicEdgeConfig, getenv func(string) string, log *slog.Logger) (*runtimePublicEdgeObserver, error) {
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL") == "1" && getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") != "1" {
+		return nil, fmt.Errorf("public edge withdrawal requires public ingress activity")
+	}
 	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_CONFIRMATION") != "1" {
 		if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") == "1" {
 			return nil, fmt.Errorf("public ingress activity requires public edge confirmation")
@@ -86,10 +98,7 @@ func prepareRuntimePublicEdgeObserver(proxy *gateway.InternalReverseProxy, store
 	}
 	// Bind the fingerprint to the mode actually installed below, even if a
 	// private caller supplied an incomplete startup configuration descriptor.
-	config.Protocol = "adr612/guard-v1"
-	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") == "1" {
-		config.Protocol = "adr614/generation-v1"
-	}
+	config.Protocol = publicEdgeProtocol(getenv)
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		return nil, fmt.Errorf("encode public edge startup config: %w", err)
@@ -99,6 +108,13 @@ func prepareRuntimePublicEdgeObserver(proxy *gateway.InternalReverseProxy, store
 	o := &runtimePublicEdgeObserver{member: member, store: store, log: log}
 	if err := o.configureActivity(proxy, getenv); err != nil {
 		return nil, err
+	}
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL") == "1" {
+		var ok bool
+		o.withdrawalStore, ok = store.(state.RuntimeUpgradePublicEdgeWithdrawalStore)
+		if !ok {
+			return nil, fmt.Errorf("public edge withdrawal requires PostgreSQL withdrawal store")
+		}
 	}
 	log.Info("private public edge guard awaits inventory review", "public_edge_slot_id", slot, "public_edge_session_id", session, "config_sha256", member.ConfigSHA256)
 	return o, nil
@@ -166,10 +182,7 @@ func (o *runtimePublicEdgeObserver) run(ctx context.Context) {
 	defer ticker.Stop()
 	for ctx.Err() == nil {
 		poll, cancel := context.WithTimeout(ctx, api.RuntimeUpgradeGatewayRepairTimeout)
-		err := o.store.RecordRuntimeUpgradePublicEdgeGuard(poll, o.member)
-		if err == nil {
-			err = o.recordActivity(poll)
-		}
+		err := o.repair(poll)
 		cancel()
 		if err != nil && ctx.Err() == nil {
 			o.log.Warn("private public edge guard pending review or retry")
@@ -180,4 +193,22 @@ func (o *runtimePublicEdgeObserver) run(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// Withdrawal precedes current facts: removed sessions cannot publish guard
+// facts, but must keep repairing their irreversible admission fence and seal.
+func (o *runtimePublicEdgeObserver) repair(ctx context.Context) error {
+	if o.withdrawalStore != nil {
+		withdrawn, err := o.withdrawalStore.RepairRuntimeUpgradePublicEdgeWithdrawal(ctx, o.member, func(id string) (state.RuntimeUpgradePublicEdgeWithdrawalSnapshot, error) {
+			a, err := o.activity.Withdraw(id)
+			return state.RuntimeUpgradePublicEdgeWithdrawalSnapshot{ID: a.ID, FenceID: a.FenceID, Version: a.Version, Closed: a.Closed, Known: a.Known, Active: a.Active}, err
+		})
+		if err != nil || withdrawn {
+			return err
+		}
+	}
+	if err := o.store.RecordRuntimeUpgradePublicEdgeGuard(ctx, o.member); err != nil {
+		return err
+	}
+	return o.recordActivity(ctx)
 }

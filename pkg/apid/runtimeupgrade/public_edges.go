@@ -39,3 +39,11 @@ func (c PublicEdgeControls) ObserveActivity(ctx context.Context, expected string
 	}
 	return store.ObserveRuntimeUpgradePublicEdgeActivity(ctx, expected)
 }
+
+func (c PublicEdgeControls) ObserveCoverage(ctx context.Context, expected string) (state.RuntimeUpgradePublicEdgeCoverageObservation, error) {
+	store, ok := c.Store.(state.RuntimeUpgradePublicEdgeCoverageVerifier)
+	if !ok {
+		return state.RuntimeUpgradePublicEdgeCoverageObservation{}, state.ErrInvalidArgument
+	}
+	return store.ObserveRuntimeUpgradePublicEdgeCoverage(ctx, expected)
+}

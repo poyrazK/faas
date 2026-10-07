@@ -8757,6 +8757,7 @@ const (
 	RuntimeUpgradeIngressIdentityMaxBytes      = 1024
 	RuntimeUpgradeIngressTokenBytes            = 32
 	RuntimeUpgradePublicEdgeLimit              = 64 // reviewed public processes (ADR-613)
+	RuntimeUpgradePublicEdgeWithdrawalLimit    = 64 // unresolved withdrawn public sessions (ADR-615)
 )
 
 // Private runtime qualification collector budgets (ADR-601).
