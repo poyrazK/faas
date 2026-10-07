@@ -387,6 +387,8 @@ type Querier interface {
 	CustomerOperationReleaseMemberCount(ctx context.Context, db DBTX, arg CustomerOperationReleaseMemberCountParams) (int64, error)
 	CustomerOperationStateMetrics(ctx context.Context, db DBTX, now pgtype.Timestamptz) ([]CustomerOperationStateMetricsRow, error)
 	CustomerOperationStreamMetric(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
+	CustomerOperationWorkflowHasRunningStep(ctx context.Context, db DBTX, runID pgtype.UUID) (bool, error)
+	CustomerOperationWorkflowTenantStatus(ctx context.Context, db DBTX, arg CustomerOperationWorkflowTenantStatusParams) (string, error)
 	CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	DeactivateProjectReleaseSets(ctx context.Context, db DBTX, arg DeactivateProjectReleaseSetsParams) error
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
@@ -766,6 +768,7 @@ type Querier interface {
 	GetCustomerOperationIdempotency(ctx context.Context, db DBTX, arg GetCustomerOperationIdempotencyParams) (GetCustomerOperationIdempotencyRow, error)
 	GetCustomerOperationRecovery(ctx context.Context, db DBTX, arg GetCustomerOperationRecoveryParams) (string, error)
 	GetCustomerOperationReport(ctx context.Context, db DBTX, arg GetCustomerOperationReportParams) (string, error)
+	GetCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, runID pgtype.UUID) (CustomerOperationWorkflowClaim, error)
 	// Single-row read for the dashboard's "edit upstream"
 	// pane (PR-B). Cursor-safe: no pagination; the handler
 	// reads the row directly. Projects the new deployment_scope
@@ -1692,6 +1695,7 @@ type Querier interface {
 	LockCustomerOperationReleaseApps(ctx context.Context, db DBTX, arg LockCustomerOperationReleaseAppsParams) ([]pgtype.UUID, error)
 	LockCustomerOperationReleaseDeployments(ctx context.Context, db DBTX, arg LockCustomerOperationReleaseDeploymentsParams) ([]pgtype.UUID, error)
 	LockCustomerOperationTenant(ctx context.Context, db DBTX, arg LockCustomerOperationTenantParams) (string, error)
+	LockCustomerOperationWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) (WorkflowRun, error)
 	// Candidate selection holds no ledger locks. Take target lanes and source
 	// rows before locking the projection, matching failure writers' lock order.
 	LockDeadLetterReplayLanes(ctx context.Context, db DBTX, eventIds []pgtype.UUID) error
@@ -1879,6 +1883,9 @@ type Querier interface {
 	MarkWorkflowRunStatusFenced(ctx context.Context, db DBTX, arg MarkWorkflowRunStatusFencedParams) (int64, error)
 	MigrateInstanceRuntimeConfig(ctx context.Context, db DBTX, arg MigrateInstanceRuntimeConfigParams) (Instance, error)
 	NextAutomationVersion(ctx context.Context, db DBTX) (int64, error)
+	// Backend row first, operation row second. A current custody lease prevents
+	// another worker claiming a callback wake or parked state early.
+	NextCustomerOperationWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error)
 	NextDueLegacyWorkflowRun(ctx context.Context, db DBTX, staleMs int64) (NextDueLegacyWorkflowRunRow, error)
 	NextEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg NextEnvironmentQueueDeliveryInvocationParams) (Invocation, error)
 	// ----------------------------------------------------------------------
@@ -2188,6 +2195,9 @@ type Querier interface {
 	OrgInvitationByTokenHash(ctx context.Context, db DBTX, tokenHash []byte) (OrgInvitationByTokenHashRow, error)
 	OrgMemberByAccount(ctx context.Context, db DBTX, arg OrgMemberByAccountParams) (OrgMemberByAccountRow, error)
 	OwnEnvironmentGitOpsField(ctx context.Context, db DBTX, arg OwnEnvironmentGitOpsFieldParams) (int64, error)
+	// A callback may have made this run due while its coordinator still held the
+	// fence. Preserve that earlier wake when the coordinator parks afterwards.
+	ParkCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg ParkCustomerOperationWorkflowRunParams) error
 	PeekProductionQueue(ctx context.Context, db DBTX, arg PeekProductionQueueParams) ([]Invocation, error)
 	PendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsEffect, error)
 	PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsRuntimeEffect, error)
@@ -2258,6 +2268,7 @@ type Querier interface {
 	PublishInstanceRuntimeConfig(ctx context.Context, db DBTX, arg PublishInstanceRuntimeConfigParams) (Instance, error)
 	PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg PublishOwnedInstanceRuntimeParams) (PublishOwnedInstanceRuntimeRow, error)
 	PutCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PutCustomerOperationIdempotencyParams) error
+	PutCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, arg PutCustomerOperationWorkflowCustodyParams) error
 	PutEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg PutEnvironmentExternalFieldOwnerParams) (int64, error)
 	PutEnvironmentGitOpsOverride(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsOverrideParams) (int64, error)
 	PutEnvironmentGitOpsPolicies(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsPoliciesParams) error
@@ -2623,6 +2634,8 @@ type Querier interface {
 	RemoveApplicationStandardUnselectedSigners(ctx context.Context, db DBTX, arg RemoveApplicationStandardUnselectedSignersParams) error
 	RenewCustomerOperationExecution(ctx context.Context, db DBTX, arg RenewCustomerOperationExecutionParams) (int64, error)
 	RenewCustomerOperationStream(ctx context.Context, db DBTX, arg RenewCustomerOperationStreamParams) (int64, error)
+	RenewCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, arg RenewCustomerOperationWorkflowCustodyParams) error
+	RenewCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg RenewCustomerOperationWorkflowRunParams) error
 	RenewEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg RenewEnvironmentGitOpsLeaseParams) (int64, error)
 	RenewEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg RenewEnvironmentWorkloadQualificationParams) (EnvironmentWorkloadQualificationRequest, error)
 	// Materialize the locked row before evaluating expiry. A valid predicate
@@ -2752,6 +2765,7 @@ type Querier interface {
 	// (the calling session). Returns the revoked ids for audit.
 	RevokeAllSessions(ctx context.Context, db DBTX, arg RevokeAllSessionsParams) ([]pgtype.UUID, error)
 	RevokeApplicationStandardException(ctx context.Context, db DBTX, arg RevokeApplicationStandardExceptionParams) (int64, error)
+	RevokeCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	RevokeDevBridge(ctx context.Context, db DBTX, arg RevokeDevBridgeParams) (int64, error)
 	RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error)
 	// Account-scoped atomic stamp. WHERE includes account_id so a
@@ -2881,7 +2895,9 @@ type Querier interface {
 	StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampRuntimeMigrationApp(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
+	StartCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowRunParams) error
 	StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
+	StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap
 	// per plan). The handler sums the declared total_size across all
