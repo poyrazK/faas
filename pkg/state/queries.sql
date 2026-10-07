@@ -4535,9 +4535,12 @@ SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
 COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
 JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
-WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
+WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes,
+COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
+COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
-WHERE b.account_id = $1;
+LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = sqlc.arg(period_start)
+WHERE b.account_id = sqlc.arg(account_id);
 
 -- name: ObjectUsageGrant :one
 SELECT max_bytes FROM object_storage_key_grants WHERE bucket_id = $1 AND key_hash = $2;
@@ -10619,7 +10622,11 @@ WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.
 -- name: FinishProjectEnvironmentClonePostgresSnapshotCleanup :one
 UPDATE project_environment_clone_postgres_snapshots s SET state='deleted',cleanup_observed_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.arg(source_database_id)::uuid
-    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL)
+    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL
+        OR EXISTS(SELECT 1 FROM managed_postgres_creation_receipts c JOIN project_environment_clone_operations owner ON owner.id=s.operation_id
+            WHERE c.kind='snapshot' AND c.cleanup_started_at IS NOT NULL AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
+                AND c.account_id=owner.account_id AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
+                AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point))
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=s.operation_id AND r.source_database_id=s.source_database_id AND r.state<>'deleted')
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=s.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
@@ -14651,6 +14658,36 @@ UPDATE workflow_runs SET status='failed',last_error='workflow coordinator lease 
 -- name: RevokeCustomerOperationWorkflowCustody :exec
 UPDATE customer_operation_workflow_claims SET lease_until=now() WHERE workflow_run_id=sqlc.arg(run_id)::uuid;
 
+-- name: GetCustomerOperationWorkflowStep :one
+SELECT * FROM workflow_steps WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text;
+
+-- name: GetCustomerOperationWorkflowStepAttempt :one
+SELECT * FROM workflow_step_attempts WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text AND attempt=sqlc.arg(attempt)::integer;
+
+-- name: StartCustomerOperationWorkflowStep :one
+UPDATE workflow_steps SET status='running',attempt=sqlc.arg(attempt)::integer,input=sqlc.arg(input)::jsonb,error=NULL,
+ started_at=coalesce(started_at,now()),next_retry_at=NULL,finished_at=NULL
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text
+AND status IN ('pending','awaiting_event') AND attempt=sqlc.arg(attempt)::integer-1
+RETURNING input;
+
+-- name: InsertCustomerOperationWorkflowStepAttempt :exec
+INSERT INTO workflow_step_attempts(run_id,step_name,attempt,status)
+VALUES(sqlc.arg(run_id)::uuid,sqlc.arg(step_name)::text,sqlc.arg(attempt)::integer,'running');
+
+-- name: TouchCustomerOperationWorkflowStep :exec
+UPDATE workflow_runs SET current_step=sqlc.arg(step_name)::text,updated_at=now() WHERE id=sqlc.arg(run_id)::uuid;
+
+-- name: CompleteCustomerOperationWorkflowStep :execrows
+UPDATE workflow_steps SET status=sqlc.arg(status)::text,output=sqlc.narg(output)::jsonb,error=sqlc.narg(error)::text,
+ next_retry_at=NULL,finished_at=now()
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text AND status='running' AND attempt=sqlc.arg(attempt)::integer;
+
+-- name: CompleteCustomerOperationWorkflowStepAttempt :execrows
+UPDATE workflow_step_attempts SET status=sqlc.arg(status)::text,http_status=sqlc.narg(http_status)::integer,
+ error=sqlc.narg(error)::text,finished_at=now(),next_attempt_at=NULL
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text AND attempt=sqlc.arg(attempt)::integer AND status='running';
+
 -- name: SetCustomerOperationJobIdentity :execrows
 UPDATE job_runs j SET operation_id=o.id FROM customer_operations o
 WHERE j.id=sqlc.arg(run_id)::uuid AND o.id=sqlc.arg(operation_id)::uuid AND j.account_id=o.account_id AND o.execution_kind='job'
@@ -14679,3 +14716,47 @@ SELECT d.id, d.app_id, d.scope, d.created_at, d.first_wake_at, d.first_5xx_windo
         OR d.first_5xx_window_ends_at > now() - make_interval(secs => sqlc.arg('grace_seconds')::int))
  ORDER BY d.created_at, d.id
  LIMIT sqlc.arg('row_limit')::int;
+
+
+-- name: RecordManagedPostgresCreationReceipt :one
+INSERT INTO managed_postgres_creation_receipts(kind,resource_id,account_id,database_id,backend_id,backend_fingerprint,generation,
+    point_in_time,source_resource_id,provider_resource_id,provider_created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT (kind,backend_id,resource_id) DO UPDATE SET resource_id=EXCLUDED.resource_id
+WHERE managed_postgres_creation_receipts.account_id=EXCLUDED.account_id
+    AND managed_postgres_creation_receipts.database_id IS NOT DISTINCT FROM EXCLUDED.database_id
+    AND managed_postgres_creation_receipts.backend_fingerprint=EXCLUDED.backend_fingerprint
+    AND managed_postgres_creation_receipts.generation=EXCLUDED.generation
+    AND managed_postgres_creation_receipts.point_in_time=EXCLUDED.point_in_time
+    AND managed_postgres_creation_receipts.source_resource_id=EXCLUDED.source_resource_id
+    AND managed_postgres_creation_receipts.provider_resource_id=EXCLUDED.provider_resource_id
+    AND managed_postgres_creation_receipts.provider_created_at=EXCLUDED.provider_created_at RETURNING *;
+
+-- name: ReadManagedPostgresCreationReceipt :one
+SELECT * FROM managed_postgres_creation_receipts WHERE kind=$1 AND backend_id=$2 AND resource_id=$3;
+
+-- name: ValidateManagedPostgresSnapshotCreationIntent :one
+SELECT o.account_id FROM project_environment_clone_postgres_snapshots s JOIN project_environment_clone_operations o ON o.id=s.operation_id
+WHERE ('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)=sqlc.arg(resource_id)::text
+    AND s.backend_id=sqlc.arg(backend_id)::text AND s.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
+    AND s.source_data_resource_id=sqlc.arg(source_resource_id)::text AND s.capture_point=sqlc.arg(point_in_time)::timestamptz
+    AND s.request_started_at IS NOT NULL AND s.state IN ('requested','deleting') AND o.status IN ('capturing','compensating')
+    AND (NOT sqlc.arg(cleanup)::boolean OR (s.state='deleting' AND o.status='compensating'));
+
+
+-- name: MarkManagedPostgresCreationCleanup :one
+UPDATE managed_postgres_creation_receipts SET cleanup_started_at=coalesce(cleanup_started_at,clock_timestamp())
+WHERE kind=$1 AND backend_id=$2 AND resource_id=$3 AND provider_resource_id=$4 AND provider_created_at=$5 RETURNING *;
+
+-- name: PurgeAccountManagedPostgresCreationReceipts :exec
+DELETE FROM managed_postgres_creation_receipts c
+WHERE c.account_id=sqlc.arg(account_id)::uuid
+    AND EXISTS(SELECT 1 FROM accounts a WHERE a.id=c.account_id AND a.status='deleted_pending')
+    AND ((c.kind='restore' AND EXISTS(SELECT 1 FROM managed_postgres_databases d
+        WHERE d.id=c.database_id AND d.account_id=c.account_id AND d.state='deleted'))
+    OR (c.kind='snapshot' AND EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots s
+        JOIN project_environment_clone_operations o ON o.id=s.operation_id
+        WHERE o.account_id=c.account_id AND s.state='deleted'
+            AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
+            AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
+            AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point)));

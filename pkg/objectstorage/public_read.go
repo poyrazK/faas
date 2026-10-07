@@ -62,6 +62,14 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 	if c.Store == nil || c.Registry == nil || c.Next == nil {
 		return nil, errors.New("object storage public read: store, registry and next are required")
 	}
+	if c.Registry.Accounting.GatewaySafety() {
+		if _, ok := c.RequestMetrics.(state.ObjectStorageGatewayEgressStore); !ok || c.Accounting == nil {
+			return nil, errors.New("object storage public read: gateway safety accounting requires durable meters and admission")
+		}
+		if _, ok := c.RequestMetrics.(state.ObjectStorageGatewayRequestStore); !ok {
+			return nil, errors.New("object storage public read: gateway safety accounting requires atomic request admission")
+		}
+	}
 	if c.Enabled == nil {
 		c.Enabled = func() bool { return true }
 	}
@@ -69,6 +77,7 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 		transport := http.DefaultTransport
 		if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
 			clone := defaultTransport.Clone()
+			clone.DisableCompression = true
 			clone.ResponseHeaderTimeout = 30 * time.Second
 			transport = clone
 		}
@@ -173,7 +182,7 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if h.requestMetrics != nil {
-		if err := h.requestMetrics.RecordObjectStorageProviderRequest(r.Context(), bucket.ID, h.now()); err != nil {
+		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket.ID, h.now(), h.registry.Accounting); err != nil {
 			http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -199,6 +208,13 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if r.Method == http.MethodGet && h.registry.Accounting.GatewaySafety() {
+		if err := ReserveGatewayRead(r.Context(), h.requestMetrics, bucket.ID, response, h.registry.Accounting, h.now()); err != nil {
+			w.Header().Del("Content-Length")
+			http.Error(w, "object storage egress budget is unavailable or exhausted", http.StatusServiceUnavailable)
+			return
+		}
+	}
 	copyPublicObjectHeaders(w.Header(), response.Header)
 	w.Header().Set("Cache-Control", publicImmutableCacheControl)
 	w.Header().Del("Content-Disposition")
@@ -206,18 +222,14 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		return
 	}
-	n, _ := io.Copy(w, response.Body)
-	if n > 0 {
-		if metrics, ok := h.requestMetrics.(state.ObjectStorageProviderEgressStore); ok {
-			// A browser disconnect cancels the request context after bytes have
-			// already left the provider. Preserve the bounded ledger write so
-			// those bytes remain visible to the accounting path.
-			egressCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
-			err := metrics.RecordObjectStorageProviderEgress(egressCtx, bucket.ID, n, h.now())
-			cancel()
-			if err != nil {
-				h.log.Warn("public object egress metric write failed", "bucket_id", bucket.ID)
-			}
+	body := io.Reader(response.Body)
+	if h.registry.Accounting.GatewaySafety() {
+		body = io.LimitReader(body, response.ContentLength)
+	}
+	n, _ := io.Copy(w, body)
+	if !h.registry.Accounting.GatewaySafety() {
+		if err := RecordDeliveredEgress(r.Context(), h.requestMetrics, bucket.ID, n, h.now()); err != nil {
+			h.log.Warn("public object egress metric write failed", "bucket_id", bucket.ID)
 		}
 	}
 }

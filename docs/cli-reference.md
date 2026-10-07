@@ -821,6 +821,12 @@ Read or change an independent legal hold
 
 `gregale bucket protection legal-hold <app> <bucket-id> <key> <version-id> [ON|OFF operation-id]`
 
+#### bucket protection event-hold
+
+Set or release event retention for an exact version
+
+`gregale bucket protection event-hold <app> <bucket-id> <key> <version-id> <GOVERNANCE|COMPLIANCE> <ON|OFF> [days|years duration] [--retain-until timestamp] <operation-id>`
+
 ### bucket reconcile
 
 Start, inspect or cancel a fenced capacity inventory
@@ -919,6 +925,28 @@ Show a persisted deletion receipt
 Permanently delete an owned immutable version or marker
 
 `gregale bucket version-delete <app> <bucket-id> <key> <version-id>`
+
+### bucket notifications
+
+Manage bucket event notifications
+
+#### bucket notifications get
+
+Read notification rules
+
+`gregale bucket notifications get <app> <bucket-id>`
+
+#### bucket notifications set
+
+Replace rules from a JSON file or stdin
+
+`gregale bucket notifications set <app> <bucket-id> <JSON-file|->`
+
+#### bucket notifications clear
+
+Remove notification rules
+
+`gregale bucket notifications clear <app> <bucket-id>`
 
 ### bucket lifecycle
 

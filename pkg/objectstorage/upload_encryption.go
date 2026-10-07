@@ -50,7 +50,7 @@ func (h *uploadHandler) writeUnfencedCapturedRouteUpload(ctx context.Context, st
 	}
 	ctx = WithEncryptionRequestRecorder(ctx, before)
 	ctx = WithEncryptionWriteRecorder(ctx, func(ctx context.Context) error {
-		if err := before(ctx); err != nil {
+		if err := RecordGatewayProviderRequest(ctx, h.requestMetrics, bucket.ID, h.now(), h.registry.Accounting); err != nil {
 			return err
 		}
 		dispatched, err := st.DispatchTrackedObjectUpload(ctx, c.AccountID, c.BucketID, c.ID)
