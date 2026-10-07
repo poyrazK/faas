@@ -26,7 +26,9 @@ permissions:
 jobs:
   acceptance:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold builds of the complete API/state test sources reached the old
+    # fifteen-minute deadline. Keep acceptance bounded without dropping tests.
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -34,6 +36,9 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # pgtest drops fully migrated schemas; the default lock table can
+          # exhaust shared memory. Match the main CI PostgreSQL fixture.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U faas -d faas"
