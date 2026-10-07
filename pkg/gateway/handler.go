@@ -5331,6 +5331,26 @@ func (c *capWriter) WriteHeader(statusCode int) {
 		// only thing on the wire.
 		return
 	}
+	// Production-us hunt #4 (H4-67): a response that announces a body
+	// larger than the cap used to go out as a 2xx with the full
+	// Content-Length and then stop mid-body, which a client sees only as a
+	// truncated transfer. Refuse it before the headers are written.
+	if c.cap > 0 && statusCode >= http.StatusOK {
+		if n, err := strconv.ParseInt(c.Header().Get("Content-Length"), 10, 64); err == nil && n > c.cap {
+			if c.disabled.CompareAndSwap(false, true) {
+				for _, k := range []string{"Content-Length", "Content-Encoding", "Content-Range", "Etag", "Last-Modified", "Accept-Ranges"} {
+					c.Header().Del(k)
+				}
+				if c.onCap != nil {
+					c.onCap()
+				}
+				if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
+					c.onWarn("exceeded")
+				}
+			}
+			return
+		}
+	}
 	c.ResponseWriter.WriteHeader(statusCode)
 }
 
