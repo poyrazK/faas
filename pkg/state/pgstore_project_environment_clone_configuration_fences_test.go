@@ -552,6 +552,14 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(successor) != 2 {
 		t.Fatal("missing protection successor downgrade")
 	}
+	purgeRaw, err := migrations.FS.ReadFile("20261007121912000_clone_configuration_parent_purge.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	purge := strings.SplitN(string(purgeRaw), "-- +goose Down", 2)
+	if len(purge) != 2 {
+		t.Fatal("missing parent purge downgrade")
+	}
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)
 	if err != nil {
@@ -576,6 +584,9 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if err := tx.QueryRow(f.ctx, shape).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tx.Exec(f.ctx, purge[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(f.ctx, successor[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -586,6 +597,9 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(f.ctx, successor[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, purge[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(f.ctx, shape).Scan(&after); err != nil || before != after {
@@ -613,4 +627,46 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 		t.Fatalf("downgrade discarded an owned source configuration hold: %v", err)
 	}
 	assertConfigurationFenceError(t, f.store.UpsertAppEnvInScope(f.ctx, f.app.AccountID, f.app.ID, "production", "VERSION", "still-held"))
+}
+
+// adr: 590 — FK cascade ordering must allow admitted purge, without granting
+// authority to mutate a live project whose configuration guard is missing.
+func TestPgCloneConfigurationFenceProjectPurgeAndMissingGuard(t *testing.T) {
+	for _, mode := range []string{"open", "held", "missing"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newCloneConfigurationFenceFixture(t)
+			if mode == "held" {
+				if _, err := f.store.AcquireProjectEnvironmentCloneConfigurationFence(f.ctx, f.lease); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "missing" {
+				if _, err := f.pool.Exec(f.ctx, "delete from project_environment_clone_configuration_guards where project_id=$1", f.app.ProjectID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := f.pool.Exec(f.ctx, "delete from projects where id=$1", f.app.ProjectID)
+			if mode == "open" {
+				if err != nil {
+					t.Fatalf("admitted parent purge failed: %v", err)
+				}
+				var present bool
+				if err := f.pool.QueryRow(f.ctx, "select exists(select 1 from projects where id=$1)", f.app.ProjectID).Scan(&present); err != nil || present {
+					t.Fatalf("parent retained: %v %v", present, err)
+				}
+				return
+			}
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "55000" {
+				t.Fatalf("unsafe deletion admitted: %v", err)
+			}
+			want := "clone_configuration_write_fenced"
+			if mode == "missing" {
+				want = "clone_configuration_guard_missing"
+			}
+			if pgErr.ConstraintName != want {
+				t.Fatalf("constraint=%s want %s", pgErr.ConstraintName, want)
+			}
+		})
+	}
 }
