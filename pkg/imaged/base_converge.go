@@ -1,6 +1,6 @@
 package imaged
 
-// Runtime base convergence — ADR-567.
+// Runtime base convergence — ADR-567; cached bases ADR-632.
 //
 // A runtime base is published under one logical key (base/runner-*.ext4) and
 // every compute node attaches its cached copy as drive0. ADR-510 refuses to
@@ -286,8 +286,13 @@ func (h *Handler) adoptPublication(ctx context.Context, be storage.StorageBacken
 	return true, nil
 }
 
-// ConvergeBases runs one convergence pass over every staged base.
+// ConvergeBases runs one convergence pass over every staged base and every
+// platform base cached on this node (ADR-632).
 func (h *Handler) ConvergeBases(ctx context.Context) {
+	h.convergeBases(ctx, BuilderArch(), os.Getenv)
+}
+
+func (h *Handler) convergeBases(ctx context.Context, arch string, envLookup func(string) string) {
 	be, err := h.storageFor()
 	if err != nil {
 		h.log.Warn("imaged: base convergence: storage", "err", err)
@@ -298,6 +303,7 @@ func (h *Handler) ConvergeBases(ctx context.Context) {
 		h.log.Warn("imaged: base convergence: hash guest-init", "path", h.guestInitPath, "err", err)
 		return
 	}
+	h.rememberCachedBases(ctx, be, arch, envLookup)
 	s := &h.baseConvergence
 	s.mu.Lock()
 	keys := make([]string, 0, len(s.staged))
