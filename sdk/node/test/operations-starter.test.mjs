@@ -2,11 +2,21 @@
 // and mocked SDK classes cannot establish that a generated feature starts.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
+
+function prepareOfflineStarterInstall(directory) {
+  const packagePath = join(directory, 'package.json');
+  const manifest = JSON.parse(readFileSync(packagePath, 'utf8'));
+  // npm still resolves dev dependency metadata with --omit=dev. These runtime
+  // tests exercise the packed SDK and generated JavaScript, not TypeScript.
+  delete manifest.devDependencies;
+  writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`);
+  rmSync(join(directory, 'package-lock.json'), {force: true});
+}
 
 for (const [template, minimumTests] of [['customer-operation-export', 6], ['customer-operation-job-export', 10], ['customer-operation-workflow-export', 8]]) {
 test(`${template}: packed SDK installs outside the checkout and serves the browser module graph`, async t => {
@@ -16,6 +26,7 @@ test(`${template}: packed SDK installs outside the checkout and serves the brows
   const source = fileURLToPath(new URL(`../../../cmd/gregale/templates/${template}/`, import.meta.url));
   const dest = join(temp, 'feature');
   cpSync(source, dest, {recursive: true}); mkdirSync(join(dest, 'packages'));
+  prepareOfflineStarterInstall(dest);
   const output = execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000});
   const [packed] = JSON.parse(output);
   cpSync(join(temp, packed.filename), join(dest, 'packages/gregale-sdk.tgz'));
@@ -61,6 +72,7 @@ test('workflow export: packed SDK installs outside the checkout and needs no buc
   const sdk = fileURLToPath(new URL('../', import.meta.url));
   const source = fileURLToPath(new URL('../../../examples/customer-operation-workflow-export/', import.meta.url));
   const dest = join(temp, 'feature'); cpSync(source, dest, {recursive: true}); mkdirSync(join(dest, 'packages'));
+  prepareOfflineStarterInstall(dest);
   const [packed] = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}));
   cpSync(join(temp, packed.filename), join(dest, 'packages/gregale-sdk.tgz'));
   const childEnv = {...process.env}; delete childEnv.NODE_TEST_CONTEXT;

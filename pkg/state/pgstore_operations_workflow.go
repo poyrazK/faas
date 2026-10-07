@@ -15,7 +15,10 @@ import (
 func (s *PgStore) OperationForWorkflowRun(ctx context.Context, runID string) (Operation, bool, error) {
 	id, err := operationUUID(runID)
 	if err != nil {
-		return Operation{}, false, err
+		// Ordinary workflow steps use synthetic correlation IDs. They have no
+		// customer operation association, so let the standard workflow pin path
+		// handle them just as MemStore does.
+		return Operation{}, false, nil
 	}
 	raw, err := sqlc.New().GetCustomerOperationForWorkflow(ctx, s.pool, id)
 	if errors.Is(err, pgx.ErrNoRows) {

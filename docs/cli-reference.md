@@ -5237,7 +5237,7 @@ Validate source contracts and optional sample input without credentials
 
 ### customer-operations types
 
-Generate or check TypeScript input and output types from source schemas
+Generate or check TypeScript input and output types
 
 `gregale customer-operations types --app <SLUG> --plan <PLAN> [--dir <PATH>] [--name <NAME>] [--output <PATH>] [--check]`
 
@@ -5248,7 +5248,7 @@ Generate or check TypeScript input and output types from source schemas
 | `--dir <PATH>` | source directory, default current directory |  |
 | `--name <NAME>` | selected operation; defaults to all |  |
 | `--output <PATH>` | generated declaration path (default customer-operations.generated.d.ts) |  |
-| `--check` | verify the generated file is current without writing |  |
+| `--check` | verify generated declarations are current without writing |  |
 
 ### customer-operations start
 

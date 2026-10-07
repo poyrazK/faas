@@ -111,8 +111,14 @@ func (s *PgStore) PutOperationDefinition(ctx context.Context, def OperationDefin
 		return OperationDefinition{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	def.Spec, def.Revision = contract.Spec, contract.Revision
+	var workflowSnapshot []byte
 	if def.Spec.Workflow != "" {
-		if _, err := operationWorkflowDefinitionTx(ctx, tx, def, api.Plan(plan)); err != nil {
+		workflow, err := operationWorkflowDefinitionTx(ctx, tx, def, api.Plan(plan))
+		if err != nil {
+			return OperationDefinition{}, err
+		}
+		workflowSnapshot, err = json.Marshal(workflow)
+		if err != nil {
 			return OperationDefinition{}, err
 		}
 	}
@@ -169,7 +175,7 @@ func (s *PgStore) PutOperationDefinition(ctx context.Context, def OperationDefin
 	if err != nil {
 		return OperationDefinition{}, err
 	}
-	row, err := q.InsertCustomerOperationDefinition(ctx, tx, sqlc.InsertCustomerOperationDefinitionParams{ID: id, AccountID: account, AppID: app, Scope: def.Scope, Name: def.Spec.Name, Revision: def.Revision, DeploymentID: deployment, ReleaseID: def.ReleaseID, Spec: spec})
+	row, err := q.InsertCustomerOperationDefinition(ctx, tx, sqlc.InsertCustomerOperationDefinitionParams{ID: id, AccountID: account, AppID: app, Scope: def.Scope, Name: def.Spec.Name, Revision: def.Revision, DeploymentID: deployment, ReleaseID: def.ReleaseID, Spec: spec, WorkflowSnapshot: workflowSnapshot})
 	if err != nil {
 		return OperationDefinition{}, fmt.Errorf("state: insert operation definition: %w", mapErr(err))
 	}

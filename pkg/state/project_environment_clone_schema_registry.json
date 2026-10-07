@@ -1709,9 +1709,21 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_job_executions",
+    "columns": [
+      "created_at",
+      "generation",
+      "operation_id",
+      "record",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_recoveries",
     "columns": [
       "created_at",
+      "decision",
       "fingerprint",
       "operation_id",
       "recovery_id",
@@ -1740,6 +1752,7 @@
       "fingerprint",
       "generation",
       "id",
+      "job_run_id",
       "lease_token",
       "lease_until",
       "next_attempt_at",
@@ -1747,7 +1760,9 @@
       "report_id",
       "size_bytes",
       "state",
-      "storage_key"
+      "storage_key",
+      "workflow_run_id",
+      "workflow_step"
     ],
     "kind": "operational"
   },
@@ -1775,6 +1790,18 @@
     ]
   },
   {
+    "table": "customer_operation_workflow_executions",
+    "columns": [
+      "created_at",
+      "generation",
+      "operation_id",
+      "record",
+      "resume_count",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operations",
     "columns": [
       "account_id",
@@ -1787,9 +1814,11 @@
       "execution_kind",
       "expires_at",
       "id",
+      "job_run_id",
       "platform_tenant_id",
       "record",
-      "state"
+      "state",
+      "workflow_run_id"
     ],
     "kind": "operational"
   },
@@ -5575,6 +5604,22 @@
     "kind": "operational"
   },
   {
+    "table": "platform_tenant_workflow_schedule_cursors",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "last_evaluated_at",
+      "last_run_id",
+      "platform_tenant_id",
+      "scheduled_for",
+      "status",
+      "trigger_snapshot",
+      "updated_at",
+      "workflow_name"
+    ]
+  },
+  {
     "table": "platform_tenants",
     "columns": [
       "account_id",
@@ -7539,22 +7584,6 @@
       "workflow_name"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "platform_tenant_workflow_schedule_cursors",
-    "kind": "operational",
-    "columns": [
-      "app_id",
-      "deployment_id",
-      "last_evaluated_at",
-      "last_run_id",
-      "platform_tenant_id",
-      "scheduled_for",
-      "status",
-      "trigger_snapshot",
-      "updated_at",
-      "workflow_name"
-    ]
   },
   {
     "table": "workflow_schedule_cursors",

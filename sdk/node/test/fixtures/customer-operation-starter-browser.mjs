@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {cpSync, mkdirSync, mkdtempSync, rmSync} from 'node:fs';
+import {cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
@@ -15,12 +15,22 @@ const accountID = '55555555-5555-4555-8555-555555555555';
 const owners = {alice: '66666666-6666-4666-8666-666666666666', bob: '77777777-7777-4777-8777-777777777777'};
 const prefix = '/v1/platform-tenant-self/customer-operations';
 
+function prepareOfflineStarterInstall(directory) {
+  const packagePath = join(directory, 'package.json');
+  const manifest = JSON.parse(readFileSync(packagePath, 'utf8'));
+  // npm resolves dev dependency metadata even when --omit=dev is set.
+  delete manifest.devDependencies;
+  writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`);
+  rmSync(join(directory, 'package-lock.json'), {force: true});
+}
+
 export async function browserStarter(t, template = 'customer-operation-workflow-export') {
   const temp = mkdtempSync(join(tmpdir(), `gregale-${template}-browser-`));
   t.after(() => rmSync(temp, {recursive: true, force: true}));
   const sdk = fileURLToPath(new URL('../../', import.meta.url));
   const source = fileURLToPath(new URL(`../../../../cmd/gregale/templates/${template}/`, import.meta.url));
   const dest = join(temp, 'feature'); cpSync(source, dest, {recursive: true}); mkdirSync(join(dest, 'packages'));
+  prepareOfflineStarterInstall(dest);
   const [packed] = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}));
   cpSync(join(temp, packed.filename), join(dest, 'packages/gregale-sdk.tgz'));
   const childEnv = {...process.env}; delete childEnv.NODE_TEST_CONTEXT;

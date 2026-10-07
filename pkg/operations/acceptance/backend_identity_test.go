@@ -339,17 +339,27 @@ func backendRunFixture(t *testing.T, ctx context.Context, s *state.PgStore, kind
 
 func insertBackendOperation(t *testing.T, ctx context.Context, db sqlc.DBTX, id, run, kind, account, app, definition, tenant string) {
 	t.Helper()
-	record, err := json.Marshal(map[string]any{"id": id, "account_id": account, "app_id": app,
+	fields := map[string]any{"id": id, "account_id": account, "app_id": app,
 		"definition_id": definition, "platform_tenant_id": tenant, "state": "accepted", "generation": 1,
-		"current_execution_id": run, "execution_kind": kind})
+		"current_execution_id": run, "execution_kind": kind}
+	params := sqlc.InsertCustomerOperationParams{ID: backendUUID(id),
+		AccountID: backendUUID(account), AppID: backendUUID(app), TenantID: backendUUID(tenant), DefinitionID: backendUUID(definition),
+		State: "accepted", CreatedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
+	if kind == "workflow" {
+		fields["workflow_run_id"] = run
+		params.WorkflowRunID = backendUUID(run)
+	} else {
+		fields["job_run_id"] = run
+		params.JobRunID = backendUUID(run)
+	}
+	record, err := json.Marshal(fields)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	err = sqlc.New().InsertCustomerOperation(ctx, db, sqlc.InsertCustomerOperationParams{ID: backendUUID(id),
-		AccountID: backendUUID(account), AppID: backendUUID(app), TenantID: backendUUID(tenant), DefinitionID: backendUUID(definition),
-		State: "accepted", Record: record, CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
-		ExpiresAt: pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true}})
+	params.Record = record
+	params.ExpiresAt = pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true}
+	err = sqlc.New().InsertCustomerOperation(ctx, db, params)
 	if err != nil {
 		t.Fatal(err)
 	}
