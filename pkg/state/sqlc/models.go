@@ -1587,6 +1587,16 @@ type CustomerOperationStreamLease struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
+type CustomerOperationWorkflowClaim struct {
+	WorkflowRunID    pgtype.UUID
+	OperationID      pgtype.UUID
+	Generation       int32
+	ExecutionKind    string
+	Attempt          int32
+	CapabilityDigest string
+	LeaseUntil       pgtype.Timestamptz
+}
+
 type CustomerOperationWorkflowExecution struct {
 	OperationID pgtype.UUID
 	Generation  int32
