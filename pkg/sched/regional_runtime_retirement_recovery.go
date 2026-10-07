@@ -1,6 +1,6 @@
 package sched
 
-// adr: 633
+// adr: 633, 649
 import (
 	"context"
 	"log/slog"
@@ -107,5 +107,22 @@ func (e *Engine) RunRegionalRuntimeFailureRecovery(ctx context.Context, log *slo
 	if owner == nil {
 		return runtimequota.ErrTrust
 	}
-	return owner.runRecovery(ctx, log, e.RecoverRegionalRuntimeFailures)
+	if log == nil {
+		log = slog.Default()
+	}
+	var inventoryAfter state.RegionalRuntimeRetirementCursor
+	return owner.runRecovery(ctx, log, func(ctx context.Context, after state.RegionalRuntimeRetirementCursor) (state.RegionalRuntimeRetirementCursor, int, error) {
+		next, completed, err := e.RecoverRegionalRuntimeFailures(ctx, after)
+		if ctx.Err() == nil {
+			var report RegionalRuntimeInventoryReport
+			var observedErr error
+			inventoryAfter, report, observedErr = e.ObserveRegionalRuntimeInventoryPage(ctx, inventoryAfter)
+			if observedErr != nil || len(report.Issues) > 0 || report.NativeUnresolved > 0 {
+				log.Warn("schedd: regional native inventory unresolved; holds retained", "matched", len(report.Matches), "unresolved_holds", len(report.Issues), "native_unresolved", report.NativeUnresolved, "nodes", report.Nodes, "err", observedErr)
+			} else if report.Nodes > 0 {
+				log.Info("schedd: regional original holds observed; admission remains frozen", "matched", len(report.Matches), "nodes", report.Nodes)
+			}
+		}
+		return next, completed, err
+	})
 }

@@ -158,7 +158,11 @@ func (v *recoveryVMMFixture) DestroyWithExport(ctx context.Context, l Lease, out
 
 func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 	t.Helper()
-	v := NewJailerVMM(t.TempDir(), time.Second).WithNativeProcessRecovery()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	v := NewJailerVMM(root, time.Second).WithNativeProcessRecovery()
 	r := v.nativeRecovery
 	r.journal = nativeJournalFixture(filepath.Join(v.chrootBase, ".native-processes"))
 	proc := t.TempDir()

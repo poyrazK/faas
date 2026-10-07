@@ -38,6 +38,10 @@ const (
 	RegionalRuntimeSigningKeyMaxBytes           = 4096 // ADR-632: one PKCS#8 Ed25519 key.
 	RegionalRuntimeTrustBundleMaxBytes          = 65536
 	RegionalRuntimeTrustAnchorsMax              = 128
+	NativeRuntimeInventoryMaxBytes              = 64 << 20 // ADR-649: whole observation; oversize refuses, never truncates.
+	NativeRuntimeInventoryChunkMaxBytes         = 64 << 10
+	NativeRuntimeInventoryFrameMaxBytes         = NativeRuntimeInventoryChunkMaxBytes + 1024
+	NativeRuntimeInventoryTimeout               = 30 * time.Second
 	RegionalMigrationLeaseTokenBytes            = 32 // ADR-628: existing 128-bit lowercase hex lease.
 	GlobalDirectoryRequestMaxBytes              = 4096
 	GlobalDirectoryProofMaxBytes                = 4096

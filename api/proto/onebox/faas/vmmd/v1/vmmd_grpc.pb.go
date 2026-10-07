@@ -44,6 +44,7 @@ const (
 	Vmmd_FrameworkReady_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
 	Vmmd_Destroy_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
 	Vmmd_RetireRegionalRuntime_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/RetireRegionalRuntime"
+	Vmmd_ObserveNativeRuntimeInventory_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/ObserveNativeRuntimeInventory"
 	Vmmd_StopInstance_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
 	Vmmd_Stats_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/Stats"
 	Vmmd_Ping_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/Ping"
@@ -203,6 +204,9 @@ type VmmdClient interface {
 	// ADR-631: exact original physical ownership, authenticated schedd only.
 	// A response is unsigned native stop evidence, never cell capacity release.
 	RetireRegionalRuntime(ctx context.Context, in *RetireRegionalRuntimeRequest, opts ...grpc.CallOption) (*RetireRegionalRuntimeResponse, error)
+	// ADR-649: fresh advisory observation, authenticated schedd only. Completion
+	// follows the native consumer's final rechecks. This grants no authority.
+	ObserveNativeRuntimeInventory(ctx context.Context, in *ObserveNativeRuntimeInventoryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NativeRuntimeInventoryFrame], error)
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send
 	// `signal` to the guest's PID 1, wait up to `grace_period_s`
 	// seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -761,6 +765,25 @@ func (c *vmmdClient) RetireRegionalRuntime(ctx context.Context, in *RetireRegion
 	return out, nil
 }
 
+func (c *vmmdClient) ObserveNativeRuntimeInventory(ctx context.Context, in *ObserveNativeRuntimeInventoryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NativeRuntimeInventoryFrame], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_ObserveNativeRuntimeInventory_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ObserveNativeRuntimeInventoryRequest, NativeRuntimeInventoryFrame]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ObserveNativeRuntimeInventoryClient = grpc.ServerStreamingClient[NativeRuntimeInventoryFrame]
+
 func (c *vmmdClient) StopInstance(ctx context.Context, in *StopInstanceRequest, opts ...grpc.CallOption) (*StopInstanceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StopInstanceResponse)
@@ -893,7 +916,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -912,7 +935,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -925,7 +948,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -938,7 +961,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -951,7 +974,7 @@ type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, F
 
 func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1182,6 +1205,9 @@ type VmmdServer interface {
 	// ADR-631: exact original physical ownership, authenticated schedd only.
 	// A response is unsigned native stop evidence, never cell capacity release.
 	RetireRegionalRuntime(context.Context, *RetireRegionalRuntimeRequest) (*RetireRegionalRuntimeResponse, error)
+	// ADR-649: fresh advisory observation, authenticated schedd only. Completion
+	// follows the native consumer's final rechecks. This grants no authority.
+	ObserveNativeRuntimeInventory(*ObserveNativeRuntimeInventoryRequest, grpc.ServerStreamingServer[NativeRuntimeInventoryFrame]) error
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send
 	// `signal` to the guest's PID 1, wait up to `grace_period_s`
 	// seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -1564,6 +1590,9 @@ func (UnimplementedVmmdServer) Destroy(context.Context, *DestroyRequest) (*Destr
 }
 func (UnimplementedVmmdServer) RetireRegionalRuntime(context.Context, *RetireRegionalRuntimeRequest) (*RetireRegionalRuntimeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetireRegionalRuntime not implemented")
+}
+func (UnimplementedVmmdServer) ObserveNativeRuntimeInventory(*ObserveNativeRuntimeInventoryRequest, grpc.ServerStreamingServer[NativeRuntimeInventoryFrame]) error {
+	return status.Error(codes.Unimplemented, "method ObserveNativeRuntimeInventory not implemented")
 }
 func (UnimplementedVmmdServer) StopInstance(context.Context, *StopInstanceRequest) (*StopInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StopInstance not implemented")
@@ -2037,6 +2066,17 @@ func _Vmmd_RetireRegionalRuntime_Handler(srv interface{}, ctx context.Context, d
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _Vmmd_ObserveNativeRuntimeInventory_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ObserveNativeRuntimeInventoryRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VmmdServer).ObserveNativeRuntimeInventory(m, &grpc.GenericServerStream[ObserveNativeRuntimeInventoryRequest, NativeRuntimeInventoryFrame]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ObserveNativeRuntimeInventoryServer = grpc.ServerStreamingServer[NativeRuntimeInventoryFrame]
 
 func _Vmmd_StopInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StopInstanceRequest)
@@ -2660,6 +2700,11 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ExecuteAppTaskStream",
 			Handler:       _Vmmd_ExecuteAppTaskStream_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ObserveNativeRuntimeInventory",
+			Handler:       _Vmmd_ObserveNativeRuntimeInventory_Handler,
 			ServerStreams: true,
 		},
 		{

@@ -159,6 +159,10 @@ service Vmmd {
   // A response is unsigned native stop evidence, never cell capacity release.
   rpc RetireRegionalRuntime(RetireRegionalRuntimeRequest) returns (RetireRegionalRuntimeResponse);
 
+  // ADR-649: fresh advisory observation, authenticated schedd only. Completion
+  // follows the native consumer's final rechecks. This grants no authority.
+  rpc ObserveNativeRuntimeInventory(ObserveNativeRuntimeInventoryRequest) returns (stream NativeRuntimeInventoryFrame);
+
   // StopInstance is the M-2 / ADR-138 graceful stop sequence: send
   // `signal` to the guest's PID 1, wait up to `grace_period_s`
   // seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -2493,4 +2497,20 @@ message RetireRegionalRuntimeResponse {
   string instance = 1;
   // Bounded canonical unsigned CapacityStop JSON with the host's first fence.
   bytes stop = 2;
+}
+
+message ObserveNativeRuntimeInventoryRequest {
+  string node_id = 1;
+  // Fresh canonical UUID chosen by the scheduler for this request.
+  string challenge = 2;
+}
+
+message NativeRuntimeInventoryFrame {
+  // Contiguous byte offset in the bounded canonical observation JSON.
+  uint32 offset = 1;
+  bytes payload = 2;
+  // Exactly one terminal frame: no payload, total offset, SHA-256 of all bytes.
+  // Receivers also require successful stream EOF before consuming the sample.
+  bool complete = 3;
+  bytes sha256 = 4;
 }
