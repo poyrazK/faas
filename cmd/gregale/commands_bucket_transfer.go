@@ -275,7 +275,7 @@ func downloadBucketFile(ctx context.Context, c bucketTransferClient, o bucketTra
 	return bucketTransferResult{Key: o.key, Path: o.path, Bytes: n, ETag: response.Header.Get("ETag"), Status: "completed"}, nil
 }
 
-func cmdObjectStorageUsage(args []string) int {
+func cmdUsageObjectStorage(args []string) int {
 	if len(args) != 0 {
 		PrintUsage(osStderr, "usage: gregale usage object-storage", "usage")
 		return 1

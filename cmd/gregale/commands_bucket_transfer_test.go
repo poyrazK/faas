@@ -196,7 +196,36 @@ func TestObjectStorageUsageCLIReportsUnknownMeters(t *testing.T) {
 	oldOut, oldJSON := osStdout, jsonOutput
 	osStdout, jsonOutput = &out, false
 	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	if code := cmdObjectStorageUsage(nil); code != 0 || !strings.Contains(out.String(), "Unavailable meters") {
+	if code := cmdUsageObjectStorage(nil); code != 0 || !strings.Contains(out.String(), "Unavailable meters") {
 		t.Fatal(code, out.String())
+	}
+}
+
+// adr: 628
+func TestRunObjectStorageUsageJSONPreservesUnknownMeters(t *testing.T) {
+	want := api.ObjectStorageUsageResponse{Usage: api.ObjectStorageUsage{UnavailableMeters: []string{"requests", "egress"}}, BillingMode: "off"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/account/object-storage-usage" {
+			t.Errorf("usage request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(want)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var out bytes.Buffer
+	oldOut, oldJSON := osStdout, jsonOutput
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	if code := run([]string{"usage", "object-storage", "--json"}); code != 0 {
+		t.Fatal(code, out.String())
+	}
+	var got api.ObjectStorageUsageResponse
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err, out.String())
+	}
+	if got.BillingMode != want.BillingMode || got.Usage.Fresh || got.Charges != nil || strings.Join(got.Usage.UnavailableMeters, ",") != "requests,egress" {
+		t.Fatal(got)
 	}
 }
