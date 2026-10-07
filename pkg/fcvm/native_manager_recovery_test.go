@@ -167,6 +167,8 @@ func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 	r.journal = nativeJournalFixture(filepath.Join(v.chrootBase, ".native-processes"))
 	proc := t.TempDir()
 	r.retirer.probe = nativeProcessProbe{root: proc, chrootBase: v.chrootBase}
+	// Replacing the journal above must preserve the production observer wiring.
+	r.journal.helperProbe = &r.retirer.probe
 	r.support = func() error { return nil }
 	r.mounts = func(string) ([]string, error) { return nil, nil }
 	// Portable tests do not claim Linux network/mount acceptance.

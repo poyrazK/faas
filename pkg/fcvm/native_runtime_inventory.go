@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -51,6 +52,7 @@ type NativeRuntimeInventory struct {
 	Cgroups         []NativeRuntimeCgroup
 	ManagedUIDTasks []NativeRuntimeTask
 	LaunchTasks     []NativeRuntimeLaunchTask
+	HelperTasks     []NativeRuntimeHelperTask `json:",omitempty"`
 	Unresolved      []string
 }
 
@@ -116,17 +118,34 @@ func (v *JailerVMM) withNativeRuntimeInventory(ctx context.Context, consume func
 		if err != nil {
 			return err
 		}
-		inventory := NativeRuntimeInventory{KernelBootID: boot, Leases: leases, Cgroups: groups, ManagedUIDTasks: tasks, LaunchTasks: launchTasks}
+		helperJournal := nativeHostHelperJournal{owner: r.journal}
+		helpers, err := helperJournal.allRecords(ctx, records)
+		if err != nil {
+			return err
+		}
+		helperTasks, err := r.retirer.probe.helperTasks(ctx, helpers)
+		if err != nil {
+			return err
+		}
+		inventory := NativeRuntimeInventory{KernelBootID: boot, Leases: leases, Cgroups: groups, ManagedUIDTasks: tasks, LaunchTasks: launchTasks, HelperTasks: helperTasks}
 		return v.withNativeRuntimeOwners(ctx, records, groups, &inventory, nil, func(sessions []nativeRuntimeObservedSession) error {
 			inventory.Unresolved = unresolvedNativeCgroups(groups, inventory.Owners)
 			inventory.Unresolved = append(inventory.Unresolved, unresolvedNativeLaunchTasks(launchTasks, inventory.Owners)...)
-			if err := v.recheckNativeRuntimeInventory(ctx, records, groups, tasks, launchTasks, sessions); err != nil {
+			inventory.Unresolved = append(inventory.Unresolved, unresolvedNativeHelperTasks(helperTasks)...)
+			for i := range inventory.Owners {
+				for _, task := range helperTasks {
+					if task.OwnerGeneration == inventory.Owners[i].Generation && inventory.Owners[i].Unresolved == "" {
+						inventory.Owners[i].Unresolved = "original helper producer remains unresolved"
+					}
+				}
+			}
+			if err := v.recheckNativeRuntimeInventory(ctx, records, groups, tasks, launchTasks, helpers, helperTasks, sessions); err != nil {
 				return err
 			}
 			if err := consume(ctx, cloneNativeRuntimeInventory(inventory)); err != nil {
 				return err
 			}
-			return v.recheckNativeRuntimeInventory(ctx, records, groups, tasks, launchTasks, sessions)
+			return v.recheckNativeRuntimeInventory(ctx, records, groups, tasks, launchTasks, helpers, helperTasks, sessions)
 		})
 	})
 }
@@ -203,7 +222,7 @@ func fillNativeRuntimeObservation(ctx context.Context, s *nativeMachineAPI, grou
 	return s.check(ctx, true)
 }
 
-func (v *JailerVMM) recheckNativeRuntimeInventory(ctx context.Context, records []nativeLaunchRecord, groups []NativeRuntimeCgroup, tasks []NativeRuntimeTask, launchTasks []NativeRuntimeLaunchTask, sessions []nativeRuntimeObservedSession) error {
+func (v *JailerVMM) recheckNativeRuntimeInventory(ctx context.Context, records []nativeLaunchRecord, groups []NativeRuntimeCgroup, tasks []NativeRuntimeTask, launchTasks []NativeRuntimeLaunchTask, helpers []nativeHostHelperRecord, helperTasks []NativeRuntimeHelperTask, sessions []nativeRuntimeObservedSession) error {
 	for _, s := range sessions {
 		if err := s.api.check(ctx, s.measured); err != nil {
 			return err
@@ -231,6 +250,28 @@ func (v *JailerVMM) recheckNativeRuntimeInventory(ctx context.Context, records [
 	currentLaunchTasks, err := v.nativeRecovery.retirer.probe.launchTasks(ctx)
 	if err != nil || !slices.Equal(launchTasks, currentLaunchTasks) {
 		return errors.Join(err, errors.New("native inventory: launch task set changed during observation"))
+	}
+	if err := v.recheckNativeHelpers(ctx, current, helpers, helperTasks); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+// All native producers are drained by the active exclusive inventory permit.
+// Existing machine sessions retain their owner locks, so do not reacquire them.
+func (v *JailerVMM) recheckNativeHelpers(ctx context.Context, owners []nativeLaunchRecord, helpers []nativeHostHelperRecord, tasks []NativeRuntimeHelperTask) error {
+	permit, _ := ctx.Value(nativeEffectContextKey{}).(*nativeEffectPermit)
+	if err := v.checkNativeInventoryPermit(ctx, permit); err != nil {
+		return err
+	}
+	j := nativeHostHelperJournal{owner: v.nativeRecovery.journal}
+	after, err := j.readAllRecords(ctx, owners, j.records)
+	if err != nil || !reflect.DeepEqual(helpers, after) {
+		return errors.Join(err, errors.New("native inventory: helper provenance changed during observation"))
+	}
+	current, err := v.nativeRecovery.retirer.probe.helperTasks(ctx, after)
+	if err != nil || !slices.Equal(tasks, current) {
+		return errors.Join(err, errors.New("native inventory: original helper task set changed during observation"))
 	}
 	return ctx.Err()
 }
@@ -261,6 +302,7 @@ func cloneNativeRuntimeInventory(source NativeRuntimeInventory) NativeRuntimeInv
 	copy.Leases, copy.Unresolved = slices.Clone(source.Leases), slices.Clone(source.Unresolved)
 	copy.ManagedUIDTasks = slices.Clone(source.ManagedUIDTasks)
 	copy.LaunchTasks = slices.Clone(source.LaunchTasks)
+	copy.HelperTasks = slices.Clone(source.HelperTasks)
 	copy.Cgroups = make([]NativeRuntimeCgroup, len(source.Cgroups))
 	for i, group := range source.Cgroups {
 		copy.Cgroups[i] = cloneNativeRuntimeCgroup(group)

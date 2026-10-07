@@ -92,6 +92,9 @@ func (g *nativeHelperGroupsFixture) Inventory(_ []nativeHostHelperRecord) error 
 func nativeHelperJournalFixture(t *testing.T) (*nativeHostHelperJournal, nativeLaunchRecord, *nativeHelperGroupsFixture) {
 	t.Helper()
 	ownerJournal, lease := preparedNativeJournal(t)
+	// The modelled cgroup backend removes fixture processes. This separate
+	// empty procfs model supplies leader absence; it is not kernel acceptance.
+	ownerJournal.helperProbe = &nativeProcessProbe{root: t.TempDir()}
 	owner, err := ownerJournal.read(lease.Instance)
 	if err != nil {
 		t.Fatal(err)

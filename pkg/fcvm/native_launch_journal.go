@@ -51,6 +51,9 @@ type nativeLaunchJournal struct {
 	// Native records cannot survive into another kernel incarnation even if
 	// an operator places the journal on a persistent filesystem.
 	bootID func() (string, error)
+	// Independent original helper leaders must be absent before VM resources
+	// can be acknowledged. Production wires the same procfs root as recovery.
+	helperProbe *nativeProcessProbe
 	// Tests inject write failure before the child receives authorization.
 	writeRecord func(string, nativeLaunchRecord) error
 }

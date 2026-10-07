@@ -125,6 +125,11 @@ func regionalRuntimeObservationIssue(row state.RegionalRuntimeInventoryEntry, sa
 	if owner == nil {
 		return "original owner was not observed; absence requires native retirement evidence"
 	}
+	for _, helper := range sample.Inventory.HelperTasks {
+		if helper.Instance == owner.Instance || helper.OwnerGeneration == owner.Generation {
+			return "original helper producer remains unresolved"
+		}
+	}
 	for i := range sample.Inventory.Owners {
 		other := &sample.Inventory.Owners[i]
 		if other != owner && other.PID == owner.PID {

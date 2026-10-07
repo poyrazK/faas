@@ -31,6 +31,12 @@ func nativeReconciliationFixture(t *testing.T) (state.RegionalRuntimeInventoryEn
 
 func TestNativeRegionalInventoryMatchesOnlyOriginalObservedHold(t *testing.T) {
 	cases := map[string]func(*state.RegionalRuntimeInventoryEntry, *fcvm.NativeRuntimeInventorySample){
+		"original-helper": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
+			s.Inventory.HelperTasks = []fcvm.NativeRuntimeHelperTask{{OwnerGeneration: s.Inventory.Owners[0].Generation, PID: 999, StartTime: 100}}
+		},
+		"historical-helper-instance": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
+			s.Inventory.HelperTasks = []fcvm.NativeRuntimeHelperTask{{Instance: s.Inventory.Owners[0].Instance, OwnerGeneration: uuid.NewString(), PID: 999, StartTime: 100}}
+		},
 		"historical-executable": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
 			s.Inventory.Owners[0].Executable = nil
 		},

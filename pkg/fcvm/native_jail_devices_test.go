@@ -101,6 +101,9 @@ func (b *nativeJailBackendFixture) NamespaceRemoved(_ context.Context, _ jailset
 func nativeJailDeviceFixture(t *testing.T) (*nativeHostHelperJournal, nativeLaunchRecord, *nativeJailBackendFixture, string) {
 	t.Helper()
 	tun, owner, _, root := nativeTunJournalFixture(t)
+	// This descriptor/cgroup model independently supplies helper-leader
+	// absence; it does not attest native kernel process retirement.
+	tun.owner.helperProbe = &nativeProcessProbe{root: t.TempDir()}
 	if err := tun.stage(t.Context(), owner, root); err != nil {
 		t.Fatal(err)
 	}

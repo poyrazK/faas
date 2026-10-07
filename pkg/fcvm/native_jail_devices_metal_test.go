@@ -66,7 +66,7 @@ func nativeMetalJailDeviceFixture(t *testing.T, crash bool) {
 		t.Fatal(err)
 	}
 	tunBackend := newNativeTunBindBackend(root)
-	j := &nativeLaunchJournal{root: filepath.Join(root, ".native-processes"), tunBinds: tunBackend, jailDevices: newNativeJailDeviceBackend(root)}
+	j := &nativeLaunchJournal{root: filepath.Join(root, ".native-processes"), helperProbe: &nativeProcessProbe{root: "/proc"}, tunBinds: tunBackend, jailDevices: newNativeJailDeviceBackend(root)}
 	lease := leaseForSlot("native-jail-device", 0)
 	lease.Plan = api.PlanHobby
 	if err := j.prepare(ctx, lease); err != nil {
@@ -208,7 +208,7 @@ func nativeMetalJailDeviceFixture(t *testing.T, crash bool) {
 
 func nativeMetalJailCrashChild(t *testing.T, ctx context.Context, root, helper string) {
 	t.Helper()
-	j := &nativeLaunchJournal{root: filepath.Join(root, ".native-processes"), tunBinds: newNativeTunBindBackend(root), jailDevices: newNativeJailDeviceBackend(root)}
+	j := &nativeLaunchJournal{root: filepath.Join(root, ".native-processes"), helperProbe: &nativeProcessProbe{root: "/proc"}, tunBinds: newNativeTunBindBackend(root), jailDevices: newNativeJailDeviceBackend(root)}
 	owner, err := j.read("native-jail-device")
 	if err != nil {
 		t.Fatal(err)

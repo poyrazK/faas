@@ -123,6 +123,9 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 	if err := helpers.requireRetired(record); err != nil {
 		return err
 	}
+	if err := helpers.requireOriginalTasksAbsent(ctx, record); err != nil {
+		return err
+	}
 	if err := helpers.requireDeviceNamespacesRemoved(ctx, record); err != nil {
 		return err
 	}

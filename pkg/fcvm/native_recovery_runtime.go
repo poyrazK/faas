@@ -68,6 +68,7 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 		},
 	}
 	v.nativeRecovery.resources = v.nativeResourcesRemoved
+	v.nativeRecovery.journal.helperProbe = &v.nativeRecovery.retirer.probe
 	return v
 }
 
@@ -128,6 +129,15 @@ func (v *JailerVMM) scanNativeRecoveryLeases(ctx context.Context) ([]Lease, erro
 	helperRecords, err := helperJournal.allRecords(ctx, records)
 	if err != nil {
 		return nil, err
+	}
+	helperTasks, err := r.retirer.probe.helperTasks(ctx, helperRecords)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range helperTasks {
+		if task.RetirementClaimed {
+			return nil, errors.New("native recovery: acknowledged helper still has its original task")
+		}
 	}
 	if r.helperGroups != nil {
 		if err := r.helperGroups.Inventory(helperRecords); err != nil {

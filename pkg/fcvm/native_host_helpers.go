@@ -508,6 +508,17 @@ func (j *nativeHostHelperJournal) requireRemoved(owner nativeLaunchRecord) error
 // Inspect current and immutable archived generations. Unknown helper owners,
 // corrupt frames and changed kernel boots cannot disappear from recovery.
 func (j *nativeHostHelperJournal) allRecords(ctx context.Context, current []nativeLaunchRecord) ([]nativeHostHelperRecord, error) {
+	return j.readAllRecords(ctx, current, func(owner nativeLaunchRecord) ([]nativeHostHelperRecord, error) {
+		lock, err := j.owner.lock(ctx, owner.Lease.Instance)
+		if err != nil {
+			return nil, err
+		}
+		frames, readErr := j.records(owner)
+		return frames, errors.Join(readErr, lock.Close())
+	})
+}
+
+func (j *nativeHostHelperJournal) readAllRecords(ctx context.Context, current []nativeLaunchRecord, readFrames func(nativeLaunchRecord) ([]nativeHostHelperRecord, error)) ([]nativeHostHelperRecord, error) {
 	root := filepath.Join(j.owner.root, "helpers")
 	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -540,12 +551,8 @@ func (j *nativeHostHelperJournal) allRecords(ctx context.Context, current []nati
 				return nil, err
 			}
 		}
-		lock, err := j.owner.lock(ctx, owner.Lease.Instance)
+		frames, err := readFrames(owner)
 		if err != nil {
-			return nil, err
-		}
-		frames, readErr := j.records(owner)
-		if err := errors.Join(readErr, lock.Close()); err != nil {
 			return nil, err
 		}
 		if owner.ResourcesRemoved || !ok {
