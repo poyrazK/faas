@@ -1408,6 +1408,18 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 	if app.migrationRuntime != nil {
 		fields.WakeID = app.migrationRuntime.WakeID
 	}
+	// The destination's boot emits wake timeline events, which vmmd rejects
+	// without the app identity (H5-18: every migration lost its readiness and
+	// boot breakdown rows).
+	if fields.AppID == "" {
+		fields.AppID = app.AppID
+	}
+	if fields.DeploymentID == "" {
+		fields.DeploymentID = app.DeploymentID
+	}
+	if fields.InstanceID == "" {
+		fields.InstanceID = instanceID
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
 		InstanceId:        instanceID,
