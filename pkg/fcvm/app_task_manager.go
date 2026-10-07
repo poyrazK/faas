@@ -41,6 +41,9 @@ func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string,
 	if !ok || inst == nil || !inst.AppTaskOnly {
 		return zero, ErrAppTaskInstanceNotFound
 	}
+	if inst.AppTaskID != "" && req.TaskID != inst.AppTaskID {
+		return zero, ErrAppTaskInstanceNotFound
+	}
 	admission := admissionForInstance(inst)
 	admission.Command = true
 	finish, admissionErr := m.beginRuntimeOperation(requestCtx, admission)

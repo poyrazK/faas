@@ -44,7 +44,7 @@ func regionalInventoryRow(row sqlc.ListRegionalRuntimeInventoryRow, cell string)
 	}
 	entry := RegionalRuntimeInventoryEntry{Receipt: receipt, ServingSeatsHeld: row.ServingSeatsHeld}
 	if row.SourceInstanceKey.Valid {
-		source := runtimequota.LaunchSource{InstanceKey: row.SourceInstanceKey.String}
+		source := runtimequota.LaunchSource{InstanceKey: row.SourceInstanceKey.String, TaskID: exclusiveUUID(row.SourceTaskID)}
 		if err := json.Unmarshal(row.SourcePermitClaims, &source.Permit); err != nil || source.Validate() != nil || source.Permit != receipt.Permit {
 			return RegionalRuntimeInventoryEntry{}, ErrConflict
 		}

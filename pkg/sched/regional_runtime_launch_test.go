@@ -39,7 +39,12 @@ func TestRegionalRuntimeSchedulerInitialIssuance(t *testing.T) {
 			spec := AppSpec{MemSizeMiB: int32(app.RAMMB), VCPUCount: 1, CPUMillicores: api.DefaultAppCPUMillicores, AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan, PrimeOnly: purpose == runtimequota.CapacityPrime}
 			spec.Sidecars = []fcvm.WorkloadSpec{{Name: "cache", RamMB: 64}, {Name: "metrics", RamMB: 32}}
 			instance, run := strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()
-			issued, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, spec, head.Grant)
+			taskID := ""
+			if purpose == runtimequota.CapacityAppTask {
+				taskID = uuid.NewString()
+				instance, _ = runtimequota.AppTaskInstanceID(taskID, run)
+			}
+			issued, err := engine.issueRegionalRuntimeLaunchSource(t.Context(), node.ID, instance, run, purpose, taskID, spec, head.Grant)
 			if err != nil || issued.RegionalRuntime == nil {
 				t.Fatal("initial bookkeeping was not issued", err)
 			}
@@ -47,18 +52,18 @@ func TestRegionalRuntimeSchedulerInitialIssuance(t *testing.T) {
 			if err != nil || source.Source.InstanceKey != instance || source.Source.Permit != issued.RegionalRuntime.Permit || source.Resources != (state.RegionalRuntimeResources{RAMMB: app.RAMMB + 96, VCPU: 1, CPUMillicores: api.DefaultAppCPUMillicores}) {
 				t.Fatal("scheduler lost actual compact runtime key", source, err)
 			}
-			again, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, issued, head.Grant)
+			again, err := engine.issueRegionalRuntimeLaunchSource(t.Context(), node.ID, instance, run, purpose, taskID, issued, head.Grant)
 			if err != nil || again.RegionalRuntime.Permit != issued.RegionalRuntime.Permit || !sameInitialServingSeat(again.RegionalRuntime.Seat, issued.RegionalRuntime.Seat) {
 				t.Fatal("retry minted another attempt", err)
 			}
 			changedSidecars := issued
 			changedSidecars.Sidecars = []fcvm.WorkloadSpec{{Name: "cache", RamMB: 65}, {Name: "metrics", RamMB: 32}}
-			if refused, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, changedSidecars, head.Grant); !errors.Is(err, state.ErrConflict) || refused.RegionalRuntime == nil || refused.RegionalRuntime.Permit != issued.RegionalRuntime.Permit {
+			if refused, err := engine.issueRegionalRuntimeLaunchSource(t.Context(), node.ID, instance, run, purpose, taskID, changedSidecars, head.Grant); !errors.Is(err, state.ErrConflict) || refused.RegionalRuntime == nil || refused.RegionalRuntime.Permit != issued.RegionalRuntime.Permit {
 				t.Fatal("retry changed original sidecar footprint or lost cleanup provenance", err)
 			}
 			missingResources := issued
 			missingResources.MemSizeMiB = 0
-			refused, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, missingResources, head.Grant)
+			refused, err := engine.issueRegionalRuntimeLaunchSource(t.Context(), node.ID, instance, run, purpose, taskID, missingResources, head.Grant)
 			if !errors.Is(err, runtimequota.ErrBinding) || refused.RegionalRuntime == nil || *refused.RegionalRuntime != *issued.RegionalRuntime {
 				t.Fatal("invalid resource retry lost original cleanup identity", refused.RegionalRuntime, err)
 			}
@@ -72,7 +77,7 @@ func TestRegionalRuntimeSchedulerInitialIssuance(t *testing.T) {
 			if _, err := store.FenceRegionalRuntimeCapacity(t.Context(), app.ID, issued.RegionalRuntime.Permit.ID, uuid.NewString()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, issued, head.Grant); !errors.Is(err, state.ErrRegionalRuntimePlacementUnavailable) {
+			if _, err := engine.issueRegionalRuntimeLaunchSource(t.Context(), node.ID, instance, run, purpose, taskID, issued, head.Grant); !errors.Is(err, state.ErrRegionalRuntimePlacementUnavailable) {
 				t.Fatal("scheduler reopened a fenced physical attempt", err)
 			}
 			usage, err = store.RegionalRuntimeCapacityUsage(t.Context(), app.ID, head.Grant.AllocationID)

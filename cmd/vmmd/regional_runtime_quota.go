@@ -32,18 +32,7 @@ func regionalRuntimeQuotaAuthorizer(store state.Store) (fcvm.RuntimeAuthorizer, 
 			return nil
 		}
 		if operation.AppTaskOnly {
-			task, err := store.AppTaskByID(ctx, operation.AccountID, operation.AppID, operation.Instance)
-			if err != nil {
-				return err
-			}
-			status := state.AppTaskRestoring
-			if operation.Command {
-				status = state.AppTaskRunning
-			}
-			if task.DeploymentID != operation.DeploymentID || task.Status != status || task.LeaseToken == nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(time.Now()) || task.CancelRequested != nil {
-				return state.ErrAppTaskLeaseLost
-			}
-			return state.CheckRegionalRuntimeQuotaAdmission(ctx, reader, operation.AppID)
+			return authorizeOriginalAppTask(ctx, store, operation)
 		}
 		instance, err := store.InstanceByID(ctx, operation.Instance)
 		if err != nil {
@@ -54,6 +43,36 @@ func regionalRuntimeQuotaAuthorizer(store state.Store) (fcvm.RuntimeAuthorizer, 
 		}
 		return state.CheckRegionalRuntimeQuotaAdmission(ctx, reader, instance.AppID)
 	}, nil
+}
+
+// adr: 653 — a surviving original VM cannot borrow a replacement task lease.
+func authorizeOriginalAppTask(ctx context.Context, store state.Store, operation fcvm.RuntimeAdmission) error {
+	instance, err := runtimequota.AppTaskInstanceID(operation.AppTaskID, operation.AppTaskLeaseToken)
+	if err != nil || instance != operation.Instance {
+		return state.ErrAppTaskLeaseLost
+	}
+	if p := operation.RegionalRuntime; p != nil {
+		source, err := store.RegionalRuntimeLaunchSource(ctx, operation.AppID, p.Permit.ID)
+		if err != nil {
+			return err
+		}
+		if source.Source.ValidateTask() != nil || source.Source.Permit != p.Permit || source.Source.InstanceKey != instance ||
+			source.Source.TaskID != operation.AppTaskID || p.Permit.RunID != operation.AppTaskLeaseToken {
+			return runtimequota.ErrBinding
+		}
+	}
+	task, err := store.AppTaskByID(ctx, operation.AccountID, operation.AppID, operation.AppTaskID)
+	if err != nil {
+		return err
+	}
+	status := state.AppTaskRestoring
+	if operation.Command {
+		status = state.AppTaskRunning
+	}
+	if task.DeploymentID != operation.DeploymentID || task.Status != status || task.LeaseToken == nil || *task.LeaseToken != operation.AppTaskLeaseToken || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(time.Now()) || task.CancelRequested != nil {
+		return state.ErrAppTaskLeaseLost
+	}
+	return state.CheckRegionalRuntimeQuotaAdmission(ctx, store, operation.AppID)
 }
 
 func checkRegionalRuntimeOperation(ctx context.Context, reader state.Store, operation fcvm.RuntimeAdmission) error {

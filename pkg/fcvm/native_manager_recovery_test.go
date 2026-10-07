@@ -107,9 +107,6 @@ func (v *recoveryVMMFixture) nativeRecoveryLeases(ctx context.Context) ([]Lease,
 func (v *recoveryVMMFixture) prepareNativeLease(ctx context.Context, l Lease) error {
 	return v.jailer.prepareNativeLease(ctx, l)
 }
-func (v *recoveryVMMFixture) prepareNativeRegionalLease(ctx context.Context, l Lease, p runtimequota.Placement) error {
-	return v.jailer.prepareNativeRegionalLease(ctx, l, p)
-}
 func (v *recoveryVMMFixture) prepareNativeRegionalResources(ctx context.Context, l Lease, p runtimequota.Placement, resources state.RegionalRuntimeResources) error {
 	return v.jailer.prepareNativeRegionalResources(ctx, l, p, resources)
 }

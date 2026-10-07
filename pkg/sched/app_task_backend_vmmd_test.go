@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -52,20 +54,22 @@ func TestRoutedVmmdAppTaskBackendKeepsCommandOutOfRestoreAndPinsSession(t *testi
 	releases := 0
 	backend := NewRoutedVmmdAppTaskBackend(router, func(_ context.Context, request AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error) {
 		resolved = request
+		instance, _ := runtimequota.AppTaskInstanceID(request.ID, request.LeaseToken)
 		return ResolvedAppTaskRuntime{NodeID: "node-a", Spec: AppTaskRestoreSpec{
-			Instance: request.ID, DeploymentID: request.DeploymentID,
+			Instance: instance, TaskID: request.ID, RunID: request.LeaseToken, DeploymentID: request.DeploymentID,
 			App: AppSpec{Plan: api.PlanPro, AccountID: request.AccountID, AppID: request.AppID, DeploymentID: request.DeploymentID},
 		}, release: func() { releases++ }}, nil
 	})
 	restore := AppTaskRestoreRequest{
-		ID: "task-1", AccountID: "acct-1", AppID: "app-1", DeploymentID: "dep-1",
+		ID: uuid.NewString(), LeaseToken: uuid.NewString(), AccountID: "acct-1", AppID: "app-1", DeploymentID: "dep-1",
 		Kind: state.AppTaskKindManual, ArtifactKey: "apps/app-1/dep-1.ext4", ImageDigest: "sha256:pinned",
 	}
 	session, err := backend.Restore(context.Background(), restore)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if resolved != restore || router.restoreNode != "node-a" || router.restoreSpec.Instance != "task-1" {
+	instance, _ := runtimequota.AppTaskInstanceID(restore.ID, restore.LeaseToken)
+	if resolved != restore || router.restoreNode != "node-a" || router.restoreSpec.Instance != instance {
 		t.Fatalf("restore resolution/router = %#v / %#v", resolved, router)
 	}
 	outcome, err := session.Execute(context.Background(), AppTaskExecuteRequest{
@@ -74,7 +78,7 @@ func TestRoutedVmmdAppTaskBackendKeepsCommandOutOfRestoreAndPinsSession(t *testi
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !router.streamed || router.executeNode != "node-a" || router.executeRequest.TaskID != "task-1" ||
+	if !router.streamed || router.executeNode != "node-a" || router.executeRequest.TaskID != restore.ID ||
 		len(router.executeRequest.Command) != 2 || router.executeRequest.Command[0] != "bin/migrate" {
 		t.Fatalf("execute route = %#v", router)
 	}
@@ -94,10 +98,12 @@ func TestRoutedVmmdAppTaskBackendKeepsCommandOutOfRestoreAndPinsSession(t *testi
 
 func TestRoutedVmmdAppTaskBackendCleansUpUnexpectedRestoreIdentity(t *testing.T) {
 	router := &unexpectedAppTaskVMM{recordingRoutedAppTaskVMM: &recordingRoutedAppTaskVMM{}}
+	request := AppTaskRestoreRequest{ID: uuid.NewString(), LeaseToken: uuid.NewString(), DeploymentID: "dep-1"}
+	instance, _ := runtimequota.AppTaskInstanceID(request.ID, request.LeaseToken)
 	backend := NewRoutedVmmdAppTaskBackend(router, func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error) {
-		return ResolvedAppTaskRuntime{NodeID: "node-a", Spec: AppTaskRestoreSpec{Instance: "task-1", DeploymentID: "dep-1"}}, nil
+		return ResolvedAppTaskRuntime{NodeID: "node-a", Spec: AppTaskRestoreSpec{Instance: instance, TaskID: request.ID, RunID: request.LeaseToken, DeploymentID: "dep-1"}}, nil
 	})
-	if _, err := backend.Restore(context.Background(), AppTaskRestoreRequest{ID: "task-1", DeploymentID: "dep-1"}); err == nil {
+	if _, err := backend.Restore(context.Background(), request); err == nil {
 		t.Fatal("Restore accepted an unexpected instance")
 	}
 	if router.destroyNode != "node-a" {
@@ -108,8 +114,12 @@ func TestRoutedVmmdAppTaskBackendCleansUpUnexpectedRestoreIdentity(t *testing.T)
 func TestResolveAppTaskRuntimeBuildsPinnedAppSpecAndRejectsDrift(t *testing.T) {
 	store, account, app, deployment, tasks := newAppTaskCoordinatorFixture(t, 1, 30, 2048)
 	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	claimed, err := store.ClaimNextAppTask(t.Context(), "runtime-test", time.Now(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := AppTaskRestoreRequest{
-		ID: tasks[0].ID, AccountID: account.ID, AppID: app.ID, DeploymentID: deployment.ID,
+		ID: tasks[0].ID, LeaseToken: *claimed.LeaseToken, AccountID: account.ID, AppID: app.ID, DeploymentID: deployment.ID,
 		Kind: tasks[0].Kind, DeploymentScope: tasks[0].DeploymentScope,
 		ArtifactKey: tasks[0].ArtifactKey, ImageDigest: tasks[0].ImageDigest,
 	}
@@ -117,7 +127,8 @@ func TestResolveAppTaskRuntimeBuildsPinnedAppSpecAndRejectsDrift(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveAppTaskRuntime: %v", err)
 	}
-	if resolved.NodeID == "" || resolved.Spec.Instance != tasks[0].ID || resolved.Spec.DeploymentID != deployment.ID {
+	instance, _ := runtimequota.AppTaskInstanceID(tasks[0].ID, request.LeaseToken)
+	if resolved.NodeID == "" || resolved.Spec.Instance != instance || resolved.Spec.RunID != request.LeaseToken || resolved.Spec.DeploymentID != deployment.ID {
 		t.Fatalf("resolved identity = %#v", resolved)
 	}
 	defer resolved.release()
@@ -217,7 +228,11 @@ func TestMigrationCredentialsOnlyReachPersistedReleaseTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, task := range []state.AppTask{tasks[0], release} {
-		request := AppTaskRestoreRequest{ID: task.ID, AccountID: account.ID, AppID: app.ID, DeploymentID: dep.ID, Kind: task.Kind, DeploymentScope: task.DeploymentScope, ArtifactKey: task.ArtifactKey, ImageDigest: task.ImageDigest}
+		claimed, err := store.ClaimNextAppTask(ctx, "secret-test", time.Now(), time.Minute)
+		if err != nil || claimed.ID != task.ID {
+			t.Fatal("unexpected task claim", claimed.ID, err)
+		}
+		request := AppTaskRestoreRequest{ID: task.ID, LeaseToken: *claimed.LeaseToken, AccountID: account.ID, AppID: app.ID, DeploymentID: dep.ID, Kind: task.Kind, DeploymentScope: task.DeploymentScope, ArtifactKey: task.ArtifactKey, ImageDigest: task.ImageDigest}
 		resolved, err := engine.ResolveAppTaskRuntime(ctx, request)
 		if err != nil {
 			t.Fatal(err)

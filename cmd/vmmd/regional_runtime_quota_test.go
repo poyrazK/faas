@@ -202,10 +202,19 @@ func TestRegionalRuntimeQuotaTaskAuthorizerPinsLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op := fcvm.RuntimeAdmission{Instance: task.ID, AccountID: task.AccountID, AppID: task.AppID, DeploymentID: task.DeploymentID, AppTaskOnly: true}
+	instance, _ := runtimequota.AppTaskInstanceID(task.ID, token)
+	op := fcvm.RuntimeAdmission{Instance: instance, AppTaskID: task.ID, AppTaskLeaseToken: token, AccountID: task.AccountID, AppID: task.AppID, DeploymentID: task.DeploymentID, AppTaskOnly: true}
 	if err = authorize(t.Context(), op); err != nil {
 		t.Fatal("valid independent task refused", err)
 	}
+	// adr: 653 — a current live lease cannot authorize the previous VM.
+	replacement := uuid.NewString()
+	reader.task.LeaseToken = &replacement
+	replacementAuthorizer, _ := regionalRuntimeQuotaAuthorizer(reader)
+	if err := replacementAuthorizer(t.Context(), op); !errors.Is(err, state.ErrAppTaskLeaseLost) {
+		t.Fatal("old VM borrowed replacement lease", err)
+	}
+	reader.task.LeaseToken = &token
 	bad := op
 	bad.DeploymentID = uuid.NewString()
 	if err = authorize(t.Context(), bad); !errors.Is(err, state.ErrAppTaskLeaseLost) {

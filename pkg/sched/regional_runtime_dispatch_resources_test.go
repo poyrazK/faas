@@ -84,11 +84,17 @@ func TestRegionalDispatchRetainsExactResourcesForEveryInitialPurpose(t *testing.
 		t.Run(scenario.purpose, func(t *testing.T) {
 			e, store, source, spec, request := regionalDispatchResourceFixture(t)
 			request.Kind = scenario.kind
+			taskID := ""
+			if scenario.purpose == runtimequota.CapacityAppTask {
+				taskID = uuid.NewString()
+				source.InstanceKey, _ = runtimequota.AppTaskInstanceID(taskID, source.Permit.RunID)
+				request.Instance = source.InstanceKey
+			}
 			spec.PrimeOnly = scenario.kind == KindSnapshotPrime
 			if err := e.ledger.Admit(request); err != nil {
 				t.Fatal(err)
 			}
-			issued, err := e.issueRegionalRuntimeLaunch(t.Context(), source.Permit.NodeID, source.InstanceKey, source.Permit.RunID, scenario.purpose, spec, source.Permit.Grant)
+			issued, err := e.issueRegionalRuntimeLaunchSource(t.Context(), source.Permit.NodeID, source.InstanceKey, source.Permit.RunID, scenario.purpose, taskID, spec, source.Permit.Grant)
 			if err != nil || issued.RegionalRuntime == nil {
 				t.Fatal("matching resources refused", err)
 			}
@@ -98,12 +104,12 @@ func TestRegionalDispatchRetainsExactResourcesForEveryInitialPurpose(t *testing.
 			if err != nil || r.regionalSource == nil || *r.regionalSource != retained.Source || r.regionalResources != resources || retained.Resources != resources {
 				t.Fatal("reservation and issuance disagree", retained, err)
 			}
-			if _, err := e.issueRegionalRuntimeLaunch(t.Context(), source.Permit.NodeID, source.InstanceKey, source.Permit.RunID, scenario.purpose, issued, source.Permit.Grant); err != nil {
+			if _, err := e.issueRegionalRuntimeLaunchSource(t.Context(), source.Permit.NodeID, source.InstanceKey, source.Permit.RunID, scenario.purpose, taskID, issued, source.Permit.Grant); err != nil {
 				t.Fatal("exact retry refused", err)
 			}
 			changed := issued
 			changed.Sidecars = []fcvm.WorkloadSpec{{Name: "cache", RamMB: 65}}
-			if refused, err := e.issueRegionalRuntimeLaunch(t.Context(), source.Permit.NodeID, source.InstanceKey, source.Permit.RunID, scenario.purpose, changed, source.Permit.Grant); !errors.Is(err, runtimequota.ErrBinding) || refused.RegionalRuntime == nil || refused.RegionalRuntime.Permit != issued.RegionalRuntime.Permit {
+			if refused, err := e.issueRegionalRuntimeLaunchSource(t.Context(), source.Permit.NodeID, source.InstanceKey, source.Permit.RunID, scenario.purpose, taskID, changed, source.Permit.Grant); !errors.Is(err, runtimequota.ErrBinding) || refused.RegionalRuntime == nil || refused.RegionalRuntime.Permit != issued.RegionalRuntime.Permit {
 				t.Fatal("changed retry lost original cleanup identity", err)
 			}
 			usage, err := store.RegionalRuntimeCapacityUsage(t.Context(), spec.AppID, source.Permit.Grant.AllocationID)

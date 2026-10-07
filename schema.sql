@@ -19468,6 +19468,7 @@ CREATE TABLE public.regional_runtime_launch_sources (
     permit_claims jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     resource_claims jsonb,
+    task_id uuid,
     CONSTRAINT regional_launch_resources_shape CHECK (((resource_claims IS NULL) OR ((jsonb_typeof(resource_claims) = 'object'::text) AND (octet_length((resource_claims)::text) <= 512) AND (resource_claims ?& ARRAY['RAMMB'::text, 'VCPU'::text, 'CPUMillicores'::text]) AND ((resource_claims - ARRAY['RAMMB'::text, 'VCPU'::text, 'CPUMillicores'::text]) = '{}'::jsonb) AND
 CASE
     WHEN (jsonb_typeof((resource_claims -> 'RAMMB'::text)) = 'number'::text) THEN (((((resource_claims ->> 'RAMMB'::text))::numeric >= (1)::numeric) AND (((resource_claims ->> 'RAMMB'::text))::numeric <= (2147483647)::numeric)) AND ((resource_claims ->> 'RAMMB'::text) ~ '^[1-9][0-9]*$'::text))
@@ -19481,6 +19482,7 @@ CASE
     WHEN (jsonb_typeof((resource_claims -> 'CPUMillicores'::text)) = 'number'::text) THEN (((((resource_claims ->> 'CPUMillicores'::text))::numeric >= (1)::numeric) AND (((resource_claims ->> 'CPUMillicores'::text))::numeric <= (2147483647)::numeric)) AND ((resource_claims ->> 'CPUMillicores'::text) ~ '^[1-9][0-9]*$'::text))
     ELSE false
 END))),
+    CONSTRAINT regional_launch_task_identity CHECK (((task_id IS NULL) OR ((task_id <> '00000000-0000-0000-0000-000000000000'::uuid) AND ((permit_claims ->> 'Kind'::text) = 'app_task'::text)))),
     CONSTRAINT regional_runtime_launch_sources_instance_key_check CHECK (((instance_key ~ '^([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'::text) AND ((instance_key)::uuid <> '00000000-0000-0000-0000-000000000000'::uuid))),
     CONSTRAINT regional_runtime_launch_sources_permit_claims_check CHECK (((jsonb_typeof(permit_claims) = 'object'::text) AND (octet_length((permit_claims)::text) <= 4096)))
 );
@@ -21432,21 +21434,21 @@ ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_default DE
 -- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-09-30 21:00:00+00') TO ('2026-10-31 21:00:00+00');
 
 
 --
 -- Name: request_telemetry_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-10-31 21:00:00+00') TO ('2026-11-30 21:00:00+00');
 
 
 --
 -- Name: request_telemetry_202612; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-11-30 21:00:00+00') TO ('2026-12-31 21:00:00+00');
 
 
 --

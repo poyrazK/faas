@@ -1,8 +1,10 @@
 package fcvm
 
+// adr: 653
 import (
 	"context"
 	"errors"
+	"github.com/google/uuid"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -110,6 +112,9 @@ func TestRegionalAppTaskRetainsCanonicalPlanAtCommandBoundary(t *testing.T) {
 	m, _, req := regionalHostFixture(t, &fakeVMM{})
 	req.RegionalRuntime.Permit.Kind = runtimequota.CapacityAppTask
 	req.RegionalRuntime.Seat = nil
+	req.AppTaskID, req.AppTaskLeaseToken = uuid.NewString(), req.RegionalRuntime.Permit.RunID
+	req.Instance, _ = runtimequota.AppTaskInstanceID(req.AppTaskID, req.AppTaskLeaseToken)
+	req.RegionalRuntime.Permit.InstanceID = req.Instance
 	req.CPUMillicores = api.DefaultAppCPUMillicores
 	inst, err := m.WakeAppTask(t.Context(), AppTaskWakeRequest{WakeRequest: req})
 	if err != nil {
@@ -122,7 +127,7 @@ func TestRegionalAppTaskRetainsCanonicalPlanAtCommandBoundary(t *testing.T) {
 		t.Fatal("task exposed ordinary forwarding")
 	}
 	inst.Lease.Plan = api.PlanScale
-	if _, err := m.ExecuteAppTask(t.Context(), req.Instance, appTaskProtocolRequest("task-plan-test")); !errors.Is(err, runtimequotahost.ErrBinding) {
+	if _, err := m.ExecuteAppTask(t.Context(), req.Instance, appTaskProtocolRequest(req.AppTaskID)); !errors.Is(err, runtimequotahost.ErrBinding) {
 		t.Fatalf("changed task plan reached command transport: %v", err)
 	}
 	if m.LeasedCount() != 0 || len(m.LiveInstances()) != 0 {

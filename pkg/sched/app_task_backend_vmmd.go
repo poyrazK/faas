@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -16,6 +17,7 @@ type ResolvedAppTaskRuntime struct {
 	NodeID  string
 	Spec    AppTaskRestoreSpec
 	release func()
+	retire  func(context.Context) error // Captured original source; never generic Destroy.
 }
 
 type AppTaskRuntimeResolver func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error)
@@ -42,61 +44,79 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 	if b == nil || b.router == nil || b.resolve == nil {
 		return nil, ErrAppTaskCoordinatorNotWired
 	}
+	instance, err := runtimequota.AppTaskInstanceID(request.ID, request.LeaseToken)
+	if err != nil {
+		return nil, state.ErrAppTaskLeaseLost
+	}
 	resolved, err := b.resolve(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	if resolved.NodeID == "" || resolved.Spec.Instance != request.ID || resolved.Spec.DeploymentID != request.DeploymentID {
-		if resolved.release != nil {
+	if resolved.NodeID == "" || resolved.Spec.Instance != instance || resolved.Spec.TaskID != request.ID ||
+		resolved.Spec.RunID != request.LeaseToken || resolved.Spec.DeploymentID != request.DeploymentID {
+		if resolved.Spec.App.RegionalRuntime == nil && resolved.release != nil {
 			resolved.release()
 		}
 		return nil, errors.New("sched: app task resolver returned an invalid runtime identity")
 	}
+	if resolved.Spec.App.RegionalRuntime != nil && resolved.retire == nil {
+		return nil, runtimequota.ErrTrust
+	}
 	outcome, err := b.router.RestoreAppTask(ctx, resolved.NodeID, resolved.Spec)
 	if err != nil {
-		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
-		if cleanupErr == nil && resolved.release != nil {
-			resolved.release()
-		}
+		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved)
 		if cleanupErr != nil {
 			return nil, errors.Join(err, cleanupErr)
 		}
 		return nil, err
 	}
-	if outcome == nil || outcome.Instance == "" || outcome.Instance != request.ID {
-		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+	if outcome == nil || outcome.Instance == "" || outcome.Instance != instance {
+		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved)
 		identityErr := errors.New("sched: vmmd returned an unexpected app task instance")
 		if cleanupErr != nil {
 			return nil, errors.Join(identityErr, cleanupErr)
 		}
-		if resolved.release != nil {
-			resolved.release()
-		}
 		return nil, identityErr
 	}
 	return &routedVmmdAppTaskSession{
-		router: b.router, nodeID: resolved.NodeID, instance: outcome.Instance, release: resolved.release,
+		router: b.router, nodeID: resolved.NodeID, instance: outcome.Instance, taskID: request.ID,
+		release: resolved.release, retire: resolved.retire, regional: resolved.Spec.App.RegionalRuntime != nil,
 	}, nil
 }
 
-func destroyRestoredAppTask(parent context.Context, router RoutedAppTaskVMM, nodeID, instance string) error {
+func destroyRestoredAppTask(parent context.Context, router RoutedAppTaskVMM, resolved ResolvedAppTaskRuntime) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), defaultAppTaskDestroyTimeout)
 	defer cancel()
-	return router.Destroy(cleanupCtx, nodeID, instance)
+	if resolved.Spec.App.RegionalRuntime != nil {
+		if resolved.retire == nil {
+			return runtimequota.ErrTrust
+		}
+		return resolved.retire(cleanupCtx)
+	}
+	if err := router.Destroy(cleanupCtx, resolved.NodeID, resolved.Spec.Instance); err != nil {
+		return err
+	}
+	if resolved.release != nil {
+		resolved.release()
+	}
+	return nil
 }
 
 type routedVmmdAppTaskSession struct {
 	router   RoutedAppTaskVMM
 	nodeID   string
 	instance string
+	taskID   string
 	release  func()
+	retire   func(context.Context) error
+	regional bool
 	once     sync.Once
 }
 
 func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskExecuteRequest) (AppTaskOutcome, error) {
 	timeoutSeconds := int(math.Ceil(request.Timeout.Seconds()))
 	wireReq := apptaskproto.Request{
-		Version: apptaskproto.Version, TaskID: s.instance,
+		Version: apptaskproto.Version, TaskID: s.taskID,
 		Command: append([]string(nil), request.Command...), CommandShell: request.CommandShell,
 		TimeoutSeconds: timeoutSeconds, MaxOutputBytes: request.MaxOutputBytes,
 	}
@@ -119,6 +139,12 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 }
 
 func (s *routedVmmdAppTaskSession) Destroy(ctx context.Context) error {
+	if s.regional {
+		if s.retire == nil {
+			return runtimequota.ErrTrust
+		}
+		return s.retire(ctx)
+	}
 	if err := s.router.Destroy(ctx, s.nodeID, s.instance); err != nil {
 		return err
 	}

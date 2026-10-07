@@ -416,15 +416,16 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
-	primeOnly               bool // immutable host-only snapshot-prime purpose
-	regionalRuntimeMu       sync.RWMutex
-	regionalResumePending   bool
-	pausedRestorePending    bool                    // guarded with regionalRuntimeMu; deferred guest hook/readiness
-	pausedRestoreCompleting bool                    // excludes duplicate independent restore completion
-	regionalRuntime         *runtimequota.Placement // immutable physical pins; seat replacement is guarded
-	Lease                   Lease
-	Net                     netns.Config
-	Method                  WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	AppTaskID, AppTaskLeaseToken string // Immutable original claim, host only.
+	primeOnly                    bool   // immutable host-only snapshot-prime purpose
+	regionalRuntimeMu            sync.RWMutex
+	regionalResumePending        bool
+	pausedRestorePending         bool                    // guarded with regionalRuntimeMu; deferred guest hook/readiness
+	pausedRestoreCompleting      bool                    // excludes duplicate independent restore completion
+	regionalRuntime              *runtimequota.Placement // immutable physical pins; seat replacement is guarded
+	Lease                        Lease
+	Net                          netns.Config
+	Method                       WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 	// Immutable native launch identity.
 	nativeGeneration string
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
@@ -3312,9 +3313,10 @@ type WakeRequest struct {
 	// AppTaskOnly is the internal lifecycle fence set only by WakeAppTask.
 	// The guest receives scoped app runtime files and normal networking, but
 	// skips HTTP readiness, characterization, and background app monitors.
-	AppTaskOnly  bool
-	AppID        string // apps.id UUID; PR-B UpdateEgressAllowlist walks live by AppID
-	DeploymentID string // deployments.id UUID; PR-B AC #1 stamps onto Instance so the vsock DGRAM sidecar-init-failed path can flip the deploy row (issue #463 / ADR-069)
+	AppTaskOnly                  bool
+	AppTaskID, AppTaskLeaseToken string `json:"-"` // Accepted only by the app-task preparation RPC.
+	AppID                        string // apps.id UUID; PR-B UpdateEgressAllowlist walks live by AppID
+	DeploymentID                 string // deployments.id UUID; PR-B AC #1 stamps onto Instance so the vsock DGRAM sidecar-init-failed path can flip the deploy row (issue #463 / ADR-069)
 	// AccountID is the apps row's owning account id (issue #301,
 	// ADR-044). Threads onto the wire so vmmd can label the
 	// vmmd_cpu_throttle_seconds_total{account_id, app_id} counter
@@ -3576,6 +3578,12 @@ func (m *Manager) WakeAppTask(ctx context.Context, req AppTaskWakeRequest) (*Ins
 		return nil, errors.New("fcvm: app task wake requires a fresh dedicated app VM")
 	}
 	wake.AppTaskOnly = true
+	if wake.AppTaskID != "" || wake.AppTaskLeaseToken != "" || wake.RegionalRuntime != nil {
+		instance, err := runtimequota.AppTaskInstanceID(wake.AppTaskID, wake.AppTaskLeaseToken)
+		if err != nil || wake.Instance != instance || wake.RegionalRuntime != nil && wake.RegionalRuntime.Permit.RunID != wake.AppTaskLeaseToken {
+			return nil, runtimequota.ErrBinding
+		}
+	}
 	// Formation sidecars are long-lived app companions, not part of a one-off
 	// command dyno. The task receives the pinned main image and its scoped
 	// environment without starting or staging deployment sidecars.
@@ -4654,7 +4662,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		primeOnly:            req.PrimeOnly,
 		pausedRestorePending: req.KeepPaused,
 		regionalRuntime:      cloneRuntimePlacement(req.RegionalRuntime),
-		Lease:                lease, Net: nc, Method: method,
+		AppTaskID:            req.AppTaskID, AppTaskLeaseToken: req.AppTaskLeaseToken,
+		Lease: lease, Net: nc, Method: method,
 		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,

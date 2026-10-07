@@ -16,6 +16,37 @@ import (
 
 func runRegionalLaunchSourceContract(t *testing.T, fixture func(*testing.T) regionalCapacityFixture) {
 	t.Helper()
+	// adr: 653 — original task identity survives issuance, inventory and retirement.
+	t.Run("original-task-source", func(t *testing.T) {
+		f := fixture(t)
+		p := initialRegionalPlacement(f, runtimequota.CapacityAppTask)
+		taskID := uuid.NewString()
+		p.Permit.InstanceID, _ = runtimequota.AppTaskInstanceID(taskID, p.Permit.RunID)
+		source := runtimequota.LaunchSource{Permit: p.Permit, InstanceKey: p.Permit.InstanceID, TaskID: taskID}
+		if err := f.ledger.IssueRegionalRuntimeLaunch(t.Context(), p, source); err != nil {
+			t.Fatal(err)
+		}
+		retained, err := f.ledger.RegionalRuntimeLaunchSource(t.Context(), f.app(), p.Permit.ID)
+		if err != nil || retained.Source != source {
+			t.Fatal("task relationship lost", retained, err)
+		}
+		rows, err := f.ledger.ListRegionalRuntimeInventory(t.Context(), "", RegionalRuntimeRetirementCursor{}, 10)
+		if err != nil || len(rows) != 1 || rows[0].Source == nil || *rows[0].Source != source {
+			t.Fatal("inventory lost task relationship", rows, err)
+		}
+		changed := source
+		changed.TaskID = ""
+		if err := f.ledger.IssueRegionalRuntimeLaunch(t.Context(), p, changed); !errors.Is(err, ErrConflict) {
+			t.Fatal("original task provenance removed", err)
+		}
+		if _, err := f.ledger.BeginRegionalRuntimeRetirement(t.Context(), p.Permit, uuid.NewString()); err != nil {
+			t.Fatal(err)
+		}
+		retirements, err := f.ledger.ListRegionalRuntimeRetirements(t.Context(), f.cell.IssuerID(), RegionalRuntimeRetirementCursor{}, 10)
+		if err != nil || len(retirements) != 1 || retirements[0].Source != source {
+			t.Fatal("retirement lost task relationship", retirements, err)
+		}
+	})
 	for _, kind := range []string{runtimequota.CapacityServing, runtimequota.CapacityWarm, runtimequota.CapacityPrime, runtimequota.CapacityAppTask} {
 		t.Run(kind+"-exact-concurrent-source", func(t *testing.T) {
 			f := fixture(t)

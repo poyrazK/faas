@@ -49,6 +49,7 @@ type AppTaskCoordinatorConfig struct {
 // but customer code cannot be dispatched before MarkAppTaskRunning wins.
 type AppTaskRestoreRequest struct {
 	ID              string
+	LeaseToken      string
 	AccountID       string
 	AppID           string
 	DeploymentID    string
@@ -235,7 +236,7 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 
 	restoreCtx, cancelRestore := context.WithTimeout(workCtx, c.config.RestoreTimeout)
 	session, restoreErr := c.backend.Restore(restoreCtx, AppTaskRestoreRequest{
-		ID: task.ID, AccountID: task.AccountID, AppID: task.AppID,
+		ID: task.ID, LeaseToken: *task.LeaseToken, AccountID: task.AccountID, AppID: task.AppID,
 		DeploymentID: task.DeploymentID, Kind: task.Kind, DeploymentScope: task.DeploymentScope,
 		ArtifactKey: task.ArtifactKey, ImageDigest: task.ImageDigest,
 	})

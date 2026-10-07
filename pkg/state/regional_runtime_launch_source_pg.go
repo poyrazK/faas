@@ -14,6 +14,7 @@ import (
 func regionalLaunchSourceRow(row sqlc.RegionalRuntimeLaunchSource) (RegionalRuntimeLaunchSource, error) {
 	r := RegionalRuntimeLaunchSource{CreatedAt: row.CreatedAt.Time}
 	r.Source.InstanceKey = row.InstanceKey
+	r.Source.TaskID = exclusiveUUID(row.TaskID)
 	if err := json.Unmarshal(row.PermitClaims, &r.Source.Permit); err != nil {
 		return RegionalRuntimeLaunchSource{}, regionalCapacityError(err)
 	}
@@ -62,7 +63,7 @@ func prepareRegionalLaunchSource(ctx context.Context, tx pgx.Tx, q *sqlc.Queries
 			return err
 		}
 	}
-	_, err = q.InsertRegionalRuntimeLaunchSource(ctx, tx, sqlc.InsertRegionalRuntimeLaunchSourceParams{AppID: uuidToPgtype(app), PermitID: uuidToPgtype(source.Permit.ID), InstanceKey: source.InstanceKey, PermitClaims: claims, ResourceClaims: resourceClaims})
+	_, err = q.InsertRegionalRuntimeLaunchSource(ctx, tx, sqlc.InsertRegionalRuntimeLaunchSourceParams{AppID: uuidToPgtype(app), PermitID: uuidToPgtype(source.Permit.ID), InstanceKey: source.InstanceKey, PermitClaims: claims, ResourceClaims: resourceClaims, TaskID: uuidToPgtype(source.TaskID)})
 	return err
 }
 
@@ -83,7 +84,7 @@ func (s *PgStore) ListRegionalRuntimeRetirements(ctx context.Context, cell strin
 	}
 	result := make([]RegionalRuntimeRetirementCandidate, 0, len(rows))
 	for _, row := range rows {
-		r := RegionalRuntimeRetirementCandidate{Source: runtimequota.LaunchSource{InstanceKey: row.InstanceKey}, FenceID: exclusiveUUID(row.FenceID)}
+		r := RegionalRuntimeRetirementCandidate{Source: runtimequota.LaunchSource{InstanceKey: row.InstanceKey, TaskID: exclusiveUUID(row.TaskID)}, FenceID: exclusiveUUID(row.FenceID)}
 		if err := json.Unmarshal(row.PermitClaims, &r.Source.Permit); err != nil || r.Source.Validate() != nil || r.Source.Permit.Grant.Binding.CellID != cell ||
 			(runtimequota.CapacityStop{Permit: r.Source.Permit, FenceID: r.FenceID, AdmissionFrozen: true}).Validate() != nil {
 			return nil, ErrConflict

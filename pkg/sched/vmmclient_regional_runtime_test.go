@@ -1,5 +1,6 @@
 package sched_test
 
+// adr: 653
 import (
 	"context"
 	"errors"
@@ -24,8 +25,10 @@ func TestVMMClientRegionalRuntimePinsSurviveWire(t *testing.T) {
 	for _, operation := range []string{"cold", "restore", "paused", "app-task", "prime"} {
 		t.Run(operation, func(t *testing.T) {
 			p := p
+			taskID := uuid.NewString()
 			if operation == "app-task" {
 				p.Kind = runtimequota.CapacityAppTask
+				p.InstanceID, _ = runtimequota.AppTaskInstanceID(taskID, p.RunID)
 			}
 			if operation == "prime" {
 				p.Kind = runtimequota.CapacityPrime
@@ -55,7 +58,7 @@ func TestVMMClientRegionalRuntimePinsSurviveWire(t *testing.T) {
 			case "paused":
 				_, err = c.CreatePausedFromSnapshot(t.Context(), p.InstanceID, app, sched.SnapshotRef{})
 			case "app-task":
-				_, err = c.RestoreAppTask(t.Context(), sched.AppTaskRestoreSpec{Instance: p.InstanceID, DeploymentID: p.DeploymentID, App: app})
+				_, err = c.RestoreAppTask(t.Context(), sched.AppTaskRestoreSpec{Instance: p.InstanceID, TaskID: taskID, RunID: p.RunID, DeploymentID: p.DeploymentID, App: app})
 				received = fake.appTaskWake.RegionalRuntime
 			}
 			if err != nil {

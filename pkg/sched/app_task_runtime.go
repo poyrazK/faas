@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -87,6 +89,14 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
+	if task.Status != state.AppTaskRestoring || task.LeaseToken == nil || *task.LeaseToken != request.LeaseToken ||
+		task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(time.Now()) || task.CancelRequested != nil {
+		return ResolvedAppTaskRuntime{}, state.ErrAppTaskLeaseLost
+	}
+	instance, err := runtimequota.AppTaskInstanceID(task.ID, request.LeaseToken)
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, state.ErrAppTaskLeaseLost
+	}
 	refs, err := envSecretsFromDep(dep)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, err
@@ -105,7 +115,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv.Entries,
 		APIEnv: appendPlatformIdentity(e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
-			app, dep, acct, placement.NodeID, request.ID, placement.Region),
+			app, dep, acct, placement.NodeID, instance, placement.Region),
 		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:         app.EgressPorts,
 		PrivateNetworkCIDRs: privateNetwork.CIDRs, PrivateNetworkAllowedCIDRs: privateNetwork.AllowedCIDRs,
@@ -120,19 +130,40 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		return ResolvedAppTaskRuntime{}, errors.New("sched: app task runtime projection is incomplete")
 	}
 	if err := e.ledger.Admit(Request{
-		Instance: request.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
+		Instance: instance, RuntimeRunID: request.LeaseToken, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
-		MaxConcurrency: app.MaxConcurrency, Kind: KindAppTask, NodeID: placement.NodeID,
+		CPUStartupBoostMillicores: startupCPUBoostQuota(acct.Plan, effectiveAppCPUMillicores(app)),
+		MaxConcurrency:            app.MaxConcurrency, Kind: KindAppTask, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,
 	}); err != nil {
 		return ResolvedAppTaskRuntime{}, err
 	}
-	return ResolvedAppTaskRuntime{
+	spec, err = e.prepareRegionalRuntimeLaunchSource(ctx, placement.NodeID, instance, request.LeaseToken, runtimequota.CapacityAppTask, task.ID, spec)
+	if err != nil {
+		if spec.RegionalRuntime != nil {
+			// Issuance may have escaped. Retain the exact source even on an
+			// unknown reply; terminal task state cannot release its capacity.
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.RegionalRuntimeFailureCleanupTimeout)
+			defer cancel()
+			return ResolvedAppTaskRuntime{}, errors.Join(err, e.FailOriginalRegionalRuntime(cleanupCtx, runtimequota.LaunchSource{Permit: spec.RegionalRuntime.Permit, InstanceKey: instance, TaskID: task.ID}, "app_task_launch_refused"))
+		}
+		e.ledger.Release(instance)
+		return ResolvedAppTaskRuntime{}, err
+	}
+	resolved := ResolvedAppTaskRuntime{
 		NodeID: placement.NodeID,
-		Spec:   AppTaskRestoreSpec{Instance: request.ID, DeploymentID: dep.ID, App: spec},
+		Spec:   AppTaskRestoreSpec{Instance: instance, TaskID: task.ID, RunID: request.LeaseToken, DeploymentID: dep.ID, App: spec},
 		release: func() {
-			e.ledger.Release(request.ID)
+			e.ledger.Release(instance)
 		},
-	}, nil
+	}
+	if spec.RegionalRuntime != nil {
+		source := runtimequota.LaunchSource{Permit: spec.RegionalRuntime.Permit, InstanceKey: instance, TaskID: task.ID}
+		resolved.release = nil
+		resolved.retire = func(ctx context.Context) error {
+			return e.FailOriginalRegionalRuntime(ctx, source, "app_task_retired")
+		}
+	}
+	return resolved, nil
 }

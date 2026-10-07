@@ -2392,6 +2392,8 @@ message RestoreAppTaskRequest {
   string account_id = 4;
   string deployment_id = 5;
   bytes regional_runtime = 6; // ADR-619, physical app-task permit, no serving seat.
+  string task_id = 7; // ADR-653: durable task identity, distinct from native instance.
+  string lease_token = 8; // Original scheduler claim; UUID, never a replacement lease.
 }
 
 message RestoreAppTaskResponse {

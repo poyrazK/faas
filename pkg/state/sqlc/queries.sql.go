@@ -14050,8 +14050,8 @@ func (q *Queries) InsertRegionalRuntimeConsent(ctx context.Context, db DBTX, arg
 }
 
 const insertRegionalRuntimeLaunchSource = `-- name: InsertRegionalRuntimeLaunchSource :one
-INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims,resource_claims)
-VALUES ($1,$2,$3,$4,$5) RETURNING app_id, permit_id, instance_key, permit_claims, created_at, resource_claims
+INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims,resource_claims,task_id)
+VALUES ($1,$2,$3,$4,$5,$6) RETURNING app_id, permit_id, instance_key, permit_claims, created_at, resource_claims, task_id
 `
 
 type InsertRegionalRuntimeLaunchSourceParams struct {
@@ -14060,6 +14060,7 @@ type InsertRegionalRuntimeLaunchSourceParams struct {
 	InstanceKey    string
 	PermitClaims   []byte
 	ResourceClaims []byte
+	TaskID         pgtype.UUID
 }
 
 func (q *Queries) InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg InsertRegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error) {
@@ -14069,6 +14070,7 @@ func (q *Queries) InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX
 		arg.InstanceKey,
 		arg.PermitClaims,
 		arg.ResourceClaims,
+		arg.TaskID,
 	)
 	var i RegionalRuntimeLaunchSource
 	err := row.Scan(
@@ -14078,6 +14080,7 @@ func (q *Queries) InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX
 		&i.PermitClaims,
 		&i.CreatedAt,
 		&i.ResourceClaims,
+		&i.TaskID,
 	)
 	return i, err
 }
@@ -21343,7 +21346,7 @@ func (q *Queries) ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg 
 
 const listRegionalRuntimeInventory = `-- name: ListRegionalRuntimeInventory :many
 SELECT c.app_id, c.allocation_id, c.permit_id, c.generation, c.instance_id, c.run_id, c.deployment_id, c.node_id, c.host_epoch_id, c.kind, c.permit_claims, c.created_at, c.issued_at, c.fence_id, c.released_at, c.stop_claims, c.stop_envelope, s.instance_key AS source_instance_key, s.permit_claims AS source_permit_claims,
-  s.resource_claims,
+  s.resource_claims, s.task_id AS source_task_id,
   (SELECT count(*) FROM regional_runtime_serving_seats seat
     WHERE seat.app_id=c.app_id AND seat.permit_id=c.permit_id
       AND seat.issued_at IS NOT NULL AND seat.released_at IS NULL)::bigint AS serving_seats_held
@@ -21384,6 +21387,7 @@ type ListRegionalRuntimeInventoryRow struct {
 	SourceInstanceKey  pgtype.Text
 	SourcePermitClaims []byte
 	ResourceClaims     []byte
+	SourceTaskID       pgtype.UUID
 	ServingSeatsHeld   int64
 }
 
@@ -21424,6 +21428,7 @@ func (q *Queries) ListRegionalRuntimeInventory(ctx context.Context, db DBTX, arg
 			&i.SourceInstanceKey,
 			&i.SourcePermitClaims,
 			&i.ResourceClaims,
+			&i.SourceTaskID,
 			&i.ServingSeatsHeld,
 		); err != nil {
 			return nil, err
@@ -21437,7 +21442,7 @@ func (q *Queries) ListRegionalRuntimeInventory(ctx context.Context, db DBTX, arg
 }
 
 const listRegionalRuntimeRetirements = `-- name: ListRegionalRuntimeRetirements :many
-SELECT s.instance_key, s.permit_claims, c.fence_id
+SELECT s.instance_key, s.permit_claims, s.task_id, c.fence_id
 FROM regional_runtime_launch_sources s
 JOIN regional_runtime_capacity_receipts c USING (app_id,permit_id)
 WHERE c.issued_at IS NOT NULL AND c.fence_id IS NOT NULL
@@ -21461,6 +21466,7 @@ type ListRegionalRuntimeRetirementsParams struct {
 type ListRegionalRuntimeRetirementsRow struct {
 	InstanceKey  string
 	PermitClaims []byte
+	TaskID       pgtype.UUID
 	FenceID      pgtype.UUID
 }
 
@@ -21479,7 +21485,12 @@ func (q *Queries) ListRegionalRuntimeRetirements(ctx context.Context, db DBTX, a
 	items := []ListRegionalRuntimeRetirementsRow{}
 	for rows.Next() {
 		var i ListRegionalRuntimeRetirementsRow
-		if err := rows.Scan(&i.InstanceKey, &i.PermitClaims, &i.FenceID); err != nil {
+		if err := rows.Scan(
+			&i.InstanceKey,
+			&i.PermitClaims,
+			&i.TaskID,
+			&i.FenceID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -37973,7 +37984,7 @@ func (q *Queries) RegionalRuntimeConsent(ctx context.Context, db DBTX, id pgtype
 }
 
 const regionalRuntimeLaunchSource = `-- name: RegionalRuntimeLaunchSource :one
-SELECT app_id, permit_id, instance_key, permit_claims, created_at, resource_claims FROM regional_runtime_launch_sources WHERE app_id=$1 AND permit_id=$2
+SELECT app_id, permit_id, instance_key, permit_claims, created_at, resource_claims, task_id FROM regional_runtime_launch_sources WHERE app_id=$1 AND permit_id=$2
 `
 
 type RegionalRuntimeLaunchSourceParams struct {
@@ -37991,6 +38002,7 @@ func (q *Queries) RegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg 
 		&i.PermitClaims,
 		&i.CreatedAt,
 		&i.ResourceClaims,
+		&i.TaskID,
 	)
 	return i, err
 }

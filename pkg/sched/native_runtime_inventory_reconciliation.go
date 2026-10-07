@@ -109,6 +109,9 @@ func regionalRuntimeObservationIssue(row state.RegionalRuntimeInventoryEntry, sa
 	if row.Source == nil || row.Source.Validate() != nil || row.Source.Permit != p || !row.Resources.Valid() {
 		return "original source or resource provenance is unavailable"
 	}
+	if p.Kind == runtimequota.CapacityAppTask && row.Source.ValidateTask() != nil {
+		return "original app task lease relationship is unavailable"
+	}
 	if p.NodeID != sample.Host.NodeID || p.HostEpochID != sample.Host.HostEpochID {
 		return "original host incarnation differs from observation"
 	}

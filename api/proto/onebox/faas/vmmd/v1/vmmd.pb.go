@@ -9140,6 +9140,8 @@ type RestoreAppTaskRequest struct {
 	AccountId       string                 `protobuf:"bytes,4,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
 	DeploymentId    string                 `protobuf:"bytes,5,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
 	RegionalRuntime []byte                 `protobuf:"bytes,6,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"` // ADR-619, physical app-task permit, no serving seat.
+	TaskId          string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                            // ADR-653: durable task identity, distinct from native instance.
+	LeaseToken      string                 `protobuf:"bytes,8,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`                // Original scheduler claim; UUID, never a replacement lease.
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -9214,6 +9216,20 @@ func (x *RestoreAppTaskRequest) GetRegionalRuntime() []byte {
 		return x.RegionalRuntime
 	}
 	return nil
+}
+
+func (x *RestoreAppTaskRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *RestoreAppTaskRequest) GetLeaseToken() string {
+	if x != nil {
+		return x.LeaseToken
+	}
+	return ""
 }
 
 type RestoreAppTaskResponse struct {
@@ -11010,7 +11026,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x10regional_runtime\x18\x02 \x01(\fR\x0fregionalRuntime\"c\n" +
 	"\x1aResumeWarmInstanceResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12)\n" +
-	"\x10regional_runtime\x18\x02 \x01(\fR\x0fregionalRuntime\"\xe6\x01\n" +
+	"\x10regional_runtime\x18\x02 \x01(\fR\x0fregionalRuntime\"\xa0\x02\n" +
 	"\x15RestoreAppTaskRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12\x12\n" +
@@ -11018,7 +11034,10 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"account_id\x18\x04 \x01(\tR\taccountId\x12#\n" +
 	"\rdeployment_id\x18\x05 \x01(\tR\fdeploymentId\x12)\n" +
-	"\x10regional_runtime\x18\x06 \x01(\fR\x0fregionalRuntime\"\xc2\x01\n" +
+	"\x10regional_runtime\x18\x06 \x01(\fR\x0fregionalRuntime\x12\x17\n" +
+	"\atask_id\x18\a \x01(\tR\x06taskId\x12\x1f\n" +
+	"\vlease_token\x18\b \x01(\tR\n" +
+	"leaseToken\"\xc2\x01\n" +
 	"\x16RestoreAppTaskResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x127\n" +

@@ -16,6 +16,11 @@ import (
 // Once independently activated, this boundary must issue receipts before RPC
 // dispatch. It never releases them on an RPC error or terminal instance row.
 func (e *Engine) prepareRegionalRuntimeLaunch(ctx context.Context, node, instance, run, purpose string, spec AppSpec) (AppSpec, error) {
+	return e.prepareRegionalRuntimeLaunchSource(ctx, node, instance, run, purpose, "", spec)
+}
+
+// adr: 653
+func (e *Engine) prepareRegionalRuntimeLaunchSource(ctx context.Context, node, instance, run, purpose, taskID string, spec AppSpec) (AppSpec, error) {
 	if err := checkRegionalRuntimeQuota(ctx, e.store, spec.AppID); err != nil {
 		return AppSpec{}, err
 	}
@@ -38,7 +43,7 @@ func (e *Engine) prepareRegionalRuntimeLaunch(ctx context.Context, node, instanc
 	if err := checkRegionalRuntimeQuota(ctx, e.store, spec.AppID); err != nil {
 		return AppSpec{}, err
 	}
-	spec, err = e.issueRegionalRuntimeLaunch(ctx, node, instance, run, purpose, spec, head.Grant)
+	spec, err = e.issueRegionalRuntimeLaunchSource(ctx, node, instance, run, purpose, taskID, spec, head.Grant)
 	if err != nil {
 		return spec, err // Keep the original attempt when an issuance reply is uncertain.
 	}
@@ -47,6 +52,11 @@ func (e *Engine) prepareRegionalRuntimeLaunch(ctx context.Context, node, instanc
 
 // Issuance is independently testable bookkeeping. It does not admit work.
 func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance, run, purpose string, spec AppSpec, grant runtimequota.Grant) (AppSpec, error) {
+	return e.issueRegionalRuntimeLaunchSource(ctx, node, instance, run, purpose, "", spec, grant)
+}
+
+// adr: 653
+func (e *Engine) issueRegionalRuntimeLaunchSource(ctx context.Context, node, instance, run, purpose, taskID string, spec AppSpec, grant runtimequota.Grant) (AppSpec, error) {
 	actualInstanceKey := instance
 	if (purpose == runtimequota.CapacityPrime) != spec.PrimeOnly {
 		return AppSpec{}, runtimequota.ErrBinding
@@ -85,8 +95,8 @@ func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance,
 	if spec.RegionalRuntime != nil && (spec.RegionalRuntime.Permit != placement.Permit || !sameInitialServingSeat(spec.RegionalRuntime.Seat, placement.Seat)) {
 		return AppSpec{}, runtimequota.ErrBinding
 	}
-	source := runtimequota.LaunchSource{Permit: placement.Permit, InstanceKey: actualInstanceKey}
-	if source.Validate() != nil {
+	source := runtimequota.LaunchSource{Permit: placement.Permit, InstanceKey: actualInstanceKey, TaskID: taskID}
+	if source.Validate() != nil || purpose == runtimequota.CapacityAppTask && source.ValidateTask() != nil {
 		return AppSpec{}, runtimequota.ErrBinding
 	}
 	resources, valid := regionalRuntimeLaunchResources(spec)

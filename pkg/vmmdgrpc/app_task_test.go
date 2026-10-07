@@ -5,6 +5,7 @@ package vmmdgrpc_test
 import (
 	"context"
 	"errors"
+	"github.com/google/uuid"
 	"io"
 	"testing"
 
@@ -44,7 +45,9 @@ func (v *appTaskRuntimeVMM) ExecuteAppTaskWithOutput(ctx context.Context, instan
 func TestAppTaskRestoreAndExecuteUseSeparateEnvelopes(t *testing.T) {
 	vmm := &appTaskRuntimeVMM{fakeVMM: &fakeVMM{}}
 	cli := newExecutionClient(t, vmm)
+	token := uuid.NewString()
 	restored, err := cli.RestoreAppTask(context.Background(), &vmmdpb.RestoreAppTaskRequest{
+		TaskId: "task-1", LeaseToken: token,
 		Instance: "task-1", AccountId: "acct-1", DeploymentId: "dep-1", Plan: "pro",
 		App: &vmmdpb.AppSpec{
 			AppId: "app-1", Runtime: "node22", BaseKey: "base/node22.ext4", LayerKey: "apps/app-1/dep-1.ext4",
@@ -55,7 +58,7 @@ func TestAppTaskRestoreAndExecuteUseSeparateEnvelopes(t *testing.T) {
 		t.Fatalf("RestoreAppTask: %v", err)
 	}
 	if restored.GetInstance() != "task-1" || vmm.wake.DeploymentID != "dep-1" || vmm.wake.AppID != "app-1" ||
-		vmm.wake.LayerKey != "apps/app-1/dep-1.ext4" || vmm.execute.TaskID != "" {
+		vmm.wake.LayerKey != "apps/app-1/dep-1.ext4" || vmm.execute.TaskID != "" || vmm.wake.AppTaskID != "task-1" || vmm.wake.AppTaskLeaseToken != token {
 		t.Fatalf("restore response/wake = %#v / %#v", restored, vmm.wake)
 	}
 	response, err := cli.ExecuteAppTask(context.Background(), validAppTaskProtoRequest())

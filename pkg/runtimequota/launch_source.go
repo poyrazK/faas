@@ -10,6 +10,7 @@ import "strings"
 type LaunchSource struct {
 	Permit      CapacityPermit
 	InstanceKey string
+	TaskID      string `json:",omitempty"` // Original durable task, never a current-row backfill.
 }
 
 func (s LaunchSource) Validate() error {
@@ -17,6 +18,20 @@ func (s LaunchSource) Validate() error {
 		return ErrInvalid
 	}
 	if s.InstanceKey != s.Permit.InstanceID && s.InstanceKey != strings.ReplaceAll(s.Permit.InstanceID, "-", "") {
+		return ErrBinding
+	}
+	if s.TaskID != "" && s.ValidateTask() != nil {
+		return ErrBinding
+	}
+	return nil
+}
+
+// ValidateTask requires the relationship retained at dispatch. Historical task
+// sources without this provenance remain readable, but cannot prove a task row.
+// adr: 653
+func (s LaunchSource) ValidateTask() error {
+	instance, err := AppTaskInstanceID(s.TaskID, s.Permit.RunID)
+	if err != nil || s.Permit.Kind != CapacityAppTask || s.Permit.InstanceID != instance {
 		return ErrBinding
 	}
 	return nil

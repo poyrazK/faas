@@ -16,6 +16,8 @@ import (
 // schedd for one durable task.
 type AppTaskRestoreSpec struct {
 	Instance     string
+	TaskID       string
+	RunID        string
 	DeploymentID string
 	App          AppSpec
 }
@@ -34,6 +36,12 @@ func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec)
 	if placementErr != nil {
 		return nil, placementErr
 	}
+	if spec.App.RegionalRuntime != nil {
+		source := runtimequota.LaunchSource{Permit: spec.App.RegionalRuntime.Permit, InstanceKey: spec.Instance, TaskID: spec.TaskID}
+		if source.Validate() != nil || source.ValidateTask() != nil || source.Permit.RunID != spec.RunID {
+			return nil, runtimequota.ErrBinding
+		}
+	}
 	if c == nil || c.cli == nil {
 		return nil, errors.New("sched: nil vmmd app task client")
 	}
@@ -41,8 +49,12 @@ func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec)
 		return nil, err
 	}
 	fields, _ := wire.FromContext(ctx)
+	if spec.RunID != "" {
+		fields.WakeID = spec.RunID
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.RestoreAppTask(ctx, &vmmdpb.RestoreAppTaskRequest{
+		TaskId: spec.TaskID, LeaseToken: spec.RunID,
 		RegionalRuntime: placement,
 		Instance:        spec.Instance, App: spec.App.toProto(), Plan: string(spec.App.Plan),
 		AccountId: spec.App.AccountID, DeploymentId: spec.DeploymentID,

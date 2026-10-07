@@ -2218,35 +2218,20 @@ func TestHealthcheckNotReadyProblemDistinguishesGuestAndHandler(t *testing.T) {
 // 422 status — the typed problem the schedd engine surfaces
 // unchanged.
 func TestWaitReady_AllConnRefusedReturnsAppNotListening(t *testing.T) {
-	// Reserve a TCP port by binding then closing — the kernel
-	// holds the port in TIME_WAIT briefly but reliably returns
-	// ECONNREFUSED for a dial against an unused port on
-	// 127.0.0.1. Using 127.0.0.1 + an ephemeral port keeps the
-	// test self-contained (no netns, no guest VM, no KVM).
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	host, _, _ := net.SplitHostPort(ln.Addr().String())
-	ln.Close()
-	addr := netip.AddrFrom4([4]byte{})
-	if err := addr.UnmarshalText([]byte(host)); err != nil {
-		t.Fatalf("parse host %q: %v", host, err)
-	}
-
+	// adr: 653 — an unrelated listener on :8080 cannot supply test readiness.
 	v := &JailerVMM{
 		readyTimeout: 250 * time.Millisecond,
+		tcpReadinessDial: func(string, string, time.Duration) (net.Conn, error) {
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+		},
 		// events is nil — emitReadiness200 must tolerate it (the
 		// "not ready" path doesn't emit).
 	}
-	l := Lease{Instance: "i-all-refused", HostIP: addr}
+	l := Lease{Instance: "i-all-refused", HostIP: netip.MustParseAddr("127.0.0.1")}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// waitReady hard-codes 8080 — we point the HostIP at a
-	// loopback-shaped address with no listener on :8080 to
-	// guarantee ECONNREFUSED on every dial.
-	err = v.waitReady(ctx, l, "")
+	err := v.waitReady(ctx, l, "")
 	if err == nil {
 		t.Fatal("waitReady on port with no listener: expected non-nil error, got nil")
 	}

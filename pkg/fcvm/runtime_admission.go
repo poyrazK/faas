@@ -14,6 +14,7 @@ import (
 // concurrency. App tasks, paused restores and migration resumes must also pass.
 // Builder and disposable execution retain their own durable claim protocols.
 type RuntimeAdmission struct {
+	AppTaskID, AppTaskLeaseToken                   string
 	Instance, AppID, AccountID, DeploymentID       string
 	AppTaskOnly, ExecutionOnly, IsBuilder, Command bool
 	RegionalRuntime                                *runtimequota.Placement
@@ -31,12 +32,12 @@ func (m *Manager) WithRuntimeAuthorizer(authorize RuntimeAuthorizer) *Manager {
 	return m
 }
 func admissionForWake(req WakeRequest) RuntimeAdmission {
-	return RuntimeAdmission{Instance: req.Instance, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, AppTaskOnly: req.AppTaskOnly, ExecutionOnly: req.ExecutionOnly, IsBuilder: req.ExportDir != "", RegionalRuntime: cloneRuntimePlacement(req.RegionalRuntime), KeepPaused: req.KeepPaused, Plan: req.Plan, PrimeOnly: req.PrimeOnly}
+	return RuntimeAdmission{AppTaskID: req.AppTaskID, AppTaskLeaseToken: req.AppTaskLeaseToken, Instance: req.Instance, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, AppTaskOnly: req.AppTaskOnly, ExecutionOnly: req.ExecutionOnly, IsBuilder: req.ExportDir != "", RegionalRuntime: cloneRuntimePlacement(req.RegionalRuntime), KeepPaused: req.KeepPaused, Plan: req.Plan, PrimeOnly: req.PrimeOnly}
 }
 func admissionForInstance(inst *Instance) RuntimeAdmission {
 	inst.regionalRuntimeMu.RLock()
 	defer inst.regionalRuntimeMu.RUnlock()
-	return RuntimeAdmission{Instance: inst.Lease.Instance, AppID: inst.AppID, AccountID: inst.AccountID, DeploymentID: inst.DeploymentID, AppTaskOnly: inst.AppTaskOnly, ExecutionOnly: inst.ExecutionOnly, IsBuilder: inst.Lease.IsBuilder, RegionalRuntime: cloneRuntimePlacement(inst.regionalRuntime), Plan: inst.Lease.Plan, PrimeOnly: inst.primeOnly, RegionalResumePending: inst.regionalResumePending}
+	return RuntimeAdmission{AppTaskID: inst.AppTaskID, AppTaskLeaseToken: inst.AppTaskLeaseToken, Instance: inst.Lease.Instance, AppID: inst.AppID, AccountID: inst.AccountID, DeploymentID: inst.DeploymentID, AppTaskOnly: inst.AppTaskOnly, ExecutionOnly: inst.ExecutionOnly, IsBuilder: inst.Lease.IsBuilder, RegionalRuntime: cloneRuntimePlacement(inst.regionalRuntime), Plan: inst.Lease.Plan, PrimeOnly: inst.primeOnly, RegionalResumePending: inst.regionalResumePending}
 }
 func (m *Manager) authorizeRuntimeOwner(ctx context.Context, admission RuntimeAdmission) error {
 	if err := validateRuntimePlacement(admission); err != nil {

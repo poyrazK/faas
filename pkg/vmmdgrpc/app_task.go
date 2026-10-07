@@ -142,6 +142,7 @@ func appTaskWakeRequestFromProto(ctx context.Context, req *vmmdpb.RestoreAppTask
 		return fcvm.AppTaskWakeRequest{}, err
 	}
 	wake.DeploymentID = req.GetDeploymentId()
+	wake.AppTaskID, wake.AppTaskLeaseToken = req.GetTaskId(), req.GetLeaseToken()
 	return fcvm.AppTaskWakeRequest{WakeRequest: wake}, nil
 }
 

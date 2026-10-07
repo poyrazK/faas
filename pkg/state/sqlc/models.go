@@ -4930,6 +4930,7 @@ type RegionalRuntimeLaunchSource struct {
 	PermitClaims   []byte
 	CreatedAt      pgtype.Timestamptz
 	ResourceClaims []byte
+	TaskID         pgtype.UUID
 }
 
 type RegionalRuntimeQuotaHead struct {
