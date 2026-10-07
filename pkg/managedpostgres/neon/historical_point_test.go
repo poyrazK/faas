@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
@@ -231,9 +233,31 @@ func TestHistoricalSQLRejectsOrdinaryPrimaryEvenWhenReadOnly(t *testing.T) {
 	pool := pgtest.Open(t)
 	for _, mode := range []string{"off", "on"} {
 		t.Run(mode, func(t *testing.T) {
-			config := pool.Config().ConnConfig.Copy()
-			config.RuntimeParams["default_transaction_read_only"] = mode
-			lsn, err := (sqlHistoricalPointReader{}).ReadLSN(t.Context(), config.ConnString())
+			// ConnString returns the original input, not later RuntimeParams
+			// mutations. Encode the startup parameter in the actual reader DSN.
+			dsn := pool.Config().ConnConfig.ConnString()
+			if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+				u, err := url.Parse(dsn)
+				if err != nil {
+					t.Fatal("parse primary fixture DSN")
+				}
+				q := u.Query()
+				q.Set("default_transaction_read_only", mode)
+				u.RawQuery = q.Encode()
+				dsn = u.String()
+			} else {
+				dsn += " default_transaction_read_only=" + mode
+			}
+			conn, err := pgx.Connect(t.Context(), dsn)
+			if err != nil {
+				t.Fatal("connect primary fixture")
+			}
+			defer func() { _ = conn.Close(context.Background()) }()
+			var actual string
+			if err := conn.QueryRow(t.Context(), `SHOW transaction_read_only`).Scan(&actual); err != nil || actual != mode {
+				t.Fatal("primary fixture did not apply the requested transaction mode")
+			}
+			lsn, err := (sqlHistoricalPointReader{}).ReadLSN(t.Context(), dsn)
 			if !errors.Is(err, managedpostgres.ErrUnavailable) || lsn != "" {
 				t.Fatal("ordinary PostgreSQL primary supplied historical recovery proof")
 			}
