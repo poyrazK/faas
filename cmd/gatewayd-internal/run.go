@@ -827,6 +827,13 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 			req.Header.Set(key, value)
 		}
 	}
+	// Workflow step headers are authored by schedd's workflow orchestrator.
+	// Any other persisted envelope (queued, replayed, CLI) cannot assert them.
+	if inv.Source != state.InvocationSource("workflow") {
+		for _, name := range []string{api.WorkflowRunIDHeader, api.WorkflowStepHeader, api.WorkflowAttemptHeader} {
+			req.Header.Del(name)
+		}
+	}
 	// CLI invoke, queue, task, and cron payloads are JSON values, but their
 	// persisted envelopes need not carry HTTP headers. Common guest frameworks
 	// will otherwise ignore the body. Preserve an explicit customer media type

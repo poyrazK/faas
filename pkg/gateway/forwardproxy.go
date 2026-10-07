@@ -65,6 +65,20 @@ func isSyntheticInvocation(ctx context.Context) bool {
 	return v
 }
 
+// guestReceivesFaasHeader reports whether an x-faas-* header may cross the
+// guest boundary. The guest receives platform-authored identity, client IP,
+// and invocation headers. Only a scheduler-marked synthetic request may carry
+// invocation source and the workflow step headers; customer-authored values
+// remain internal. Dropping the workflow headers broke the documented
+// X-Faas-Workflow-Attempt contract (production-us hunt #5, H5-44).
+func guestReceivesFaasHeader(ctx context.Context, name string) bool {
+	return isTrustedServiceCallerAssertion(ctx, name) ||
+		strings.EqualFold(name, api.InvocationIDHeader) ||
+		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsWorkflowStepHeader(name))) ||
+		api.IsGuestIdentityHeader(name) ||
+		strings.EqualFold(name, wire.ClientIPHeader)
+}
+
 // withTrustedServiceCallerAssertion marks the assertion that ServiceProxy
 // minted after resolving and authorizing a service caller. Customer-supplied
 // x-faas-* headers remain stripped at the guest boundary; only this
@@ -407,17 +421,8 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	guestHeaders := stripHopByHop(r.Header)
 	injectGuestTraceContext(r.Context(), guestHeaders)
 	for name, vals := range guestHeaders {
-		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
-			!isTrustedServiceCallerAssertion(r.Context(), name) &&
-			!strings.EqualFold(name, api.InvocationIDHeader) &&
-			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, api.InvocationSourceHeader)) &&
-			!api.IsGuestIdentityHeader(name) {
-			// The guest receives platform-authored identity, client IP, and
-			// invocation headers. Only a scheduler-marked synthetic request may
-			// carry invocation source; customer-authored values remain internal.
-			if !strings.EqualFold(name, wire.ClientIPHeader) {
-				continue
-			}
+		if strings.HasPrefix(strings.ToLower(name), "x-faas-") && !guestReceivesFaasHeader(r.Context(), name) {
+			continue
 		}
 		for _, v := range vals {
 			init.Headers = append(init.Headers, &vmmdpb.Header{Name: name, Value: v})
@@ -1077,12 +1082,7 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 
 	headers := r.Header.Clone()
 	for name := range headers {
-		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
-			!isTrustedServiceCallerAssertion(r.Context(), name) &&
-			!strings.EqualFold(name, api.InvocationIDHeader) &&
-			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, api.InvocationSourceHeader)) &&
-			!api.IsGuestIdentityHeader(name) &&
-			!strings.EqualFold(name, wire.ClientIPHeader) {
+		if strings.HasPrefix(strings.ToLower(name), "x-faas-") && !guestReceivesFaasHeader(r.Context(), name) {
 			headers.Del(name)
 		}
 	}
