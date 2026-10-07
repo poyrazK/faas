@@ -1430,6 +1430,37 @@ worker:
 	}
 }
 
+func TestWorkerManifest_CustomMetricScaleParsesName(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+worker:
+  command: ./consumer
+  scale:
+    min: 1
+    max: 10
+    metric: custom
+    name: mcp_tasks_outstanding
+    target: 4
+`
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write gregale.yaml: %v", err)
+	}
+	manifest, ok, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !ok || manifest.Worker == nil {
+		t.Fatalf("Worker not parsed: %+v", manifest)
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	got := manifest.Worker.Scale.ToAPI()
+	if got.Metric != api.ScalingMetricCustom || got.Name != "mcp_tasks_outstanding" || got.Target != 4 {
+		t.Fatalf("worker scale API = %+v, want custom gauge target", got)
+	}
+}
+
 func TestWorkerManifest_ValidationErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1449,12 +1480,21 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 		{
 			name: "invalid metric",
 			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 0, Max: 10, Metric: "cpu_percent", Target: 80}},
-			want: "unsupported worker metric",
+			want: "is not in the closed set",
 		},
 		{
 			name: "queue_lag non-positive target",
 			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 0}},
-			want: "target for metric \"queue_lag\" must be greater than 0",
+			want: "value must be > 0 for queue_lag",
+		},
+		{
+			name: "custom metric requires name",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 1, Max: 5, Metric: api.ScalingMetricCustom, Target: 4}},
+			want: "is required for metric",
+		},
+		{
+			name: "custom metric valid",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 1, Max: 5, Metric: api.ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4}},
 		},
 		{
 			name: "unsupported source kind",
@@ -1494,6 +1534,12 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := &Manifest{Worker: &tt.spec}
 			err := m.Validate()
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("Validate error = %v, want nil", err)
+				}
+				return
+			}
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Validate error = %v, want substring %q", err, tt.want)
 			}

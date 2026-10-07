@@ -523,6 +523,10 @@ func (s *server) listBucketObjects(w http.ResponseWriter, r *http.Request, acct 
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
+	if err := s.customerObjectRequestRecorder(b)(r.Context()); err != nil {
+		bucketProblem(w, err)
+		return
+	}
 	page, err := provider.ListObjects(r.Context(), b.PhysicalName, prefix, cursor, int32(limit))
 	if err != nil {
 		bucketProblem(w, err)

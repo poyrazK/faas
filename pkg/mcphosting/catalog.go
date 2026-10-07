@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 )
 
 // RPCError reports a JSON-RPC error without exposing server-controlled text.
@@ -43,16 +44,25 @@ type PromptsCapability struct {
 	ListChanged bool `json:"listChanged,omitempty"`
 }
 
+type CompletionsCapability struct{}
+
 // ServerCapabilities is populated by server/discover on the current protocol
 // and by initialize when explicitly checking legacy compatibility.
 type ServerCapabilities struct {
-	Tools     *ToolsCapability     `json:"tools,omitempty"`
-	Resources *ResourcesCapability `json:"resources,omitempty"`
-	Prompts   *PromptsCapability   `json:"prompts,omitempty"`
+	Tools       *ToolsCapability           `json:"tools,omitempty"`
+	Resources   *ResourcesCapability       `json:"resources,omitempty"`
+	Prompts     *PromptsCapability         `json:"prompts,omitempty"`
+	Completions *CompletionsCapability     `json:"completions,omitempty"`
+	Extensions  map[string]json.RawMessage `json:"extensions,omitempty"`
 }
 
 func (c ServerCapabilities) HasCatalog() bool {
 	return c.Tools != nil || c.Resources != nil || c.Prompts != nil
+}
+
+func (c ServerCapabilities) HasExtension(name string) bool {
+	_, ok := c.Extensions[name]
+	return ok
 }
 
 type Icon struct {
@@ -103,6 +113,7 @@ type Prompt struct {
 
 type Catalog struct {
 	Capabilities      []string           `json:"capabilities,omitempty"`
+	Extensions        []string           `json:"extensions,omitempty"`
 	Tools             []Tool             `json:"tools"`
 	Resources         []Resource         `json:"resources"`
 	ResourceTemplates []ResourceTemplate `json:"resource_templates"`
@@ -142,6 +153,11 @@ func (c *Client) Discover(ctx context.Context) (ServerCapabilities, Exchange, er
 	if !result.Capabilities.HasCatalog() {
 		return ServerCapabilities{}, x, fmt.Errorf("server/discover must advertise tools, resources or prompts")
 	}
+	for name, settings := range result.Capabilities.Extensions {
+		if name == "" || !isJSONObject(settings) {
+			return ServerCapabilities{}, x, fmt.Errorf("server/discover contains an invalid extension capability")
+		}
+	}
 	c.Capabilities = result.Capabilities
 	return result.Capabilities, x, nil
 }
@@ -161,8 +177,8 @@ func (c *Client) DiscoverCatalog(ctx context.Context) (Catalog, Exchange, error)
 		return Catalog{}, first, fmt.Errorf("legacy initialize did not advertise tools, resources or prompts")
 	}
 	catalog := Catalog{
-		Capabilities: capabilityNames(capabilities),
-		Tools:        make([]Tool, 0), Resources: make([]Resource, 0),
+		Capabilities: capabilityNames(capabilities), Extensions: extensionNames(capabilities),
+		Tools: make([]Tool, 0), Resources: make([]Resource, 0),
 		ResourceTemplates: make([]ResourceTemplate, 0), Prompts: make([]Prompt, 0),
 	}
 	if capabilities.Tools != nil {
@@ -196,7 +212,7 @@ func (c *Client) DiscoverCatalog(ctx context.Context) (Catalog, Exchange, error)
 }
 
 func capabilityNames(capabilities ServerCapabilities) []string {
-	names := make([]string, 0, 3)
+	names := make([]string, 0, 4)
 	if capabilities.Tools != nil {
 		names = append(names, "tools")
 	}
@@ -206,6 +222,18 @@ func capabilityNames(capabilities ServerCapabilities) []string {
 	if capabilities.Prompts != nil {
 		names = append(names, "prompts")
 	}
+	if capabilities.Completions != nil {
+		names = append(names, "completions")
+	}
+	return names
+}
+
+func extensionNames(capabilities ServerCapabilities) []string {
+	names := make([]string, 0, len(capabilities.Extensions))
+	for name := range capabilities.Extensions {
+		names = append(names, name)
+	}
+	slices.Sort(names)
 	return names
 }
 

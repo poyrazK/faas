@@ -8,7 +8,7 @@
 //
 // Wire contract and state mapping:
 //   - An app is a worker if Manifest.EffectiveExecutionMode() == "worker" or WorkloadClass == "worker"
-//   - Autoscaling parameters live in Manifest.WorkerReplicas (Min, Max, Metric, Target)
+//   - Autoscaling parameters live in Manifest.WorkerReplicas (Min, Max, Metric, Name, Target)
 //   - Draining parameters live in Manifest.StopGracePeriodS and Manifest.StopSignal
 //   - Queue telemetry and DLQ status query attached triggers via client.GetTriggers / GetTriggersIdMetrics
 
@@ -457,12 +457,13 @@ func cmdWorkersLogs(args []string) int {
 }
 
 func cmdWorkersScale(args []string) int {
-	usage := "usage: gregale workers scale <app> [--min N] [--max N] [--target N] [--metric METRIC] [--drain-timeout DURATION] [--stop-signal SIG]"
+	usage := "usage: gregale workers scale <app> [--min N] [--max N] [--target N] [--metric METRIC] [--name CUSTOM_METRIC] [--drain-timeout DURATION] [--stop-signal SIG]"
 	fs := newFlagSet("workers scale", flag.ContinueOnError)
 	minFlag := fs.Int("min", -1, "min worker replicas (0 = scale to zero)")
 	maxFlag := fs.Int("max", -1, "max worker replicas")
 	targetFlag := fs.Float64("target", -1, "target backlog per worker")
-	metricFlag := fs.String("metric", "", "autoscaling metric (queue_lag | queue_depth)")
+	metricFlag := fs.String("metric", "", "autoscaling metric (queue_lag | queue_depth | custom)")
+	nameFlag := fs.String("name", "", "custom metric name (required with --metric custom)")
 	drainFlag := fs.String("drain-timeout", "", "graceful drain duration before kill (e.g. 90s, 2m)")
 	stopSignalFlag := fs.String("stop-signal", "", "stop signal sent during scale-down (e.g. SIGTERM, SIGINT)")
 
@@ -518,11 +519,33 @@ func cmdWorkersScale(args []string) int {
 		scalingChanged = true
 	}
 	if *metricFlag != "" {
-		if *metricFlag != "queue_lag" && *metricFlag != "queue_depth" {
-			return printErr("Invalid metric", fmt.Errorf("metric %q must be one of {queue_lag, queue_depth}", *metricFlag))
+		if *metricFlag != "queue_lag" && *metricFlag != "queue_depth" && *metricFlag != api.ScalingMetricCustom {
+			return printErr("Invalid metric", fmt.Errorf("metric %q must be one of {queue_lag, queue_depth, custom}", *metricFlag))
 		}
 		newScaling.Metric = *metricFlag
+		if *metricFlag != api.ScalingMetricCustom {
+			newScaling.Name = ""
+		}
 		scalingChanged = true
+	}
+	if *nameFlag != "" {
+		newScaling.Name = *nameFlag
+		scalingChanged = true
+	}
+	if *metricFlag != "" && *targetFlag < 0 && existingScaling != nil &&
+		existingScaling.Metric != "" && existingScaling.Metric != newScaling.Metric {
+		return printErr("Invalid scaling target", fmt.Errorf("--target is required when switching worker metrics"))
+	}
+	if newScaling.Metric == api.ScalingMetricCustom {
+		if problem := api.ValidateCustomMetricName(newScaling.Name); problem != nil {
+			return printErr("Invalid custom metric name", fmt.Errorf("%s", problem.Detail))
+		}
+		if *metricFlag == api.ScalingMetricCustom && *targetFlag < 0 &&
+			(existingScaling == nil || existingScaling.Metric != api.ScalingMetricCustom) {
+			return printErr("Invalid custom scaling target", fmt.Errorf("--target is required when switching to a custom metric"))
+		}
+	} else if newScaling.Name != "" {
+		return printErr("Invalid custom metric name", fmt.Errorf("--name is only valid with --metric custom"))
 	}
 
 	if newScaling.Max < newScaling.Min {
@@ -531,6 +554,18 @@ func cmdWorkersScale(args []string) int {
 
 	if scalingChanged {
 		req.WorkerReplicas = &newScaling
+		policy := api.ScalingPolicy{}
+		if app.ScalingPolicy != nil {
+			policy = *app.ScalingPolicy
+		}
+		policy.MinInstances = newScaling.Min
+		policy.MaxInstances = newScaling.Max
+		if *metricFlag != "" || *targetFlag >= 0 || *nameFlag != "" ||
+			(policy.Target == nil && len(policy.Targets) == 0 && newScaling.Metric != "") {
+			policy.Targets = nil
+			policy.Target = &api.ScalingTarget{Metric: newScaling.Metric, Name: newScaling.Name, Value: newScaling.Target}
+		}
+		req.ScalingPolicy = &policy
 	}
 
 	if *drainFlag != "" {
@@ -569,7 +604,11 @@ func cmdWorkersScale(args []string) int {
 	PrintOK(osStdout, "Worker scaling updated for %s", slug)
 	if updatedApp.Manifest.WorkerReplicas != nil {
 		_, _ = fmt.Fprintf(osStdout, "  Replicas: min=%d, max=%d\n", updatedApp.Manifest.WorkerReplicas.Min, updatedApp.Manifest.WorkerReplicas.Max)
-		_, _ = fmt.Fprintf(osStdout, "  Scaling:  target=%.0f, metric=%s\n", updatedApp.Manifest.WorkerReplicas.Target, updatedApp.Manifest.WorkerReplicas.Metric)
+		_, _ = fmt.Fprintf(osStdout, "  Scaling:  target=%.0f, metric=%s", updatedApp.Manifest.WorkerReplicas.Target, updatedApp.Manifest.WorkerReplicas.Metric)
+		if updatedApp.Manifest.WorkerReplicas.Name != "" {
+			_, _ = fmt.Fprintf(osStdout, " (%s)", updatedApp.Manifest.WorkerReplicas.Name)
+		}
+		_, _ = fmt.Fprintln(osStdout)
 	}
 	if updatedApp.Manifest.StopGracePeriod > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  Drain:    %ds timeout\n", int(updatedApp.Manifest.StopGracePeriod.Seconds()))

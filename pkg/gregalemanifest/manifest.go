@@ -1642,6 +1642,7 @@ type WorkerScaleSpec struct {
 	Min    int     `yaml:"min"`
 	Max    int     `yaml:"max"`
 	Metric string  `yaml:"metric"`
+	Name   string  `yaml:"name,omitempty"`
 	Target float64 `yaml:"target,omitempty"`
 }
 
@@ -1651,6 +1652,7 @@ func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 		Min:    s.Min,
 		Max:    s.Max,
 		Metric: s.Metric,
+		Name:   s.Name,
 		Target: s.Target,
 	}
 }
@@ -1707,15 +1709,14 @@ func (s WorkerScaleSpec) Validate() error {
 	if s.Max < s.Min {
 		return fmt.Errorf("max instances %d cannot be less than min instances %d", s.Max, s.Min)
 	}
-	switch s.Metric {
-	case "queue_lag", "queue_depth":
-		if s.Target <= 0 {
-			return fmt.Errorf("target for metric %q must be greater than 0", s.Metric)
+	if s.Metric == "" {
+		if s.Name != "" || s.Target != 0 {
+			return fmt.Errorf("name and target require a worker metric")
 		}
-	case "":
-		// manual fixed replica count without metric
-	default:
-		return fmt.Errorf("unsupported worker metric %q; supported metrics: queue_lag, queue_depth", s.Metric)
+		return nil
+	}
+	if problem := api.ValidateScalingTargets("worker.scale", []api.ScalingTarget{{Metric: s.Metric, Name: s.Name, Value: s.Target}}); problem != nil {
+		return fmt.Errorf("%s", problem.Detail)
 	}
 	return nil
 }

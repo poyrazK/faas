@@ -1578,6 +1578,7 @@ func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClien
 			MaxInstances: m.Worker.Scale.Max,
 			Target: &api.ScalingTarget{
 				Metric: m.Worker.Scale.Metric,
+				Name:   m.Worker.Scale.Name,
 				Value:  m.Worker.Scale.Target,
 			},
 		}
