@@ -253,3 +253,16 @@ should have at least one replica for prompt execution. Do not store access
 tokens in task arguments; the store already keeps payloads encrypted and
 short-lived, but application handlers still own data-minimization and
 authorization.
+
+Task admission defaults to 1000 outstanding tasks per namespace and 100 per
+owner; override `tasks.max_outstanding` and `tasks.max_outstanding_per_owner`.
+Queued, running and input-required tasks count against admission atomically.
+Versioned workers claim only supported handlers; retain earlier implementations
+with `previousVersions: { '1': executeV1 }` or keep the old worker until it drains.
+
+`npm run start:tasks-observer` publishes aggregate queue metrics from a separate
+always-running process, allowing worker replicas to start from zero. Give it a
+read-only database credential, the shared namespace and worker scaling metrics
+credentials. It needs no owner key and never migrates schema or claims tasks.
+Worker-only metrics still require at least one worker replica. Alert on the
+payload-free `mcp_task_metrics_publish_failed` log event.

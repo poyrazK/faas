@@ -234,6 +234,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     let subscription;
     let unsubscribeBus;
     let keepAlive;
+    let authDeadline;
     let ended = false;
     let ready = false;
     let closeAfterSetup = false;
@@ -242,6 +243,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
       if (ended) return;
       ended = true;
       clearInterval(keepAlive);
+      clearTimeout(authDeadline);
       unsubscribeBus?.();
       subscription?.close();
       taskSubscriptionStreams.delete(closeGracefully);
@@ -267,6 +269,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     };
     function deliver(message) {
       if (ended) return;
+      if (req.auth?.expiresAt * 1000 <= Date.now()) { closeNow(); return; }
       if (!ready) { queued.push(message); return; }
       writeSseMessage(res, message);
     }
@@ -286,6 +289,16 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     taskSubscriptionStreams.add(closeGracefully);
     res.once('close', closeNow);
     req.once('aborted', closeNow);
+    // Streams may survive a token's lifetime (including snapshot restore).
+    // Recheck the clock when delivering as well as when the deadline fires.
+    function expireAuthentication() {
+      if (ended || !Number.isFinite(req.auth?.expiresAt)) return;
+      const remaining = req.auth.expiresAt * 1000 - Date.now();
+      if (remaining <= 0) { closeNow(); return; }
+      authDeadline = setTimeout(expireAuthentication, Math.min(remaining, 2_147_483_647));
+      authDeadline.unref?.();
+    }
+    expireAuthentication();
 
     try {
       unsubscribeBus = handler.bus.subscribe(event => {
