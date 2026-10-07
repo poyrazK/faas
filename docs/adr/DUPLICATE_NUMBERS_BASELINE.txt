@@ -1,6 +1,6 @@
 # Frozen baseline of ADR numbers that are already duplicated on main.
 #
-# docs/adr/ carries 671 numbered files under 558 distinct numbers, with 75
+# docs/adr/ carries 687 numbered files under 577 distinct numbers, with 72
 # duplicated numbers, because concurrent PRs each pick "the next number" and
 # whichever merges second keeps it.
 # scripts/ci/check_adr_number_uniqueness.sh fails on any number duplicated
@@ -98,3 +98,5 @@
 168
 171
 190
+# Main now contains both ADR-638 files after the independent event-replay merge.
+638
