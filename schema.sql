@@ -3233,6 +3233,7 @@ BEGIN
       FROM triggers t
       JOIN trigger_records r ON r.id = NEW.record_id
      WHERE t.id = NEW.trigger_id
+       AND NOT (t.kind = 'queue' AND t.source IN ('queue', 'delayed_task'))
     ON CONFLICT (source, source_id) DO UPDATE SET
         origin = EXCLUDED.origin,
         trigger_id = EXCLUDED.trigger_id,
