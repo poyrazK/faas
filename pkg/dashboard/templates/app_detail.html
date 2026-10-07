@@ -167,6 +167,24 @@
     .alert-preset-explanation .why   { margin: 0.2rem 0; color: #374151; white-space: pre-line; }
     .alert-preset-explanation .fix   { margin: 0.2rem 0; color: #374151; white-space: pre-line; }
     .alert-preset-explanation .docs  { margin: 0.3rem 0 0; font-size: 0.8rem; }
+    .cost-note { color: #6b7280; font-size: 0.9rem; }
+    .cost-month-selector { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0; }
+    .cost-month-selector input, .cost-month-selector button { padding: 0.35rem 0.5rem; font: inherit; }
+    .cost-export-link { display: inline-block; margin: 0.25rem 0 0.5rem; }
+    .cost-trend-loader { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 0.75rem 0; }
+    .cost-trend-loader button { padding: 0.35rem 0.6rem; font: inherit; cursor: pointer; }
+    .cost-trend-loader .htmx-indicator { display: none; color: #6b7280; }
+    .cost-trend-loader .htmx-request .htmx-indicator, .cost-trend-loader .htmx-request.htmx-indicator { display: inline; }
+    .cost-trend-table-wrap { overflow-x: auto; }
+    .cost-trend-table { min-width: 720px; }
+    .cost-trend-table tr.selected { background: #eff6ff; }
+    .cost-trend-current { display: inline-block; color: #6b7280; font-size: 0.75rem; font-weight: 400; }
+    .cost-trend-bar { width: 100%; min-width: 90px; height: 0.45rem; margin-top: 0.25rem; background: #f3f4f6; border-radius: 4px; overflow: hidden; }
+    .cost-trend-fill { display: block; height: 100%; border-radius: 4px; }
+    .cost-trend-fill.compute { background: #1e40af; }
+    .cost-trend-fill.egress { background: #0f766e; }
+    .cost-trend-fill.negative { background: #b91c1c; }
+    .cost-trend-unavailable { color: #6b7280; }
   </style>
 </head>
 <body hx-ext="sse" sse-connect="/v1/events">
@@ -175,6 +193,7 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/app-costs">App costs</a>
       <a href="/dashboard/developers">Developer environments</a>
       <a href="/dashboard/projects">Projects</a>
       <a href="/dashboard/usage">Usage</a>
@@ -186,7 +205,7 @@
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
-  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed, sse:api_route_discovered" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed, sse:api_route_discovered" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RefreshQuery}}?{{.Data.RefreshQuery}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
     {{template "email-verification-banner" .}}
     {{/* Issue #791 PR-E / ADR-090 closure — flash banner shown
          after a dashboard fire-now POST. The handler redirects
@@ -208,6 +227,75 @@
         · Lifecycle: <strong>{{.Data.App.Status}}</strong>
         · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a>
       </p>
+      {{if .Data.Operational}}{{template "app-operational-summary" .Data}}{{end}}
+      {{if .Data.AppCosts}}
+      <section aria-label="App cost and usage">
+        <h2>Cost and usage</h2>
+        <form class="cost-month-selector" method="get" action="/dashboard/apps/{{.Data.App.Slug}}">
+          {{if and .Data.AnalyticsGroupBy (ne .Data.AnalyticsGroupBy "route")}}<input type="hidden" name="analytics_by" value="{{.Data.AnalyticsGroupBy}}">{{end}}
+          {{if and (eq .Data.AnalyticsGroupBy "route") .Data.AnalyticsRoute .Data.AnalyticsMethod}}<input type="hidden" name="analytics_route" value="{{.Data.AnalyticsRoute}}"><input type="hidden" name="analytics_method" value="{{.Data.AnalyticsMethod}}">{{end}}
+          <label for="app-cost-month">Month</label>
+          <input id="app-cost-month" type="month" name="cost_month" value="{{.Data.AppCosts.SelectedMonth}}" max="{{.Data.AppCosts.MaxMonth}}" required>
+          <button type="submit">Show costs</button>
+        </form>
+        <p><a class="cost-export-link" href="/dashboard/apps/{{.Data.App.Slug}}/costs.csv?cost_month={{.Data.AppCosts.SelectedMonth}}">Download {{.Data.AppCosts.Month}} costs as CSV</a></p>
+        {{if .Data.AppCosts.SelectionNotice}}<p class="cost-note" role="status">{{.Data.AppCosts.SelectionNotice}}</p>{{end}}
+        <div class="cost-trend-loader">
+          <button type="button" hx-get="/dashboard/apps/{{.Data.App.Slug}}/cost-trend{{if .Data.RefreshQuery}}?{{.Data.RefreshQuery}}{{end}}" hx-target="#app-cost-trend" hx-swap="innerHTML" hx-disabled-elt="this">Load six month cost trend <span class="htmx-indicator">Loading…</span></button>
+          <a class="cost-export-link" href="/dashboard/apps/{{.Data.App.Slug}}/cost-trend.csv?cost_month={{.Data.AppCosts.SelectedMonth}}">Download six months as CSV</a>
+        </div>
+        <div id="app-cost-trend"></div>
+        {{if .Data.AppCosts.Unavailable}}
+          <p class="cost-note" role="status">{{.Data.AppCosts.Unavailable}}</p>
+        {{else}}
+          <p>Attributed cost: <strong>{{.Data.AppCosts.KnownUsage}}</strong> for {{.Data.AppCosts.Month}} as of {{.Data.AppCosts.AsOf}}.</p>
+          <p class="cost-note">This includes retained usage attributed to this app, net of its allocated share of the account&#39;s included usage allowance. Separately attributed jobs and account-level charges are excluded. Coverage reflects account-wide sampling. This is not an invoice total or an app-level forecast.</p>
+          <table>
+            <thead><tr><th>Meter</th><th>Usage</th><th>Attributed cost</th><th>Source coverage</th></tr></thead>
+            <tbody>
+              {{range .Data.AppCosts.Meters}}
+              <tr><td>{{.Meter}}</td><td>{{.Quantity}}</td><td>{{.NetCost}}</td><td>{{.Coverage}}</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+          {{range .Data.AppCosts.Meters}}
+            {{if .Drivers}}
+              <details>
+                <summary>{{.Meter}} usage drivers (up to 5)</summary>
+                <table><thead><tr><th>Workload</th><th>Usage</th><th>Attributed cost</th></tr></thead><tbody>
+                  {{range .Drivers}}<tr><td>{{.Name}}</td><td>{{.Quantity}}</td><td>{{.NetCost}}</td></tr>{{end}}
+                </tbody></table>
+              </details>
+            {{end}}
+          {{end}}
+          {{if .Data.AppCosts.MissingBillComponents}}
+            <p class="cost-note">The full bill estimate is unavailable. This report excludes: {{range $i, $component := .Data.AppCosts.MissingBillComponents}}{{if $i}}, {{end}}{{$component}}{{end}}.</p>
+          {{end}}
+          {{if .Data.AppCosts.Comparison}}
+            <h3>Compared with {{.Data.AppCosts.Comparison.PreviousPeriod}}</h3>
+            <p class="cost-note">The comparison uses complete months for closed periods and the same elapsed part for the current month, capped at the previous month&#39;s end. A positive difference means higher attributed cost in {{.Data.AppCosts.Comparison.SelectedPeriod}}.</p>
+            <table>
+              <thead><tr><th>Meter</th><th>{{.Data.AppCosts.Comparison.SelectedPeriod}}</th><th>{{.Data.AppCosts.Comparison.PreviousPeriod}}</th><th>Difference</th></tr></thead>
+              <tbody>
+                {{range .Data.AppCosts.Comparison.Meters}}<tr><td>{{.Meter}}</td><td>{{.SelectedCost}}</td><td>{{.PreviousCost}}</td><td>{{.Difference}}</td></tr>{{end}}
+                <tr><th>Total</th><th>{{.Data.AppCosts.Comparison.SelectedTotal}}</th><th>{{.Data.AppCosts.Comparison.PreviousTotal}}</th><th>{{.Data.AppCosts.Comparison.Difference}}</th></tr>
+              </tbody>
+            </table>
+          {{else if .Data.AppCosts.ComparisonUnavailable}}
+            <p class="cost-note" role="status">{{.Data.AppCosts.ComparisonUnavailable}}</p>
+          {{end}}
+          {{if .Data.AppCosts.ComparisonCoverage}}
+            <details>
+              <summary>Comparison source coverage</summary>
+              <table><thead><tr><th>Meter</th><th>{{.Data.AppCosts.ComparisonCoverage.SelectedPeriod}}</th><th>{{.Data.AppCosts.ComparisonCoverage.PreviousPeriod}}</th></tr></thead><tbody>
+                {{range .Data.AppCosts.ComparisonCoverage.Meters}}<tr><td>{{.Meter}}</td><td>{{.Selected}}</td><td>{{.Previous}}</td></tr>{{end}}
+              </tbody></table>
+            </details>
+          {{end}}
+          <p><a href="/dashboard/billing">View account billing →</a> · <a href="/dashboard/usage">View account usage →</a></p>
+        {{end}}
+      </section>
+      {{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View live logs →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/issues">Investigate issues →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>

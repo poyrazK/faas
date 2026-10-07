@@ -55,6 +55,25 @@ const (
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
 )
 
+// Operational summaries bound each recovery kind independently and never
+// perform active probes or lifecycle work while loading a customer page.
+const AppOperationalRecoveryLimit = 10
+const AppOperationalReadTimeout = 5 * time.Second
+
+const (
+	AppRestartWaitTimeoutDefault  = 10 * time.Minute
+	AppRestartPollIntervalDefault = 2 * time.Second
+	AppRestartDashboardRefresh    = 5 * time.Second
+)
+
+// Inspect watches serialize bounded reads and remain quiet between state changes.
+const (
+	InspectWatchIntervalDefault = 5 * time.Second
+	InspectWatchIntervalMin     = time.Second
+	InspectWatchIntervalMax     = time.Hour
+	InspectWatchReadTimeout     = 30 * time.Second
+)
+
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
 const (
 	EventBacklogPageDefault      = 100
