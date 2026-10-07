@@ -39,6 +39,12 @@ type WorkflowIdentityExecutor interface {
 	ExecuteWorkflowStep(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error)
 }
 
+// WorkflowRetryAfterExecutor preserves downstream throttling deadlines while
+// carrying the same trusted identity and operation context as normal dispatch.
+type WorkflowRetryAfterExecutor interface {
+	ExecuteWorkflowStepWithRetryAfter(context.Context, string, WorkflowStepIdentity, string, string, map[string]string, []byte, time.Duration, string, int64) (int, []byte, time.Time, error)
+}
+
 // WorkflowManagedOperationExecutor is implemented by the authenticated
 // scheduler-to-gateway transport. The operation identity is host metadata;
 // it must never be supplied as a customer HTTP header.
@@ -116,6 +122,14 @@ func workflowHTTPStatus(statusCode int, callErr error) *int {
 		return nil
 	}
 	return &statusCode
+}
+
+func (o *WorkflowOrchestrator) executeWorkflowHandlerWithRetryAfter(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, time.Time, error) {
+	if executor, ok := o.executor.(WorkflowRetryAfterExecutor); ok {
+		return executor.ExecuteWorkflowStepWithRetryAfter(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID}, path, method, headers, body, timeout, operationID, generation)
+	}
+	status, body, err := o.executeWorkflowHandler(ctx, run, path, method, headers, body, timeout, operationID, generation)
+	return status, body, time.Time{}, err
 }
 
 func (o *WorkflowOrchestrator) executeWorkflowHandler(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error) {
@@ -1050,7 +1064,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			if managedOperationID != "" {
 				generation = int64(step.Attempt + 1)
 			}
-			statusCode, body, err = o.executeWorkflowHandler(execCtx, run, workflowStepPath(spec), method, headers, inputBytes, timeout, managedOperationID, generation)
+			statusCode, body, outboundRetryAt, err = o.executeWorkflowHandlerWithRetryAfter(execCtx, run, workflowStepPath(spec), method, headers, inputBytes, timeout, managedOperationID, generation)
 		}
 	}
 	auditOutput := string(body)

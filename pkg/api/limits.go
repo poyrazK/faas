@@ -53,6 +53,14 @@ const (
 	EventReplayBackfillItemsPageMax        = 100
 	EventReplayBackfillItemsCursorMaxBytes = 4096
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
+// Workflow reliability bounds (ADR-638).
+const (
+	WorkflowRetryAfterMaxDelay         = time.Hour
+	WorkflowScheduleBatch              = 256
+	WorkflowScheduleHistoryRetention   = 30 * 24 * time.Hour
+	WorkflowScheduleHistoryPageDefault = 100
+	WorkflowScheduleHistoryPageMax     = 200
+	WorkflowScheduleHistoryPruneBatch  = 1000
 )
 
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).

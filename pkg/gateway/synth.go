@@ -630,7 +630,8 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		Result      json.RawMessage `json:"result,omitempty"`
 		StatusCode  int             `json:"status_code,omitempty"`
 		OutcomeCode string          `json:"outcome_code,omitempty"`
-	}{string(out.State), out.Result, statusCode, out.OutcomeCode})
+		RetryAfter  string          `json:"retry_after,omitempty"`
+	}{string(out.State), out.Result, statusCode, out.OutcomeCode, out.ResponseRetryAfter})
 }
 
 func jsonOrEmpty(m map[string]string) json.RawMessage {

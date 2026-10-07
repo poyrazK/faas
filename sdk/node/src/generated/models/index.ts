@@ -663,6 +663,7 @@ export type { ListTriggerRecordsResponse } from './ListTriggerRecordsResponse.js
 export type { ListWorkflowCallbacksResponse } from './ListWorkflowCallbacksResponse.js';
 export type { ListWorkflowResumesResponse } from './ListWorkflowResumesResponse.js';
 export type { ListWorkflowRunsResponse } from './ListWorkflowRunsResponse.js';
+export type { ListWorkflowScheduleOccurrencesResponse } from './ListWorkflowScheduleOccurrencesResponse.js';
 export type { ListWorkflowSchedulesResponse } from './ListWorkflowSchedulesResponse.js';
 export type { ListWorkflowStepAttemptsResponse } from './ListWorkflowStepAttemptsResponse.js';
 export type { ListWorkflowStepsResponse } from './ListWorkflowStepsResponse.js';
@@ -1406,6 +1407,7 @@ export type { WorkflowOutboundSpec } from './WorkflowOutboundSpec.js';
 export type { WorkflowResumeResponse } from './WorkflowResumeResponse.js';
 export type { WorkflowRetrySpec } from './WorkflowRetrySpec.js';
 export type { WorkflowRunResponse } from './WorkflowRunResponse.js';
+export type { WorkflowScheduleOccurrenceResponse } from './WorkflowScheduleOccurrenceResponse.js';
 export type { WorkflowScheduleResponse } from './WorkflowScheduleResponse.js';
 export type { WorkflowSpec } from './WorkflowSpec.js';
 export type { WorkflowStepAttemptResponse } from './WorkflowStepAttemptResponse.js';

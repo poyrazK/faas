@@ -1232,6 +1232,12 @@ var cliCommands = []cliCommand{
 				{Name: "created-before", Short: "inclusive RFC3339 creation-time end", Value: "RFC3339"},
 			}},
 			{Name: "schedules", Short: "Inspect recurring workflow schedules and their latest admission", Flags: []cliFlag{{Name: "app", Short: "application slug", Req: true, Value: "SLUG"}}},
+			{Name: "schedule-history", Short: "Inspect recurring workflow admission history", Flags: []cliFlag{
+				{Name: "app", Short: "application slug", Req: true, Value: "SLUG"},
+				{Name: "platform-tenant-id", Short: "filter by tenant UUID", Value: "UUID"},
+				{Name: "cursor", Short: "next cursor from the previous page", Value: "UUID"},
+				{Name: "limit", Short: "maximum occurrences (1-200)", Value: "N"},
+			}},
 			{Name: "run", Short: "Trigger a new workflow run", Positionals: []string{"<workflow-name>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "input", Short: "JSON input payload (default {})", Value: "JSON"}, {Name: "idempotency-key", Short: "stable key for retrying an uncertain run start", Value: "KEY"}}},
 			{Name: "status", Short: "Show details of a workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "steps", Short: "List steps for a workflow run", Positionals: []string{"<run_id>"}},

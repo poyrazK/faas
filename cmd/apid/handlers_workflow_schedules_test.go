@@ -53,3 +53,50 @@ func TestWorkflowScheduleInspectionAndAccountIsolation(t *testing.T) {
 		t.Fatalf("cross-account read = %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestWorkflowScheduleHistoryPaginationAndAccountIsolation(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedWorkflowApp(t, e, "history-app")
+	ctx := context.Background()
+	deployment, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive, ImageDigest: "sha256:history",
+		Workflows: json.RawMessage(`[{"name":"nightly","trigger":{"type":"schedule","schedule":"* * * * *"},"steps":[{"name":"main","run":"report"}]}]`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Minute)
+	for cycle := range 3 {
+		if _, _, err := e.store.AdmitScheduledWorkflow(ctx, app.ID, deployment.ID, "nightly", at.Add(time.Duration(cycle)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/v1/apps/" + app.Slug + "/workflows/schedules/occurrences"
+	var first api.ListWorkflowScheduleOccurrencesResponse
+	rec := e.do(t, "GET", path+"?limit=1", nil, nil)
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &first) != nil || len(first.Occurrences) != 1 || first.NextCursor == "" || first.Occurrences[0].Status != state.WorkflowScheduleSkippedOverlap {
+		t.Fatalf("first=%d %s", rec.Code, rec.Body)
+	}
+	var second api.ListWorkflowScheduleOccurrencesResponse
+	rec = e.do(t, "GET", path+"?limit=1&cursor="+first.NextCursor, nil, nil)
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &second) != nil || len(second.Occurrences) != 1 || second.NextCursor != "" || second.Occurrences[0].RunID == "" {
+		t.Fatalf("second=%d %s", rec.Code, rec.Body)
+	}
+	for _, query := range []string{"?limit=0", "?limit=201", "?limit=bad", "?cursor=bad", "?platform_tenant_id=bad"} {
+		rec = e.do(t, "GET", path+query, nil, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("query=%s status=%d body=%s", query, rec.Code, rec.Body)
+		}
+	}
+	other, err := e.store.CreateAccount(ctx, "history-other@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherApp, err := e.store.CreateApp(ctx, state.App{AccountID: other.ID, Slug: "history-other", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, "GET", "/v1/apps/"+otherApp.Slug+"/workflows/schedules/occurrences", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-account history=%d %s", rec.Code, rec.Body)
+	}
+}

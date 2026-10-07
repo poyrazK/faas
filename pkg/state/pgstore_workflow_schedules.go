@@ -29,7 +29,7 @@ func (s *PgStore) ListWorkflowScheduleCandidates(ctx context.Context, owner, aft
 
 func workflowScheduleCursorFromSQL(row sqlc.WorkflowScheduleCursor) WorkflowScheduleCursor {
 	result := WorkflowScheduleCursor{AppID: uuidFromPgtype(row.AppID).String(), WorkflowName: row.WorkflowName,
-		TriggerSnapshot: cloneWorkflowJSON(row.TriggerSnapshot), LastEvaluatedAt: timeFromPgtype(row.LastEvaluatedAt),
+		TriggerSnapshot: cloneWorkflowJSON(row.TriggerSnapshot), LastAdmittedAt: timestamptzToTimePtr(row.LastAdmittedAt), LastEvaluatedAt: timeFromPgtype(row.LastEvaluatedAt),
 		ScheduledFor: timestamptzToTimePtr(row.ScheduledFor), Status: row.Status}
 	if row.DeploymentID.Valid {
 		result.DeploymentID = uuidFromPgtype(row.DeploymentID).String()
@@ -117,11 +117,14 @@ func (s *PgStore) AdmitScheduledWorkflow(ctx context.Context, appID, deploymentI
 	}
 	_, err = queries.UpsertWorkflowScheduleCursor(ctx, tx, sqlc.UpsertWorkflowScheduleCursorParams{
 		AppID: mustPgUUID(appID), WorkflowName: name, DeploymentID: mustPgUUID(deploymentID),
-		TriggerSnapshot: next.TriggerSnapshot, LastEvaluatedAt: pgtype.Timestamptz{Time: next.LastEvaluatedAt, Valid: true},
+		TriggerSnapshot: next.TriggerSnapshot, LastAdmittedAt: nullableTimestamptzPtr(next.LastAdmittedAt), LastEvaluatedAt: pgtype.Timestamptz{Time: next.LastEvaluatedAt, Valid: true},
 		ScheduledFor: nullableTimestamptzPtr(next.ScheduledFor), Status: next.Status, LastRunID: mustPgUUID(next.LastRunID),
 	})
 	if err != nil {
 		return WorkflowScheduleCursor{}, false, fmt.Errorf("state: record scheduled workflow outcome: %w", err)
+	}
+	if err := insertWorkflowScheduleOccurrence(ctx, tx, next, now); err != nil {
+		return WorkflowScheduleCursor{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return WorkflowScheduleCursor{}, false, fmt.Errorf("state: commit scheduled workflow: %w", err)

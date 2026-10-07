@@ -374,6 +374,7 @@ var dtoExclude = map[string]bool{
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
 	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
 	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
+	"ListWorkflowScheduleOccurrencesOptions":          true, // client-only history query parameters; the occurrence response DTOs are in the public spec
 	"InboundWebhookEndpointRow":                       true,
 	"AppLogDrainRow":                                  true,
 	"QueueBindingRow":                                 true,

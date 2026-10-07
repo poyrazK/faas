@@ -261,3 +261,62 @@ func TestHTTPGatewaySynthExecuteStepRequiresWorkflowTokenMinter(t *testing.T) {
 		t.Fatalf("err = %v, want missing workflow token minter", err)
 	}
 }
+
+func TestHTTPGatewaySynthWorkflowThrottlingParksUntilRetryAfter(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	calls := 0
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Headers map[string]string `json:"headers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		keys = append(keys, request.Headers["Idempotency-Key"])
+		calls++
+		_, _ = w.Write([]byte(`{"state":"failed","status_code":429,"retry_after":"2","result":{"error":"throttled"}}`))
+	}))
+	defer srv.Close()
+	transport := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL, mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
+	run := &state.WorkflowRun{AppID: "00000000-0000-4000-8000-000000000001", WorkflowName: "report", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{"name":"report","steps":[{"name":"main","run":"report","retry":{"max_attempts":2}}]}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	orchestrator := NewWorkflowOrchestrator(store, transport, nil, nil, nil)
+	before := time.Now().UTC()
+	if err := orchestrator.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := store.GetWorkflowSteps(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked, err := store.GetWorkflowRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(steps) != 1 || steps[0].NextRetryAt == nil || steps[0].NextRetryAt.Before(before.Add(2*time.Second)) || parked.ScheduledFor.Before(*steps[0].NextRetryAt) {
+		t.Fatalf("not durably parked: calls=%d run=%+v steps=%+v", calls, parked, steps)
+	}
+	// Reconstruct the orchestrator, as after scheduler restart.
+	orchestrator = NewWorkflowOrchestrator(store, transport, nil, nil, nil)
+	if err := orchestrator.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatal("restart ignored retry deadline")
+	}
+	time.Sleep(time.Until(*steps[0].NextRetryAt) + 10*time.Millisecond)
+	if err := orchestrator.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	final, err := store.GetWorkflowRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] || final.Status != state.WorkflowRunStatusFailed {
+		t.Fatalf("retry budget/idempotency: calls=%d keys=%v run=%+v", calls, keys, final)
+	}
+}

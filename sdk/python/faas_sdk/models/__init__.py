@@ -1296,6 +1296,7 @@ from .list_workflow_callbacks_response import ListWorkflowCallbacksResponse
 from .list_workflow_resumes_response import ListWorkflowResumesResponse
 from .list_workflow_runs_response import ListWorkflowRunsResponse
 from .list_workflow_runs_status import ListWorkflowRunsStatus
+from .list_workflow_schedule_occurrences_response import ListWorkflowScheduleOccurrencesResponse
 from .list_workflow_schedules_response import ListWorkflowSchedulesResponse
 from .list_workflow_schedules_response_unavailable_reason import ListWorkflowSchedulesResponseUnavailableReason
 from .list_workflow_step_attempts_response import ListWorkflowStepAttemptsResponse
@@ -2697,6 +2698,8 @@ from .workflow_retry_spec import WorkflowRetrySpec
 from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
 from .workflow_run_response import WorkflowRunResponse
 from .workflow_run_response_status import WorkflowRunResponseStatus
+from .workflow_schedule_occurrence_response import WorkflowScheduleOccurrenceResponse
+from .workflow_schedule_occurrence_response_status import WorkflowScheduleOccurrenceResponseStatus
 from .workflow_schedule_response import WorkflowScheduleResponse
 from .workflow_schedule_response_last_status import WorkflowScheduleResponseLastStatus
 from .workflow_schedule_response_overlap import WorkflowScheduleResponseOverlap
@@ -3993,6 +3996,7 @@ __all__ = (
     "ListWorkflowResumesResponse",
     "ListWorkflowRunsResponse",
     "ListWorkflowRunsStatus",
+    "ListWorkflowScheduleOccurrencesResponse",
     "ListWorkflowSchedulesResponse",
     "ListWorkflowSchedulesResponseUnavailableReason",
     "ListWorkflowStepAttemptsResponse",
@@ -5322,6 +5326,8 @@ __all__ = (
     "WorkflowRetrySpecBackoff",
     "WorkflowRunResponse",
     "WorkflowRunResponseStatus",
+    "WorkflowScheduleOccurrenceResponse",
+    "WorkflowScheduleOccurrenceResponseStatus",
     "WorkflowScheduleResponse",
     "WorkflowScheduleResponseLastStatus",
     "WorkflowScheduleResponseOverlap",

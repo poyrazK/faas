@@ -39,7 +39,7 @@ func (s *PgStore) ListTenantWorkflowScheduleCandidates(ctx context.Context, owne
 func tenantWorkflowScheduleCursorFromSQL(row sqlc.PlatformTenantWorkflowScheduleCursor) WorkflowScheduleCursor {
 	result := WorkflowScheduleCursor{AppID: pgUUIDString(row.AppID), PlatformTenantID: pgUUIDString(row.PlatformTenantID),
 		WorkflowName: row.WorkflowName, TriggerSnapshot: cloneWorkflowJSON(row.TriggerSnapshot),
-		LastEvaluatedAt: timeFromPgtype(row.LastEvaluatedAt), ScheduledFor: timestamptzToTimePtr(row.ScheduledFor), Status: row.Status}
+		LastAdmittedAt: timestamptzToTimePtr(row.LastAdmittedAt), LastEvaluatedAt: timeFromPgtype(row.LastEvaluatedAt), ScheduledFor: timestamptzToTimePtr(row.ScheduledFor), Status: row.Status}
 	if row.DeploymentID.Valid {
 		result.DeploymentID = pgUUIDString(row.DeploymentID)
 	}
@@ -140,6 +140,7 @@ func (s *PgStore) AdmitTenantScheduledWorkflow(ctx context.Context, appID, tenan
 	if err != nil || next == nil {
 		return WorkflowScheduleCursor{}, false, err
 	}
+	outcomeChanged := workflowScheduleOutcomeChanged(next, previous)
 	if customized {
 		next.TriggerSnapshot, err = encodeTenantWorkflowScheduleSnapshot(*definition.Trigger, configVersion)
 		if err != nil {
@@ -159,16 +160,19 @@ func (s *PgStore) AdmitTenantScheduledWorkflow(ctx context.Context, appID, tenan
 	_, err = queries.UpsertTenantWorkflowScheduleCursor(ctx, tx, sqlc.UpsertTenantWorkflowScheduleCursorParams{
 		AppID: mustPgUUID(appID), TenantID: mustPgUUID(tenantID), WorkflowName: name,
 		DeploymentID: mustPgUUID(deploymentID), TriggerSnapshot: next.TriggerSnapshot,
-		LastEvaluatedAt: pgtype.Timestamptz{Time: next.LastEvaluatedAt, Valid: true},
-		ScheduledFor:    nullableTimestamptzPtr(next.ScheduledFor), Status: next.Status, LastRunID: mustPgUUID(next.LastRunID),
+		LastAdmittedAt: nullableTimestamptzPtr(next.LastAdmittedAt), LastEvaluatedAt: pgtype.Timestamptz{Time: next.LastEvaluatedAt, Valid: true},
+		ScheduledFor: nullableTimestamptzPtr(next.ScheduledFor), Status: next.Status, LastRunID: mustPgUUID(next.LastRunID),
 	})
 	if err != nil {
 		return WorkflowScheduleCursor{}, false, fmt.Errorf("state: record tenant workflow schedule outcome: %w", err)
 	}
+	if err := insertWorkflowScheduleOccurrence(ctx, tx, next, now); err != nil {
+		return WorkflowScheduleCursor{}, false, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return WorkflowScheduleCursor{}, false, fmt.Errorf("state: commit tenant scheduled workflow: %w", err)
 	}
-	return *next, true, nil
+	return *next, outcomeChanged, nil
 }
 
 func lockTenantWorkflowScheduleBinding(ctx context.Context, tx pgx.Tx, accountID, tenantID, appID string) (sqlc.LockTenantWorkflowScheduleTargetRow, bool, error) {
@@ -326,6 +330,7 @@ func (s *PgStore) UpdateTenantWorkflowSchedule(ctx context.Context, accountID, t
 	if previous != nil {
 		next.ScheduledFor = previous.ScheduledFor
 		next.LastRunID = previous.LastRunID
+		next.LastAdmittedAt = cloneTimePtr(previous.LastAdmittedAt)
 		if next.ScheduledFor != nil && next.ScheduledFor.After(now) {
 			next.ScheduledFor = nil
 		}
@@ -333,8 +338,8 @@ func (s *PgStore) UpdateTenantWorkflowSchedule(ctx context.Context, accountID, t
 	_, err = queries.UpsertTenantWorkflowScheduleCursor(ctx, tx, sqlc.UpsertTenantWorkflowScheduleCursorParams{
 		AppID: mustPgUUID(appID), TenantID: mustPgUUID(tenantID), WorkflowName: name,
 		DeploymentID: target.DeploymentID, TriggerSnapshot: next.TriggerSnapshot,
-		LastEvaluatedAt: pgtype.Timestamptz{Time: next.LastEvaluatedAt, Valid: true},
-		ScheduledFor:    nullableTimestamptzPtr(next.ScheduledFor), Status: next.Status, LastRunID: mustPgUUID(next.LastRunID),
+		LastAdmittedAt: nullableTimestamptzPtr(next.LastAdmittedAt), LastEvaluatedAt: pgtype.Timestamptz{Time: next.LastEvaluatedAt, Valid: true},
+		ScheduledFor: nullableTimestamptzPtr(next.ScheduledFor), Status: next.Status, LastRunID: mustPgUUID(next.LastRunID),
 	})
 	if err != nil {
 		return TenantWorkflowSchedule{}, fmt.Errorf("state: save tenant workflow schedule: %w", err)

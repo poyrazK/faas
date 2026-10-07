@@ -31,6 +31,7 @@ type WorkflowScheduleCursor struct {
 	WorkflowName     string
 	DeploymentID     string
 	TriggerSnapshot  json.RawMessage
+	LastAdmittedAt   *time.Time
 	LastEvaluatedAt  time.Time
 	ScheduledFor     *time.Time
 	Status           string
@@ -59,6 +60,14 @@ type TenantWorkflowScheduleStore interface {
 	AdmitTenantScheduledWorkflow(context.Context, string, string, string, string, time.Time) (WorkflowScheduleCursor, bool, error)
 	ListTenantWorkflowSchedules(context.Context, string, string, string) ([]TenantWorkflowSchedule, error)
 	UpdateTenantWorkflowSchedule(context.Context, string, string, string, string, int64, string, string, string, bool) (TenantWorkflowSchedule, error)
+}
+
+// FairTenantWorkflowScheduleStore orders tenant/workflow pairs by their last
+// admission and excludes those already evaluated during this minute. Paging
+// removes evaluated rows, so priority changes cannot move unseen rows behind
+// a keyset cursor.
+type FairTenantWorkflowScheduleStore interface {
+	ListFairTenantWorkflowScheduleCandidates(context.Context, string, time.Time, int) ([]WorkflowScheduleCandidate, error)
 }
 
 const (
@@ -201,6 +210,9 @@ func evaluateWorkflowSchedule(appID, tenantID, deploymentID string, spec api.Wor
 	}
 	cursor := &WorkflowScheduleCursor{AppID: appID, PlatformTenantID: tenantID, WorkflowName: spec.Name,
 		DeploymentID: deploymentID, TriggerSnapshot: trigger, LastEvaluatedAt: now.UTC()}
+	if previous != nil {
+		cursor.LastAdmittedAt = cloneTimePtr(previous.LastAdmittedAt)
+	}
 	if previous == nil || previous.DeploymentID != deploymentID || !equalWorkflowJSON(previous.TriggerSnapshot, trigger) {
 		cursor.Status = WorkflowScheduleArmed
 		if previous != nil && previous.LastEvaluatedAt.After(cursor.LastEvaluatedAt) {
@@ -217,6 +229,11 @@ func evaluateWorkflowSchedule(appID, tenantID, deploymentID string, spec api.Wor
 		return nil, nil, err
 	}
 	if !schedule.Next(nominal.Add(-time.Minute)).Equal(nominal) {
+		if tenantID != "" {
+			value := *previous
+			value.LastEvaluatedAt = now.UTC()
+			return &value, nil, nil
+		}
 		return nil, nil, nil
 	}
 	cursor.ScheduledFor = &nominal
@@ -238,5 +255,21 @@ func evaluateWorkflowSchedule(appID, tenantID, deploymentID string, spec api.Wor
 		return nil, nil, err
 	}
 	cursor.Status, cursor.LastRunID = WorkflowScheduleStarted, run.ID
+	cursor.LastAdmittedAt = cloneTimePtr(&nominal)
 	return cursor, run, nil
+}
+
+// workflowScheduleOutcomeChanged distinguishes internal scan progress from a
+// changed admission outcome. Non-due evaluations retain the public no-op result.
+func workflowScheduleOutcomeChanged(next, previous *WorkflowScheduleCursor) bool {
+	if previous == nil {
+		return true
+	}
+	if next.DeploymentID != previous.DeploymentID || next.Status != previous.Status || next.LastRunID != previous.LastRunID || !equalWorkflowJSON(next.TriggerSnapshot, previous.TriggerSnapshot) {
+		return true
+	}
+	if next.ScheduledFor == nil || previous.ScheduledFor == nil {
+		return next.ScheduledFor != nil || previous.ScheduledFor != nil
+	}
+	return !next.ScheduledFor.Equal(*previous.ScheduledFor)
 }

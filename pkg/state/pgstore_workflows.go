@@ -183,7 +183,7 @@ func (s *PgStore) CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun,
 		return 0, fmt.Errorf("pgstore: begin workflow admission: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, r.AppID); err != nil {
+	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, r.AppID); err != nil {
 		return 0, fmt.Errorf("pgstore: lock workflow admission: %w", err)
 	}
 	var active int
@@ -240,7 +240,7 @@ func (s *PgStore) CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Contex
 		return 0, false, fmt.Errorf("pgstore: begin idempotent workflow admission: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, r.AppID); err != nil {
+	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, r.AppID); err != nil {
 		return 0, false, fmt.Errorf("pgstore: lock idempotent workflow admission: %w", err)
 	}
 

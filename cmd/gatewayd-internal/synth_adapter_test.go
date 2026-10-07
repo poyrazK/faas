@@ -375,3 +375,17 @@ func TestSynthAdapterSanitizedReplayForwardsPayloadAndComparesBodyHash(t *testin
 		t.Fatalf("debug replay persisted raw response hashes: body=%x source=%x", rows[0].BodyHash, rows[0].SourceBodyHash)
 	}
 }
+
+func TestSynthAdapterPreservesWorkflowRetryAfter(t *testing.T) {
+	a := &synthAdapter{forward: func(gateway.Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Retry-After", "120")
+			w.WriteHeader(http.StatusTooManyRequests)
+		})
+	}}
+	before := time.Now().UTC()
+	out, status, err := a.forwardInvocationWithStatus(context.Background(), gateway.Target{InstanceID: "instance-1", NodeID: "node-1"}, state.Invocation{ID: "inv-1", AppID: "app-1", Source: state.InvocationSource("workflow")})
+	if err != nil || status != http.StatusTooManyRequests || api.WorkflowRetryAfter(out.ResponseRetryAfter, time.Now().UTC()).Before(before.Add(120*time.Second)) {
+		t.Fatalf("response=%+v status=%d err=%v", out, status, err)
+	}
+}

@@ -399,18 +399,19 @@ type MemStore struct {
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
-	workflowResumes          map[string][]WorkflowResume
-	workflowRuns             map[string]WorkflowRun
-	workflowRunCreateKeys    map[workflowRunCreateKey]workflowRunCreateKeyEntry
-	workflowSchedules        map[string]WorkflowScheduleCursor
-	workflowTenantSchedules  map[string]WorkflowScheduleCursor
-	automationVersion        int64
-	automations              map[string]Automation
-	automationRevisions      map[string][]AutomationRevision
-	workflowSteps            map[string]map[string]WorkflowStep // run_id → step_name → step
-	workflowStepAttempts     map[workflowStepAttemptKey]WorkflowStepAttempt
-	workflowOperationEffects map[workflowStepAttemptKey][]workflowOperationStoredEffect
-	workflowEvents           map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowResumes             map[string][]WorkflowResume
+	workflowRuns                map[string]WorkflowRun
+	workflowRunCreateKeys       map[workflowRunCreateKey]workflowRunCreateKeyEntry
+	workflowSchedules           map[string]WorkflowScheduleCursor
+	workflowTenantSchedules     map[string]WorkflowScheduleCursor
+	workflowScheduleOccurrences map[string]WorkflowScheduleOccurrence
+	automationVersion           int64
+	automations                 map[string]Automation
+	automationRevisions         map[string][]AutomationRevision
+	workflowSteps               map[string]map[string]WorkflowStep // run_id → step_name → step
+	workflowStepAttempts        map[workflowStepAttemptKey]WorkflowStepAttempt
+	workflowOperationEffects    map[workflowStepAttemptKey][]workflowOperationStoredEffect
+	workflowEvents              map[string][]WorkflowEvent // run_id → []WorkflowEvent
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
