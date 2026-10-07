@@ -33,13 +33,13 @@ func migrationRecoveryLocalConfig(cfg *pgx.ConnConfig) bool {
 }
 
 func migrationRecoveryDumpEnv(cfg *pgx.ConnConfig) []string {
-	env := make([]string, 0, len(os.Environ())+5)
+	env := make([]string, 0, len(os.Environ())+6)
 	for _, value := range os.Environ() {
 		if !strings.HasPrefix(value, "PG") {
 			env = append(env, value)
 		}
 	}
-	return append(env, "PGHOST="+cfg.Host, "PGPORT="+strconv.Itoa(int(cfg.Port)), "PGDATABASE="+cfg.Database, "PGUSER="+cfg.User, "PGPASSWORD="+cfg.Password)
+	return append(env, "PGHOST="+cfg.Host, "PGPORT="+strconv.Itoa(int(cfg.Port)), "PGDATABASE="+cfg.Database, "PGUSER="+cfg.User, "PGPASSWORD="+cfg.Password, "PGTZ=UTC")
 }
 
 func stripMigrationRecoveryNoise(raw []byte) []byte {

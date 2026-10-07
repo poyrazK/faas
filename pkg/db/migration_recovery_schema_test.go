@@ -16,17 +16,22 @@ func TestMigrationRecoveryDumpEnvExcludesAlternateCredentials(t *testing.T) {
 	t.Setenv("PGSERVICE", "unreviewed-service")
 	t.Setenv("PGPASSFILE", "/unreviewed/passwords")
 	t.Setenv("PGPASSWORD", "inherited-secret")
+	t.Setenv("PGTZ", "Europe/Istanbul")
+	t.Setenv("PGOPTIONS", "-c timezone=Europe/Istanbul")
 	cfg := &pgx.ConnConfig{}
 	cfg.Host, cfg.Port, cfg.Database, cfg.User, cfg.Password = "/local/socket", 5432, "reviewed", "owner", "selected-secret"
 	env := migrationRecoveryDumpEnv(cfg)
 	joined := strings.Join(env, "\n")
-	for _, absent := range []string{"PGSERVICE=", "PGPASSFILE=", "inherited-secret"} {
+	for _, absent := range []string{"PGSERVICE=", "PGPASSFILE=", "inherited-secret", "PGOPTIONS=", "Europe/Istanbul"} {
 		if strings.Contains(joined, absent) {
 			t.Fatal("pg_dump can inherit unreviewed connection or credential inputs")
 		}
 	}
 	if !strings.Contains(joined, "PGDATABASE=reviewed") || !strings.Contains(joined, "PGPASSWORD=selected-secret") {
 		t.Fatal("pg_dump did not receive the selected database credentials")
+	}
+	if !strings.Contains(joined, "PGTZ=UTC") {
+		t.Fatal("canonical schema dump did not use UTC")
 	}
 }
 
