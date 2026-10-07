@@ -13571,7 +13571,11 @@ func (q *Queries) FinishProjectEnvironmentClonePostgresCopyTargetCleanup(ctx con
 const finishProjectEnvironmentClonePostgresSnapshotCleanup = `-- name: FinishProjectEnvironmentClonePostgresSnapshotCleanup :one
 UPDATE project_environment_clone_postgres_snapshots s SET state='deleted',cleanup_observed_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE s.operation_id=$1::uuid AND s.source_database_id=$2::uuid
-    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL)
+    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL
+        OR EXISTS(SELECT 1 FROM managed_postgres_creation_receipts c JOIN project_environment_clone_operations owner ON owner.id=s.operation_id
+            WHERE c.kind='snapshot' AND c.cleanup_started_at IS NOT NULL AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
+                AND c.account_id=owner.account_id AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
+                AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point))
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=s.operation_id AND r.source_database_id=s.source_database_id AND r.state<>'deleted')
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=s.operation_id AND o.status='compensating' AND o.revision=$3::bigint
@@ -33072,6 +33076,46 @@ func (q *Queries) MarkLegacyWorkflowOutboundUnknown(ctx context.Context, db DBTX
 	return err
 }
 
+const markManagedPostgresCreationCleanup = `-- name: MarkManagedPostgresCreationCleanup :one
+UPDATE managed_postgres_creation_receipts SET cleanup_started_at=coalesce(cleanup_started_at,clock_timestamp())
+WHERE kind=$1 AND backend_id=$2 AND resource_id=$3 AND provider_resource_id=$4 AND provider_created_at=$5 RETURNING kind, resource_id, account_id, database_id, backend_id, backend_fingerprint, generation, point_in_time, source_resource_id, provider_resource_id, provider_created_at, recorded_at, cleanup_started_at
+`
+
+type MarkManagedPostgresCreationCleanupParams struct {
+	Kind               string
+	BackendID          string
+	ResourceID         string
+	ProviderResourceID string
+	ProviderCreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) MarkManagedPostgresCreationCleanup(ctx context.Context, db DBTX, arg MarkManagedPostgresCreationCleanupParams) (ManagedPostgresCreationReceipt, error) {
+	row := db.QueryRow(ctx, markManagedPostgresCreationCleanup,
+		arg.Kind,
+		arg.BackendID,
+		arg.ResourceID,
+		arg.ProviderResourceID,
+		arg.ProviderCreatedAt,
+	)
+	var i ManagedPostgresCreationReceipt
+	err := row.Scan(
+		&i.Kind,
+		&i.ResourceID,
+		&i.AccountID,
+		&i.DatabaseID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.Generation,
+		&i.PointInTime,
+		&i.SourceResourceID,
+		&i.ProviderResourceID,
+		&i.ProviderCreatedAt,
+		&i.RecordedAt,
+		&i.CleanupStartedAt,
+	)
+	return i, err
+}
+
 const markProjectEnvironmentCloneObjectManifestEntryCopied = `-- name: MarkProjectEnvironmentCloneObjectManifestEntryCopied :execrows
 UPDATE project_environment_clone_object_entries
 SET copied_at = coalesce(copied_at, clock_timestamp()), target_etag = $1::text, verified_sha256 = $2::text
@@ -43666,6 +43710,25 @@ func (q *Queries) PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const purgeAccountManagedPostgresCreationReceipts = `-- name: PurgeAccountManagedPostgresCreationReceipts :exec
+DELETE FROM managed_postgres_creation_receipts c
+WHERE c.account_id=$1::uuid
+    AND EXISTS(SELECT 1 FROM accounts a WHERE a.id=c.account_id AND a.status='deleted_pending')
+    AND ((c.kind='restore' AND EXISTS(SELECT 1 FROM managed_postgres_databases d
+        WHERE d.id=c.database_id AND d.account_id=c.account_id AND d.state='deleted'))
+    OR (c.kind='snapshot' AND EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots s
+        JOIN project_environment_clone_operations o ON o.id=s.operation_id
+        WHERE o.account_id=c.account_id AND s.state='deleted'
+            AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
+            AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
+            AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point)))
+`
+
+func (q *Queries) PurgeAccountManagedPostgresCreationReceipts(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, purgeAccountManagedPostgresCreationReceipts, accountID)
+	return err
+}
+
 const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
 INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
 VALUES($1::text,$2::uuid,$3::uuid,
@@ -46326,6 +46389,37 @@ func (q *Queries) ReadManagedPostgresCloneRestoreProof(ctx context.Context, db D
 		&i.Generation,
 		&i.ObservedAt,
 		&i.DataResourceID,
+	)
+	return i, err
+}
+
+const readManagedPostgresCreationReceipt = `-- name: ReadManagedPostgresCreationReceipt :one
+SELECT kind, resource_id, account_id, database_id, backend_id, backend_fingerprint, generation, point_in_time, source_resource_id, provider_resource_id, provider_created_at, recorded_at, cleanup_started_at FROM managed_postgres_creation_receipts WHERE kind=$1 AND backend_id=$2 AND resource_id=$3
+`
+
+type ReadManagedPostgresCreationReceiptParams struct {
+	Kind       string
+	BackendID  string
+	ResourceID string
+}
+
+func (q *Queries) ReadManagedPostgresCreationReceipt(ctx context.Context, db DBTX, arg ReadManagedPostgresCreationReceiptParams) (ManagedPostgresCreationReceipt, error) {
+	row := db.QueryRow(ctx, readManagedPostgresCreationReceipt, arg.Kind, arg.BackendID, arg.ResourceID)
+	var i ManagedPostgresCreationReceipt
+	err := row.Scan(
+		&i.Kind,
+		&i.ResourceID,
+		&i.AccountID,
+		&i.DatabaseID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.Generation,
+		&i.PointInTime,
+		&i.SourceResourceID,
+		&i.ProviderResourceID,
+		&i.ProviderCreatedAt,
+		&i.RecordedAt,
+		&i.CleanupStartedAt,
 	)
 	return i, err
 }
@@ -50491,6 +50585,68 @@ func (q *Queries) RecordMailSuppression(ctx context.Context, db DBTX, arg Record
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const recordManagedPostgresCreationReceipt = `-- name: RecordManagedPostgresCreationReceipt :one
+INSERT INTO managed_postgres_creation_receipts(kind,resource_id,account_id,database_id,backend_id,backend_fingerprint,generation,
+    point_in_time,source_resource_id,provider_resource_id,provider_created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT (kind,backend_id,resource_id) DO UPDATE SET resource_id=EXCLUDED.resource_id
+WHERE managed_postgres_creation_receipts.account_id=EXCLUDED.account_id
+    AND managed_postgres_creation_receipts.database_id IS NOT DISTINCT FROM EXCLUDED.database_id
+    AND managed_postgres_creation_receipts.backend_fingerprint=EXCLUDED.backend_fingerprint
+    AND managed_postgres_creation_receipts.generation=EXCLUDED.generation
+    AND managed_postgres_creation_receipts.point_in_time=EXCLUDED.point_in_time
+    AND managed_postgres_creation_receipts.source_resource_id=EXCLUDED.source_resource_id
+    AND managed_postgres_creation_receipts.provider_resource_id=EXCLUDED.provider_resource_id
+    AND managed_postgres_creation_receipts.provider_created_at=EXCLUDED.provider_created_at RETURNING kind, resource_id, account_id, database_id, backend_id, backend_fingerprint, generation, point_in_time, source_resource_id, provider_resource_id, provider_created_at, recorded_at, cleanup_started_at
+`
+
+type RecordManagedPostgresCreationReceiptParams struct {
+	Kind               string
+	ResourceID         string
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Generation         int64
+	PointInTime        pgtype.Timestamptz
+	SourceResourceID   string
+	ProviderResourceID string
+	ProviderCreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) RecordManagedPostgresCreationReceipt(ctx context.Context, db DBTX, arg RecordManagedPostgresCreationReceiptParams) (ManagedPostgresCreationReceipt, error) {
+	row := db.QueryRow(ctx, recordManagedPostgresCreationReceipt,
+		arg.Kind,
+		arg.ResourceID,
+		arg.AccountID,
+		arg.DatabaseID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.Generation,
+		arg.PointInTime,
+		arg.SourceResourceID,
+		arg.ProviderResourceID,
+		arg.ProviderCreatedAt,
+	)
+	var i ManagedPostgresCreationReceipt
+	err := row.Scan(
+		&i.Kind,
+		&i.ResourceID,
+		&i.AccountID,
+		&i.DatabaseID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.Generation,
+		&i.PointInTime,
+		&i.SourceResourceID,
+		&i.ProviderResourceID,
+		&i.ProviderCreatedAt,
+		&i.RecordedAt,
+		&i.CleanupStartedAt,
+	)
+	return i, err
 }
 
 const recordManagedPostgresDiscoveredResource = `-- name: RecordManagedPostgresDiscoveredResource :execrows
@@ -59900,6 +60056,38 @@ func (q *Queries) ValidateInvocationWorkEnvironmentClaim(ctx context.Context, db
 	var i ValidateInvocationWorkEnvironmentClaimRow
 	err := row.Scan(&i.StagePin, &i.AdmissionValid)
 	return i, err
+}
+
+const validateManagedPostgresSnapshotCreationIntent = `-- name: ValidateManagedPostgresSnapshotCreationIntent :one
+SELECT o.account_id FROM project_environment_clone_postgres_snapshots s JOIN project_environment_clone_operations o ON o.id=s.operation_id
+WHERE ('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)=$1::text
+    AND s.backend_id=$2::text AND s.backend_fingerprint=$3::text
+    AND s.source_data_resource_id=$4::text AND s.capture_point=$5::timestamptz
+    AND s.request_started_at IS NOT NULL AND s.state IN ('requested','deleting') AND o.status IN ('capturing','compensating')
+    AND (NOT $6::boolean OR (s.state='deleting' AND o.status='compensating'))
+`
+
+type ValidateManagedPostgresSnapshotCreationIntentParams struct {
+	ResourceID         string
+	BackendID          string
+	BackendFingerprint string
+	SourceResourceID   string
+	PointInTime        pgtype.Timestamptz
+	Cleanup            bool
+}
+
+func (q *Queries) ValidateManagedPostgresSnapshotCreationIntent(ctx context.Context, db DBTX, arg ValidateManagedPostgresSnapshotCreationIntentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, validateManagedPostgresSnapshotCreationIntent,
+		arg.ResourceID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.SourceResourceID,
+		arg.PointInTime,
+		arg.Cleanup,
+	)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
 }
 
 const webhookAutomationLegacyReceiptExists = `-- name: WebhookAutomationLegacyReceiptExists :one

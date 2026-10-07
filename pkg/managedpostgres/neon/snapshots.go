@@ -30,12 +30,19 @@ type snapshotResponse struct {
 }
 
 func (p *Provider) CaptureSnapshot(ctx context.Context, request managedpostgres.SnapshotCaptureRequest) (managedpostgres.DatabaseSnapshot, error) {
+	return p.CaptureSnapshotWithCreationReceipt(ctx, request, nil, nil)
+}
+
+func (p *Provider) CaptureSnapshotWithCreationReceipt(ctx context.Context, request managedpostgres.SnapshotCaptureRequest, expected *managedpostgres.CreationAcknowledgement, record managedpostgres.CreationRecorder) (managedpostgres.DatabaseSnapshot, error) {
 	if p == nil {
 		return managedpostgres.DatabaseSnapshot{}, managedpostgres.ErrUnavailable
 	}
 	source, err := snapshotCaptureSource(request)
 	if err != nil {
 		return managedpostgres.DatabaseSnapshot{}, err
+	}
+	if expected != nil {
+		return p.ObserveSnapshotCreation(ctx, request, *expected)
 	}
 	name := p.snapshotName(request.ResourceID)
 	actual, err := p.findSnapshot(ctx, source.projectID, "", name)
@@ -46,6 +53,16 @@ func (p *Provider) CaptureSnapshot(ctx context.Context, request managedpostgres.
 		err = p.doJSON(ctx, http.MethodPost, path, query, nil, &accepted, http.StatusOK)
 		if err == nil {
 			actual = accepted.Snapshot
+			if record != nil {
+				custody, custodyErr := snapshotCreationAcknowledgement(source, name, actual)
+				if custodyErr == nil {
+					if err := record(ctx, custody); err != nil {
+						return managedpostgres.DatabaseSnapshot{}, err
+					}
+				} else if !errors.Is(custodyErr, managedpostgres.ErrUnavailable) {
+					return managedpostgres.DatabaseSnapshot{}, custodyErr
+				}
+			}
 		} else if errors.Is(err, managedpostgres.ErrUnavailable) && ctx.Err() == nil {
 			// One discovery recovers a lost POST acknowledgement. Never repeat
 			// the creation request in this call or adopt a different point.

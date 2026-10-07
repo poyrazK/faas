@@ -41526,6 +41526,71 @@ ALTER TABLE ONLY public.customer_operation_workflow_claims
 ALTER TABLE ONLY public.customer_operation_workflow_claims
     ADD CONSTRAINT customer_operation_workflow_claims_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
 
+
+--
+-- Name: managed_postgres_creation_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_creation_receipts (
+    kind text NOT NULL,
+    resource_id text NOT NULL,
+    account_id uuid NOT NULL,
+    database_id uuid,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    generation bigint NOT NULL,
+    point_in_time timestamp with time zone NOT NULL,
+    source_resource_id text NOT NULL,
+    provider_resource_id text NOT NULL,
+    provider_created_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    cleanup_started_at timestamp with time zone,
+    CONSTRAINT managed_postgres_creation_receipts_cleanup_started_at_check CHECK (((cleanup_started_at IS NULL) OR isfinite(cleanup_started_at))),
+    CONSTRAINT managed_postgres_creation_receipts_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_creation_receipts_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_check CHECK (((provider_resource_id <> source_resource_id) AND (point_in_time <= provider_created_at) AND (provider_created_at <= recorded_at))),
+    CONSTRAINT managed_postgres_creation_receipts_check1 CHECK ((((kind = 'restore'::text) AND (database_id IS NOT NULL) AND (resource_id = (database_id)::text)) OR ((kind = 'snapshot'::text) AND (database_id IS NULL)))),
+    CONSTRAINT managed_postgres_creation_receipts_generation_check CHECK ((generation > 0)),
+    CONSTRAINT managed_postgres_creation_receipts_kind_check CHECK ((kind = ANY (ARRAY['restore'::text, 'snapshot'::text]))),
+    CONSTRAINT managed_postgres_creation_receipts_point_in_time_check CHECK (isfinite(point_in_time)),
+    CONSTRAINT managed_postgres_creation_receipts_provider_created_at_check CHECK (isfinite(provider_created_at)),
+    CONSTRAINT managed_postgres_creation_receipts_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_resource_id_check CHECK (((resource_id <> ''::text) AND (length(resource_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255)))
+);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_rec_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_rec_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_pkey PRIMARY KEY (kind, backend_id, resource_id);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
 --
 -- Name: assert_clone_configuration_mutable(uuid); Type: FUNCTION; Schema: public; Owner: -
 --

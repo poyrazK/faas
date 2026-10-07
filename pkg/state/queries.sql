@@ -10662,7 +10662,11 @@ WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.
 -- name: FinishProjectEnvironmentClonePostgresSnapshotCleanup :one
 UPDATE project_environment_clone_postgres_snapshots s SET state='deleted',cleanup_observed_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.arg(source_database_id)::uuid
-    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL)
+    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL
+        OR EXISTS(SELECT 1 FROM managed_postgres_creation_receipts c JOIN project_environment_clone_operations owner ON owner.id=s.operation_id
+            WHERE c.kind='snapshot' AND c.cleanup_started_at IS NOT NULL AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
+                AND c.account_id=owner.account_id AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
+                AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point))
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=s.operation_id AND r.source_database_id=s.source_database_id AND r.state<>'deleted')
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=s.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
@@ -14790,3 +14794,47 @@ SELECT d.id, d.app_id, d.scope, d.created_at, d.first_wake_at, d.first_5xx_windo
         OR d.first_5xx_window_ends_at > now() - make_interval(secs => sqlc.arg('grace_seconds')::int))
  ORDER BY d.created_at, d.id
  LIMIT sqlc.arg('row_limit')::int;
+
+
+-- name: RecordManagedPostgresCreationReceipt :one
+INSERT INTO managed_postgres_creation_receipts(kind,resource_id,account_id,database_id,backend_id,backend_fingerprint,generation,
+    point_in_time,source_resource_id,provider_resource_id,provider_created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT (kind,backend_id,resource_id) DO UPDATE SET resource_id=EXCLUDED.resource_id
+WHERE managed_postgres_creation_receipts.account_id=EXCLUDED.account_id
+    AND managed_postgres_creation_receipts.database_id IS NOT DISTINCT FROM EXCLUDED.database_id
+    AND managed_postgres_creation_receipts.backend_fingerprint=EXCLUDED.backend_fingerprint
+    AND managed_postgres_creation_receipts.generation=EXCLUDED.generation
+    AND managed_postgres_creation_receipts.point_in_time=EXCLUDED.point_in_time
+    AND managed_postgres_creation_receipts.source_resource_id=EXCLUDED.source_resource_id
+    AND managed_postgres_creation_receipts.provider_resource_id=EXCLUDED.provider_resource_id
+    AND managed_postgres_creation_receipts.provider_created_at=EXCLUDED.provider_created_at RETURNING *;
+
+-- name: ReadManagedPostgresCreationReceipt :one
+SELECT * FROM managed_postgres_creation_receipts WHERE kind=$1 AND backend_id=$2 AND resource_id=$3;
+
+-- name: ValidateManagedPostgresSnapshotCreationIntent :one
+SELECT o.account_id FROM project_environment_clone_postgres_snapshots s JOIN project_environment_clone_operations o ON o.id=s.operation_id
+WHERE ('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)=sqlc.arg(resource_id)::text
+    AND s.backend_id=sqlc.arg(backend_id)::text AND s.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
+    AND s.source_data_resource_id=sqlc.arg(source_resource_id)::text AND s.capture_point=sqlc.arg(point_in_time)::timestamptz
+    AND s.request_started_at IS NOT NULL AND s.state IN ('requested','deleting') AND o.status IN ('capturing','compensating')
+    AND (NOT sqlc.arg(cleanup)::boolean OR (s.state='deleting' AND o.status='compensating'));
+
+
+-- name: MarkManagedPostgresCreationCleanup :one
+UPDATE managed_postgres_creation_receipts SET cleanup_started_at=coalesce(cleanup_started_at,clock_timestamp())
+WHERE kind=$1 AND backend_id=$2 AND resource_id=$3 AND provider_resource_id=$4 AND provider_created_at=$5 RETURNING *;
+
+-- name: PurgeAccountManagedPostgresCreationReceipts :exec
+DELETE FROM managed_postgres_creation_receipts c
+WHERE c.account_id=sqlc.arg(account_id)::uuid
+    AND EXISTS(SELECT 1 FROM accounts a WHERE a.id=c.account_id AND a.status='deleted_pending')
+    AND ((c.kind='restore' AND EXISTS(SELECT 1 FROM managed_postgres_databases d
+        WHERE d.id=c.database_id AND d.account_id=c.account_id AND d.state='deleted'))
+    OR (c.kind='snapshot' AND EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots s
+        JOIN project_environment_clone_operations o ON o.id=s.operation_id
+        WHERE o.account_id=c.account_id AND s.state='deleted'
+            AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
+            AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
+            AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point)));
