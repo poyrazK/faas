@@ -6977,7 +6977,7 @@ Remove one live connection from a channel
 
 Publish a message to a channel
 
-`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] [--delivery live|retained] [--idempotency-key <KEY>] <app> <endpoint-id> <channel>`
+`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] [--delivery <MODE>] [--idempotency-key <KEY>] <app> <endpoint-id> <channel>`
 
 | Flag | Meaning | |
 |---|---|---|
