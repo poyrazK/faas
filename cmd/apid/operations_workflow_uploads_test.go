@@ -247,12 +247,12 @@ func TestOperationWorkflowDirectUploadResume(t *testing.T) {
 				if _, err := f.runtime.ReuseWorkflowOperationUpload(ctx, f.op.ID, first, req); err == nil {
 					t.Fatal("old generation accepted")
 				}
-				before := f.current(t.Context(), t)
+				before := f.current(ctx, t)
 				r, err := f.runtime.UploadWorkflowOperationArtifact(ctx, f.op.ID, proof, req, strings.NewReader("never transferred on resume"))
 				if err != nil || !r.Available || r.Artifact.ID != artifactID {
 					t.Fatal("stable resumed receipt lost", err)
 				}
-				rebound := f.current(t.Context(), t)
+				rebound := f.current(ctx, t)
 				receipt := rebound.WorkflowArtifactReceipts[req.ReportID]
 				if receipt.Generation != proof.Generation || receipt.Attempt != proof.Attempt || rebound.ReportCount != before.ReportCount || rebound.LatestSequence != before.LatestSequence {
 					t.Fatal("resume duplicated reports or failed to rebind")
