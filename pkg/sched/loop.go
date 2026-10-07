@@ -811,8 +811,7 @@ func (l *Loop) Run(ctx context.Context) error {
 
 	reaperT := time.NewTicker(10 * time.Second)
 	defer reaperT.Stop()
-	cronT := time.NewTicker(60 * time.Second)
-	defer cronT.Stop()
+	cronTicks := minuteTicks(ctx, time.Now)
 	// Fire-now safety ticker (PR-D / issue #791). 60s cadence
 	// mirrors pkg/sched/fire_now.go::fireNowSafetyTick: when a
 	// NotifyCronRunNow delivery is dropped (Postgres bounce, network
@@ -873,7 +872,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		retentionFirst = delay.C
 	}
 	// ADR-134 PR-B: invocations retention + deadline-breach sweep.
-	// 60s cadence matches the cron sweep (cronT below); both
+	// 60s cadence matches the cron sweep (cronTicks below); both
 	// sweeps are read-only SELECTs over partial indexes and cost
 	// single-digit ms each. nil = no ticker fires the case.
 	var invocationsRetentionT *time.Ticker
@@ -1186,7 +1185,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-reaperT.C:
 			l.dispatchReaper(ctx)
-		case <-cronT.C:
+		case <-cronTicks:
 			l.runCronTick(ctx)
 		case <-watchdogTick(watchdogT):
 			l.runWatchdog(ctx)
