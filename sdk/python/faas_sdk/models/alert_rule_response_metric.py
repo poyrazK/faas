@@ -20,6 +20,10 @@ AlertRuleResponseMetric = Literal[
     "queue_depth",
     "request_count",
     "slo_burn_rate",
+    "workflow_failures",
+    "workflow_pending_age_seconds",
+    "workflow_schedule_quota_skips",
+    "workflow_waiting_age_seconds",
 ]
 
 ALERT_RULE_RESPONSE_METRIC_VALUES: set[AlertRuleResponseMetric] = {
@@ -42,6 +46,10 @@ ALERT_RULE_RESPONSE_METRIC_VALUES: set[AlertRuleResponseMetric] = {
     "queue_depth",
     "request_count",
     "slo_burn_rate",
+    "workflow_failures",
+    "workflow_pending_age_seconds",
+    "workflow_schedule_quota_skips",
+    "workflow_waiting_age_seconds",
 }
 
 

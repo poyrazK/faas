@@ -15,6 +15,7 @@ import type { ListTenantWorkflowSchedulesResponse } from '../models/ListTenantWo
 import type { ListWorkflowCallbacksResponse } from '../models/ListWorkflowCallbacksResponse.js';
 import type { ListWorkflowResumesResponse } from '../models/ListWorkflowResumesResponse.js';
 import type { ListWorkflowRunsResponse } from '../models/ListWorkflowRunsResponse.js';
+import type { ListWorkflowScheduleOccurrencesResponse } from '../models/ListWorkflowScheduleOccurrencesResponse.js';
 import type { ListWorkflowSchedulesResponse } from '../models/ListWorkflowSchedulesResponse.js';
 import type { ListWorkflowStepAttemptsResponse } from '../models/ListWorkflowStepAttemptsResponse.js';
 import type { ListWorkflowStepsResponse } from '../models/ListWorkflowStepsResponse.js';
@@ -720,6 +721,54 @@ export class WorkflowsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect scheduled workflow admission history
+   * Started and skipped due minutes retained for 30 days. Requires app read access. History includes all linked tenants; optionally filter by tenant. No missed-minute catch-up is inferred.
+   * @returns ListWorkflowScheduleOccurrencesResponse Newest nominal minutes first
+   * @throws ApiError
+   */
+  public static listWorkflowScheduleOccurrences({
+    slug,
+    platformTenantId,
+    cursor,
+    limit = 100,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Only occurrences for this platform tenant within the app.
+     */
+    platformTenantId?: string,
+    /**
+     * next_cursor from the previous page. An expired cursor returns an empty page.
+     */
+    cursor?: string,
+    /**
+     * Maximum occurrences returned per page.
+     */
+    limit?: number,
+  }): CancelablePromise<ListWorkflowScheduleOccurrencesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/schedules/occurrences',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'platform_tenant_id': platformTenantId,
+        'cursor': cursor,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
     });

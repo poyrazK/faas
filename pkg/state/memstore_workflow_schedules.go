@@ -135,6 +135,7 @@ func (m *MemStore) AdmitScheduledWorkflow(_ context.Context, appID, deploymentID
 	if m.workflowSchedules == nil {
 		m.workflowSchedules = make(map[string]WorkflowScheduleCursor)
 	}
+	m.recordWorkflowScheduleOccurrenceLocked(cursor, now)
 	m.workflowSchedules[key] = *cursor
 	return *cursor, true, nil
 }
@@ -149,6 +150,7 @@ func (m *MemStore) ListWorkflowScheduleCursors(_ context.Context, appID string) 
 		}
 		cursor.TriggerSnapshot = cloneWorkflowJSON(cursor.TriggerSnapshot)
 		cursor.ScheduledFor = cloneTimePtr(cursor.ScheduledFor)
+		cursor.LastAdmittedAt = cloneTimePtr(cursor.LastAdmittedAt)
 		if _, exists := m.workflowRuns[cursor.LastRunID]; !exists {
 			cursor.LastRunID = ""
 		}
@@ -260,6 +262,7 @@ func (m *MemStore) AdmitTenantScheduledWorkflow(_ context.Context, appID, tenant
 	if err != nil || cursor == nil {
 		return WorkflowScheduleCursor{}, false, err
 	}
+	outcomeChanged := workflowScheduleOutcomeChanged(cursor, previous)
 	if run != nil {
 		if err := m.insertWorkflowRunLocked(run); err != nil {
 			return WorkflowScheduleCursor{}, false, err
@@ -271,8 +274,9 @@ func (m *MemStore) AdmitTenantScheduledWorkflow(_ context.Context, appID, tenant
 			return WorkflowScheduleCursor{}, false, err
 		}
 	}
+	m.recordWorkflowScheduleOccurrenceLocked(cursor, now)
 	m.workflowTenantSchedules[key] = *cursor
-	return *cursor, true, nil
+	return *cursor, outcomeChanged, nil
 }
 
 func (m *MemStore) ListTenantWorkflowSchedules(_ context.Context, accountID, tenantID, appID string) ([]TenantWorkflowSchedule, error) {

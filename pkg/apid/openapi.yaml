@@ -17558,6 +17558,36 @@ paths:
             schema:
               $ref: '#/components/schemas/SetAutomationEnabledRequest'
 
+  /v1/apps/{slug}/workflows/schedules/occurrences:
+    get:
+      tags: [workflows]
+      summary: Inspect scheduled workflow admission history
+      description: Started and skipped due minutes retained for 30 days. Requires app read access. History includes all linked tenants; optionally filter by tenant. No missed-minute catch-up is inferred.
+      operationId: listWorkflowScheduleOccurrences
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: platform_tenant_id
+          in: query
+          description: Only occurrences for this platform tenant within the app.
+          schema: { type: string, format: uuid }
+        - name: cursor
+          in: query
+          description: next_cursor from the previous page. An expired cursor returns an empty page.
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          description: Maximum occurrences returned per page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: Newest nominal minutes first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowScheduleOccurrencesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServerError' }
   /v1/apps/{slug}/workflows/schedules:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -42602,6 +42632,29 @@ components:
         last_status: { type: string, enum: [armed, started, skipped_overlap, skipped_quota] }
         last_run_id: { type: string, format: uuid }
 
+    WorkflowScheduleOccurrenceResponse:
+      description: Immutable admission outcome for one due schedule minute, retained independently from the workflow run.
+      type: object
+      required: [id, app_id, workflow_name, deployment_id, scheduled_for, evaluated_at, status]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        platform_tenant_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        deployment_id: { type: string, format: uuid }
+        scheduled_for: { type: string, format: date-time }
+        evaluated_at: { type: string, format: date-time }
+        status: { type: string, enum: [started, skipped_overlap, skipped_quota] }
+        run_id: { type: string, format: uuid, description: Present for started outcomes; retained after run expiry. }
+    ListWorkflowScheduleOccurrencesResponse:
+      description: Page of due workflow schedule outcomes ordered by nominal minute, with a cursor for the next page.
+      type: object
+      required: [occurrences]
+      properties:
+        occurrences:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowScheduleOccurrenceResponse' }
+        next_cursor: { type: string, format: uuid }
     ListWorkflowSchedulesResponse:
       description: Deployed workflow schedules with runtime availability and any admission blocker.
       type: object
@@ -47895,6 +47948,10 @@ components:
             - slo_burn_rate
             - pre_auth_target_threshold
             - pre_auth_target_signal_gap_pct
+            - workflow_failures
+            - workflow_schedule_quota_skips
+            - workflow_pending_age_seconds
+            - workflow_waiting_age_seconds
         comparison:
           type: string
           enum: [gt, gte, lt, lte]
@@ -47919,7 +47976,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. Pre-auth target metrics support webhook only.'
+          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. Pre-auth target and workflow metrics support webhook only.'
           default: webhook
           example: webhook
         state:
@@ -47967,7 +48024,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. Omit to default to webhook. Pre-auth target metrics support webhook only.'
+          description: 'What to do when the rule fires. Omit to default to webhook. Pre-auth target and workflow metrics support webhook only.'
           default: webhook
           example: webhook
 
@@ -47998,7 +48055,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'Replace the action. Omit to leave the existing action in place. Pre-auth target metrics support webhook only.'
+          description: 'Replace the action. Omit to leave the existing action in place. Pre-auth target and workflow metrics support webhook only.'
 
     RotateAlertRuleSecretResponse:
       description: 'rotate-secret response — returns the rotated_at timestamp + the masked constant.'

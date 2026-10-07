@@ -812,3 +812,42 @@ the current retry budget. Resume history is retained for as long as the run.
 Apply migration `20261003180000001_workflow_resume.sql` and update/drain scheduler
 workers before customers use the endpoint. Drain or cancel resumed runs before
 downgrading; export resume history before rolling the migration back.
+
+## Admission history and reliability alerts
+
+Inspect the last 30 days of due schedule outcomes with
+`gregale workflows schedule-history --app reports --limit 100` or
+`GET /v1/apps/{slug}/workflows/schedules/occurrences`. Both started and skipped
+minutes are retained, including `skipped_quota` and `skipped_overlap`; each
+started occurrence includes its run ID even after the run expires. History
+contains no workflow input or output. Use `--platform-tenant-id` to inspect one
+customer and `--cursor` with the returned next cursor for another page.
+History starts when this version is deployed; earlier outcomes are not backfilled.
+An expired history cursor returns an empty page.
+
+Tenant/workflow pairs share the app's active-run quota and are evaluated in
+least-recently-admitted order. Admission priority persists through scheduler
+restarts, skipped minutes, deployment changes, and run retention. Paused
+schedules are excluded. This distributes scarce admissions across customers;
+quota skips and downtime still do not produce catch-up runs.
+
+Existing alert rules accept four notification-only workflow metrics:
+
+| Metric | Observation |
+| --- | --- |
+| `workflow_failures` | Failed or dead runs completed in the selected window; excludes cancellation |
+| `workflow_schedule_quota_skips` | Due schedule occurrences skipped for app quota in the selected window |
+| `workflow_pending_age_seconds` | Age of the oldest eligible pending run since it became eligible; excludes future retries; zero if none |
+| `workflow_waiting_age_seconds` | Age of the oldest currently awaiting step, zero if none |
+
+Scope an alert to one app or the authenticated account. Age signals describe
+current state rather than a window average. Waiting age includes intentional
+timers, callbacks, conditions, and event waits, so choose thresholds suitable
+for the workflow. These metrics support webhook notifications only.
+
+App-handler steps retry HTTP 408, 425, and 429 using the configured attempt
+budget. A downstream `Retry-After` (seconds or HTTP date) extends ordinary
+backoff, capped at one hour, and survives scheduler restarts. Ordinary 4xx
+validation/authorization errors remain terminal. All attempts retain the
+same step idempotency key; app handlers must deduplicate their side effects.
+Unsafe outbound actions keep their existing no-retry policy.

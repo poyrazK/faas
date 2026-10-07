@@ -3152,6 +3152,10 @@ const (
 	AlertMetricColdStartPct              AlertMetric = "cold_start_pct"
 	AlertMetricRequestCount              AlertMetric = "request_count"
 	AlertMetricFailedInvocs              AlertMetric = "failed_invocations"
+	AlertMetricWorkflowFailures          AlertMetric = "workflow_failures"
+	AlertMetricWorkflowQuotaSkips        AlertMetric = "workflow_schedule_quota_skips"
+	AlertMetricWorkflowPendingAge        AlertMetric = "workflow_pending_age_seconds"
+	AlertMetricWorkflowWaitingAge        AlertMetric = "workflow_waiting_age_seconds"
 	AlertMetricAPIUp                     AlertMetric = "api_up"
 	AlertMetricAccountSpendEUR           AlertMetric = "account_spend_eur"
 	AlertMetricFailedDeployments         AlertMetric = "deployment_failed"
@@ -3970,6 +3974,9 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
+	// ResponseRetryAfter is transient gateway response metadata, never persisted
+	// or accepted from the customer invocation envelope.
+	ResponseRetryAfter string `json:"-"`
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`

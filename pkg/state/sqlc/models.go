@@ -4826,6 +4826,7 @@ type PlatformTenantWorkflowScheduleCursor struct {
 	Status           string
 	LastRunID        pgtype.UUID
 	UpdatedAt        pgtype.Timestamptz
+	LastAdmittedAt   pgtype.Timestamptz
 }
 
 type PrPreviewSet struct {
@@ -6692,6 +6693,19 @@ type WorkflowScheduleCursor struct {
 	Status          string
 	LastRunID       pgtype.UUID
 	UpdatedAt       pgtype.Timestamptz
+	LastAdmittedAt  pgtype.Timestamptz
+}
+
+type WorkflowScheduleOccurrence struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	WorkflowName     string
+	DeploymentID     pgtype.UUID
+	ScheduledFor     pgtype.Timestamptz
+	EvaluatedAt      pgtype.Timestamptz
+	Status           string
+	RunID            pgtype.UUID
 }
 
 type WorkflowStep struct {
