@@ -7,13 +7,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// projectApplyStatus is the CLI's interpretation of the per-workload build
+// projectApplyStatus is the CLI's interpretation of the per-workload deployment
 // results returned by POST /v1/projects. The server deliberately keeps
 // reconciliation and build enqueue independent, so a 200 response can still
 // contain failed (or missing) build results.
 type projectApplyStatus struct {
 	appsReconciled int
 	buildsQueued   int
+	imagesQueued   int
 	buildsFailed   int
 	// missingBuilds is the number of expected build rows that the server did
 	// not return. It is kept separately so the text renderer can explain an
@@ -22,8 +23,8 @@ type projectApplyStatus struct {
 }
 
 // summarizeProjectApply classifies an apply response for both human and JSON
-// output. A successful build row must carry both IDs; an error row or an
-// incomplete row is a failed build. ApplyResponse.Apps is the authoritative
+// output. A successful row must carry a deployment ID; image deployments have
+// no build ID. An error row or missing deployment is a failure. Apps is the authoritative
 // added/changed set, so it tells us how many rows the enqueue loop should have
 // returned without mistaking a matched-but-unchanged update for a build.
 func summarizeProjectApply(apply api.ApplyResponse) projectApplyStatus {
@@ -32,11 +33,15 @@ func summarizeProjectApply(apply api.ApplyResponse) projectApplyStatus {
 	}
 
 	for _, build := range apply.Builds {
-		if build.Error != "" || build.DeploymentID == "" || build.BuildID == "" {
+		if build.Error != "" || build.DeploymentID == "" {
 			status.buildsFailed++
 			continue
 		}
-		status.buildsQueued++
+		if build.BuildID == "" {
+			status.imagesQueued++
+		} else {
+			status.buildsQueued++
+		}
 	}
 
 	expected := len(apply.Apps)
@@ -71,8 +76,14 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 			} else {
 				_, _ = fmt.Fprintf(w, "  ! %s: %s\n", build.Slug, build.Error)
 			}
-		case build.DeploymentID == "" || build.BuildID == "":
-			_, _ = fmt.Fprintf(w, "  ! %s: incomplete build result (deployment_id/build_id missing)\n", build.Slug)
+		case build.DeploymentID == "":
+			_, _ = fmt.Fprintf(w, "  ! %s: incomplete deployment result (deployment_id missing)\n", build.Slug)
+		case build.BuildID == "":
+			_, _ = fmt.Fprintf(w, "  ✓ %s: deployment=%s", build.Slug, build.DeploymentID)
+			if build.DeploymentStatus != "" {
+				_, _ = fmt.Fprintf(w, " status=%s", build.DeploymentStatus)
+			}
+			_, _ = fmt.Fprintln(w)
 		default:
 			if build.DeploymentStatus != "" || build.BuildStatus != "" {
 				_, _ = fmt.Fprintf(w, "  ✓ %s: deployment=%s build=%s status=%s build_status=%s\n",
@@ -86,8 +97,12 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 		_, _ = fmt.Fprintf(w, "  ! missing build results: %d workload(s) were expected but not returned\n", status.missingBuilds)
 	}
 
-	_, _ = fmt.Fprintf(w, "Summary: apps reconciled=%d, builds queued=%d, builds failed=%d\n",
+	_, _ = fmt.Fprintf(w, "Summary: apps reconciled=%d, builds queued=%d, builds failed=%d",
 		status.appsReconciled, status.buildsQueued, status.buildsFailed)
+	if status.imagesQueued > 0 {
+		_, _ = fmt.Fprintf(w, ", images queued=%d", status.imagesQueued)
+	}
+	_, _ = fmt.Fprintln(w)
 	if status.buildsFailed > 0 {
 		return 1
 	}
@@ -97,6 +112,10 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 // reportProjectApplyFailure keeps --json stdout machine-readable while still
 // explaining the non-zero exit to an operator watching stderr.
 func reportProjectApplyFailure(w io.Writer, status projectApplyStatus) {
-	_, _ = fmt.Fprintf(w, "project apply failed: apps reconciled=%d, builds queued=%d, builds failed=%d\n",
+	_, _ = fmt.Fprintf(w, "project apply failed: apps reconciled=%d, builds queued=%d, builds failed=%d",
 		status.appsReconciled, status.buildsQueued, status.buildsFailed)
+	if status.imagesQueued > 0 {
+		_, _ = fmt.Fprintf(w, ", images queued=%d", status.imagesQueued)
+	}
+	_, _ = fmt.Fprintln(w)
 }

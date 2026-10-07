@@ -64,6 +64,34 @@ func TestSummarizeProjectApply_AllSuccess(t *testing.T) {
 	}
 }
 
+// adr: 678
+func TestRenderProjectApplyResult_ImageDeployment(t *testing.T) {
+	plan := projectApplyPlan("create", "create")
+	apply := api.ApplyResponse{ProjectID: "image-project",
+		Apps: []api.ApplyResponseApp{{Slug: "image"}, {Slug: "source"}},
+		Builds: []api.AppliedBuild{
+			{Slug: "image", DeploymentID: "image-deployment", DeploymentStatus: statusLive},
+			{Slug: "source", DeploymentID: "source-deployment", BuildID: "source-build"},
+		}}
+	status := summarizeProjectApply(apply)
+	if status.imagesQueued != 1 || status.buildsQueued != 1 || status.buildsFailed != 0 {
+		t.Fatalf("mixed image/source receipt = %+v", status)
+	}
+	var out bytes.Buffer
+	if code := renderProjectApplyResult(&out, plan, apply); code != 0 {
+		t.Fatalf("image apply exit = %d: %s", code, out.String())
+	}
+	for _, want := range []string{
+		"image: deployment=image-deployment status=live",
+		"source: deployment=source-deployment build=source-build",
+		"builds queued=1, builds failed=0, images queued=1",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q: %s", want, out.String())
+		}
+	}
+}
+
 func TestRenderProjectApplyResult_PartialFailure(t *testing.T) {
 	plan := projectApplyPlan("create", "update")
 	apply := api.ApplyResponse{

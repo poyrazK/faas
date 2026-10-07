@@ -2761,8 +2761,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "registry",
 		DocSlug: "registry",
-		Short:   "Per-app private container registry credentials (registry list|set|rm --app <slug>)",
+		Short:   "Manage private registry credentials and deploy published images",
 		Subcommands: []cliSub{
+			{Name: "published", Short: "Deploy an image after CI publishes its immutable digest", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "image", Short: "published digest-pinned image reference", Req: true, Value: "REF"},
+				{Name: "scope", Short: "deployment scope", Value: "SLUG"},
+				{Name: "environment", Short: "registered project environment", Value: "SLUG"},
+				{Name: "wait", Short: "wait for the image deployment"},
+				{Name: "timeout", Short: "deployment wait timeout", Value: "DURATION"},
+			}},
 			{Name: "list", Short: "List registry credentials", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
 			{Name: "set", Short: "Set a registry credential", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},

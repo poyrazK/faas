@@ -412,11 +412,19 @@ func TestSnapshotPublicationConflictPreservesWinnerAndCleansCandidate(t *testing
 }
 
 func TestGitHubSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
-	checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindGitHub)
+	checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindGitHub, false)
 }
 
 func TestPreviewSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
-	checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindPreview)
+	checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindPreview, false)
+}
+
+func TestImageSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
+	checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindImage, false)
+}
+
+func TestImageSnapshotCannotReplaceNewerLiveDeployment(t *testing.T) {
+	checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindImage, true)
 }
 
 func TestGitHubWebhookSnapshotCannotPromoteAfterBranchMoves(t *testing.T) {
@@ -488,7 +496,7 @@ func TestGitHubWebhookSnapshotCannotPromoteAfterBranchMoves(t *testing.T) {
 	}
 }
 
-func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T, kind state.DeploymentKind) {
+func checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T, kind state.DeploymentKind, newerLive bool) {
 	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -508,16 +516,24 @@ func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.
 		t.Fatal(err)
 	}
 	older, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
-		CommitSHA: strings.Repeat("a", 40)})
+		CommitSHA: strings.Repeat("a", 40), ImageDigest: "sha256:older"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpdateDeploymentStatus(ctx, older.ID, state.DeploySnapshotting, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
-		CommitSHA: strings.Repeat("b", 40)}); err != nil {
+	newer, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
+		CommitSHA: strings.Repeat("b", 40), ImageDigest: "sha256:newer"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	servingID := stable.ID
+	if newerLive {
+		if err := store.MarkDeploymentLiveIfLatest(ctx, newer.ID); err != nil {
+			t.Fatal(err)
+		}
+		servingID = newer.ID
 	}
 	backend := mustLocalStorage(t, t.TempDir())
 	notifier := &fakeNotifier{}
@@ -536,7 +552,7 @@ func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.
 	if err != nil || oldRow.Status != state.DeploySuperseded {
 		t.Fatalf("stale GitHub row = (%+v, %v)", oldRow, err)
 	}
-	stableRow, err := store.DeploymentByID(ctx, stable.ID)
+	stableRow, err := store.DeploymentByID(ctx, servingID)
 	if err != nil || stableRow.Status != state.DeployLive {
 		t.Fatalf("serving predecessor = (%+v, %v)", stableRow, err)
 	}

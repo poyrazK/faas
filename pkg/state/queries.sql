@@ -1,3 +1,22 @@
+-- name: HasNewerDeploymentRevision :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments
+    WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text
+      AND revision > sqlc.arg(revision)::bigint
+);
+
+-- name: SetDeploymentRuntimeProfile :execrows
+UPDATE deployments
+SET inferred_profile = (sqlc.arg(profile)::jsonb - 'image_command' - 'image_healthcheck') ||
+    CASE WHEN inferred_profile ? 'image_command'
+         THEN jsonb_build_object('image_command', inferred_profile -> 'image_command')
+         ELSE '{}'::jsonb END ||
+    CASE WHEN inferred_profile ? 'image_healthcheck'
+         THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
+         ELSE '{}'::jsonb END
+WHERE id = sqlc.arg(deployment_id)::uuid AND kind = 'image'
+  AND status IN ('pending', 'building', 'imaging');
+
 -- name: ReadSnapshotPublicationDeployment :one
 SELECT a.id::text AS app_id, a.account_id::text AS account_id
 FROM apps a JOIN deployments d ON d.app_id = a.id
@@ -354,6 +373,21 @@ WITH owned AS MATERIALIZED (
 UPDATE notification_outbox o
 SET state = 'pending', attempts = o.attempts - 1,
     claimed_by = NULL, claimed_at = NULL, lease_until = NULL
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
+
+-- name: DeferNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = sqlc.arg(id)::bigint AND state = 'processing'
+      AND claimed_by = sqlc.arg(claim_token)::text AND attempts > 0
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET state = 'pending', attempts = o.attempts - 1,
+    available_at = clock_timestamp() + sqlc.arg(delay_milliseconds)::bigint * interval '1 millisecond',
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL,
+    last_error = sqlc.arg(message)::text
 FROM owned
 WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
 

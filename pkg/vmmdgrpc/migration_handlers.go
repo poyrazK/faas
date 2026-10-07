@@ -569,12 +569,14 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 		method = vmmdpb.WakeMethod_WAKE_COLD_BOOT
 	}
 	return &vmmdpb.AdoptMigratedInstanceResponse{
-		SupportsSecretAliases: true,
-		HostIp:                addrOrEmpty(inst.Lease.HostIP),
-		Netns:                 inst.Net.Netns,
-		GuestUid:              int32(inst.Lease.UID),
-		Method:                method,
-		WakeId:                req.GetWakeId(),
+		SupportsSecretAliases:              true,
+		ImageHealthcheckVerified:           wakeReq.ImageHealthcheckRequired && inst.ImageHealthcheckRequired && !inst.Paused,
+		SupportsImageHealthcheckMonitoring: true,
+		HostIp:                             addrOrEmpty(inst.Lease.HostIP),
+		Netns:                              inst.Net.Netns,
+		GuestUid:                           int32(inst.Lease.UID),
+		Method:                             method,
+		WakeId:                             req.GetWakeId(),
 	}, nil
 }
 

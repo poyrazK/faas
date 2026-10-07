@@ -108,6 +108,7 @@ type Handler struct {
 	// hostingVerificationNow permits deterministic recovery/restart tests.
 	// Nil uses the process clock; the persisted deadline remains authoritative.
 	hostingVerificationNow func() time.Time
+	dependencyGateNow      func() time.Time
 	// githubSourceRefVerifier is queried immediately before a source-ref branch
 	// deployment switches traffic. Nil fails closed for branch-backed rows.
 	githubSourceRefVerifier GitHubSourceRefVerifier
@@ -2240,6 +2241,9 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return err
 	}
 	ref = selectedRef
+	// Every subsequent read, including the full-rootfs fallback, uses the
+	// selected immutable child. The durable row retains the signed source.
+	dep.ImageDigest = selectedRef
 	// Issue #461 / ADR-062: best-effort mark credential used on
 	// successful authenticated pull. Best-effort so a transient
 	// mark-used failure cannot abort an otherwise-successful
@@ -2298,7 +2302,8 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
 	}
-	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 {
+	requiresImageHealthcheck := manifest.Healthcheck != nil && len(manifest.Healthcheck.Test) > 0 && manifest.Healthcheck.Test[0] != "NONE"
+	if dep.Kind == state.DeploymentKindImage && (requiresImageHealthcheck || (isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0)) {
 		// The image config may advertise a single non-8080 TCP port. The
 		// guest manifest already has that port, but schedd reads the durable
 		// deployment row to configure vmmd's host:8080 -> guest:<port> DNAT.
@@ -2306,13 +2311,14 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// first-boot readiness probe targets the wrong guest port.
 		profile, marshalErr := json.Marshal(frameworkprofile.Profile{
 			Version: frameworkprofile.Version, Framework: "unknown", Port: manifest.Port,
+			ImageHealthcheckRequired: requiresImageHealthcheck,
 		})
 		if marshalErr != nil {
 			return fmt.Errorf("imaged: encode OCI runtime profile: %w", marshalErr)
 		}
 		if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, profile); err != nil {
-			_ = h.markDeployFailed(ctx, dep.ID, err, "persist OCI runtime port")
-			return fmt.Errorf("imaged: persist OCI runtime port: %w", err)
+			_ = h.markDeployFailed(ctx, dep.ID, err, "persist OCI runtime contract")
+			return fmt.Errorf("imaged: persist OCI runtime contract: %w", err)
 		}
 	}
 
@@ -3455,6 +3461,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
+	if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
+		return gateErr
+	}
 	// Snapshot candidates are verified through the gateway's authenticated,
 	// deployment-pinned smoke path before the live pointer moves. Keeping the
 	// predecessor live during this phase is the zero-downtime boundary: a slow
@@ -3533,7 +3542,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	}
 
 	var promoteErr error
-	if !checkedRollback && dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
+	if !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindImage) && dep.GitHubSourceRef != "" {
 		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
 		if stale || verifyErr != nil {
 			code := api.CodeSourceRefStale
@@ -3549,8 +3558,8 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			return nil
 		}
 	}
-	if !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview) {
-		promoteErr = h.store.MarkGitDrivenDeploymentLiveIfLatest(ctx, dep.ID)
+	if !checkedRollback && dep.Kind.RequiresLatestRevision() {
+		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}
@@ -3559,6 +3568,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		return nil
 	}
 	if promoteErr != nil {
+		var dependencyBlocker *state.DependencyGateError
+		if errors.As(promoteErr, &dependencyBlocker) {
+			// Refresh the durable blocker after a dependency changed during
+			// smoke, before finalizing the failed or deferred activation.
+			if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
+				return gateErr
+			}
+		}
+		if stop, gateErr := h.handleProjectDependencyBlocker(ctx, dep, promoteErr); stop {
+			return gateErr
+		}
 		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)

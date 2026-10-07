@@ -83,7 +83,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect queues and manage first-class queue bindings |
 | [`dlq`](#dlq) | Inspect, replay, or purge unified dead-letter events |
-| [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
+| [`registry`](#registry) | Manage private registry credentials and deploy published images |
 | [`realtime`](#realtime) | Manage realtime endpoints, policies, connections, channels, and auth |
 | [`rollback`](#rollback) | Restore a previous deployment, or check an exact historical rollback |
 | [`projects`](#projects) | Inspect and recover repository projects |
@@ -6820,9 +6820,24 @@ Purge one event or --all
 
 ## registry
 
-Per-app private container registry credentials (registry list|set|rm --app &lt;slug&gt;)
+Manage private registry credentials and deploy published images
 
 `gregale registry [<subcommand>]`
+
+### registry published
+
+Deploy an image after CI publishes its immutable digest
+
+`gregale registry published --app <slug> --image <REF> [--scope <SLUG>] [--environment <SLUG>] [--wait] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--image <REF>` | published digest-pinned image reference | required |
+| `--scope <SLUG>` | deployment scope |  |
+| `--environment <SLUG>` | registered project environment |  |
+| `--wait` | wait for the image deployment |  |
+| `--timeout <DURATION>` | deployment wait timeout |  |
 
 ### registry list
 

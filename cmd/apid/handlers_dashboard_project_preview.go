@@ -165,6 +165,7 @@ func (s *server) submitProjectPreview(w http.ResponseWriter, r *http.Request, lo
 	}
 	// Map scanPlanResponse → view.
 	view.WillDeploy = toProjectPreviewAffected(resp.WillDeploy, false)
+	setProjectPreviewImages(view.WillDeploy, resp.Workloads)
 	view.Skipped = toProjectPreviewAffected(resp.Skipped, true)
 	view.Unaffected = toProjectPreviewAffected(resp.Unaffected, false)
 	view.Removed = resp.Removed
@@ -357,6 +358,7 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 	// success branch). The partition is the operator's record of
 	// what just changed; rendering it again is the audit trail.
 	view.WillDeploy = toProjectPreviewAffected(resp.WillDeploy, false)
+	setProjectPreviewImages(view.WillDeploy, resp.Workloads)
 	view.Skipped = toProjectPreviewAffected(resp.Skipped, true)
 	view.Unaffected = toProjectPreviewAffected(resp.Unaffected, false)
 	view.Removed = resp.Removed
@@ -417,6 +419,16 @@ func (s *server) renderProjectPreviewPage(w http.ResponseWriter, log *slog.Logge
 // per row come from actionAffordance (kept in this file because
 // the vocabulary is dashboard-local; the wire DTO does not
 // encode it).
+func setProjectPreviewImages(rows []views.ProjectPreviewAffected, workloads []api.PlanWorkload) {
+	images := make(map[string]string, len(workloads))
+	for _, workload := range workloads {
+		images[workload.Name] = workload.Image
+	}
+	for i := range rows {
+		rows[i].Image = images[rows[i].Slug]
+	}
+}
+
 func toProjectPreviewAffected(in []api.PlanAffectedApp, excluded bool) []views.ProjectPreviewAffected {
 	if len(in) == 0 {
 		return nil

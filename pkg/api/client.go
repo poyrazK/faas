@@ -958,6 +958,13 @@ func (c *Client) Deploy(ctx context.Context, slug string, req CreateDeploymentRe
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/deployments", req, &out)
 }
 
+// PublishAppImage deploys a published digest from the configured project image
+// repository. Repeated app/scope/digest deliveries return the original row.
+func (c *Client) PublishAppImage(ctx context.Context, slug string, req CreateDeploymentRequest) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/image-published", req, &out)
+}
+
 // RetryDeploymentFromStage (ADR-117 §Production-ready follow-on,
 // C2) inserts a fresh `deployments` row copying the failed
 // deployment's input primitives and seeds the new row's

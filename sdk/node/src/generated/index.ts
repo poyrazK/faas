@@ -218,6 +218,7 @@ export type { CommitRouting } from './models/CommitRouting.js';
 export type { CommitSourceResponse } from './models/CommitSourceResponse.js';
 export type { CompleteObjectMultipartUploadRequest } from './models/CompleteObjectMultipartUploadRequest.js';
 export type { CompleteWorkflowCallbackResponse } from './models/CompleteWorkflowCallbackResponse.js';
+export type { ComposeHealthcheck } from './models/ComposeHealthcheck.js';
 export type { ConsumedCreditRow } from './models/ConsumedCreditRow.js';
 export type { ConsumeInvoiceResponse } from './models/ConsumeInvoiceResponse.js';
 export type { ConsumerKeyListResponse } from './models/ConsumerKeyListResponse.js';
