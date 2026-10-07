@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+
+	"github.com/onebox-faas/faas/pkg/jailsetup"
 )
 
 // These are retained original helper leaders and observed family candidates,
@@ -164,6 +166,9 @@ func (j *nativeHostHelperJournal) requireHelperFamilyAbsent(ctx context.Context,
 	if record.SessionID == 0 {
 		return errors.New("native helper: original private session provenance is unavailable")
 	}
+	if record.SessionPolicy != jailsetup.HostHelperSessionPolicyVersion {
+		return errors.New("native helper: original session restriction provenance is unavailable")
+	}
 	if j.owner.helperProbe == nil {
 		return errors.New("native helper: independent family observation is unavailable")
 	}
@@ -186,8 +191,8 @@ func (j *nativeHostHelperJournal) requireOriginalTasksAbsent(ctx context.Context
 		return ctx.Err()
 	}
 	for _, frame := range frames {
-		if frame.Launch.Authorized && frame.SessionID == 0 {
-			return errors.New("native helper: original private session provenance is unavailable")
+		if frame.Launch.Authorized && (frame.SessionID == 0 || frame.SessionPolicy != jailsetup.HostHelperSessionPolicyVersion) {
+			return errors.New("native helper: original restricted private session provenance is unavailable")
 		}
 	}
 	if j.owner.helperProbe == nil {

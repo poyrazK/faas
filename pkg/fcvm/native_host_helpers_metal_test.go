@@ -30,7 +30,7 @@ func TestMetalNativeHostHelperRetiresOrphanDescendant(t *testing.T) {
 		t.Fatal(err)
 	}
 	withCgroupRootAt(t, "/sys/fs/cgroup")
-	ownerJournal := &nativeLaunchJournal{root: filepath.Join(t.TempDir(), "journal")}
+	ownerJournal := &nativeLaunchJournal{root: filepath.Join(t.TempDir(), "journal"), helperProbe: &nativeProcessProbe{root: "/proc"}}
 	lease := leaseForSlot("native-helper-descendant", 0)
 	if err := ownerJournal.prepare(t.Context(), lease); err != nil {
 		t.Fatal(err)

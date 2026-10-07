@@ -47,7 +47,7 @@ func newNativeJailDeviceCommand(helper string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	command.Args = []string{"vmmd-host-helper", "--launch-jail-device-setup", "3"}
+	command.Args = []string{"vmmd-host-helper", jailsetup.SessionJailDeviceMode, "3"}
 	return command, nil
 }
 

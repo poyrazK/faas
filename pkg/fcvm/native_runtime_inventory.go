@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/jailsetup"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -134,13 +135,13 @@ func (v *JailerVMM) withNativeRuntimeInventory(ctx context.Context, consume func
 			inventory.Unresolved = append(inventory.Unresolved, unresolvedNativeHelperTasks(helperTasks)...)
 			// adr: 654 — a disappeared historical leader cannot supply missing family provenance.
 			for _, helper := range helpers {
-				if helper.Launch.Authorized && helper.SessionID == 0 {
-					inventory.Unresolved = append(inventory.Unresolved, "original helper private session provenance is unavailable")
+				if helper.Launch.Authorized && (helper.SessionID == 0 || helper.SessionPolicy != jailsetup.HostHelperSessionPolicyVersion) {
+					inventory.Unresolved = append(inventory.Unresolved, "original helper restricted session provenance is unavailable")
 				}
 			}
 			for i := range inventory.Owners {
 				for _, helper := range helpers {
-					if helper.Launch.Authorized && helper.SessionID == 0 && (helper.OwnerGeneration == inventory.Owners[i].Generation || helper.Launch.Lease.Instance == inventory.Owners[i].Instance) && inventory.Owners[i].Unresolved == "" {
+					if helper.Launch.Authorized && (helper.SessionID == 0 || helper.SessionPolicy != jailsetup.HostHelperSessionPolicyVersion) && (helper.OwnerGeneration == inventory.Owners[i].Generation || helper.Launch.Lease.Instance == inventory.Owners[i].Instance) && inventory.Owners[i].Unresolved == "" {
 						inventory.Owners[i].Unresolved = "original helper family provenance is unavailable"
 					}
 				}

@@ -49,6 +49,9 @@ func TestNativeHelperFamilyLinuxObservesOrphanInOriginalPrivateSession(t *testin
 	if _, err := (nativeLinuxHostHelperGroups{}).OriginalSession(cmd.Process.Pid, start+1); err == nil {
 		t.Fatal("replacement incarnation borrowed session")
 	}
+	if err := (nativeLinuxHostHelperGroups{}).SessionRestricted(cmd.Process.Pid, start); err == nil {
+		t.Fatal("private session alone supplied a kernel restriction")
+	}
 	_, owner, _ := nativeHelperJournalFixture(t)
 	frame := nativeHelperTaskRecord(owner, cmd.Process.Pid, start)
 	frame.SessionID = session

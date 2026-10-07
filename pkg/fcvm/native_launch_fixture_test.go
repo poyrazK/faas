@@ -20,6 +20,21 @@ func runNativeLaunchHelperFixture() {
 	if os.Getenv("GREGALE_NATIVE_LAUNCH_FIXTURE") != "1" {
 		return
 	}
+	if os.Getenv("GREGALE_NATIVE_REAL_SESSION_POLICY") == "1" {
+		if !jailsetup.Run(os.Args) {
+			os.Exit(10)
+		}
+		os.Exit(0)
+	}
+	if len(os.Args) > 1 && (os.Args[1] == jailsetup.SessionHostCommandMode || os.Args[1] == jailsetup.SessionJailDeviceMode) {
+		fd := uintptr(4)
+		if os.Args[1] == jailsetup.SessionJailDeviceMode {
+			fd = 8
+		}
+		ready := os.NewFile(fd, "fixture-session-policy")
+		_, _ = ready.Write([]byte{jailsetup.HostHelperSessionPolicyVersion})
+		_ = ready.Close()
+	}
 	gate := os.NewFile(3, "fixture-launch-gate")
 	if err := jailsetup.AwaitLaunchGate(gate); err != nil {
 		if outcome := os.Getenv("GREGALE_NATIVE_GATE_OUTCOME"); outcome != "" {
@@ -30,7 +45,7 @@ func runNativeLaunchHelperFixture() {
 		os.Exit(2)
 	}
 	_ = gate.Close()
-	if len(os.Args) == 4 && os.Args[1] == "--launch-jail-device-setup" {
+	if len(os.Args) == 4 && os.Args[1] == jailsetup.SessionJailDeviceMode {
 		var scope jailsetup.DeviceSetupScope
 		if json.Unmarshal([]byte(os.Args[3]), &scope) != nil || scope.Validate() != nil {
 			os.Exit(5)

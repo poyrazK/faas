@@ -22,13 +22,13 @@ func Run(args []string) bool {
 		return false
 	}
 	switch args[1] {
-	case "--launch-jail-device-setup":
+	case "--launch-jail-device-setup", SessionJailDeviceMode:
 		if err := awaitDeviceSetup(args); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: native jail device setup: %v\n", err)
 			os.Exit(1)
 		}
 		return true
-	case "--launch-jailer", "--launch-host-command":
+	case "--launch-jailer", "--launch-host-command", SessionHostCommandMode:
 		if err := launchCommand(args); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: native launch: %v\n", err)
 			os.Exit(1)
@@ -185,6 +185,11 @@ func Run(args []string) bool {
 func launchCommand(args []string) error {
 	if len(args) < 5 || args[2] != "3" || args[3] != "--" || !filepath.IsAbs(args[4]) {
 		return fmt.Errorf("native launch requires 3 -- absolute-executable-path arguments")
+	}
+	if args[1] == SessionHostCommandMode {
+		if err := acknowledgeHostHelperSessionPolicy(4); err != nil {
+			return err
+		}
 	}
 	gate := os.NewFile(3, "native-launch-gate")
 	if gate == nil {

@@ -35,6 +35,11 @@ func awaitDeviceSetup(args []string) error {
 	if err := scope.Validate(); err != nil {
 		return err
 	}
+	if args[1] == SessionJailDeviceMode {
+		if err := acknowledgeHostHelperSessionPolicy(8); err != nil {
+			return err
+		}
+	}
 	gate := os.NewFile(3, "native-device-gate")
 	if gate == nil {
 		return errors.New("native jail device gate missing")

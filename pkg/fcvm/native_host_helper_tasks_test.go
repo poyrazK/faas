@@ -17,7 +17,7 @@ import (
 
 func nativeHelperTaskRecord(owner nativeLaunchRecord, pid int, start uint64) nativeHostHelperRecord {
 	id := uuid.NewString()
-	return nativeHostHelperRecord{OwnerGeneration: owner.Generation, SessionID: pid,
+	return nativeHostHelperRecord{OwnerGeneration: owner.Generation, SessionID: pid, SessionPolicy: 1,
 		Launch: nativeLaunchRecord{Version: 1, Generation: id, KernelBootID: owner.KernelBootID, Lease: owner.Lease, Authorized: true, PID: pid, StartTime: start},
 		Group:  nativeHostHelperGroup{Path: "fixture-service/" + nativeHostHelperScope + "/" + id, Device: 17, Inode: 1}}
 }

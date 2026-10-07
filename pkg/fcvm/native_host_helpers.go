@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/jailsetup"
 )
 
 const nativeHostHelperScope = "gregale-host-helpers"
@@ -42,7 +44,8 @@ type nativeHostHelperRecord struct {
 	Group           nativeHostHelperGroup   `json:"group"`
 	Purpose         nativeHostHelperPurpose `json:"purpose,omitempty"`
 	JailDevice      *nativeJailDeviceFrame  `json:"jail_device,omitempty"`
-	SessionID       int                     `json:"session_id,omitempty"` // Captured before the launch gate; never backfilled.
+	SessionID       int                     `json:"session_id,omitempty"`     // Captured before the launch gate; never backfilled.
+	SessionPolicy   int                     `json:"session_policy,omitempty"` // Original acknowledged policy; never inferred from a later task.
 }
 
 func (r *nativeHostHelperRecord) UnmarshalJSON(data []byte) error {
@@ -64,18 +67,19 @@ func (r *nativeHostHelperRecord) UnmarshalJSON(data []byte) error {
 	if _, present := fields["session_id"]; present && r.SessionID <= 0 {
 		return errors.New("native helper: original private session is invalid")
 	}
+	if _, present := fields["session_policy"]; present && r.SessionPolicy != jailsetup.HostHelperSessionPolicyVersion {
+		return errors.New("native helper: unsupported original session policy")
+	}
 	return nil
 }
 
 // adr: 654 — exact historical shapes remain readable without inventing a session.
 func nativeHostHelperRecordFields(data []byte) (map[string]json.RawMessage, error) {
 	var result error
-	for _, session := range []bool{false, true} {
+	for _, provenance := range [][]string{nil, {"session_id"}, {"session_id", "session_policy"}} {
 		for _, extra := range [][]string{nil, {"purpose"}, {"purpose", "jail_device"}} {
 			required := append([]string{"owner_generation", "launch", "group"}, extra...)
-			if session {
-				required = append(required, "session_id")
-			}
+			required = append(required, provenance...)
 			fields, err := nativeJournalObjectFields(data, required)
 			if err == nil {
 				return fields, nil
@@ -98,6 +102,9 @@ func (r nativeHostHelperRecord) validate(owner nativeLaunchRecord) error {
 	}
 	if r.SessionID != 0 && (!r.Launch.Authorized || r.SessionID != r.Launch.PID) {
 		return errors.New("native helper: original private session differs from launch identity")
+	}
+	if r.SessionPolicy != 0 && (r.SessionPolicy != jailsetup.HostHelperSessionPolicyVersion || r.SessionID == 0 || !r.Launch.Authorized) {
+		return errors.New("native helper: session policy differs from original authorized session")
 	}
 	if r.Purpose != "" && r.Purpose != nativeHostHelperEffect && r.Purpose != nativeHostHelperNetworkCleanup && r.Purpose != nativeHostHelperJailDevices {
 		return errors.New("native helper: unsupported command purpose")
@@ -156,6 +163,7 @@ type nativeHostHelperGroups interface {
 	Removed(nativeHostHelperGroup) error
 	Inventory([]nativeHostHelperRecord) error
 	OriginalSession(int, uint64) (int, error)
+	SessionRestricted(int, uint64) error
 }
 
 type nativeHostHelperJournal struct {
@@ -245,7 +253,7 @@ func newNativeHostHelperCommand(helper string, argv []string) (*exec.Cmd, error)
 	if !filepath.IsAbs(helper) || len(argv) == 0 || !filepath.IsAbs(argv[0]) {
 		return nil, errors.New("native helper: resolved helper and executable paths are required")
 	}
-	args := append([]string{"--launch-host-command", "3", "--"}, argv...)
+	args := append([]string{jailsetup.SessionHostCommandMode, "3", "--"}, argv...)
 	cmd := exec.Command(helper, args...)
 	cmd.Args[0] = "vmmd-host-helper"
 	isolateLifecycleChild(cmd)
@@ -259,9 +267,9 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	deviceCommand := j.purpose == nativeHostHelperJailDevices
 	validCommand := cmd != nil && filepath.IsAbs(cmd.Path) && len(cmd.ExtraFiles) == 0 && j.groups != nil
 	if validCommand && deviceCommand {
-		validCommand = slices.Equal(cmd.Args, []string{"vmmd-host-helper", "--launch-jail-device-setup", "3"})
+		validCommand = slices.Equal(cmd.Args, []string{"vmmd-host-helper", jailsetup.SessionJailDeviceMode, "3"})
 	} else if validCommand {
-		validCommand = len(cmd.Args) >= 5 && cmd.Args[0] == "vmmd-host-helper" && cmd.Args[1] == "--launch-host-command" && cmd.Args[2] == "3" && cmd.Args[3] == "--" && filepath.IsAbs(cmd.Args[4])
+		validCommand = len(cmd.Args) >= 5 && cmd.Args[0] == "vmmd-host-helper" && cmd.Args[1] == jailsetup.SessionHostCommandMode && cmd.Args[2] == "3" && cmd.Args[3] == "--" && filepath.IsAbs(cmd.Args[4])
 	}
 	if !validCommand {
 		return record, false, errors.New("native helper: command bypasses durable ownership")
@@ -387,6 +395,12 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	if deviceInputs != nil {
 		cmd.ExtraFiles = append(cmd.ExtraFiles, deviceInputs.Files()...)
 	}
+	ready, acknowledge, err := os.Pipe()
+	if err != nil {
+		return record, false, err
+	}
+	defer func() { _ = ready.Close(); _ = acknowledge.Close() }()
+	cmd.ExtraFiles = append(cmd.ExtraFiles, acknowledge)
 	if err := ctx.Err(); err != nil {
 		return record, false, err
 	}
@@ -394,7 +408,13 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 		return record, false, err
 	}
 	started = true
+	if err := acknowledge.Close(); err != nil {
+		return record, true, err
+	}
 	if err := reader.Close(); err != nil {
+		return record, true, err
+	}
+	if err := awaitNativeHelperSessionPolicy(ctx, ready); err != nil {
 		return record, true, err
 	}
 	if deviceInputs != nil {
@@ -419,6 +439,10 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	if err != nil || record.SessionID != record.Launch.PID {
 		return record, true, errors.Join(err, errors.New("native helper: original private session was not observed"))
 	}
+	if err := j.groups.SessionRestricted(record.Launch.PID, start); err != nil {
+		return record, true, err
+	}
+	record.SessionPolicy = jailsetup.HostHelperSessionPolicyVersion
 	if err := j.write(owner, record); err != nil {
 		return record, true, err
 	}
@@ -426,6 +450,26 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 		return record, true, fmt.Errorf("native helper: release execution gate: %w", err)
 	}
 	return record, true, nil
+}
+
+func awaitNativeHelperSessionPolicy(ctx context.Context, ready *os.File) error {
+	ctx, cancel := context.WithTimeout(ctx, api.NativeHostHelperPolicyTimeout)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	if err := ready.SetReadDeadline(deadline); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = ready.SetReadDeadline(time.Now()) })
+	defer stop()
+	var token [2]byte
+	n, err := io.ReadFull(ready, token[:])
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if n != 1 || !errors.Is(err, io.ErrUnexpectedEOF) || token[0] != jailsetup.HostHelperSessionPolicyVersion {
+		return errors.Join(err, errors.New("native helper: original session policy acknowledgement is invalid"))
+	}
+	return nil
 }
 
 // Retirement rereads durable ownership, then revokes before killing. Caller
@@ -720,7 +764,7 @@ func validateNativeHostHelperAuthority(owner nativeLaunchRecord, purpose nativeH
 		}
 		return errors.New("native helper: cleanup command exceeds the original lease")
 	case nativeHostHelperJailDevices:
-		if owner.Revoked || !owner.Authorized || owner.Lease.Networkless || hasInput || !slices.Equal(argv, []string{"vmmd-host-helper", "--launch-jail-device-setup", "3"}) {
+		if owner.Revoked || !owner.Authorized || owner.Lease.Networkless || hasInput || !slices.Equal(argv, []string{"vmmd-host-helper", jailsetup.SessionJailDeviceMode, "3"}) {
 			return errors.New("native jail device setup: command lacks original authorized lease")
 		}
 	default:

@@ -73,7 +73,7 @@ func TestNativeHelperFamilyFindsLegacyAndUnpublishedCgroupOccupants(t *testing.T
 		t.Run(strconv.FormatBool(authorized), func(t *testing.T) {
 			_, owner, _ := nativeHelperJournalFixture(t)
 			frame := nativeHelperTaskRecord(owner, 42, 100)
-			frame.SessionID = 0 // Actual historical frames have no private-session provenance.
+			frame.SessionID, frame.SessionPolicy = 0, 0 // Actual historical frames have no private-session provenance.
 			frame.Launch.Authorized = authorized
 			if !authorized {
 				frame.Launch.PID, frame.Launch.StartTime = 0, 0
@@ -218,7 +218,7 @@ func TestNativeHelperSessionProvenancePrecedesExecutionGate(t *testing.T) {
 			published := false
 			j.writeValue = func(path string, record nativeHostHelperRecord) error {
 				if record.Launch.Authorized && !record.Launch.Revoked {
-					if record.SessionID != cmd.Process.Pid {
+					if record.SessionID != cmd.Process.Pid || record.SessionPolicy != 1 {
 						t.Fatal("private session missing from original publication")
 					}
 					if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
@@ -244,7 +244,7 @@ func TestNativeHelperSessionProvenancePrecedesExecutionGate(t *testing.T) {
 func TestNativeHelperSessionFramePreservesHistoricalShapeAndRejectsDamage(t *testing.T) {
 	_, owner, _ := nativeHelperJournalFixture(t)
 	frame := nativeHelperTaskRecord(owner, 42, 100)
-	frame.SessionID = 0
+	frame.SessionID, frame.SessionPolicy = 0, 0
 	old, err := json.Marshal(frame)
 	if err != nil || strings.Contains(string(old), "session_id") {
 		t.Fatal("historical shape changed", err)
@@ -306,7 +306,7 @@ func TestNativeHelperFamilyInventoryRechecksAroundConsumerAndTransport(t *testin
 						t.Fatal(err)
 					}
 				case "frame":
-					frame.SessionID = 0
+					frame.SessionID, frame.SessionPolicy = 0, 0
 					writeNativeHelperTaskFrame(t, j, owner, frame)
 				case "unrelated":
 					nativeHelperFamilyProc(t, r.retirer.probe.root, frame, 45, 1, 900, 1000, 104, "other")
@@ -330,7 +330,7 @@ func TestNativeHelperHistoricalSessionMissingRemainsUnresolvedAfterLeaderExit(t 
 	j := &nativeHostHelperJournal{owner: r.journal, groups: newNativeHelperGroupsFixture()}
 	r.helperGroups = j.groups
 	frame := nativeHelperTaskRecord(owner, 43, 102)
-	frame.SessionID = 0
+	frame.SessionID, frame.SessionPolicy = 0, 0
 	frame.Launch.Revoked, frame.Launch.ExitConfirmed, frame.Launch.ResourcesRemoved = true, true, true
 	writeNativeHelperTaskFrame(t, j, owner, frame)
 	if err := j.retire(t.Context(), owner, frame.Launch.Generation); err == nil {

@@ -147,6 +147,67 @@ func (nativeLinuxHostHelperGroups) OriginalSession(pid int, start uint64) (int, 
 	return process.SessionID, nil
 }
 
+// Acknowledgement comes only from the new trusted helper mode. Independently
+// check that its process-wide policy reached every existing thread before gate
+// publication. Status alone never supplies a missing historical policy version.
+func (g nativeLinuxHostHelperGroups) SessionRestricted(pid int, start uint64) error {
+	if _, err := g.OriginalSession(pid, start); err != nil {
+		return err
+	}
+	root := filepath.Join("/proc", strconv.Itoa(pid), "task")
+	threads, err := os.ReadDir(root)
+	if err != nil || len(threads) == 0 {
+		return errors.Join(err, errors.New("native helper: original thread inventory unavailable"))
+	}
+	for _, thread := range threads {
+		tid, err := strconv.Atoi(thread.Name())
+		if err != nil || tid <= 0 || strconv.Itoa(tid) != thread.Name() || !thread.IsDir() {
+			return errors.New("native helper: ambiguous original thread identity")
+		}
+		if err := nativeHelperRestrictedThread(filepath.Join(root, thread.Name()), tid, pid, start); err != nil {
+			return err
+		}
+	}
+	after, err := os.ReadDir(root)
+	if err != nil || len(after) != len(threads) {
+		return errors.Join(err, errors.New("native helper: original thread inventory changed"))
+	}
+	for i := range threads {
+		if after[i].Name() != threads[i].Name() {
+			return errors.New("native helper: original thread inventory changed")
+		}
+	}
+	_, err = g.OriginalSession(pid, start)
+	return err
+}
+
+func nativeHelperRestrictedThread(dir string, tid, session int, start uint64) error {
+	before, err := os.ReadFile(filepath.Join(dir, "stat"))
+	if err != nil {
+		return err
+	}
+	process, err := nativeHelperProcessStat(string(before), tid)
+	if err != nil || process.SessionID != session || process.StartTime < start {
+		return errors.Join(err, errors.New("native helper: original thread session changed"))
+	}
+	status, err := os.ReadFile(filepath.Join(dir, "status"))
+	if err != nil {
+		return err
+	}
+	if err := nativeHelperSessionStatus(string(status)); err != nil {
+		return err
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "stat"))
+	if err != nil {
+		return err
+	}
+	current, err := nativeHelperProcessStat(string(after), tid)
+	if err != nil || current != process {
+		return errors.Join(err, errors.New("native helper: original restricted thread changed"))
+	}
+	return nil
+}
+
 func nativeHelperCgroupControl(fd int, name string, flags int) (*os.File, error) {
 	control, err := unix.Openat(fd, name, flags|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {

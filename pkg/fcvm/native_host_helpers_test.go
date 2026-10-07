@@ -62,6 +62,8 @@ func (g *nativeHelperGroupsFixture) OriginalSession(pid int, _ uint64) (int, err
 	return pid, nil
 }
 
+func (g *nativeHelperGroupsFixture) SessionRestricted(int, uint64) error { return nil }
+
 func (g *nativeHelperGroupsFixture) Retire(ctx context.Context, group nativeHostHelperGroup) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
