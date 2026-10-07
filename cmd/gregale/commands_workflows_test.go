@@ -296,3 +296,21 @@ func TestCmdWorkflowsEvents_TrailingMalformedPayloadFailsBeforeRequest(t *testin
 		t.Fatalf("exit=%d stderr=%q", code, output)
 	}
 }
+
+// production-us hunt #5: `workflows get <run>` and `workflows runs` were
+// refused with no hint; they are the natural names for status and list.
+func TestCmdWorkflowsAcceptsCommonAliases(t *testing.T) {
+	for alias, want := range map[string]string{"get": "workflows status", "show": "workflows status", "runs": "--app <slug>", "ls": "--app <slug>"} {
+		code, captured := runWithStderr(t, func() int { return cmdWorkflows([]string{alias}) })
+		if code != 1 || strings.Contains(captured, "unknown workflows subcommand") || !strings.Contains(captured, want) {
+			t.Errorf("workflows %s: code=%d stderr=%q, want the %q usage", alias, code, captured, want)
+		}
+	}
+}
+
+func TestCmdWorkflowsSuggestsTheClosestSubcommand(t *testing.T) {
+	_, captured := runWithStderr(t, func() int { return cmdWorkflows([]string{"statsu"}) })
+	if !strings.Contains(captured, "status") || !strings.Contains(strings.ToLower(captured), "did you mean") {
+		t.Fatalf("typo got no suggestion: %q", captured)
+	}
+}

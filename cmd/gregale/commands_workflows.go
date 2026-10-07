@@ -22,13 +22,13 @@ func cmdWorkflows(args []string) int {
 		return 1
 	}
 	switch args[0] {
-	case "list":
+	case "list", "ls", "runs":
 		return cmdWorkflowsList(args[1:])
 	case "schedules":
 		return cmdWorkflowSchedules(args[1:])
 	case "run":
 		return cmdWorkflowsRun(args[1:])
-	case "status":
+	case "status", "get", "show":
 		return cmdWorkflowsStatus(args[1:])
 	case "steps":
 		return cmdWorkflowsSteps(args[1:])
@@ -46,6 +46,10 @@ func cmdWorkflows(args []string) int {
 		return cmdWorkflowsEvents(args[1:])
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", args[0]), "workflows")
+		if parent, ok := lookupCliCommand("workflows"); ok {
+			sug, _ := suggestSubcommand(args[0], parent)
+			maybeSuggestSub(sug)
+		}
 		return 1
 	}
 }
