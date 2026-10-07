@@ -33,6 +33,8 @@
   - The owner published RUNNING 20 ms later. The watchdog's WAKING→COLD_BOOTING
     write was then refused as an illegal edge from RUNNING.
   - The RUNNING row had no VM for 10 minutes, until the idle reaper stopped it.
+    Billing follows the row (§4.7), so the customer was billed 612 s at plan
+    RAM + 8 MB (0.176 GB-h) for a VM that lived about 8 s.
     Each forward reached vmmd, got `NotFound` and answered 503 without logging
     anything. The ADR-191 divergence sweep reported the row every 30 s, but it
     is report-only.
