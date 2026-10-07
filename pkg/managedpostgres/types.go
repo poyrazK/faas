@@ -241,6 +241,8 @@ const (
 	CredentialReadWrite CredentialAccess = "read_write"
 	CredentialReadOnly  CredentialAccess = "read_only"
 	CredentialMigration CredentialAccess = "migration"
+	// Data API logins receive only api-schema DML, without owner memberships.
+	CredentialDataAPI CredentialAccess = "data_api"
 )
 
 type EndpointRole string
@@ -628,7 +630,7 @@ func (c Capabilities) Validate() error {
 		}
 	}
 	for _, access := range c.CredentialAccess {
-		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
+		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
 			return ErrInvalid
 		}
 	}
@@ -645,7 +647,7 @@ func (c Capabilities) Validate() error {
 // the backend prevents Gregale from reserving work that the provider can never
 // reconcile.
 func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
-	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
+	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
 		return ErrInvalid
 	}
 	if !contains(c.CredentialAccess, access) {
@@ -707,6 +709,12 @@ type CredentialPrivilegeProber interface {
 // disposable resources. Advertising read_only requires this live evidence.
 type ReadOnlyCredentialProber interface {
 	ProbeReadOnlyCredentials(context.Context, string) (ReadOnlyCredentialEvidence, error)
+}
+
+// DataAPICredentialProber verifies schema isolation, RLS, recovery and retirement
+// on a disposable resource before the backend can advertise data_api bindings.
+type DataAPICredentialProber interface {
+	ProbeDataAPICredentials(context.Context, string) (DataAPICredentialEvidence, error)
 }
 
 // RestoreCredentialIsolationProber verifies that the source login cannot

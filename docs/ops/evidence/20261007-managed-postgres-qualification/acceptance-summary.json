@@ -1,0 +1,526 @@
+{
+  "document_kind": "acceptance_summary_not_rollout_approval",
+  "source_commit": "5d43e0707684beeefbb54ac519745939420172ff",
+  "qualification_version": 7,
+  "private_artifact_sha256": "37523f3746d009504b2450ea80243a96ce188e7aa653749cf778107faf684719",
+  "spec": {
+    "Region": "us-east-2",
+    "PostgresMajor": 18,
+    "Class": "development",
+    "Availability": "single_zone",
+    "ScaleToZero": true,
+    "StorageLimitBytes": 1073741824,
+    "RestoreWindowSeconds": 86400
+  },
+  "core_provider_contract_passed": true,
+  "snapshot_contract_passed": false,
+  "production_changes": false,
+  "billing_plan_changes": false,
+  "provider": {
+    "provider": "neon",
+    "mutating": true,
+    "started_at": "2026-10-07T20:02:53.672669Z",
+    "completed_at": "2026-10-07T20:17:44.723263Z",
+    "checks": [
+      {
+        "name": "provider_present",
+        "passed": true
+      },
+      {
+        "name": "resource_identity",
+        "passed": true
+      },
+      {
+        "name": "spec_valid",
+        "passed": true
+      },
+      {
+        "name": "capabilities_valid",
+        "passed": true
+      },
+      {
+        "name": "spec_supported",
+        "passed": true
+      },
+      {
+        "name": "provision",
+        "passed": true
+      },
+      {
+        "name": "provision_observed",
+        "passed": true
+      },
+      {
+        "name": "provision_idempotent",
+        "passed": true
+      },
+      {
+        "name": "provision_idempotent_identity",
+        "passed": true
+      },
+      {
+        "name": "inspect",
+        "passed": true
+      },
+      {
+        "name": "inspect_observed",
+        "passed": true
+      },
+      {
+        "name": "restore_source_identity",
+        "passed": true
+      },
+      {
+        "name": "usage",
+        "passed": true
+      },
+      {
+        "name": "usage_valid",
+        "passed": true
+      },
+      {
+        "name": "credentials_issue",
+        "passed": true
+      },
+      {
+        "name": "credentials_valid",
+        "passed": true
+      },
+      {
+        "name": "credentials_idempotent",
+        "passed": true
+      },
+      {
+        "name": "scale_to_zero_probe",
+        "passed": true
+      },
+      {
+        "name": "credential_privileges_probe",
+        "passed": true
+      },
+      {
+        "name": "read_only_credentials_probe",
+        "passed": true
+      },
+      {
+        "name": "compute_resize_probe",
+        "passed": true
+      },
+      {
+        "name": "compute_policy_probe",
+        "passed": true
+      },
+      {
+        "name": "restore_prepare",
+        "passed": true
+      },
+      {
+        "name": "restore",
+        "passed": true
+      },
+      {
+        "name": "restore_lineage",
+        "passed": true
+      },
+      {
+        "name": "restore_observed",
+        "passed": true
+      },
+      {
+        "name": "restore_ready",
+        "passed": true
+      },
+      {
+        "name": "restore_idempotent",
+        "passed": true
+      },
+      {
+        "name": "restore_idempotent_lineage",
+        "passed": true
+      },
+      {
+        "name": "restore_credentials_issue",
+        "passed": true
+      },
+      {
+        "name": "restore_credentials_valid",
+        "passed": true
+      },
+      {
+        "name": "restore_data_verified",
+        "passed": true
+      },
+      {
+        "name": "restore_credentials_isolated",
+        "passed": true
+      },
+      {
+        "name": "restore_credentials_revoke",
+        "passed": true
+      },
+      {
+        "name": "restore_delete",
+        "passed": true
+      },
+      {
+        "name": "restore_delete_complete",
+        "passed": true
+      },
+      {
+        "name": "restore_cleanup",
+        "passed": true
+      },
+      {
+        "name": "credentials_revoke",
+        "passed": true
+      },
+      {
+        "name": "delete",
+        "passed": true
+      },
+      {
+        "name": "delete_recovery",
+        "passed": true
+      },
+      {
+        "name": "delete_complete",
+        "passed": true
+      },
+      {
+        "name": "delete_recovery_complete",
+        "passed": true
+      }
+    ],
+    "scale_to_zero": {
+      "suspended": true,
+      "resumed": true,
+      "wake_latency_ms": 2368
+    },
+    "restore": {
+      "restored": true,
+      "data_verified": true,
+      "deleted": true,
+      "credentials_isolated": true
+    },
+    "credential_privileges": {
+      "runtime_restricted": true,
+      "migration_separated": true,
+      "rotation_preserves_data": true
+    },
+    "credential_access": [
+      "read_write",
+      "read_only",
+      "migration"
+    ],
+    "read_only_credentials": {
+      "restricted": true,
+      "password_recovered": true,
+      "rotation_preserves_data": true,
+      "revoked": true
+    },
+    "class_resize": true,
+    "scale_to_zero_update": true,
+    "compute_policy": {
+      "identity_preserved": true,
+      "data_preserved": true,
+      "credentials_preserved": true,
+      "replay_stable": true,
+      "original_policy_restored": true,
+      "always_on_observed": true,
+      "suspended": true,
+      "resumed": true
+    },
+    "resize": {
+      "identity_preserved": true,
+      "data_preserved": true,
+      "credentials_preserved": true,
+      "replay_stable": true,
+      "original_class_restored": true
+    }
+  },
+  "lifecycle": {
+    "checks": [
+      {
+        "name": "service_present",
+        "passed": true
+      },
+      {
+        "name": "binding_service_present",
+        "passed": true
+      },
+      {
+        "name": "lifecycle_identity",
+        "passed": true
+      },
+      {
+        "name": "lifecycle_access",
+        "passed": true
+      },
+      {
+        "name": "lifecycle_spec",
+        "passed": true
+      },
+      {
+        "name": "database_create",
+        "passed": true
+      },
+      {
+        "name": "database_ready",
+        "passed": true
+      },
+      {
+        "name": "binding_create",
+        "passed": true
+      },
+      {
+        "name": "binding_ready",
+        "passed": true
+      },
+      {
+        "name": "binding_delete",
+        "passed": true
+      },
+      {
+        "name": "database_delete",
+        "passed": true
+      }
+    ]
+  },
+  "preflight": [
+    {
+      "name": "config_path",
+      "passed": true
+    },
+    {
+      "name": "staging_environment",
+      "passed": true
+    },
+    {
+      "name": "configuration_valid",
+      "passed": true
+    },
+    {
+      "name": "single_default_backend",
+      "passed": true
+    },
+    {
+      "name": "provisioning_disabled",
+      "passed": true
+    },
+    {
+      "name": "default_backend",
+      "passed": true
+    },
+    {
+      "name": "placement_fingerprint",
+      "passed": true
+    },
+    {
+      "name": "qualification_spec",
+      "passed": true
+    },
+    {
+      "name": "plan_entitlements",
+      "passed": true
+    },
+    {
+      "name": "global_database_ceiling",
+      "passed": true
+    },
+    {
+      "name": "canary_accounts",
+      "passed": true
+    },
+    {
+      "name": "qualification_resource_id",
+      "passed": true
+    },
+    {
+      "name": "qualification_timeout",
+      "passed": true
+    },
+    {
+      "name": "approval_ttl",
+      "passed": true
+    }
+  ],
+  "verification_cases": [
+    {
+      "name": "genuine",
+      "passed": true,
+      "exit_code": 0,
+      "readiness": {
+        "ready": true
+      }
+    },
+    {
+      "name": "older_version",
+      "passed": true,
+      "exit_code": 1,
+      "readiness": {
+        "ready": false,
+        "reasons": [
+          "artifact_version_invalid"
+        ]
+      }
+    },
+    {
+      "name": "report_digest",
+      "passed": true,
+      "exit_code": 1,
+      "readiness": {
+        "ready": false,
+        "reasons": [
+          "report_digest_mismatch"
+        ]
+      }
+    },
+    {
+      "name": "missing_lifecycle",
+      "passed": true,
+      "exit_code": 1,
+      "readiness": {
+        "ready": false,
+        "reasons": [
+          "lifecycle_report_missing"
+        ]
+      }
+    },
+    {
+      "name": "backend_mismatch",
+      "passed": true,
+      "exit_code": 1,
+      "readiness": {
+        "ready": false,
+        "reasons": [
+          "backend_fingerprint_mismatch"
+        ]
+      }
+    },
+    {
+      "name": "canary_mismatch",
+      "passed": true,
+      "exit_code": 1,
+      "readiness": {
+        "ready": false,
+        "reasons": [
+          "canary_accounts_mismatch"
+        ]
+      }
+    },
+    {
+      "name": "expired",
+      "passed": true,
+      "exit_code": 1,
+      "readiness": {
+        "ready": false,
+        "reasons": [
+          "approval_expired"
+        ]
+      }
+    }
+  ],
+  "snapshot_custody_checks": [
+    {
+      "name": "configuration",
+      "passed": true
+    },
+    {
+      "name": "backend",
+      "passed": true
+    },
+    {
+      "name": "provision",
+      "passed": true
+    },
+    {
+      "name": "source_ready",
+      "passed": true
+    },
+    {
+      "name": "credential_issue",
+      "passed": true
+    },
+    {
+      "name": "prepare_snapshot_point",
+      "passed": true
+    },
+    {
+      "name": "durable_snapshot_custody",
+      "passed": true
+    },
+    {
+      "name": "capture_refuses_missing_metadata",
+      "passed": true
+    },
+    {
+      "name": "restart_refuses_unverified_capture",
+      "passed": true
+    },
+    {
+      "name": "native_copy_blocked_without_capture_proof",
+      "passed": true
+    },
+    {
+      "name": "snapshot_custody_cleanup",
+      "passed": true
+    },
+    {
+      "name": "snapshot_cleanup_replay",
+      "passed": true
+    },
+    {
+      "name": "snapshot_confirmed_absent",
+      "passed": true
+    },
+    {
+      "name": "probe_cleanup",
+      "passed": true
+    },
+    {
+      "name": "credential_cleanup",
+      "passed": true
+    },
+    {
+      "name": "source_delete",
+      "passed": true
+    }
+  ],
+  "settled_usage_after_deletion": {
+    "error": "",
+    "from": "2026-10-07T19:00:00Z",
+    "kind": "settled_usage",
+    "passed": true,
+    "to": "2026-10-07T20:00:00Z",
+    "usage": {
+      "Window": {
+        "From": "2026-10-07T19:00:00Z",
+        "To": "2026-10-07T20:00:00Z"
+      },
+      "Readings": [
+        {
+          "Meter": "compute_unit_seconds",
+          "Quantity": 10
+        },
+        {
+          "Meter": "storage_byte_seconds",
+          "Quantity": 0
+        },
+        {
+          "Meter": "history_byte_seconds",
+          "Quantity": 0
+        },
+        {
+          "Meter": "egress_bytes",
+          "Quantity": 0
+        }
+      ]
+    }
+  },
+  "cleanup": {
+    "disposable_projects_absent": true,
+    "temporary_key_revoked": true,
+    "subsequent_auth_status": 401,
+    "local_secret_removed": true
+  }
+}
