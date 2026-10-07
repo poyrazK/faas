@@ -7324,3 +7324,37 @@ broker URL regression checks pass. SQLC v1.31.1 parity, migration and repository
 policy checks pass; golangci-lint v2.4.0 reports zero issues across state, object
 storage, activity wrappers, S3 gateway and APID. Optional Packer/live nft checks
 were skipped. These checks do not qualify a live provider or a common point.
+
+### Separate multipart initiation recovery from creation (2026-10-07)
+
+The S3 adapter now exposes an optional read-only initiation recovery capability
+for the R2/OVH path. Recovery lists existing native uploads and never calls
+creation. A complete empty listing returns `ErrNotFound`; incomplete or invalid
+listings fail closed, and multiple exact-key uploads remain a conflict. The
+portable helper refuses unsupported adapters rather than falling back to
+`EnsureMultipartUpload`, and rejects an invalid identity returned by an adapter.
+The existing request callback runs before every discovery page, allowing the
+eventual journal integration to recheck authority throughout a paginated read.
+
+An empty listing after a lost reply is only a negative observation. It cannot
+authorize another initiation or retire a writer receipt. A discovered native
+identity is also only a candidate: S3 pending-upload listings do not expose
+session metadata. Adoption still requires original journal authority and
+qualified exclusive key ownership. This capability does not establish that
+ownership for native credentials used outside Gregale.
+
+This bounded increment supplies the provider boundary needed for durable
+initiation dispatch binding; control API and gateway initiation still use their
+existing admission paths. Next work must persist dispatch ownership before
+creation, conservatively classify existing uncertain sessions, and compose
+positive recovery with the original receipt. Independent part writers and live
+R2/OVH qualification remain outstanding. Full public capture remains gated.
+
+Validation: the full object-storage package passes under `-race` against the
+task-owned PostgreSQL 16.15 instance. Recovery regressions cover a lost create
+reply followed by delayed listing visibility, adapter restart, negative and
+ambiguous discovery, incomplete listings, expired authority between pages,
+invalid requests/identities, and refusal to fall back to a legacy adapter's
+creation method. Pinned golangci-lint v2.4.0 reports zero issues for object
+storage; text encoding, shell quoting and ADR-number checks pass. These are
+local adapter and regression checks, not live R2/OVH qualification.

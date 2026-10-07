@@ -582,7 +582,7 @@ func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r Multipa
 }
 
 func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r MultipartCreateRequest, encryption *ResolvedObjectEncryption) (string, error) {
-	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateObjectMetadata(r.Metadata) != nil {
+	if !validMultipartCreateRequest(r) {
 		return "", ErrInvalid
 	}
 	// A Gregale bucket does not expose native provider credentials. Combined
