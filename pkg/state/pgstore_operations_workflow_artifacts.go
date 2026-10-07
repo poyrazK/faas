@@ -179,6 +179,9 @@ func workflowArtifactMutationTx(ctx context.Context, tx pgx.Tx, op *Operation, r
 }
 
 func reserveWorkflowArtifactTx(ctx context.Context, tx pgx.Tx, op Operation, a OperationWorkflowAuthority, req api.OperationArtifactRequest, now time.Time) (OperationResultBlob, error) {
+	if op.Generation < 1 || op.Generation > math.MaxInt32 || a.Attempt < 1 || a.Attempt > math.MaxInt32 {
+		return OperationResultBlob{}, ErrOperationStaleAttempt
+	}
 	q := sqlc.New()
 	blob := newOperationResultBlob(op, Invocation{Attempts: a.Attempt}, req, now)
 	blob.ExecutionID, blob.WorkflowRunID, blob.WorkflowStep = "", a.RunID, a.StepName

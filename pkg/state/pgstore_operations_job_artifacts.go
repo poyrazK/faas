@@ -3,6 +3,7 @@ package state
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -172,6 +173,9 @@ func reserveJobArtifactTx(ctx context.Context, tx pgx.Tx, op Operation, task Job
 	}
 	if err := validateOperationJobAuthority(op, task, a, time.Now().UTC()); err != nil {
 		return OperationResultBlob{}, err
+	}
+	if op.Generation < 1 || op.Generation > math.MaxInt32 || a.Attempt < 1 || a.Attempt > math.MaxInt32 {
+		return OperationResultBlob{}, ErrOperationStaleAttempt
 	}
 	err = q.InsertCustomerOperationBlob(ctx, tx, sqlc.InsertCustomerOperationBlobParams{ID: mustPgUUID(blob.ID), OperationID: mustPgUUID(op.ID), AccountID: account, Generation: int32(op.Generation), JobRunID: mustPgUUID(a.RunID), Attempt: int32(a.Attempt), ReportID: req.ReportID, Fingerprint: blob.Fingerprint, StorageKey: blob.StorageKey, SizeBytes: blob.SizeBytes, ExpiresAt: operationBlobTime(blob.ExpiresAt)})
 	return blob, err

@@ -182,14 +182,14 @@ func TestOperationWorkflowDirectUploadResume(t *testing.T) {
 			var artifactID string
 			f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
 				first = proof
-				before := f.current(t.Context(), t)
+				before := f.current(ctx, t)
 				for i := 0; i < 3; i++ {
 					r, err := f.runtime.ReuseWorkflowOperationUpload(ctx, f.op.ID, proof, req)
 					if err != nil || r.Available {
 						t.Fatal("false receipt", err)
 					}
 				}
-				after := f.current(t.Context(), t)
+				after := f.current(ctx, t)
 				if after.ReportCount != before.ReportCount || after.LatestSequence != before.LatestSequence {
 					t.Fatal("absent lookup mutated ledger")
 				}
@@ -226,7 +226,7 @@ func TestOperationWorkflowDirectUploadResume(t *testing.T) {
 				if _, err := f.runtime.ReuseWorkflowOperationUpload(ctx, f.op.ID, proof, changed); err == nil {
 					t.Fatal("changed payload accepted")
 				}
-				pending := f.current(t.Context(), t)
+				pending := f.current(ctx, t)
 				if pending.ReportCount != before.ReportCount+1 || len(pending.Artifacts) != 0 || len(pending.WorkflowArtifactReceipts) != 1 {
 					t.Fatal("duplicate or published receipt")
 				}

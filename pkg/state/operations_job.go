@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -43,6 +44,9 @@ func operationJobCapability(runID, instanceID, lease string) string {
 	return hex.EncodeToString(digest[:])
 }
 func validateOperationJobAuthority(op Operation, task JobTask, a JobOperationAuthority, now time.Time) error {
+	if op.Generation < 1 || op.Generation > math.MaxInt32 || a.Attempt < 1 || a.Attempt > math.MaxInt32 {
+		return ErrOperationStaleAttempt
+	}
 	if op.JobRunID != a.RunID || op.Generation != a.Generation || a.Attempt != task.Attempt || task.TaskIndex != 0 || task.Status != "claimed" || !operationIsActive(op) || task.InstanceID == nil || *task.InstanceID != a.InstanceID || task.LeaseToken == nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now) || !operationJobDeadline(op, task).After(now) {
 		return ErrOperationStaleAttempt
 	}

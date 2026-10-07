@@ -37,10 +37,11 @@ func resolveWorkflowOperationInvocationVersion(ctx context.Context, store invoca
 		return inv, InvocationVersion{}, true, ErrOperationStaleAttempt
 	}
 	name := headers["X-Faas-Workflow-Step"]
-	attempt, err := strconv.Atoi(headers["X-Faas-Workflow-Attempt"])
-	if err != nil || attempt < 1 {
+	attemptValue, err := strconv.ParseInt(headers["X-Faas-Workflow-Attempt"], 10, 32)
+	if err != nil || attemptValue < 1 {
 		return inv, InvocationVersion{}, true, ErrInvalidArgument
 	}
+	attempt := int(attemptValue)
 	if _, err := reader.GetWorkflowOutboundAttempt(ctx, runID, name, attempt); err != nil {
 		return inv, InvocationVersion{}, true, ErrOperationStaleAttempt
 	}

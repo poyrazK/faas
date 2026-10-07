@@ -914,7 +914,7 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 			Attempt:   1,
 			CreatedAt: now,
 		}
-		if len(inputs) > 0 {
+		if i < len(inputs) {
 			t.InputID = inputs[i].ID
 			t.InputRef = inputs[i].Ref
 		}
