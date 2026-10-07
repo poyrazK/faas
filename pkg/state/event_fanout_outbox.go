@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -36,6 +37,7 @@ type PublishedEventWork struct {
 	DeliveredAt       time.Time
 	RecipientClaims   bool
 	routingRecipients map[string]*PublishedEventRecipientWork
+	replayRecipients  map[string]PublishedEventRecipient
 }
 
 // PublishedEventRecipient is an immutable source/type candidate captured when
@@ -178,8 +180,9 @@ type EventFanoutAttemptCursor struct {
 }
 
 const (
-	EventFanoutAttemptActionAttempt = "fanout_attempt"
-	EventFanoutAttemptActionReplay  = "operator_replay"
+	EventFanoutAttemptActionAttempt  = "fanout_attempt"
+	EventFanoutAttemptActionReplay   = "operator_replay"
+	EventFanoutAttemptActionBackfill = "backfill_attempt"
 )
 
 // EventFanoutReplayBatch reports a bounded operator replay. HasMore means
@@ -375,14 +378,11 @@ func (s *PgStore) PruneDeliveredPublishedEvents(ctx context.Context, before time
 	if limit <= 0 {
 		return 0, nil
 	}
-	result, err := s.pool.Exec(ctx, `DELETE FROM event_fanout_outbox WHERE id IN (
-		SELECT id FROM event_fanout_outbox WHERE state = 'delivered' AND delivered_at < $1
-		ORDER BY delivered_at, id LIMIT $2
-	)`, before.UTC(), limit)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	return sqlc.New().EventReplayBackfillPruneEnvelopes(ctx, s.pool, sqlc.EventReplayBackfillPruneEnvelopesParams{
+		BeforeAt:    pgtypeFromTime(before.UTC()),
+		JobCutoffAt: pgtypeFromTime(before.Add(PublishedEventIdentityRetention - api.EventReplayBackfillJobRetention).UTC()),
+		PageLimit:   int32(limit),
+	})
 }
 
 // ListEventFanoutFailuresForApp returns failed recipient outcomes newest
