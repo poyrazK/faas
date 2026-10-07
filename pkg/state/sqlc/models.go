@@ -1595,6 +1595,7 @@ type CustomerOperationWorkflowGuestClaim struct {
 	CapabilityDigest   string
 	DeadlineAt         pgtype.Timestamptz
 	BoundAt            pgtype.Timestamptz
+	DispatchStartedAt  pgtype.Timestamptz
 }
 
 type DataUpstream struct {
@@ -1817,6 +1818,15 @@ type DeploymentCodePinDeadline struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	ExpiresAt    interface{}
+}
+
+type DeploymentDependencyGate struct {
+	DeploymentID pgtype.UUID
+	Pins         []byte
+	StartedAt    pgtype.Timestamptz
+	DeadlineAt   pgtype.Timestamptz
+	Status       string
+	Blocker      string
 }
 
 type DeploymentImagePreparation struct {

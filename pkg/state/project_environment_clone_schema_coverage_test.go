@@ -20,6 +20,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"alert_historical_rollback_claims":        CloneSchemaOperational,
 		"deployment_recovery_lineage":             CloneSchemaOperational,
 		"deployment_rollback_operations":          CloneSchemaOperational,
+		"deployment_dependency_gates":             CloneSchemaOperational,
 		"app_environment_secret_refs":             CloneSchemaConfiguration,
 		"app_environment_secret_ref_suppressions": CloneSchemaConfiguration,
 		"app_environment_workload_intents":        CloneSchemaConfiguration,
@@ -134,6 +135,22 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 	}
 	if len(wanted) > 0 {
 		t.Fatalf("missing policy boundaries: %v", wanted)
+	}
+	dispatchReceiptColumnRegistered := false
+	for _, policy := range policies {
+		if policy.TableName != "customer_operation_workflow_guest_claims" {
+			continue
+		}
+		for _, column := range policy.Columns {
+			if column == "dispatch_started_at" {
+				dispatchReceiptColumnRegistered = true
+				break
+			}
+		}
+		break
+	}
+	if !dispatchReceiptColumnRegistered {
+		t.Fatal("customer operation workflow guest claims clone policy must retain dispatch_started_at receipts")
 	}
 	report, err := cloneSchemaCoverage(policies)
 	if err != nil || !report.Known || len(report.Hash) != 64 || len(report.Blockers) == 0 {

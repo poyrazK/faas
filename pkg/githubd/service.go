@@ -644,7 +644,19 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 
 	buildIDs := make([]string, 0, len(toEnqueue))
 	var deliveryErrors []error
+	toEnqueue, err = reconcile.OrderProjectDeploymentApps(toEnqueue)
+	if err != nil {
+		return result, fmt.Errorf("githubd: order dependency admission: %w", err)
+	}
+	selected, accepted := reconcile.ProjectDeploymentSelection(toEnqueue), make(map[string]bool, len(toEnqueue))
 	for _, app := range toEnqueue {
+		if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
+			s.Log.Warn("githubd: dependency admission blocked", "app_id", app.ID, "detail", blocker)
+			if deliveryID != "" {
+				deliveryErrors = append(deliveryErrors, fmt.Errorf("enqueue app %s: %s", app.ID, blocker))
+			}
+			continue
+		}
 		if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
 			if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
 				app.Slug, deploymentScope, githubdgrpc.CheckPhaseQueued, fmt.Sprintf("Deployment queued (scope: %s).", deploymentScope)); werr != nil {
@@ -705,13 +717,16 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			}
 			continue
 		}
-		buildIDs = append(buildIDs, build.ID)
+		if build.ID != "" {
+			buildIDs = append(buildIDs, build.ID)
+		}
+		accepted[strings.ToLower(app.WorkloadName)] = true
 		// Issue #432 phase 5: emit project.build.enqueued
 		// AFTER the bridge returns a non-empty build_id.
 		// The durable build row is the source of truth, so
 		// emitting on success keeps the audit paper trail
 		// consistent with the build pipeline.
-		if s.Reconcile != nil {
+		if s.Reconcile != nil && build.ID != "" {
 			s.Reconcile.EmitBuildEnqueued(ctx, project, app.ID, build.ID, build.DeploymentID, ev.After, ev.Repository.FullName, branch, sourcePath)
 		}
 	}
@@ -1778,7 +1793,9 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			if enqueueErr != nil {
 				return result, fmt.Errorf("githubd: enqueue preview build for %q: %w", preview.WorkloadName, enqueueErr)
 			}
-			result.BuildIDs = append(result.BuildIDs, build.ID)
+			if build.ID != "" {
+				result.BuildIDs = append(result.BuildIDs, build.ID)
+			}
 		}
 	}
 

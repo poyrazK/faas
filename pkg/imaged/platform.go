@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -26,6 +27,15 @@ func (h *Handler) prepareContainerImage(ctx context.Context, app state.App, dep 
 		if requiresSignature {
 			if err := h.verifyImageSignature(ctx, app, dep, resolved.SourceReference); err != nil {
 				return "", "", err
+			}
+		}
+		if !api.ValidDeploymentImage(ref) {
+			pins, ok := h.store.(state.DeploymentImageReferenceStore)
+			if !ok {
+				return "", "", fmt.Errorf("imaged: image reference pinning unavailable")
+			}
+			if err := pins.PinDeploymentImageReference(ctx, dep.ID, ref, resolved.SourceReference); err != nil {
+				return "", "", fmt.Errorf("imaged: pin image source: %w", err)
 			}
 		}
 		h.log.Info("imaged: image platform resolved", "deployment", dep.ID, "input_ref", ref, "source_ref", resolved.SourceReference, "image_ref", resolved.Reference, "image_digest", resolved.Digest)

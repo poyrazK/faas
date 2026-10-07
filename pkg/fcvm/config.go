@@ -193,6 +193,8 @@ type ColdBootSpec struct {
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
+	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget. 0 means use the
 	// vmmd default, preserving direct callers from before M-3.
 	StartupDeadlineS int

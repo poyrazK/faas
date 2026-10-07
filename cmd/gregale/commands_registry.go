@@ -44,7 +44,7 @@ import (
 func cmdRegistry(args []string) int {
 	parent, _ := lookupCliCommand("registry")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale registry <list|set|rm> --app <slug> [--registry <h>] [--user <u>] [--password-stdin]", "registry")
+		PrintUsage(os.Stderr, "usage: gregale registry <list|set|rm|published> --app <slug>", "registry")
 		return 1
 	}
 	switch args[0] {
@@ -54,6 +54,8 @@ func cmdRegistry(args []string) int {
 		return cmdRegistrySet(args[1:])
 	case subRm:
 		return cmdRegistryRm(args[1:])
+	case "published":
+		return cmdRegistryPublished(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown registry subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)

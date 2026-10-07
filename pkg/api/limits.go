@@ -144,6 +144,15 @@ const EnvironmentGitProtectedBranchEvidenceMaxAge = time.Minute
 // acknowledge the alias contract after node capability discovery.
 const VMMSecretAliasCleanupTimeout = 5 * time.Second
 
+// VMMImageHealthcheckCleanupTimeout bounds teardown of an unverified wake.
+const VMMImageHealthcheckCleanupTimeout = 5 * time.Second
+
+// Image command timing remains image-owned; these bound only host transport
+// and monitor recovery when no fresh guest outcome can be obtained.
+const ImageHealthcheckTransportAllowance = time.Second
+const ImageHealthcheckTransportRetryInterval = time.Second
+const ImageHealthcheckTransportFailures = 3
+
 const EnvironmentGitReviewedMergeReadTimeout = 30 * time.Second
 const EnvironmentGitApprovalEvidenceMaxBytes = 64 << 10
 const EnvironmentGitApprovalMaxReviews = 1000
@@ -648,6 +657,10 @@ const (
 	OperationExecutionRenewTimeout = 5 * time.Second
 	// Preserve the native workflow handler default for controlled dispatch.
 	OperationWorkflowHandlerDefaultTimeout = 30 * time.Second
+	// Typed workflow dispatch carries credentials only; the retained ledger
+	// supplies the handler body. Responses include base64 JSON envelope overhead.
+	OperationWorkflowDispatchBodyMaxBytes     int64 = 16 << 10
+	OperationWorkflowDispatchResponseMaxBytes int64 = 2*OperationSubmissionMaxBytes + OperationReportBodyMaxBytes
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -4526,6 +4539,12 @@ const (
 	// keeping the cap explicit limits malformed roster growth before graph
 	// validation.
 	WorkloadDependencyCapMax = SidecarCapMax + 1
+
+	// Project dependency release gates (ADR-685) are bounded independently
+	// of same-VM companion startup dependencies.
+	ProjectDependencyGateCapMax  = 100
+	ProjectDependencyGateTimeout = 15 * time.Minute
+	ProjectDependencyGatePoll    = 5 * time.Second
 
 	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps
 	// the wall-clock spent inside pkg/gateway.(*Handler).applyEdgeRuleJWT

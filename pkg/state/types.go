@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
+	"maps"
 	"net/netip"
 	"strings"
 	"time"
@@ -1685,6 +1686,14 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
+	// ProjectImage preserves declared image intent (including a mutable tag).
+	// Each deployment resolves and pins its own immutable source. Command
+	// replaces the image CMD, retaining its ENTRYPOINT; nil inherits CMD.
+	ProjectImage                string                  `json:"project_image,omitempty"`
+	ProjectImageCommand         []string                `json:"project_image_command,omitempty"`
+	ProjectImagePort            int                     `json:"project_image_port,omitempty"`
+	ProjectImageHealthcheck     *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
+	ProjectDependencyConditions map[string]string       `json:"project_dependency_conditions,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -1776,7 +1785,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1787,8 +1796,16 @@ func (m AppManifest) IsZero() bool {
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
+	if existing.ExecutionMode == "" && desired.ProjectImage != "" {
+		existing.ExecutionMode = desired.ExecutionMode
+	}
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
+	existing.ProjectImage = desired.ProjectImage
+	existing.ProjectImageCommand = desired.ProjectImageCommand
+	existing.ProjectImagePort = desired.ProjectImagePort
+	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
+	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
@@ -2752,6 +2769,7 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
+	DependencyGate      *DeploymentDependencyGate    `json:"dependency_gate,omitempty"`
 	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
 	RetryRequestedStage StageName                    `json:"retry_requested_stage,omitempty"`
 	RetryRestartReason  string                       `json:"retry_restart_reason,omitempty"`

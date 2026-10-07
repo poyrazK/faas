@@ -844,6 +844,7 @@ func (s *Server) ForceRestartInstance(ctx context.Context, req *scheddpb.ForceRe
 //   - liveness_n_consecutive — the catch-all "counter reached N"
 //   - liveness_infrastructure — transport miss correlated with local request pressure
 //   - liveness_process_exited — transport miss corroborated by a dead Firecracker process
+//   - image_healthcheck_unhealthy — the declared command failure threshold was reached
 //
 // Anything outside the closed set is still accepted by the
 // schedd side (the reason string flows verbatim into the
