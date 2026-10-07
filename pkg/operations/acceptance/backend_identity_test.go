@@ -216,6 +216,23 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
+	// The current operation fixture writes these later additions while the
+	// migration under test is specifically the execution-identity change.
+	if _, err := pool.Exec(t.Context(), `ALTER TABLE customer_operation_definitions ADD COLUMN IF NOT EXISTS workflow_snapshot jsonb`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `CREATE UNIQUE INDEX IF NOT EXISTS deployments_operation_code_pin_owner_idx ON deployments(id,app_id)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS customer_operation_code_pins (
+		deployment_id uuid PRIMARY KEY,
+		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+		expires_at timestamptz NOT NULL CHECK (isfinite(expires_at)),
+		CONSTRAINT customer_operation_code_pins_owner_fk FOREIGN KEY(deployment_id,app_id)
+			REFERENCES deployments(id,app_id) ON DELETE CASCADE
+	)`); err != nil {
+		t.Fatal(err)
+	}
 	s := state.NewPgStore(pool)
 	ctx := context.Background()
 	account, err := s.CreateAccount(ctx, "operations@example.com", api.PlanPro)
