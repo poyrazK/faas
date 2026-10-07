@@ -3227,7 +3227,11 @@ Cancel an active workflow run
 
 Send external event to a workflow run
 
-`gregale workflows events <run_id> <event_name>`
+`gregale workflows events [--payload <JSON>] <run_id> <event_name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--payload <JSON>` | JSON event payload (default {}) |  |
 
 
 ## dashboard

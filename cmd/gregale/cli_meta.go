@@ -1240,7 +1240,7 @@ var cliCommands = []cliCommand{
 			{Name: "resume", Short: "Resume eligible failed actions in a workflow run", Positionals: []string{"<run_id>"}, Flags: []cliFlag{{Name: "expected-resume-count", Short: "current resume_count shown by workflows status", Req: true, Value: "N"}, {Name: "idempotency-key", Short: "stable key for retrying the same resume request", Value: "KEY"}}},
 			{Name: "resumes", Short: "List continuation history for a workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "cancel", Short: "Cancel an active workflow run", Positionals: []string{"<run_id>"}},
-			{Name: "events", Short: "Send external event to a workflow run", Positionals: []string{"<run_id>", "<event_name>"}},
+			{Name: "events", Short: "Send external event to a workflow run", Positionals: []string{"<run_id>", "<event_name>"}, Flags: []cliFlag{{Name: "payload", Short: "JSON event payload (default {})", Value: "JSON"}}},
 		},
 	},
 	{
