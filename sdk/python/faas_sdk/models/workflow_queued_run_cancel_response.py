@@ -15,6 +15,8 @@ T = TypeVar("T", bound="WorkflowQueuedRunCancelResponse")
 
 @_attrs_define
 class WorkflowQueuedRunCancelResponse:
+    """Per-run results for a queued cancellation request."""
+
     outcomes: list[WorkflowQueuedRunCancelOutcome]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -62,16 +62,16 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 636 | [Tenant-scoped scheduled workflow starts](636-tenant-scheduled-workflow-starts.md) | accepted | Per-tenant schedule cursors and atomic tenant-bound run admission |
 | 637 | [Tenant-configurable workflow schedules](637-tenant-configurable-workflow-schedules.md) | accepted | Explicitly opt in to tenant-owned cadence, overlap, and enablement settings |
 | 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
-| 638 | [Fair workflow admission, history, and transient retries](638-workflow-admission-history-and-transient-retries.md) | accepted | Durable tenant/workflow fairness, atomic occurrence history, throttling retries, and workflow alert signals |
-| 639 | [Bounded workflow schedule catch-up](639-bounded-workflow-schedule-catch-up.md) | accepted | Opt-in latest-fire recovery with a bounded window and tenant parity |
-| 640 | [Workflow handler deployment pins](640-workflow-handler-deployment-pins.md) | accepted | Immutable handler code per run, private retention from event acceptance, and exact deployment routing |
-| 641 | [Fair bounded workflow dispatch](641-fair-bounded-workflow-dispatch.md) | accepted | Fill bounded execution slots and persist app/tenant service order with lease-aware dispatch caps |
-| 642 | [Automation queue health](642-automation-queue-health.md) | accepted | Current dispatch capacity and bounded aggregate waiting reasons, independent of the historical health window |
-| 643 | [Due automation backlog alerts](643-due-automation-backlog-alerts.md) | accepted | Opt-in webhook alerts for aged due work, including overdue parked wakes and expired leases |
-| 644 | [Workflow run diagnostics and resume preview](644-workflow-run-diagnostics-and-resume-preview.md) | accepted | Read-only queue and step diagnostics with precise recovery blockers and the existing continuation plan |
-| 645 | [Read-only workflow schedule preview](645-workflow-schedule-preview.md) | accepted | Timezone-aware upcoming fires and a what-if catch-up decision using the durable schedule cursor |
-| 646 | [Controlled workflow schedule replay](646-controlled-workflow-schedule-replay.md) | accepted | Explicit replay of selected skipped occurrences with definition pins, idempotency, and normal admission checks |
-| 647 | [Selected unstarted workflow cancellation](647-selected-unstarted-workflow-cancellation.md) | accepted | Preview and atomically cancel selected pending runs that have never started |
+| 646 | [Fair workflow admission, history, and transient retries](646-workflow-admission-history-and-transient-retries.md) | accepted | Durable tenant/workflow fairness, atomic occurrence history, throttling retries, and workflow alert signals |
+| 647 | [Bounded workflow schedule catch-up](647-bounded-workflow-schedule-catch-up.md) | accepted | Opt-in latest-fire recovery with a bounded window and tenant parity |
+| 648 | [Workflow handler deployment pins](648-workflow-handler-deployment-pins.md) | accepted | Immutable handler code per run, private retention from event acceptance, and exact deployment routing |
+| 649 | [Fair bounded workflow dispatch](649-fair-bounded-workflow-dispatch.md) | accepted | Fill bounded execution slots and persist app/tenant service order with lease-aware dispatch caps |
+| 650 | [Automation queue health](650-automation-queue-health.md) | accepted | Current dispatch capacity and bounded aggregate waiting reasons, independent of the historical health window |
+| 651 | [Due automation backlog alerts](651-due-automation-backlog-alerts.md) | accepted | Opt-in webhook alerts for aged due work, including overdue parked wakes and expired leases |
+| 652 | [Workflow run diagnostics and resume preview](652-workflow-run-diagnostics-and-resume-preview.md) | accepted | Read-only queue and step diagnostics with precise recovery blockers and the existing continuation plan |
+| 653 | [Read-only workflow schedule preview](653-workflow-schedule-preview.md) | accepted | Timezone-aware upcoming fires and a what-if catch-up decision using the durable schedule cursor |
+| 654 | [Controlled workflow schedule replay](654-controlled-workflow-schedule-replay.md) | accepted | Explicit replay of selected skipped occurrences with definition pins, idempotency, and normal admission checks |
+| 655 | [Selected unstarted workflow cancellation](655-selected-unstarted-workflow-cancellation.md) | accepted | Preview and atomically cancel selected pending runs that have never started |
 | 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
 | 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
 | 620 | [Protection-aware object lifecycle deletion](620-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |

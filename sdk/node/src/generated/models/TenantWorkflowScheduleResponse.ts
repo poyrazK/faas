@@ -13,7 +13,7 @@ export type TenantWorkflowScheduleResponse = {
    */
   schedule: string;
   /**
-   * Effective IANA timezone.
+   * Effective IANA timezone inherited from the published workflow.
    */
   timezone: string;
   overlap: 'skip' | 'allow';

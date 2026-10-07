@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Eligibility or result for replaying one schedule occurrence.
+ */
 export type WorkflowScheduleReplayOutcome = {
   occurrence_id: string;
   platform_tenant_id?: string;

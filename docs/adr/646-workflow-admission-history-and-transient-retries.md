@@ -1,4 +1,4 @@
-# ADR-638: Fair workflow schedule admission, history, and transient retries
+# ADR-646: Fair workflow schedule admission, history, and transient retries
 
 - **Status:** accepted
 - **Date:** 2026-10-07

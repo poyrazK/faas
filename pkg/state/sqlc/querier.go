@@ -799,7 +799,7 @@ type Querier interface {
 	// form (PR-C).
 	GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTrustPolicyParams) (GetOIDCTrustPolicyRow, error)
 	GetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg GetOutboundBindingProbePolicyParams) (GetOutboundBindingProbePolicyRow, error)
-	// ADR-644: no row/advisory locks or state transitions in diagnostic snapshots.
+	// ADR-652: no row/advisory locks or state transitions in diagnostic snapshots.
 	GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, arg GetOwnedWorkflowDiagnosticsRunParams) (WorkflowRun, error)
 	// Read the row after a detector upsert so the notification reflects a
 	// preserved acknowledgement/dismissal rather than assuming active state.
@@ -839,7 +839,7 @@ type Querier interface {
 	GetWebhookAutomationBinding(ctx context.Context, db DBTX, endpointID pgtype.UUID) (WorkflowWebhookBinding, error)
 	GetWebhookAutomationReceipt(ctx context.Context, db DBTX, arg GetWebhookAutomationReceiptParams) (GetWebhookAutomationReceiptRow, error)
 	GetWorkflowAutomationHealthSummary(ctx context.Context, db DBTX, arg GetWorkflowAutomationHealthSummaryParams) (GetWorkflowAutomationHealthSummaryRow, error)
-	// ADR-642: live diagnostics share the health transaction's observation time.
+	// ADR-650: live diagnostics share the health transaction's observation time.
 	// Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
 	GetWorkflowAutomationQueueHealth(ctx context.Context, db DBTX, arg GetWorkflowAutomationQueueHealthParams) (GetWorkflowAutomationQueueHealthRow, error)
 	GetWorkflowAutomationRevision(ctx context.Context, db DBTX, arg GetWorkflowAutomationRevisionParams) (WorkflowAutomationRevision, error)
@@ -1722,7 +1722,7 @@ type Querier interface {
 	LockUDPListenerAppOwner(ctx context.Context, db DBTX, appID string) (string, error)
 	LockWebhookAutomationEndpoint(ctx context.Context, db DBTX, arg LockWebhookAutomationEndpointParams) (InboundWebhookEndpoint, error)
 	LockWorkflowActionAdmission(ctx context.Context, db DBTX, workflowKey string) error
-	// ADR-641: serialize only the short claim transaction, never handler execution.
+	// ADR-649: serialize only the short claim transaction, never handler execution.
 	LockWorkflowDispatchFairness(ctx context.Context, db DBTX) error
 	LockWorkflowGuardRun(ctx context.Context, db DBTX, runID pgtype.UUID) (LockWorkflowGuardRunRow, error)
 	LockWorkflowGuardStep(ctx context.Context, db DBTX, arg LockWorkflowGuardStepParams) (LockWorkflowGuardStepRow, error)

@@ -944,7 +944,7 @@ export class WorkflowsService {
   /**
    * Preview a deployed workflow schedule.
    * Read-only simulation of upcoming local fire times and the next catch-up decision using the durable cursor. Fire times follow Gregale daylight-saving rules. No run is admitted or cursor changed.
-   * @returns WorkflowSchedulePreviewResponse Read-only schedule simulation.
+   * @returns WorkflowSchedulePreviewResponse Preview evaluated for this app's active deployment.
    * @throws ApiError
    */
   public static getWorkflowSchedulePreview({
@@ -963,7 +963,7 @@ export class WorkflowsService {
      */
     name: string,
     /**
-     * Hypothetical evaluator time in RFC3339; defaults to now and is bounded to five years in either direction.
+     * RFC3339 time for evaluating future fire times and catch-up; defaults to the current time and is limited to five years from now.
      */
     at?: string,
     /**
@@ -971,7 +971,7 @@ export class WorkflowsService {
      */
     since?: string,
     /**
-     * Upcoming occurrences to return.
+     * Maximum number of future local fire times to include.
      */
     count?: number,
   }): CancelablePromise<WorkflowSchedulePreviewResponse> {

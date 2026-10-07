@@ -19,6 +19,8 @@ T = TypeVar("T", bound="WorkflowScheduleReplayOutcome")
 
 @_attrs_define
 class WorkflowScheduleReplayOutcome:
+    """Eligibility or result for replaying one schedule occurrence."""
+
     occurrence_id: UUID
     outcome: WorkflowScheduleReplayOutcomeOutcome
     platform_tenant_id: UUID | Unset = UNSET

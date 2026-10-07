@@ -1,4 +1,4 @@
-# ADR-641: Fair bounded workflow dispatch
+# ADR-649: Fair bounded workflow dispatch
 
 - **Status:** accepted
 - **Date:** 2026-10-07

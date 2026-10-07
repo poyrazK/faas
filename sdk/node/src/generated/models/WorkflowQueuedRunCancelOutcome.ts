@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Eligibility or result for cancelling one queued workflow run.
+ */
 export type WorkflowQueuedRunCancelOutcome = {
   run_id: string;
   workflow_name?: string;

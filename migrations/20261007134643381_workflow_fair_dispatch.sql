@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-641: scheduling service order survives worker restart and history pruning.
+-- ADR-649: scheduling service order survives worker restart and history pruning.
 CREATE TABLE workflow_dispatch_cursors (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE
         CHECK (app_id <> '00000000-0000-0000-0000-000000000000'),

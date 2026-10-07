@@ -14999,7 +14999,7 @@ WITH owned_apps AS (
  SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid
  AND (sqlc.narg(app_id)::uuid IS NULL OR id = sqlc.narg(app_id)::uuid)
 ), due_runs AS (
- -- Same wake/lease eligibility as automation queue health (ADR-642/643).
+ -- Same wake/lease eligibility as automation queue health (ADR-650/643).
  SELECT r.created_at,CASE WHEN r.status='running'
   THEN coalesce(r.lease_until,r.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))
   ELSE r.scheduled_for END AS due_at
@@ -15026,7 +15026,7 @@ VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.narg(platform_tenant_id)::
  sqlc.arg(workflow_name)::text,sqlc.arg(status)::text,sqlc.arg(input)::jsonb,sqlc.arg(definition_snapshot)::jsonb,sqlc.arg(scheduled_for)::timestamptz)
 RETURNING created_at,updated_at;
 
--- ADR-641: serialize only the short claim transaction, never handler execution.
+-- ADR-649: serialize only the short claim transaction, never handler execution.
 -- name: LockWorkflowDispatchFairness :exec
 SELECT pg_advisory_xact_lock(hashtextextended('workflow-dispatch-fairness',0));
 
@@ -15084,7 +15084,7 @@ SELECT sqlc.arg(app_id)::uuid,NULL::uuid,'app',at FROM claimed_at
 UNION ALL SELECT sqlc.arg(app_id)::uuid,sqlc.narg(platform_tenant_id)::uuid,coalesce(sqlc.narg(platform_tenant_id)::uuid::text,'unscoped'),at FROM claimed_at
 ON CONFLICT(app_id,scope_key) DO UPDATE SET last_claimed_at=excluded.last_claimed_at;
 
--- ADR-642: live diagnostics share the health transaction's observation time.
+-- ADR-650: live diagnostics share the health transaction's observation time.
 -- Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
 -- name: GetWorkflowAutomationQueueHealth :one
 WITH clock AS MATERIALIZED (SELECT now() AS at),
@@ -15146,7 +15146,7 @@ SELECT clock.at::timestamptz AS observed_at,app_claims.running AS app_running_co
  (SELECT count(*) FROM classified WHERE reason='workflow_capacity')::bigint AS workflow_capacity
 FROM clock CROSS JOIN app_claims;
 
--- ADR-644: no row/advisory locks or state transitions in diagnostic snapshots.
+-- ADR-652: no row/advisory locks or state transitions in diagnostic snapshots.
 -- name: GetOwnedWorkflowDiagnosticsRun :one
 SELECT r.* FROM workflow_runs r JOIN apps a ON a.id=r.app_id
 WHERE r.id=sqlc.arg(run_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid

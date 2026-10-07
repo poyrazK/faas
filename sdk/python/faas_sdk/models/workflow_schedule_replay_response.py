@@ -15,6 +15,8 @@ T = TypeVar("T", bound="WorkflowScheduleReplayResponse")
 
 @_attrs_define
 class WorkflowScheduleReplayResponse:
+    """Per-occurrence results for a controlled schedule replay request."""
+
     outcomes: list[WorkflowScheduleReplayOutcome]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

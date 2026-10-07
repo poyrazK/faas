@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Selection of workflow runs for a preview or unstarted cancellation.
+ */
 export type WorkflowQueuedRunCancelRequest = {
   run_ids: Array<string>;
   /**

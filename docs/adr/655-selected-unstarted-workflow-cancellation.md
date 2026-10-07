@@ -1,4 +1,4 @@
-# ADR-647 · Selected unstarted workflow cancellation
+# ADR-655 · Selected unstarted workflow cancellation
 
 - **Status:** accepted
 - **Date:** 2026-10-07

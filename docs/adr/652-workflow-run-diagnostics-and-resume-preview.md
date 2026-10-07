@@ -1,8 +1,8 @@
-# ADR-644: Workflow run diagnostics and resume preview
+# ADR-652: Workflow run diagnostics and resume preview
 
 - **Status:** accepted
 - **Date:** 2026-10-07
-- **Extends:** ADR-573 safe continuation, ADR-640 deployment pins and ADR-642 queue health
+- **Extends:** ADR-573 safe continuation, ADR-648 deployment pins and ADR-650 queue health
 - **Decision:** Add read-only `GET /v1/workflows/runs/{id}/diagnostics` and the
   corresponding tenant-self route. `gregale workflows diagnose <run_id>` prints
   the same observation and recovery preview; Go, Node and Python SDKs expose

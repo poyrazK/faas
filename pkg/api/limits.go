@@ -53,7 +53,9 @@ const (
 	EventReplayBackfillItemsPageMax        = 100
 	EventReplayBackfillItemsCursorMaxBytes = 4096
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
-// Workflow reliability bounds (ADR-638, ADR-639, ADR-641).
+)
+
+// Workflow reliability bounds (ADR-646, ADR-647, ADR-649).
 const (
 	WorkflowDispatchSlots                = 4
 	WorkflowDispatchBatchPerSlot         = 8

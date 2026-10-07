@@ -11,6 +11,8 @@ T = TypeVar("T", bound="WorkflowScheduleReplayRequest")
 
 @_attrs_define
 class WorkflowScheduleReplayRequest:
+    """Selection of skipped schedule occurrence IDs to preview or replay."""
+
     occurrence_ids: list[UUID]
 
     def to_dict(self) -> dict[str, Any]:

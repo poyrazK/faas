@@ -42057,23 +42057,6 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 --
 
 --
--- Name: customer_operation_workflow_claims; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.customer_operation_workflow_claims (
-    workflow_run_id uuid NOT NULL,
-    operation_id uuid NOT NULL,
-    generation integer NOT NULL,
-    execution_kind text DEFAULT 'workflow'::text NOT NULL,
-    attempt integer NOT NULL,
-    capability_digest text NOT NULL,
-    lease_until timestamp with time zone NOT NULL,
-    CONSTRAINT customer_operation_workflow_claims_attempt_check CHECK ((attempt > 0)),
-    CONSTRAINT customer_operation_workflow_claims_capability_digest_check CHECK ((capability_digest ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT customer_operation_workflow_claims_execution_kind_check CHECK ((execution_kind = 'workflow'::text)),
-    CONSTRAINT customer_operation_workflow_claims_generation_check CHECK ((generation > 0)),
-    CONSTRAINT customer_operation_workflow_claims_lease_until_check CHECK (isfinite(lease_until))
-);
 
 
 --

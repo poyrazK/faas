@@ -28,7 +28,7 @@ class TenantWorkflowScheduleResponse:
     schedule: str
     """Five-field cron expression."""
     timezone: str
-    """Effective IANA timezone."""
+    """Effective IANA timezone inherited from the published workflow."""
     overlap: TenantWorkflowScheduleResponseOverlap
     enabled: bool
     tenant_configurable: bool

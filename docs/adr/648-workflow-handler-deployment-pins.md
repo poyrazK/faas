@@ -1,8 +1,8 @@
-# ADR-640: Workflow handler deployment pins
+# ADR-648: Workflow handler deployment pins
 
 - **Status:** accepted
 - **Date:** 2026-10-07
-- **Extends:** ADR-081, ADR-487, ADR-638 and ADR-639
+- **Extends:** ADR-081, ADR-487, ADR-646 and ADR-647
 - **Decision:** Newly accepted manual, application/tenant schedule, internal event,
   and verified webhook runs capture an immutable `deployment_id` alongside their
   definition snapshot. Every same-app handler, condition check, failure handler,

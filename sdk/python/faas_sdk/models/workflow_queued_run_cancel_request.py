@@ -13,6 +13,8 @@ T = TypeVar("T", bound="WorkflowQueuedRunCancelRequest")
 
 @_attrs_define
 class WorkflowQueuedRunCancelRequest:
+    """Selection of workflow runs for a preview or unstarted cancellation."""
+
     run_ids: list[UUID]
     workflow_name: str | Unset = UNSET
     """Optional exact workflow-name guard for the selection."""

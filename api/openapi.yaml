@@ -17724,7 +17724,7 @@ paths:
       parameters:
         - name: at
           in: query
-          description: Hypothetical evaluator time in RFC3339; defaults to now and is bounded to five years in either direction.
+          description: RFC3339 time for evaluating future fire times and catch-up; defaults to the current time and is limited to five years from now.
           schema: { type: string, format: date-time }
         - name: since
           in: query
@@ -17732,11 +17732,11 @@ paths:
           schema: { type: string, format: date-time }
         - name: count
           in: query
-          description: Upcoming occurrences to return.
+          description: Maximum number of future local fire times to include.
           schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
       responses:
         '200':
-          description: Read-only schedule simulation.
+          description: Preview evaluated for this app's active deployment.
           headers:
             Cache-Control: { schema: { type: string, const: no-store } }
           content:
@@ -43201,6 +43201,7 @@ components:
           items: { $ref: '#/components/schemas/WorkflowScheduleOccurrenceResponse' }
         next_cursor: { type: string, format: uuid }
     WorkflowScheduleReplayRequest:
+      description: Selection of skipped schedule occurrence IDs to preview or replay.
       type: object
       required: [occurrence_ids]
       additionalProperties: false
@@ -43212,6 +43213,7 @@ components:
           uniqueItems: true
           items: { type: string, format: uuid }
     WorkflowScheduleReplayOutcome:
+      description: Eligibility or result for replaying one schedule occurrence.
       type: object
       required: [occurrence_id, outcome]
       properties:
@@ -43224,6 +43226,7 @@ components:
           enum: [eligible, replayed, already_replayed, occurrence_not_found, not_skipped, history_not_replayable, deployment_changed, definition_changed, schedule_disabled, overlap_active, quota_full, tenant_unavailable, target_unavailable, plan_unavailable]
         replay_run_id: { type: string, format: uuid }
     WorkflowScheduleReplayResponse:
+      description: Per-occurrence results for a controlled schedule replay request.
       type: object
       required: [outcomes]
       properties:
@@ -43231,6 +43234,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/WorkflowScheduleReplayOutcome' }
     WorkflowQueuedRunCancelRequest:
+      description: Selection of workflow runs for a preview or unstarted cancellation.
       type: object
       additionalProperties: false
       required: [run_ids]
@@ -43246,6 +43250,7 @@ components:
           maxLength: 128
           description: Optional exact workflow-name guard for the selection.
     WorkflowQueuedRunCancelOutcome:
+      description: Eligibility or result for cancelling one queued workflow run.
       type: object
       required: [run_id, outcome]
       properties:
@@ -43261,6 +43266,7 @@ components:
         created_at: { type: string, format: date-time }
         cancelled_at: { type: string, format: date-time }
     WorkflowQueuedRunCancelResponse:
+      description: Per-run results for a queued cancellation request.
       type: object
       required: [outcomes]
       properties:
@@ -43344,7 +43350,7 @@ components:
         workflow_name: { type: string }
         deployment_id: { type: string, format: uuid }
         schedule: { type: string, description: Five-field cron expression. }
-        timezone: { type: string, description: Effective IANA timezone. }
+        timezone: { type: string, description: Effective IANA timezone inherited from the published workflow. }
         overlap: { type: string, enum: [skip, allow] }
         catch_up: { type: string, enum: [skip, latest], description: Inherited owner-controlled recovery policy. }
         catch_up_window: { type: string, description: Inherited recovery duration, present only for latest. }

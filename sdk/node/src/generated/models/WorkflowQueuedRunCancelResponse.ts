@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { WorkflowQueuedRunCancelOutcome } from './WorkflowQueuedRunCancelOutcome.js';
+/**
+ * Per-run results for a queued cancellation request.
+ */
 export type WorkflowQueuedRunCancelResponse = {
   outcomes: Array<WorkflowQueuedRunCancelOutcome>;
 };

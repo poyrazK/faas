@@ -1,4 +1,4 @@
--- ADR-643: opt-in notification for sustained due automation backlog.
+-- ADR-651: opt-in notification for sustained due automation backlog.
 -- +goose Up
 ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_metric_chk;
 ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_chk CHECK (metric IN (

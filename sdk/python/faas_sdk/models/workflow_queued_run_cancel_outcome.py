@@ -23,6 +23,8 @@ T = TypeVar("T", bound="WorkflowQueuedRunCancelOutcome")
 
 @_attrs_define
 class WorkflowQueuedRunCancelOutcome:
+    """Eligibility or result for cancelling one queued workflow run."""
+
     run_id: UUID
     outcome: WorkflowQueuedRunCancelOutcomeOutcome
     """Preview classification or the final result after the atomic cancellation recheck."""

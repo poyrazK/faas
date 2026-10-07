@@ -1,8 +1,8 @@
-# ADR-639: Bounded workflow schedule catch-up
+# ADR-647: Bounded workflow schedule catch-up
 
 - **Status:** accepted
 - **Date:** 2026-10-07
-- **Extends:** ADR-487, ADR-637 and ADR-638
+- **Extends:** ADR-487, ADR-637 and ADR-646
 - **Decision:** Schedule triggers keep `catch_up: skip` as the default. Owners
   may opt into `catch_up: latest`, selecting at most one unconsumed occurrence
   inside `catch_up_window` after a gap in eligible evaluation. The window defaults

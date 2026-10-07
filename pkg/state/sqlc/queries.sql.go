@@ -15339,7 +15339,7 @@ type GetOwnedWorkflowDiagnosticsRunParams struct {
 	TenantID  pgtype.UUID
 }
 
-// ADR-644: no row/advisory locks or state transitions in diagnostic snapshots.
+// ADR-652: no row/advisory locks or state transitions in diagnostic snapshots.
 func (q *Queries) GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, arg GetOwnedWorkflowDiagnosticsRunParams) (WorkflowRun, error) {
 	row := db.QueryRow(ctx, getOwnedWorkflowDiagnosticsRun, arg.RunID, arg.AccountID, arg.TenantID)
 	var i WorkflowRun
@@ -15902,7 +15902,7 @@ type GetWorkflowAutomationQueueHealthRow struct {
 	WorkflowCapacity    int64
 }
 
-// ADR-642: live diagnostics share the health transaction's observation time.
+// ADR-650: live diagnostics share the health transaction's observation time.
 // Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
 func (q *Queries) GetWorkflowAutomationQueueHealth(ctx context.Context, db DBTX, arg GetWorkflowAutomationQueueHealthParams) (GetWorkflowAutomationQueueHealthRow, error) {
 	row := db.QueryRow(ctx, getWorkflowAutomationQueueHealth,
@@ -33379,7 +33379,7 @@ const lockWorkflowDispatchFairness = `-- name: LockWorkflowDispatchFairness :exe
 SELECT pg_advisory_xact_lock(hashtextextended('workflow-dispatch-fairness',0))
 `
 
-// ADR-641: serialize only the short claim transaction, never handler execution.
+// ADR-649: serialize only the short claim transaction, never handler execution.
 func (q *Queries) LockWorkflowDispatchFairness(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, lockWorkflowDispatchFairness)
 	return err
@@ -61282,7 +61282,7 @@ WITH owned_apps AS (
  SELECT id FROM apps WHERE account_id = $3::uuid
  AND ($4::uuid IS NULL OR id = $4::uuid)
 ), due_runs AS (
- -- Same wake/lease eligibility as automation queue health (ADR-642/643).
+ -- Same wake/lease eligibility as automation queue health (ADR-650/643).
  SELECT r.created_at,CASE WHEN r.status='running'
   THEN coalesce(r.lease_until,r.updated_at+($5::bigint*interval '1 millisecond'))
   ELSE r.scheduled_for END AS due_at

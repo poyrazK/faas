@@ -1,8 +1,8 @@
-# ADR-642: Automation queue health
+# ADR-650: Automation queue health
 
 - **Status:** accepted
 - **Date:** 2026-10-07
-- **Extends:** ADR-641 and the automation health API
+- **Extends:** ADR-649 and the automation health API
 - **Decision:** Add an optional `queue` snapshot to automation health. Historical
   counts retain their existing inclusive creation window. Queue diagnostics use
   the current ledger, independently of that window, and expose an observation
@@ -43,7 +43,7 @@
   New APIs return the optional queue object; clients tolerate older responses
   without it. CLI displays current diagnostics and reports their absence on
   older servers. OpenAPI and generated Go-facing DTO, Node and Python models
-  carry the additive shape. Apply ADR-641's worker rollout before relying on
+  carry the additive shape. Apply ADR-649's worker rollout before relying on
   the reported dispatch budgets as enforcement guarantees.
 
 This is a read-only control-plane feature; it introduces no VM lifecycle changes.

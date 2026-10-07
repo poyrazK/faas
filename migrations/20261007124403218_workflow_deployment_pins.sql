@@ -1,5 +1,5 @@
 -- +goose Up
--- ADR-640: workflow-private code retention never extends public revision TTLs.
+-- ADR-648: workflow-private code retention never extends public revision TTLs.
 ALTER TABLE workflow_runs ADD COLUMN deployment_id uuid
     CHECK (deployment_id IS NULL OR deployment_id <> '00000000-0000-0000-0000-000000000000');
 ALTER TABLE workflow_runs ADD CONSTRAINT workflow_runs_deployment_owner_fk
