@@ -31,22 +31,26 @@ func (p *cloneCreationReceiptProvider) CaptureSnapshotWithCreationReceipt(ctx co
 }
 func (p *cloneCreationReceiptProvider) ObserveSnapshotCreation(_ context.Context, _ managedpostgres.SnapshotCaptureRequest, a managedpostgres.CreationAcknowledgement) (managedpostgres.DatabaseSnapshot, error) {
 	p.ownedReads++
-	if a != p.accepted {
+	if !p.ownsCreation(a) {
 		return managedpostgres.DatabaseSnapshot{}, managedpostgres.ErrConflict
 	}
 	return managedpostgres.DatabaseSnapshot{}, managedpostgres.ErrUnavailable
 }
 func (p *cloneCreationReceiptProvider) DeleteSnapshotCreation(ctx context.Context, _ managedpostgres.SnapshotCaptureRequest, a managedpostgres.CreationAcknowledgement, cleanup managedpostgres.CreationCleanup) (managedpostgres.DeleteResult, error) {
+	if !p.ownsCreation(a) {
+		return managedpostgres.DeleteResult{}, managedpostgres.ErrConflict
+	}
 	if !cleanup.Started {
 		if err := cleanup.RecordStarted(ctx); err != nil {
 			return managedpostgres.DeleteResult{}, err
 		}
 	}
 	p.ownedDeletes++
-	if a != p.accepted {
-		return managedpostgres.DeleteResult{}, managedpostgres.ErrConflict
-	}
 	return managedpostgres.DeleteResult{Done: !p.pending}, nil
+}
+
+func (p *cloneCreationReceiptProvider) ownsCreation(a managedpostgres.CreationAcknowledgement) bool {
+	return a.ProviderResourceID == p.accepted.ProviderResourceID && a.SourceResourceID == p.accepted.SourceResourceID && a.CreatedAt.Equal(p.accepted.CreatedAt)
 }
 
 // Regression: missing capture metadata prevented cleanup despite a successful
