@@ -318,7 +318,8 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"EventReplayPreviewOptions": true, // client-only query options; the wire parameters are declared on the route
+	"EventReplayPreviewOptions":     true, // client-only query options; the wire parameters are declared on the route
+	"EventReplayBackfillItemsQuery": true, // client-only pagination/filter options; the wire parameters are declared on the route
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
