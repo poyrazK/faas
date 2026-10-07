@@ -20,6 +20,41 @@ import (
 	"time"
 )
 
+// MCP task admission defaults are starter-owned namespace limits, not plan
+// quotas. Customer PostgreSQL stores enforce these atomically across replicas.
+const (
+	MCPTaskDefaultMaxOutstanding         = 1000
+	MCPTaskDefaultMaxOutstandingPerOwner = 100
+	MCPPolicyMaxEntries                  = 256
+	MCPPolicyMaxKeyBytes                 = 4096
+	MCPPolicyMaxRequestBytes             = 1 << 20
+	MCPReleaseMaxRoles                   = 32
+	MCPReleasePolicyMaxBytes             = 64 << 10
+)
+
+// Historical replay preview bounds retained-envelope reads (ADR-645).
+const (
+	EventReplayPreviewPageDefault    = 50
+	EventReplayPreviewPageMax        = 100
+	EventReplayPreviewCursorMaxBytes = 4096
+	EventReplayPreviewReadTimeout    = 5 * time.Second
+)
+
+// Historical backfills pin only the bounded settled-receipt retention window.
+const (
+	EventReplayBackfillMaxRange            = 30 * 24 * time.Hour
+	EventReplayBackfillPageSize            = 100
+	EventReplayBackfillInFlightMax         = 100
+	EventReplayBackfillActiveJobsMax       = 3
+	EventReplayBackfillJobRetention        = 30 * 24 * time.Hour
+	EventReplayBackfillPruneBatch          = 100
+	EventReplayBackfillRetryMax            = 100
+	EventReplayBackfillItemsPageDefault    = 50
+	EventReplayBackfillItemsPageMax        = 100
+	EventReplayBackfillItemsCursorMaxBytes = 4096
+	EventReplayBackfillRequestTimeout      = 5 * time.Second
+)
+
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
 const (
 	EventBacklogPageDefault      = 100

@@ -7466,12 +7466,13 @@ type EdgeRuleCORSAction struct {
 // algs. RequiredClaims enforces a key=value check on top of the
 // standard iss/aud/exp/nbf validation.
 type EdgeRuleJWTAction struct {
-	Issuer                         string            `json:"issuer"`
-	Audience                       []string          `json:"audience,omitempty"`
-	JWKSURL                        string            `json:"jwks_url"`
-	Algorithms                     []string          `json:"algorithms"`
-	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
-	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
+	Issuer                         string                 `json:"issuer"`
+	Audience                       []string               `json:"audience,omitempty"`
+	JWKSURL                        string                 `json:"jwks_url"`
+	Algorithms                     []string               `json:"algorithms"`
+	RequiredClaims                 map[string]string      `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string                 `json:"platform_tenant_external_ref_claim,omitempty"`
+	MCP                            *api.MCPResourcePolicy `json:"mcp,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =

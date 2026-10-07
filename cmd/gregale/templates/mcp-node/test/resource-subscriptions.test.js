@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { createApp } from '../app.js';
+import { generateKeyPair, SignJWT } from 'jose';
+import { setTimeout as delay } from 'node:timers/promises';
 
 function taskSnapshot(taskID, status, result) {
   return {
@@ -37,6 +39,7 @@ function createFakeTaskRuntime(taskID) {
         if (watcher.taskIDs.has(taskID)) watcher.onTask(structuredClone(current));
       }
     },
+    watcherCount() { return watchers.size; },
   };
 }
 
@@ -140,6 +143,62 @@ test('task resources acknowledge authorized URIs and publish changed task conten
   await messages.cancel();
   abort.abort();
 });
+
+for (const filter of ['taskIds', 'resourceSubscriptions']) {
+  test(`authenticated ${filter} subscriptions close at token expiry and release watchers`, async t => {
+    const taskID = randomUUID();
+    const runtime = createFakeTaskRuntime(taskID);
+    const { privateKey, publicKey } = await generateKeyPair('RS256');
+    const expiresAt = Math.floor(Date.now() / 1000) + 3;
+    const token = await new SignJWT({ scope: 'mcp:tools' })
+      .setProtectedHeader({ alg: 'RS256' }).setSubject('alice')
+      .setIssuer('https://issuer.example').setAudience('https://mcp.example/mcp')
+      .setExpirationTime(expiresAt).sign(privateKey);
+    const { app, handler, closeTaskSubscriptions } = createApp({
+      version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
+      legacy: false, allowed_origins: [], tasks: { enabled: true },
+      auth: { mode: 'external-oauth', issuer: 'https://issuer.example',
+        jwks_url: 'https://issuer.example/jwks', resource: 'https://mcp.example/mcp',
+        scopes: ['mcp:tools'], tool_scopes: { build_report: [] },
+        resource_scopes: { 'task://tasks/{taskId}': [] } },
+    }, { taskRuntime: runtime, keyResolver: publicKey, log() {} });
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(async () => {
+      closeTaskSubscriptions();
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+      await handler.close();
+    });
+    const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
+    const response = await fetch(endpoint, {
+      method: 'POST', headers: { ...protocolHeaders('subscriptions/listen'), authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 31, method: 'subscriptions/listen', params: {
+        notifications: { [filter]: [filter === 'taskIds' ? taskID : `task://tasks/${taskID}`] },
+        _meta: { ...modernEnvelope(), 'io.modelcontextprotocol/clientCapabilities': { extensions: { 'io.modelcontextprotocol/tasks': {} } } },
+      } }),
+    });
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    await reader.read();
+    assert.equal(runtime.watcherCount(), 1);
+    await delay(Math.max(0, expiresAt * 1000 - Date.now()) + 100);
+    runtime.update(taskSnapshot(taskID, 'completed', { content: [{ type: 'text', text: 'private-result-marker' }] }));
+    const remainder = [];
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      remainder.push(Buffer.from(chunk.value));
+    }
+    assert.equal(Buffer.concat(remainder).toString().includes('private-result-marker'), false);
+    assert.equal(runtime.watcherCount(), 0);
+    const fresh = await fetch(endpoint, {
+      method: 'POST', headers: { ...protocolHeaders('tasks/get'), authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 32, method: 'tasks/get', params: { taskId: taskID, _meta: modernEnvelope() } }),
+    });
+    assert.equal(fresh.status, 401);
+  });
+}
 
 test('task resource subscriptions do not acknowledge unknown task URIs', async t => {
   const runtime = createFakeTaskRuntime(randomUUID());

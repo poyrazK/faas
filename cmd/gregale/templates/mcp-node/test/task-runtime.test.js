@@ -135,3 +135,22 @@ test('web process startup exposes task APIs without claiming work', async () => 
   assert.equal(runtimeOptions.keepAlive, false);
   await service.close();
 });
+
+test('an external observer needs no payload key and never initializes schema or workers', async () => {
+  let publishedSettings;
+  let reads = 0;
+  const env = { ...baseEnv, MCP_TASK_NAMESPACE: 'storefront-prod', MCP_TASKS_SCALING_APP_SLUG: 'storefront-worker', MCP_TASKS_SCALING_TOKEN: 'metrics-secret' };
+  delete env.MCP_TASK_OWNER_KEY;
+  const service = await startMcpTaskRuntime(config, {
+    env, role: 'observer',
+    createPool: () => ({ async end() {} }),
+    createStore() { assert.fail('observer must not access encrypted task store'); },
+    createRuntime() { assert.fail('observer must not initialize a worker'); },
+    createObserver: () => ({ async queueMetrics() { reads++; return { outstandingTasks: 2, oldestAgeSeconds: 1 }; } }),
+    createMetricsPublisher(options) { publishedSettings = options; return { async close() {} }; },
+  });
+  assert.equal(reads, 1);
+  assert.equal(publishedSettings.keepAlive, true);
+  assert.equal(service.taskRuntime, undefined);
+  await service.close();
+});

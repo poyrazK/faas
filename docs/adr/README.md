@@ -65,6 +65,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 641 | [Edge health follows the last instance](641-edge-health-follows-last-instance.md) | proposed | A parked app's edge health answer comes from its last instance (only FAILED is unhealthy), cached 15 s per gateway, instead of the process-local wake outcome that went unknown after every restart |
 | 642 | [Restore-safe guest timers](642-restore-safe-guest-timers.md) | proposed | Guests boot with kvm-clock and the one-shot LAPIC timer because Firecracker 1.7 restores lost TSC-deadline interrupts; backing identity v2 refuses captures booted with the old profile |
 | 643 | [Park-to-admit for refused wakes](643-park-to-admit-refused-wakes.md) | proposed | A gateway wake refused for fleet capacity parks one idle, floor-respecting instance of another owned app and retries once, instead of answering 503 until the idle timeout |
+| 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
 | 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
 | 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
 | 620 | [Protection-aware object lifecycle deletion](620-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |
@@ -622,3 +623,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-615: Customer event storage admission](615-customer-event-storage-admission.md)
 - [ADR-616: Bounded event routing history](616-bounded-event-routing-history.md)
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
+- [ADR-645: Subscription-scoped retained-event replay preview](645-subscription-retained-event-replay-preview.md)
+- [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)

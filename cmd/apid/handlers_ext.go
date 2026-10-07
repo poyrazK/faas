@@ -2176,7 +2176,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
-	if req.ExpectedServingDeploymentID != nil {
+	if req.ExpectedServingDeploymentID != nil && *req.ExpectedServingDeploymentID != "" {
 		if !deploymentIDRefPattern.MatchString(*req.ExpectedServingDeploymentID) {
 			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
 			return

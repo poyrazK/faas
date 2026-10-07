@@ -62,13 +62,34 @@ four harmless tools, a welcome resource, a customer-record URI template and a
 summarize prompt. An empty allowed-origins list rejects all browser origins; add
 exact origins for trusted browser clients.
 
-`mcp deploy` uploads the current worktree, waits for ordinary deployment readiness,
-enables streaming, and opens the platform ingress auth gate for the application's
-client-auth policy. It then verifies catalog discovery, Origin rejection and declared
-legacy compatibility. A failed check returns a failing receipt and enables
-maintenance to stop public requests. Review and fix the failure before clearing
-maintenance with `gregale app my-mcp --no-maintenance` and deploying again.
-Post-deploy verification does not roll the application back or execute tools.
+`mcp deploy` stages the current worktree with zero production traffic, waits for
+readiness and verifies the exact deployment preview. It checks catalog discovery,
+missing and malformed bearer rejection, Origin rejection and declared legacy
+compatibility, then promotes only if the previous serving revision still owns
+100% of traffic. First promotion requires no serving sibling. Failed checks leave
+the candidate at zero traffic and preserve the serving revision. A deployment
+preview URL is required. On a new app, the command enables streaming and MCP
+client ingress; an existing serving app must already have those settings.
+App-wide secret bindings, schema migrations and gateway policy updates are
+separate operations. Verification does not execute tools.
+
+Use `--release-policy release.json` to gate each role's reviewed catalog before
+promotion. Tokens come only from environment variables. Full format-2 catalog baselines resolve within
+the policy directory, preserve their modern/legacy protocol, and use strict
+catalog comparison. Any breaking change or change requiring review blocks
+promotion, including newly visible tools. Prepare and review fresh baselines for
+intentional changes. For example:
+
+```json
+{"version":1,"roles":[
+  {"name":"reader","token_env":"MCP_READER_TOKEN","baseline":"reader.lock.json"},
+  {"name":"writer","token_env":"MCP_WRITER_TOKEN","baseline":"writer.lock.json"}
+]}
+```
+
+```sh
+gregale mcp deploy --path . --name my-mcp --token-env MCP_CLIENT_TOKEN --release-policy release.json --json
+```
 
 Doctor reports the real response's gateway streaming classification, wake tier
 and client-observed request duration. Duration includes network and application
@@ -468,8 +489,9 @@ authorization; `Mcp-Method` and `Mcp-Name` headers do not.
 
 Omitting an individual policy map preserves endpoint-only authorization for that
 catalog type. This manifest describes application policy: deploying an arbitrary
-server with these fields does not install a gateway enforcement layer. Such
-servers must implement the policy themselves. Scope checks do not replace
+server with these fields does not install a gateway enforcement layer. Use
+`mcp policy` to install the explicit gateway execution gate; keep application
+catalog filtering and ownership checks. Scope checks do not replace
 object/tenant ownership checks inside callbacks; use the verified subject and
 your own data lookup to enforce those. Compare contract snapshots under the same
 identity and scopes, including separate baselines for different roles.
@@ -506,3 +528,71 @@ Protocol references: [Streamable HTTP](https://modelcontextprotocol.io/specifica
 [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks)
 and [authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
 Design: [ADR-426](adr/426-mcp-hosting-contract.md).
+
+## Gateway OAuth resource policy
+
+`gregale mcp policy --path . --name my-mcp` installs or updates an MCP resource
+policy on the existing JWT edge rule. This uses the normal JWT edge-rule plan
+and quota gates. New rules are staged disabled and their persisted policy is
+checked before activation, so an older API cannot silently discard MCP fields.
+Deploy matching apid and gateway builds before using this policy. Configure `external-oauth` first, with a canonical resource and
+provider JWKS. The command refuses unrelated or competing enabled JWT rules;
+resolve those explicitly with `edge-rules`. This is a separate app-wide change,
+not part of candidate traffic promotion. Reapply after intentional policy changes.
+
+The gateway serves protected-resource metadata without waking the guest,
+validates issuer, audience, asymmetric signatures, subject and unexpired JWTs,
+and enforces endpoint/tool/resource/prompt execution scopes using exact JSON-RPC
+body fields. Forged MCP hint headers grant no access. Missing credentials receive
+401 with a resource-metadata challenge; missing scopes receive 403. Streams have
+a token-expiry deadline. The provider retains discovery, PKCE, login, consent,
+registration and issuance. Opaque tokens need a provider-specific adapter.
+
+An omitted scope map permits endpoint-authorized access for that catalog type;
+an explicit empty map denies every entry. Every overlapping resource policy
+must pass. Gateway resource templates support simple `{variable}` expressions;
+advanced RFC 6570 expressions remain application policy. Requests are bounded to
+1 MiB. Keep the starter's catalog filters, owner checks and domain authorization:
+the gateway does not filter discovery responses or look up task owners. Keep
+canonical resource rules covering all paths/methods without header selectors,
+and avoid adding JWT rules that shadow the MCP rule. The router applies the same canonical policy to deployment previews, named
+environment aliases and custom domains. JWT policy load failures reject the
+request with 503. Keep application OAuth validation as an additional gate.
+
+## Task admission and worker releases
+
+`tasks.max_outstanding` and `tasks.max_outstanding_per_owner` default to 1000 and
+100. The store locks namespace admission and counts unexpired queued, running
+and input-required tasks in the insert transaction. Completed, cancelled, failed
+or expired tasks release capacity. Open-mode callers share one owner partition.
+These are customer-configurable application safeguards, not Gregale plan quotas.
+
+Workers select only registered `(tool, handler version)` pairs. Keep an old
+worker running until its queue drains, or retain the old implementation:
+
+```js
+const handlers = {
+  build_report: { version: '2', execute: executeV2, previousVersions: { '1': executeV1 } },
+};
+```
+
+Keep old implementations behaviorally compatible with saved input requests.
+Unsupported versions stay queued until a compatible worker claims them or their
+TTL expires. Work remains at least once: use `taskId` to deduplicate external
+side effects. Database connection and statement timeouts bound queue operations.
+A metrics publication failure logs `mcp_task_metrics_publish_failed` without
+credentials, identifiers or task payloads; alert on recurring failures.
+
+For worker scale from zero, deploy `npm run start:tasks-observer` in a separate
+always-running app/process. Set the same `MCP_TASK_NAMESPACE`, a read-only
+`DATABASE_URL`, and the worker app's scoped `MCP_TASKS_SCALING_APP_SLUG` and
+`MCP_TASKS_SCALING_TOKEN`. Enable Tasks in its config. Initialize the schema first
+through a web/worker process. The observer only reads aggregate queue metrics,
+never migrates schema or claims tasks, and needs no `MCP_TASK_OWNER_KEY`. It
+publishes the existing custom metrics every 15 seconds. Configure the worker's
+custom scaling target and `worker.scale.min: 0`; keep the observer at a minimum of
+one running process. An in-process worker publisher still requires a worker
+minimum of one. Monitor observer health and metric freshness.
+
+See [release qualification](ops/mcp-release-qualification.md) for native and
+real-provider/client checks required before promoting the preview to GA.
