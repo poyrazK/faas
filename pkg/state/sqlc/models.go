@@ -3452,6 +3452,22 @@ type ManagedPostgresCheckpointMaintenance struct {
 	UpdatedAt                pgtype.Timestamptz
 }
 
+type ManagedPostgresCreationReceipt struct {
+	Kind               string
+	ResourceID         string
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Generation         int64
+	PointInTime        pgtype.Timestamptz
+	SourceResourceID   string
+	ProviderResourceID string
+	ProviderCreatedAt  pgtype.Timestamptz
+	RecordedAt         pgtype.Timestamptz
+	CleanupStartedAt   pgtype.Timestamptz
+}
+
 type ManagedPostgresCutover struct {
 	ID                       pgtype.UUID
 	AccountID                pgtype.UUID
