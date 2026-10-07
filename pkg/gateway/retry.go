@@ -461,6 +461,7 @@ func (h *Handler) proxyAttempt(
 	forward retryAttempt,
 	app App,
 ) {
+	forward = h.circuitObserved(app.ID, forward)
 	// An authenticated candidate smoke owns its retry loop in imaged. The
 	// generic picker can select the currently serving sibling revision and
 	// must never replay a candidate probe there under the original identity.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel"
@@ -59,7 +60,13 @@ func TestTraceGRPCOptionsPropagateOneTraceAcrossBothBoundaries(t *testing.T) {
 		t.Fatalf("health Check: %v", err)
 	}
 
+	// The server span ends in the gRPC stats handler after the response is
+	// written, so the client can return first; on a loaded CI runner the
+	// recorder briefly held only root + client (pure-Go shard 1, #4277).
 	spans := recorder.Ended()
+	for deadline := time.Now().Add(5 * time.Second); len(spans) < 3 && time.Now().Before(deadline); spans = recorder.Ended() {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if len(spans) < 3 {
 		t.Fatalf("recorded spans = %d, want root + client + server", len(spans))
 	}

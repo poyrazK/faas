@@ -1,3 +1,4 @@
+// adr: 121
 // Tests for the buffered reverse-proxy response body cap (issue
 // #995 Phase 2 / ADR-121). The buffered path now installs a
 // capWriter at the dispatch site in handler.go's ServeHTTP; the
@@ -21,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -280,5 +282,46 @@ func TestDefaultProxy_NoCap_NoUpstreamGuard(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) != fullBody {
 		t.Errorf("body length with cap=0: got %d, want %d (no upstream guard expected)", len(body), fullBody)
+	}
+}
+
+// TestCapWriterRefusesAnAnnouncedOversizeBody pins production-us hunt #4
+// (H4-67): a 200 MiB response on a 100 MiB plan cap went out as 200 with the
+// full Content-Length and stopped at ~100 MiB.
+func TestCapWriterRefusesAnAnnouncedOversizeBody(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		length     string
+		wantStatus int
+	}{
+		{"over the cap", "101", http.StatusRequestEntityTooLarge},
+		{"at the cap", "100", http.StatusOK},
+		{"unknown length", "", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			fired := 0
+			cw := &capWriter{ResponseWriter: rec, cap: 100, disabled: &atomic.Bool{}, onCap: func() {
+				fired++
+				rec.Header().Set("Content-Type", "application/problem+json")
+				rec.WriteHeader(http.StatusRequestEntityTooLarge)
+			}}
+			if tc.length != "" {
+				cw.Header().Set("Content-Length", tc.length)
+			}
+			cw.Header().Set("Etag", `"v1"`)
+			cw.WriteHeader(http.StatusOK)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if tc.wantStatus == http.StatusRequestEntityTooLarge {
+				if fired != 1 || rec.Header().Get("Content-Length") != "" || rec.Header().Get("Etag") != "" {
+					t.Fatalf("onCap fired %d times, headers %v; want one problem without the upstream entity headers", fired, rec.Header())
+				}
+				if n, err := cw.Write([]byte("x")); n != 0 || err == nil {
+					t.Fatalf("Write after refusal = %d, %v; want blocked", n, err)
+				}
+			}
+		})
 	}
 }

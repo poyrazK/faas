@@ -82,7 +82,7 @@ func (f *snapshotCopyFixture) serveHTTP(w http.ResponseWriter, r *http.Request) 
 			rows = append(rows, f.project)
 		case "pagination":
 			if r.URL.Query().Get("cursor") == "" {
-				rows, cursor = []project{}, "next-page"
+				rows, cursor = []project{{ID: "project-unrelated", Name: "unrelated"}}, "next-page"
 			}
 		}
 		writeResponse(t, w, http.StatusOK, map[string]any{"projects": rows, "pagination": map[string]any{"cursor": cursor}})

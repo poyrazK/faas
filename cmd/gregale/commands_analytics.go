@@ -24,16 +24,18 @@ func cmdAnalytics(args []string) int {
 	since := fs.String("since", "24h", "lookback window (for example 24h or 7d)")
 	until := fs.String("until", "", "exclusive RFC3339 end timestamp")
 	by := fs.String("by", "route", "grouping dimension")
+	app := fs.String("app", "", appSlugFlagUsage)
 	if err := fs.Parse(normalizeAnalyticsArgs(args)); err != nil {
 		return 1
 	}
-	if fs.NArg() > 1 {
+	pos, err := mergeAppFlag(fs.Args(), *app, 1)
+	if err != nil || len(pos) > 1 {
 		PrintUsage(os.Stderr, analyticsCmdUsage, analyticsCmdDocsTopic)
 		return 1
 	}
 	slug := ""
-	if fs.NArg() == 1 {
-		slug = fs.Arg(0)
+	if len(pos) == 1 {
+		slug = pos[0]
 	} else {
 		var resolveErr error
 		slug, resolveErr = resolveRequiredAppSlug("")

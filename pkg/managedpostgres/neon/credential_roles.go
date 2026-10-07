@@ -355,6 +355,13 @@ func revokeCredentialRole(ctx context.Context, conn *pgx.Conn, role credentialRo
 	if ownsObjects {
 		return managedpostgres.ErrConflict
 	}
+	// PostgreSQL 16+ auto-grants ADMIN but not SET to a non-superuser
+	// CREATEROLE owner. DROP OWNED requires SET membership. This grant is
+	// confined to the guarded retirement transaction: DROP ROLE removes it,
+	// and any failure rolls it back. Plain GRANT also supports PostgreSQL 14/15.
+	if _, err := tx.Exec(ctx, "GRANT "+roleIdentifier(role.name)+" TO CURRENT_USER"); err != nil {
+		return err
+	}
 	// With object ownership excluded, DROP OWNED removes grants/default ACL
 	// references only. No application table can be removed by credential rotation.
 	if _, err := tx.Exec(ctx, "DROP OWNED BY "+roleIdentifier(role.name)); err != nil {

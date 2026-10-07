@@ -230,7 +230,9 @@ func cmdTriggersCreate(args []string) int {
 		return triggerUsageError(usage, "--app and --kind are required")
 	}
 	if !triggerKindValid(*kind) {
-		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerKindsUsage)
+		// cron is a valid trigger kind but not one `triggers create` makes,
+		// so list only the kinds this command accepts.
+		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
 	}
 	if *kind == string(api.TriggerKindCron) {
 		return triggerUsageError(usage, "kind=cron is managed by `gregale crons add`; POST /v1/triggers rejects cron rows")
@@ -587,7 +589,7 @@ func triggerEnabledValue(explicit map[string]bool, enabled, disabled bool) *bool
 }
 
 func triggerJSONFlag(value string) (json.RawMessage, error) {
-	raw, err := resolvePayload(value)
+	raw, err := resolveJSONFlag("--config", value)
 	if err != nil {
 		return nil, err
 	}

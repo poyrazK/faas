@@ -184,10 +184,36 @@ func cmdDebugRequests(args []string) int {
 	return 1
 }
 
+// debugRequestRefArgs accepts `<slug> <request-id>` or `--app <slug>
+// <request-id>` (in either order) for the single-request leaves.
+// production-us hunt #4: `debug requests list` took --app, but `get`,
+// `explain`, `evidence` and `trace` rejected it with their usage line.
+func debugRequestRefArgs(args []string) ([]string, bool) {
+	var app string
+	positional := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--app":
+			if i+1 >= len(args) {
+				return nil, false
+			}
+			i++
+			app = args[i]
+		case strings.HasPrefix(a, "--app="):
+			app = strings.TrimPrefix(a, "--app=")
+		default:
+			positional = append(positional, a)
+		}
+	}
+	merged, err := mergeAppFlag(positional, strings.TrimSpace(app), 2)
+	return merged, err == nil && len(merged) == 2
+}
+
 // cmdDebugRequestsExplain renders the structured root-cause synthesis from
 // the same bounded evidence endpoint used by `show` and `evidence`.
 func cmdDebugRequestsExplain(args []string) int {
-	if len(args) != 2 {
+	args, ok := debugRequestRefArgs(args)
+	if !ok {
 		PrintUsage(os.Stderr, "usage: gregale debug requests explain <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}
@@ -210,7 +236,8 @@ func cmdDebugRequestsExplain(args []string) int {
 // deterministic explanation for one request. Human output is the default;
 // --json remains the stable machine-readable representation.
 func cmdDebugRequestsEvidence(args []string) int {
-	if len(args) != 2 {
+	args, ok := debugRequestRefArgs(args)
+	if !ok {
 		PrintUsage(os.Stderr, "usage: gregale debug requests evidence <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}
@@ -244,15 +271,17 @@ func cmdDebugRequestsList(args []string) int {
 	cursor := fs.String("cursor", "", "opaque cursor from the previous page")
 	limit := fs.Int("limit", 20, "max rows (1..200)")
 	all := fs.Bool("all", false, "walk every retained page")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
 		"since": true, "route": true, "deployment-id": true, "status": true,
 		"cold-boot": true, "consumer-id": true, "min-latency-ms": true,
-		"cursor": true, "limit": true, "all": false,
+		"cursor": true, "limit": true, "all": false, "app": true,
 	})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if len(positional) != 1 {
+	positional, mergeErr := mergeAppFlag(positional, *app, 1)
+	if mergeErr != nil || len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale debug requests list [--all] [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1
 	}
@@ -385,7 +414,8 @@ func debugTelemetryOptionsFromFlags(since, route, deploymentID string, status in
 
 // cmdDebugRequestsGet renders a single request's metadata by id.
 func cmdDebugRequestsGet(args []string) int {
-	if len(args) != 2 {
+	args, ok := debugRequestRefArgs(args)
+	if !ok {
 		PrintUsage(os.Stderr, "usage: gregale debug requests get <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}

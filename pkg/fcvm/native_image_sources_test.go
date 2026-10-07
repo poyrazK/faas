@@ -425,7 +425,7 @@ func TestNativeImageManagerStagingUsesOriginalOwnerAndRefusesUnjournaledCopies(t
 	if _, err := v.stageWritableAs(root, "/source.img", "layer", lease.UID, lease.GID, lease.Instance); err == nil {
 		t.Fatal("native writable copy used legacy producer")
 	}
-	if _, _, err := v.freezeSnapshotDrive(root, lease.Instance); err == nil {
+	if _, _, _, err := v.freezeSnapshotDrive(root, lease.Instance); err == nil {
 		t.Fatal("native snapshot export used legacy producer")
 	}
 	if _, err := v.stageEphemeralWritableAsForOwner(t.Context(), nativeLaunchRecord{}, root, "/source.img", "scratch", lease.UID, lease.GID, lease.Instance); err == nil {
