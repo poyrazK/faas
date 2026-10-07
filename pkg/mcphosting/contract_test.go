@@ -317,3 +317,54 @@ func TestMCPResourceAndPromptContractChanges(t *testing.T) {
 		t.Fatalf("empty advertised capability removal was lost: %+v err=%v", diff, err)
 	}
 }
+
+func TestTaskExtensionIsCapturedAndRemovalIsBreaking(t *testing.T) {
+	withTasks, err := NewCatalogContract(ProtocolVersion, Catalog{
+		Capabilities: []string{"tools"},
+		Extensions:   []string{TasksExtensionID},
+		Tools:        []Tool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutTasks, err := NewCatalogContract(ProtocolVersion, Catalog{
+		Capabilities: []string{"tools"},
+		Tools:        []Tool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := MarshalContract(withTasks)
+	if err != nil {
+		t.Fatalf("marshal task extension snapshot: %v", err)
+	}
+	parsed, err := ReadContract(bytes.NewReader(encoded))
+	if err != nil || !contractEqual(parsed.Extensions, []string{TasksExtensionID}) {
+		t.Fatalf("extension did not round trip: %+v err=%v", parsed, err)
+	}
+	diff, err := CompareContracts(withTasks, withoutTasks)
+	if err != nil || !diff.Breaking || len(diff.Changes) != 1 || diff.Changes[0].Kind != "capability_removed" || diff.Changes[0].Capability != "extension:"+TasksExtensionID {
+		t.Fatalf("extension removal diff=%+v err=%v", diff, err)
+	}
+}
+
+func TestCompletionsCapabilityIsCapturedAndRemovalIsBreaking(t *testing.T) {
+	withCompletions, err := NewCatalogContract(ProtocolVersion, Catalog{
+		Capabilities: []string{"tools", "completions"},
+		Tools:        []Tool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutCompletions, err := NewCatalogContract(ProtocolVersion, Catalog{
+		Capabilities: []string{"tools"},
+		Tools:        []Tool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := CompareContracts(withCompletions, withoutCompletions)
+	if err != nil || !diff.Breaking || len(diff.Changes) != 1 || diff.Changes[0].Capability != "completions" {
+		t.Fatalf("completion capability removal diff=%+v err=%v", diff, err)
+	}
+}

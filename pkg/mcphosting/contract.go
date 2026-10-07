@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 )
 
 const ContractFile = "gregale-mcp.lock.json"
@@ -16,6 +17,7 @@ type Contract struct {
 	Version           int                `json:"version"`
 	ProtocolVersion   string             `json:"protocol_version"`
 	Capabilities      []string           `json:"capabilities,omitempty"`
+	Extensions        []string           `json:"extensions,omitempty"`
 	Tools             []Tool             `json:"tools"`
 	Resources         []Resource         `json:"resources,omitempty"`
 	ResourceTemplates []ResourceTemplate `json:"resource_templates,omitempty"`
@@ -44,7 +46,7 @@ func newContract(formatVersion int, version string, catalog Catalog) (Contract, 
 		}
 	}
 	c := Contract{
-		Version: formatVersion, ProtocolVersion: version, Capabilities: capabilities, Tools: append([]Tool{}, catalog.Tools...),
+		Version: formatVersion, ProtocolVersion: version, Capabilities: capabilities, Extensions: append([]string{}, catalog.Extensions...), Tools: append([]Tool{}, catalog.Tools...),
 		Resources:         append([]Resource{}, catalog.Resources...),
 		ResourceTemplates: append([]ResourceTemplate{}, catalog.ResourceTemplates...),
 		Prompts:           append([]Prompt{}, catalog.Prompts...),
@@ -54,6 +56,7 @@ func newContract(formatVersion int, version string, catalog Catalog) (Contract, 
 	}
 	slices.SortFunc(c.Tools, func(a, b Tool) int { return bytes.Compare([]byte(a.Name), []byte(b.Name)) })
 	slices.Sort(c.Capabilities)
+	slices.Sort(c.Extensions)
 	slices.SortFunc(c.Resources, func(a, b Resource) int { return bytes.Compare([]byte(a.URI), []byte(b.URI)) })
 	slices.SortFunc(c.ResourceTemplates, func(a, b ResourceTemplate) int { return bytes.Compare([]byte(a.URITemplate), []byte(b.URITemplate)) })
 	slices.SortFunc(c.Prompts, func(a, b Prompt) int { return bytes.Compare([]byte(a.Name), []byte(b.Name)) })
@@ -64,8 +67,8 @@ func (c Contract) Validate() error {
 	if (c.Version != 1 && c.Version != 2) || (c.ProtocolVersion != ProtocolVersion && c.ProtocolVersion != LegacyProtocolVersion) {
 		return fmt.Errorf("unsupported MCP contract format or protocol version")
 	}
-	if c.Version == 1 && (len(c.Capabilities) != 0 || len(c.Resources) != 0 || len(c.ResourceTemplates) != 0 || len(c.Prompts) != 0) {
-		return fmt.Errorf("MCP contract format 1 cannot contain capabilities, resources, templates or prompts")
+	if c.Version == 1 && (len(c.Capabilities) != 0 || len(c.Extensions) != 0 || len(c.Resources) != 0 || len(c.ResourceTemplates) != 0 || len(c.Prompts) != 0) {
+		return fmt.Errorf("MCP contract format 1 cannot contain capabilities, extensions, resources, templates or prompts")
 	}
 	if c.Version == 2 {
 		if len(c.Capabilities) == 0 {
@@ -73,10 +76,17 @@ func (c Contract) Validate() error {
 		}
 		seenCapabilities := make(map[string]bool, len(c.Capabilities))
 		for _, capability := range c.Capabilities {
-			if !slices.Contains([]string{"tools", "resources", "prompts"}, capability) || seenCapabilities[capability] {
+			if !slices.Contains([]string{"tools", "resources", "prompts", "completions"}, capability) || seenCapabilities[capability] {
 				return fmt.Errorf("MCP contract contains an invalid or duplicate capability")
 			}
 			seenCapabilities[capability] = true
+		}
+		seenExtensions := make(map[string]bool, len(c.Extensions))
+		for _, extension := range c.Extensions {
+			if !validExtensionName(extension) || seenExtensions[extension] {
+				return fmt.Errorf("MCP contract contains an invalid or duplicate extension")
+			}
+			seenExtensions[extension] = true
 		}
 		if (len(c.Tools) != 0 && !seenCapabilities["tools"]) || ((len(c.Resources) != 0 || len(c.ResourceTemplates) != 0) && !seenCapabilities["resources"]) || (len(c.Prompts) != 0 && !seenCapabilities["prompts"]) {
 			return fmt.Errorf("MCP contract contains definitions for an unadvertised capability")
@@ -165,6 +175,14 @@ func (c Contract) Validate() error {
 	return nil
 }
 
+func validExtensionName(name string) bool {
+	if len(name) == 0 || len(name) > 256 || strings.IndexFunc(name, func(r rune) bool { return r < 0x21 || r > 0x7e }) >= 0 {
+		return false
+	}
+	slash := strings.IndexByte(name, '/')
+	return slash > 0 && slash < len(name)-1
+}
+
 func validateAnnotations(item string, raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
@@ -199,7 +217,7 @@ func MarshalContract(c Contract) ([]byte, error) {
 	if c.Version == 1 {
 		normalized, err = NewContract(c.ProtocolVersion, c.Tools)
 	} else {
-		normalized, err = NewCatalogContract(c.ProtocolVersion, Catalog{Capabilities: c.Capabilities, Tools: c.Tools, Resources: c.Resources, ResourceTemplates: c.ResourceTemplates, Prompts: c.Prompts})
+		normalized, err = NewCatalogContract(c.ProtocolVersion, Catalog{Capabilities: c.Capabilities, Extensions: c.Extensions, Tools: c.Tools, Resources: c.Resources, ResourceTemplates: c.ResourceTemplates, Prompts: c.Prompts})
 	}
 	if err != nil {
 		return nil, err
@@ -480,7 +498,11 @@ func contractCapabilities(contract Contract) []string {
 	if contract.Version == 1 {
 		return []string{"tools"}
 	}
-	return contract.Capabilities
+	capabilities := append([]string{}, contract.Capabilities...)
+	for _, extension := range contract.Extensions {
+		capabilities = append(capabilities, "extension:"+extension)
+	}
+	return capabilities
 }
 
 func comparePrompt(name string, before, after Prompt, add func(string, string, string, string, string)) {

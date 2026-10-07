@@ -121,6 +121,14 @@ func TestObjectUploadRecoveryAfterLostAcknowledgmentPG(t *testing.T) {
 	if _, _, err = st.BeginTrackedObjectUpload(ctx, replacement, registry.Accounting); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("pending current-object proof replaced", err)
 	}
+	unrelated, err := st.BeginObjectBucketMutation(ctx, b, state.ObjectBucketMutationRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hold, err := st.AcquireObjectBucketWriteFence(ctx, b, uuid.NewString())
+	if err != nil || hold.Uploads != 1 || hold.Requests != 2 {
+		t.Fatal("lost ACK falsely drained", hold, err)
+	}
 	due(ctx, c.ID)
 	e := setup(t, api.PlanHobby)
 	e.s.store = st
@@ -139,6 +147,19 @@ func TestObjectUploadRecoveryAfterLostAcknowledgmentPG(t *testing.T) {
 	if err != nil || c.Status != "completed" || c.ETag != "recovered" || provider.writes != 1 || provider.confirms != 1 {
 		t.Fatal(c, provider.writes, provider.confirms, err)
 	}
+	observed, err := st.ReadObjectBucketWriteFence(ctx, b, hold.Token)
+	if err != nil || observed.Uploads != 0 || observed.Requests != 1 {
+		t.Fatal("recovery erased unrelated provider receipt", observed, err)
+	}
+	if _, _, err := st.BeginTrackedObjectUpload(ctx, replacement, registry.Accounting); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
+		t.Fatal("settlement reopened held source", err)
+	}
+	if err := st.ReleaseObjectBucketWriteFence(ctx, b, hold.Token); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishObjectBucketMutation(ctx, unrelated); err != nil {
+		t.Fatal(err)
+	}
 	delete(provider.objects, c.Key)
 	j, err := st.RequestObjectCapacityReconciliation(ctx, acct.ID, app.ID, b.ID)
 	if err != nil {
@@ -153,6 +174,10 @@ func TestObjectUploadRecoveryAfterLostAcknowledgmentPG(t *testing.T) {
 	}
 	registry.Accounting.MaxMonthlyCostMillicents *= 2
 	unknown := seed(ctx, "unknown")
+	hold, err = st.AcquireObjectBucketWriteFence(ctx, b, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
 	due(ctx, unknown.ID)
 	if err = e.s.reconcileObjectUploads(ctx, nil); err != nil {
 		t.Fatal(err)
@@ -160,6 +185,10 @@ func TestObjectUploadRecoveryAfterLostAcknowledgmentPG(t *testing.T) {
 	pending, err := st.GetObjectUploadReceipt(ctx, acct.ID, app.ID, route.ID, "owner", unknown.ID)
 	if err != nil || pending.Status != "pending" || pending.ErrorCode != "provider_write_uncertain" {
 		t.Fatal("absence refunded", pending, err)
+	}
+	observed, err = st.ReadObjectBucketWriteFence(ctx, b, hold.Token)
+	if err != nil || observed.Uploads != 1 || observed.Requests != 1 {
+		t.Fatal("absence erased bound writer", observed, err)
 	}
 	// Losing configuration only defers probing; it never closes a dispatched write.
 	e.s.WithObjectStorage(nil)

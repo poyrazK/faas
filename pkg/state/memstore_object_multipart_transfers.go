@@ -24,15 +24,28 @@ func (m *MemStore) SettleObjectMultipartPart(_ context.Context, account, id stri
 	defer m.mu.Unlock()
 	u := m.objectMultipartUploads[id]
 	transfer := m.objectMultipartTransfers[id][part]
-	if u.AccountID != account || token == "" || transfer.token != token {
+	if u.AccountID != account || token == "" || transfer.token != token || m.multipartPartWriterPendingLocked(id, part) {
 		return ErrConflict
 	}
-	transfer.token, transfer.unsafeUntil = "", time.Time{}
-	m.objectMultipartTransfers[id][part] = transfer
+	m.settleMultipartPartLocked(id, part)
 	return nil
 }
 
+func (m *MemStore) settleMultipartPartLocked(id string, part int32) {
+	transfer := m.objectMultipartTransfers[id][part]
+	key := multipartPartWriterKey{id, part, transfer.token}
+	if d, ok := m.objectMultipartPartWriters[key]; ok {
+		d.settled = true
+		m.objectMultipartPartWriters[key] = d
+	}
+	transfer.token, transfer.unsafeUntil = "", time.Time{}
+	m.objectMultipartTransfers[id][part] = transfer
+}
+
 func (m *MemStore) multipartTransfersPendingLocked(id string) bool {
+	if m.multipartPartWriterPendingLocked(id, 0) {
+		return true
+	}
 	for _, transfer := range m.objectMultipartTransfers[id] {
 		if transfer.token != "" && transfer.unsafeUntil.After(m.clock()) {
 			return true
@@ -86,7 +99,9 @@ func (m *MemStore) FinishVerifiedObjectMultipartAbort(_ context.Context, id, tok
 	u.AttemptCount, u.LastErrorCode = 0, ""
 	u.UpdatedAt, u.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = u
+	m.retireMultipartMutationLocked(id)
 	for part, transfer := range m.objectMultipartTransfers[id] {
+		m.settleMultipartPartLocked(id, part)
 		if transfer.tracked {
 			delete(m.objectMultipartPartGrants[id], part)
 			delete(m.objectMultipartTransfers[id], part)

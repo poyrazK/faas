@@ -125,7 +125,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 	if manifest.WorkerReplicas != nil {
 		workerReplicas = &state.WorkerScaling{
 			Min: manifest.WorkerReplicas.Min, Max: manifest.WorkerReplicas.Max,
-			Metric: manifest.WorkerReplicas.Metric, Target: manifest.WorkerReplicas.Target,
+			Metric: manifest.WorkerReplicas.Metric, Name: manifest.WorkerReplicas.Name, Target: manifest.WorkerReplicas.Target,
 		}
 	}
 	stopGracePeriodS := 0
@@ -171,7 +171,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 	if manifest.WorkerReplicas != nil {
 		workerReplicas = &api.WorkerScaling{
 			Min: manifest.WorkerReplicas.Min, Max: manifest.WorkerReplicas.Max,
-			Metric: manifest.WorkerReplicas.Metric, Target: manifest.WorkerReplicas.Target,
+			Metric: manifest.WorkerReplicas.Metric, Name: manifest.WorkerReplicas.Name, Target: manifest.WorkerReplicas.Target,
 		}
 	}
 	var stopGrace time.Duration

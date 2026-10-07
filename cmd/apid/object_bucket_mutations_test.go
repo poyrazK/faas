@@ -40,8 +40,8 @@ func TestObjectBucketMutationAPIUploadGrantAndFence(t *testing.T) {
 	}
 	token := uuid.NewString()
 	fence, err := e.store.AcquireObjectBucketWriteFence(context.Background(), b, token)
-	if err != nil || fence.Requests != 0 || fence.NativeGrants != 0 {
-		t.Fatalf("broker URL unexpectedly created an outstanding native grant: %+v %v", fence, err)
+	if err != nil || fence.Requests != 1 || fence.Uploads != 1 || fence.NativeGrants != 0 {
+		t.Fatalf("broker URL must retain its original upload intent without a native grant: %+v %v", fence, err)
 	}
 	calls := len(provider.accessed)
 	for _, test := range []struct {
@@ -61,8 +61,8 @@ func TestObjectBucketMutationAPIUploadGrantAndFence(t *testing.T) {
 		t.Fatalf("fence blocked read: %d %s", response.Code, response.Body.String())
 	}
 	fence, err = e.store.ReadObjectBucketWriteFence(context.Background(), b, token)
-	if err != nil || fence.NativeGrants != 0 || fence.Requests != 0 {
-		t.Fatalf("failed writes or read changed grant count: %+v %v", fence, err)
+	if err != nil || fence.NativeGrants != 0 || fence.Requests != 1 || fence.Uploads != 1 {
+		t.Fatalf("failed writes or read changed original upload custody: %+v %v", fence, err)
 	}
 }
 
@@ -86,8 +86,8 @@ func TestObjectUploadGrantAPIMultipartSigningDoesNotContactProvider(t *testing.T
 			}
 			token := uuid.NewString()
 			fence, err := e.store.AcquireObjectBucketWriteFence(context.Background(), b, token)
-			if err != nil || fence.Requests != 0 || fence.NativeGrants != 0 {
-				t.Fatalf("broker signing unexpectedly created a native upload capability: %+v %v", fence, err)
+			if err != nil || fence.Requests != 1 || fence.Multipart != 1 || fence.NativeGrants != 0 {
+				t.Fatalf("broker signing changed original session custody: %+v %v", fence, err)
 			}
 			calls := len(provider.accessed)
 			response = e.do(t, "POST", base+"/"+upload.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{ExpiresIn: 60}, nil)

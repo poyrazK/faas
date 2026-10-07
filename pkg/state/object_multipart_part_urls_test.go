@@ -100,13 +100,13 @@ func TestObjectMultipartPartURLFencePG(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(ctx) //nolint:errcheck
-		if _, err = tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads DISABLE TRIGGER object_multipart_part_url_deadline_protected`); err != nil {
+		if _, err = tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads DISABLE TRIGGER object_multipart_part_url_deadline_protected; ALTER TABLE object_storage_multipart_uploads DISABLE TRIGGER object_multipart_bound_journal`); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = tx.Exec(ctx, `UPDATE object_storage_multipart_uploads SET created_at=created_at-interval '1 hour',part_url_unsafe_until=clock_timestamp()-interval '1 second' WHERE id=$1`, id); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads ENABLE TRIGGER object_multipart_part_url_deadline_protected`); err != nil {
+		if _, err = tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads ENABLE TRIGGER object_multipart_part_url_deadline_protected; ALTER TABLE object_storage_multipart_uploads ENABLE TRIGGER object_multipart_bound_journal`); err != nil {
 			t.Fatal(err)
 		}
 		if err = tx.Commit(ctx); err != nil {

@@ -91,7 +91,7 @@ func (h *Handler) encryptionContext(ctx context.Context, req requestContext) con
 	})
 }
 
-func (h *Handler) ensureCapturedMultipart(ctx context.Context, req requestContext, u state.ObjectMultipartUpload) (string, error) {
+func (h *Handler) ensureCapturedMultipart(ctx context.Context, req requestContext, u state.ObjectMultipartUpload, dispatch func(context.Context) error) (string, error) {
 	var err error
 	ctx, err = h.protectionContext(ctx, req, u.Protection)
 	if err != nil {
@@ -117,6 +117,9 @@ func (h *Handler) ensureCapturedMultipart(ctx context.Context, req requestContex
 	} else {
 		r.BeforeRequest = before
 		ctx = h.encryptionContext(ctx, req)
+	}
+	if dispatch != nil {
+		return objectstorage.InitiateMultipartUpload(ctx, req.provider, req.bucket.PhysicalName, r, u.Encryption, dispatch)
 	}
 	return objectstorage.EnsureMultipartWithEncryption(ctx, req.provider, req.bucket.PhysicalName, r, u.Encryption)
 }

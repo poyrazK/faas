@@ -52,7 +52,10 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 		if !s.objectStorageEnabled() {
 			err = objectstorage.ErrUnavailable
 		} else {
-			err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
+			err = s.inventoryRequestRecorder(b)(callCtx)
+			if err == nil {
+				err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
+			}
 		}
 	} else {
 		owned, err = s.ownedBucketCleanupRequired(callCtx, b)
@@ -63,7 +66,10 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 			}
 		}
 		if err == nil {
-			err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
+			err = s.inventoryRequestRecorder(b)(callCtx)
+			if err == nil {
+				err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
+			}
 		}
 	}
 	notEmpty := b.State == "deleting" && errors.Is(err, objectstorage.ErrNotEmpty)

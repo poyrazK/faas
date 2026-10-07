@@ -423,13 +423,13 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 		}
 		if database.RestoreSourceResourceID != "" {
-			observed, err = backend.Provider.Restore(providerContext, RestoreRequest{
-				ResourceID:       database.ID,
-				SourceResourceID: database.RestoreSourceResourceID,
-				Spec:             database.Spec,
-				PointInTime:      database.RestorePointInTime,
-				IdempotencyKey:   "restore-" + database.ID,
-			})
+			request := RestoreRequest{ResourceID: database.ID, SourceResourceID: database.RestoreSourceResourceID,
+				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID}
+			if receipts, ok := backend.Provider.(RestoreCreationProvider); ok {
+				observed, err = s.reconcileRestoreCreation(providerContext, receipts, database, request)
+			} else {
+				observed, err = backend.Provider.Restore(providerContext, request)
+			}
 		} else {
 			observed, err = backend.Provider.Provision(providerContext, ProvisionRequest{
 				ResourceID:     database.ID,
@@ -511,6 +511,17 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 // provider identity, and again when asynchronous provisioning becomes ready.
 // The publication gate separately requires durable, coordinated data evidence.
 func validateCloneRestoreObservation(database Database, observed ObservedDatabase) error {
+	if database.RestoreSourceResourceID == "" && database.EnvironmentCloneOperationID == "" {
+		return nil
+	}
+	// Every restore keeps its source and point pinned while asynchronously
+	// becoming ready. Successful creation is not permanent data correctness.
+	if observed.RestoreLineage == nil || observed.RestoreLineage.SourceResourceID == "" || observed.RestoreLineage.PointInTime.IsZero() || observed.ProviderResourceID == "" {
+		return ErrUnavailable
+	}
+	if observed.ProviderResourceID == database.RestoreSourceResourceID || observed.RestoreLineage.SourceResourceID != database.RestoreSourceResourceID || !observed.RestoreLineage.PointInTime.Equal(database.RestorePointInTime) {
+		return ErrConflict
+	}
 	if database.EnvironmentCloneOperationID == "" {
 		return nil
 	}
@@ -551,6 +562,17 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 	}
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
+	if database.ProviderResourceID == "" && database.RestoreSourceResourceID != "" {
+		if receipts, ok := backend.Provider.(RestoreCreationProvider); ok {
+			accepted, receiptErr := s.restoreCreation(providerContext, database)
+			if receiptErr != nil {
+				return Database{}, s.releaseProviderError(ctx, database, StateDeleting, receiptErr)
+			}
+			if accepted != nil {
+				return s.deleteRestoreCreation(ctx, providerContext, receipts, database, *accepted)
+			}
+		}
+	}
 	if database.ProviderResourceID == "" {
 		identity, discoverErr := discoverResource(providerContext, backend.Provider, database)
 		if errors.Is(discoverErr, ErrNotFound) {

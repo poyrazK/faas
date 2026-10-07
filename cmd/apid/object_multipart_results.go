@@ -37,7 +37,7 @@ func (s *server) executeObjectMultipartResult(ctx context.Context, uploads state
 	if bindErr != nil {
 		return bindErr
 	}
-	result, err := objectstorageactivity.Execute(ctx, s.store, bucket, func(mutationCtx context.Context) (objectstorage.MultipartCompletionResult, error) {
+	result, err := objectstorageactivity.ExecuteMultipart(ctx, s.store, store, bucket, u, func(mutationCtx context.Context) (objectstorage.MultipartCompletionResult, error) {
 		return objectstorage.CompleteMultipartWithResult(mutationCtx, provider, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
 			Encryption: encryption, SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: parts,
 			Recovering: u.CompletionDispatched, RecoveryCursor: u.CompletionRecoveryCursor,

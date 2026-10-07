@@ -59,9 +59,14 @@ func (s DeletionService) start(ctx context.Context, b state.ObjectBucket, key, s
 			return state.ObjectDeletion{}, ErrUnsupported
 		}
 	}
+	if p, native := s.Provider.(*GCS); native && selector == "" {
+		if err := s.observeGCSDeletionVersioning(ctx, b, p); err != nil {
+			return state.ObjectDeletion{}, err
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, api.ObjectDeletionOperationTimeout)
 	defer cancel()
-	j, created, e := s.Store.BeginObjectDeletion(ctx, state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: id, BucketID: b.ID, Key: key, Selector: selector}, AccountID: b.AccountID, AppID: b.AppID, Token: uuid.NewString(), Lifecycle: binding}, p)
+	j, created, e := s.Store.BeginObjectDeletion(ctx, state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: id, BucketID: b.ID, Key: key, Selector: selector}, AccountID: b.AccountID, AppID: b.AppID, Token: uuid.NewString(), Lifecycle: binding, NativeGCS: isGCSProvider(s.Provider)}, p)
 	if e != nil || !created {
 		return j, e
 	}
@@ -112,6 +117,12 @@ func (s DeletionService) execute(ctx context.Context, b state.ObjectBucket, j st
 		var out VersionDeleteResult
 		out, e = provider.DeleteObjectVersion(ctx, b.PhysicalName, j.Key, j.TargetProviderVersionID)
 		receipt = MutableDeleteResult{ProviderVersionID: j.TargetProviderVersionID, DeleteMarker: out.DeleteMarker}
+	} else if nativeGCSDeletion(j) {
+		provider, ok := s.Provider.(*GCS)
+		if !ok {
+			return s.deferAttempt(ctx, j, ErrConfiguration)
+		}
+		e = provider.deleteCapturedCurrent(ctx, b.PhysicalName, j.Key, j.Baseline)
 	} else if provider, ok := s.Provider.(MutableObjectDeleter); ok {
 		receipt, e = provider.DeleteMutableObject(ctx, b.PhysicalName, j.Key, j.Selector)
 	} else {
@@ -143,6 +154,9 @@ func (s DeletionService) execute(ctx context.Context, b state.ObjectBucket, j st
 }
 
 func validMutableDeleteReceipt(j state.ObjectDeletion, r MutableDeleteResult) bool {
+	if nativeGCSDeletion(j) {
+		return j.Selector == "" && !r.DeleteMarker && r.ProviderVersionID == ""
+	}
 	if j.TargetProviderVersionID != "" {
 		return r.ProviderVersionID == j.TargetProviderVersionID
 	}
@@ -168,6 +182,9 @@ func (s DeletionService) prepare(ctx context.Context, b state.ObjectBucket, j st
 		return []string{}, "", nil
 	}
 	status := j.ProviderStatus
+	if nativeGCSDeletion(j) {
+		return s.prepareGCSDeletion(ctx, b, j)
+	}
 	if p, ok := s.Provider.(BucketVersioningProvider); ok {
 		if e := s.before(ctx); e != nil {
 			return nil, status, e
@@ -303,7 +320,8 @@ func (s DeletionService) deferAttempt(ctx context.Context, j state.ObjectDeletio
 	return out, cause
 }
 
-// Recovery may re-dispatch only an immutable selected version. Mutable
+// Recovery may re-dispatch an immutable selected version or the captured GCS
+// current-generation condition. S3 mutable
 // deletion requires a unique marker proof; absence and expiry are insufficient.
 func (s DeletionService) Recover(ctx context.Context, b state.ObjectBucket, id string) (state.ObjectDeletion, error) {
 	if s.Store == nil {
@@ -330,6 +348,12 @@ func (s DeletionService) Recover(ctx context.Context, b state.ObjectBucket, id s
 		return s.recoverProtectedLifecycle(ctx, b, j)
 	}
 	if j.TargetProviderVersionID != "" {
+		if e = s.before(ctx); e != nil {
+			return s.deferAttempt(ctx, j, e)
+		}
+		return s.execute(ctx, b, j, true)
+	}
+	if nativeGCSDeletion(j) {
 		if e = s.before(ctx); e != nil {
 			return s.deferAttempt(ctx, j, e)
 		}

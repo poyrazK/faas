@@ -123,7 +123,7 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			return fmt.Errorf("retired queue delivery for %s: %w", scope, err)
 		}
 		if plan.target != "" {
-			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, plan.app, scope, override)
+			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, plan.app, scope, len(plan.workers), override)
 			if err != nil {
 				return fmt.Errorf("worker demand for %s: %w", scope, err)
 			}
@@ -278,7 +278,7 @@ func (p *workerScopePlan) applyCooldown(policy *state.ScalingPolicy, history sta
 	}
 }
 
-func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App, scope string, override *int) (int, string, error) {
+func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App, scope string, currentReplicas int, override *int) (int, string, error) {
 	account, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
 		return 0, "", err
@@ -314,6 +314,12 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 	} else if policy := app.ScalingPolicy; policy != nil {
 		queueTarget, haveQueue := policy.TargetFor(api.ScalingMetricQueueDepth)
 		lagTarget, haveLag := policy.TargetFor(api.ScalingMetricQueueLag)
+		customTargets := make([]state.ScalingTarget, 0, len(policy.EffectiveTargets()))
+		for _, target := range policy.EffectiveTargets() {
+			if target.Metric == api.ScalingMetricCustom {
+				customTargets = append(customTargets, target)
+			}
+		}
 		if haveQueue && queueTarget > 0 {
 			desired, err = e.workerQueueDemandForScope(ctx, app, scope, queueTarget)
 			if err != nil {
@@ -325,6 +331,7 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 		}
 		// The existing broker surface has no environment identity. Its lag
 		// can authorize demand only in the producer's default environment.
+		haveLagSignal := false
 		if haveLag && lagTarget > 0 {
 			haveSignal := false
 			if e.brokerLag != nil && scope == state.DefaultInvocationDeploymentScope(app) {
@@ -333,6 +340,7 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 					return 0, "", err
 				}
 				haveSignal = available
+				haveLagSignal = available
 				if available {
 					if lagDesired := int(math.Ceil(float64(lag) / lagTarget)); lagDesired > desired {
 						desired = lagDesired
@@ -341,7 +349,52 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 				}
 			}
 			if !haveQueue && !haveSignal {
-				return 0, "", fmt.Errorf("queue_lag has no environment-scoped signal: %w", state.ErrConflict)
+				if len(customTargets) == 0 {
+					return 0, "", fmt.Errorf("queue_lag has no environment-scoped signal: %w", state.ErrConflict)
+				}
+			}
+		}
+		if len(customTargets) > 0 {
+			// Custom metrics are app-wide and do not include a deployment
+			// environment dimension. They may only authorize the default
+			// invocation pool; applying them to every project environment
+			// would multiply the same backlog across neighboring pools.
+			if scope != state.DefaultInvocationDeploymentScope(app) {
+				return 0, "", fmt.Errorf("custom worker scaling metrics have no environment scope: %w", state.ErrConflict)
+			}
+			rows, err := e.store.ListCustomMetrics(ctx, app.ID)
+			if err != nil {
+				return 0, "", fmt.Errorf("read worker custom metrics: %w", err)
+			}
+			stored := make(map[string]state.CustomMetric, len(rows))
+			for _, row := range rows {
+				stored[row.Name] = row
+			}
+			now := e.now()
+			freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
+			haveCustomSignal := false
+			for _, target := range customTargets {
+				row, ok := stored[target.Name]
+				if !ok || now.Sub(row.ObservedAt) > freshness {
+					continue
+				}
+				haveCustomSignal = true
+				demand := max
+				if ratio := math.Ceil(row.Value / target.Value); ratio < float64(max) {
+					demand = int(ratio)
+				}
+				if demand > desired {
+					desired = demand
+					signal = api.ScalingMetricCustom
+				}
+			}
+			if !haveCustomSignal && !haveQueue && !haveLagSignal {
+				if currentReplicas > 0 {
+					return 0, "", fmt.Errorf("custom worker scaling metric is missing or stale: %w", state.ErrConflict)
+				}
+				// Start the configured minimum so an in-process publisher can
+				// emit its first reading. Once a fleet exists, missing data is
+				// not evidence that the queue is empty and must not scale it in.
 			}
 		}
 		if policy.MinInstances > desired {

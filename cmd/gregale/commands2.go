@@ -1578,6 +1578,7 @@ func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClien
 			MaxInstances: m.Worker.Scale.Max,
 			Target: &api.ScalingTarget{
 				Metric: m.Worker.Scale.Metric,
+				Name:   m.Worker.Scale.Name,
 				Value:  m.Worker.Scale.Target,
 			},
 		}
@@ -5471,6 +5472,8 @@ func cmdUsage(args []string) int {
 		// Tier C: per-(app, day) snapshot+layer byte rollup
 		// (ADR-049 §B.3). Informational — not billed today.
 		return cmdUsageStorage(args[1:])
+	case "object-storage":
+		return cmdUsageObjectStorage(args[1:])
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
 	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])

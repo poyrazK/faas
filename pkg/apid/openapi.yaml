@@ -36314,10 +36314,12 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ObjectStorageComputeBinding' } }
     ObjectStoragePolicy:
-      description: Operator safety limits; zero values mean unconfigured and block signing.
+      description: Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other budgets remain positive and finite.
       type: object
       required: [max_account_bytes, max_bucket_bytes, max_account_keys, max_monthly_cost_millicents, max_monthly_requests, max_monthly_egress_bytes, max_monthly_authorizations, max_report_age_seconds]
       properties:
+        accounting_mode: { type: string, enum: [gateway_safety_v1] }
+        gateway_metering_since: { type: string, format: date-time }
         max_account_bytes: { type: integer, format: int64, minimum: 0 }
         max_bucket_bytes: { type: integer, format: int64, minimum: 0 }
         max_account_keys: { type: integer, format: int64, minimum: 0 }
@@ -36327,10 +36329,13 @@ components:
         max_monthly_authorizations: { type: integer, format: int64, minimum: 0 }
         max_report_age_seconds: { type: integer, format: int64, minimum: 0 }
     ObjectStorageUsage:
-      description: Account-wide usage and reserved capacity. Costs are EUR millicents, not a customer invoice.
+      description: Account-wide usage and reserved capacity. In gateway_safety_v1 requests count durable provider attempts and egress counts full response lengths reserved before forwarding; disconnects retain reservations. Fields named in unavailable_meters are unknown, their numeric placeholders are not measured zeros and must not be billed. Legacy costs are EUR millicents, not a customer invoice.
       type: object
       required: [observed_bytes, capacity_bytes, capacity_keys, stored_byte_hours, request_count, egress_bytes, cost_millicents, authorizations, fresh, period_start]
       properties:
+        unavailable_meters:
+          type: array
+          items: { type: string, enum: [stored_byte_hours, cost_millicents] }
         observed_bytes: { type: integer, format: int64, minimum: 0 }
         capacity_bytes: { type: integer, format: int64, minimum: 0 }
         capacity_keys: { type: integer, format: int64, minimum: 0 }
@@ -41923,7 +41928,7 @@ components:
           example: 2
 
     WorkerScaling:
-      description: "Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."
+      description: "Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."
       type: object
       required: [min, max, metric, target]
       properties:
@@ -41939,12 +41944,16 @@ components:
           example: 50
         metric:
           type: string
-          enum: [queue_lag, queue_depth]
-          description: "Queue metric driving autoscaling."
+          enum: [queue_lag, queue_depth, custom]
+          description: "Queue or customer-pushed metric driving autoscaling."
           example: queue_lag
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,62}$'
+          description: "Required when metric is custom; the app-scoped custom gauge name."
         target:
           type: number
-          description: "Target backlog per worker instance (e.g. 500 messages per worker)."
+          description: "Target backlog per worker instance. Custom metric targets use the custom gauge's units."
           example: 500
 
     # ─── Deployments ──────────────────────────────────────────────────────
