@@ -40799,7 +40799,7 @@ components:
           example: 2
 
     WorkerScaling:
-      description: "Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."
+      description: "Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."
       type: object
       required: [min, max, metric, target]
       properties:
@@ -40815,12 +40815,16 @@ components:
           example: 50
         metric:
           type: string
-          enum: [queue_lag, queue_depth]
-          description: "Queue metric driving autoscaling."
+          enum: [queue_lag, queue_depth, custom]
+          description: "Queue or customer-pushed metric driving autoscaling."
           example: queue_lag
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,62}$'
+          description: "Required when metric is custom; the app-scoped custom gauge name."
         target:
           type: number
-          description: "Target backlog per worker instance (e.g. 500 messages per worker)."
+          description: "Target backlog per worker instance. Custom metric targets use the custom gauge's units."
           example: 500
 
     # ─── Deployments ──────────────────────────────────────────────────────

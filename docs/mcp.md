@@ -24,10 +24,12 @@ gregale mcp call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,
 gregale mcp deploy --path . --name my-mcp --profile small
 gregale mcp tools --app my-mcp
 gregale mcp resources --app my-mcp
-gregale mcp resource-read --app my-mcp --uri 'file:///reports/current'
+gregale mcp resource-read --app my-mcp --uri 'customer://records/example-1'
 gregale mcp prompts --app my-mcp
-gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"period":"week"}'
+gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'
+gregale mcp complete --app my-mcp --prompt summarize --argument style --value exec
 gregale mcp config --app my-mcp --name my-mcp
+gregale mcp watch --app my-mcp --baseline gregale-mcp.lock.json
 ```
 
 `mcp resources` and `mcp prompts` return definitions only. Resource reads and
@@ -35,12 +37,30 @@ prompt rendering require the explicit `resource-read --uri` and `prompt-get --pr
 commands. Returned resource contents and rendered prompt messages may
 contain private data; review them before saving or forwarding the output.
 
+`mcp complete` requests server-side suggestions for one prompt argument or URI
+template variable. Select exactly one of `--prompt` or `--resource-template`, and
+provide `--argument` and the current `--value` (an empty value requests the first
+suggestions). Pass other resolved string arguments with `--context` or
+`--context-file` when suggestions depend on them:
+
+```sh
+gregale mcp complete --app my-mcp --prompt summarize --argument style --value exec
+gregale mcp complete --app my-mcp \
+  --resource-template 'customer://records/{recordId}' --argument recordId --value example-
+```
+
+Completions help MCP hosts guide users while filling prompt forms or resource
+templates. The CLI caps accepted responses at 100 suggestions. Keep returned
+values bounded and caller-authorized; completion results can reveal information
+just like resource reads.
+
 The starter binds loopback locally and the guest interface on Gregale.
 `gregale.yaml` controls start, port and health. `gregale-mcp.json` controls the
 MCP endpoint, stateless mode, legacy compatibility, trusted browser origins and
 client authentication. The default starter explicitly allows public access to
-three harmless tools. An empty allowed-origins list rejects all browser origins;
-add exact origins for trusted browser clients.
+four harmless tools, a welcome resource, a customer-record URI template and a
+summarize prompt. An empty allowed-origins list rejects all browser origins; add
+exact origins for trusted browser clients.
 
 `mcp deploy` uploads the current worktree, waits for ordinary deployment readiness,
 enables streaming, and opens the platform ingress auth gate for the application's
@@ -96,6 +116,147 @@ The CLI sends form responses only after an explicit opt-in and bounds the
 number and size of requests it handles. Calls without either input option keep
 the existing single-request behavior.
 
+## MCP Tasks
+
+Gregale's Go client supports the `io.modelcontextprotocol/tasks` extension, and
+the Node starter can optionally persist and run task-enabled tools. Tasks use
+the modern `2026-07-28` protocol. The starter includes `build_report`, a safe
+example that returns a task handle for opted-in clients when durable tasks are
+enabled. Other calls stay synchronous. The server returns the handle only
+after PostgreSQL can read the new row.
+
+Tasks are disabled by default. Enable them in `gregale-mcp.json` and bind a
+PostgreSQL URL whose database role can create and alter the namespaced task
+table, queue index, notification function, and update trigger. Keep a stable
+32-byte-or-longer secret in `MCP_TASK_OWNER_KEY`:
+
+```json
+"tasks": {
+  "enabled": true,
+  "database_url_env": "DATABASE_URL",
+  "owner_key_env": "MCP_TASK_OWNER_KEY",
+  "namespace_env": "FAAS_APP_ID",
+  "ttl_seconds": 86400,
+  "poll_interval_ms": 2000,
+  "worker_concurrency": 1
+}
+```
+
+For local runs, set `MCP_TASK_NAMESPACE` when `FAAS_APP_ID` is absent. Keep the
+owner key unchanged until all tasks created with it expire; it derives both the
+per-caller owner hash and the AES-256-GCM payload key. The task table is scoped
+by app namespace, stores no bearer tokens or plain caller subjects, and deletes
+expired rows. TTL is configurable from 60 seconds to 30 days. An explicit
+`MCP_TASK_NAMESPACE` overrides `FAAS_APP_ID`; set the same stable value in every
+app that shares the task database.
+
+By default, the HTTP process also claims tasks for single-process use. The Node
+starter can instead run a separate Gregale worker app with the same source. Set
+`MCP_TASKS_ROLE=web` on the HTTP app so it serves MCP requests without claiming
+work. Deploy a second app from the same source with `hosting.start` set to
+`npm run start:tasks-worker`, plus a worker lifecycle block. Bind the same
+PostgreSQL database and `MCP_TASK_OWNER_KEY` to both apps, and set the same
+explicit `MCP_TASK_NAMESPACE` on both because their Gregale app IDs differ. For
+example, the worker app's `gregale.yaml` can declare:
+
+```yaml
+hosting:
+  start: npm run start:tasks-worker
+worker:
+  drain_timeout: 45s
+  stop_signal: SIGTERM
+  scale:
+    min: 1
+    max: 10
+    metric: custom
+    name: mcp_tasks_outstanding
+    target: 4
+```
+
+The worker has no HTTP listener. Set `MCP_TASKS_SCALING_APP_SLUG` to the worker
+app's Gregale slug and `MCP_TASKS_SCALING_TOKEN` to an API key restricted to
+`metrics:write`; the optional `GREGALE_API_URL` selects a non-production API.
+Each worker publishes the namespace's aggregate outstanding-task count and
+oldest task age as `mcp_tasks_outstanding` and
+`mcp_tasks_oldest_age_seconds`. These gauges include no task or caller
+identifiers. The custom target scales to `ceil(outstanding / target)`, so use
+the task worker concurrency as the target. Keep `min: 1` while using this
+in-process reporter: at zero workers no process can refresh the metric. Custom
+metrics require Hobby or higher. If the pool is empty, Gregale starts its
+configured minimum so the in-process publisher can send its first reading;
+afterward, missing or stale metrics preserve the current pool rather than
+interpreting an unavailable database signal as an empty queue. On `SIGTERM`,
+the worker stops claiming new tasks and waits for active
+handlers to finish within the configured drain window. If a worker is killed
+early, another worker can reclaim the task after its lease expires. Task
+cancellation is cooperative. A handler may run again after a lease expires,
+including after a crash following an external side effect, so handlers that
+cause such effects must be idempotent by task ID. The sample `build_report`
+handler is pure and safe to replay. The portable suite
+tests the wire using memory storage and checks SQL parameters through a fake pool.
+A PostgreSQL 16 integration job verifies DDL, encrypted payloads, caller and app
+isolation, concurrent worker claims, lease recovery, cancellation, retry
+exhaustion, expiry cleanup, encrypted task input requests, partial
+`tasks/update` responses, and replacement-runtime resume after a worker
+restart. Run it locally against a disposable database with
+`MCP_TASKS_TEST_DATABASE_URL` and `npm run test:postgres`; it creates and removes
+its own schema. Before enabling Tasks on a managed database, also confirm the
+configured role has the required create/alter/index DDL privileges and that
+provider connection and failover behavior meet the app-local worker contract.
+
+Custom task handlers can request client input with `requestInput(key, request)`
+or `requestInputs({key: request})` in the execution context.
+The task moves to `input_required`, and `tasks/get` returns outstanding
+`inputRequests`. The client answers with `tasks/update` and `inputResponses`;
+the worker then replays the handler from its beginning with the saved responses
+available under the same keys. Request and response payloads are encrypted
+with the task key, and request keys cannot be reused for a different prompt.
+The original client must have declared support for each embedded request type.
+Keep handlers idempotent because worker recovery can also replay them after a
+crash.
+
+Modern clients that declared the Tasks extension can open
+`subscriptions/listen` with `notifications.taskIds` to receive current task
+snapshots and subsequent `notifications/tasks` updates over one SSE stream.
+The starter acknowledges only task IDs visible to that caller and allowed by
+the tool policy. Reopening the stream sends fresh snapshots, while `tasks/get`
+polling remains available as a fallback. PostgreSQL `LISTEN`/`NOTIFY` carries
+worker updates to the web process; bounded polling takes over if a database
+connection or pooler cannot keep a listener open.
+
+Use `mcp call --tasks` to request task support from the server. If it returns a
+handle, the CLI prints it so you can inspect, resume or cancel it:
+
+```sh
+gregale mcp call --url https://mcp.example.com/mcp --tool build_report \
+  --arguments '{"report":"weekly","steps":8}' --tasks
+gregale mcp task-get --url https://mcp.example.com/mcp --task-id TASK_ID
+gregale mcp task-wait --url https://mcp.example.com/mcp --task-id TASK_ID
+gregale mcp task-cancel --url https://mcp.example.com/mcp --task-id TASK_ID
+gregale mcp resource-read --url https://mcp.example.com/mcp --uri task://tasks/TASK_ID
+gregale mcp resource-watch --url https://mcp.example.com/mcp --uri task://tasks/TASK_ID
+```
+
+With Tasks enabled in the Node starter, `task://tasks/{taskId}` exposes the
+caller-visible task status and result as a resource. Reading it requires both
+ownership of the task and permission for its originating tool, plus the
+resource's configured scope. `resource-watch` receives resource updates as the
+task moves or completes; the starter uses the task store's PostgreSQL listener
+and bounded polling recovery to fan changes out to web replicas.
+
+`mcp call --wait` also opts in and returns the final tool result. It listens for
+task status notifications when the server supports subscriptions, reopening a
+dropped stream from a fresh snapshot. It falls back to `tasks/get` polling when
+subscriptions are unavailable or keep disconnecting. It reports status changes
+on stderr. If the task requests form input, use `--interactive` or
+`--input-responses-file`; the CLI sends those replies through `tasks/update`.
+When either wait command reaches its timeout, it makes a best-effort cooperative
+`tasks/cancel` request. Tasks require the modern `2026-07-28` protocol; legacy
+calls keep their existing behavior. Task IDs are opaque and must be saved by
+the caller if they need to resume waiting after a CLI restart.
+`task-wait` resumes waiting on a saved handle after a restart; it accepts the same
+`--interactive` or `--input-responses-file` options for supported form requests.
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:
@@ -109,8 +270,10 @@ gregale mcp diff --before baseline.json --after candidate.json --check --json
 `lock` discovers advertised definitions without executing tools, reading resource
 contents or rendering prompts. Its default destination is
 `gregale-mcp.lock.json`; `--legacy` captures the stateless 2025-11-25 interface.
-Snapshots contain the protocol version, advertised capabilities, tool definitions,
-resource and resource template metadata, and prompt arguments. They omit resource contents, rendered
+Snapshots contain the protocol version, catalog capabilities, advertised
+extension identifiers, tool definitions, resource and resource template metadata,
+and prompt arguments. Extension additions are informational by default and need
+review with `--strict-catalog`; extension removals are breaking. They omit resource contents, rendered
 prompt messages, endpoint URLs, timestamps and client credentials. Catalog names
 and JSON object keys are sorted, and schema numbers keep their precision. Contract
 format 2 records capabilities and adds resources, templates and prompts; existing
@@ -118,6 +281,43 @@ format 1 tool-only locks remain readable and compare as advertising tools.
 Discovery that rejects any tool cannot produce a complete snapshot and fails
 without writing a file. Existing snapshots require a new `--out` or explicit
 `--force`; writes are atomic with private file permissions and reject symlinks.
+
+`mcp watch` compares the live caller-visible catalog to a saved snapshot and
+prints only drift findings. It listens for tool, resource and prompt list-change
+notifications where supported, then re-discovers only the changed definition
+lists. It also reconciles against a fresh snapshot at `--interval` (30 seconds
+by default), so changes are still found if a notification is missed; servers
+without a working subscription use polling. Pass `--tools`, `--resources` or
+`--prompts` to limit subscribed and refreshed lists; with none, all three are
+watched. The initial snapshot is compared in full. `--json` emits one NDJSON
+drift event per change, including an event when drift clears back to the
+baseline. The command lists definitions only: it does not call tools, read
+resource contents or render prompts. Ctrl+C stops the watch.
+
+## MCP resource updates
+
+Watch one explicitly selected resource URI and receive its current contents
+immediately, then again only when they change:
+
+```sh
+gregale mcp resource-watch --app my-mcp --uri 'task://tasks/TASK_ID'
+```
+
+On the modern protocol, the client subscribes to that URI and re-reads it when
+the server sends `notifications/resources/updated`. It also re-reads every
+`--interval` (30 seconds by default) to cover missed notifications and falls
+back to polling when the server does not acknowledge the URI subscription. The
+watch uses the same endpoint and client token for every read. `--json` emits
+one NDJSON event for the initial snapshot and each changed result; ordinary
+output prints the same event as readable JSON. Resource contents can be
+sensitive, so select a URI the current caller is authorized to read and treat
+the output accordingly. Ctrl+C stops the watch.
+
+The Node starter publishes per-resource updates for `task://tasks/{taskId}` when
+Tasks are enabled. With Tasks disabled, the starter has no changing sample
+resource; watch a URI that your own server actually exposes. Notification
+streams still reconcile on `--interval`, and servers without URI subscriptions
+use polling.
 
 Use the same authorization context for both captures: a caller's scopes can change
 which definitions are visible. Review catalog metadata before committing it; it is supplied
@@ -214,7 +414,7 @@ object ownership remains the application's responsibility.
 
 ## External OAuth
 
-Before adding sensitive tools, change `auth` in `gregale-mcp.json`:
+Before adding sensitive catalog entries, change `auth` in `gregale-mcp.json`:
 
 ```json
 {
@@ -227,6 +427,13 @@ Before adding sensitive tools, change `auth` in `gregale-mcp.json`:
     "greet": [],
     "add": ["math:read"],
     "stream_demo": ["mcp:stream"]
+  },
+  "resource_scopes": {
+    "greeting://welcome": [],
+    "customer://records/{recordId}": ["records:read"]
+  },
+  "prompt_scopes": {
+    "summarize": ["reports:read"]
   }
 }
 ```
@@ -236,29 +443,36 @@ audience. The starter serves RFC 9728 protected-resource metadata and a bearer
 challenge. It verifies signed RS256/ES256 JWT access tokens with issuer, audience,
 expiry, subject and all configured scopes. The provider owns login, consent,
 client registration and token issuance. Opaque tokens require an introspection
-adapter. `auth.scopes` are required for every request. In the Node starter,
-`auth.tool_scopes` adds application-owned permissions: every listed scope is
-required in addition to the endpoint scopes. `[]` permits any authenticated
-endpoint caller to use that tool. A configured map denies tools missing from it;
-`{}` denies every tool. Null maps or scope arrays fail configuration validation.
-Open mode allows only empty scope arrays; the generated public starter explicitly
-allows its three harmless tools.
+adapter. `auth.scopes` are required for every request and are advertised with
+catalog scopes in protected-resource metadata. In the Node starter,
+`tool_scopes`, `resource_scopes` and `prompt_scopes` add application-owned
+permissions for tools, resource URIs (including URI templates) and prompt names.
+Every listed scope is required in addition to the endpoint scopes. An explicit
+empty scope array permits any authenticated endpoint caller to use that entry. A
+configured map denies entries missing from it; `{}` hides and denies every entry
+of that catalog type. Null maps and scope arrays fail configuration validation.
+Open mode accepts only empty scope arrays. The generated public starter lists its
+harmless entries explicitly.
 
-The starter filters `tools/list` using verified JWT scopes on each request and
-checks `tools/call` before execution, including calls to hidden tools. Missing
-tool scopes return HTTP 403 with an `insufficient_scope` bearer challenge naming
-the endpoint and tool scopes; an unlisted tool returns `tool_access_denied`.
-Headers, arguments and tool annotations cannot grant permissions. Register new
-tools through the starter's `registerTool` helper to retain discovery filtering
-and the callback guard. The JSON-RPC tool name controls authorization; an
-`Mcp-Name` header does not.
+The starter filters `tools/list`, `resources/list`,
+`resources/templates/list` and `prompts/list` using verified JWT scopes for each
+request. It checks `tools/call`, `resources/read` and `prompts/get` before dispatch
+and checks verified request context again inside each registered callback.
+Missing entry scopes return HTTP 403 with an `insufficient_scope` bearer
+challenge naming the endpoint and entry scopes; an unlisted entry returns a
+catalog-specific `*_access_denied` error. Resource policy keys are exact resource
+URIs or URI-template patterns, such as
+`customer://records/{recordId}`. Headers, arguments and catalog annotations
+cannot grant permission. The JSON-RPC method and body parameters control
+authorization; `Mcp-Method` and `Mcp-Name` headers do not.
 
-Omitting `auth.tool_scopes` preserves endpoint-only authorization for existing
-servers. This manifest describes application policy: deploying an arbitrary
-server with this field does not install a gateway enforcement layer. Such servers
-must implement the policy themselves. Object/tenant ownership checks inside each
-tool remain the application's responsibility. Compare contract snapshots under
-the same identity and scopes, including separate baselines for different roles.
+Omitting an individual policy map preserves endpoint-only authorization for that
+catalog type. This manifest describes application policy: deploying an arbitrary
+server with these fields does not install a gateway enforcement layer. Such
+servers must implement the policy themselves. Scope checks do not replace
+object/tenant ownership checks inside callbacks; use the verified subject and
+your own data lookup to enforce those. Compare contract snapshots under the same
+identity and scopes, including separate baselines for different roles.
 
 Pass an MCP client access token with `--token-env MCP_TOKEN` for authenticated
 deploy verification, doctor or calls. Keep secrets out of shell history and use
@@ -282,10 +496,13 @@ digests without suppressing provider credential checks. Older deployed apid buil
 may still reject those hashes; upgrade the scanner before qualifying reproducible
 deployments. Do not disable secret scanning to bypass that issue.
 
-Keep durable state and long-running work outside the request VM. Durable MCP Tasks,
-per-customer execution isolation, gateway tool policy/metrics and tool-contract
-rollout checks are follow-on capabilities, not included in this preview.
+Keep durable task records in the bound PostgreSQL database. The default combined
+process may pause when its app scales to zero; a dedicated worker deployment can
+scale on the task table's aggregate backlog through Gregale custom metrics.
+Per-customer execution isolation, gateway tool policy/metrics and tool-contract
+rollout checks remain follow-on capabilities, not included in this preview.
 
-Protocol references: [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
+Protocol references: [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http),
+[Tasks extension](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks)
 and [authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
 Design: [ADR-426](adr/426-mcp-hosting-contract.md).

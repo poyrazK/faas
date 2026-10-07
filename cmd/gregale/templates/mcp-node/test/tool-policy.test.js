@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createToolPolicy } from '../tool-policy.js';
+import { createPromptPolicy, createResourcePolicy, createToolPolicy } from '../tool-policy.js';
 
 const auth = { mode: 'external-oauth', scopes: ['mcp:tools'], tool_scopes: { greet: [], add: ['math:read', 'math:write'] } };
 test('configured policy denies missing tools and requires every scope', () => {
@@ -36,3 +36,57 @@ for (const [name, tool_scopes] of [
   ['nonascii scope', { greet: ['nonascii:é'] }],
 ]) test(name, () => assert.throws(() => createToolPolicy({ ...auth, tool_scopes })));
 test('public mode cannot grant scoped tools', () => assert.throws(() => createToolPolicy({ mode: 'open', tool_scopes: { greet: ['read'] } })));
+
+test('resource policy matches exact URIs and URI templates without widening the allowlist', () => {
+  const policy = createResourcePolicy({
+    mode: 'external-oauth', scopes: ['mcp:tools'],
+    resource_scopes: { 'greeting://welcome': [], 'customer://records/{recordId}': ['records:read'] },
+  });
+  assert.equal(policy.canAccess('greeting://welcome', { scopes: ['mcp:tools'] }), true);
+  assert.equal(policy.canAccess('customer://records/123', { scopes: ['mcp:tools'] }), false);
+  assert.deepEqual(policy.requiredScopes('customer://records/123'), ['records:read']);
+  assert.equal(policy.canAccess('customer://records/123', { scopes: ['mcp:tools', 'records:read'] }), true);
+  assert.equal(policy.canAccess('customer://records/123/extra', { scopes: ['mcp:tools', 'records:read'] }), false);
+  assert.equal(policy.canAccess('customer://other/123', { scopes: ['mcp:tools', 'records:read'] }), false);
+});
+
+test('resource callback guard rechecks verified context and omitted policies preserve endpoint-only access', async () => {
+  const policy = createResourcePolicy({ mode: 'external-oauth', scopes: ['mcp:tools'], resource_scopes: { 'customer://records/{recordId}': ['records:read'] } });
+  let reads = 0;
+  const guarded = policy.guard('customer://records/{recordId}', async () => { reads++; });
+  assert.throws(() => guarded(new URL('customer://records/123'), {}, { http: { authInfo: { scopes: ['mcp:tools'] } } }), /Resource access denied/);
+  assert.equal(reads, 0);
+  await guarded(new URL('customer://records/123'), {}, { http: { authInfo: { scopes: ['mcp:tools', 'records:read'] } } });
+  assert.equal(reads, 1);
+  assert.equal(createResourcePolicy({ mode: 'external-oauth', scopes: ['mcp:tools'] }).canAccess('customer://records/123', { scopes: ['mcp:tools'] }), true);
+});
+
+test('prompt policy is a closed name allowlist and guards rendering', () => {
+  const policy = createPromptPolicy({ mode: 'external-oauth', scopes: ['mcp:tools'], prompt_scopes: { summarize: [], private_report: ['reports:read'] } });
+  assert.equal(policy.canAccess('summarize', { scopes: ['mcp:tools'] }), true);
+  assert.equal(policy.canAccess('private_report', { scopes: ['mcp:tools'] }), false);
+  assert.deepEqual(policy.requiredScopes('private_report'), ['reports:read']);
+  assert.equal(policy.canAccess('private_report', { scopes: ['mcp:tools', 'reports:read'] }), true);
+  assert.equal(policy.canAccess('private_report', { scopes: ['mcp:tools', 'reports:read', 'other'] }), true);
+  assert.equal(policy.canAccess('unlisted', { scopes: ['mcp:tools', 'reports:read'] }), false);
+  assert.equal(createPromptPolicy({ mode: 'open', prompt_scopes: { summarize: [] } }).canAccess('summarize'), true);
+  let renders = 0;
+  const guarded = policy.guard('private_report', async () => { renders++; });
+  assert.throws(() => guarded({}, { http: { authInfo: { scopes: ['mcp:tools'] } } }), /Prompt access denied/);
+  assert.equal(renders, 0);
+  guarded({}, { http: { authInfo: { scopes: ['mcp:tools', 'reports:read'] } } });
+  assert.equal(renders, 1);
+});
+
+for (const [field, entry] of [
+  ['resource_scopes', { 'relative/{id}': [] }],
+  ['resource_scopes', { 'customer://records/{id': [] }],
+  ['resource_scopes', { 'customer://records/{id}': null }],
+  ['prompt_scopes', { 'bad name': [] }],
+  ['prompt_scopes', { summarize: null }],
+]) test(`${field} rejects invalid configuration`, () => assert.throws(() => (field === 'resource_scopes' ? createResourcePolicy : createPromptPolicy)({ mode: 'open', [field]: entry })));
+
+test('open servers cannot require scoped resources or prompts', () => {
+  assert.throws(() => createResourcePolicy({ mode: 'open', resource_scopes: { 'customer://records/{id}': ['records:read'] } }));
+  assert.throws(() => createPromptPolicy({ mode: 'open', prompt_scopes: { private_report: ['reports:read'] } }));
+});

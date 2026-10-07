@@ -42,8 +42,24 @@ explicit review before resuming public traffic. A probe does not roll back code.
 `mcp call` may opt in to bounded form-mode Multi Round-Trip Requests (SEP-2322)
 with `--interactive` or `--input-responses-file`. The default call remains
 single-request; the CLI handles at most three input rounds and 16 form requests
-per round. This does not add sampling, roots, URL elicitation, or Tasks input
-handling.
+per round. Modern calls may also opt into the `io.modelcontextprotocol/tasks`
+extension with `--tasks` or `--wait`. The client can inspect/cancel returned task
+handles with `mcp task-get` and `mcp task-cancel`; `--wait` polls using the
+server's interval, handles bounded form input when explicitly enabled, and sends
+a cooperative cancellation request if its timeout expires. `mcp task-wait`
+resumes polling a saved task handle and can answer supported form requests.
+The starter can optionally produce durable Tasks for task-aware clients when a
+PostgreSQL binding and stable encryption key are configured. By default, the
+HTTP process also claims work. Operators can run a separate worker app using
+Gregale's existing worker lifecycle; both apps must share the database, owner
+key, and explicit task namespace. The worker recovers expired leases. Gregale's
+worker scaling metrics do not currently read depth from this PostgreSQL task
+table, so dedicated worker apps need a nonzero replica floor for prompt
+execution. Tasks remain disabled by default. Custom task handlers can persist
+client input requests and resume through `tasks/update`; embedded elicitation,
+sampling, and roots requests are limited to capabilities declared by the
+original client. The starter has no built-in sampling, roots, URL elicitation,
+task notifications, or stateful sessions.
 Doctor discovers tools without invoking them; an explicit call or stream probe
 authorizes execution. Preserve lockfiles and suppress entropy only for valid
 dependency-integrity digests while retaining provider credential detection.
@@ -51,24 +67,31 @@ dependency-integrity digests while retaining provider credential detection.
 ## Qualification and future work
 
 Portable acceptance covers scaffold, config, JSON/SSE, legacy initialization,
-errors, pagination, origin rejection, OAuth token validation, and redaction.
-A CLI journey must deploy, discover, call, stream, park, and rediscover on an
-existing native host. This changes no VM lifecycle code. Product maturity remains
-preview until independent MCP clients and provider integration are qualified.
+errors, pagination, origin rejection, OAuth token validation, redaction, and the
+Tasks wire flow with a memory store. A separate PostgreSQL 16 integration job
+verifies the SQL store's DDL, payload encryption, caller/app isolation, expired
+lease recovery, retry exhaustion, cancellation, expiry cleanup, concurrent worker
+claims, and replacement-runtime recovery after a worker process crashes. A CLI
+journey must deploy, discover, call, stream, park, and rediscover on an existing
+native host. This changes no VM lifecycle code.
+Product maturity remains preview until independent MCP clients and provider
+integration are qualified.
 
 [The 2026-10-01 receipts](../ops/evidence/20261001-mcp-preview/README.md) record
 that journey and the production scanner upgrade still required for an untouched
 dependency-lockfile deployment.
 
-Follow-on work includes gateway-owned OAuth and per-tool policy/metrics, contract
-promotion checks, durable Tasks backed by Jobs, and customer-isolated
-execution. These require separate acceptance and must not be advertised as shipped
-by this implementation.
+Follow-on work includes gateway-owned OAuth and per-tool metrics, contract
+promotion checks, PostgreSQL task-queue depth integration with worker scaling,
+and customer-isolated execution. These require separate acceptance and must not
+be advertised as shipped by this implementation.
 
 ## Local tool contract checks
 
 `mcp lock` captures a deterministic caller-visible tool catalog without execution,
 endpoint identity or credentials. Partial discovery cannot publish a snapshot.
+Snapshots also record advertised extension identifiers, so clients can review
+changes such as Tasks support appearing or disappearing.
 `mcp diff` compares local snapshots with conservative input/output directionality;
 unknown changed schema keywords and annotations require review. `--check` fails
 for both structural breaks and review requirements. References are never fetched.
@@ -85,23 +108,27 @@ token explicitly and retains comparison evidence. This adds a user-controlled CI
 check without changing platform promotion ownership. Reader/writer fixtures cover
 modern and legacy catalogs, expansion/removal and zero tool execution.
 
-## Application-owned tool authorization
+## Application-owned catalog authorization
 
-The Node starter accepts an optional `auth.tool_scopes` map alongside endpoint
-scopes. A configured map denies unlisted tools, including future registrations;
-an explicit empty scope array permits the endpoint's callers. An empty map denies
-all tools. Null maps/arrays fail validation, and public mode cannot grant scoped
-tools. Omission retains the endpoint-only policy of existing servers.
+The Node starter accepts optional `auth.tool_scopes`, `auth.resource_scopes` and
+`auth.prompt_scopes` maps alongside endpoint scopes. They scope tools, exact
+resource URIs and resource URI templates, and prompt names. A configured map
+denies unlisted entries, including future registrations; an explicit empty scope
+array permits the endpoint's callers. An empty map denies all entries of that
+catalog type. Null maps/arrays fail validation, and public mode cannot grant
+scoped entries. Omitting each map retains endpoint-only policy for that catalog
+type.
 
 Verified JWT claims populate request-local SDK auth context. A fresh server
-instance disables unauthorized registrations for discovery; actual JSON-RPC calls
-are checked before dispatch and tool callbacks have an independent guard. Scope
-denials challenge with endpoint plus tool scopes. Caller-supplied headers,
-arguments and annotations grant no permissions. Object ownership is checked by
-the application inside each callback. The platform does not enforce arbitrary
-customer servers' policy merely because they supply this manifest.
+instance builds a caller-filtered catalog; actual JSON-RPC operations are checked
+before dispatch and callbacks have an independent guard. Scope denials challenge
+with endpoint plus catalog-entry scopes. Caller-supplied headers, arguments and
+annotations grant no permissions. Object ownership is checked by the application
+inside each callback. The platform does not enforce arbitrary customer servers'
+policy merely because they supply this manifest.
 
-Portable acceptance covers both modern and stateless legacy discovery/execution,
-alternating/concurrent callers, guessed tool names, forged headers, missing
-identity, all-required scopes, empty policies, and redacted logs. This extends the
-resource-server contract without a new gateway or deployment policy owner.
+Portable acceptance covers both modern and stateless legacy discovery and
+execution, alternating/concurrent callers, guessed catalog identifiers, forged
+headers, missing identity, all-required scopes, empty policies, and redacted tool
+logs. This extends the resource-server contract without a new gateway or
+deployment policy owner.
