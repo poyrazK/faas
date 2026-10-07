@@ -14,11 +14,11 @@ export type MCPResourcePolicy = {
   resource: string;
   scopes?: Array<string>;
   allowed_origins?: Array<string>;
-  tool_scopes?: Record<string, Array<string>> | null;
+  tool_scopes?: (Record<string, Array<string>> | null);
   /**
    * Absolute URIs or simple variable templates; every matching entry must authorize access.
    */
-  resource_scopes?: Record<string, Array<string>> | null;
-  prompt_scopes?: Record<string, Array<string>> | null;
+  resource_scopes?: (Record<string, Array<string>> | null);
+  prompt_scopes?: (Record<string, Array<string>> | null);
 };
 

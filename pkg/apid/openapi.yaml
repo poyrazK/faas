@@ -48688,19 +48688,23 @@ components:
         resource: { type: string, format: uri }
         scopes: { type: array, items: { type: string }, maxItems: 256 }
         allowed_origins: { type: array, items: { type: string, format: uri } }
+        # Explicit unions preserve scope-map types in the pinned SDK generator.
         tool_scopes:
-          type: object
-          nullable: true
-          additionalProperties: { type: array, items: { type: string } }
+          oneOf:
+            - type: object
+              additionalProperties: { type: array, items: { type: string } }
+            - type: "null"
         resource_scopes:
-          type: object
-          nullable: true
           description: Absolute URIs or simple variable templates; every matching entry must authorize access.
-          additionalProperties: { type: array, items: { type: string } }
+          oneOf:
+            - type: object
+              additionalProperties: { type: array, items: { type: string } }
+            - type: "null"
         prompt_scopes:
-          type: object
-          nullable: true
-          additionalProperties: { type: array, items: { type: string } }
+          oneOf:
+            - type: object
+              additionalProperties: { type: array, items: { type: string } }
+            - type: "null"
 
     EdgeRuleJWTAction:
       description: |
