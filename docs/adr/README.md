@@ -57,6 +57,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
+| 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
 | 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
 | 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
 | 620 | [Protection-aware object lifecycle deletion](620-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |
@@ -305,7 +306,6 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 624 | [Durable managed PostgreSQL idle policy changes](624-managed-postgres-durable-idle-policy.md) | accepted for operator preview | Change scale-to-zero through the shared fenced compute journal and qualified provider contract |
 | 631 | [Reclaim unowned layer clones and tenant cgroups, and retry failed teardowns](631-unowned-layer-clone-reclamation.md) | accepted | Reap clones and empty tenant cgroup scopes no Manager, journal record or live row owns, in cache buckets and /srv/fc/base; retry retained teardowns |
 | 632 | [Converge cached runtime bases](632-converge-cached-runtime-bases.md) | proposed | ADR-567 convergence also covers runtime bases an earlier daemon cached, not only the ones this process staged |
-| 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
 | 154 | [Disposable developer source deltas](154-developer-source-delta.md): changed-entry transfer with full-archive reconstruction and automatic full fallback | accepted | `gregale dev` DX follow-up to ADR-153 |
 | 153 | [Developer BuildKit dependency cache](153-developer-buildkit-cache.md): tenant/workspace-scoped Railpack cache across ephemeral developer builder VMs | accepted | `gregale dev` rebuild latency |
 | 152 | [Configurable sustained CPU per app](152-configurable-app-cpu.md): 250m, 500m, and 1000m cgroup quotas with configured/effective API visibility | accepted | Cloud Run gap analysis |
