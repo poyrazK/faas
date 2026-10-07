@@ -30,12 +30,19 @@ type snapshotResponse struct {
 }
 
 func (p *Provider) CaptureSnapshot(ctx context.Context, request managedpostgres.SnapshotCaptureRequest) (managedpostgres.DatabaseSnapshot, error) {
+	return p.CaptureSnapshotWithCreationReceipt(ctx, request, nil, nil)
+}
+
+func (p *Provider) CaptureSnapshotWithCreationReceipt(ctx context.Context, request managedpostgres.SnapshotCaptureRequest, expected *managedpostgres.CreationAcknowledgement, record managedpostgres.CreationRecorder) (managedpostgres.DatabaseSnapshot, error) {
 	if p == nil {
 		return managedpostgres.DatabaseSnapshot{}, managedpostgres.ErrUnavailable
 	}
 	source, err := snapshotCaptureSource(request)
 	if err != nil {
 		return managedpostgres.DatabaseSnapshot{}, err
+	}
+	if expected != nil {
+		return p.ObserveSnapshotCreation(ctx, request, *expected)
 	}
 	name := p.snapshotName(request.ResourceID)
 	actual, err := p.findSnapshot(ctx, source.projectID, "", name)
@@ -45,11 +52,17 @@ func (p *Provider) CaptureSnapshot(ctx context.Context, request managedpostgres.
 		var accepted snapshotResponse
 		err = p.doJSON(ctx, http.MethodPost, path, query, nil, &accepted, http.StatusOK)
 		if err == nil {
-			if _, err = validateOwnedSnapshot(source, name, request.PointInTime, accepted.Snapshot); err != nil {
-				return managedpostgres.DatabaseSnapshot{}, err
+			actual = accepted.Snapshot
+			if record != nil {
+				custody, custodyErr := snapshotCreationAcknowledgement(source, name, actual)
+				if custodyErr == nil {
+					if err := record(ctx, custody); err != nil {
+						return managedpostgres.DatabaseSnapshot{}, err
+					}
+				} else if !errors.Is(custodyErr, managedpostgres.ErrUnavailable) {
+					return managedpostgres.DatabaseSnapshot{}, custodyErr
+				}
 			}
-			// Observe the accepted ID independently before changing retention.
-			actual, err = p.findSnapshot(ctx, source.projectID, accepted.Snapshot.ID, "")
 		} else if errors.Is(err, managedpostgres.ErrUnavailable) && ctx.Err() == nil {
 			// One discovery recovers a lost POST acknowledgement. Never repeat
 			// the creation request in this call or adopt a different point.
@@ -63,7 +76,57 @@ func (p *Provider) CaptureSnapshot(ctx context.Context, request managedpostgres.
 	if err != nil {
 		return managedpostgres.DatabaseSnapshot{}, err
 	}
+	// Creation, replay and lost-response discovery share the same bounded
+	// observation path. A discovered identity can still be initializing.
+	actual, err = p.awaitSnapshotMetadata(ctx, source, name, request.PointInTime, actual)
+	if err != nil {
+		return managedpostgres.DatabaseSnapshot{}, err
+	}
 	return p.retainOwnedSnapshot(ctx, source, name, request.PointInTime, actual)
+}
+
+// Snapshot creation is asynchronous too: its acknowledgement can omit the
+// capture timestamp and expiry. Hydrate only that accepted identity, retaining
+// exact ownership and time checks before any retention mutation.
+func (p *Provider) awaitSnapshotMetadata(ctx context.Context, source resourceRef, name string, point time.Time, accepted snapshot) (snapshot, error) {
+	if !validProviderID.MatchString(accepted.ID) {
+		return snapshot{}, managedpostgres.ErrUnavailable
+	}
+	if (accepted.Name != "" && accepted.Name != name) || (accepted.SourceBranchID != "" && accepted.SourceBranchID != source.branchID) {
+		return snapshot{}, managedpostgres.ErrConflict
+	}
+	ctx, cancel := context.WithTimeout(ctx, restoreLineageTimeout)
+	defer cancel()
+	actual := accepted
+	for {
+		_, proofErr := validateOwnedSnapshot(source, name, point, actual)
+		if proofErr != nil && !errors.Is(proofErr, managedpostgres.ErrUnavailable) {
+			return snapshot{}, proofErr
+		}
+		// Independently observe even an apparently complete acknowledgement.
+		observed, err := p.findSnapshot(ctx, source.projectID, accepted.ID, "")
+		if err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
+			if ctx.Err() != nil {
+				err = managedpostgres.ErrUnavailable
+			}
+			return snapshot{}, err
+		}
+		if err == nil {
+			if _, err := validateOwnedSnapshot(source, name, point, observed); err == nil {
+				return observed, nil
+			} else if !errors.Is(err, managedpostgres.ErrUnavailable) {
+				return snapshot{}, err
+			}
+			actual = observed
+		}
+		timer := time.NewTimer(p.credentialPollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return snapshot{}, managedpostgres.ErrUnavailable
+		case <-timer.C:
+		}
+	}
 }
 
 func (p *Provider) RetainSnapshot(ctx context.Context, request managedpostgres.SnapshotCaptureRequest, id string) (managedpostgres.DatabaseSnapshot, error) {
@@ -261,6 +324,17 @@ func observedSnapshot(projectID string, actual snapshot) (managedpostgres.Databa
 }
 
 func validateOwnedSnapshot(source resourceRef, name string, point time.Time, actual snapshot) (managedpostgres.DatabaseSnapshot, error) {
+	// Do not let an omitted expiry or timestamp hide contradictory ownership
+	// already reported by the provider and then adopt a later substitution.
+	if actual.Name != "" && actual.Name != name || actual.SourceBranchID != "" && actual.SourceBranchID != source.branchID {
+		return managedpostgres.DatabaseSnapshot{}, managedpostgres.ErrConflict
+	}
+	if actual.Timestamp != "" {
+		at, err := time.Parse(time.RFC3339Nano, actual.Timestamp)
+		if err == nil && !at.Equal(point) {
+			return managedpostgres.DatabaseSnapshot{}, managedpostgres.ErrConflict
+		}
+	}
 	observed, err := observedSnapshot(source.projectID, actual)
 	if err != nil {
 		return observed, err

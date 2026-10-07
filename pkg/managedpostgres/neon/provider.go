@@ -232,6 +232,13 @@ func (p *Provider) Provision(ctx context.Context, request managedpostgres.Provis
 }
 
 func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	return p.RestoreWithCreationReceipt(ctx, request, nil, nil)
+}
+
+func (p *Provider) RestoreWithCreationReceipt(ctx context.Context, request managedpostgres.RestoreRequest, accepted *managedpostgres.CreationAcknowledgement, record managedpostgres.CreationRecorder) (managedpostgres.ObservedDatabase, error) {
+	if p == nil {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+	}
 	if request.ResourceID == "" || len(request.ResourceID) > 255 || request.SourceResourceID == "" || len(request.SourceResourceID) > 255 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 || request.PointInTime.IsZero() {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
 	}
@@ -244,18 +251,31 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 	}
 	parentID := source.branchID
 	if parentID == "" {
+		record = nil
+	} // legacy project selectors cannot establish exact-source custody
+	if parentID == "" {
 		parentID, err = p.defaultBranch(ctx, source.projectID)
 		if err != nil {
 			return managedpostgres.ObservedDatabase{}, err
 		}
 	}
 	branchName := p.restoreBranchName(request.ResourceID)
+	if accepted != nil {
+		target, err := p.readRestoreCreation(ctx, request, *accepted)
+		if errors.Is(err, managedpostgres.ErrNotFound) {
+			err = managedpostgres.ErrUnavailable
+		}
+		if err != nil {
+			return managedpostgres.ObservedDatabase{}, err
+		}
+		return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, target, request)
+	}
 	existing, err := p.findBranch(ctx, source.projectID, branchName)
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
 	if existing.ID != "" {
-		return restoredBranchObservation(source.projectID, parentID, branchName, existing, request)
+		return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, existing, request)
 	}
 	payload := createBranchRequest{}
 	payload.Branch.Name = branchName
@@ -274,12 +294,12 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 				return managedpostgres.ObservedDatabase{}, recoveryErr
 			}
 			if recovered.ID != "" {
-				return restoredBranchObservation(source.projectID, parentID, branchName, recovered, request)
+				return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, recovered, request)
 			}
 		}
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	return restoredBranchObservation(source.projectID, parentID, branchName, created.Branch, request)
+	return p.awaitRestoredBranchWithCreation(ctx, source.projectID, parentID, branchName, created.Branch, request, record)
 }
 
 func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
@@ -290,9 +310,6 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	metadata, err := p.readDatabaseMetadata(ctx, ref, true)
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
-	}
-	if metadata.operations.Pagination.Cursor != "" {
-		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
 	}
 	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
 	status := operationStatus(metadata.operations.Operations, resourcesReady)
@@ -466,7 +483,7 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 					return managedpostgres.DeleteResult{}, sourceErr
 				}
 			}
-			observed, lineageErr := restoredBranchObservation(source.projectID, parentID, p.restoreBranchName(request.ResourceID), candidate,
+			observed, lineageErr := p.awaitRestoredBranch(ctx, source.projectID, parentID, p.restoreBranchName(request.ResourceID), candidate,
 				managedpostgres.RestoreRequest{PointInTime: request.RestorePointInTime})
 			if lineageErr != nil {
 				return managedpostgres.DeleteResult{}, lineageErr
@@ -567,27 +584,18 @@ func (p *Provider) restoreBranchName(resourceID string) string {
 }
 
 func (p *Provider) findBranch(ctx context.Context, projectID, name string) (branch, error) {
-	path := "/projects/" + url.PathEscape(projectID) + "/branches"
-	var response branchesResponse
-	if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
-		return branch{}, err
+	actual, err := p.findOwnedBranch(ctx, projectID, "", name)
+	if errors.Is(err, managedpostgres.ErrNotFound) {
+		// Preserve the ordinary restore/discovery seam's absence convention.
+		return branch{}, nil
 	}
-	var match branch
-	for _, candidate := range response.Branches {
-		if candidate.Name != name {
-			continue
-		}
-		if match.ID != "" || !validProviderID.MatchString(candidate.ID) {
-			return branch{}, managedpostgres.ErrConflict
-		}
-		match = candidate
-	}
-	return match, nil
+	return actual, err
 }
 
 func (p *Provider) findProject(ctx context.Context, name string) (string, error) {
 	cursor := ""
 	match := ""
+	seenCursors := map[string]bool{}
 	for page := 0; page < maximumProjectSearchPages; page++ {
 		query := url.Values{"limit": {"400"}, "search": {name}, "org_id": {p.organizationID}}
 		if cursor != "" {
@@ -596,6 +604,9 @@ func (p *Provider) findProject(ctx context.Context, name string) (string, error)
 		var response projectsResponse
 		if err := p.doJSON(ctx, http.MethodGet, "/projects", query, nil, &response, http.StatusOK); err != nil {
 			return "", err
+		}
+		if response.Projects == nil || len(response.UnavailableProjectIDs) > 0 {
+			return "", managedpostgres.ErrUnavailable
 		}
 		for _, candidate := range response.Projects {
 			if candidate.Name != name {
@@ -606,13 +617,14 @@ func (p *Provider) findProject(ctx context.Context, name string) (string, error)
 			}
 			match = candidate.ID
 		}
-		if response.Pagination.Cursor == "" {
+		if len(response.Projects) == 0 || response.Pagination.Cursor == "" {
 			return match, nil
 		}
-		if response.Pagination.Cursor == cursor {
+		if seenCursors[response.Pagination.Cursor] {
 			return "", managedpostgres.ErrUnavailable
 		}
 		cursor = response.Pagination.Cursor
+		seenCursors[cursor] = true
 	}
 	return "", managedpostgres.ErrUnavailable
 }

@@ -144,7 +144,7 @@ func TestResolveSimpleAppPlanRejectsFunctionShape(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "handler.js"), []byte("exports.handler = () => {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false); err == nil || !strings.Contains(err.Error(), "function path") {
+	if _, err := resolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false); err == nil || !strings.Contains(err.Error(), "gregale deploy --diff") {
 		t.Fatalf("error = %v, want function-path guidance", err)
 	}
 }

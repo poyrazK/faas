@@ -285,6 +285,76 @@ func TestSQLCredentialRevokeRefusesOwnedObjects(t *testing.T) {
 	}
 }
 
+// Neon owners have CREATEROLE without SUPERUSER. On PostgreSQL 16+, the
+// automatic ADMIN membership does not permit DROP OWNED without SET access.
+func TestSQLCredentialRetirementByNonSuperuserPreservesData(t *testing.T) {
+	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration} {
+		t.Run(string(access), func(t *testing.T) {
+			f := newCredentialFixture(t)
+			ctx := context.Background()
+			owner := "gregale_control_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			f.extraRoles = append(f.extraRoles, owner)
+			executeSQL(t, f.admin, "CREATE ROLE "+roleIdentifier(owner)+" LOGIN CREATEROLE NOSUPERUSER PASSWORD 'local-owner-password'")
+			executeSQL(t, f.admin, "GRANT pg_signal_backend TO "+roleIdentifier(owner))
+			executeSQL(t, f.admin, "ALTER DATABASE "+roleIdentifier(f.config.Database)+" OWNER TO "+roleIdentifier(owner))
+			executeSQL(t, f.admin, "ALTER SCHEMA public OWNER TO "+roleIdentifier(owner))
+			config := f.config.Copy()
+			config.User, config.Password = owner, "local-owner-password"
+			f.manager.connect = func(ctx context.Context, _ string) (*pgx.Conn, error) {
+				return pgx.ConnectConfig(ctx, config.Copy())
+			}
+			controller, err := pgx.ConnectConfig(ctx, config.Copy())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = controller.Close(ctx) }()
+			var superuser, createRole bool
+			if err := controller.QueryRow(ctx, `SELECT rolsuper, rolcreaterole FROM pg_roles WHERE rolname=current_user`).Scan(&superuser, &createRole); err != nil || superuser || !createRole {
+				t.Fatalf("fixture permissions superuser=%v createrole=%v err=%v", superuser, createRole, err)
+			}
+			if err := f.manager.Ensure(ctx, f.material, f.migration); err != nil {
+				t.Fatal("create migration role", err)
+			}
+			migration := f.connect(t, f.migration.name)
+			executeSQL(t, migration, `CREATE TABLE public.retirement_data(value text); INSERT INTO public.retirement_data VALUES ('preserved')`)
+			role := f.migration
+			if access == managedpostgres.CredentialReadWrite {
+				role = f.runtime
+			} else if access == managedpostgres.CredentialReadOnly {
+				role = f.readonly
+			}
+			if err := f.manager.Ensure(ctx, f.material, role); err != nil {
+				t.Fatal("create credential", err)
+			}
+			retired := f.connect(t, role.name)
+			replacementRole := role
+			replacementRole.name += "_next"
+			f.extraRoles = append(f.extraRoles, replacementRole.name)
+			if err := f.manager.Ensure(ctx, f.material, replacementRole); err != nil {
+				t.Fatal("create replacement", err)
+			}
+			replacement := f.connect(t, replacementRole.name)
+			if err := f.manager.Revoke(ctx, f.material, role); err != nil {
+				t.Fatal("non-superuser retirement", err)
+			}
+			if _, err := retired.Exec(ctx, "SELECT 1"); err == nil {
+				t.Fatal("retired session survived")
+			}
+			var value string
+			if err := replacement.QueryRow(ctx, `SELECT value FROM public.retirement_data`).Scan(&value); err != nil || value != "preserved" {
+				t.Fatalf("replacement data value=%q err=%v", value, err)
+			}
+			var exists bool
+			if err := f.admin.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)`, role.name).Scan(&exists); err != nil || exists {
+				t.Fatalf("retired role exists=%v err=%v", exists, err)
+			}
+			if err := f.manager.Revoke(ctx, f.material, role); err != nil {
+				t.Fatal("retirement replay", err)
+			}
+		})
+	}
+}
+
 func TestSQLCredentialRejectsPrivilegeDriftAndPublicDefiners(t *testing.T) {
 	for _, kind := range []string{"admin flag", "membership", "schema create", "public definer"} {
 		t.Run(kind, func(t *testing.T) {

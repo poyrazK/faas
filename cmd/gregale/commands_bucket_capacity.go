@@ -9,6 +9,12 @@ import (
 )
 
 func cmdBucket(args []string) int {
+	if len(args) > 0 && args[0] == "uploads" {
+		return cmdBucketUploads(args[1:])
+	}
+	if len(args) > 0 && (args[0] == "upload" || args[0] == "download") {
+		return cmdBucketTransfer(args)
+	}
 	if len(args) > 0 && args[0] == "copy-sources" {
 		return cmdBucketCopySources(args[1:])
 	}

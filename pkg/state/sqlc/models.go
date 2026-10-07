@@ -3476,6 +3476,22 @@ type ManagedPostgresCheckpointMaintenance struct {
 	UpdatedAt                pgtype.Timestamptz
 }
 
+type ManagedPostgresCreationReceipt struct {
+	Kind               string
+	ResourceID         string
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Generation         int64
+	PointInTime        pgtype.Timestamptz
+	SourceResourceID   string
+	ProviderResourceID string
+	ProviderCreatedAt  pgtype.Timestamptz
+	RecordedAt         pgtype.Timestamptz
+	CleanupStartedAt   pgtype.Timestamptz
+}
+
 type ManagedPostgresCutover struct {
 	ID                       pgtype.UUID
 	AccountID                pgtype.UUID
@@ -4827,6 +4843,19 @@ type PlatformTenantUsageMinute struct {
 	BillableUnits    int64
 	UpdatedAt        pgtype.Timestamptz
 	SourceKind       string
+}
+
+type PlatformTenantWorkflowScheduleCursor struct {
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	WorkflowName     string
+	DeploymentID     pgtype.UUID
+	TriggerSnapshot  []byte
+	LastEvaluatedAt  pgtype.Timestamptz
+	ScheduledFor     pgtype.Timestamptz
+	Status           string
+	LastRunID        pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type PrPreviewSet struct {

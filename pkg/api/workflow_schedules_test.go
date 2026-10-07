@@ -17,6 +17,9 @@ func TestWorkflowScheduleValidation(t *testing.T) {
 	}{
 		{"manual", WorkflowTriggerSpec{Type: "manual"}, false},
 		{"schedule", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", Timezone: "Europe/Istanbul"}, false},
+		{"tenant-configurable schedule", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", TenantConfigurable: true}, false},
+		{"tenant-configurable manual", WorkflowTriggerSpec{Type: "manual", TenantConfigurable: true}, true},
+		{"tenant-configurable event", WorkflowTriggerSpec{Type: "event", Source: "billing.*", EventType: "paid", TenantConfigurable: true}, true},
 		{"unknown", WorkflowTriggerSpec{Type: "event"}, true},
 		{"missing schedule", WorkflowTriggerSpec{Type: "schedule"}, true},
 		{"seconds", WorkflowTriggerSpec{Type: "schedule", Schedule: "* * * * * *"}, true},

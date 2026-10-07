@@ -3294,45 +3294,6 @@ $$;
 
 
 --
--- Name: faas_invocation_headers_own_stage(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.faas_invocation_headers_own_stage(owner_app uuid, pin_headers jsonb) RETURNS boolean
-    LANGUAGE sql STABLE
-    AS $$
-SELECT
-    EXISTS(SELECT 1 FROM deployments stage
-        WHERE stage.app_id=owner_app AND stage.scope NOT IN ('production','default')
-            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
-                WHERE lower(pin.key)='x-gregale-revision' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')))
-    OR EXISTS(SELECT 1 FROM project_release_sets stage JOIN apps owner
-        ON owner.project_id=stage.project_id AND owner.account_id=stage.account_id
-        WHERE owner.id=owner_app AND stage.environment_slug NOT IN ('production','default')
-            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
-                WHERE lower(pin.key)='x-gregale-release' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')));
-$$;
-
-
---
--- Name: faas_retain_dead_letter_environment_ownership(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.faas_retain_dead_letter_environment_ownership() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-    IF TG_OP='UPDATE' THEN NEW.environment_owned := NEW.environment_owned OR OLD.environment_owned; END IF;
-    NEW.environment_owned := NEW.environment_owned OR (NEW.source='invocation' AND (faas_invocation_headers_own_stage(NEW.app_id,NEW.headers)
-        OR EXISTS(SELECT 1 FROM invocations i WHERE i.id=NEW.source_id
-            AND NOT EXISTS(SELECT 1 FROM production_invocation_work p WHERE p.id=i.id))));
-    RETURN NEW;
-END;
-$$;
-
-
---
-
-
 -- Name: faas_capture_workflow_finished_webhook_event(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3395,8 +3356,43 @@ $$;
 
 
 --
+-- Name: faas_invocation_headers_own_stage(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_invocation_headers_own_stage(owner_app uuid, pin_headers jsonb) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT
+    EXISTS(SELECT 1 FROM deployments stage
+        WHERE stage.app_id=owner_app AND stage.scope NOT IN ('production','default')
+            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
+                WHERE lower(pin.key)='x-gregale-revision' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')))
+    OR EXISTS(SELECT 1 FROM project_release_sets stage JOIN apps owner
+        ON owner.project_id=stage.project_id AND owner.account_id=stage.account_id
+        WHERE owner.id=owner_app AND stage.environment_slug NOT IN ('production','default')
+            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
+                WHERE lower(pin.key)='x-gregale-release' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')));
+$$;
 
 
+--
+-- Name: faas_retain_dead_letter_environment_ownership(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_retain_dead_letter_environment_ownership() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP='UPDATE' THEN NEW.environment_owned := NEW.environment_owned OR OLD.environment_owned; END IF;
+    NEW.environment_owned := NEW.environment_owned OR (NEW.source='invocation' AND (faas_invocation_headers_own_stage(NEW.app_id,NEW.headers)
+        OR EXISTS(SELECT 1 FROM invocations i WHERE i.id=NEW.source_id
+            AND NOT EXISTS(SELECT 1 FROM production_invocation_work p WHERE p.id=i.id))));
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: faas_stamp_app_deletion_deadline(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16557,11 +16553,12 @@ CREATE TABLE public.object_deletions (
     CONSTRAINT object_deletions_check4 CHECK (((state <> 'completed'::text) OR (selector <> 'null'::text) OR (version_id = 'null'::text))),
     CONSTRAINT object_deletions_check5 CHECK (((state <> 'completed'::text) OR (provider_status <> 'Enabled'::text) OR (selector <> ''::text) OR (delete_marker AND (version_id <> ALL (ARRAY[''::text, 'null'::text])) AND (provider_version_id <> ALL (ARRAY[''::text, 'null'::text]))))),
     CONSTRAINT object_deletions_check6 CHECK (((reserved_bytes = 0) OR ((selector = ''::text) AND (provider_status <> ''::text)))),
-    CONSTRAINT object_deletions_check7 CHECK (((provider_status = 'Enabled'::text) OR (baseline = '[]'::jsonb))),
+    CONSTRAINT object_deletions_check7 CHECK (((provider_status = ANY (ARRAY['Enabled'::text, 'GCS_Enabled'::text, 'GCS_Suspended'::text])) OR (baseline = '[]'::jsonb))),
+    CONSTRAINT object_deletions_gcs_generation_fence CHECK (((provider_status <> ALL (ARRAY['GCS_Enabled'::text, 'GCS_Suspended'::text])) OR ((selector = ''::text) AND (target_provider_version_id = ''::text) AND (reserved_bytes = 0) AND (NOT delete_marker) AND (version_id = ''::text) AND (provider_version_id = ''::text) AND (((state = ANY (ARRAY['prepared'::text, 'failed'::text])) AND (baseline = '[]'::jsonb)) OR ((jsonb_array_length(baseline) = 1) AND (jsonb_typeof((baseline -> 0)) = 'string'::text) AND ((baseline ->> 0) ~ '^0{48}[0-7][0-9a-f]{15}$'::text)))))),
     CONSTRAINT object_deletions_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'configuration'::text, 'preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text, 'object_protected'::text]))),
     CONSTRAINT object_deletions_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
     CONSTRAINT object_deletions_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
-    CONSTRAINT object_deletions_provider_status_check CHECK ((provider_status = ANY (ARRAY[''::text, 'Enabled'::text, 'Suspended'::text]))),
+    CONSTRAINT object_deletions_provider_status_check CHECK ((provider_status = ANY (ARRAY[''::text, 'Enabled'::text, 'Suspended'::text, 'GCS_Enabled'::text, 'GCS_Suspended'::text]))),
     CONSTRAINT object_deletions_provider_version_id_check CHECK ((octet_length(provider_version_id) <= 1024)),
     CONSTRAINT object_deletions_reserved_bytes_check CHECK (((reserved_bytes >= 0) AND (reserved_bytes <= 1024))),
     CONSTRAINT object_deletions_selector_check CHECK (((selector = ANY (ARRAY[''::text, 'null'::text])) OR (selector ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
@@ -20996,7 +20993,7 @@ CREATE TABLE public.workflow_automation_revisions (
     legacy_snapshot boolean DEFAULT false NOT NULL,
     published_by_account_id uuid NOT NULL,
     published_by_api_key_id uuid,
-    CONSTRAINT workflow_automation_revisions_definition_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
+    CONSTRAINT workflow_automation_revisions_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
     CONSTRAINT workflow_automation_revisions_name_check CHECK ((length(name) > 0)),
     CONSTRAINT workflow_automation_revisions_version_check CHECK ((version > 0))
 );
@@ -21116,6 +21113,27 @@ CREATE TABLE public.workflow_runs (
     CONSTRAINT workflow_runs_create_idempotency_check CHECK ((((create_idempotency_key IS NULL) AND (create_request_fingerprint IS NULL)) OR ((create_idempotency_key IS NOT NULL) AND ((octet_length(create_idempotency_key) >= 1) AND (octet_length(create_idempotency_key) <= 255)) AND (create_request_fingerprint IS NOT NULL) AND (octet_length(create_request_fingerprint) = 32)))),
     CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
+);
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_workflow_schedule_cursors (
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    deployment_id uuid,
+    trigger_snapshot jsonb NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    scheduled_for timestamp with time zone,
+    status text NOT NULL,
+    last_run_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_workflow_name_check CHECK ((workflow_name <> ''::text))
 );
 
 
@@ -26425,6 +26443,14 @@ ALTER TABLE ONLY public.workflow_runs
 
 ALTER TABLE ONLY public.workflow_schedule_cursors
     ADD CONSTRAINT workflow_schedule_cursors_pkey PRIMARY KEY (app_id, workflow_name);
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_pkey PRIMARY KEY (app_id, platform_tenant_id, workflow_name);
 
 
 --
@@ -31935,17 +31961,18 @@ CREATE INDEX workflow_runs_app_id_idx ON public.workflow_runs USING btree (app_i
 
 
 --
+-- Name: workflow_runs_app_name_concurrency_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_name_concurrency_idx ON public.workflow_runs USING btree (app_id, workflow_name, status, started_at) WHERE (status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text]));
+
+
+--
 -- Name: workflow_runs_app_name_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX workflow_runs_app_name_created_idx ON public.workflow_runs USING btree (app_id, workflow_name, created_at DESC);
 
-
---
--- Name: workflow_runs_app_name_concurrency_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX workflow_runs_app_name_concurrency_idx ON public.workflow_runs USING btree (app_id, workflow_name, status, started_at) WHERE (status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text]));
 
 --
 -- Name: workflow_runs_create_idempotency_idx; Type: INDEX; Schema: public; Owner: -
@@ -31966,6 +31993,20 @@ CREATE INDEX workflow_runs_dispatch_idx ON public.workflow_runs USING btree (sch
 --
 
 CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: workflow_runs_app_tenant_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_tenant_history_idx ON public.workflow_runs USING btree (app_id, platform_tenant_id, created_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: platform_tenant_workflow_schedule_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_workflow_schedule_tenant_idx ON public.platform_tenant_workflow_schedule_cursors USING btree (platform_tenant_id, app_id);
 
 
 --
@@ -34895,17 +34936,17 @@ CREATE TRIGGER workflow_runs_capture_dead_letter_event AFTER UPDATE OF status ON
 
 
 --
+-- Name: workflow_runs workflow_runs_capture_finished_webhook_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_runs_capture_finished_webhook_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_finished_webhook_event();
+
+
+--
 -- Name: workflow_webhook_bindings workflow_webhook_routing_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.workflow_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
-
-
---
--- Name: workflow_runs_capture_finished_webhook_event; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER workflow_runs_capture_finished_webhook_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_finished_webhook_event();
 
 
 --
@@ -41386,6 +41427,38 @@ ALTER TABLE ONLY public.workflow_runs
 
 
 --
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_last_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_last_run_id_fkey FOREIGN KEY (last_run_id) REFERENCES public.workflow_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_schedule_cursors workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -41515,3 +41588,68 @@ ALTER TABLE ONLY public.customer_operation_workflow_claims
 
 ALTER TABLE ONLY public.customer_operation_workflow_claims
     ADD CONSTRAINT customer_operation_workflow_claims_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_creation_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_creation_receipts (
+    kind text NOT NULL,
+    resource_id text NOT NULL,
+    account_id uuid NOT NULL,
+    database_id uuid,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    generation bigint NOT NULL,
+    point_in_time timestamp with time zone NOT NULL,
+    source_resource_id text NOT NULL,
+    provider_resource_id text NOT NULL,
+    provider_created_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    cleanup_started_at timestamp with time zone,
+    CONSTRAINT managed_postgres_creation_receipts_cleanup_started_at_check CHECK (((cleanup_started_at IS NULL) OR isfinite(cleanup_started_at))),
+    CONSTRAINT managed_postgres_creation_receipts_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_creation_receipts_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_check CHECK (((provider_resource_id <> source_resource_id) AND (point_in_time <= provider_created_at) AND (provider_created_at <= recorded_at))),
+    CONSTRAINT managed_postgres_creation_receipts_check1 CHECK ((((kind = 'restore'::text) AND (database_id IS NOT NULL) AND (resource_id = (database_id)::text)) OR ((kind = 'snapshot'::text) AND (database_id IS NULL)))),
+    CONSTRAINT managed_postgres_creation_receipts_generation_check CHECK ((generation > 0)),
+    CONSTRAINT managed_postgres_creation_receipts_kind_check CHECK ((kind = ANY (ARRAY['restore'::text, 'snapshot'::text]))),
+    CONSTRAINT managed_postgres_creation_receipts_point_in_time_check CHECK (isfinite(point_in_time)),
+    CONSTRAINT managed_postgres_creation_receipts_provider_created_at_check CHECK (isfinite(provider_created_at)),
+    CONSTRAINT managed_postgres_creation_receipts_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_resource_id_check CHECK (((resource_id <> ''::text) AND (length(resource_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255)))
+);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_rec_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_rec_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_pkey PRIMARY KEY (kind, backend_id, resource_id);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;

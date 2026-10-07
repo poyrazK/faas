@@ -4535,9 +4535,12 @@ SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
 COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
 JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
-WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
+WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes,
+COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
+COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
-WHERE b.account_id = $1;
+LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = sqlc.arg(period_start)
+WHERE b.account_id = sqlc.arg(account_id);
 
 -- name: ObjectUsageGrant :one
 SELECT max_bytes FROM object_storage_key_grants WHERE bucket_id = $1 AND key_hash = $2;
@@ -10619,7 +10622,11 @@ WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.
 -- name: FinishProjectEnvironmentClonePostgresSnapshotCleanup :one
 UPDATE project_environment_clone_postgres_snapshots s SET state='deleted',cleanup_observed_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.arg(source_database_id)::uuid
-    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL)
+    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL
+        OR EXISTS(SELECT 1 FROM managed_postgres_creation_receipts c JOIN project_environment_clone_operations owner ON owner.id=s.operation_id
+            WHERE c.kind='snapshot' AND c.cleanup_started_at IS NOT NULL AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
+                AND c.account_id=owner.account_id AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
+                AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point))
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=s.operation_id AND r.source_database_id=s.source_database_id AND r.state<>'deleted')
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=s.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
@@ -13623,6 +13630,87 @@ ON CONFLICT (app_id, workflow_name) DO UPDATE SET
     status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, updated_at = now()
 RETURNING *;
 
+-- Tenant schedule candidates are one row per active tenant/app binding. The
+-- composite cursor prevents large tenants from being starved by the page cap.
+-- name: ListTenantWorkflowScheduleCandidates :many
+SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
+       app_workflow_definitions(a.id, d.workflows)::jsonb AS workflows
+FROM apps a
+JOIN accounts ac ON ac.id = a.account_id
+JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
+JOIN deployments d ON d.app_id = a.id
+WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+  AND d.id = (SELECT dep.id FROM deployments dep WHERE dep.app_id = a.id
+      AND dep.status = 'live' AND dep.scope = 'default'
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1)
+  AND (sqlc.narg(owner_node_id)::uuid IS NULL OR a.node_id = sqlc.narg(owner_node_id)::uuid)
+  AND (sqlc.narg(after_app_id)::uuid IS NULL OR a.id > sqlc.narg(after_app_id)::uuid
+       OR (a.id = sqlc.narg(after_app_id)::uuid AND t.id > sqlc.narg(after_tenant_id)::uuid))
+  AND app_workflow_definitions(a.id, d.workflows)::jsonb @> '[{"trigger":{"type":"schedule"}}]'::jsonb
+  AND (EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id = a.account_id AND c.app_id = a.id
+       AND c.platform_tenant_id = t.id AND c.status = 'active' AND c.revoked_at IS NULL)
+       OR EXISTS (SELECT 1 FROM tenant_surfaces s WHERE s.account_id = a.account_id AND s.app_id = a.id
+       AND s.platform_tenant_id = t.id AND s.status = 'active'))
+ORDER BY a.id, t.id LIMIT sqlc.arg(batch_limit);
+
+-- name: LockTenantWorkflowScheduleTarget :one
+SELECT a.account_id, d.id AS deployment_id, app_workflow_definitions(a.id, d.workflows)::jsonb AS workflows, ac.plan
+FROM apps a
+JOIN accounts ac ON ac.id = a.account_id
+JOIN platform_tenants t ON t.id = sqlc.arg(tenant_id)::uuid AND t.account_id = a.account_id
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted' AND NOT a.maintenance_mode
+  AND a.platform_tenant_required AND t.status = 'active'
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND d.id = (SELECT dep.id FROM deployments dep WHERE dep.app_id = a.id
+      AND dep.status = 'live' AND dep.scope = 'default'
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1)
+FOR SHARE OF a, ac, t, d;
+
+-- Link rows are locked separately so unlink/revocation cannot race a schedule
+-- admission after the target and tenant have been checked.
+-- name: LockTenantWorkflowScheduleConsumerLink :one
+SELECT c.id FROM api_consumers c
+WHERE c.account_id = sqlc.arg(account_id)::uuid AND c.app_id = sqlc.arg(app_id)::uuid
+  AND c.platform_tenant_id = sqlc.arg(tenant_id)::uuid AND c.status = 'active' AND c.revoked_at IS NULL
+FOR SHARE;
+
+-- name: LockTenantWorkflowScheduleSurfaceLink :one
+SELECT s.id FROM tenant_surfaces s
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.app_id = sqlc.arg(app_id)::uuid
+  AND s.platform_tenant_id = sqlc.arg(tenant_id)::uuid AND s.status = 'active'
+FOR SHARE;
+
+-- name: CountActiveTenantWorkflowRunsForAdmission :one
+SELECT count(*) FROM workflow_runs
+WHERE app_id = sqlc.arg(app_id)::uuid AND platform_tenant_id = sqlc.arg(tenant_id)::uuid
+  AND workflow_name = sqlc.arg(workflow_name)::text
+  AND status IN ('pending', 'running', 'awaiting_event');
+
+-- name: InsertTenantScheduledWorkflowRun :one
+INSERT INTO workflow_runs (id, app_id, platform_tenant_id, workflow_name, status, input, definition_snapshot, scheduled_for)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(tenant_id)::uuid, sqlc.arg(workflow_name)::text,
+    'pending', sqlc.arg(input)::jsonb, sqlc.arg(definition_snapshot)::jsonb, sqlc.arg(scheduled_for)::timestamptz)
+RETURNING created_at, updated_at;
+
+-- name: GetTenantWorkflowScheduleCursor :one
+SELECT * FROM platform_tenant_workflow_schedule_cursors
+WHERE app_id = sqlc.arg(app_id)::uuid AND platform_tenant_id = sqlc.arg(tenant_id)::uuid
+  AND workflow_name = sqlc.arg(workflow_name)::text;
+
+-- name: UpsertTenantWorkflowScheduleCursor :one
+INSERT INTO platform_tenant_workflow_schedule_cursors (app_id, platform_tenant_id, workflow_name,
+    deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id)
+VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(tenant_id)::uuid, sqlc.arg(workflow_name)::text,
+    sqlc.arg(deployment_id)::uuid, sqlc.arg(trigger_snapshot)::jsonb, sqlc.arg(last_evaluated_at)::timestamptz,
+    sqlc.narg(scheduled_for)::timestamptz, sqlc.arg(status)::text, sqlc.narg(last_run_id)::uuid)
+ON CONFLICT (app_id, platform_tenant_id, workflow_name) DO UPDATE SET
+    deployment_id = EXCLUDED.deployment_id, trigger_snapshot = EXCLUDED.trigger_snapshot,
+    last_evaluated_at = EXCLUDED.last_evaluated_at, scheduled_for = EXCLUDED.scheduled_for,
+    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, updated_at = now()
+RETURNING *;
+
 -- name: ListMatchingEventWorkflows :many
 SELECT recipient::jsonb FROM workflow_event_recipients(sqlc.arg(account_id)::uuid, sqlc.arg(source)::text, sqlc.arg(event_type)::text)
 WHERE recipient->>'id' > sqlc.arg(after_id)::text
@@ -13645,8 +13733,8 @@ FROM apps a JOIN accounts ac ON ac.id = a.account_id
 WHERE a.id = sqlc.arg(app_id) FOR SHARE OF a, ac;
 
 -- name: InsertEventWorkflowRun :exec
-INSERT INTO workflow_runs(id, app_id, workflow_name, status, input, definition_snapshot)
-VALUES($1, $2, $3, 'pending', $4, $5);
+INSERT INTO workflow_runs(id, app_id, platform_tenant_id, workflow_name, status, input, definition_snapshot)
+VALUES($1, $2, nullif(sqlc.arg(platform_tenant_id)::text, '')::uuid, $3, 'pending', $4, $5);
 
 -- name: InsertEventWorkflowReceipt :exec
 INSERT INTO workflow_event_receipts(outbox_id, recipient_id, run_id) VALUES($1, $2, $3);
@@ -14629,3 +14717,65 @@ INSERT INTO customer_operation_executions(operation_id,generation,job_run_id)
 SELECT o.id,sqlc.arg(generation)::integer,j.id FROM customer_operations o
 JOIN job_runs j ON j.id=sqlc.arg(run_id)::uuid AND j.account_id=o.account_id AND j.operation_id=o.id
 WHERE o.id=sqlc.arg(operation_id)::uuid AND o.execution_kind='job';
+
+-- name: ListRollbackOn5xxCandidates :many
+-- ADR-625: completed live releases that opted into first-wake 5xx
+-- auto-rollback and have not rolled back. A NULL window means apid has not
+-- observed traffic for the release yet; an open window, plus a grace for
+-- late telemetry, is still evaluated. Canary rollouts in flight belong to the
+-- meterd circuit breaker, so only 100% complete releases qualify.
+SELECT d.id, d.app_id, d.scope, d.created_at, d.first_wake_at, d.first_5xx_window_ends_at
+  FROM deployments AS d
+ WHERE d.status = 'live'
+   AND d.rollback_on_5xx
+   AND d.last_auto_rollback_reason IS NULL
+   AND d.traffic_percent = 100
+   AND d.rollout_state = 'complete'
+   AND (d.first_5xx_window_ends_at IS NULL
+        OR d.first_5xx_window_ends_at > now() - make_interval(secs => sqlc.arg('grace_seconds')::int))
+ ORDER BY d.created_at, d.id
+ LIMIT sqlc.arg('row_limit')::int;
+
+
+-- name: RecordManagedPostgresCreationReceipt :one
+INSERT INTO managed_postgres_creation_receipts(kind,resource_id,account_id,database_id,backend_id,backend_fingerprint,generation,
+    point_in_time,source_resource_id,provider_resource_id,provider_created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT (kind,backend_id,resource_id) DO UPDATE SET resource_id=EXCLUDED.resource_id
+WHERE managed_postgres_creation_receipts.account_id=EXCLUDED.account_id
+    AND managed_postgres_creation_receipts.database_id IS NOT DISTINCT FROM EXCLUDED.database_id
+    AND managed_postgres_creation_receipts.backend_fingerprint=EXCLUDED.backend_fingerprint
+    AND managed_postgres_creation_receipts.generation=EXCLUDED.generation
+    AND managed_postgres_creation_receipts.point_in_time=EXCLUDED.point_in_time
+    AND managed_postgres_creation_receipts.source_resource_id=EXCLUDED.source_resource_id
+    AND managed_postgres_creation_receipts.provider_resource_id=EXCLUDED.provider_resource_id
+    AND managed_postgres_creation_receipts.provider_created_at=EXCLUDED.provider_created_at RETURNING *;
+
+-- name: ReadManagedPostgresCreationReceipt :one
+SELECT * FROM managed_postgres_creation_receipts WHERE kind=$1 AND backend_id=$2 AND resource_id=$3;
+
+-- name: ValidateManagedPostgresSnapshotCreationIntent :one
+SELECT o.account_id FROM project_environment_clone_postgres_snapshots s JOIN project_environment_clone_operations o ON o.id=s.operation_id
+WHERE ('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)=sqlc.arg(resource_id)::text
+    AND s.backend_id=sqlc.arg(backend_id)::text AND s.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
+    AND s.source_data_resource_id=sqlc.arg(source_resource_id)::text AND s.capture_point=sqlc.arg(point_in_time)::timestamptz
+    AND s.request_started_at IS NOT NULL AND s.state IN ('requested','deleting') AND o.status IN ('capturing','compensating')
+    AND (NOT sqlc.arg(cleanup)::boolean OR (s.state='deleting' AND o.status='compensating'));
+
+
+-- name: MarkManagedPostgresCreationCleanup :one
+UPDATE managed_postgres_creation_receipts SET cleanup_started_at=coalesce(cleanup_started_at,clock_timestamp())
+WHERE kind=$1 AND backend_id=$2 AND resource_id=$3 AND provider_resource_id=$4 AND provider_created_at=$5 RETURNING *;
+
+-- name: PurgeAccountManagedPostgresCreationReceipts :exec
+DELETE FROM managed_postgres_creation_receipts c
+WHERE c.account_id=sqlc.arg(account_id)::uuid
+    AND EXISTS(SELECT 1 FROM accounts a WHERE a.id=c.account_id AND a.status='deleted_pending')
+    AND ((c.kind='restore' AND EXISTS(SELECT 1 FROM managed_postgres_databases d
+        WHERE d.id=c.database_id AND d.account_id=c.account_id AND d.state='deleted'))
+    OR (c.kind='snapshot' AND EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots s
+        JOIN project_environment_clone_operations o ON o.id=s.operation_id
+        WHERE o.account_id=c.account_id AND s.state='deleted'
+            AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
+            AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
+            AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point)));

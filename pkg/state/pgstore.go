@@ -10481,7 +10481,7 @@ func (s *PgStore) StampFirstWake(ctx context.Context, deploymentID string, windo
 	row := s.pool.QueryRow(ctx, `
 		update deployments
 		   set first_wake_at = coalesce(first_wake_at, now()),
-		       first_5xx_window_ends_at = coalesce(first_5xx_window_ends_at, now() + ($2::text || ' minutes')::interval)
+		       first_5xx_window_ends_at = coalesce(first_5xx_window_ends_at, now() + make_interval(mins => $2::int))
 		 where id = $1
 		 returning `+deploymentSelectColumnsWithRootfs, deploymentID, windowMinutes)
 	d, err := scanDeploymentWithRootfs(row)
@@ -19518,7 +19518,7 @@ func (s *PgStore) AppendEvent(ctx context.Context, actor, kind string, subject *
 // the best-effort events worker reaches Postgres later.
 func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error {
 	if subject != nil && customerPublishedEvent(kind, data) && !at.IsZero() {
-		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, nil, &at)
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, "", "", data, nil, &at)
 	}
 	if at.IsZero() {
 		return s.AppendEvent(ctx, actor, kind, subject, data)
@@ -19544,7 +19544,7 @@ func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject
 // value surfaces as SQLSTATE 23514 to the caller.
 func (s *PgStore) AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error {
 	if subject != nil && customerPublishedEvent(kind, data) {
-		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, traceID, nil)
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, "", "", data, traceID, nil)
 	}
 	var subj *uuid.UUID
 	if subject != nil {
@@ -25905,6 +25905,11 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// `delete from accounts` at the bottom be the natural sentinel.
 	if err := purgeOperationOwnerTx(ctx, tx, id, ""); err != nil {
 		return fmt.Errorf("state: purge customer operation owner: %w", err)
+	}
+	// Custody outlives provider cleanup until final account erasure. Refuse to
+	// purge any acknowledgement whose lifecycle has not confirmed deletion.
+	if err := sqlc.New().PurgeAccountManagedPostgresCreationReceipts(ctx, tx, mustPgUUID(id)); err != nil {
+		return fmt.Errorf("state: purge deleted managed PostgreSQL custody: %w", err)
 	}
 
 	steps := []struct {

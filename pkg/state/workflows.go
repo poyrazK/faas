@@ -414,12 +414,13 @@ type WorkflowEvent struct {
 
 // ListWorkflowRunsOpts controls pagination and filtering for workflow runs.
 type ListWorkflowRunsOpts struct {
-	Status        string
-	WorkflowName  string
-	CreatedAfter  *time.Time
-	CreatedBefore *time.Time
-	Limit         int
-	Offset        int
+	Status           string
+	WorkflowName     string
+	PlatformTenantID string
+	CreatedAfter     *time.Time
+	CreatedBefore    *time.Time
+	Limit            int
+	Offset           int
 }
 
 // WorkflowStore defines the storage operations for durable workflows.
@@ -500,4 +501,13 @@ type WorkflowStore interface {
 	// Retention
 	SweepExpiredWorkflowRuns(ctx context.Context, olderThan time.Duration) (int, error)
 	SweepExpiredWorkflowEvents(ctx context.Context, olderThan time.Duration) (int, error)
+}
+
+// TenantWorkflowContinuationStore admits external event and callback
+// continuations only when the run still belongs to the authenticated tenant
+// and that tenant is still linked to the app. Implementations perform the
+// identity check in the same critical section as the durable write.
+type TenantWorkflowContinuationStore interface {
+	InsertTenantWorkflowEvent(ctx context.Context, tenantID string, event *WorkflowEvent) error
+	CompleteTenantWorkflowCallback(ctx context.Context, tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (duplicate bool, err error)
 }

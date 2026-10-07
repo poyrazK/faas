@@ -112,8 +112,12 @@ def sync_detailed(
     tenant. Outbound steps can use an existing app-bound customer-managed
     integration; the signed run identity and active tenant-to-app link are
     checked at dispatch and outbound authorization. Integration credentials
-    and route policies remain app-scoped and shared across tenants. Event
-    waits and callbacks remain unsupported.
+    and route policies remain app-scoped and shared across tenants. This
+    tenant-self API also supports authenticated event waits and callbacks.
+    Schedule-triggered workflows are admitted independently for each active
+    tenant link. The published cadence is the default; triggers marked
+    tenant_configurable can be overridden through the tenant-self schedule
+    API without changing workflow input or steps.
 
     Args:
         slug (str):
@@ -157,8 +161,12 @@ def sync(
     tenant. Outbound steps can use an existing app-bound customer-managed
     integration; the signed run identity and active tenant-to-app link are
     checked at dispatch and outbound authorization. Integration credentials
-    and route policies remain app-scoped and shared across tenants. Event
-    waits and callbacks remain unsupported.
+    and route policies remain app-scoped and shared across tenants. This
+    tenant-self API also supports authenticated event waits and callbacks.
+    Schedule-triggered workflows are admitted independently for each active
+    tenant link. The published cadence is the default; triggers marked
+    tenant_configurable can be overridden through the tenant-self schedule
+    API without changing workflow input or steps.
 
     Args:
         slug (str):
@@ -197,8 +205,12 @@ async def asyncio_detailed(
     tenant. Outbound steps can use an existing app-bound customer-managed
     integration; the signed run identity and active tenant-to-app link are
     checked at dispatch and outbound authorization. Integration credentials
-    and route policies remain app-scoped and shared across tenants. Event
-    waits and callbacks remain unsupported.
+    and route policies remain app-scoped and shared across tenants. This
+    tenant-self API also supports authenticated event waits and callbacks.
+    Schedule-triggered workflows are admitted independently for each active
+    tenant link. The published cadence is the default; triggers marked
+    tenant_configurable can be overridden through the tenant-self schedule
+    API without changing workflow input or steps.
 
     Args:
         slug (str):
@@ -240,8 +252,12 @@ async def asyncio(
     tenant. Outbound steps can use an existing app-bound customer-managed
     integration; the signed run identity and active tenant-to-app link are
     checked at dispatch and outbound authorization. Integration credentials
-    and route policies remain app-scoped and shared across tenants. Event
-    waits and callbacks remain unsupported.
+    and route policies remain app-scoped and shared across tenants. This
+    tenant-self API also supports authenticated event waits and callbacks.
+    Schedule-triggered workflows are admitted independently for each active
+    tenant link. The published cadence is the default; triggers marked
+    tenant_configurable can be overridden through the tenant-self schedule
+    API without changing workflow input or steps.
 
     Args:
         slug (str):

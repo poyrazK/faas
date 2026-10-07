@@ -38,6 +38,12 @@ class EventReceiptRecipientResponse:
     recovery_actions: list[EventReceiptRecoveryAction]
     """Applicable selective recovery requests; empty when no action is currently eligible. Authorization and state
     are checked again on POST."""
+    workflow_name: str | Unset = UNSET
+    """Published workflow captured as an event recipient."""
+    workflow_run_id: UUID | Unset = UNSET
+    """Durable run id after event-trigger admission."""
+    workflow_run_status: str | Unset = UNSET
+    """Current workflow run status when retained."""
     app_slug: str | Unset = UNSET
     """Current slug when the target still belongs to the authenticated account."""
     execution: EventReceiptExecutionResponse | Unset = UNSET
@@ -68,6 +74,14 @@ class EventReceiptRecipientResponse:
         for recovery_actions_item_data in self.recovery_actions:
             recovery_actions_item = recovery_actions_item_data.to_dict()
             recovery_actions.append(recovery_actions_item)
+
+        workflow_name = self.workflow_name
+
+        workflow_run_id: str | Unset = UNSET
+        if not isinstance(self.workflow_run_id, Unset):
+            workflow_run_id = str(self.workflow_run_id)
+
+        workflow_run_status = self.workflow_run_status
 
         app_slug = self.app_slug
 
@@ -101,6 +115,12 @@ class EventReceiptRecipientResponse:
                 "recovery_actions": recovery_actions,
             }
         )
+        if workflow_name is not UNSET:
+            field_dict["workflow_name"] = workflow_name
+        if workflow_run_id is not UNSET:
+            field_dict["workflow_run_id"] = workflow_run_id
+        if workflow_run_status is not UNSET:
+            field_dict["workflow_run_status"] = workflow_run_status
         if app_slug is not UNSET:
             field_dict["app_slug"] = app_slug
         if execution is not UNSET:
@@ -139,6 +159,17 @@ class EventReceiptRecipientResponse:
             recovery_actions_item = EventReceiptRecoveryAction.from_dict(recovery_actions_item_data)
 
             recovery_actions.append(recovery_actions_item)
+
+        workflow_name = d.pop("workflow_name", UNSET)
+
+        _workflow_run_id = d.pop("workflow_run_id", UNSET)
+        workflow_run_id: UUID | Unset
+        if isinstance(_workflow_run_id, Unset):
+            workflow_run_id = UNSET
+        else:
+            workflow_run_id = UUID(_workflow_run_id)
+
+        workflow_run_status = d.pop("workflow_run_status", UNSET)
 
         app_slug = d.pop("app_slug", UNSET)
 
@@ -179,6 +210,9 @@ class EventReceiptRecipientResponse:
             app_id=app_id,
             routing=routing,
             recovery_actions=recovery_actions,
+            workflow_name=workflow_name,
+            workflow_run_id=workflow_run_id,
+            workflow_run_status=workflow_run_status,
             app_slug=app_slug,
             execution=execution,
             recovery=recovery,

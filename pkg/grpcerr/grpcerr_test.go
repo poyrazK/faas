@@ -244,3 +244,24 @@ func TestNew_Convenience(t *testing.T) {
 		t.Fatalf("FromStatus failed: %v %v", p, ok)
 	}
 }
+
+// production-us hunt #4 (H4-23): a scan_critical Problem crossed vmmd ->
+// schedd -> gatewayd and reached the customer titled "Fixable CRITICAL ...:
+// Fixable CRITICAL ...", because each FromStatus lifted "Title: Detail" into
+// both fields and the next ToStatus joined them again. Any number of hops
+// must preserve Title and Detail exactly.
+func TestProblemSurvivesRepeatedHops(t *testing.T) {
+	want := &api.Problem{Code: api.CodeScanCritical, Title: "Fixable CRITICAL vulnerability in base ext4",
+		Detail: `base "base/runner.ext4" has 5 fix-available CRITICAL Grype findings; refusing to boot`}
+	err := grpcerr.ToStatus(want)
+	for hop := 1; hop <= 3; hop++ {
+		got, ok := grpcerr.FromStatus(err)
+		if !ok || got.Title != want.Title || got.Detail != want.Detail || got.Code != want.Code {
+			t.Fatalf("hop %d: got (%q, %q, %q), want (%q, %q, %q)", hop, got.Code, got.Title, got.Detail, want.Code, want.Title, want.Detail)
+		}
+		err = grpcerr.ToStatus(got)
+	}
+	if msg := status.Convert(err).Message(); strings.Count(msg, want.Title) != 1 {
+		t.Fatalf("status message %q repeats the title", msg)
+	}
+}

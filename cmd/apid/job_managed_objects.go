@@ -65,6 +65,12 @@ func (s *server) loadJobManagedObject(w http.ResponseWriter, r *http.Request, ac
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return state.ObjectBucket{}, nil, "", false
 	}
+	if s.objectStorage.Accounting.GatewaySafety() {
+		// These paths read directly and can return reusable native URLs;
+		// neither is covered by the prospective gateway safety meter.
+		bucketProblem(w, objectstorage.ErrUnsupported)
+		return state.ObjectBucket{}, nil, "", false
+	}
 	st, ok := s.store.(state.ObjectBucketStore)
 	if !ok {
 		bucketProblem(w, objectstorage.ErrUnavailable)

@@ -102,7 +102,7 @@ func (s *PgStore) AdmitScheduledWorkflow(ctx context.Context, appID, deploymentI
 	if err != nil {
 		return WorkflowScheduleCursor{}, false, err
 	}
-	next, run, err := evaluateWorkflowSchedule(appID, deploymentID, *definition, cursor, now, int(active), int(named), plan.WorkflowMaxConcurrentRuns())
+	next, run, err := evaluateWorkflowSchedule(appID, "", deploymentID, *definition, cursor, now, int(active), int(named), plan.WorkflowMaxConcurrentRuns())
 	if err != nil || next == nil {
 		return WorkflowScheduleCursor{}, false, err
 	}
