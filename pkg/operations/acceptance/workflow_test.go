@@ -115,9 +115,9 @@ func (f workflowOperationFixture) start(t *testing.T) state.Operation {
 	return op
 }
 
-func (f workflowOperationFixture) read(t *testing.T, id string) state.Operation {
+func (f workflowOperationFixture) read(ctx context.Context, t *testing.T, id string) state.Operation {
 	t.Helper()
-	op, err := f.ops.OperationByID(context.Background(), f.account.ID, f.tenant.ID, id)
+	op, err := f.ops.OperationByID(ctx, f.account.ID, f.tenant.ID, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestOperationWorkflowResumePreservesConfirmedSteps(t *testing.T) {
 			calls = append(calls, path)
 			keys = append(keys, headers["Idempotency-Key"])
 			inputs = append(inputs, string(input))
-			progress := f.read(t, op.ID)
+			progress := f.read(ctx, t, op.ID)
 			if progress.State != api.OperationRunning || progress.Progress == nil {
 				t.Fatalf("missing running projection: %+v", progress)
 			}
@@ -180,7 +180,7 @@ func TestOperationWorkflowResumePreservesConfirmedSteps(t *testing.T) {
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
-		first := f.read(t, op.ID)
+		first := f.read(ctx, t, op.ID)
 		if first.State != api.OperationRequiresReconciliation || first.Progress.Completed != 1 || first.CompletionDelivery.State != "awaiting_outcome" || len(calls) != 2 {
 			t.Fatalf("failed action projection=%+v calls=%v", first, calls)
 		}
@@ -229,7 +229,7 @@ func TestOperationWorkflowResumePreservesConfirmedSteps(t *testing.T) {
 		if _, err := f.ops.RecoverOperation(ctx, f.account.ID, f.tenant.ID, op.ID, recovery); !errors.Is(err, state.ErrOperationQuota) {
 			t.Fatal("workflow recovery ignored quota", err)
 		}
-		if rejected := f.read(t, op.ID); rejected.Generation != 1 || rejected.RecoveryCount != 0 || rejected.State != api.OperationRequiresReconciliation {
+		if rejected := f.read(ctx, t, op.ID); rejected.Generation != 1 || rejected.RecoveryCount != 0 || rejected.State != api.OperationRequiresReconciliation {
 			t.Fatalf("rejected recovery changed operation: %+v", rejected)
 		}
 		for _, id := range queued {
@@ -256,7 +256,7 @@ func TestOperationWorkflowResumePreservesConfirmedSteps(t *testing.T) {
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
-		final := f.read(t, op.ID)
+		final := f.read(ctx, t, op.ID)
 		if final.State != api.OperationSucceeded || final.ID != op.ID || final.WorkflowRunID != run.ID || workflowCanonical(t, final.Result) != `{"file":"export.csv"}` || final.Progress.Completed != 3 || final.CompletionDelivery.State != "pending" {
 			t.Fatalf("resumed result=%+v", final)
 		}
@@ -300,13 +300,13 @@ func TestOperationWorkflowResumePreservesConfirmedSteps(t *testing.T) {
 		if err := store.MarkAppWebhookDeliveryDead(ctx, delivery.ID, delivery.Attempt, delivery.NextAttemptAt, "receiver unavailable"); err != nil {
 			t.Fatal(err)
 		}
-		if failedDelivery := f.read(t, op.ID); failedDelivery.State != api.OperationSucceeded || failedDelivery.CompletionDelivery.State != "dead" {
+		if failedDelivery := f.read(ctx, t, op.ID); failedDelivery.State != api.OperationSucceeded || failedDelivery.CompletionDelivery.State != "dead" {
 			t.Fatalf("notification failure changed business state: %+v", failedDelivery)
 		}
 		if _, err := f.ops.(state.OperationDeliveryStore).RetryOperationCompletionDelivery(ctx, f.account.ID, op.ID, api.OperationDeliveryRetryRequest{RetryID: "delivery-only", DeliveryID: final.CompletionDelivery.DeliveryID, ExpectedReplayGeneration: func() *int { zero := 0; return &zero }()}); err != nil {
 			t.Fatal(err)
 		}
-		if err := orchestrator.DispatchTick(ctx); err != nil || len(calls) != 4 || f.read(t, op.ID).State != api.OperationSucceeded {
+		if err := orchestrator.DispatchTick(ctx); err != nil || len(calls) != 4 || f.read(ctx, t, op.ID).State != api.OperationSucceeded {
 			t.Fatal("delivery retry repeated business work", err)
 		}
 		if deleted, err := store.SweepExpiredWorkflowRuns(ctx, 0); err != nil || deleted != len(queued) {
@@ -445,7 +445,7 @@ func TestOperationWorkflowConcurrentAdmission(t *testing.T) {
 			id = received
 		}
 		runs, total, err := store.ListWorkflowRuns(ctx, f.app.ID, state.ListWorkflowRunsOpts{})
-		if err != nil || total != 1 || len(runs) != 1 || runs[0].ID != f.read(t, id).WorkflowRunID {
+		if err != nil || total != 1 || len(runs) != 1 || runs[0].ID != f.read(ctx, t, id).WorkflowRunID {
 			t.Fatalf("duplicate submission left extra workflow runs: %+v %d %v", runs, total, err)
 		}
 	})
@@ -509,7 +509,7 @@ func TestOperationWorkflowInterruptedActionRequiresReconciliation(t *testing.T) 
 		if err := store.RecoverWorkflowRun(ctx, run.ID); err != nil {
 			t.Fatal(err)
 		}
-		if uncertain := f.read(t, op.ID); uncertain.State != api.OperationRequiresReconciliation || uncertain.Progress.Completed != 1 {
+		if uncertain := f.read(ctx, t, op.ID); uncertain.State != api.OperationRequiresReconciliation || uncertain.Progress.Completed != 1 {
 			t.Fatalf("interrupted action was not reconciled: %+v", uncertain)
 		}
 		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, "transform", state.WorkflowStepStatusSucceeded, 1, nil, []byte(`{"rows":[9]}`), nil); !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
@@ -549,7 +549,7 @@ func TestOperationWorkflowInvalidOutputDoesNotRestartSuccessfulRun(t *testing.T)
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
-		result := f.read(t, op.ID)
+		result := f.read(ctx, t, op.ID)
 		if result.State != api.OperationRequiresReconciliation || result.FailureCode != "invalid_output" || calls != 3 || result.CompletionDelivery.State != "awaiting_outcome" {
 			t.Fatalf("invalid output projection=%+v calls=%d", result, calls)
 		}

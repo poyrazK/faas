@@ -91,7 +91,7 @@ func TestCustomerOperationJobExportPackRetainsSDKAndJobImageInputs(t *testing.T)
 	if _, err := packDirToTarGz(dest, archive, defaultZeroConfigSourceCapMB, nil); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Open(archive)
+	f, err := openCustomerFile(archive)
 	if err != nil {
 		t.Fatal(err)
 	}

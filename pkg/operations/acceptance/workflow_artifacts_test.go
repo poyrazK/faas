@@ -58,7 +58,7 @@ func TestOperationWorkflowArtifactResume(t *testing.T) {
 					t.Fatal("invalid proof accepted")
 				}
 			}
-			before := f.read(t, op.ID)
+			before := f.read(ctx, t, op.ID)
 			receipt, err := artifacts.ReuseWorkflowOperationArtifact(ctx, op.ID, a, req)
 			if err != nil {
 				t.Fatal(err)
@@ -87,7 +87,7 @@ func TestOperationWorkflowArtifactResume(t *testing.T) {
 					}()
 				}
 				wg.Wait()
-				prepared := f.read(t, op.ID)
+				prepared := f.read(ctx, t, op.ID)
 				if len(prepared.Artifacts) != 0 || prepared.ReportCount != before.ReportCount+1 {
 					t.Fatalf("premature publication or duplicate reports: %+v", prepared)
 				}
@@ -114,7 +114,7 @@ func TestOperationWorkflowArtifactResume(t *testing.T) {
 			if !receipt.Available || receipt.Artifact.ID != artifactID {
 				t.Fatal("approved resume lost verified copy")
 			}
-			rebound := f.read(t, op.ID)
+			rebound := f.read(ctx, t, op.ID)
 			if len(rebound.Artifacts) != 0 || rebound.ArtifactStorageKeys[artifactID] != storageKey {
 				t.Fatal("rebind published or replaced copy")
 			}
@@ -124,7 +124,7 @@ func TestOperationWorkflowArtifactResume(t *testing.T) {
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
-		first := f.read(t, op.ID)
+		first := f.read(ctx, t, op.ID)
 		if first.State != api.OperationRequiresReconciliation || len(first.Artifacts) != 0 || first.CompletionDelivery.State != "awaiting_outcome" {
 			t.Fatalf("unconfirmed file exposed: %+v", first)
 		}
@@ -141,7 +141,7 @@ func TestOperationWorkflowArtifactResume(t *testing.T) {
 			t.Fatalf("private file recovery preview=%+v %v", preview, err)
 		}
 		publication, err := reader.PreviewOperationRecovery(ctx, f.account.ID, op.ID, api.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "succeeded", Result: []byte(`{"file":"export.csv"}`)})
-		if err != nil || !publication.Eligible || len(publication.PublishArtifactIDs) != 1 || publication.PublishArtifactIDs[0] != artifactID || len(f.read(t, op.ID).Artifacts) != 0 {
+		if err != nil || !publication.Eligible || len(publication.PublishArtifactIDs) != 1 || publication.PublishArtifactIDs[0] != artifactID || len(f.read(ctx, t, op.ID).Artifacts) != 0 {
 			t.Fatal("publication preview changed visibility", err)
 		}
 		_, err = f.ops.RecoverOperation(ctx, f.account.ID, f.tenant.ID, op.ID, api.OperationRecoveryRequest{RecoveryID: "reuse-verified-copy", ExpectedInspectionRevision: preview.Inspection.InspectionRevision, ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "verified copy is retained; final action can reuse it without writing"})
@@ -151,7 +151,7 @@ func TestOperationWorkflowArtifactResume(t *testing.T) {
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
-		complete := f.read(t, op.ID)
+		complete := f.read(ctx, t, op.ID)
 		if complete.State != api.OperationSucceeded || len(complete.Artifacts) != 1 || complete.Artifacts[0].ID != artifactID || complete.ArtifactStorageKeys[artifactID] != storageKey || uploads != 1 || calls["/collect"] != 1 || calls["/transform"] != 1 || calls["/finish"] != 2 {
 			t.Fatalf("resume failed copy/prefix contract: %+v uploads=%d calls=%v", complete, uploads, calls)
 		}
@@ -242,7 +242,7 @@ func TestOperationWorkflowArtifactReconciliation(t *testing.T) {
 				if err := orchestrator.DispatchTick(ctx); err != nil {
 					t.Fatal(err)
 				}
-				before := f.read(t, op.ID)
+				before := f.read(ctx, t, op.ID)
 				if before.State != api.OperationRequiresReconciliation || len(before.Artifacts) != 0 {
 					t.Fatal("file exposed before reconciliation")
 				}

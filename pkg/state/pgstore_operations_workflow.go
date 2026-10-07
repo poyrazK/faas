@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -13,8 +14,8 @@ import (
 )
 
 func (s *PgStore) OperationForWorkflowRun(ctx context.Context, runID string) (Operation, bool, error) {
-	id, err := operationUUID(runID)
-	if err != nil {
+	id, ok := operationWorkflowRunUUID(runID)
+	if !ok {
 		// Ordinary workflow steps use synthetic correlation IDs. They have no
 		// customer operation association, so let the standard workflow pin path
 		// handle them just as MemStore does.
@@ -29,6 +30,14 @@ func (s *PgStore) OperationForWorkflowRun(ctx context.Context, runID string) (Op
 	}
 	op, err := operationPGRecord(raw)
 	return op, err == nil, err
+}
+
+func operationWorkflowRunUUID(runID string) (pgtype.UUID, bool) {
+	parsed, err := uuid.Parse(runID)
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	return pgtype.UUID{Bytes: parsed, Valid: true}, true
 }
 
 func operationWorkflowDefinitionTx(ctx context.Context, tx pgx.Tx, def OperationDefinition, plan api.Plan) (api.WorkflowSpec, error) {

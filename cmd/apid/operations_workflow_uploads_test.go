@@ -27,6 +27,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/operations"
+	// Test-only downstream orchestration exercises the full workflow HTTP boundary.
+	// Production apid remains control-plane-only.
+	//nolint:depguard // The integration harness drives schedd-owned workflow execution.
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -141,9 +144,9 @@ func newWorkflowUploadFixture(t *testing.T, kind string, timeout time.Duration) 
 	return &workflowUploadFixture{store: store, pool: pool, op: op, app: app, server: srv, instanceID: instance.ID, runtime: runtime, owner: owner, customer: api.NewClient(httpServer.URL, token.Token)}
 }
 
-func (f *workflowUploadFixture) current(t *testing.T) state.Operation {
+func (f *workflowUploadFixture) current(ctx context.Context, t *testing.T) state.Operation {
 	t.Helper()
-	op, err := f.store.(state.OperationStore).OperationByID(t.Context(), f.op.AccountID, f.op.PlatformTenantID, f.op.ID)
+	op, err := f.store.(state.OperationStore).OperationByID(ctx, f.op.AccountID, f.op.PlatformTenantID, f.op.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,14 +182,14 @@ func TestOperationWorkflowDirectUploadResume(t *testing.T) {
 			var artifactID string
 			f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
 				first = proof
-				before := f.current(t)
+				before := f.current(t.Context(), t)
 				for i := 0; i < 3; i++ {
 					r, err := f.runtime.ReuseWorkflowOperationUpload(ctx, f.op.ID, proof, req)
 					if err != nil || r.Available {
 						t.Fatal("false receipt", err)
 					}
 				}
-				after := f.current(t)
+				after := f.current(t.Context(), t)
 				if after.ReportCount != before.ReportCount || after.LatestSequence != before.LatestSequence {
 					t.Fatal("absent lookup mutated ledger")
 				}
@@ -223,7 +226,7 @@ func TestOperationWorkflowDirectUploadResume(t *testing.T) {
 				if _, err := f.runtime.ReuseWorkflowOperationUpload(ctx, f.op.ID, proof, changed); err == nil {
 					t.Fatal("changed payload accepted")
 				}
-				pending := f.current(t)
+				pending := f.current(t.Context(), t)
 				if pending.ReportCount != before.ReportCount+1 || len(pending.Artifacts) != 0 || len(pending.WorkflowArtifactReceipts) != 1 {
 					t.Fatal("duplicate or published receipt")
 				}
@@ -232,7 +235,7 @@ func TestOperationWorkflowDirectUploadResume(t *testing.T) {
 				}
 				return 503, []byte(`{"error":"uncertain step reply"}`), nil
 			})
-			if op := f.current(t); op.State != api.OperationRequiresReconciliation || len(op.Artifacts) != 0 {
+			if op := f.current(t.Context(), t); op.State != api.OperationRequiresReconciliation || len(op.Artifacts) != 0 {
 				t.Fatal("uncertain step published business success")
 			}
 			if _, err := f.owner.RecoverOperation(ctx, f.app.Slug, f.op.ID, api.OperationRecoveryRequest{RecoveryID: "reuse", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "verified final-action file permits reuse without another business effect"}); err != nil {
@@ -244,12 +247,12 @@ func TestOperationWorkflowDirectUploadResume(t *testing.T) {
 				if _, err := f.runtime.ReuseWorkflowOperationUpload(ctx, f.op.ID, first, req); err == nil {
 					t.Fatal("old generation accepted")
 				}
-				before := f.current(t)
+				before := f.current(t.Context(), t)
 				r, err := f.runtime.UploadWorkflowOperationArtifact(ctx, f.op.ID, proof, req, strings.NewReader("never transferred on resume"))
 				if err != nil || !r.Available || r.Artifact.ID != artifactID {
 					t.Fatal("stable resumed receipt lost", err)
 				}
-				rebound := f.current(t)
+				rebound := f.current(t.Context(), t)
 				receipt := rebound.WorkflowArtifactReceipts[req.ReportID]
 				if receipt.Generation != proof.Generation || receipt.Attempt != proof.Attempt || rebound.ReportCount != before.ReportCount || rebound.LatestSequence != before.LatestSequence {
 					t.Fatal("resume duplicated reports or failed to rebind")
@@ -260,7 +263,7 @@ func TestOperationWorkflowDirectUploadResume(t *testing.T) {
 			if _, err := f.customer.DownloadPlatformTenantSelfOperationArtifact(ctx, f.op.ID, artifactID, &downloaded); err != nil || downloaded.String() != directJobCSV {
 				t.Fatal("private download changed", err)
 			}
-			if puts != 0 || f.collectCalls != 1 || f.current(t).State != api.OperationSucceeded {
+			if puts != 0 || f.collectCalls != 1 || f.current(t.Context(), t).State != api.OperationSucceeded {
 				t.Fatal("resume repeated confirmed prefix or transfer")
 			}
 			if _, err := f.runtime.ReuseWorkflowOperationUpload(ctx, f.op.ID, first, req); err == nil {
@@ -317,7 +320,7 @@ func TestOperationWorkflowDirectUploadConcurrentCopies(t *testing.T) {
 				if count != 2 || len(backend.keys) != 2 || backend.keys[0] == backend.keys[1] {
 					t.Fatal("copies overwrote one object")
 				}
-				op := f.current(t)
+				op := f.current(t.Context(), t)
 				if len(op.WorkflowArtifactReceipts) != 1 || len(op.ArtifactStorageKeys) != 1 || len(op.Artifacts) != 0 {
 					t.Fatal("duplicate or public binding")
 				}
@@ -343,13 +346,13 @@ func TestOperationWorkflowDirectUploadIntegrity(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			f := newWorkflowUploadFixture(t, kind, 0)
 			f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
-				before := f.current(t)
+				before := f.current(t.Context(), t)
 				for _, body := range []string{"short", directJobCSV + "extra", strings.ReplaceAll(directJobCSV, "alice", "other")} {
 					if _, err := f.runtime.UploadWorkflowOperationArtifact(t.Context(), f.op.ID, proof, directJobDeclaration(), strings.NewReader(body)); err == nil {
 						t.Fatal("unverified bytes retained")
 					}
 				}
-				if after := f.current(t); after.ReportCount != before.ReportCount || len(after.WorkflowArtifactReceipts) != 0 || len(after.ArtifactStorageKeys) != 0 {
+				if after := f.current(t.Context(), t); after.ReportCount != before.ReportCount || len(after.WorkflowArtifactReceipts) != 0 || len(after.ArtifactStorageKeys) != 0 {
 					t.Fatal("invalid transfer mutated ledger")
 				}
 				r, err := f.runtime.UploadWorkflowOperationArtifact(t.Context(), f.op.ID, proof, directJobDeclaration(), strings.NewReader(directJobCSV))
@@ -372,7 +375,7 @@ func TestOperationWorkflowDirectUploadFencedDuringIO(t *testing.T) {
 				}
 				f := newWorkflowUploadFixture(t, kind, timeout)
 				f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
-					before := f.current(t)
+					before := f.current(t.Context(), t)
 					ctx := t.Context()
 					cancel := func() {
 						if _, err := f.store.(state.OperationStore).CancelOperation(ctx, f.op.AccountID, f.op.PlatformTenantID, f.op.ID, proof.Generation); err != nil {
@@ -412,7 +415,7 @@ func TestOperationWorkflowDirectUploadFencedDuringIO(t *testing.T) {
 					if err == nil {
 						t.Fatal("lost native authority committed file")
 					}
-					after := f.current(t)
+					after := f.current(t.Context(), t)
 					if len(after.WorkflowArtifactReceipts) != 0 || len(after.ArtifactStorageKeys) != 0 || len(after.Artifacts) != 0 || after.ReportCount != before.ReportCount {
 						t.Fatal("fenced transfer published a receipt")
 					}
@@ -453,7 +456,7 @@ func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				before := f.current(t)
+				before := f.current(t.Context(), t)
 				control, err := f.runtime.GetWorkflowOperationExecutionControl(ctx, f.op.ID, proof)
 				if err != nil {
 					t.Fatal(err)
@@ -509,7 +512,7 @@ func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("file transaction remained blocked")
 				}
-				after := f.current(t)
+				after := f.current(t.Context(), t)
 				if after.ReportCount != before.ReportCount || after.LatestSequence != before.LatestSequence || len(after.WorkflowArtifactReceipts) != len(before.WorkflowArtifactReceipts) || len(after.Artifacts) != 0 {
 					t.Fatal("expired transaction changed or published the receipt")
 				}
