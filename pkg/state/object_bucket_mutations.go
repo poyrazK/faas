@@ -19,10 +19,13 @@ const (
 // grants are not synchronous requests: URL expiry, caller cancellation and
 // signing completion do not prove that the provider has drained their writes.
 type ObjectBucketMutation struct {
-	ID        string
-	Bucket    ObjectBucket
-	Kind      string
-	CreatedAt time.Time
+	ID                    string
+	UploadID              string
+	MultipartUploadID     string
+	MultipartPartWriterID string
+	Bucket                ObjectBucket
+	Kind                  string
+	CreatedAt             time.Time
 }
 
 type ObjectBucketWriteFence struct {
@@ -30,6 +33,14 @@ type ObjectBucketWriteFence struct {
 	BucketID, Token        string
 	CloneOperationID       string
 	Requests, NativeGrants int64
+	// Prepared and dispatched deletion intents retain their own recovery
+	// journal. They drain only through an authenticated terminal transition.
+	Deletions int64
+	// Waiting/applying retention and legal-hold journals remain busy even
+	// after worker expiry; only original terminal settlement drains them.
+	Protections int64
+	// Pending upload receipts and live multipart sessions never drain by expiry.
+	Uploads, Multipart int64
 }
 
 // This is a private data-plane seam. A zero count covers only instrumented
@@ -68,4 +79,16 @@ func validObjectMutationKind(kind string) bool {
 func validObjectMutationToken(token string) bool {
 	id, err := uuid.Parse(token)
 	return err == nil && id != uuid.Nil && id.String() == token
+}
+
+// Original upload receipts pin provider placement until journal settlement.
+// Reads never create a receipt or adopt an unbound legacy writer.
+type ObjectTrackedUploadMutationStore interface {
+	ReadTrackedObjectUploadMutation(context.Context, ObjectUploadCompletion) (ObjectBucketMutation, error)
+}
+
+// Original multipart completion and abort use only their reserved placement.
+// Initiation and independent part writers retain separate admission receipts.
+type ObjectMultipartMutationStore interface {
+	ReadObjectMultipartMutation(context.Context, ObjectMultipartUpload) (ObjectBucketMutation, error)
 }

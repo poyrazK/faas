@@ -378,7 +378,8 @@ when available; Gregale does not synthesize checksums for older objects or
 providers without that capability. Ordinary PUTs and multipart completion preserve
 `If-Match` and `If-None-Match: *` atomically on S3 backends. Conditions are mutually
 exclusive; If-Match is limited to 256 bytes and rejects control characters.
-GCS conditional PUTs/completion and source-conditional copies return 501 explicitly.
+GCS conditional PUTs/completion return 501 explicitly. GCS tracked copies
+support source conditions using a captured generation and metageneration.
 S3 copies support `x-amz-copy-source-if-match` and
 `x-amz-copy-source-if-none-match`, each with one strong ETag or `*`. Copy source,
 range and condition headers must be signed. S3 copies also support signed
@@ -1003,7 +1004,8 @@ five-second deadline. It runs with uploads disabled or budgets exhausted.
 Route deletion preserves recovery records until the owning bucket is removed.
 See [ADR-534](adr/534-recoverable-application-object-uploads.md).
 
-GCS and third-party writers without the tracked capability retain conservative
+GCS supports tracked receipts and generation-based historical confirmation.
+Third-party writers without the tracked capability retain conservative
 admissions and the previous failure-receipt behavior. Historical/direct signed
 uploads, copies and uncertain writes still cannot be force-refunded.
 
@@ -1078,9 +1080,10 @@ when generic retries are enabled.
 Include PUT-only `encryption` with `algorithm`, an enrolled `key_id` for KMS,
 optional `bucket_key_enabled` and optional `context`. The gateway captures the
 owned selection before issuing the URL and returns owned encryption headers.
-GCS rejects encryption; an ordinary GCS PUT still uses the branded broker, but
-a lost acknowledgment retains its receipt until exact provider proof support
-is available. Fixed multipart part URLs now use the branded endpoint too. The
+GCS supports enrolled AES256 and confirms the stored receipt, native generation
+and encryption intent before acknowledging it. CMEK and other encryption modes
+remain unsupported. Lost acknowledgments retain their receipt for exact current
+or historical proof. Fixed multipart part URLs use the branded endpoint too. The
 URL binds the owned session, exact part and length; it stops admitting writes
 when the session starts completion or abort. Native upload IDs stay private.
 URLs issued before ADR-557/558 retain their native provider expiry; changing
@@ -1255,12 +1258,50 @@ embedded errors inside HTTP 200 remain pending. Recovery confirms only the
 destination receipt, size and ETag; it never repeats the copy. After confirmed
 settlement, deletion and fenced inventory can reclaim capacity without
 refunding monthly authorizations or billing. Existing upload recovery and
-transfer limits apply. GCS, older copies, environment-clone/cross-bucket copies
+transfer limits apply. GCS tracked copies use the same owned receipts and source
+grant admission. Older copies, environment-clone copies
 and providers without the capability remain conservative.
 Apply the additive migration before upgrading gateways and API workers.
 See [ADR-536](adr/536-recoverable-s3-gateway-copies.md).
 
 ## Multipart server-side copy
+
+GCS uses a generation- and metageneration-fenced native GET streamed into a
+part PUT. This consumes one extra provider request and reserves the copied
+source length against gateway safety egress before reading it. Range responses
+must match the requested interval exactly. Interrupted copy reservations remain
+conservative. Native multipart completion confirms the stored session receipt
+and generation, including retained history after a later replacement.
+
+## CLI file transfers
+
+```sh
+gregale bucket upload <app> <bucket-id> <key> <file> --content-type text/plain
+gregale bucket download <app> <bucket-id> <key> <file>
+gregale bucket download <app> <bucket-id> <key> <file> --force
+gregale bucket uploads list <app> <bucket-id>
+gregale bucket uploads status <app> <bucket-id> <upload-id>
+gregale bucket uploads parts <app> <bucket-id> <upload-id>
+gregale usage object-storage
+```
+
+Transfers stream regular files with a default thirty-minute deadline. Uploads
+automatically use multipart above the server's single PUT limit. An uncertain
+transfer returns its pending receipt or session ID for inspection; it does not
+automatically abort or repeat an admitted write. Downloads publish atomically
+after success, preserve existing files on failure, and require `--force` to
+replace a destination. JSON output includes the key, file, size, status and
+upload ID. Usage output marks unavailable meters as unknown.
+
+GCS supports tracked PUT/copy recovery, native version controls and reads, copy
+grants and enrolled AES256. The GCS example enrolls AES256 explicitly. Adding
+enrollment to an existing backend changes its immutable placement fingerprint;
+preserve existing placement configuration and use the normal adoption process.
+Native generations remain private, and ordinary deletion does not manufacture
+S3 delete markers. GCS Object Lock, CMEK and conditional PUT/completion remain
+unsupported. See [ADR-628](adr/628-gcs-tracked-writes-and-native-generations.md).
+
+## Multipart copy admission
 
 S3 backends implement `UploadPartCopy` within the credential's logical bucket.
 The credential needs both read and write permissions. Initiate the destination
@@ -1440,8 +1481,12 @@ gregale bucket versioning suspend <app> <bucket-id>
 Control requests require storage manage scope and bucket write access; S3 PUT
 requires a bucket write credential. Discovery of provider versioning also fences
 an empty bucket until adoption is verified. Unresolved legacy direct-write grants
-block configuration; URL expiry alone cannot make them safe. MFA Delete changes,
-GCS configuration and unsupported provider endpoints return NotImplemented.
+block configuration; URL expiry alone cannot make them safe. GCS maps enabled
+versioning to Enabled and its disabled Boolean to Suspended; it preserves native
+generations without creating S3 delete markers. MFA Delete changes and
+unsupported provider endpoints return NotImplemented.
+The first GCS versioning observation also requires the existing fifteen-minute
+adoption window and a complete generation inventory, including when disabled.
 See [ADR-545](adr/545-durable-bucket-versioning-configuration.md). Delete-marker
 admission and mutable null deletion are implemented in
 [ADR-547](adr/547-durable-s3-mutable-deletion.md). Replay-safe direct writes and

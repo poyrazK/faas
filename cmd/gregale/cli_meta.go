@@ -335,11 +335,19 @@ var cliCommands = []cliCommand{
 	},
 	{
 		Name: "bucket", DocSlug: "object-storage", Short: "Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity",
-		Subcommands: []cliSub{{Name: "copy-sources", Short: "Manage copy-only owned source grants", Subcommands: []cliSub{
-			{Name: "list", Short: "List source grants for a destination credential", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>"}},
-			{Name: "grant", Short: "Allow copying an owned source bucket or prefix", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>", "[prefix]"}},
-			{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
-		}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
+		Subcommands: []cliSub{
+			{Name: "uploads", Short: "Inspect owned multipart upload sessions and parts", Subcommands: []cliSub{
+				{Name: "list", Short: "List multipart sessions", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "cursor", Value: "ID", Short: "next page cursor"}}},
+				{Name: "status", Short: "Inspect a multipart session returned by an upload", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}},
+				{Name: "parts", Short: "List uploaded multipart parts", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "part-number-marker", Value: "N", Short: "last part from the previous page"}}},
+			}},
+			{Name: "upload", Short: "Upload a file, using multipart above the single PUT limit", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "content-type", Value: "TYPE", Short: "object MIME type"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
+			{Name: "download", Short: "Download an object to a file after a complete transfer", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "force", Short: "replace destination after a complete transfer"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
+			{Name: "copy-sources", Short: "Manage copy-only owned source grants", Subcommands: []cliSub{
+				{Name: "list", Short: "List source grants for a destination credential", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>"}},
+				{Name: "grant", Short: "Allow copying an owned source bucket or prefix", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>", "[prefix]"}},
+				{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
+			}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "encryption", Short: "Inspect or configure verified bucket encryption defaults", Subcommands: []cliSub{
 				{Name: "status", Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "clear", Short: "Remove the default for new writes", Positionals: []string{"<app>", "<bucket-id>"}},
@@ -596,7 +604,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "events",
 		DocSlug: "events",
-		Short:   "Preview routing, publish events, inspect deliveries and routing history, and replay failures",
+		Short:   "Preview routing, publish events, inspect deliveries, and backfill retained events",
 		Subcommands: []cliSub{
 			{Name: "preview", Short: "Preview account-wide event routing without publishing", Flags: []cliFlag{
 				{Name: "id", Short: "event id to use when filters inspect the CloudEvents id", Value: "ID"},
@@ -604,6 +612,29 @@ var cliCommands = []cliCommand{
 				{Name: "type", Short: "event type (or second positional argument)", Value: "TYPE"},
 				{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
 				{Name: "time", Short: "event time (RFC3339; defaults to server time)", Value: "RFC3339"},
+			}},
+			{Name: "replay-preview", Short: "Preview retained events for one current subscription without creating deliveries", Positionals: []string{"<app>"}, Flags: []cliFlag{
+				{Name: "subscription-id", Short: "target ordinary application subscription UUID", Req: true, Value: "UUID"},
+				{Name: "from", Short: "inclusive acceptance timestamp", Req: true, Value: "RFC3339"},
+				{Name: "until", Short: "exclusive acceptance timestamp", Req: true, Value: "RFC3339"},
+				{Name: "after", Short: "opaque continuation cursor; keep target and range unchanged", Value: "CURSOR"},
+				{Name: "limit", Short: "envelopes examined per page (1..100; default 50)", Value: "N"},
+			}},
+			{Name: "backfill", Short: "Create a durable bounded delivery job for matching retained events", Positionals: []string{"<app>"}, Flags: []cliFlag{
+				{Name: "subscription-id", Short: "target ordinary application subscription UUID", Req: true, Value: "UUID"},
+				{Name: "from", Short: "inclusive platform acceptance timestamp", Req: true, Value: "RFC3339"},
+				{Name: "until", Short: "exclusive platform acceptance timestamp", Req: true, Value: "RFC3339"},
+				{Name: "yes", Short: "confirm that matching historical events may invoke this consumer", Req: true, Bool: true},
+			}},
+			{Name: "backfill-status", Short: "Read durable event backfill progress", Positionals: []string{"<job-id>"}},
+			{Name: "backfill-items", Short: "Inspect paginated per-envelope outcomes for a backfill job", Positionals: []string{"<job-id>"}, Flags: []cliFlag{
+				{Name: "state", Short: "filter by a routing outcome state", Value: "STATE"},
+				{Name: "limit", Short: "items per page (1..100; default 50)", Value: "N"},
+				{Name: "after", Short: "opaque continuation cursor; keep job and state unchanged", Value: "CURSOR"},
+			}},
+			{Name: "backfill-retry", Short: "Retry a bounded batch of failed backfill deliveries", Positionals: []string{"<job-id>"}, Flags: []cliFlag{
+				{Name: "limit", Short: "failed routing recipients to requeue (1..100; default 100)", Value: "N"},
+				{Name: "yes", Short: "confirm requeueing failed event deliveries", Req: true, Bool: true},
 			}},
 			{Name: "publish", Short: "Publish one event (SOURCE TYPE can be positional; ID is generated by default)", Flags: []cliFlag{
 				{Name: "id", Short: "stable event id (generated when omitted)", Value: "ID"},
@@ -662,7 +693,7 @@ var cliCommands = []cliCommand{
 				{Name: "event-source", Short: "limit replay to one published event source", Value: "SOURCE"},
 				{Name: "event-id", Short: "limit replay to one published event", Value: "ID"},
 				{Name: "limit", Short: "max recipients to requeue (1..100)", Value: "N"},
-				{Name: "yes", Short: "confirm requeueing retryable event recipients", Req: true},
+				{Name: "yes", Short: "confirm requeueing retryable event recipients", Req: true, Bool: true},
 			}},
 		},
 	},
@@ -3029,6 +3060,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "daily", Short: "Per-day breakdown"},
 			{Name: "storage", Short: "Per-app storage bytes"},
+			{Name: "object-storage", Short: "Account object storage observations, safety policy and billing state"},
 			{Name: "summary", Short: "Account roll-up"},
 		},
 		Flags: []cliFlag{

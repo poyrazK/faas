@@ -14,6 +14,7 @@ type Querier interface {
 	// Used by handlers_auth.go so an operator investigating "who signed in
 	// as alice?" can identify the key that authenticated. See ADR-034 rev2.
 	APIKeyByHash(ctx context.Context, db DBTX, keySha256 []byte) (APIKeyByHashRow, error)
+	AbandonProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg AbandonProjectEnvironmentCloneConfigurationParams) (int64, error)
 	AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg AbortLockedInstanceMigrationParams) (int64, error)
 	AccountByEmail(ctx context.Context, db DBTX, email interface{}) (AccountByEmailRow, error)
 	AccountByID(ctx context.Context, db DBTX, id pgtype.UUID) (AccountByIDRow, error)
@@ -43,6 +44,7 @@ type Querier interface {
 	AdvanceEnvironmentGitOpsRuntimeBoundary(ctx context.Context, db DBTX, arg AdvanceEnvironmentGitOpsRuntimeBoundaryParams) (EnvironmentGitopsRuntimeEffect, error)
 	AdvanceEnvironmentWorkloadGraphPreparation(ctx context.Context, db DBTX, arg AdvanceEnvironmentWorkloadGraphPreparationParams) (EnvironmentWorkloadGraph, error)
 	AdvanceImagePreparation(ctx context.Context, db DBTX, arg AdvanceImagePreparationParams) (int64, error)
+	AdvanceProjectEnvironmentCloneConfigurationClock(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneConfigurationClockParams) (int64, error)
 	AdvanceProjectEnvironmentCloneOperationStatus(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneOperationStatusParams) (int64, error)
 	AppBindingRefreshInventory(ctx context.Context, db DBTX, arg AppBindingRefreshInventoryParams) ([]AppBindingRefreshInventoryRow, error)
 	AppBindingRuntimeInventory(ctx context.Context, db DBTX, arg AppBindingRuntimeInventoryParams) ([]AppBindingRuntimeInventoryRow, error)
@@ -331,7 +333,7 @@ type Querier interface {
 	// disjoint row sets with no advisory-lock plumbing.
 	CreateTrigger(ctx context.Context, db DBTX, arg CreateTriggerParams) (CreateTriggerRow, error)
 	CreateUDPListener(ctx context.Context, db DBTX, arg CreateUDPListenerParams) (AppUdpListener, error)
-	// ==============================================================
+	// =======================================================
 	// Inserts a fresh upload_sessions row. The handler pre-validates
 	// total_size against limits.SourceTarballMaxMB (pkg/api/limits.go)
 	// and the per-account open-session cap (5 per (account_id, app_slug))
@@ -547,6 +549,37 @@ type Querier interface {
 	EventRecipientReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientReplayReceiptParams) (EventRecipientReplayReceiptRow, error)
 	EventRecipientSettleReceipt(ctx context.Context, db DBTX, id int64) error
 	EventRecipientUpdateProgress(ctx context.Context, db DBTX, arg EventRecipientUpdateProgressParams) error
+	EventReplayBackfillActiveJobCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	EventReplayBackfillAdoptReceipt(ctx context.Context, db DBTX, id int64) (int64, error)
+	EventReplayBackfillAdvance(ctx context.Context, db DBTX, arg EventReplayBackfillAdvanceParams) error
+	EventReplayBackfillCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillCandidatesParams) ([]EventReplayBackfillCandidatesRow, error)
+	EventReplayBackfillClaimTarget(ctx context.Context, db DBTX, arg EventReplayBackfillClaimTargetParams) ([]byte, error)
+	EventReplayBackfillClaimValid(ctx context.Context, db DBTX, arg EventReplayBackfillClaimValidParams) (bool, error)
+	EventReplayBackfillCountRetryableFailed(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
+	EventReplayBackfillCreate(ctx context.Context, db DBTX, arg EventReplayBackfillCreateParams) (pgtype.UUID, error)
+	EventReplayBackfillExists(ctx context.Context, db DBTX, arg EventReplayBackfillExistsParams) (bool, error)
+	EventReplayBackfillFinalize(ctx context.Context, db DBTX, id pgtype.UUID) error
+	EventReplayBackfillFinishItem(ctx context.Context, db DBTX, arg EventReplayBackfillFinishItemParams) (int64, error)
+	EventReplayBackfillGet(ctx context.Context, db DBTX, arg EventReplayBackfillGetParams) (EventReplayBackfillGetRow, error)
+	EventReplayBackfillInFlightCount(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
+	EventReplayBackfillInsertItem(ctx context.Context, db DBTX, arg EventReplayBackfillInsertItemParams) (int64, error)
+	EventReplayBackfillInsertRecipient(ctx context.Context, db DBTX, arg EventReplayBackfillInsertRecipientParams) (int64, error)
+	EventReplayBackfillItems(ctx context.Context, db DBTX, arg EventReplayBackfillItemsParams) ([]EventReplayBackfillItemsRow, error)
+	EventReplayBackfillLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	EventReplayBackfillLockAnyJob(ctx context.Context, db DBTX, arg EventReplayBackfillLockAnyJobParams) (pgtype.UUID, error)
+	EventReplayBackfillLockJob(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	EventReplayBackfillLockParent(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error)
+	EventReplayBackfillMarkScanned(ctx context.Context, db DBTX, id pgtype.UUID) error
+	EventReplayBackfillMaterializeSnapshot(ctx context.Context, db DBTX, id int64) error
+	EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error)
+	EventReplayBackfillPruneEnvelopes(ctx context.Context, db DBTX, arg EventReplayBackfillPruneEnvelopesParams) (int64, error)
+	EventReplayBackfillPruneJobs(ctx context.Context, db DBTX, arg EventReplayBackfillPruneJobsParams) (int64, error)
+	EventReplayBackfillResetItem(ctx context.Context, db DBTX, arg EventReplayBackfillResetItemParams) (int64, error)
+	EventReplayBackfillRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillRetryCandidatesParams) ([]EventReplayBackfillRetryCandidatesRow, error)
+	EventReplayBackfillSetRunning(ctx context.Context, db DBTX, id pgtype.UUID) error
+	EventReplayPreviewCandidates(ctx context.Context, db DBTX, arg EventReplayPreviewCandidatesParams) ([]EventReplayPreviewCandidatesRow, error)
+	EventReplayPreviewEarliestRetained(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Timestamptz, error)
+	EventReplayPreviewTarget(ctx context.Context, db DBTX, arg EventReplayPreviewTargetParams) (EventReplayPreviewTargetRow, error)
 	EventRoutingClaimReceipt(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRoutingClaimReceiptRow, error)
 	// Evaluate the wall clock only after all admission locks have been acquired.
 	EventRoutingClaimValid(ctx context.Context, db DBTX, arg EventRoutingClaimValidParams) (bool, error)
@@ -809,6 +842,7 @@ type Querier interface {
 	HasPendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasPendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasProjectEnvironmentClonePostgresVerificationAttempts(ctx context.Context, db DBTX, arg HasProjectEnvironmentClonePostgresVerificationAttemptsParams) (bool, error)
+	HoldProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg HoldProjectEnvironmentCloneConfigurationParams) (ProjectEnvironmentCloneConfigurationGuard, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal
@@ -1891,16 +1925,25 @@ type Querier interface {
 	ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg ObjectMultipartFinishResultParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartFinishVerifiedAbort(ctx context.Context, db DBTX, arg ObjectMultipartFinishVerifiedAbortParams) (int64, error)
 	ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMultipartGetParams) (ObjectStorageMultipartUpload, error)
+	ObjectMultipartInitiationDispatch(ctx context.Context, db DBTX, arg ObjectMultipartInitiationDispatchParams) (int64, error)
+	ObjectMultipartInitiationObserve(ctx context.Context, db DBTX, arg ObjectMultipartInitiationObserveParams) (int64, error)
+	ObjectMultipartInitiationRead(ctx context.Context, db DBTX, multipartUploadID pgtype.UUID) (ObjectMultipartInitiationDispatch, error)
 	ObjectMultipartInsert(ctx context.Context, db DBTX, arg ObjectMultipartInsertParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMultipartListParams) ([]ObjectStorageMultipartUpload, error)
 	ObjectMultipartLockBucket(ctx context.Context, db DBTX, arg ObjectMultipartLockBucketParams) (pgtype.UUID, error)
+	ObjectMultipartMutationRead(ctx context.Context, db DBTX, multipartUploadID pgtype.UUID) (ObjectBucketMutation, error)
 	ObjectMultipartPartBegin(ctx context.Context, db DBTX, arg ObjectMultipartPartBeginParams) error
+	ObjectMultipartPartBodyObserve(ctx context.Context, db DBTX, arg ObjectMultipartPartBodyObserveParams) (int64, error)
+	ObjectMultipartPartCopyIntentRead(ctx context.Context, db DBTX, arg ObjectMultipartPartCopyIntentReadParams) ([]byte, error)
 	ObjectMultipartPartGrant(ctx context.Context, db DBTX, arg ObjectMultipartPartGrantParams) (int64, error)
 	ObjectMultipartPartGrantUpsert(ctx context.Context, db DBTX, arg ObjectMultipartPartGrantUpsertParams) error
+	ObjectMultipartPartPutIntentRead(ctx context.Context, db DBTX, arg ObjectMultipartPartPutIntentReadParams) (ObjectMultipartPartPutIntentReadRow, error)
 	ObjectMultipartPartRevision(ctx context.Context, db DBTX, id pgtype.UUID) error
 	ObjectMultipartPartSettle(ctx context.Context, db DBTX, arg ObjectMultipartPartSettleParams) (int64, error)
 	ObjectMultipartPartTotal(ctx context.Context, db DBTX, uploadID pgtype.UUID) (int64, error)
 	ObjectMultipartPartTransfer(ctx context.Context, db DBTX, arg ObjectMultipartPartTransferParams) (ObjectMultipartPartTransferRow, error)
+	ObjectMultipartPartWriterDispatch(ctx context.Context, db DBTX, arg ObjectMultipartPartWriterDispatchParams) (ObjectMultipartPartWriter, error)
+	ObjectMultipartPartWriterFinish(ctx context.Context, db DBTX, arg ObjectMultipartPartWriterFinishParams) (int64, error)
 	ObjectMultipartRecordPartURL(ctx context.Context, db DBTX, arg ObjectMultipartRecordPartURLParams) (int64, error)
 	ObjectMultipartRejectCompletion(ctx context.Context, db DBTX, arg ObjectMultipartRejectCompletionParams) (int64, error)
 	ObjectMultipartRejectResult(ctx context.Context, db DBTX, arg ObjectMultipartRejectResultParams) (int64, error)
@@ -1960,6 +2003,7 @@ type Querier interface {
 	ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg ObjectTrackedUploadFinishParams) (ObjectUploadCompletion, error)
 	ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg ObjectTrackedUploadGetParams) (ObjectUploadCompletion, error)
 	ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg ObjectTrackedUploadInsertParams) (ObjectUploadCompletion, error)
+	ObjectTrackedUploadMutationRead(ctx context.Context, db DBTX, uploadID pgtype.UUID) (ObjectBucketMutation, error)
 	ObjectTrackedUploadReplay(ctx context.Context, db DBTX, arg ObjectTrackedUploadReplayParams) (ObjectUploadCompletion, error)
 	ObjectTrackedUploadRetry(ctx context.Context, db DBTX, arg ObjectTrackedUploadRetryParams) error
 	ObjectURLCredentialCleanup(ctx context.Context, db DBTX, arg ObjectURLCredentialCleanupParams) error
@@ -2196,6 +2240,7 @@ type Querier interface {
 	ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg ReadProductionQueueStateLiveParams) (ReadProductionQueueStateLiveRow, error)
 	ReadProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg ReadProductionQueueTriggerInvocationParams) (Invocation, error)
 	ReadProjectEnvironmentCloneConfigurationCaptureIdentity(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationCaptureIdentityParams) (ReadProjectEnvironmentCloneConfigurationCaptureIdentityRow, error)
+	ReadProjectEnvironmentCloneConfigurationGuard(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationGuardParams) (ProjectEnvironmentCloneConfigurationGuard, error)
 	// Include all application-schema tables. Several configuration tables have
 	// neither tenant identity columns nor foreign keys, so ownership heuristics
 	// would silently omit them. Partition children inherit their parent's policy.
@@ -2251,6 +2296,7 @@ type Querier interface {
 	ReadProjectEnvironmentCloneSelectedArtifact(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSelectedArtifactParams) ([]byte, error)
 	ReadProjectEnvironmentCloneSidecarLayers(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([][]byte, error)
 	ReadProjectEnvironmentCloneSidecarSignals(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]ReadProjectEnvironmentCloneSidecarSignalsRow, error)
+	ReadProjectEnvironmentCloneSourceAppIDs(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceAppIDsParams) ([]string, error)
 	ReadProjectEnvironmentCloneSourceRelease(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceReleaseParams) (string, error)
 	ReadProjectEnvironmentCloneTargetArtifact(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadProjectEnvironmentCloneTargetOperationID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetOperationIDParams) (string, error)

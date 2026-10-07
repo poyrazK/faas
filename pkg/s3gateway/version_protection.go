@@ -121,7 +121,7 @@ func (h *Handler) putVersionProtection(w http.ResponseWriter, r *http.Request, r
 	if err == nil {
 		j, err = svc.Reconcile(r.Context(), req.bucket, j.ID)
 	}
-	if j.AccountID == req.bucket.AccountID && j.BucketID == req.bucket.ID {
+	if j.AccountID == req.bucket.AccountID && j.BucketID == req.bucket.ID && !j.CreatedAt.IsZero() {
 		w.Header().Set("X-Gregale-Protection-Id", j.ID)
 	}
 	if err != nil {
@@ -170,6 +170,8 @@ func (h *Handler) protectionError(w http.ResponseWriter, r *http.Request, req re
 	status, code, message := 503, "ServiceUnavailable", "Object protection could not be verified; inspect its operation receipt."
 	var oversized *http.MaxBytesError
 	switch {
+	case errors.Is(err, state.ErrObjectBucketWriteFenced):
+		message = "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, objectstorage.ErrUnsupported):
 		h.unsupported(w, r, req.requestID)
 		return

@@ -53,8 +53,11 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 		}
 		count++
 	}
-	if _, exists := m.objectMultipartUploads[upload.ID]; exists || count >= limit {
+	if _, exists := m.objectMultipartUploads[upload.ID]; exists || count >= limit || m.objectMutations[upload.ID].ID != "" {
 		return ObjectMultipartUpload{}, ErrConflict
+	}
+	if _, held := m.objectWriteFences[upload.BucketID]; held {
+		return ObjectMultipartUpload{}, ErrObjectBucketWriteFenced
 	}
 	var captureErr error
 	upload.Encryption, upload.EncryptionDefaultRevision, captureErr = m.captureObjectBucketDefaultLocked(upload.BucketID, upload.Encryption)
@@ -83,7 +86,15 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 	if m.objectMultipartUploads == nil {
 		m.objectMultipartUploads = map[string]ObjectMultipartUpload{}
 	}
+	if m.objectMutations == nil {
+		m.objectMutations = map[string]ObjectBucketMutation{}
+	}
+	m.objectMutations[upload.ID] = ObjectBucketMutation{ID: upload.ID, MultipartUploadID: upload.ID, Bucket: bucket, Kind: ObjectBucketMutationRequest, CreatedAt: now}
 	m.objectMultipartUploads[upload.ID] = cloneObjectMultipartUpload(upload)
+	if m.objectMultipartInitiations == nil {
+		m.objectMultipartInitiations = map[string]ObjectMultipartInitiation{}
+	}
+	m.objectMultipartInitiations[upload.ID] = ObjectMultipartInitiation{}
 	return cloneObjectMultipartUpload(upload), nil
 }
 
@@ -193,6 +204,9 @@ func (m *MemStore) ActivateObjectMultipartUpload(_ context.Context, id, token, p
 	if !ok || upload.State != ObjectMultipartInitiating || token == "" || upload.LeaseToken != token || providerID == "" {
 		return ErrConflict
 	}
+	if d := m.objectMultipartInitiations[id]; d.Dispatched && d.DispatchToken != "" && (d.ProviderUploadID != providerID || !upload.LeaseUntil.After(m.clock())) {
+		return ErrConflict
+	}
 	upload.State, upload.ProviderUploadID = ObjectMultipartActive, providerID
 	upload.LeaseToken, upload.LeaseUntil = "", time.Time{}
 	upload.AttemptCount, upload.LastErrorCode = 0, ""
@@ -219,13 +233,14 @@ func (m *MemStore) FinishObjectMultipartUpload(_ context.Context, id, token, nex
 	defer m.mu.Unlock()
 	upload, ok := m.objectMultipartUploads[id]
 	valid := ObjectMultipartIsCompleting(upload.State) && next == ObjectMultipartCompleted
-	if !ok || token == "" || upload.LeaseToken != token || !valid || next == ObjectMultipartCompleted && (upload.CompletionDispatched || !upload.Encryption.Empty() || !upload.Protection.Empty()) {
+	if !ok || token == "" || upload.LeaseToken != token || !valid || m.multipartPartWriterPendingLocked(id, 0) || next == ObjectMultipartCompleted && (upload.CompletionDispatched || !upload.Encryption.Empty() || !upload.Protection.Empty()) {
 		return ErrConflict
 	}
 	upload.State, upload.LeaseToken, upload.LeaseUntil = next, "", time.Time{}
 	upload.AttemptCount, upload.LastErrorCode = 0, ""
 	upload.UpdatedAt, upload.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = upload
+	m.retireMultipartMutationLocked(id)
 	return nil
 }
 

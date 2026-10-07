@@ -61,7 +61,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
 | 636 | [Tenant-scoped scheduled workflow starts](636-tenant-scheduled-workflow-starts.md) | accepted | Per-tenant schedule cursors and atomic tenant-bound run admission |
 | 637 | [Tenant-configurable workflow schedules](637-tenant-configurable-workflow-schedules.md) | accepted | Explicitly opt in to tenant-owned cadence, overlap, and enablement settings |
-| 639 | [Verified MCP promotion and resource policy](639-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
+| 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
 | 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
 | 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
 | 620 | [Protection-aware object lifecycle deletion](620-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |
@@ -310,6 +310,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 624 | [Durable managed PostgreSQL idle policy changes](624-managed-postgres-durable-idle-policy.md) | accepted for operator preview | Change scale-to-zero through the shared fenced compute journal and qualified provider contract |
 | 625 | [First-wake 5xx auto-rollback evaluated by apid](625-first-wake-5xx-rollback-from-request-telemetry.md) | accepted | Evaluate opt-in post-release rollback from per-deployment request telemetry and preserve readiness-gated rollback semantics |
 | 627 | [Prospective gateway object-storage safety accounting](627-prospective-gateway-storage-safety-accounting.md) | accepted for operator preview | Use durable gateway meters and complete inventories for admission with billing off and explicit unknown costs |
+| 628 | [GCS tracked writes and native generations](628-gcs-tracked-writes-and-native-generations.md) | accepted for local qualification | Recover native receipts, fence generation copies and deletes, and stream CLI transfers |
 | 631 | [Reclaim unowned layer clones and tenant cgroups, and retry failed teardowns](631-unowned-layer-clone-reclamation.md) | accepted | Reap clones and empty tenant cgroup scopes no Manager, journal record or live row owns, in cache buckets and /srv/fc/base; retry retained teardowns |
 | 632 | [Converge cached runtime bases](632-converge-cached-runtime-bases.md) | proposed | ADR-567 convergence also covers runtime bases an earlier daemon cached, not only the ones this process staged |
 | 633 | [Snapshot drive layer block sharing](633-snapshot-drive-layer-block-sharing.md) | proposed | Snapshot drives share their app layer's unchanged blocks and the node cache counts shared blocks once, so a node holds ~2.4x more snapshots |
@@ -618,3 +619,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-615: Customer event storage admission](615-customer-event-storage-admission.md)
 - [ADR-616: Bounded event routing history](616-bounded-event-routing-history.md)
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
+- [ADR-645: Subscription-scoped retained-event replay preview](645-subscription-retained-event-replay-preview.md)
+- [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)

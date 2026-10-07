@@ -2351,6 +2351,52 @@ type EventFanoutRecipient struct {
 	LeaseUntil                  pgtype.Timestamptz
 	CapacityDeferrals           int32
 	GenerationCapacityDeferrals int32
+	BackfillJobID               pgtype.UUID
+}
+
+type EventReplayJob struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	SubscriptionID        pgtype.UUID
+	SubscriptionRevision  string
+	Recipient             []byte
+	FromAt                pgtype.Timestamptz
+	UntilAt               pgtype.Timestamptz
+	CutoffAt              pgtype.Timestamptz
+	EarliestRetainedAt    pgtype.Timestamptz
+	CursorAt              pgtype.Timestamptz
+	CursorOutboxID        int64
+	DuplicatePolicy       string
+	State                 string
+	ScanComplete          bool
+	ScannedCount          int64
+	MatchedCount          int64
+	FilteredCount         int64
+	SkippedCapturedCount  int64
+	SkippedUnknownCount   int64
+	SkippedExistingCount  int64
+	SkippedUnsettledCount int64
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	CompletedAt           pgtype.Timestamptz
+}
+
+type EventReplayJobItem struct {
+	JobID         pgtype.UUID
+	OutboxID      int64
+	AcceptedAt    pgtype.Timestamptz
+	EventSource   string
+	EventID       string
+	EventType     string
+	SchemaVersion string
+	State         string
+	Attempts      int32
+	FailureCode   string
+	LastError     string
+	Retryable     bool
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type EventRoutingBacklog struct {
@@ -3963,13 +4009,16 @@ type ObjectBucketLifecycle struct {
 }
 
 type ObjectBucketMutation struct {
-	ID                 pgtype.UUID
-	BucketID           pgtype.UUID
-	Kind               string
-	BackendID          string
-	BackendFingerprint string
-	PhysicalName       string
-	CreatedAt          pgtype.Timestamptz
+	ID                    pgtype.UUID
+	BucketID              pgtype.UUID
+	Kind                  string
+	BackendID             string
+	BackendFingerprint    string
+	PhysicalName          string
+	CreatedAt             pgtype.Timestamptz
+	UploadID              pgtype.UUID
+	MultipartUploadID     pgtype.UUID
+	MultipartPartWriterID pgtype.UUID
 }
 
 type ObjectBucketNotification struct {
@@ -4068,6 +4117,30 @@ type ObjectLifecycleScan struct {
 	Phase          string
 	LastUploadID   pgtype.UUID
 	ScannedUploads int64
+}
+
+type ObjectMultipartInitiationDispatch struct {
+	MultipartUploadID pgtype.UUID
+	Dispatched        bool
+	DispatchToken     string
+	ProviderUploadID  string
+}
+
+type ObjectMultipartPartWriter struct {
+	ID                 pgtype.UUID
+	UploadID           pgtype.UUID
+	PartNumber         int32
+	TransferToken      string
+	Managed            bool
+	Dispatched         bool
+	Settled            bool
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CopyIntent         []byte
+	PutIntent          []byte
+	BodySha256         string
 }
 
 type ObjectS3CopySourceEpoch struct {
@@ -5035,6 +5108,22 @@ type ProjectEnvironmentCloneConfigurationCapture struct {
 	Version           int32
 	ConfigurationHash string
 	Configuration     []byte
+}
+
+type ProjectEnvironmentCloneConfigurationClock struct {
+	Singleton  bool
+	Generation int64
+}
+
+type ProjectEnvironmentCloneConfigurationGuard struct {
+	ProjectID          pgtype.UUID
+	AccountID          pgtype.UUID
+	Generation         int64
+	OperationID        pgtype.UUID
+	State              string
+	SourceEnvironment  string
+	SourceRevisionHash string
+	HeldAt             pgtype.Timestamptz
 }
 
 type ProjectEnvironmentCloneLayerPin struct {

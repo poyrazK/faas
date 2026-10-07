@@ -2664,6 +2664,7 @@
       "app_id",
       "attempts",
       "available_at",
+      "backfill_job_id",
       "capacity_deferrals",
       "claim_token",
       "generation",
@@ -2674,6 +2675,57 @@
       "state",
       "subscription_id",
       "total_attempts"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_replay_job_items",
+    "columns": [
+      "accepted_at",
+      "attempts",
+      "created_at",
+      "event_id",
+      "event_source",
+      "event_type",
+      "failure_code",
+      "job_id",
+      "last_error",
+      "outbox_id",
+      "retryable",
+      "schema_version",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_replay_jobs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "completed_at",
+      "created_at",
+      "cursor_at",
+      "cursor_outbox_id",
+      "cutoff_at",
+      "duplicate_policy",
+      "earliest_retained_at",
+      "filtered_count",
+      "from_at",
+      "id",
+      "matched_count",
+      "recipient",
+      "scan_complete",
+      "scanned_count",
+      "skipped_captured_count",
+      "skipped_existing_count",
+      "skipped_unsettled_count",
+      "skipped_unknown_count",
+      "state",
+      "subscription_id",
+      "subscription_revision",
+      "until_at",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -4525,7 +4577,10 @@
       "created_at",
       "id",
       "kind",
-      "physical_name"
+      "multipart_part_writer_id",
+      "multipart_upload_id",
+      "physical_name",
+      "upload_id"
     ],
     "kind": "operational"
   },
@@ -4669,6 +4724,36 @@
       "scanned_uploads",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_multipart_initiation_dispatches",
+    "columns": [
+      "dispatch_token",
+      "dispatched",
+      "multipart_upload_id",
+      "provider_upload_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_multipart_part_writers",
+    "columns": [
+      "backend_fingerprint",
+      "backend_id",
+      "body_sha256",
+      "bucket_id",
+      "copy_intent",
+      "dispatched",
+      "id",
+      "managed",
+      "part_number",
+      "physical_name",
+      "put_intent",
+      "settled",
+      "transfer_token",
+      "upload_id"
     ],
     "kind": "operational"
   },
@@ -5724,6 +5809,28 @@
       "configuration_hash",
       "operation_id",
       "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_configuration_clock",
+    "columns": [
+      "generation",
+      "singleton"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_configuration_guards",
+    "columns": [
+      "account_id",
+      "generation",
+      "held_at",
+      "operation_id",
+      "project_id",
+      "source_environment",
+      "source_revision_hash",
+      "state"
     ],
     "kind": "operational"
   },

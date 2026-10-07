@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/objectstorage/grantrevocation"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -14,6 +15,7 @@ type cloneCaptureBarrierStore interface {
 	state.ProjectEnvironmentCloneBindingCaptureStore
 	state.ProjectEnvironmentClonePostgresWriteFenceStore
 	state.ProjectEnvironmentCloneObjectWriteFenceStore
+	state.ProjectEnvironmentCloneObjectGrantRevocationStore
 }
 
 // Transient observations, never durable checkpoint or release authority.
@@ -21,8 +23,10 @@ type cloneCaptureBarrierStore interface {
 // PostgreSQL background workers. No capture point is selected by this driver.
 type cloneCaptureBarrierObservation struct {
 	configuration              state.ProjectEnvironmentCloneConfigurationCapture
+	configurationFence         state.ProjectEnvironmentCloneConfigurationFence
 	postgres                   []managedpostgres.CheckpointConnectionClosure
 	objects                    []state.ObjectBucketWriteFence
+	objectRetirements          []grantrevocation.Observation
 	instrumentedWritersDrained bool
 }
 
@@ -105,7 +109,12 @@ func (s *server) prepareProjectEnvironmentCloneCaptureBarriers(ctx context.Conte
 		}
 	}
 	// Independently verify complete owned rosters before touching providers.
-	if _, err := readCloneCaptureBarrierRosters(ctx, store, lease, databases, objects); err != nil {
+	fences, err := readCloneCaptureBarrierRosters(ctx, store, lease, databases, objects)
+	if err != nil {
+		return lease, zero, err
+	}
+	retirements, err := s.cloneCaptureObjectGrantRetirementPlans(ctx, store, lease, objects, fences)
+	if err != nil {
 		return lease, zero, err
 	}
 	out := cloneCaptureBarrierObservation{configuration: capture, instrumentedWritersDrained: true}
@@ -128,12 +137,24 @@ func (s *server) prepareProjectEnvironmentCloneCaptureBarriers(ctx context.Conte
 		out.postgres = append(out.postgres, closure)
 		out.instrumentedWritersDrained = out.instrumentedWritersDrained && closure.Drained
 	}
+	for _, plan := range retirements {
+		if _, err := readCloneCaptureBarrierRosters(ctx, store, lease, databases, objects); err != nil {
+			return lease, zero, err
+		}
+		var observation grantrevocation.Observation
+		lease, observation, err = s.revokeProjectEnvironmentCloneObjectNativeGrants(ctx, lease, plan)
+		if err != nil {
+			return lease, zero, err
+		}
+		out.objectRetirements = append(out.objectRetirements, observation)
+		out.instrumentedWritersDrained = out.instrumentedWritersDrained && observation.Drained()
+	}
 	out.objects, err = readCloneCaptureBarrierRosters(ctx, store, lease, databases, objects)
 	if err != nil {
 		return lease, zero, err
 	}
 	for _, fence := range out.objects {
-		out.instrumentedWritersDrained = out.instrumentedWritersDrained && fence.Requests == 0 && fence.NativeGrants == 0
+		out.instrumentedWritersDrained = out.instrumentedWritersDrained && fence.Requests == 0 && fence.NativeGrants == 0 && fence.Deletions == 0 && fence.Protections == 0 && fence.Uploads == 0 && fence.Multipart == 0
 	}
 	// Detect config edits during remote IO without replacing the original root.
 	// This snapshot does not fence edits after it or attest a common data point.
@@ -211,7 +232,7 @@ func cloneCapturePostgresFenceMatches(op state.ProjectEnvironmentCloneOperation,
 
 func cloneCaptureObjectFenceMatches(op state.ProjectEnvironmentCloneOperation, plan capturedProjectEnvironmentObjectPlan, f state.ObjectBucketWriteFence) bool {
 	b, source := f.Bucket, plan.source
-	return f.BucketID == source.ID && f.Token == op.ID && f.CloneOperationID == op.ID && f.Requests >= 0 && f.NativeGrants >= 0 &&
+	return f.BucketID == source.ID && f.Token == op.ID && f.CloneOperationID == op.ID && f.Requests >= 0 && f.NativeGrants >= 0 && f.Deletions >= 0 && f.Protections >= 0 && f.Uploads >= 0 && f.Multipart >= 0 &&
 		b.ID == source.ID && b.AccountID == op.AccountID && b.AppID == plan.appID && b.State == "ready" &&
 		b.Scope == plan.sourceScope && b.Name == source.Name && b.Region == source.Region && b.BackendID == source.BackendID &&
 		b.BackendFingerprint == source.BackendFingerprint && b.PhysicalName == source.PhysicalName &&

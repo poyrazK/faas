@@ -1,6 +1,6 @@
 package main
 
-// adr: 639 — gateway resource policy must fail closed and survive compilation.
+// adr: 644 — gateway resource policy must fail closed and survive compilation.
 
 import (
 	"context"

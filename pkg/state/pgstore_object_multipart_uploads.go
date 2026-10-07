@@ -114,6 +114,9 @@ func (s *PgStore) reserveObjectMultipart(ctx context.Context, upload ObjectMulti
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return ObjectMultipartUpload{}, err
 	}
+	if err := checkObjectUploadCaptureAdmissionTx(ctx, tx, upload.AccountID, upload.AppID, upload.BucketID); err != nil {
+		return ObjectMultipartUpload{}, err
+	}
 	count, err := q.ObjectMultipartCount(ctx, tx, mustPgUUID(upload.BucketID))
 	if err != nil {
 		return ObjectMultipartUpload{}, err

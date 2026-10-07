@@ -33,7 +33,7 @@ func (h *Handler) executeMultipartResult(w http.ResponseWriter, r *http.Request,
 		h.providerError(w, r, req, bindErr, u.Key)
 		return
 	}
-	result, err := objectstorageactivity.Execute(callCtx, h.store, req.bucket, func(mutationCtx context.Context) (objectstorage.MultipartCompletionResult, error) {
+	result, err := objectstorageactivity.ExecuteMultipart(callCtx, h.store, store, req.bucket, u, func(mutationCtx context.Context) (objectstorage.MultipartCompletionResult, error) {
 		return objectstorage.CompleteMultipartWithResult(mutationCtx, req.provider, req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
 			Encryption: encryption, SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: toProviderParts(u.Parts), Recovering: u.CompletionDispatched, RecoveryCursor: u.CompletionRecoveryCursor,
 			BeforeRequest: func(ctx context.Context) error {

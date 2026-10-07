@@ -1,6 +1,6 @@
 package gateway
 
-// adr: 639 — verified promotion and gateway resource-policy acceptance.
+// adr: 644 — verified promotion and gateway resource-policy acceptance.
 
 import (
 	"context"

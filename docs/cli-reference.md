@@ -14,7 +14,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
-| [`events`](#events) | Preview routing, publish events, inspect deliveries and routing history, and replay failures |
+| [`events`](#events) | Preview routing, publish events, inspect deliveries, and backfill retained events |
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
@@ -682,6 +682,60 @@ Provision or attach object storage and inject sealed S3 settings
 Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity
 
 `gregale bucket [<subcommand>]`
+
+### bucket uploads
+
+Inspect owned multipart upload sessions and parts
+
+#### bucket uploads list
+
+List multipart sessions
+
+`gregale bucket uploads list [--limit <N>] [--cursor <ID>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--cursor <ID>` | next page cursor |  |
+
+#### bucket uploads status
+
+Inspect a multipart session returned by an upload
+
+`gregale bucket uploads status <app> <bucket-id> <upload-id>`
+
+#### bucket uploads parts
+
+List uploaded multipart parts
+
+`gregale bucket uploads parts [--limit <N>] [--part-number-marker <N>] <app> <bucket-id> <upload-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--part-number-marker <N>` | last part from the previous page |  |
+
+### bucket upload
+
+Upload a file, using multipart above the single PUT limit
+
+`gregale bucket upload [--content-type <TYPE>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--content-type <TYPE>` | object MIME type |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket download
+
+Download an object to a file after a complete transfer
+
+`gregale bucket download [--force] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--force` | replace destination after a complete transfer |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
 
 ### bucket copy-sources
 
@@ -1440,7 +1494,7 @@ Inspect durable execution status
 
 ## events
 
-Preview routing, publish events, inspect deliveries and routing history, and replay failures
+Preview routing, publish events, inspect deliveries, and backfill retained events
 
 `gregale events [<subcommand>]`
 
@@ -1457,6 +1511,62 @@ Preview account-wide event routing without publishing
 | `--type <TYPE>` | event type (or second positional argument) |  |
 | `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
 | `--time <RFC3339>` | event time (RFC3339; defaults to server time) |  |
+
+### events replay-preview
+
+Preview retained events for one current subscription without creating deliveries
+
+`gregale events replay-preview --subscription-id <UUID> --from <RFC3339> --until <RFC3339> [--after <CURSOR>] [--limit <N>] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--subscription-id <UUID>` | target ordinary application subscription UUID | required |
+| `--from <RFC3339>` | inclusive acceptance timestamp | required |
+| `--until <RFC3339>` | exclusive acceptance timestamp | required |
+| `--after <CURSOR>` | opaque continuation cursor; keep target and range unchanged |  |
+| `--limit <N>` | envelopes examined per page (1..100; default 50) |  |
+
+### events backfill
+
+Create a durable bounded delivery job for matching retained events
+
+`gregale events backfill --subscription-id <UUID> --from <RFC3339> --until <RFC3339> --yes <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--subscription-id <UUID>` | target ordinary application subscription UUID | required |
+| `--from <RFC3339>` | inclusive platform acceptance timestamp | required |
+| `--until <RFC3339>` | exclusive platform acceptance timestamp | required |
+| `--yes` | confirm that matching historical events may invoke this consumer | required |
+
+### events backfill-status
+
+Read durable event backfill progress
+
+`gregale events backfill-status <job-id>`
+
+### events backfill-items
+
+Inspect paginated per-envelope outcomes for a backfill job
+
+`gregale events backfill-items [--state <STATE>] [--limit <N>] [--after <CURSOR>] <job-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--state <STATE>` | filter by a routing outcome state |  |
+| `--limit <N>` | items per page (1..100; default 50) |  |
+| `--after <CURSOR>` | opaque continuation cursor; keep job and state unchanged |  |
+
+### events backfill-retry
+
+Retry a bounded batch of failed backfill deliveries
+
+`gregale events backfill-retry [--limit <N>] --yes <job-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | failed routing recipients to requeue (1..100; default 100) |  |
+| `--yes` | confirm requeueing failed event deliveries | required |
 
 ### events publish
 
@@ -1569,14 +1679,14 @@ Retry one terminal pre-invocation recipient failure using its event identity and
 
 Retry a bounded batch of terminal failures classified as retryable; pass --event-source and --event-id together to filter
 
-`gregale events replay-retryable [--event-source <SOURCE>] [--event-id <ID>] [--limit <N>] --yes <value> <app>`
+`gregale events replay-retryable [--event-source <SOURCE>] [--event-id <ID>] [--limit <N>] --yes <app>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--event-source <SOURCE>` | limit replay to one published event source |  |
 | `--event-id <ID>` | limit replay to one published event |  |
 | `--limit <N>` | max recipients to requeue (1..100) |  |
-| `--yes <value>` | confirm requeueing retryable event recipients | required |
+| `--yes` | confirm requeueing retryable event recipients | required |
 
 
 ## send
@@ -7485,6 +7595,10 @@ Per-day breakdown
 ### usage storage
 
 Per-app storage bytes
+
+### usage object-storage
+
+Account object storage observations, safety policy and billing state
 
 ### usage summary
 
