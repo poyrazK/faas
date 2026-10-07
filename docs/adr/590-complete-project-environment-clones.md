@@ -7604,3 +7604,24 @@ parent layout, including its shorter final part. Optional Packer/live nft
 checks remain skipped.
 Pinned golangci-lint v2.4.0 reports zero issues across state, object storage,
 activity, gateway and APID.
+
+### Independent multipart part observations
+
+The provider boundary now offers `ObserveMultipartPart`, a read-only lookup of
+one part under the original native upload identity. The caller must supply an
+original-journal authority check, executed before provider IO. The lookup uses
+the preceding part marker and a one-item limit; invalid identities, malformed
+pages and inconsistent cursors fail closed. The S3 adapter validates native
+bucket/key/upload response scope before returning the observation.
+
+A candidate, even with matching size or ETag, may be an older part. A missing
+part or upload is only a negative observation. This helper provides no write,
+retry, adoption or receipt-settlement authority. R2/OVH delayed-write drainage
+and native credential closure still require provider qualification before any
+automatic recovery or public fully copyable capture can be enabled.
+
+Validation: the full object-storage race suite passes, including native scoped
+GET fixtures, missing observations, malformed pages and denied journal
+authority. Pinned golangci-lint v2.4.0 reports zero issues for object storage;
+text encoding, shell quoting and ADR numbering checks pass. No live-provider
+drainage qualification was performed.
