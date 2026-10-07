@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0.
+ * Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0.
  */
 export type WorkerScaling = {
   /**
@@ -15,11 +15,15 @@ export type WorkerScaling = {
    */
   max: number;
   /**
-   * Queue metric driving autoscaling.
+   * Queue or customer-pushed metric driving autoscaling.
    */
-  metric: 'queue_lag' | 'queue_depth';
+  metric: 'queue_lag' | 'queue_depth' | 'custom';
   /**
-   * Target backlog per worker instance (e.g. 500 messages per worker).
+   * Required when metric is custom; the app-scoped custom gauge name.
+   */
+  name?: string;
+  /**
+   * Target backlog per worker instance. Custom metric targets use the custom gauge's units.
    */
   target: number;
 };

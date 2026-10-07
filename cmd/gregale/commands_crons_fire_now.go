@@ -72,12 +72,12 @@ func cmdCronsRun(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons run <id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
 		return 1
 	}
 	id := fs.Arg(0)
 	if !cronIDPattern.MatchString(id) {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons run <id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -109,12 +109,12 @@ func cmdCronsFireNowGet(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons fire-now <request-id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
 		return 1
 	}
 	requestID := fs.Arg(0)
 	if !fireNowRequestIDPattern.MatchString(requestID) {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons fire-now <request-id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -123,6 +123,14 @@ func cmdCronsFireNowGet(args []string) int {
 	}
 	resp, err := client.GetFireCronRequest(context.Background(), requestID)
 	if err != nil {
+		// production-us hunt #4: `crons fire-now <cron-id>` reads as "fire
+		// this cron now" and answered only "no such fire-now request". When
+		// the id is a cron, say which command fires it.
+		if isNotFound(err) {
+			if cron, cronErr := client.GetCron(context.Background(), requestID); cronErr == nil && cron.ID != "" {
+				return printErr("Not a fire-now request", fmt.Errorf("%s is a cron rule; fire it with `gregale crons run %s`, which prints the request id that `crons fire-now` follows", requestID, requestID))
+			}
+		}
 		return printErr("Could not load fire-now request", err)
 	}
 	if jsonOutput {

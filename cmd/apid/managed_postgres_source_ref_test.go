@@ -19,7 +19,7 @@ func (sourceRefManagedPostgresProvider) Capabilities() managedpostgres.Capabilit
 		PostgresMajors:    []int{17},
 		ServiceClasses:    []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment},
 		Availability:      []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:  []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite},
+		CredentialAccess:  []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialMigration},
 		ScaleToZero:       true,
 		PooledConnections: true,
 	}
@@ -71,7 +71,7 @@ func (sourceRefManagedPostgresProvider) Delete(context.Context, managedpostgres.
 }
 
 func (sourceRefManagedPostgresProvider) IssueCredentials(_ context.Context, request managedpostgres.CredentialRequest) (managedpostgres.CredentialMaterial, error) {
-	if request.Access != managedpostgres.CredentialReadWrite {
+	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialMigration {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
 	}
 	return managedpostgres.CredentialMaterial{
@@ -166,7 +166,7 @@ func configureSourceRefManagedPostgres(t *testing.T, env sourceRefTestEnv) (*man
 	if err != nil {
 		t.Fatalf("managed postgres binding service: %v", err)
 	}
-	env.srv.WithManagedPostgres(service, nil, bindingService, nil, nil)
+	env.srv.WithManagedPostgres(service, nil, bindingService, nil, nil, nil)
 	return store, sink, database.ID
 }
 

@@ -22,6 +22,9 @@ func TestOperationPlanBoundsSupportRetentionAndReporting(t *testing.T) {
 			if op.ArtifactMaxBytes <= 0 || op.ArtifactMaxBytes > op.ArtifactTotalMaxBytes || op.ArtifactTotalMaxBytes > OperationArtifactSpoolMaxBytes {
 				t.Fatal("artifact policy exceeds verification capacity or cannot hold a single artifact")
 			}
+			if op.RetainedArtifactBytesPerAccount < op.ArtifactTotalMaxBytes || op.RetainedArtifactsPerAccount < op.ArtifactsPerOperation {
+				t.Fatal("account storage bounds must hold one complete operation result")
+			}
 			if op.ReportsPerOperation < op.ProgressStages+op.ArtifactsPerOperation || op.ReportBytes > OperationReportBodyMaxBytes || op.ReportMinIntervalMS <= 0 {
 				t.Fatal("report policy must support the declared stages and attachments within protocol bounds")
 			}
@@ -32,5 +35,8 @@ func TestOperationPlanBoundsSupportRetentionAndReporting(t *testing.T) {
 	}
 	if OperationExecutionRenewTimeout >= OperationExecutionLeaseMax || OperationStreamAuthInterval >= OperationStreamLease || OperationStreamRenewInterval >= OperationStreamLease {
 		t.Fatal("execution and stream leases must leave time for bounded renewal and authorization checks")
+	}
+	if OperationArtifactStagingLifetime <= OperationArtifactTransferTimeout || OperationArtifactCleanupLease <= OperationArtifactTransferTimeout+OperationExecutionRenewTimeout {
+		t.Fatal("storage intents and cleanup claims must outlast their bounded transfers")
 	}
 }

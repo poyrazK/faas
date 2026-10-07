@@ -25,3 +25,5 @@ export {
   REALTIME_RESUME_BEARER_SUBPROTOCOL_PREFIX,
   type BrowserRealtimeSocketFactory,
 } from './browser-realtime.js';
+
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './customer-operations.js';

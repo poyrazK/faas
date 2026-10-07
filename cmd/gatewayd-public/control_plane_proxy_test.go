@@ -51,6 +51,7 @@ func TestControlPlaneProxyKeepsOneRequestIDAcrossApidRedirect(t *testing.T) {
 }
 
 func TestControlPlaneProxyKeepsAPIOnControlPlane(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "gregale.dev")
 	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("control-plane"))
@@ -79,7 +80,7 @@ func TestControlPlaneProxyKeepsAPIOnControlPlane(t *testing.T) {
 		{path: "/v1/invocations:dispatch_batch", want: "compute"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "http://edge.local"+tc.path, nil)
+			req := httptest.NewRequest(http.MethodGet, "http://api.gregale.dev"+tc.path, nil)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 			if got := strings.TrimSpace(rec.Body.String()); got != tc.want {
@@ -283,7 +284,7 @@ func TestControlPlaneProxyDoesNotExposeMetricsDiscovery(t *testing.T) {
 		"/v1/internal/metrics/promtail-targets",
 	} {
 		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "http://edge.local"+path, nil)
+			req := httptest.NewRequest(http.MethodGet, "http://api.gregale.dev"+path, nil)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 			if rec.Code != http.StatusNotFound {
@@ -343,11 +344,12 @@ func TestControlPlaneProxyScopesMetricsByHost(t *testing.T) {
 }
 
 func TestControlPlaneProxyReportsUnavailableAPI(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "gregale.dev")
 	handler, err := newControlPlaneProxy("http://127.0.0.1:1", http.NotFoundHandler(), slog.Default())
 	if err != nil {
 		t.Fatalf("newControlPlaneProxy: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "http://edge.local/v1/whoami", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://api.gregale.dev/v1/whoami", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -412,51 +414,55 @@ func TestControlPlaneProxyKeepsSessionsOffTenantHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, tc := range []struct {
-		host        string
-		keepSession bool
-	}{
-		{"gregale.dev", true},
-		{"api.gregale.dev", true},
-		{"operations.gregale.dev", true},
-		{"127.0.0.1", true},
-		{"attacker.gregale.dev", false},
-		{"pr-1-shop.gregale.dev", false},
-		{"customer.example", false},
-	} {
-		t.Run(tc.host, func(t *testing.T) {
+	// Platform hosts keep the API and the dashboard session.
+	for _, host := range []string{"gregale.dev", "api.gregale.dev", "operations.gregale.dev", "127.0.0.1"} {
+		t.Run(host, func(t *testing.T) {
 			gotCookie = ""
-			req := httptest.NewRequest(http.MethodPost, "http://"+tc.host+"/v1/keys", nil)
+			req := httptest.NewRequest(http.MethodPost, "http://"+host+"/v1/keys", nil)
 			req.AddCookie(&http.Cookie{Name: "faas_sid", Value: "victim"})
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want the API reachable", rec.Code)
-			}
-			if forwarded := gotCookie != ""; forwarded != tc.keepSession {
-				t.Errorf("Cookie forwarded = %v (%q), want %v", forwarded, gotCookie, tc.keepSession)
-			}
-			if issued := rec.Header().Get("Set-Cookie") != ""; issued != tc.keepSession {
-				t.Errorf("Set-Cookie passed through = %v, want %v", issued, tc.keepSession)
+			if rec.Code != http.StatusOK || gotCookie == "" || rec.Header().Get("Set-Cookie") == "" {
+				t.Fatalf("platform host %s: status %d cookie %q set-cookie %q, want the API with its session", host, rec.Code, gotCookie, rec.Header().Get("Set-Cookie"))
 			}
 		})
 	}
 
-	for _, path := range []string{"/dashboard", "/dashboard/apps/shop", "/login?next=%2Fdashboard", "/signup", "/logout", "/auth/reset/abc", "/cli-auth", "/oauth/callback"} {
-		req := httptest.NewRequest(http.MethodGet, "http://attacker.gregale.dev"+path, nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "https://gregale.dev"+path {
-			t.Errorf("GET %s on a tenant host = %d Location=%q, want 302 to https://gregale.dev%s",
-				path, rec.Code, rec.Header().Get("Location"), path)
+	// ADR-480: on app, preview and customer hosts every reserved path belongs
+	// to the app, so apid never sees (or issues) a session there.
+	paths := []string{"/v1/keys", "/v1/whoami", "/status", "/docs", "/dashboard", "/login?next=%2Fdashboard", "/signup", "/logout", "/auth/reset/abc", "/cli-auth", "/oauth/callback"}
+	for _, host := range []string{"attacker.gregale.dev", "pr-1-shop.gregale.dev", "customer.example"} {
+		for _, path := range paths {
+			gotCookie = ""
+			req := httptest.NewRequest(http.MethodGet, "http://"+host+path, nil)
+			req.AddCookie(&http.Cookie{Name: "faas_sid", Value: "victim"})
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusTeapot || gotCookie != "" {
+				t.Errorf("GET %s%s = %d (apid saw cookie %q), want it served by the app", host, path, rec.Code, gotCookie)
+			}
 		}
 	}
-	for _, path := range []string{"/status", "/docs", "/v1/whoami"} {
-		req := httptest.NewRequest(http.MethodGet, "http://attacker.gregale.dev"+path, nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Errorf("GET %s on a tenant host = %d, want it proxied without a session", path, rec.Code)
+}
+
+// The compute-owned /v1 endpoints keep entering the compute data plane on
+// every host: the scheduler and the log stream address them that way.
+func TestControlPlaneProxyKeepsComputeOwnedPathsOnEveryHost(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "gregale.dev")
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer controlPlane.Close()
+	compute := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	handler, err := newControlPlaneProxy(controlPlane.URL, compute, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"api.gregale.dev", "shop.gregale.dev"} {
+		for _, path := range []string{"/v1/synthesize", "/v1/invocations:dispatch", "/v1/apps/shop/logs"} {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "http://"+host+path, nil))
+			if rec.Code != http.StatusTeapot {
+				t.Errorf("POST %s%s = %d, want the compute data plane", host, path, rec.Code)
+			}
 		}
 	}
 }

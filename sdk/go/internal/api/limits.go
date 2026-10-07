@@ -6,6 +6,8 @@
 // the split contract this module enforces.
 package api
 
+import "time"
+
 // File-level note: this file is the SDK copy of pkg/api/limits.go,
 // trimmed to the wire types only (Plan enum, Plans slice, Limits
 // struct). The authoritative planLimits table, ConntrackCapProbe, and
@@ -109,3 +111,27 @@ func (l Limits) EphemeralDiskMaxBytes() int64 {
 	}
 	return int64(l.EphemeralDiskMaxMB()) * 1024 * 1024
 }
+
+// Notification configuration is bounded independently of object upload bodies.
+const (
+	MaxObjectNotificationRules                = 1000
+	MaxObjectNotificationIDRunes              = 255
+	MaxObjectNotificationEvents               = 10
+	MaxObjectNotificationFilterBytes          = 1024
+	MaxObjectNotificationQueueNameBytes       = 63
+	MaxObjectNotificationBodyBytes      int64 = 1 << 20
+	MaxObjectNotificationXMLDepth             = 6
+	MaxObjectNotificationXMLNodes             = MaxObjectNotificationRules*24 + 1
+)
+
+// Object Lock duration bounds mirror the server contract.
+const (
+	MaxObjectLockRetentionDays  int32 = 36500
+	MaxObjectLockRetentionYears int32 = 100
+)
+
+const (
+	BindingReleasePolicyMaxRevision    int64 = 1<<53 - 1
+	BindingReleasePolicyMaxAge               = 24 * time.Hour
+	BindingReleasePolicyReasonMaxBytes       = 256
+)

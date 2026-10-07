@@ -63,3 +63,30 @@ func TestMarkPrimeFailedExplainsBeforeCheckpointFailure(t *testing.T) {
 		t.Fatalf("deployment error = %q, want safe hook-specific message", got.Error)
 	}
 }
+
+func TestMarkPrimeFailedPersistsStartupPhaseGuidance(t *testing.T) {
+	for _, tc := range []struct{ phase, want string }{
+		{"guest_startup", "guest did not answer"},
+		{"handler_healthcheck", "answered readiness probes"},
+		{"image_healthcheck", "fresh successful result"},
+	} {
+		t.Run(tc.phase, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			_, _, dep := seedApp(t, store, api.PlanScale, 1024, 10)
+			if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeploySnapshotting, ""); err != nil {
+				t.Fatal(err)
+			}
+			e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+			problem := api.NewProblem(422, api.CodeAppStartupTimeout, "startup timeout", "startup_phase="+tc.phase+": deadline elapsed")
+			e.markPrimeFailed(ctx, dep.ID, problem)
+			got, err := store.DeploymentByID(ctx, dep.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != state.DeployFailed || got.ErrorCode != api.CodeAppStartupTimeout || !strings.Contains(got.ErrorWhy, tc.want) || got.ErrorFix == "" {
+				t.Fatalf("status=%s code=%s why=%q fix=%q", got.Status, got.ErrorCode, got.ErrorWhy, got.ErrorFix)
+			}
+		})
+	}
+}

@@ -16,6 +16,8 @@ import (
 )
 
 func TestObjectStorageAccountingAPIGates(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
 	e := setup(t, api.PlanPro)
 	createApp(t, e, "accounting")
 	a, b := &fakeObjectProvider{}, &fakeObjectProvider{}
@@ -61,8 +63,8 @@ func TestObjectStorageAccountingAPIGates(t *testing.T) {
 	if r := e.do(t, "POST", sign, map[string]any{"method": "GET", "key": "file"}, nil); r.Code != 402 {
 		t.Fatal("budgeted GET", r.Code)
 	}
-	if r := e.do(t, "DELETE", path+"/"+bucket.ID+"/objects?key=file", nil, nil); r.Code != 204 {
-		t.Fatal("cleanup blocked", r.Code)
+	if r := e.do(t, "DELETE", path+"/"+bucket.ID+"/objects?key=file", nil, nil); r.Code != 409 {
+		t.Fatal("pending signed PUT did not fence deletion", r.Code)
 	}
 }
 
@@ -93,6 +95,17 @@ func TestValidateObjectStorageBillingSetupRequiresEURPricing(t *testing.T) {
 	registry.Pricing = &api.ObjectStoragePricing{Currency: "EUR"}
 	if err := validateObjectStorageBillingSetup(provider, registry); err != nil {
 		t.Fatalf("EUR pricing error = %v", err)
+	}
+}
+
+// adr: 627
+func TestGatewaySafetyAccountingRejectsBilling(t *testing.T) {
+	registry := &objectstorage.Registry{Accounting: api.ObjectStoragePolicy{AccountingMode: api.ObjectStorageGatewaySafetyV1}}
+	if err := validateObjectStorageBillingSetup(&objectStorageBillingStatusProvider{}, registry); err == nil || !strings.Contains(err.Error(), "billing to be off") {
+		t.Fatal("gateway safety admitted live billing", err)
+	}
+	if err := validateObjectStorageBillingSetup(nil, registry); err != nil {
+		t.Fatal("billing-off qualification rejected", err)
 	}
 }
 
@@ -128,29 +141,37 @@ func TestObjectStorageUsageReportOperatorBoundary(t *testing.T) {
 
 type inventoryProvider struct {
 	fakeObjectProvider
-	fail  bool
-	cycle bool
+	mode string
 }
 
 func (p *inventoryProvider) ListObjects(_ context.Context, _, _, cursor string, _ int32) (objectstorage.ObjectPage, error) {
 	if cursor == "" {
+		if p.mode == "empty-truncated" {
+			return objectstorage.ObjectPage{NextCursor: "page2"}, nil
+		}
+		if p.mode == "unexpected-prefix" {
+			return objectstorage.ObjectPage{CommonPrefixes: []string{"folder/"}}, nil
+		}
 		return objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "a", Size: 3}}, NextCursor: "page2"}, nil
 	}
-	if p.fail {
+	if p.mode == "failed" {
 		return objectstorage.ObjectPage{}, errors.New("do not log upstream secrets")
 	}
-	if p.cycle {
+	if p.mode == "cycle" {
 		return objectstorage.ObjectPage{NextCursor: "page2"}, nil
+	}
+	if p.mode == "duplicate" {
+		return objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "a", Size: 4}}}, nil
 	}
 	return objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "b", Size: 4}}}, nil
 }
 
 func TestObjectStorageInventoryPublishesOnlyCompleteScans(t *testing.T) {
-	for _, mode := range []string{"complete", "failed", "cycle"} {
+	for _, mode := range []string{"complete", "failed", "cycle", "empty-truncated", "unexpected-prefix", "duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			e := setup(t, api.PlanPro)
 			createApp(t, e, "inventory")
-			p := &inventoryProvider{fail: mode == "failed", cycle: mode == "cycle"}
+			p := &inventoryProvider{mode: mode}
 			policy := api.ObjectStoragePolicy{MaxAccountBytes: 1000, MaxBucketBytes: 500, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 1000, MaxMonthlyRequests: 1000, MaxMonthlyEgressBytes: 1000, MaxMonthlyAuthorizations: 1000, MaxReportAgeSeconds: 3600}
 			registry, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "external"}, Backends: []objectstorage.BackendConfig{{ID: "external", Driver: "fake", Region: "us-east-1", Namespace: "isolated", Endpoint: "https://s3.example.test", S3Region: "us-east-1", UsageReportsPath: "/var/spool/faas/external-usage.json"}}}, func(string) string { return "" }, map[string]objectstorage.Factory{"fake": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return p, nil }})
 			if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,6 +36,7 @@ func (i *StateRuntimeSnapshotIndex) LookupRuntimeSnapshot(ctx context.Context, c
 		return RuntimeSnapshot{}, err
 	}
 	identity := RuntimeSnapshotIdentity{
+		Profile:             record.Profile,
 		Runtime:             record.Runtime,
 		Architecture:        record.Architecture,
 		KernelDigest:        record.KernelDigest,
@@ -43,6 +45,9 @@ func (i *StateRuntimeSnapshotIndex) LookupRuntimeSnapshot(ctx context.Context, c
 		MemoryMB:            record.MemoryMB,
 		EphemeralDiskMB:     record.EphemeralDiskMB,
 		FormatVersion:       record.FormatVersion,
+	}
+	if identity.Profile.Normalized() == api.ExecutionProfileStandard {
+		identity.Profile = ""
 	}
 	entry := RuntimeSnapshot{
 		Identity:       identity,

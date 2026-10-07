@@ -5,6 +5,11 @@
   },
   "max_databases_per_account": 3,
   "provisioning_enabled": false,
+  "health": {
+    "enabled": true,
+    "interval_seconds": 60,
+    "stale_after_seconds": 300
+  },
   "usage": {
     "enabled": false,
     "collection_interval_seconds": 300,
@@ -26,6 +31,7 @@
       "driver": "neon",
       "region": "eu-central-1",
       "namespace": "org-replace-with-neon-org-id",
+      "data_api_enabled": false,
       "settings": {
         "region_id": "aws-eu-central-1",
         "database_name": "gregale",

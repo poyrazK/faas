@@ -211,6 +211,11 @@ type BuildFullRootfsInput struct {
 	FunctionRunnerPath  string
 	SBOMRun             func(ctx context.Context, dir string) ([]byte, error)
 	SBOMStorageKey      string
+	// CommandPATH is the effective non-secret PATH at assembly time. Nil
+	// defers bare-command lookup to guest-init when runtime env is unknown.
+	// Explicit command paths are always checked, relative to WorkingDir. This value
+	// is used only for validation; it is never baked into the artifact.
+	CommandPATH *string
 	// Resolver is consulted by ApplyLayerGzWithResolver during the
 	// per-entry chown path. Commit 5 lays the plumbing; commit 7
 	// wires the real image-/etc/passwd parser + merge walk.
@@ -399,6 +404,9 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	// Pro 64 / Scale 256.
 	if err := writePasswdTable(staging, passwdEntries, api.UserUIDOverrideMax[in.Plan]); err != nil {
 		return BuildResult{}, fmt.Errorf("rootfs: build passwd table: %w", err)
+	}
+	if err := validateFullRootfsLaunch(staging, in.Manifest, in.CommandPATH); err != nil {
+		return BuildResult{}, err
 	}
 
 	stats, err := InspectStaging(staging)
@@ -834,37 +842,51 @@ func (b *Builder) publishBaseExt4(ctx context.Context, in BaseBuildInput, stagin
 	}
 	// mkfs's -d flag populates the new image from `staging`; the output file
 	// must therefore live outside that tree and its tmpfs staging budget.
+	tmpPath, err := createBaseTemp("faas-base-mkfs-*.ext4")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := b.runBaseMkfs(ctx, staging, tmpPath, sizeMB); err != nil {
+		return fmt.Errorf("rootfs: base mkfs: %w", err)
+	}
+	return b.publishBaseFile(ctx, in.Storage, in.StorageKey, tmpPath)
+}
+
+// createBaseTemp creates an empty scratch file for a base image under
+// FAAS_BASE_TMP_ROOT (the host's large ext4 scratch area on production
+// nodes) or the system temp dir. The caller removes it.
+func createBaseTemp(pattern string) (string, error) {
 	tmpRoot := os.Getenv("FAAS_BASE_TMP_ROOT")
 	if tmpRoot == "" {
 		tmpRoot = os.TempDir()
 	}
 	if err := os.MkdirAll(tmpRoot, 0o755); err != nil {
-		return fmt.Errorf("rootfs: create base tmp root: %w", err)
+		return "", fmt.Errorf("rootfs: create base tmp root: %w", err)
 	}
-	tmp, err := os.CreateTemp(tmpRoot, "faas-base-mkfs-*.ext4")
+	tmp, err := os.CreateTemp(tmpRoot, pattern)
 	if err != nil {
-		return fmt.Errorf("rootfs: create base tmp ext4: %w", err)
+		return "", fmt.Errorf("rootfs: create base tmp ext4: %w", err)
 	}
 	tmpPath := tmp.Name()
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rootfs: close base tmp ext4: %w", err)
+		return "", fmt.Errorf("rootfs: close base tmp ext4: %w", err)
 	}
-	if err := b.runBaseMkfs(ctx, staging, tmpPath, sizeMB); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rootfs: base mkfs: %w", err)
-	}
-	// nolint:forbidigo // tmpPath is from os.MkdirTemp at the top of
-	// this function — a daemon-internal scratch file the builder just
-	// wrote via MkfsCommand. Not a customer path.
-	f, err := os.Open(tmpPath)
+	return tmpPath, nil
+}
+
+// publishBaseFile Puts a finished base image under key and signs it.
+func (b *Builder) publishBaseFile(ctx context.Context, be storage.StorageBackend, key, path string) error {
+	// nolint:forbidigo // path is a daemon-internal scratch file from
+	// createBaseTemp that the builder just wrote. Not a customer path.
+	f, err := os.Open(path)
 	if err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rootfs: open base mkfs output: %w", err)
+		return fmt.Errorf("rootfs: open base image: %w", err)
 	}
-	defer func() { _ = f.Close(); _ = os.Remove(tmpPath) }()
-	if err := in.Storage.Put(ctx, in.StorageKey, f); err != nil {
-		return fmt.Errorf("rootfs: publish base %q: %w", in.StorageKey, err)
+	defer func() { _ = f.Close() }()
+	if err := be.Put(ctx, key, f); err != nil {
+		return fmt.Errorf("rootfs: publish base %q: %w", key, err)
 	}
 	// ADR-038: mirror publishExt4's sign call. The base sig lives
 	// at sigs/<StorageKey>.sig — same convention as the app-layer
@@ -874,9 +896,9 @@ func (b *Builder) publishBaseExt4(ctx context.Context, in BaseBuildInput, stagin
 	// exists (see pkg/imaged/base_stage.go); app layers re-sign on
 	// the next deploy.
 	if b.signer != nil {
-		sigKey := "sigs/" + in.StorageKey + ".sig"
-		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
-			return fmt.Errorf("rootfs: sign base %q: %w", in.StorageKey, err)
+		sigKey := "sigs/" + key + ".sig"
+		if err := b.signer.Sign(ctx, key, sigKey); err != nil {
+			return fmt.Errorf("rootfs: sign base %q: %w", key, err)
 		}
 	}
 	return nil

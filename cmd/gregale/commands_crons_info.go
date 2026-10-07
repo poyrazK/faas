@@ -42,12 +42,12 @@ func cmdCronsInfo(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons info <id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons info <id>\n")
 		return 1
 	}
 	id := fs.Arg(0)
 	if !cronIDPattern.MatchString(id) {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons info <id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons info <id>\n")
 		return 1
 	}
 	client, err := authedClient()

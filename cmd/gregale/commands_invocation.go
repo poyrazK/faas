@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -157,23 +158,37 @@ func invokeStatusOK(status string) bool {
 //
 // Empty payload is valid (handler accepts a zero-body invocation,
 // returns 200 with status=completed + empty result).
-func resolvePayload(s string) ([]byte, error) {
+func resolvePayload(s string) ([]byte, error) { return resolveJSONFlag("--payload", s) }
+
+// resolveJSONFlag reads a JSON flag value (inline, @file, or - for stdin) and
+// names flag in the validation error, so `send --data` and `triggers --config`
+// do not tell the user to fix a --payload they never passed.
+func resolveJSONFlag(flag, s string) ([]byte, error) {
 	if s == "" {
 		return nil, nil
 	}
-	if s[0] == '@' {
-		b, err := os.ReadFile(s[1:])
+	var b []byte
+	switch {
+	case s[0] == '@':
+		read, err := os.ReadFile(s[1:])
 		if err != nil {
 			return nil, fmt.Errorf("read payload file %q: %w", s[1:], err)
 		}
-		return b, nil
-	}
-	if s == "-" {
-		b, err := io.ReadAll(os.Stdin)
+		b = read
+	case s == "-":
+		read, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, fmt.Errorf("read stdin: %w", err)
 		}
-		return b, nil
+		b = read
+	default:
+		b = []byte(s)
 	}
-	return []byte(s), nil
+	// The body is sent as a JSON value. Without this check an invalid
+	// payload surfaced as "marshal request: json: error calling MarshalJSON
+	// for type json.RawMessage: invalid character ...".
+	if len(bytes.TrimSpace(b)) > 0 && !json.Valid(b) {
+		return nil, fmt.Errorf("%s must be valid JSON (inline, @file, or - for stdin)", flag)
+	}
+	return b, nil
 }

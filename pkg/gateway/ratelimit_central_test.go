@@ -142,11 +142,64 @@ func TestLimiter_RealBackend_PGErrorDegradesSoft(t *testing.T) {
 	if l.AllowWithCentralParams(context.Background(), "appid", rps, burst, centralKey) {
 		t.Error("scale admit accepted despite PG error (degraded posture must preserve local reject)")
 	}
-	if got := fake.consumeCalls.Load(); got == 0 {
-		t.Error("consume calls during PG-error test = 0")
+	// The frozen clock never closes the breaker: the first failure is the
+	// only consult, and every request is a locally-decided, observed fallback.
+	if got := fake.consumeCalls.Load(); got != 1 {
+		t.Errorf("consume calls during PG-error test = %d, want 1 (breaker open after the first failure)", got)
 	}
-	if got, want := observed.Load(), fake.consumeCalls.Load(); got != want {
-		t.Errorf("degraded observations=%d, want one per failed consume (%d)", got, want)
+	if got, want := observed.Load(), int64(3001); got != want {
+		t.Errorf("degraded observations=%d, want one per locally-decided request (%d)", got, want)
+	}
+}
+
+// Prod hunt #3: with gatewayd's Postgres pool saturated, every central
+// consult waited out centralConsultTimeout before falling back, adding up to
+// 500 ms (app + account) to each request and capping an app near 150 rps.
+// After a failure the limiter decides locally for centralBreakerWindow, then
+// consults again; a success closes the breaker.
+func TestLimiter_CentralBreakerSkipsConsultsAfterFailure(t *testing.T) {
+	fake := newFakeCentral()
+	var failing atomic.Bool
+	failing.Store(true)
+	fake.consumeResult = func() (int, bool, error) {
+		if failing.Load() {
+			return 0, false, context.DeadlineExceeded
+		}
+		return 5, true, nil
+	}
+	now := time.Unix(1_700_000_000, 0)
+	l := NewLimiterWithCentralAndClock(fake, func() time.Time { return now })
+	const centralKey = "app:00000000-0000-0000-0000-000000000002:scale"
+	for i := 0; i < 50; i++ {
+		if !l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey) {
+			t.Fatalf("request %d rejected; the local fallback has burst left", i)
+		}
+	}
+	if got := fake.consumeCalls.Load(); got != 1 {
+		t.Fatalf("consults while the breaker is open = %d, want 1", got)
+	}
+	failing.Store(false)
+	now = now.Add(centralBreakerWindow)
+	l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey)
+	l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey)
+	if got := fake.consumeCalls.Load(); got != 3 {
+		t.Fatalf("consults after the window = %d, want 3 (probe, then closed breaker)", got)
+	}
+}
+
+func TestLimiter_CentralBreakerIgnoresCallerCancellation(t *testing.T) {
+	fake := newFakeCentral()
+	fake.consumeResult = func() (int, bool, error) { return 0, false, context.Canceled }
+	now := time.Unix(1_700_000_000, 0)
+	l := NewLimiterWithCentralAndClock(fake, func() time.Time { return now })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	const centralKey = "app:00000000-0000-0000-0000-000000000002:scale"
+	l.AllowWithCentralParams(ctx, "appid", 1500, 3000, centralKey)
+	fake.consumeResult = nil
+	l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey)
+	if got := fake.consumeCalls.Load(); got != 2 {
+		t.Fatalf("consults = %d, want 2: a disconnected caller must not open the breaker", got)
 	}
 }
 

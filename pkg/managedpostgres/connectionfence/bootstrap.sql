@@ -1,0 +1,149 @@
+-- ADR-531: these functions live only in the dedicated bootstrap session's
+-- temporary schema. No schema or function is installed in an application DB.
+-- The session lock covers CREATE DATABASE, which cannot run in a transaction.
+-- All workers must use the same authenticated source database for this lock.
+
+-- name: MaintenanceBootstrapIdentity :one
+SELECT current_database()::text AS database_name, current_user::text AS role_name,
+ session_user::text AS session_role,
+ d.datdba=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_database,
+ current_setting('server_version_num')::integer AS server_version,
+ NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolcanlogin AND NOT r.rolsuper
+   AND r.rolname<>current_user AND pg_has_role(r.oid,current_user,'MEMBER')) AS private_role
+FROM pg_database d WHERE d.datname=current_database();
+
+-- name: LockMaintenanceBootstrap :exec
+SELECT pg_advisory_lock(hashtext('gregale checkpoint bootstrap'),0);
+
+-- name: UnlockMaintenanceBootstrap :one
+SELECT pg_advisory_unlock(hashtext('gregale checkpoint bootstrap'),0)::boolean;
+
+-- name: InstallMaintenanceBootstrapFunction :exec
+CREATE OR REPLACE FUNCTION pg_temp.gregale_maintenance(token uuid, source text, action text, expected_owner oid, expected_database oid)
+RETURNS text LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
+DECLARE role_name text; actor record; owner record; db record; marker jsonb; phase text;
+BEGIN
+ IF token IS NULL OR token='00000000-0000-0000-0000-000000000000' OR source IS NULL OR source='' OR
+   action IS NULL OR action NOT IN ('reserve','check','activate','retire') OR
+   expected_owner IS NULL OR expected_database IS NULL OR current_user<>session_user OR
+   (current_database()='gregale_checkpoint' AND action<>'check') THEN
+  RAISE EXCEPTION 'invalid maintenance bootstrap' USING ERRCODE='22023';
+ END IF;
+ IF current_setting('server_version_num')::integer<160000 THEN
+  RAISE EXCEPTION 'maintenance role isolation is not qualified' USING ERRCODE='42501';
+ END IF;
+ SELECT * INTO actor FROM pg_roles WHERE rolname=current_user;
+ IF NOT actor.rolsuper AND (NOT actor.rolcreaterole OR NOT actor.rolcreatedb) THEN
+  RAISE EXCEPTION 'maintenance bootstrap authority is unavailable' USING ERRCODE='42501';
+ END IF;
+ IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolcanlogin AND NOT r.rolsuper AND r.oid<>actor.oid
+   AND pg_has_role(r.oid,actor.oid,'MEMBER')) THEN
+  RAISE EXCEPTION 'maintenance bootstrap role is shared' USING ERRCODE='42501';
+ END IF;
+ role_name := 'grg_ckpt_' || replace(token::text,'-','');
+ SELECT * INTO owner FROM pg_roles WHERE rolname=role_name;
+ IF NOT FOUND THEN
+  IF expected_owner<>0 OR action NOT IN ('reserve','retire') THEN
+   RAISE EXCEPTION 'maintenance owner is missing' USING ERRCODE='55000';
+  END IF;
+  -- A different database must not be renamed or adopted on name alone.
+  IF EXISTS (SELECT 1 FROM pg_database WHERE datname='gregale_checkpoint') THEN
+   RAISE EXCEPTION 'maintenance database is already present' USING ERRCODE='55000';
+  END IF;
+  IF action='retire' THEN phase := 'retired'; ELSE phase := 'reserved'; END IF;
+  EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS %s',
+    role_name, CASE WHEN phase='reserved' THEN 'CREATEDB' ELSE 'NOCREATEDB' END);
+  EXECUTE format('GRANT %I TO %I WITH INHERIT TRUE, SET TRUE',role_name,current_user);
+  SELECT * INTO owner FROM pg_roles WHERE rolname=role_name;
+  marker := jsonb_build_object('protocol','gregale-maintenance-v1','owner_token',token,'source_resource_id',source,
+    'actor_oid',actor.oid,'owner_oid',owner.oid,'database_oid',0,'state',phase);
+  EXECUTE format('COMMENT ON ROLE %I IS %L',role_name,marker::text);
+ END IF;
+ marker := shobj_description(owner.oid,'pg_authid')::jsonb;
+ phase := marker->>'state';
+ IF marker IS NULL OR marker->>'protocol' IS DISTINCT FROM 'gregale-maintenance-v1' OR
+   marker->>'owner_token' IS DISTINCT FROM token::text OR marker->>'source_resource_id' IS DISTINCT FROM source OR
+   (marker->>'actor_oid')::oid IS DISTINCT FROM actor.oid OR (marker->>'owner_oid')::oid IS DISTINCT FROM owner.oid OR
+   phase IS NULL OR phase NOT IN ('reserved','ready','retired') OR marker->>'database_oid' IS NULL OR
+   (phase='reserved' AND (marker->>'database_oid')::oid<>0) OR
+   (expected_owner<>0 AND owner.oid<>expected_owner) OR owner.rolcanlogin OR owner.rolsuper OR owner.rolcreaterole OR
+   owner.rolreplication OR owner.rolbypassrls OR owner.rolcreatedb<>(phase='reserved') OR
+   NOT pg_has_role(actor.oid,owner.oid,'USAGE') OR NOT pg_has_role(actor.oid,owner.oid,'SET') OR
+   (NOT actor.rolsuper AND NOT EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.grantor
+     WHERE m.roleid=owner.oid AND m.member=actor.oid AND m.admin_option AND g.rolsuper)) OR
+   EXISTS (SELECT 1 FROM pg_auth_members m LEFT JOIN pg_roles g ON g.oid=m.grantor
+     WHERE m.roleid=owner.oid AND (m.member<>actor.oid OR (m.grantor<>actor.oid AND NOT COALESCE(g.rolsuper,false)))) OR
+   EXISTS (SELECT 1 FROM pg_auth_members WHERE member=owner.oid) THEN
+  RAISE EXCEPTION 'maintenance owner identity changed' USING ERRCODE='55000';
+ END IF;
+ SELECT * INTO db FROM pg_database WHERE datname='gregale_checkpoint';
+ IF current_database()='gregale_checkpoint' AND phase<>'ready' THEN
+  RAISE EXCEPTION 'maintenance database is not ready' USING ERRCODE='55000';
+ END IF;
+ IF FOUND THEN
+  IF db.datdba<>owner.oid OR (expected_database<>0 AND db.oid<>expected_database) OR
+    (phase IN ('ready','retired') AND (marker->>'database_oid')::oid IS DISTINCT FROM db.oid) OR
+    db.datallowconn<>(phase='ready') THEN
+   RAISE EXCEPTION 'maintenance database identity changed' USING ERRCODE='55000';
+  END IF;
+ ELSE
+  IF expected_database<>0 OR phase='ready' OR (marker->>'database_oid')::oid<>0 THEN
+   RAISE EXCEPTION 'maintenance database is missing' USING ERRCODE='55000';
+  END IF;
+ END IF;
+ IF phase='retired' AND action<>'check' AND action<>'retire' THEN
+  RAISE EXCEPTION 'maintenance owner is retired' USING ERRCODE='55000';
+ END IF;
+ IF action='activate' THEN
+  IF db.oid IS NULL THEN
+   RAISE EXCEPTION 'maintenance database is missing' USING ERRCODE='55000';
+  END IF;
+  IF phase='reserved' THEN
+   IF EXISTS (SELECT 1 FROM pg_stat_activity WHERE datid=db.oid) OR
+     EXISTS (SELECT 1 FROM aclexplode(COALESCE(db.datacl,acldefault('d',db.datdba))) a
+       WHERE a.grantee<>db.datdba AND a.grantee<>0) THEN
+    RAISE EXCEPTION 'maintenance database is shared' USING ERRCODE='55000';
+   END IF;
+   REVOKE ALL ON DATABASE gregale_checkpoint FROM PUBLIC;
+   ALTER DATABASE gregale_checkpoint ALLOW_CONNECTIONS true;
+   EXECUTE format('ALTER ROLE %I NOCREATEDB',role_name);
+   marker := marker || jsonb_build_object('state','ready','database_oid',db.oid);
+   EXECUTE format('COMMENT ON ROLE %I IS %L',role_name,marker::text);
+   phase := 'ready';
+  END IF;
+ ELSIF action='retire' AND phase<>'retired' THEN
+  -- Only an unactivated bootstrap may be retired here. An installed barrier
+  -- needs separate, qualified source-lifecycle cleanup with its recovery holds.
+  IF phase='ready' THEN
+   RAISE EXCEPTION 'active maintenance cleanup is not qualified' USING ERRCODE='55000';
+  END IF;
+  EXECUTE format('ALTER ROLE %I NOCREATEDB',role_name);
+  marker := marker || jsonb_build_object('state','retired','database_oid',COALESCE(db.oid,0));
+  EXECUTE format('COMMENT ON ROLE %I IS %L',role_name,marker::text);
+  phase := 'retired';
+ END IF;
+ IF phase='ready' AND EXISTS (SELECT 1 FROM pg_database d,
+   LATERAL aclexplode(COALESCE(d.datacl,acldefault('d',d.datdba))) a
+   WHERE d.oid=db.oid AND a.grantee<>d.datdba) THEN
+  RAISE EXCEPTION 'maintenance database grants changed' USING ERRCODE='55000';
+ END IF;
+ RETURN phase;
+END $$;
+
+-- name: MaintenanceBootstrapAction :one
+SELECT pg_temp.gregale_maintenance(sqlc.arg(owner_token)::uuid,sqlc.arg(source_resource_id)::text,
+ sqlc.arg(action)::text,sqlc.arg(expected_owner)::oid,sqlc.arg(expected_database)::oid)::text AS state;
+
+-- name: ReadMaintenanceBootstrap :one
+SELECT r.oid AS owner_oid, COALESCE(d.oid,0)::oid AS database_oid
+FROM pg_roles r LEFT JOIN pg_database d ON d.datdba=r.oid AND d.datname='gregale_checkpoint'
+WHERE r.rolname=sqlc.arg(owner_role)::text;
+
+-- name: SetMaintenanceOwnerRole :one
+SELECT set_config('role',sqlc.arg(owner_role)::text,false)::text;
+
+-- name: ResetMaintenanceOwnerRole :exec
+RESET ROLE;
+
+-- name: CreateMaintenanceDatabase :exec
+CREATE DATABASE gregale_checkpoint WITH TEMPLATE template0 ALLOW_CONNECTIONS false;

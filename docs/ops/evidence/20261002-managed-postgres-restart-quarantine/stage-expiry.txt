@@ -1,0 +1,114 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Fri Oct  2 16:20:51 UTC 2026
+ 16:20:51 up 1 day,  3:56,  8 users,  load average: 0.11, 0.13, 0.05
+#!/usr/bin/env python3
+"""Inventory and safely remove bounded Gregale validation artifacts."""
+
+import argparse
+import contextlib
+import dataclasses
+import errno
+import fcntl
+import fnmatch
+import glob
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Dict, Iterable, List, Optional, Set
+
+
+DEFAULT_CONFIG = "/etc/faas/canary-artifacts.json"
+DEFAULT_STATE_DIR = "/var/lib/faas/canary-artifacts"
+DEFAULT_METRICS = "/var/lib/node_exporter/textfile_collector/faas_canary_artifacts.prom"
+
+
+class PolicyError(RuntimeError):
+    pass
+
+
+class ReferenceProofError(RuntimeError):
+    pass
+
+
+@dataclasses.dataclass
+class Artifact:
+    path: pathlib.Path
+    size: int
+    created_at: float
+    state: str
+    record: Optional[dict]
+
+
+def atomic_write(path: pathlib.Path, content: str, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+        raise
+
+
+_MISSING = object()
+
+
+def load_json(path: pathlib.Path, default=_MISSING):
+    try:
+        with path.open(encoding="utf-8") as stream:
+            return json.load(stream)
+    except FileNotFoundError:
+        if default is not _MISSING:
+            return default
+        raise
+
+
+def artifact_id(path: pathlib.Path) -> str:
+    return hashlib.sha256(os.fsencode(str(path))).hexdigest()
+
+
+class Manager:
+    def __init__(
+        self,
+        config_path: str,
+        state_dir: str,
+        metrics_path: str,
+        proc_root: str = "/proc",
+drwxr-xr-x 2 kucukarslanhuseyinpoyraz_gmail_c kucukarslanhuseyinpoyraz_gmail_c 40 Oct  2 16:13 /var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-9da44e64
+TARGET                                                           SOURCE        FSTYPE OPTIONS
+/dev/shm                                                         tmpfs         tmpfs  rw,nosuid,nodev,inode64
+/run                                                             tmpfs         tmpfs  rw,nosuid,nodev,size=3274000k,nr_inodes=819200,mode=755,inode64
+├─/run/lock                                                      tmpfs         tmpfs  rw,nosuid,nodev,noexec,relatime,size=5120k,inode64
+├─/run/user/1271305697                                           tmpfs         tmpfs  rw,nosuid,nodev,relatime,size=1636996k,nr_inodes=409249,mode=700,uid=1271305697,gid=1271305697,inode64
+└─/run/netns                                                     tmpfs[/netns] tmpfs  rw,nosuid,nodev,size=3274000k,nr_inodes=819200,mode=755,inode64
+/srv/fc/jail                                                     tmpfs         tmpfs  rw,nosuid,nodev,relatime,size=12582912k,mode=1700,inode64
+/var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-9da44e64 tmpfs         tmpfs  rw,relatime,size=6291456k,mode=755,inode64
+Sat 2026-10-03 06:22:16 UTC       14h Fri 2026-10-02 06:48:50 UTC       9h ago apt-daily-upgrade.timer          apt-daily-upgrade.service
+Sat 2026-10-03 08:00:59 UTC       15h Fri 2026-10-02 08:30:35 UTC       7h ago man-db.timer                     man-db.service
+Sat 2026-10-03 12:29:40 UTC       20h Fri 2026-10-02 12:29:40 UTC 3h 51min ago update-notifier-download.timer   update-notifier-download.service
+Sat 2026-10-03 12:39:43 UTC       20h Fri 2026-10-02 12:39:43 UTC 3h 41min ago systemd-tmpfiles-clean.timer     systemd-tmpfiles-clean.service
+Sun 2026-10-04 03:10:57 UTC 1 day 10h -                                      - e2scrub_all.timer                e2scrub_all.service
+Mon 2026-10-05 00:47:55 UTC    2 days -                                      - fstrim.timer                     fstrim.service
+Thu 2026-10-08 22:55:27 UTC    6 days -                                      - update-notifier-motd.timer       update-notifier-motd.service
+-                                   - -                                      - apport-autoreport.timer          apport-autoreport.service
+-                                   - -                                      - snapd.snap-repair.timer          snapd.snap-repair.service
+-                                   - -                                      - ua-timer.timer                   ua-timer.service
+
+19 timers listed.

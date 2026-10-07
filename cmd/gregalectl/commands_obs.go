@@ -472,6 +472,9 @@ func writeObsOverviewHuman(w io.Writer, response api.ObsOverviewResponse) {
 }
 
 func writeObsCapacityHuman(w io.Writer, response api.ObsCapacityResponse) {
+	if p := response.ServiceProtection; p.State != "" {
+		_, _ = fmt.Fprintf(w, "service_protection=%s healthy_nodes=%d desired_replicas=%d reserved_replicas=%d failover_slots=%d fleet_slots=%d replica_ram_mb=%d replica_cpu_millicores=%d replica_vcpu=%d\n", p.State, p.HealthyNodes, p.DesiredReplicas, p.ReservedReplicas, p.FailoverSlots, p.FleetSlots, p.ReplicaRAMMB, p.ReplicaCPUMillicores, p.ReplicaVCPU)
+	}
 	_, _ = fmt.Fprintf(w, "generated_at=%s\n", response.GeneratedAt.UTC().Format(time.RFC3339))
 	summary := response.Summary
 	_, _ = fmt.Fprintf(w, "summary total_nodes=%d active_nodes=%d inactive_nodes=%d total_vcpus=%d total_vcpu_budget=%d total_mem_mb=%d total_admission_ceiling_mb=%d ram_used_mb=%d admission_margin_mb=%d instances_live=%d instances_running=%d instances_waking=%d instances_cold_booting=%d apps_total=%d tenants_total=%d unplaced_apps=%d\n",

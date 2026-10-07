@@ -41,8 +41,8 @@ func seedCron(t *testing.T, e testEnv, slug, schedule string) (cronID, appID str
 
 // seedCronRun drives one invocation row through the real lifecycle so
 // the outcome column is written by production code, not by the test.
-// terminal selects the ending: "success", "failed", "timeout", or
-// "running" (claimed but never terminated).
+// terminal selects the ending: "success", "failed", "timeout",
+// "uncertain", or "running" (claimed but never terminated).
 func seedCronRun(t *testing.T, e testEnv, cronID, appID, terminal string, createdAt time.Time) string {
 	t.Helper()
 	ctx := context.Background()
@@ -76,6 +76,11 @@ func seedCronRun(t *testing.T, e testEnv, cronID, appID, terminal string, create
 		if err := e.store.FailInvocation(ctx, inv.ID, "invoke: deadline", 0, 0,
 			state.WithOutcome(state.OutcomeTimeout)); err != nil {
 			t.Fatalf("FailInvocation timeout: %v", err)
+		}
+	case "uncertain":
+		if err := e.store.FailInvocation(ctx, inv.ID, "invoke receipt uncertain", 0, 0,
+			state.WithOutcome(state.OutcomeUncertain)); err != nil {
+			t.Fatalf("FailInvocation uncertain: %v", err)
 		}
 	case "running":
 		// Leave it dispatching.
@@ -138,14 +143,15 @@ func TestListCronRuns_OutcomeVariants(t *testing.T) {
 	base := time.Now().UTC().Add(-3 * time.Hour)
 	seedCronRun(t, e, cronID, appID, "failed", base)
 	seedCronRun(t, e, cronID, appID, "timeout", base.Add(time.Hour))
-	seedCronRun(t, e, cronID, appID, "running", base.Add(2*time.Hour))
+	seedCronRun(t, e, cronID, appID, "uncertain", base.Add(2*time.Hour))
+	seedCronRun(t, e, cronID, appID, "running", base.Add(3*time.Hour))
 
 	out := getRuns(t, e, "/v1/crons/"+cronID+"/runs")
-	if len(out.Runs) != 3 {
-		t.Fatalf("got %d runs, want 3", len(out.Runs))
+	if len(out.Runs) != 4 {
+		t.Fatalf("got %d runs, want 4", len(out.Runs))
 	}
-	// Newest first: running, timeout, failed.
-	want := []api.CronRunOutcome{api.CronRunRunning, api.CronRunTimeout, api.CronRunFailed}
+	// Newest first: running, uncertain, timeout, failed.
+	want := []api.CronRunOutcome{api.CronRunRunning, api.CronRunUncertain, api.CronRunTimeout, api.CronRunFailed}
 	for i, w := range want {
 		if out.Runs[i].Outcome != w {
 			t.Errorf("run %d outcome = %q, want %q", i, out.Runs[i].Outcome, w)
@@ -156,7 +162,7 @@ func TestListCronRuns_OutcomeVariants(t *testing.T) {
 		t.Errorf("running run duration_ms = %v, want nil", *out.Runs[0].DurationMs)
 	}
 	// The failure text rides along, but outcome is the branchable field.
-	if out.Runs[2].Error == "" {
+	if out.Runs[3].Error == "" {
 		t.Error("failed run error = empty, want the operator-facing text")
 	}
 }

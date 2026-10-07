@@ -290,7 +290,10 @@ export class RealtimeService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -351,7 +354,10 @@ export class RealtimeService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -395,7 +401,10 @@ export class RealtimeService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -526,7 +535,10 @@ export class RealtimeService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -571,7 +583,10 @@ export class RealtimeService {
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -618,7 +633,10 @@ export class RealtimeService {
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -665,7 +683,10 @@ export class RealtimeService {
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -713,7 +734,10 @@ export class RealtimeService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -763,7 +787,10 @@ export class RealtimeService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -823,7 +850,10 @@ export class RealtimeService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }

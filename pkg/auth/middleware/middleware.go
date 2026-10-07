@@ -765,12 +765,77 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == path {
 		return false
 	}
+	if suffix == "customer-operations" {
+		return method == http.MethodPost || method == http.MethodGet
+	}
+	if strings.HasPrefix(suffix, "customer-operations/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		if len(parts) == 3 && parts[1] != "" {
+			return (parts[2] == "events" && method == http.MethodGet) || (parts[2] == "cancel" && method == http.MethodPost)
+		}
+		if len(parts) == 4 && parts[1] != "" && parts[2] == "artifacts" && parts[3] != "" {
+			return method == http.MethodGet
+		}
+		return false
+	}
 	if strings.HasPrefix(suffix, "invocations/") {
 		parts := strings.Split(suffix, "/")
 		if len(parts) == 2 && parts[1] != "" {
 			return method == http.MethodGet
 		}
 		if len(parts) == 3 && parts[1] != "" && (parts[2] == "cancel" || parts[2] == "replay") {
+			return method == http.MethodPost
+		}
+		return false
+	}
+	if strings.HasPrefix(suffix, "apps/") {
+		parts := strings.Split(suffix, "/")
+		if method == http.MethodGet && len(parts) == 4 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "runs" {
+			return true
+		}
+		if method == http.MethodGet && len(parts) == 4 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" {
+			return true
+		}
+		if method == http.MethodPut && len(parts) == 5 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" && parts[4] != "" {
+			return true
+		}
+		if method == http.MethodPost && len(parts) == 3 && parts[1] != "" && parts[2] == "events:publish" {
+			return true
+		}
+		if method == http.MethodGet && len(parts) == 5 && parts[1] != "" && parts[2] == "events" && parts[3] == "receipts" && parts[4] != "" {
+			return true
+		}
+		if method == http.MethodPost && len(parts) == 3 && parts[1] != "" && parts[2] == "operations" {
+			return true
+		}
+		return method == http.MethodPost && len(parts) == 5 && parts[1] != "" && parts[2] == "workflows" && parts[3] != "" && parts[4] == "runs"
+	}
+	if strings.HasPrefix(suffix, "operations/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		if len(parts) == 3 && parts[1] != "" && parts[2] == "cancel" {
+			return method == http.MethodPost
+		}
+		return false
+	}
+	if strings.HasPrefix(suffix, "workflows/runs/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 3 && parts[2] != "" {
+			return method == http.MethodGet
+		}
+		if len(parts) == 4 && parts[2] != "" && (parts[3] == "cancel" || parts[3] == "resume") {
+			return method == http.MethodPost
+		}
+		if len(parts) == 4 && parts[2] != "" {
+			return (parts[3] == "callbacks" && method == http.MethodGet) ||
+				(parts[3] == "events" && method == http.MethodPost)
+		}
+		if len(parts) == 5 && parts[2] != "" && parts[3] == "callbacks" && parts[4] != "" {
 			return method == http.MethodPost
 		}
 		return false
@@ -984,9 +1049,16 @@ func InactiveAccountMayReach(acct state.Account, method, path string) bool {
 }
 
 func isBillingRecoveryRoute(method, path string) bool {
+	if financialBudgetRecoveryRoute(method, path) {
+		return true
+	}
+	if method == http.MethodPost && strings.HasPrefix(path, "/v1/invoices/") && strings.HasSuffix(path, "/refresh") && strings.Count(path, "/") == 4 {
+		return true
+	}
 	switch method + " " + path {
 	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
-		"GET /v1/billing/portal", "GET /v1/billing/status", "POST /v1/billing/retry",
+		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
+		"GET /v1/billing/costs", "GET /v1/billing/forecast", "GET /v1/billing/budgets", "POST /v1/billing/budgets/preview",
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
@@ -994,6 +1066,20 @@ func isBillingRecoveryRoute(method, path string) bool {
 		return true
 	}
 	return false
+}
+
+// ADR-566: customers can inspect and release budget intent while payment or
+// deletion holds remain. Handlers authorize ownership and never clear the
+// account status; allowing these routes does not resume compute.
+func financialBudgetRecoveryRoute(method, path string) bool {
+	parts := strings.Split(path, "/")
+	if len(parts) < 5 || parts[0] != "" || parts[1] != "v1" || parts[2] != "billing" || parts[3] != "budgets" || parts[4] == "" || parts[4] == "preview" {
+		return false
+	}
+	if len(parts) == 5 {
+		return method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete
+	}
+	return len(parts) == 6 && parts[5] == "revisions" && method == http.MethodGet
 }
 
 // --- RequireLimited ------------------------------------------------------
@@ -1420,6 +1506,13 @@ func principalHasScope(p principal, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+// HasScope uses the same policy as RequireScope for a section of an already
+// authenticated aggregate read. A missing principal always fails closed.
+func HasScope(r *http.Request, allowed ...string) bool {
+	p, ok := principalFrom(r)
+	return ok && principalHasScope(p, allowed)
 }
 
 // --- MFA allowlist -------------------------------------------------------

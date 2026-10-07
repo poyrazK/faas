@@ -96,6 +96,12 @@ func (c *Client) GetBuildsAll(ctx context.Context, app, status string) ([]BuildR
 	}
 }
 
+// SecretsListPageMax is the largest page GET /v1/secrets serves. The CLI
+// pages through account secrets with the same value so a client page size
+// can never drift above the server cap (`gregale secrets audit` asked for
+// 200 and failed every run with "Bad limit").
+const SecretsListPageMax = 100
+
 // ParseLimit parses a ?limit= query value with a strict 400 contract
 // (issue #393 — matches /v1/invoices' parseInvoiceListParams shape).
 // Returns:

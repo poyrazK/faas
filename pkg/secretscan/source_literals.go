@@ -10,7 +10,7 @@ import (
 // containing credentials. Provider signatures still scan the complete value;
 // generic entropy applies to individual tokens and quoted literals. The .env
 // parser retains its existing whole-value behavior, including quoted spaces.
-func matchSourceValue(file string, line int, key string, value []byte, inPEMBlock bool) *Finding {
+func matchSourceValue(file string, line int, key string, value []byte, inPEMBlock, dependencyLock bool) *Finding {
 	if strings.HasPrefix(filepath.Base(file), ".env") {
 		return matchValue(file, line, key, value, inPEMBlock)
 	}
@@ -19,6 +19,9 @@ func matchSourceValue(file string, line int, key string, value []byte, inPEMBloc
 		return f
 	}
 	if inPEMBlock {
+		return nil
+	}
+	if dependencyLock && key == "integrity" && isIntegrityDigest(value) {
 		return nil
 	}
 	value = bytes.TrimSpace(value)

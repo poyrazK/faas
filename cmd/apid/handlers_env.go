@@ -9,7 +9,7 @@
 //
 // All three routes accept an optional `?scope=` query param
 // (ADR-090 D2 / PR-B). The scope is a domain-valid slug
-// (3..40 lowercase alnum + dash, see api.EnvScopePattern) or
+// (1..40 lowercase alnum + dash, see api.EnvScopePattern) or
 // the reserved sentinel `__all__` on GET only. Omitted `?scope=`
 // means `scope=default` — the wire shape is byte-identical to
 // pre-PR-B. See api.ValidateScope for the rejection rules.
@@ -120,7 +120,7 @@ func deploymentScopeFromQuery(r *http.Request) (string, *api.Problem) {
 		return "", nil
 	}
 	if len(raw) > api.MaxEnvScopeLen || !envScopeReForDeployment.MatchString(raw) {
-		return "", api.ErrEnvScopeInvalid("deployment_scope must be 3..40 chars, lowercase alnum + dash")
+		return "", api.ErrEnvScopeInvalid("deployment_scope must be 1..40 chars, lowercase alnum + dash")
 	}
 	return raw, nil
 }
@@ -309,15 +309,18 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		persistErr = s.store.UpsertAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key, req.Value)
 	}
 	if persistErr != nil {
+		if writeEnvironmentGitOpsOwnershipProblem(w, persistErr) {
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not persist env var"))
 		return
 	}
 	// A snapshot contains the guest process environment in its memory image.
-	// Invalidate every non-stale snapshot before acknowledging the mutation so
-	// the next wake cold-boots with the new value instead of restoring an old
-	// process image. Running instances remain unchanged; live reload is an
+	// Invalidate snapshots in this scope before acknowledging the mutation;
+	// default-scope values overlay every environment and invalidate all scopes.
+	// The next wake cold-boots with the new value. Running instances remain unchanged; live reload is an
 	// explicit opt-in application feature, not an OS environment mutation.
-	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
+	invalidated, err := state.InvalidateAppSnapshotsInScope(r.Context(), s.store, app.ID, scope)
 	if err != nil {
 		s.log.Error("env set: invalidate snapshots", "app", app.Slug, "err", err)
 		s.audit.Emit(r.Context(), "env.snapshot_invalidation_failed", &acct.ID, map[string]any{
@@ -524,6 +527,9 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		deleteErr = s.store.DeleteAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key)
 	}
 	if deleteErr != nil {
+		if writeEnvironmentGitOpsOwnershipProblem(w, deleteErr) {
+			return
+		}
 		if errors.Is(deleteErr, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrEnvVarNotFound(key))
 			return
@@ -531,7 +537,7 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not delete env var"))
 		return
 	}
-	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
+	invalidated, err := state.InvalidateAppSnapshotsInScope(r.Context(), s.store, app.ID, scope)
 	if err != nil {
 		s.log.Error("env delete: invalidate snapshots", "app", app.Slug, "err", err)
 		s.audit.Emit(r.Context(), "env.snapshot_invalidation_failed", &acct.ID, map[string]any{

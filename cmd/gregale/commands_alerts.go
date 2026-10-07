@@ -27,6 +27,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -44,16 +46,20 @@ const (
 func cmdAlerts(args []string) int {
 	parent, _ := lookupCliCommand("alerts")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale alerts <list|add|info|update|rm|rotate-secret|preset> --app <slug>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts <list|add|info|deliveries|update|rm|rotate-secret|preset|actions> --app <slug>", "alerts")
 		return 1
 	}
 	switch args[0] {
+	case "actions":
+		return cmdAlertActions(args[1:])
 	case subList:
 		return cmdAlertList(args[1:])
 	case subAdd:
 		return cmdAlertAdd(args[1:])
 	case subInfo:
 		return cmdAlertInfo(args[1:])
+	case "deliveries":
+		return cmdAlertDeliveries(args[1:])
 	case subUpdate:
 		return cmdAlertUpdate(args[1:])
 	case subRm:
@@ -66,7 +72,7 @@ func cmdAlerts(args []string) int {
 		// list, enable. Documented at commands_alert_presets.go.
 		return cmdAlertsPreset(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown alerts subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown alerts subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -124,6 +130,7 @@ func cmdAlertAdd(args []string) int {
 	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
+	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown window in minutes (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	enabled := fs.Bool(flagNameEnabled, true, "whether the rule is enabled")
 	if err := fs.Parse(args); err != nil {
@@ -141,6 +148,10 @@ func cmdAlertAdd(args []string) int {
 	if !validateAlertClosedSets(metric, comparison, windowSpec, failureSource, action) {
 		return 1
 	}
+	windowSeconds, err := alertRollbackWindowSeconds(*postWindow)
+	if err != nil || windowSeconds > 0 && *action != "rollback" {
+		return printErr("Invalid post-deploy rollback window", fmt.Errorf("requires action=rollback and a whole-second duration from 0 to 1h"))
+	}
 	if !api.IsFiniteFloat(*threshold) {
 		return printErr("Invalid threshold", fmt.Errorf("--threshold must be a finite number; got %v", *threshold))
 	}
@@ -149,17 +160,18 @@ func cmdAlertAdd(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	resp, err := client.CreateAlertRule(context.Background(), *slug, api.CreateAlertRuleRequest{
-		Name:            *name,
-		Enabled:         enabled,
-		Metric:          *metric,
-		Comparison:      *comparison,
-		Threshold:       *threshold,
-		WindowSpec:      *windowSpec,
-		FailureSource:   *failureSource,
-		Action:          ptrIfNonEmpty(*action),
-		WebhookURL:      *webhookURL,
-		WebhookSecret:   *webhookSecret,
-		CooldownMinutes: cooldown,
+		Name:                            *name,
+		Enabled:                         enabled,
+		Metric:                          *metric,
+		Comparison:                      *comparison,
+		Threshold:                       *threshold,
+		WindowSpec:                      *windowSpec,
+		FailureSource:                   *failureSource,
+		Action:                          ptrIfNonEmpty(*action),
+		WebhookURL:                      *webhookURL,
+		WebhookSecret:                   *webhookSecret,
+		CooldownMinutes:                 cooldown,
+		PostDeployRollbackWindowSeconds: &windowSeconds,
 	})
 	if err != nil {
 		return printErr("Create failed", err)
@@ -222,7 +234,7 @@ func validateAlertClosedSets(metric, comparison, windowSpec, failureSource, acti
 func cmdAlertInfo(args []string) int {
 	fs := newFlagSet("alerts info", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
@@ -244,24 +256,92 @@ func cmdAlertInfo(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	fmt.Printf("id:           %s\n", resp.ID)
-	fmt.Printf("name:         %s\n", resp.Name)
-	fmt.Printf("enabled:      %t\n", resp.Enabled)
-	fmt.Printf("metric:       %s\n", resp.Metric)
-	fmt.Printf("comparison:   %s\n", resp.Comparison)
-	fmt.Printf("threshold:    %s\n", formatThreshold(resp.Threshold))
-	fmt.Printf("window_spec:  %s\n", resp.WindowSpec)
+	_, _ = fmt.Fprintf(osStdout, "id:           %s\n", resp.ID)
+	_, _ = fmt.Fprintf(osStdout, "name:         %s\n", resp.Name)
+	_, _ = fmt.Fprintf(osStdout, "enabled:      %t\n", resp.Enabled)
+	_, _ = fmt.Fprintf(osStdout, "metric:       %s\n", resp.Metric)
+	_, _ = fmt.Fprintf(osStdout, "comparison:   %s\n", resp.Comparison)
+	_, _ = fmt.Fprintf(osStdout, "threshold:    %s\n", formatThreshold(resp.Threshold))
+	_, _ = fmt.Fprintf(osStdout, "window_spec:  %s\n", resp.WindowSpec)
 	if resp.FailureSource != "" {
-		fmt.Printf("failure_source: %s\n", resp.FailureSource)
+		_, _ = fmt.Fprintf(osStdout, "failure_source: %s\n", resp.FailureSource)
 	}
-	fmt.Printf("action:       %s\n", resp.Action)
-	fmt.Printf("webhook_url:  %s\n", resp.WebhookURL)
-	fmt.Printf("state:        %s\n", resp.State)
-	fmt.Printf("cooldown:     %d minutes\n", resp.CooldownMinutes)
+	_, _ = fmt.Fprintf(osStdout, "action:       %s\n", resp.Action)
+	_, _ = fmt.Fprintf(osStdout, "webhook_url:  %s\n", resp.WebhookURL)
+	_, _ = fmt.Fprintf(osStdout, "state:        %s\n", resp.State)
+	_, _ = fmt.Fprintf(osStdout, "cooldown:     %d minutes\n", resp.CooldownMinutes)
+	_, _ = fmt.Fprintf(osStdout, "post-deploy rollback window: %s\n", time.Duration(resp.PostDeployRollbackWindowSeconds)*time.Second)
 	if resp.LastFiredAt != "" {
-		fmt.Printf("last_fired:   %s\n", resp.LastFiredAt)
+		_, _ = fmt.Fprintf(osStdout, "last_fired:   %s\n", resp.LastFiredAt)
+	}
+	// The rule row only says when it fired. Whether the webhook arrived is
+	// on the delivery ledger. On production-us every delivery failed
+	// ("namespace mismatch") while `alerts info` looked healthy.
+	if deliveries, err := client.ListAlertRuleDeliveries(context.Background(), *slug, id, false, 1); err == nil && len(deliveries) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "last_delivery: %s\n", alertDeliverySummary(deliveries[0]))
 	}
 	return 0
+}
+
+// cmdAlertDeliveries lists a rule's delivery ledger, newest first.
+func cmdAlertDeliveries(args []string) int {
+	fs := newFlagSet("alerts deliveries", flag.ContinueOnError)
+	slug := fs.String("app", "", "app slug (required)")
+	limit := fs.Int("limit", 20, "max deliveries (1..100)")
+	includeTest := fs.Bool("include-test", false, "include test deliveries")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	if *slug == "" || fs.NArg() != 1 || *limit < 1 || *limit > 100 {
+		PrintUsage(os.Stderr, "usage: gregale alerts deliveries <alert-id> --app <slug> [--limit N] [--include-test]", "alerts")
+		return 1
+	}
+	id := fs.Arg(0)
+	if !alertIDPattern.MatchString(id) {
+		return printErr("Invalid alert id", fmt.Errorf("must be a 32-hex-char UUID; got %q", id))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	deliveries, err := client.ListAlertRuleDeliveries(context.Background(), *slug, id, *includeTest, *limit)
+	if err != nil {
+		return printErr("Fetch failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(deliveries))
+	}
+	if len(deliveries) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "No deliveries yet.")
+		return 0
+	}
+	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "FIRED_AT\tSTATUS\tATTEMPTS\tHTTP\tOBSERVED\tERROR")
+	for _, d := range deliveries {
+		httpStatus, errText := "-", d.LastError
+		if d.LastStatusCode > 0 {
+			httpStatus = strconv.Itoa(d.LastStatusCode)
+		}
+		if errText == "" {
+			errText = "-"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", d.FiredAt.UTC().Format(time.RFC3339), d.Status, d.AttemptCount, httpStatus, formatThreshold(d.ObservedValue), errText)
+	}
+	_ = tw.Flush()
+	return 0
+}
+
+// alertDeliverySummary is the one-line `alerts info` view of a delivery.
+func alertDeliverySummary(d api.AlertDeliveryResponse) string {
+	summary := fmt.Sprintf("%s at %s (attempts %d", d.Status, d.FiredAt.UTC().Format(time.RFC3339), d.AttemptCount)
+	if d.LastStatusCode > 0 {
+		summary += fmt.Sprintf(", http %d", d.LastStatusCode)
+	}
+	summary += ")"
+	if d.LastError != "" {
+		summary += ": " + d.LastError
+	}
+	return summary
 }
 
 // cmdAlertUpdate mirrors cmdWebhookUpdate — pointer-everything so
@@ -283,8 +363,11 @@ func cmdAlertUpdate(args []string) int {
 	webhookURL := fs.String("webhook-url", "", "webhook URL")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the replacement webhook secret from stdin")
+	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
-	if err := fs.Parse(args); err != nil {
+	// `alerts info|deliveries|rm <id> --app X` take the id first; update
+	// stopped parsing at it and never saw --app (production-us hunt #4).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
@@ -310,12 +393,15 @@ func cmdAlertUpdate(args []string) int {
 	// rule on a rename-only update.
 	enabledSet := false
 	cooldownSet := false
+	postWindowSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case flagNameEnabled:
 			enabledSet = true
 		case flagNameCooldownMinutes:
 			cooldownSet = true
+		case "post-deploy-rollback-window":
+			postWindowSet = true
 		}
 	})
 	req := api.UpdateAlertRuleRequest{
@@ -327,6 +413,13 @@ func cmdAlertUpdate(args []string) int {
 		Action:        ptrIfNonEmpty(*action),
 		WebhookURL:    ptrIfNonEmpty(*webhookURL),
 		WebhookSecret: ptrIfNonEmpty(*webhookSecret),
+	}
+	if postWindowSet {
+		seconds, err := alertRollbackWindowSeconds(*postWindow)
+		if err != nil {
+			return printErr("Invalid post-deploy rollback window", err)
+		}
+		req.PostDeployRollbackWindowSeconds = &seconds
 	}
 	if enabledSet {
 		req.Enabled = enabled
@@ -520,4 +613,11 @@ func thrIfFinite(v float64) *float64 {
 		return nil
 	}
 	return &v
+}
+
+func alertRollbackWindowSeconds(d time.Duration) (int, error) {
+	if d < 0 || d > time.Duration(api.AlertRollbackMaxWindowSeconds)*time.Second || d%time.Second != 0 {
+		return 0, fmt.Errorf("window must be a whole-second duration from 0 to 1h")
+	}
+	return int(d / time.Second), nil
 }

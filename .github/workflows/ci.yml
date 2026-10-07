@@ -117,9 +117,9 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # golangci-lint alone has an 8-minute cold-cache budget; leave enough
-    # time for setup, build, and the policy gates that follow it.
-    timeout-minutes: 15
+    # Full cold-cache lint exceeded twenty minutes with bounded memory.
+    # Leave time for analysis, cold builds and the remaining policy gates.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -162,6 +162,8 @@ jobs:
         run: make fix-has-test-check
       - name: fix-has-test checker tests
         run: make fix-has-test-check-test
+      - name: coverage checker tests
+        run: make coverage-checker-test
       - name: CVE monitor parser and issue-payload tests
         run: scripts/ci/cve-monitor_test.sh
 
@@ -175,18 +177,28 @@ jobs:
       # repository accumulates baseline coverage; the table identifies tests
       # that are absent or already passing on the base.
       - name: advisory regression pin report
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          # Bound analysis memory after repeated hosted-runner shutdowns.
+          GOMEMLIMIT: 3GiB
+          GOGC: 75
+          GOMAXPROCS: 2
         with:
           version: v2.4.0
-          # The full repository lint is clean but can exceed six minutes on
-          # a cold hosted-runner cache. Keep the linter deadline above the
-          # observed cold-cache runtime so timing is not reported as a lint
-          # failure while the job-level timeout remains bounded.
-          args: --timeout=8m
+          # The expanded repository exceeded the twenty-minute cold-cache
+          # deadline under these memory bounds. Retain every rule and give
+          # the complete analysis a bounded thirty-minute deadline.
+          args: --timeout=30m
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
           skip-cache: true
@@ -197,6 +209,11 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
       - name: vet
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: go vet ./...
       - name: build
         run: make build
@@ -231,6 +248,14 @@ jobs:
       - name: release manifest materialization
         run: bash scripts/materialize-release-manifest_test.sh
 
+      - name: signed component hotfix controller contracts
+        run: bash scripts/ops/request_evidence_hotfix_test.sh
+
+      # cd-compute and cd-controlplane reuse one cached Ansible toolchain per
+      # pin on the fleet runner; a stale or half-built cache must never run.
+      - name: CD Ansible toolchain cache
+        run: bash scripts/ci/ensure-ansible-toolchain_test.sh
+
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
       # enforcement and platform detection are gated on every PR, not just
@@ -243,6 +268,9 @@ jobs:
 
       - name: npm package staging
         run: bash scripts/build-npm-packages_test.sh
+
+      - name: npm publication readiness and tag isolation
+        run: bash scripts/publish-npm-packages_test.sh
 
       # Cloudflare Free can replace origin 502/504 bodies. Keep the optional
       # public-timeout Worker contract executable in CI so its marker-based
@@ -516,17 +544,22 @@ jobs:
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Include cold APID race compilation and the full PostgreSQL API suite.
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        # ADR-531 checkpoint contracts require PostgreSQL 16 or newer.
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # Concurrent template migrations and schema teardown share the
+          # cluster lock table; match the other parallel PostgreSQL shard.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
@@ -536,11 +569,16 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      # Handler fixtures clone a fully migrated private database. Migration
+      # tests still use fresh schemas/databases and exercise the complete chain.
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+      # Portable HTTP boundary only: the VM bridge is an HTTP fixture.
+      GREGALE_OPERATIONS_ACCEPTANCE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -575,11 +613,26 @@ jobs:
           restore-keys: |
             go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-1-${{ runner.os }}-
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+      - name: build SDK for portable Operations HTTP acceptance
+        working-directory: sdk/node
+        run: |
+          npm ci --ignore-scripts
+          npm run build
       - name: unit tests (pg shard 1)
+        # APID test DWARF generation exceeds hosted-runner memory on cold builds.
+        # Omit test debug metadata and serialize its backend; keep optimization.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
-          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -race -count=1 -p 4 -timeout=30m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
 
       - name: sdk-check
         run: make sdk-check
@@ -604,41 +657,23 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  # Shard 2 (Postgres-heavy B) is split into two jobs because pkg/state and
-  # cmd/gregale are independent race-enabled hot spots. Both jobs keep their
-  # own Postgres service so a slow package group cannot hold the other group
-  # behind it.
-  unit-tests-pg-2:
-    name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
+  # The complete state test inventory runs on two independent PostgreSQL
+  # runners. Fuzz seeds and runnable examples belong to exactly one shard;
+  # Go's registered list guards against silently omitting a new test family.
+  unit-tests-state:
+    name: unit tests (state shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - id: a
-            label: state/reconcile/reposcan
-            # Bridge lease/replay parity and relay read-only checks require Postgres.
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
-            coverage_file: cover-shard2a.out
-            state_coverage: true
-          - id: b
-            label: gregale/gregalectl/daemons
-            # Packages with pgtest-backed tests must run in a Postgres shard:
-            # in the pure shards pgtest skips them, and cmd/githubd shipped a
-            # query that failed on every call while its test was never run.
-            package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
-            coverage_file: cover-shard2b.out
-            state_coverage: false
-    # The state suite uses a migrated template database and clones a clean
-    # database per fixture, so the test binary has a strict 20-minute budget.
-    # Leave a small amount of job-level headroom for coverage and upload.
-    timeout-minutes: 25
+        shard: [1, 2]
     permissions:
       contents: read
       id-token: write
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -653,11 +688,120 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+      GREGALE_GITOPS_ACCEPTANCE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-state-${{ matrix.shard }}-${{ runner.os }}-
+      - name: verify complete state inventory
+        run: |
+          mkdir -p coverage
+          go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
+          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -check -list-file=coverage/state-inventory.txt
+      - name: state tests (shard ${{ matrix.shard }})
+        run: |
+          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -shard=${{ matrix.shard }})
+          go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+      - name: upload state coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-state-${{ matrix.shard }}
+          path: coverage/cover-shard-state-${{ matrix.shard }}.out
+          if-no-files-found: error
+      - name: upload to Codecov (state shard ${{ matrix.shard }})
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        with:
+          files: coverage/cover-shard-state-${{ matrix.shard }}.out
+          flags: unittests
+          use_oidc: true
+          fail_ci_if_error: false
+      - name: save Go build + test cache
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  # PostgreSQL parity/reconciliation and CLI/daemon packages have independent
+  # services. The state package itself runs in unit-tests-state above.
+  unit-tests-pg-2:
+    name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: a
+            label: parity/operations/reconcile/reposcan
+            # Bridge, GitOps, and customer-operation acceptance require PostgreSQL.
+            package_pattern: '/(pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            coverage_file: cover-shard2a.out
+            gitops_acceptance: true
+            state_coverage: true
+            test_timeout: 30m
+            job_timeout_minutes: 45
+          - id: b
+            label: gregale/gregalectl/daemons
+            # Packages with pgtest-backed tests must run in a Postgres shard:
+            # in the pure shards pgtest skips them, and cmd/githubd shipped a
+            # query that failed on every call while its test was never run.
+            package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
+            coverage_file: cover-shard2b.out
+            gitops_acceptance: false
+            state_coverage: false
+            test_timeout: 20m
+            job_timeout_minutes: 30
+    # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
+    # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
+    # in its two deterministic shards above.
+    # Allow headroom for race compilation, coverage, PostgreSQL contract gates,
+    # and artifact upload after the main suite completes.
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      postgres:
+        # Keep state and provider SQL contracts on the supported version.
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          # Parallel packages create/drop the full migrated schema. Give their
+          # relation locks headroom without reducing race-test concurrency.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -693,18 +837,73 @@ jobs:
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-
       - name: unit tests (pg shard 2${{ matrix.id }})
+        env:
+          GREGALE_GITOPS_ACCEPTANCE: ${{ matrix.gitops_acceptance && '1' || '' }}
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}' | grep -v '/pkg/state$')
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
-          go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          COVERARGS=()
+          TESTLOGARGS=()
+          if [ '${{ matrix.state_coverage }}' = 'true' ]; then
+            # Keep named adapter outcomes alongside the complete coverage run.
+            TESTLOGARGS=(-v)
+            python3 -m unittest discover -s scripts/ci -p 'test_normalize_go_cover_profile.py'
+            # External GitOps and Operations tests exercise the state adapters.
+            # Union those calls with both complete state test shards below.
+            # Generated sqlc remains outside the exact-package 70% gate.
+            STATEPKG=$(go list ./pkg/state)
+            COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | grep -v '/pkg/state/sqlc$' | sort -u | paste -sd, -)
+            COVERARGS=(-coverpkg="$COVERPKGS")
+          fi
+          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${TESTLOGARGS[@]}" "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          if [ '${{ matrix.state_coverage }}' = 'true' ]; then
+            # Credit the union of blocks covered by multiple test binaries.
+            python3 scripts/ci/normalize_go_cover_profile.py "coverage/${{ matrix.coverage_file }}"
+          fi
 
-      - name: pkg/state coverage gate
-        if: ${{ matrix.state_coverage }}
-        run: make check-state-coverage COVERFILE=coverage/${{ matrix.coverage_file }}
+      - name: upload external state-adapter coverage
+        if: matrix.state_coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-state-parity
+          path: coverage/${{ matrix.coverage_file }}
+          if-no-files-found: error
+
+      - name: require PostgreSQL operation-policy retirement
+        if: matrix.id == 'a'
+        run: |
+          set -o pipefail
+          python3 scripts/ci/operation-policy-postgres-check.py 2>&1 | tee operation-policy-postgres-contract.log
+
+      - name: upload PostgreSQL operation-policy retirement log
+        if: always() && matrix.id == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operation-policy-postgres-contract
+          path: operation-policy-postgres-contract.log
+          if-no-files-found: ignore
+
+      - name: require PostgreSQL UDP contracts
+        if: matrix.id == 'a'
+        env:
+          GOFLAGS: -race
+        run: |
+          set -o pipefail
+          make udp-postgres-check 2>&1 | tee udp-postgres-contract.log
+
+      - name: upload PostgreSQL UDP contract log
+        if: always() && matrix.id == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: udp-postgres-contract
+          path: udp-postgres-contract.log
+          if-no-files-found: ignore
 
       - name: coverage floor (ship-blocking packages)
+        # Shard a contributes external state coverage to the aggregate gate.
+        if: matrix.id == 'b'
         # Validates the ship-blocking package floors via the shared
         # coverage-floor gate (see Makefile). Packages not exercised by
         # this matrix entry's PKGS list print "(no statements — skip)"
@@ -729,11 +928,58 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
+  # Require all three compatible profiles. A half-suite or parity-only profile
+  # cannot replace the full exact-package 70% gate.
+  state-coverage:
+    name: pkg/state coverage gate (all shards)
+    needs: [unit-tests-state, unit-tests-pg-2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-state-*
+          path: coverage
+          merge-multiple: true
+      - name: exact pkg/state coverage gate
+        run: |
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard2a.out
+      - name: coverage floor (ship-blocking packages)
+        run: make coverage-floor COVERDIR=coverage
+
+  # Branch protection matches this historical name exactly. Keep it stable
+  # while its original state/PostgreSQL inventory runs in parallel above.
+  unit-tests-pg-2a-gate:
+    name: unit tests (pg shard 2a — state/reconcile/reposcan)
+    if: always()
+    needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: require every state and PostgreSQL shard
+        env:
+          STATE_RESULT: ${{ needs.unit-tests-state.result }}
+          POSTGRES_RESULT: ${{ needs.unit-tests-pg-2.result }}
+          COVERAGE_RESULT: ${{ needs.state-coverage.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$STATE_RESULT" != success || "$POSTGRES_RESULT" != success || "$COVERAGE_RESULT" != success ]]; then
+            echo "::error::Required state/PostgreSQL tests or coverage did not pass: state=$STATE_RESULT postgres=$POSTGRES_RESULT coverage=$COVERAGE_RESULT"
+            exit 1
+          fi
+
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Race compilation plus the scheduler suite can consume ten minutes.
+    # Leave room for the coverage gate and upload after the tests pass.
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -810,7 +1056,10 @@ jobs:
   unit-tests-pure-2:
     name: unit tests (pure Go shard 2 — light packages)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # This job runs the package shard and property suite sequentially. Each
+    # Go command has its own 10-minute test timeout, so the job budget must
+    # leave time for both commands plus setup, coverage, and cleanup.
+    timeout-minutes: 25
     permissions:
       contents: read
       id-token: write
@@ -846,7 +1095,7 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|pkg/operations/acceptance|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
 
@@ -882,6 +1131,46 @@ jobs:
             ~/go/pkg/mod
           key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
+  container-contract:
+    name: portable container contracts (strict)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: cache container contract builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ hashFiles('scripts/ci/container-contract-check.py', 'scripts/ci/udp-contract-check.py', 'pkg/ingressroute/**', 'pkg/tcpd/**', 'pkg/udpd/**', 'pkg/oci/**', 'pkg/ociidentity/**', 'pkg/e2etest/**', 'pkg/imaged/**', 'cmd/gregale/**') }}
+          restore-keys: |
+            go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-container-contract-${{ runner.os }}-
+      - name: require portable container contracts
+        run: |
+          set -o pipefail
+          make test-container-contract 2>&1 | tee container-contract.log
+      - name: require portable UDP contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py 2>&1 | tee udp-contract.log
+      - name: retain container qualification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            container-contract.log
+            udp-contract.log
+          if-no-files-found: warn
+
   checks:
     # Nine gates that each finished in well under two minutes used to run
     # as nine separate jobs. Each one paid ~40 s of runner spin-up +
@@ -895,11 +1184,18 @@ jobs:
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
+    # retain time for the remaining SQLC, vulnerability and Ansible gates.
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
       GOVULNCHECK_VERSION: "1.7.0"
+      # Several contract gates compile the APID test package.
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOMEMLIMIT: 2GiB
+      GOGC: 10
+      GOMAXPROCS: 2
     steps:
       - uses: actions/checkout@v7
         with:
@@ -993,7 +1289,7 @@ jobs:
       - name: product capability registry and generated matrix
         run: make capabilities-check
       - name: standards registry and generated matrix
-        run: make standards-check standards-conformance
+        run: make standards-check standards-conformance standards-contract-check focus-contract-check
       - name: customer docs and pricing
         run: make pricing-check docs-links-check
       # ---- former job `api-hosting-contract-check`: framework fixture matrix ----
@@ -1133,6 +1429,11 @@ jobs:
         run: |
           set -euo pipefail
           govulncheck -mode=source -show=verbose ./...
+      - name: terraform provider vulnerability scan
+        working-directory: terraform-provider-gregale
+        # A nested module is absent from the root ./... traversal. Scan the
+        # provider's selected dependencies, including its plugin RPC server.
+        run: govulncheck -mode=source -show=verbose ./...
       # ---- moved from `lint + build`: Prometheus rule + ansible gates ----
       # These need pip (ansible-core, ansible-lint), a pinned promtool and
       # ~90 s of wall time, none of which the Go lint/build critical path
@@ -1168,7 +1469,9 @@ jobs:
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             pkg/promqlrules/data_placement.yaml
           promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
+          promtool test rules deploy/ansible/roles/prometheus/files/faas_managed_postgres_health.test.yml
           promtool test rules pkg/promqlrules/testdata/service_dependency_errors.test.yml
+          make udp-alert-check tcp-tls-alert-check commit-alert-check host-alert-check
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check
@@ -1201,6 +1504,7 @@ jobs:
         run: |
           set -euo pipefail
           pip install --quiet 'ansible-core==2.21.2'
+          python3 scripts/ci/test_udp_deployment.py
           cd deploy/ansible
           COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
           export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
@@ -1233,11 +1537,14 @@ jobs:
               https://github.com/ansible-collections/community.postgresql.git \
               "${COLLECTIONS_PATH}/ansible_collections/community/postgresql"
           fi
+          ansible-playbook -i localhost, -c local tests/tcp_tls_config.yml
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook
           # before an operator can run either role-specific target.
           ansible-playbook --syntax-check bootstrap.yml
+          # ADR-580: the CD entrypoint that wraps the control-plane play.
+          ansible-playbook --syntax-check control_plane_converge.yml
           # Gate-C: keep the connection-free scale validator parseable.
           ansible-playbook --syntax-check scale_check.yml
           # Gate-D: keep the trusted deployment-runner bootstrap parseable.
@@ -1343,6 +1650,13 @@ jobs:
           sed "s#/etc/prometheus#$rules_dir#g" \
             "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"
           promtool check config "$RUNNER_TEMP/prometheus-checked.yml"
+
+      # Nothing else renders alertmanager.yml.j2 before it reaches a host.
+      # Render every delivery shape (dev, Discord + heartbeat, Slack, email +
+      # Pushover, Pushover only), validate with the pinned amtool, and prove
+      # page / warn / FaasWatchdog reach the receivers the role promises.
+      - name: Alertmanager config check
+        run: make alertmanager-config-check
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
@@ -1416,14 +1730,15 @@ jobs:
       - name: unit tests
         working-directory: sdk/node
         run: npm run test:unit
+      - name: Gregale Issues staging smoke contract
+        run: node --test tests/issues-smoke/run.test.mjs
 
-  # ADR-377: exercise the actual runtime SDK, control plane, gateway and
-  # telemetry persistence together; the small fakeapid fixture cannot prove
-  # verified customer targeting or refresh after inactivity.
-  flags-acceptance:
-    name: flags (customer release + request evidence)
+  # ADR-484: real customer PostgreSQL transactions and HTTP process recovery.
+  # Required database tests must run; unit-only SDK jobs skip these fixtures.
+  operation-sdk-acceptance:
+    name: operations (transaction + HTTP recovery + cross-SDK)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
     services:
@@ -1452,14 +1767,77 @@ jobs:
           node-version: '22.10.0'
           cache: 'npm'
           cache-dependency-path: sdk/node/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            sdk/python/pyproject.toml
+            sdk/commit-tests/requirements.txt
+      - name: install SDK acceptance dependencies
+        run: |
+          npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
+          python -m pip install -e sdk/python -r sdk/commit-tests/requirements.txt
+      - name: producer and handler transaction acceptance
+        # APID test DWARF generation exceeds hosted-runner memory on cold builds.
+        # Omit test debug metadata and serialize its backend; keep optimization.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
+        run: make test-commit-sdk test-operation-sdk
+
+  # ADR-377: exercise the actual runtime SDK, control plane, gateway and
+  # telemetry persistence together; the small fakeapid fixture cannot prove
+  # verified customer targeting or refresh after inactivity.
+  flags-acceptance:
+    name: flags (customer release + request evidence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
       - name: customer-aware feature flag acceptance
+        # APID test DWARF generation exceeds hosted-runner memory on cold builds.
+        # Omit test debug metadata and serialize its backend; keep optimization.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make test-flags
 
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -1599,14 +1977,18 @@ jobs:
     # flakes before the retry.
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # A full-schema teardown locks thousands of relations. Without
+          # headroom failed cleanup leaks schemas into later migration tests.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
+          --shm-size 1g
           --health-cmd "pg_isready -U faas -d faas"
           --health-interval 5s
           --health-timeout 3s
@@ -1627,7 +2009,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -1823,7 +2205,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -1871,7 +2253,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -1893,7 +2275,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -1963,7 +2345,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -1985,7 +2367,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -2040,7 +2422,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -2062,7 +2444,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -2117,7 +2499,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -2139,7 +2521,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi

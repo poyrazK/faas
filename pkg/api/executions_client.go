@@ -27,6 +27,13 @@ func (c *Client) CreateExecution(ctx context.Context, req CreateExecutionRequest
 	return out, c.do(ctx, "POST", "/v1/executions", req, &out)
 }
 
+// GetExecutionCapabilities returns the authenticated account's Runs admission
+// state, supported runtimes/profiles, and plan-resolved request limits.
+func (c *Client) GetExecutionCapabilities(ctx context.Context) (ExecutionCapabilitiesResponse, error) {
+	var out ExecutionCapabilitiesResponse
+	return out, c.do(ctx, "GET", "/v1/executions/capabilities", nil, &out)
+}
+
 // GetExecution returns the current state or terminal result of one run.
 func (c *Client) GetExecution(ctx context.Context, id string) (ExecutionResponse, error) {
 	var out ExecutionResponse
@@ -36,6 +43,15 @@ func (c *Client) GetExecution(ctx context.Context, id string) (ExecutionResponse
 // ListExecutions returns the newest account-scoped execution page. A zero
 // limit or offset lets the server apply its defaults; status is optional.
 func (c *Client) ListExecutions(ctx context.Context, limit, offset int, status ExecutionStatus) (ExecutionListResponse, error) {
+	return c.listExecutions(ctx, limit, offset, status, "")
+}
+
+// ListExecutionsForWorkflow returns the visible runs carrying workflowID.
+func (c *Client) ListExecutionsForWorkflow(ctx context.Context, workflowID string, limit, offset int, status ExecutionStatus) (ExecutionListResponse, error) {
+	return c.listExecutions(ctx, limit, offset, status, workflowID)
+}
+
+func (c *Client) listExecutions(ctx context.Context, limit, offset int, status ExecutionStatus, workflowID string) (ExecutionListResponse, error) {
 	query := url.Values{}
 	if limit > 0 {
 		query.Set("limit", strconv.Itoa(limit))
@@ -46,12 +62,30 @@ func (c *Client) ListExecutions(ctx context.Context, limit, offset int, status E
 	if status != "" {
 		query.Set("status", string(status))
 	}
+	if workflowID != "" {
+		query.Set("workflow_id", workflowID)
+	}
 	path := "/v1/executions"
 	if encoded := query.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
 	var out ExecutionListResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetExecutionWorkflow returns workflow counts and terminal-run resource usage
+// visible to the authenticated principal.
+func (c *Client) GetExecutionWorkflow(ctx context.Context, workflowID string) (ExecutionWorkflowResponse, error) {
+	var out ExecutionWorkflowResponse
+	path := "/v1/execution-workflows/" + url.PathEscape(workflowID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// CreateManagedExecutionWorkflow stores an encrypted sequential plan and lets
+// the control plane admit later Runs after this client disconnects.
+func (c *Client) CreateManagedExecutionWorkflow(ctx context.Context, req CreateManagedExecutionWorkflowRequest) (ManagedExecutionWorkflowResponse, error) {
+	var out ManagedExecutionWorkflowResponse
+	return out, c.do(ctx, "POST", "/v1/execution-workflows", req, &out)
 }
 
 // CancelExecution requests cancellation. Cancellation is idempotent: queued

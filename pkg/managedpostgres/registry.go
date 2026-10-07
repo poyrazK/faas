@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"sort"
@@ -22,6 +23,7 @@ type Config struct {
 	MaxDatabasesPerAccount int               `json:"max_databases_per_account"`
 	ProvisioningEnabled    bool              `json:"provisioning_enabled"`
 	Usage                  UsageConfig       `json:"usage"`
+	Health                 HealthConfig      `json:"health"`
 	Backends               []BackendConfig   `json:"backends"`
 }
 
@@ -45,6 +47,13 @@ type UsageConfig struct {
 }
 
 func (c UsageConfig) policy() (UsagePolicy, error) {
+	if c.Enabled {
+		for _, seconds := range []int64{c.CollectionIntervalSeconds, c.WindowSeconds, c.StaleAfterSeconds} {
+			if seconds < 0 || seconds > math.MaxInt64/int64(time.Second) {
+				return UsagePolicy{}, errors.New("managed postgres: invalid usage policy duration")
+			}
+		}
+	}
 	policy := UsagePolicy{
 		Enabled:                      c.Enabled,
 		CollectionInterval:           time.Duration(c.CollectionIntervalSeconds) * time.Second,
@@ -73,6 +82,8 @@ type BackendConfig struct {
 	Namespace string            `json:"namespace"`
 	Settings  map[string]string `json:"settings,omitempty"`
 	SecretEnv map[string]string `json:"secret_env,omitempty"`
+	// DataAPIEnabled changes the qualified credential contract, not placement.
+	DataAPIEnabled bool `json:"data_api_enabled,omitempty"`
 }
 
 type Backend struct {
@@ -91,6 +102,7 @@ type Registry struct {
 	MaxDatabasesPerAccount int
 	ProvisioningEnabled    bool
 	usage                  UsagePolicy
+	health                 HealthPolicy
 	backends               map[string]Backend
 	defaults               map[string]string
 }
@@ -106,11 +118,16 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 	if err != nil {
 		return nil, err
 	}
+	healthPolicy, err := config.Health.policy()
+	if err != nil {
+		return nil, errors.New("managed postgres: invalid health policy")
+	}
 	registry := &Registry{
 		DefaultRegion:          config.DefaultRegion,
 		MaxDatabasesPerAccount: config.MaxDatabasesPerAccount,
 		ProvisioningEnabled:    config.ProvisioningEnabled,
 		usage:                  usagePolicy,
+		health:                 healthPolicy,
 		backends:               make(map[string]Backend, len(config.Backends)),
 		defaults:               make(map[string]string, len(config.Defaults)),
 	}
@@ -231,8 +248,10 @@ func (r *Registry) Regions() []string {
 
 func fingerprint(config BackendConfig) string {
 	// SecretEnv is intentionally excluded: credential rotation or renaming an
-	// environment variable must not change placement. Namespace and all
-	// non-secret settings fail closed if a backend is accidentally repurposed.
+	// environment variable must not change placement. DataAPIEnabled is a
+	// rollout capability, fenced by qualification's credential-access equality.
+	// Namespace and all non-secret settings fail closed if a backend is
+	// accidentally repurposed.
 	payload := struct {
 		Driver    string            `json:"driver"`
 		Region    string            `json:"region"`

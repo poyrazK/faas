@@ -1,0 +1,70 @@
+{
+  "capabilities": [
+    "completions",
+    "prompts",
+    "resources",
+    "tools"
+  ],
+  "prompts": [
+    {
+      "arguments": [
+        {
+          "name": "text",
+          "required": true
+        },
+        {
+          "name": "style"
+        }
+      ],
+      "description": "Create a concise summary request.",
+      "name": "summarize",
+      "title": "Summarize text"
+    }
+  ],
+  "protocol_version": "2026-07-28",
+  "resource_templates": [
+    {
+      "description": "Example customer-record resource; enforce ownership in your own data lookup.",
+      "mimeType": "application/json",
+      "name": "customer_record",
+      "title": "Customer record",
+      "uriTemplate": "customer://records/{recordId}"
+    }
+  ],
+  "resources": [
+    {
+      "description": "A public example resource.",
+      "mimeType": "text/plain",
+      "name": "welcome",
+      "title": "Welcome",
+      "uri": "greeting://welcome"
+    }
+  ],
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return a greeting from Gregale.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "greet"
+    }
+  ],
+  "version": 2
+}

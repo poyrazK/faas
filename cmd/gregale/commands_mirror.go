@@ -152,7 +152,20 @@ func cmdMirrorCreate(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created mirror rule %s (%s → %s, %d%%)\n",
 		resp.ID, resp.SourceDeploymentID, resp.MirrorDeploymentID, resp.Percent)
+	warnMirrorConcurrency(client, *slug)
 	return 0
+}
+
+// warnMirrorConcurrency says when the app has no instance slot for the shadow
+// VM. Mirror instances count against max_concurrency (invariant §6.2-1).
+// production-us hunt #4: with the default max_concurrency of 1 every mirrored
+// request was "Admission rejected" and nothing said why. Best-effort.
+func warnMirrorConcurrency(client *api.Client, slug string) {
+	app, err := client.GetApp(context.Background(), slug)
+	if err != nil || app.MaxConcurrency >= 2 {
+		return
+	}
+	PrintWarn(osStdout, "Mirror instances count against max_concurrency (%d here), so mirrored requests are rejected while the source holds the only slot. Raise it with `gregale app %s scale --max-concurrency 2`.", app.MaxConcurrency, slug)
 }
 
 // cmdMirrorInfo implements `gregale mirror info --app <slug> --id <mirror-id>`.
@@ -387,6 +400,12 @@ func cmdMirrorSummary(args []string) int {
 	_, _ = fmt.Fprintf(os.Stdout, "Mean latency Δ: %d ms\n", resp.MeanLatencyDiffMs)
 	_, _ = fmt.Fprintf(os.Stdout, "p99 latency Δ:  %d ms\n", resp.P99LatencyDiffMs)
 	_, _ = fmt.Fprintf(os.Stdout, "Crashes:        %d\n", resp.CrashCount)
+	_, _ = fmt.Fprintf(os.Stdout, "Admission timeout:  %d\n", resp.SchedulerAdmissionTimeoutCount)
+	_, _ = fmt.Fprintf(os.Stdout, "Admission rejected: %d\n", resp.SchedulerAdmissionRejectedCount)
+	_, _ = fmt.Fprintf(os.Stdout, "Admission errors:   %d\n", resp.SchedulerAdmissionErrorCount)
+	if resp.SchedulerAdmissionRejectedCount > 0 {
+		warnMirrorConcurrency(client, *slug)
+	}
 	return 0
 }
 

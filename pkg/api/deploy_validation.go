@@ -49,6 +49,28 @@ func ValidFunctionRuntime(runtime string) bool {
 // by deploy preview and every deployment admission path.
 var deploymentImageRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
 
+// Project images may name a tag; imaged pins the resolved source before
+// materializing it. References must first be normalized with oci.ParseReference.
+var projectImageRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(@sha256:[0-9a-f]{64})?$`)
+
+// ValidProjectImage validates a normalized registry reference with a tag or
+// digest. Unlike direct image API admission, project tags are pinned by imaged.
+func ValidProjectImage(ref string) bool {
+	if !projectImageRE.MatchString(ref) {
+		return false
+	}
+	name := strings.SplitN(ref, "@", 2)[0]
+	if colon := strings.LastIndexByte(name, ':'); colon > strings.LastIndexByte(name, '/') {
+		name = name[:colon]
+	}
+	for _, segment := range strings.Split(name, "/")[1:] {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 // ValidDeploymentImage reports whether ref is a full digest-pinned OCI image
 // reference. Tags, shortened digests, whitespace and control bytes fail.
 func ValidDeploymentImage(ref string) bool {

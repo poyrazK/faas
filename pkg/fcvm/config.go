@@ -182,7 +182,7 @@ type ColdBootSpec struct {
 	BaseKey    string // StorageBackend key for drive0 shared ro base rootfs
 	LayerKey   string // StorageBackend key for drive1 per-app app layer (legacy single-workload path)
 	VcpuCount  int    // 2, or 4 for Scale
-	MemSizeMiB int    // plan RAM
+	MemSizeMiB int    // guest RAM: main plus explicitly allocated companions
 	Tap        string // netns-side tap device (always "tap0")
 	// HealthcheckPath is the HTTP readiness path. Empty preserves the
 	// legacy TCP probe unless HealthcheckGRPC selects the standard gRPC
@@ -193,6 +193,8 @@ type ColdBootSpec struct {
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
+	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget. 0 means use the
 	// vmmd default, preserving direct callers from before M-3.
 	StartupDeadlineS int

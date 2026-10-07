@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,9 @@ const (
 	// envelope. The frame header itself stays compatible with the existing
 	// Firecracker vsock framing used by vmmd.
 	Version uint16 = 1
+	// ArtifactVersion fails closed on old vmmd/guest binaries. Legacy runs use v1.
+	ArtifactVersion uint16 = 2
+	ProfileVersion  uint16 = 3
 
 	// VsockPort is the guest listener reserved for one-shot executions. It is
 	// intentionally distinct from resume (1024), characterization/job exit
@@ -40,6 +44,11 @@ const (
 	FrameStderr  uint32 = 3
 	FrameResult  uint32 = 4
 	FrameError   uint32 = 5
+	// FrameOutboundCall and FrameOutboundResponse are the guest-to-host
+	// capability broker. They are meaningful only for an execution restored
+	// with an explicit integration allowlist.
+	FrameOutboundCall     uint32 = 6
+	FrameOutboundResponse uint32 = 7
 
 	frameHeaderBytes = 8 // 4-byte BE type + 4-byte BE body length
 	// MaxFrameBytes bounds a single allocation on both sides. Stream output is
@@ -56,6 +65,15 @@ const (
 	// MaxFailureMessageBytes prevents a language/runtime error from becoming a
 	// second unbounded output channel. The host maps it to a safe public detail.
 	MaxFailureMessageBytes = 512
+	// Outbound calls have a separate budget from stdout/result/artifacts. The
+	// limits are intentionally much smaller than MaxFrameBytes, which also
+	// carries execution source and bundles.
+	MaxOutboundBodyBytes   = 1 << 20
+	MaxOutboundPathBytes   = 2048
+	MaxOutboundHeaderBytes = 8 << 10
+	MaxOutboundHeaderCount = 16
+	MaxOutboundTotalBytes  = 8 << 20
+	MaxOutboundCalls       = 128
 	// streamChunkBytes keeps writes responsive to cancellation and makes the
 	// shared output budget enforceable before any single write allocates a huge
 	// frame.
@@ -63,13 +81,15 @@ const (
 )
 
 var (
-	ErrAlreadyUsed          = errors.New("execution protocol: session already used")
-	ErrInvalidRequest       = errors.New("execution protocol: invalid request")
-	ErrInvalidResult        = errors.New("execution protocol: invalid result")
-	ErrFrameTooLarge        = errors.New("execution protocol: frame too large")
-	ErrOutputLimitExceeded  = errors.New("execution protocol: output limit exceeded")
-	ErrUnexpectedFrame      = errors.New("execution protocol: unexpected frame")
-	ErrGuestExecutionFailed = errors.New("execution protocol: guest execution failed")
+	ErrAlreadyUsed           = errors.New("execution protocol: session already used")
+	ErrInvalidRequest        = errors.New("execution protocol: invalid request")
+	ErrInvalidResult         = errors.New("execution protocol: invalid result")
+	ErrFrameTooLarge         = errors.New("execution protocol: frame too large")
+	ErrOutputLimitExceeded   = errors.New("execution protocol: output limit exceeded")
+	ErrUnexpectedFrame       = errors.New("execution protocol: unexpected frame")
+	ErrGuestExecutionFailed  = errors.New("execution protocol: guest execution failed")
+	ErrOutboundLimitExceeded = errors.New("execution protocol: outbound broker limit exceeded")
+	ErrOutboundNotAuthorized = errors.New("execution protocol: outbound integration is not authorized")
 )
 
 // Request is the only payload sent across the host/guest boundary. Source and
@@ -77,31 +97,38 @@ var (
 // vmmd adapter decrypts them in host memory immediately before this request is
 // sent to the already-restored disposable guest.
 type Request struct {
+	Profile     api.ExecutionProfile     `json:"profile,omitempty"`
 	Version     uint16                   `json:"version"`
 	ExecutionID string                   `json:"execution_id"`
 	Runtime     api.ExecutionRuntime     `json:"runtime"`
 	Source      string                   `json:"source,omitempty"`
 	Entrypoint  string                   `json:"entrypoint,omitempty"`
 	Files       []api.ExecutionFile      `json:"files,omitempty"`
+	OutputFiles []string                 `json:"output_files,omitempty"`
 	Input       json.RawMessage          `json:"input"`
 	TimeoutMS   int                      `json:"timeout_ms"`
 	MaxOutput   int                      `json:"max_output_bytes"`
 	NetworkMode api.ExecutionNetworkMode `json:"network_mode"`
+	// OutboundEnabled exposes the short-lived loopback helper only when a
+	// scheduler restored this Run with at least one explicit integration grant.
+	// No grant IDs or bearer material cross the guest boundary.
+	OutboundEnabled bool `json:"outbound_enabled,omitempty"`
 }
 
 // Result is the terminal guest report. Stdout and Stderr are carried in
 // separate stream frames and are populated by Client.Execute after the final
 // result frame arrives.
 type Result struct {
-	Status          api.ExecutionStatus `json:"status"`
-	Result          json.RawMessage     `json:"result,omitempty"`
-	OutputTruncated bool                `json:"output_truncated"`
-	ExitCode        *int                `json:"exit_code,omitempty"`
-	FailureCode     string              `json:"failure_code,omitempty"`
-	FailureMessage  string              `json:"failure_message,omitempty"`
-	Usage           api.ExecutionUsage  `json:"usage,omitempty"`
-	Stdout          []byte              `json:"-"`
-	Stderr          []byte              `json:"-"`
+	Status          api.ExecutionStatus     `json:"status"`
+	Artifacts       []api.ExecutionArtifact `json:"artifacts,omitempty"`
+	Result          json.RawMessage         `json:"result,omitempty"`
+	OutputTruncated bool                    `json:"output_truncated"`
+	ExitCode        *int                    `json:"exit_code,omitempty"`
+	FailureCode     string                  `json:"failure_code,omitempty"`
+	FailureMessage  string                  `json:"failure_message,omitempty"`
+	Usage           api.ExecutionUsage      `json:"usage,omitempty"`
+	Stdout          []byte                  `json:"-"`
+	Stderr          []byte                  `json:"-"`
 }
 
 // OutputReceiver observes one bounded stdout/stderr frame as it arrives from
@@ -110,6 +137,108 @@ type Result struct {
 // Stream is one of "stdout" or "stderr" and chunk is owned by the caller only
 // for the duration of the callback.
 type OutputReceiver func(ctx context.Context, stream string, chunk []byte) error
+
+// OutboundRequest is the only request shape available to an execution guest.
+// It deliberately has no origin, headers, credentials, or proxy field.
+type OutboundRequest struct {
+	ID            uint64 `json:"id"`
+	IntegrationID string `json:"integration_id"`
+	Method        string `json:"method"`
+	Path          string `json:"path"`
+	Body          []byte `json:"body,omitempty"`
+}
+
+// OutboundResponse contains only the bounded provider response fields exposed
+// by the host broker. Header names are a fixed safe allowlist.
+type OutboundResponse struct {
+	ID      uint64            `json:"id"`
+	Status  int               `json:"status"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Body    []byte            `json:"body,omitempty"`
+}
+
+// OutboundBroker is implemented by the host-side transport. Calls return
+// only response data; the signing assertion remains outside the guest API.
+type OutboundBroker interface {
+	Call(context.Context, OutboundRequest) (OutboundResponse, error)
+}
+
+// OutboundCallFunc is the callback form used by the vmmd/scheduler bridge.
+type OutboundCallFunc func(context.Context, OutboundRequest) (OutboundResponse, error)
+
+func (r OutboundRequest) Validate() error {
+	if r.ID == 0 || r.ID > MaxOutboundCalls {
+		return fmt.Errorf("%w: invalid outbound call ID", ErrInvalidRequest)
+	}
+	if _, err := api.NormalizeExecutionIntegrationIDs([]string{r.IntegrationID}); err != nil {
+		return fmt.Errorf("%w: invalid outbound integration ID", ErrInvalidRequest)
+	}
+	switch r.Method {
+	case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE":
+	default:
+		return fmt.Errorf("%w: unsupported outbound method", ErrInvalidRequest)
+	}
+	if r.Path == "" || len(r.Path) > MaxOutboundPathBytes || r.Path[0] != '/' || strings.HasPrefix(r.Path, "//") || strings.ContainsAny(r.Path, "\\\r\n#") {
+		return fmt.Errorf("%w: invalid outbound path", ErrInvalidRequest)
+	}
+	parsedPath, err := url.ParseRequestURI(r.Path)
+	if err != nil || parsedPath.IsAbs() || parsedPath.Host != "" || parsedPath.Fragment != "" {
+		return fmt.Errorf("%w: invalid outbound path", ErrInvalidRequest)
+	}
+	decodedPath, err := url.PathUnescape(parsedPath.EscapedPath())
+	if err != nil || strings.ContainsAny(decodedPath, "\\\x00\r\n") {
+		return fmt.Errorf("%w: invalid outbound path", ErrInvalidRequest)
+	}
+	for _, segment := range strings.Split(decodedPath, "/") {
+		if segment == "." || segment == ".." {
+			return fmt.Errorf("%w: invalid outbound path", ErrInvalidRequest)
+		}
+	}
+	if len(r.Body) > MaxOutboundBodyBytes || (len(r.Body) != 0 && !json.Valid(r.Body)) {
+		return fmt.Errorf("%w: invalid outbound body", ErrInvalidRequest)
+	}
+	return nil
+}
+
+func (r OutboundResponse) Validate() error {
+	if r.ID == 0 || r.ID > MaxOutboundCalls || r.Status < 100 || r.Status > 599 || len(r.Body) > MaxOutboundBodyBytes {
+		return fmt.Errorf("%w: invalid outbound response", ErrInvalidResult)
+	}
+	if len(r.Headers) > MaxOutboundHeaderCount {
+		return fmt.Errorf("%w: too many outbound response headers", ErrInvalidResult)
+	}
+	bytes := 0
+	seen := make(map[string]struct{}, len(r.Headers))
+	for name, value := range r.Headers {
+		lowerName := strings.ToLower(name)
+		if name != lowerName || !safeOutboundHeader(name) || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("%w: unsafe outbound response header", ErrInvalidResult)
+		}
+		if _, exists := seen[lowerName]; exists {
+			return fmt.Errorf("%w: duplicate outbound response header", ErrInvalidResult)
+		}
+		seen[lowerName] = struct{}{}
+		for i := range len(value) {
+			if value[i] < 0x20 || value[i] > 0x7e {
+				return fmt.Errorf("%w: unsafe outbound response header", ErrInvalidResult)
+			}
+		}
+		bytes += len(name) + len(value)
+	}
+	if bytes > MaxOutboundHeaderBytes {
+		return fmt.Errorf("%w: outbound response headers too large", ErrInvalidResult)
+	}
+	return nil
+}
+
+func safeOutboundHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "content-type", "cache-control", "etag", "last-modified", "retry-after", "x-request-id":
+		return true
+	default:
+		return false
+	}
+}
 
 // RequestFromResolvedExecution is the narrow mapping used by vmmd adapters.
 // The scheduler should pass the remaining host deadline as TimeoutMS when the
@@ -121,13 +250,25 @@ func RequestFromResolvedExecution(id string, req api.ResolvedExecutionRequest) R
 	if networkMode == "" {
 		networkMode = api.ExecutionNetworkNone
 	}
+	version := Version
+	if len(req.OutputFiles) != 0 {
+		version = ArtifactVersion
+	}
+	profile := req.Profile
+	if profile.Normalized() == api.ExecutionProfileStandard {
+		profile = ""
+	} else {
+		version = ProfileVersion
+	}
 	return Request{
-		Version:     Version,
+		Profile:     profile,
+		Version:     version,
 		ExecutionID: id,
 		Runtime:     req.Runtime,
 		Source:      req.Source,
 		Entrypoint:  req.Entrypoint,
 		Files:       cloneExecutionFiles(req.Files),
+		OutputFiles: append([]string(nil), req.OutputFiles...),
 		Input:       input,
 		TimeoutMS:   req.Limits.TimeoutMS,
 		MaxOutput:   req.Limits.MaxOutputBytes,
@@ -148,8 +289,17 @@ type ErrorFrame struct {
 // called; these checks defend the guest boundary if a future caller bypasses
 // apid or a stale scheduler sends malformed state.
 func (r Request) Validate() error {
-	if r.Version != Version {
+	if r.Version != Version && r.Version != ArtifactVersion && r.Version != ProfileVersion {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalidRequest, r.Version)
+	}
+	if len(r.OutputFiles) != 0 && r.Version < ArtifactVersion {
+		return fmt.Errorf("%w: artifacts require version 2", ErrInvalidRequest)
+	}
+	if err := r.Profile.Validate(r.Runtime); err != nil || (r.Profile.Normalized() != api.ExecutionProfileStandard && r.Version != ProfileVersion) {
+		return fmt.Errorf("%w: profile requires compatible runtime and protocol v3", ErrInvalidRequest)
+	}
+	if err := api.ValidateExecutionOutputFiles(r.OutputFiles); err != nil {
+		return fmt.Errorf("%w: invalid output files", ErrInvalidRequest)
 	}
 	if strings.TrimSpace(r.ExecutionID) == "" || len(r.ExecutionID) > MaxExecutionIDBytes {
 		return fmt.Errorf("%w: execution_id is empty or too long", ErrInvalidRequest)
@@ -207,7 +357,13 @@ func (r Result) Validate(maxOutput int) error {
 	if len(r.FailureMessage) > MaxFailureMessageBytes {
 		return fmt.Errorf("%w: failure message too long", ErrInvalidResult)
 	}
-	if maxOutput < 0 || len(r.Result)+len(r.Stdout)+len(r.Stderr) > maxOutput {
+	if err := api.ValidateExecutionArtifacts(r.Artifacts); err != nil {
+		return fmt.Errorf("%w: invalid artifacts", ErrInvalidResult)
+	}
+	if r.Status != api.ExecutionStatusSucceeded && len(r.Artifacts) != 0 {
+		return fmt.Errorf("%w: failed execution has artifacts", ErrInvalidResult)
+	}
+	if maxOutput < 0 || len(r.Result)+len(r.Stdout)+len(r.Stderr)+api.ExecutionArtifactsOutputBytes(r.Artifacts) > maxOutput {
 		return fmt.Errorf("%w: combined output exceeds limit", ErrOutputLimitExceeded)
 	}
 	return nil
@@ -242,6 +398,14 @@ func (c *Client) Execute(ctx context.Context, req Request) (Result, error) {
 // error aborts the exchange; this is the backpressure and cancellation seam
 // used by vmmd's server-streaming execution RPC.
 func (c *Client) ExecuteWithOutput(ctx context.Context, req Request, receive OutputReceiver) (Result, error) {
+	return c.ExecuteWithOutputAndBroker(ctx, req, receive, nil)
+}
+
+// ExecuteWithOutputAndBroker is the host-broker variant of Execute. The
+// reader keeps draining stdout/stderr while an outbound call is in flight, so
+// a guest writing output concurrently with a provider request cannot block
+// the broker response behind a full vsock send buffer.
+func (c *Client) ExecuteWithOutputAndBroker(ctx context.Context, req Request, receive OutputReceiver, broker OutboundCallFunc) (Result, error) {
 	var zero Result
 	if c == nil || c.conn == nil {
 		return zero, fmt.Errorf("%w: nil client", ErrInvalidRequest)
@@ -272,9 +436,29 @@ func (c *Client) ExecuteWithOutput(ctx context.Context, req Request, receive Out
 	}
 
 	var out Result
+	var brokerMu sync.Mutex
+	var writeMu sync.Mutex
+	seenCalls := make(map[uint64]struct{})
+	var brokerBytes int
+	var inFlight int
+	var brokerErr error
+	setBrokerErr := func(err error) {
+		brokerMu.Lock()
+		if brokerErr == nil {
+			brokerErr = err
+		}
+		brokerMu.Unlock()
+		_ = c.conn.Close()
+	}
 	for {
 		frameType, frameBody, err := readFrame(ctx, c.conn)
 		if err != nil {
+			brokerMu.Lock()
+			callErr := brokerErr
+			brokerMu.Unlock()
+			if callErr != nil {
+				return zero, callErr
+			}
 			return zero, err
 		}
 		switch frameType {
@@ -298,12 +482,80 @@ func (c *Client) ExecuteWithOutput(ctx context.Context, req Request, receive Out
 					return zero, err
 				}
 			}
+		case FrameOutboundCall:
+			if broker == nil {
+				return zero, fmt.Errorf("%w: outbound call without a configured broker", ErrUnexpectedFrame)
+			}
+			var call OutboundRequest
+			if err := json.Unmarshal(frameBody, &call); err != nil || call.Validate() != nil {
+				return zero, fmt.Errorf("%w: malformed outbound call", ErrUnexpectedFrame)
+			}
+			brokerMu.Lock()
+			_, duplicate := seenCalls[call.ID]
+			frameBytes := len(frameBody) + frameHeaderBytes
+			if duplicate || len(seenCalls) >= MaxOutboundCalls || brokerBytes+frameBytes > MaxOutboundTotalBytes {
+				brokerMu.Unlock()
+				return zero, ErrOutboundLimitExceeded
+			}
+			seenCalls[call.ID] = struct{}{}
+			brokerBytes += frameBytes
+			inFlight++
+			brokerMu.Unlock()
+			go func(call OutboundRequest) {
+				response, callErr := broker(ctx, call)
+				if callErr != nil {
+					setBrokerErr(callErr)
+					return
+				}
+				if response.ID == 0 {
+					response.ID = call.ID
+				}
+				if response.ID != call.ID || response.Validate() != nil {
+					setBrokerErr(fmt.Errorf("%w: invalid broker response", ErrInvalidResult))
+					return
+				}
+				encoded, encodeErr := json.Marshal(response)
+				if encodeErr != nil || len(encoded)+frameHeaderBytes > MaxOutboundTotalBytes {
+					setBrokerErr(ErrOutboundLimitExceeded)
+					return
+				}
+				brokerMu.Lock()
+				if brokerBytes+len(encoded)+frameHeaderBytes > MaxOutboundTotalBytes {
+					brokerMu.Unlock()
+					setBrokerErr(ErrOutboundLimitExceeded)
+					return
+				}
+				brokerBytes += len(encoded) + frameHeaderBytes
+				brokerMu.Unlock()
+				// The guest cannot produce its terminal result until the entire
+				// response frame has been read. Decrement immediately before the
+				// write so net.Pipe and fast vsock readers cannot race the host's
+				// post-write bookkeeping against that terminal frame.
+				brokerMu.Lock()
+				inFlight--
+				brokerMu.Unlock()
+				writeMu.Lock()
+				writeErr := writeFrame(ctx, c.conn, FrameOutboundResponse, encoded)
+				writeMu.Unlock()
+				if writeErr != nil {
+					setBrokerErr(writeErr)
+				}
+			}(call)
 		case FrameResult:
+			brokerMu.Lock()
+			pendingCalls := inFlight
+			brokerMu.Unlock()
+			if pendingCalls != 0 {
+				return zero, fmt.Errorf("%w: terminal result arrived with broker calls in flight", ErrUnexpectedFrame)
+			}
 			if err := json.Unmarshal(frameBody, &out); err != nil {
 				return zero, fmt.Errorf("%w: decode result: %w", ErrInvalidResult, err)
 			}
 			if err := out.Validate(req.MaxOutput); err != nil {
 				return zero, err
+			}
+			if out.Status == api.ExecutionStatusSucceeded && !api.ExecutionArtifactsMatch(req.OutputFiles, out.Artifacts) {
+				return zero, fmt.Errorf("%w: artifact selection mismatch", ErrInvalidResult)
 			}
 			return out, nil
 		case FrameError:
@@ -375,10 +627,26 @@ func (w *OutputWriter) Write(p []byte) (int, error) {
 // by Serve; other validation failures become a bounded ErrorFrame.
 type Handler func(context.Context, Request, *OutputWriter, *OutputWriter) (Result, error)
 
+// HandlerWithBroker adds the narrowly-scoped Runs outbound capability while
+// preserving Handler for guests and tests that have no broker support.
+type HandlerWithBroker func(context.Context, Request, *OutputWriter, *OutputWriter, OutboundBroker) (Result, error)
+
 // Serve handles one request on conn and then returns. The caller owns conn
 // closure. The guest side should terminate its init process after Serve
 // returns, ensuring the VM cannot become a reusable worker.
 func Serve(ctx context.Context, conn net.Conn, handler Handler) error {
+	if conn == nil || handler == nil {
+		return fmt.Errorf("%w: nil connection or handler", ErrInvalidRequest)
+	}
+	return ServeWithBroker(ctx, conn, func(ctx context.Context, req Request, stdout, stderr *OutputWriter, _ OutboundBroker) (Result, error) {
+		return handler(ctx, req, stdout, stderr)
+	})
+}
+
+// ServeWithBroker handles one request and gives the trusted guest handler a
+// sequential call/response channel. The broker contains no identity material;
+// only vmmd and the scheduler see the signed assertion used upstream.
+func ServeWithBroker(ctx context.Context, conn net.Conn, handler HandlerWithBroker) error {
 	if conn == nil || handler == nil {
 		return fmt.Errorf("%w: nil connection or handler", ErrInvalidRequest)
 	}
@@ -409,7 +677,8 @@ func Serve(ctx context.Context, conn net.Conn, handler Handler) error {
 	defer cancel()
 	stdout := &OutputWriter{conn: conn, max: req.MaxOutput, mu: &streamMu, used: &used, usedMu: &usedMu, ctx: outCtx, frameType: FrameStdout}
 	stderr := &OutputWriter{conn: conn, max: req.MaxOutput, mu: &streamMu, used: &used, usedMu: &usedMu, ctx: outCtx, frameType: FrameStderr}
-	result, handlerErr := handler(outCtx, req, stdout, stderr)
+	broker := &guestOutboundBroker{conn: conn, ctx: outCtx, writeMu: &streamMu}
+	result, handlerErr := handler(outCtx, req, stdout, stderr, broker)
 	if handlerErr != nil {
 		result = Result{Status: statusForHandlerError(outCtx, handlerErr), Result: json.RawMessage("null"), FailureCode: failureCodeForHandlerError(outCtx, handlerErr)}
 	}
@@ -432,6 +701,68 @@ func Serve(ctx context.Context, conn net.Conn, handler Handler) error {
 	err = writeFrame(ctx, conn, FrameResult, encoded)
 	streamMu.Unlock()
 	return err
+}
+
+type guestOutboundBroker struct {
+	conn    net.Conn
+	ctx     context.Context
+	writeMu *sync.Mutex
+	callMu  sync.Mutex
+	nextID  uint64
+	used    int
+}
+
+func (b *guestOutboundBroker) Call(ctx context.Context, request OutboundRequest) (OutboundResponse, error) {
+	var zero OutboundResponse
+	if b == nil || b.conn == nil || b.writeMu == nil {
+		return zero, ErrInvalidRequest
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
+	if err := b.ctx.Err(); err != nil {
+		return zero, err
+	}
+	b.callMu.Lock()
+	defer b.callMu.Unlock()
+	if b.nextID >= MaxOutboundCalls {
+		return zero, ErrOutboundLimitExceeded
+	}
+	b.nextID++
+	request.ID = b.nextID
+	if err := request.Validate(); err != nil {
+		return zero, err
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil || len(encoded)+frameHeaderBytes > MaxOutboundTotalBytes {
+		return zero, ErrOutboundLimitExceeded
+	}
+	if b.used+len(encoded)+frameHeaderBytes > MaxOutboundTotalBytes {
+		return zero, ErrOutboundLimitExceeded
+	}
+	b.used += len(encoded) + frameHeaderBytes
+	b.writeMu.Lock()
+	err = writeFrame(ctx, b.conn, FrameOutboundCall, encoded)
+	b.writeMu.Unlock()
+	if err != nil {
+		return zero, err
+	}
+	frameType, body, err := readFrame(ctx, b.conn)
+	if err != nil {
+		return zero, err
+	}
+	if frameType != FrameOutboundResponse {
+		return zero, fmt.Errorf("%w: expected outbound response frame", ErrUnexpectedFrame)
+	}
+	if len(body)+frameHeaderBytes+b.used > MaxOutboundTotalBytes {
+		return zero, ErrOutboundLimitExceeded
+	}
+	b.used += len(body) + frameHeaderBytes
+	var response OutboundResponse
+	if err := json.Unmarshal(body, &response); err != nil || response.Validate() != nil || response.ID != request.ID {
+		return zero, fmt.Errorf("%w: malformed outbound response", ErrUnexpectedFrame)
+	}
+	return response, nil
 }
 
 func statusForHandlerError(ctx context.Context, err error) api.ExecutionStatus {

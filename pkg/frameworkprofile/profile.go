@@ -25,10 +25,16 @@ const (
 	maxSourceFileBytes = 1 << 20
 )
 
-// Profile is the inferred run contract for an API source tree.
+// Profile persists source-derived runtime defaults and, for project images,
+// the command contract captured at deployment admission.
 type Profile struct {
-	Version      string `json:"version"`
-	Framework    string `json:"framework"`
+	Version   string `json:"version"`
+	Framework string `json:"framework"`
+	// Family is the runtime family the source markers identified
+	// (node|python|go|docker|unknown) — the vocabulary the deployment
+	// pipeline records as BuildPlan.Framework. Framework refines it
+	// (express, fastapi, gin, …). Not part of the profile wire shape.
+	Family       string `json:"-"`
 	FrameworkVer string `json:"framework_version,omitempty"`
 	// DockerfilePath records the explicit Dockerfile selected for this exact
 	// deployment. It is relative to the accepted source root and remains empty
@@ -47,6 +53,12 @@ type Profile struct {
 	// the effective contract used by the builder and runtime.
 	ConfigFile string    `json:"config_file,omitempty"`
 	Warnings   []Warning `json:"warnings,omitempty"`
+	// ImageCommand is the accepted Compose CMD contract. Its presence freezes
+	// image semantics even when Cmd is nil (inherit) or the app changes class.
+	ImageCommand     *ImageCommand     `json:"image_command,omitempty"`
+	ImageHealthcheck *ImageHealthcheck `json:"image_healthcheck,omitempty"`
+	// ImageHealthcheckRequired is imaged's effective immutable-manifest receipt.
+	ImageHealthcheckRequired bool `json:"image_healthcheck_required,omitempty"`
 }
 
 // Warning is actionable profile feedback. Source paths are relative to the
@@ -99,7 +111,7 @@ func Analyze(fsys fs.FS) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-	profile := Profile{Version: Version, Framework: string(framework), Port: defaultPort(framework), HealthPath: "/healthz"}
+	profile := Profile{Version: Version, Framework: string(framework), Family: string(framework), Port: defaultPort(framework), HealthPath: "/healthz"}
 
 	switch framework {
 	case markers.FrameworkNode:
@@ -112,6 +124,7 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		inferDocker(fsys, &profile)
 	default:
 		profile.Framework = string(markers.FrameworkUnknown)
+		profile.Family = string(markers.FrameworkUnknown)
 		profile.Warnings = append(profile.Warnings, Warning{Code: "framework_not_detected", Message: "No supported API framework marker was found; supply an explicit Dockerfile or command."})
 	}
 	if framework != markers.FrameworkUnknown {

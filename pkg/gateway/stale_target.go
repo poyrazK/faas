@@ -24,6 +24,13 @@ func withStaleTargetSignal(ctx context.Context, signal *staleTargetSignal) conte
 	return context.WithValue(ctx, staleTargetSignalKey{}, signal)
 }
 
+// staleTargetMarked reports whether the attempt carried by ctx proved its
+// target dead at the transport layer.
+func staleTargetMarked(ctx context.Context) bool {
+	signal, ok := ctx.Value(staleTargetSignalKey{}).(*staleTargetSignal)
+	return ok && signal != nil && signal.stale.Load()
+}
+
 func markStaleTarget(ctx context.Context) {
 	if signal, ok := ctx.Value(staleTargetSignalKey{}).(*staleTargetSignal); ok && signal != nil {
 		signal.stale.Store(true)

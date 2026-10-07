@@ -33,6 +33,8 @@ class OutboundIntegrationOffer:
     allowed_methods: list[str]
     allowed_path_prefixes: list[str]
     enabled: bool
+    runs_enabled: bool
+    """Whether account policy grants use by stateless Runs."""
     credential_source: OutboundIntegrationOfferCredentialSource
     """Who supplies the provider Authorization value."""
     credential_configured: bool
@@ -58,6 +60,8 @@ class OutboundIntegrationOffer:
 
         enabled = self.enabled
 
+        runs_enabled = self.runs_enabled
+
         credential_source: str = self.credential_source
 
         credential_configured = self.credential_configured
@@ -79,6 +83,7 @@ class OutboundIntegrationOffer:
                 "allowed_methods": allowed_methods,
                 "allowed_path_prefixes": allowed_path_prefixes,
                 "enabled": enabled,
+                "runs_enabled": runs_enabled,
                 "credential_source": credential_source,
                 "credential_configured": credential_configured,
                 "owner_kind": owner_kind,
@@ -106,6 +111,8 @@ class OutboundIntegrationOffer:
 
         enabled = d.pop("enabled")
 
+        runs_enabled = d.pop("runs_enabled")
+
         credential_source = check_outbound_integration_offer_credential_source(d.pop("credential_source"))
 
         credential_configured = d.pop("credential_configured")
@@ -128,6 +135,7 @@ class OutboundIntegrationOffer:
             allowed_methods=allowed_methods,
             allowed_path_prefixes=allowed_path_prefixes,
             enabled=enabled,
+            runs_enabled=runs_enabled,
             credential_source=credential_source,
             credential_configured=credential_configured,
             owner_kind=owner_kind,

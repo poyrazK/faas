@@ -27,6 +27,7 @@ GREGALECTL_BIN="${GREGALECTL_BIN:-/usr/local/bin/gregalectl}"
 FAAS_API="${FAAS_API:-https://api.gregale.dev}"
 FAAS_APPS_DOMAIN="${FAAS_APPS_DOMAIN:-gregale.dev}"
 DEPLOY_TIMEOUT_SECONDS="${DEPLOY_TIMEOUT_SECONDS:-1200}"
+INFRA_RETRY_DELAY_SECONDS="${INFRA_RETRY_DELAY_SECONDS:-30}"
 
 [[ -x "$GREGALE_BIN" ]] || { echo "candidate gregale binary is missing: $GREGALE_BIN" >&2; exit 1; }
 [[ -x "$GREGALECTL_BIN" ]] || { echo "candidate gregalectl binary is missing: $GREGALECTL_BIN" >&2; exit 1; }
@@ -67,11 +68,56 @@ export FAAS_API FAAS_APPS_DOMAIN
 short_sha="${RELEASE_SHA:0:8}"
 run_suffix="${RUN_ID: -8}"
 
-deploy_one() {
+deploy_attempt() {
 	local template="$1" slug="$2" output="$3"
 	FAAS_JSON=1 "$GREGALE_BIN" deploy \
 		--template "$template" --name "$slug" --wait --timeout "$DEPLOY_TIMEOUT_SECONDS" \
-		--yes --no-require-authn --reason production-release-acceptance >"$output"
+		--yes --no-require-authn --reason production-release-acceptance >"$output" 2>"$output.stderr"
+}
+
+# deploy_one retries an infrastructure-class failure exactly once. On rc.243
+# the first function build failed with failure_class=infra ("builderd: vm exit
+# 1") less than a minute after the last node activated, and the same deploy
+# passed 276 s later. A release defect still fails the gate on its first
+# attempt; the retried failure's evidence is printed before it is replaced.
+deploy_one() {
+	local template="$1" slug="$2" output="$3" rc=0
+	deploy_attempt "$template" "$slug" "$output" || rc=$?
+	if (( rc != 0 )) && jq -e '.failure_class == "infra"' "$output" >/dev/null 2>&1; then
+		echo "acceptance deployment ${slug} hit an infrastructure-class failure; retrying once in ${INFRA_RETRY_DELAY_SECONDS}s" >&2
+		report_failed_deploy "$slug" "$output" "$rc"
+		sleep "$INFRA_RETRY_DELAY_SECONDS"
+		rc=0
+		deploy_attempt "$template" "$slug" "$output" || rc=$?
+	fi
+	return "$rc"
+}
+
+# report_failed_deploy prints what a failed acceptance deployment left behind
+# before cleanup deletes the app and the work directory: the receipt fields
+# that explain the failure, then the tail of the CLI's stderr. Without it a
+# failed rollout logged only "one or more ... deployments failed".
+report_failed_deploy() {
+	local slug="$1" output="$2" rc="$3"
+	echo "acceptance deployment ${slug} failed (exit ${rc})" >&2
+	if jq -e . "$output" >/dev/null 2>&1; then
+		jq -c '{id, status, rollout_state, error, error_code, code, title, detail,
+			smoke: .hosting_receipt.smoke} | with_entries(select(.value != null))' "$output" >&2 || true
+	elif [[ -s "$output" ]]; then
+		head -c 4096 "$output" >&2
+		echo >&2
+	fi
+	if [[ -s "$output.stderr" ]]; then
+		echo "--- gregale deploy stderr (last 40 lines) ---" >&2
+		tail -n 40 "$output.stderr" >&2
+	fi
+	# The build log lives with the app, which cleanup deletes; keep its tail.
+	local deployment_id
+	deployment_id="$(jq -r '.id // empty' "$output" 2>/dev/null || true)"
+	if [[ -n "$deployment_id" ]]; then
+		echo "--- deployment ${deployment_id} log (last 40 lines) ---" >&2
+		"$GREGALE_BIN" logs "$slug" --deployment "$deployment_id" --limit 40 2>&1 | tail -n 40 >&2 || true
+	fi
 }
 
 # verify_receipt checks one deployment receipt and its public routes. The
@@ -224,6 +270,7 @@ verify_app_policy_controls() {
 # so this first wave proves both shapes but cannot guarantee node coverage.
 pids=()
 outputs=()
+wave_slugs=()
 for i in $(seq 1 "$ACTIVE_NODE_COUNT"); do
 	app_slug="ra-${short_sha}-${run_suffix}-a${i}"
 	function_slug="ra-${short_sha}-${run_suffix}-f${i}"
@@ -232,12 +279,19 @@ for i in $(seq 1 "$ACTIVE_NODE_COUNT"); do
 	function_output="$workdir/${function_slug}.json"
 	outputs+=("$app_output" "$function_output")
 	deploy_one hello-node "$app_slug" "$app_output" & pids+=("$!")
+	wave_slugs+=("$app_slug")
 	deploy_one function-node "$function_slug" "$function_output" & pids+=("$!")
+	wave_slugs+=("$function_slug")
 done
 
 failed=0
-for pid in "${pids[@]}"; do
-	wait "$pid" || failed=1
+for index in "${!pids[@]}"; do
+	rc=0
+	wait "${pids[$index]}" || rc=$?
+	if (( rc != 0 )); then
+		failed=1
+		report_failed_deploy "${wave_slugs[$index]}" "${outputs[$index]}" "$rc"
+	fi
 done
 (( failed == 0 )) || { echo "one or more production acceptance deployments failed" >&2; exit 1; }
 
@@ -277,7 +331,13 @@ for ((i=1; i<=max_extra; i++)); do
 	extra_slug="ra-${short_sha}-${run_suffix}-x${i}"
 	extra_output="$workdir/${extra_slug}.json"
 	slugs+=("$extra_slug")
-	deploy_one hello-node "$extra_slug" "$extra_output"
+	rc=0
+	deploy_one hello-node "$extra_slug" "$extra_output" || rc=$?
+	if (( rc != 0 )); then
+		report_failed_deploy "$extra_slug" "$extra_output" "$rc"
+		echo "a production acceptance coverage deployment failed" >&2
+		exit 1
+	fi
 	verify_receipt "$extra_output"
 	slug_csv="$(IFS=,; echo "${slugs[*]}")"
 	if "$GREGALECTL_BIN" release-acceptance verify-placement --slugs "$slug_csv" >"$placement_file"; then

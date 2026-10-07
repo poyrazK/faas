@@ -2,10 +2,14 @@ package s3gateway
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -153,4 +158,47 @@ func hasSDKIntegrityHeader(header http.Header) bool {
 		}
 	}
 	return false
+}
+
+func TestGatewayAWSGoSDKDefaultChecksumRead(t *testing.T) {
+	payload := "checksum-validated read"
+	sum := crc32.ChecksumIEEE([]byte(payload))
+	raw := make([]byte, 4)
+	binary.BigEndian.PutUint32(raw, sum)
+	checksum := base64.StdEncoding.EncodeToString(raw)
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(r *http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("X-Amz-Checksum-Crc32", checksum)
+		header.Set("Content-Length", strconv.Itoa(len(payload)))
+		return &http.Response{StatusCode: 200, Header: header, Body: io.NopCloser(strings.NewReader(payload)), Request: r}, nil
+	})
+	handler.now = func() time.Time { return time.Now().UTC() }
+	sawMode := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawMode = r.Header.Get("X-Amz-Checksum-Mode") == "ENABLED"
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	u, _ := url.Parse(server.URL)
+	handler.host = u.Host
+	client := awss3.NewFromConfig(aws.Config{Region: "us-east-1", Credentials: credentials.NewStaticCredentialsProvider(testAccess, testSecret, ""), HTTPClient: server.Client(), ResponseChecksumValidation: aws.ResponseChecksumValidationWhenSupported}, func(o *awss3.Options) { o.BaseEndpoint = aws.String(server.URL); o.UsePathStyle = true })
+	out, e := client.GetObject(context.Background(), &awss3.GetObjectInput{Bucket: aws.String("assets"), Key: aws.String("key")})
+	if e != nil {
+		t.Fatal(e)
+	}
+	body, e := io.ReadAll(out.Body)
+	_ = out.Body.Close()
+	if e != nil || string(body) != payload || aws.ToString(out.ChecksumCRC32) != checksum || !sawMode {
+		t.Fatalf("body=%q err=%v checksum=%v mode=%v", body, e, out.ChecksumCRC32, sawMode)
+	}
+}
+
+func TestGatewayMissingObjectDeleteIsIdempotent(t *testing.T) {
+	h, _, p := newGatewayTestHandler(t, state.ObjectBucketPermissionWrite, func(*http.Request) (*http.Response, error) { t.Fatal("unexpected upstream request"); return nil, nil })
+	p.deleteErrors = map[string]error{"missing": objectstorage.ErrNotFound}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, signedGatewayRequest(t, http.MethodDelete, "https://s3.gregale.dev/assets/missing", nil, "UNSIGNED-PAYLOAD"))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
 }

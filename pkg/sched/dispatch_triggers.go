@@ -70,7 +70,9 @@ package sched
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,6 +83,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -88,6 +91,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/triggerconfig"
@@ -103,20 +107,24 @@ const gatewayDispatchResponseMaxBytes = 1 << 20
 // comparisons in classifyDLQReason() + the path-through call
 // sites as duplicates.
 const (
-	triggerReasonPoisonRecord    = "poison_record"
-	triggerReasonMaxAttempts     = "max_attempts"
-	triggerReasonBrokerError     = "broker_error"
-	triggerReasonRateLimited     = "rate_limited"
-	triggerReasonPayloadTooLarge = "payload_too_large"
+	triggerReasonPoisonRecord               = "poison_record"
+	triggerReasonMaxAttempts                = "max_attempts"
+	triggerReasonBrokerError                = "broker_error"
+	triggerReasonRateLimited                = "rate_limited"
+	triggerReasonPayloadTooLarge            = "payload_too_large"
+	triggerReasonExclusiveOperationRejected = "exclusive_operation_rejected"
 )
 
 // triggerDispatchRecord is one broker-delivered record the
 // dispatch tick packages for the gateway batch envelope.
 type triggerDispatchRecord struct {
-	ItemIdentifier string            `json:"item_identifier"`
-	PayloadB64     string            `json:"payload_b64"`
-	Headers        map[string]string `json:"headers"`
-	Metadata       map[string]any    `json:"metadata"`
+	ItemIdentifier             string            `json:"item_identifier"`
+	InvocationID               string            `json:"invocation_id,omitempty"`
+	InvocationAttempt          int               `json:"invocation_attempt,omitempty"`
+	InvocationReplayGeneration int64             `json:"invocation_replay_generation,omitempty"`
+	PayloadB64                 string            `json:"payload_b64"`
+	Headers                    map[string]string `json:"headers"`
+	Metadata                   map[string]any    `json:"metadata"`
 }
 
 // triggerDispatchRequest is the JSON body posted to
@@ -257,24 +265,6 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 	if store == nil {
 		return
 	}
-	// Without an HTTP transport for the batch dispatch path
-	// (gatewayd-internal was not wired at boot — production
-	// schedd on a single-box deploy, or the schedd-only e2e
-	// harness like meterd_dunning_e2e_test / meterd_quota_e2e_test
-	// that don't run gatewayd-internal), skip the tick entirely.
-	// Otherwise we walk every trigger, poll records from each
-	// broker, claim the trigger_records rows, fail on postBatch
-	// (typed error "gateway http client not configured"), and
-	// bounce the records to retry — every 1s. That tight retry
-	// storm will also mask the real failure (the dial error from
-	// boot), so the warn emitted at boot by cmd/schedd/main.go is
-	// the single source of operator visibility. PR #910 audit #5
-	// required boot-fatal for the dial; the boot warn + tick
-	// short-circuit preserves that signal without crashing the
-	// daemon when the trigger primitive is unconfigured.
-	if l.gatewayHTTPClient == nil {
-		return
-	}
 	triggers, err := store.ListEnabledTriggers(ctx)
 	if err != nil {
 		l.log.Warn("sched trigger tick: list", "err", err)
@@ -324,12 +314,29 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 // apps get their per-plan WakeBurstPerApp + TriggerRecordsPerSecondPerApp
 // caps rather than collapsing to Free.
 func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store storeLike, planFor func(string) api.Plan) error {
+	var exclusiveBinding *state.ExclusiveTriggerBinding
+	if bindings, ok := store.(state.ExclusiveTriggerBindingStore); ok {
+		binding, bindingErr := bindings.ExclusiveTriggerBinding(ctx, t.AccountID.String(), "broker", t.ID.String())
+		if bindingErr == nil {
+			bindingAppID, bindingIDErr := uuid.Parse(binding.AppID)
+			triggerAppID, triggerIDErr := uuid.Parse(t.AppID.String())
+			if bindingIDErr != nil || triggerIDErr != nil || bindingAppID != triggerAppID {
+				return fmt.Errorf("exclusive broker binding app does not match trigger")
+			}
+			exclusiveBinding = &binding
+		} else if !errors.Is(bindingErr, state.ErrNotFound) {
+			return fmt.Errorf("load exclusive broker binding: %w", bindingErr)
+		}
+	}
 	// 1. Poller lookup. Cached on the Loop.
 	poller, _, err := l.pollerForTrigger(t)
 	if err != nil {
 		return err
 	}
 	if poller == nil {
+		return nil
+	}
+	if exclusiveBinding == nil && l.gatewayHTTPClient == nil {
 		return nil
 	}
 
@@ -371,6 +378,14 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	}
 	pollSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "records"))
 	pollSpan.End()
+
+	// Freeze the queue's attempt and replay generation for this dispatch.
+	// A later poll may recover the same invocation while this HTTP request is
+	// still unwinding; its callback must never look up that newer handle.
+	if queue, ok := poller.(*queuePoller); ok {
+		poller = queue.deliveryPoller(res.Records)
+		defer poller.(*queuePoller).forgetClaims(batchItemIDs(res.Records))
+	}
 
 	// 3. Batch close: size / 6MB.
 	batch := closeBatch(res.Records, int(t.BatchSizeMax), int(t.PayloadMaxBytes))
@@ -642,7 +657,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if planFor != nil {
 		appPlan = planFor(t.AppID.String())
 	}
-	if l.rateLimiter != nil && !l.rateLimiter.AllowWakeApp(t.AppID.String(), appPlan) {
+	if exclusiveBinding == nil && l.rateLimiter != nil && !l.rateLimiter.AllowWakeApp(t.AppID.String(), appPlan) {
 		l.handleRateLimitedBatch(ctx, poller, t, batch, store)
 		return nil
 	}
@@ -654,7 +669,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// account_id; an extra round-trip per trigger (one per tick)
 	// is acceptable because the deny path is the hot path we
 	// want to keep fast.
-	if l.rateLimiter != nil {
+	if exclusiveBinding == nil && l.rateLimiter != nil {
 		app, appErr := l.engine.Store().AppByID(ctx, t.AppID.String())
 		if appErr == nil {
 			if !l.rateLimiter.AllowWakeAccount(app.AccountID, appPlan) {
@@ -723,7 +738,14 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		attribute.String("gregale.trigger.kind", t.Kind),
 		attribute.Int("gregale.batch.size", len(claimedBatch)))
 	defer dispatchSpan.End()
-	respBody, postErr := l.postBatch(dispatchCtx, envelope)
+	var respBody []byte
+	var postErr error
+	if exclusiveBinding != nil {
+		response := l.admitExclusiveBrokerBatch(dispatchCtx, store, t, *exclusiveBinding, claimedBatch, claimed)
+		respBody, postErr = json.Marshal(response)
+	} else {
+		respBody, postErr = l.postBatch(dispatchCtx, envelope)
+	}
 	if postErr != nil {
 		dispatchSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "gateway_error"))
 		dispatchSpan.RecordError(postErr)
@@ -1103,9 +1125,11 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 	for _, r := range batch {
 		recs = append(recs, triggerDispatchRecord{
 			ItemIdentifier: r.ItemIdentifier,
-			PayloadB64:     base64.StdEncoding.EncodeToString(r.Payload),
-			Headers:        r.Headers,
-			Metadata:       r.Metadata,
+			InvocationID:   r.InvocationID, InvocationAttempt: r.InvocationAttempt,
+			InvocationReplayGeneration: r.InvocationReplayGeneration,
+			PayloadB64:                 base64.StdEncoding.EncodeToString(r.Payload),
+			Headers:                    r.Headers,
+			Metadata:                   r.Metadata,
 		})
 	}
 	return triggerDispatchRequest{
@@ -1115,6 +1139,94 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 		TriggerID:    t.ID.String(),
 		Records:      recs,
 	}
+}
+
+func (l *Loop) admitExclusiveBrokerBatch(ctx context.Context, store storeLike, trigger sqlc.Trigger, binding state.ExclusiveTriggerBinding, batch []SourceRecord, claimed []sqlc.TriggerRecord) triggerDispatchResponse {
+	response := triggerDispatchResponse{Results: make([]triggerDispatchResult, 0, len(batch))}
+	owners, ownerOK := store.(state.ExclusiveWorkStore)
+	linker, linkerOK := store.(state.ExclusiveTriggerRecordLinker)
+	claimedByItem := make(map[string]sqlc.TriggerRecord, len(claimed))
+	for _, record := range claimed {
+		claimedByItem[record.ItemIdentifier] = record
+	}
+	for _, record := range batch {
+		result := triggerDispatchResult{ItemIdentifier: record.ItemIdentifier}
+		if !ownerOK || !linkerOK {
+			result.Status = "retry"
+			result.Code = "exclusive_operation_admission_error"
+			result.Error = "managed operation admission is unavailable"
+			response.Results = append(response.Results, result)
+			continue
+		}
+		payload := record.Payload
+		if len(payload) == 0 {
+			payload = json.RawMessage("{}")
+		}
+		request, err := json.Marshal(api.InvokeRequest{
+			Payload: json.RawMessage(payload), Headers: json.RawMessage(marshalJSON(record.Headers)),
+			Method: http.MethodPost, Path: fmt.Sprintf("/_triggers/%s/%s", trigger.Kind, trigger.ID.String()),
+		})
+		if err != nil {
+			result.Status = "dead_letter"
+			result.Code = "payload_b64_invalid"
+			result.Error = "broker payload cannot be represented as a managed operation request"
+			response.Results = append(response.Results, result)
+			continue
+		}
+		stableIdentity := record.StableIdentifier
+		if stableIdentity == "" && trigger.Kind == "queue" {
+			// The in-platform queue's invocation ID is its durable identity.
+			stableIdentity = record.ItemIdentifier
+		}
+		if stableIdentity == "" {
+			result.Status = "dead_letter"
+			result.Code = "broker_message_identity_missing"
+			result.Error = "broker record has no stable message identity for safe redelivery"
+			response.Results = append(response.Results, result)
+			continue
+		}
+		identityDigest := sha256.Sum256([]byte(trigger.ID.String() + "\x00" + stableIdentity))
+		operation, joined, err := owners.AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{
+			AccountID: binding.AccountID, AppID: binding.AppID,
+			PlatformTenantID: binding.PlatformTenantID, PolicyName: binding.PolicyName,
+			Key: binding.Key, Request: request, EquivalenceKey: binding.EquivalenceKey,
+			IdempotencyKey: "broker:" + hex.EncodeToString(identityDigest[:]),
+		})
+		if l.ops != nil {
+			l.ops.ObserveExclusiveOperationAdmission("broker", exclusiveAdmissionOutcome(err, joined, operation.Replayed))
+		}
+		if err != nil {
+			if errors.Is(err, exclusivework.ErrBusy) || errors.Is(err, exclusivework.ErrIdentityConflict) ||
+				errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrPlatformTenantSuspended) {
+				result.Status = "dead_letter"
+				result.Code = triggerReasonExclusiveOperationRejected
+				result.Error = "the exclusive-operation policy rejected this broker record"
+			} else {
+				result.Status = "retry"
+				result.Code = "exclusive_operation_admission_error"
+				result.Error = "managed operation admission temporarily failed"
+				l.log.Warn("sched trigger tick: exclusive operation admission", "trigger_id", trigger.ID.String(), "record_id", record.ItemIdentifier, "err", err)
+			}
+			response.Results = append(response.Results, result)
+			continue
+		}
+		claimedRecord, ok := claimedByItem[record.ItemIdentifier]
+		var linkErr error
+		if ok {
+			linkErr = linker.LinkExclusiveTriggerRecordOperation(ctx, claimedRecord.ID.String(), claimedRecord.ClaimGeneration, operation.ID)
+		}
+		if !ok || linkErr != nil {
+			l.log.Warn("sched trigger tick: persist exclusive operation receipt", "trigger_id", trigger.ID.String(), "record_id", record.ItemIdentifier, "err", linkErr)
+			result.Status = "retry"
+			result.Code = "exclusive_operation_admission_error"
+			result.Error = "could not persist the managed operation receipt on its broker record"
+			response.Results = append(response.Results, result)
+			continue
+		}
+		result.Status = "succeeded"
+		response.Results = append(response.Results, result)
+	}
+	return response
 }
 
 // postBatch hits the gateway's batch endpoint via the existing
@@ -1923,6 +2035,8 @@ func numericMetadataInt64(v any) (int64, bool) {
 func classifyDLQReason(code, gatewayErr string) string {
 	if code != "" {
 		switch code {
+		case triggerReasonExclusiveOperationRejected:
+			return triggerReasonExclusiveOperationRejected
 		case "function_failed":
 			return triggerReasonMaxAttempts
 		case "function_state_timeout",
@@ -1931,7 +2045,8 @@ func classifyDLQReason(code, gatewayErr string) string {
 			"function_state_lost":
 			return triggerReasonMaxAttempts
 		case "payload_b64_invalid",
-			"response_malformed":
+			"response_malformed",
+			"broker_message_identity_missing":
 			return triggerReasonPoisonRecord
 		case "invoke_error":
 			return triggerReasonBrokerError
@@ -2103,6 +2218,9 @@ func ackSingle(ctx context.Context, t sqlc.Trigger, rec SourceRecord, l *Loop) e
 	}
 	if poller == nil {
 		return nil
+	}
+	if queue, ok := poller.(*queuePoller); ok {
+		poller = queue.deliveryPoller([]SourceRecord{rec})
 	}
 	return poller.Ack(ctx, t, []string{rec.ItemIdentifier})
 }

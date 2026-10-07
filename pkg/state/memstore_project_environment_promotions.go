@@ -28,6 +28,16 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(_ context.Context, promotio
 		promotion.CreatedAt = now
 	}
 	promotion.UpdatedAt = now
+	if promotion.SyncConfig {
+		captured, err := m.capturePromotionFeatureFlagsLocked(promotion)
+		if err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
+		if m.projectEnvironmentPromotionFlags == nil {
+			m.projectEnvironmentPromotionFlags = map[string]promotionFeatureFlags{}
+		}
+		m.projectEnvironmentPromotionFlags[promotion.ID] = captured
+	}
 	m.projectEnvironmentPromotions[promotion.ID] = promotion
 	items := make([]ProjectEnvironmentPromotionWorkload, len(workloads))
 	for i, workload := range workloads {

@@ -80,7 +80,8 @@ def sync_detailed(
 ) -> Response[ExecutionResponse | Problem]:
     """Cancel one disposable execution.
 
-     Cancellation is idempotent and destroys a claimed VM during teardown.
+     Cancellation is idempotent and destroys a claimed VM during teardown. Runs-only keys can cancel only
+    receipts created by their own key family. Requires `deploy:write`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):
@@ -114,7 +115,8 @@ def sync(
 ) -> ExecutionResponse | Problem | None:
     """Cancel one disposable execution.
 
-     Cancellation is idempotent and destroys a claimed VM during teardown.
+     Cancellation is idempotent and destroys a claimed VM during teardown. Runs-only keys can cancel only
+    receipts created by their own key family. Requires `deploy:write`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):
@@ -143,7 +145,8 @@ async def asyncio_detailed(
 ) -> Response[ExecutionResponse | Problem]:
     """Cancel one disposable execution.
 
-     Cancellation is idempotent and destroys a claimed VM during teardown.
+     Cancellation is idempotent and destroys a claimed VM during teardown. Runs-only keys can cancel only
+    receipts created by their own key family. Requires `deploy:write`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):
@@ -175,7 +178,8 @@ async def asyncio(
 ) -> ExecutionResponse | Problem | None:
     """Cancel one disposable execution.
 
-     Cancellation is idempotent and destroys a claimed VM during teardown.
+     Cancellation is idempotent and destroys a claimed VM during teardown. Runs-only keys can cancel only
+    receipts created by their own key family. Requires `deploy:write`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):

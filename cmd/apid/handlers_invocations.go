@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -205,9 +206,9 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, destinationProblem)
 		return
 	}
-	timeout := 30 * time.Second
+	timeout := time.Duration(api.SyncInvokeWaitSeconds) * time.Second
 	if acct.Plan == api.PlanFree {
-		timeout = 5 * time.Second
+		timeout = time.Duration(api.SyncInvokeWaitSecondsFree) * time.Second
 	}
 	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), req.Headers)
 	if err != nil {
@@ -259,7 +260,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		_ = payload // payload is the pg_notify JSON; we re-read by id below
 	}
 	if errors.Is(waitErr, db.ErrWaitTimeout) {
-		api.WriteProblem(w, api.ErrLongPollTimeout())
+		api.WriteProblem(w, s.syncInvokeTimeoutProblem(r.Context(), inv, timeout))
 		return
 	}
 	if waitErr != nil {
@@ -279,6 +280,26 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		Result: final.Result,
 		Error:  final.LastError,
 	})
+}
+
+// syncInvokeTimeoutProblem names the invocation that outlived the sync wait,
+// its current state and its last recorded error. production-us hunt #4: a
+// wake failing on a scan_critical base surfaced only as a generic 504 (and,
+// because the wait equalled the SDK timeout, usually as a client network
+// error). The invocation keeps running, so the detail says how to follow it.
+func (s *server) syncInvokeTimeoutProblem(ctx context.Context, inv state.Invocation, waited time.Duration) *api.Problem {
+	current := inv
+	if row, err := s.store.InvocationByID(ctx, inv.ID); err == nil {
+		current = row
+	}
+	p := api.ErrLongPollTimeout()
+	p.Detail = fmt.Sprintf("invocation %s is still %s after %s and keeps running; follow it with `gregale invocations get %s`",
+		current.ID, current.State, waited, current.ID)
+	if current.LastError != "" {
+		p.Detail = fmt.Sprintf("invocation %s is still %s after %s; last error: %s. Follow it with `gregale invocations get %s`",
+			current.ID, current.State, waited, current.LastError, current.ID)
+	}
+	return p
 }
 
 // invokeRequest is the shared body for sync + async invoke (uses
@@ -321,6 +342,9 @@ func (s *server) resolveInvocationDestinations(ctx context.Context, appID, accou
 // per-app MaxQueueDepth cap is re-checked here (the apid gate; the
 // drain re-checks at dispatch tick).
 func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -334,13 +358,14 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.QueueName, req.RetryPolicy, req.Work)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusCreated, api.QueueSendResponse{
+		Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID,
 		ID:      inv.ID,
 		TraceID: traceID,
 	})
@@ -350,6 +375,9 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 // reuses InvocationQueue so queue depth, retry, dead-letter, replay, wake, and
 // trace behavior stay identical to `queues/send`.
 func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -363,6 +391,29 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
+	envelope, payload, problem := normalizeAppMessage(acct, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, req.Work)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	setInvocationVersionResponseHeaders(w, inv)
+	writeJSON(w, http.StatusAccepted, api.SendAppMessageResponse{
+		Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID,
+		ID:        inv.ID,
+		EventID:   envelope.ID,
+		TargetApp: app.Slug,
+		Status:    string(inv.State),
+		StatusURL: "/v1/invocations/" + inv.ID,
+		TraceID:   traceID,
+	})
+}
+
+func normalizeAppMessage(acct state.Account, req api.SendAppMessageRequest) (events.Envelope, json.RawMessage, *api.Problem) {
 	if req.ID == "" {
 		req.ID = uuid.NewString()
 	}
@@ -382,34 +433,26 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 		Data:            req.Data,
 	}).Normalize(acct.ID, time.Now().UTC())
 	if err != nil {
-		api.WriteProblem(w, api.ErrValidation(err.Error()))
-		return
+		return events.Envelope{}, nil, api.ErrValidation(err.Error())
 	}
 	payload, err := json.Marshal(envelope)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("encode application message"))
-		return
+		return events.Envelope{}, nil, api.ErrCapacity("encode application message")
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.QueueName, req.RetryPolicy, req.Work)
-	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-	setInvocationVersionResponseHeaders(w, inv)
-	writeJSON(w, http.StatusAccepted, api.SendAppMessageResponse{
-		ID:        inv.ID,
-		EventID:   envelope.ID,
-		TargetApp: app.Slug,
-		Status:    string(inv.State),
-		StatusURL: "/v1/invocations/" + inv.ID,
-		TraceID:   traceID,
-	})
+	return envelope, payload, nil
 }
 
-func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, queueName string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
+func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, rawFlagContext, queueName, environment string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxQueueDepth == 0 {
 		return state.Invocation{}, "", api.ErrPlanFeatureGated("queues", acct.Plan)
+	}
+	selection, problem := s.resolveQueueSendSelection(ctx, acct, app, queueName, environment)
+	if problem != nil {
+		return state.Invocation{}, "", problem
+	}
+	if work != nil && selection.Binding != nil && selection.Binding.DeploymentScope != "" {
+		return state.Invocation{}, "", api.NewProblem(http.StatusConflict, "queue_environment_work_policy_unavailable", "Scoped work policy unavailable", "application-shared work policies cannot manage an environment-owned queue")
 	}
 	n, err := s.store.CountPendingInvocations(ctx, app.ID, state.InvocationQueue)
 	if err != nil {
@@ -427,34 +470,15 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	if problem := validateInvocationRetryPolicy(retryPolicy); problem != nil {
 		return state.Invocation{}, "", problem
 	}
-	resolvedQueueName, problem := s.resolveQueueSendName(ctx, acct, app, queueName)
+	flagContextHeader, platformTenantID, problem := canonicalQueueFlagContext(rawFlagContext)
 	if problem != nil {
 		return state.Invocation{}, "", problem
 	}
-	if work != nil && resolvedQueueName != "" {
+	if work != nil && selection.Name != "" {
 		// A named keyed row is owned by the queue trigger poller. Require an
 		// enabled push consumer so it cannot be accepted into an arbitrary name
 		// that the generic invocation drain deliberately excludes.
-		bound := false
-		bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID)
-		if err != nil {
-			return state.Invocation{}, "", api.ErrCapacity("look up queue binding")
-		}
-		for _, binding := range bindings {
-			bound = bound || (binding.Enabled && binding.Mode == "push" && binding.QueueName == resolvedQueueName)
-		}
-		if !bound {
-			triggers, err := s.store.ListTriggersForApp(ctx, app.ID)
-			if err != nil {
-				return state.Invocation{}, "", api.ErrCapacity("look up queue consumer")
-			}
-			for _, trigger := range triggers {
-				bound = bound || (trigger.Enabled && trigger.Kind == string(api.TriggerKindQueue) &&
-					trigger.Source.Valid && trigger.Source.String == string(state.InvocationQueue) &&
-					trigger.Slug == resolvedQueueName)
-			}
-		}
-		if !bound {
+		if !selection.CanPush {
 			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer")
 		}
 	}
@@ -462,15 +486,35 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	if err != nil {
 		return state.Invocation{}, "", api.ErrCapacity("encode queue trace context")
 	}
+	if flagContextHeader != "" {
+		var headers map[string]string
+		if err := json.Unmarshal(traceHeaders, &headers); err != nil {
+			return state.Invocation{}, "", api.ErrCapacity("encode queue flag context")
+		}
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[api.FlagContextHeader] = flagContextHeader
+		traceHeaders, err = json.Marshal(headers)
+		if err != nil {
+			return state.Invocation{}, "", api.ErrCapacity("encode queue flag context")
+		}
+	}
+	bindingID := ""
+	if selection.Binding != nil {
+		bindingID = selection.Binding.ID
+	}
 	inv, versionProblem := s.enqueueVersionedInvocation(ctx, requestHeaders, state.Invocation{
-		AppID:           app.ID,
-		AccountID:       acct.ID,
-		Source:          state.InvocationQueue,
-		QueueName:       resolvedQueueName,
-		Payload:         payload,
-		Headers:         traceHeaders,
-		DueAt:           time.Now().UTC(),
-		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
+		DeploymentScope: selection.Scope, QueueBindingID: bindingID,
+		AppID:            app.ID,
+		AccountID:        acct.ID,
+		PlatformTenantID: platformTenantID,
+		Source:           state.InvocationQueue,
+		QueueName:        selection.Name,
+		Payload:          payload,
+		Headers:          traceHeaders,
+		DueAt:            time.Now().UTC(),
+		RetryPolicyJSON:  effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
 	}, "enqueue application message", work)
 	if versionProblem != nil {
 		return state.Invocation{}, "", versionProblem
@@ -478,6 +522,24 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	var traceHeaderValues map[string]string
 	_ = json.Unmarshal(traceHeaders, &traceHeaderValues)
 	return inv, traceHeaderValues[api.TraceIDHeader], nil
+}
+
+// canonicalQueueFlagContext accepts only the bounded Flags wire contract.
+// The tenant id is persisted separately so invocation admission can enforce
+// account ownership and tenant suspension before every attempt.
+func canonicalQueueFlagContext(raw string) (header, tenantID string, problem *api.Problem) {
+	if raw == "" {
+		return "", "", nil
+	}
+	propagated, err := flags.DecodePropagationHeader(raw)
+	if err != nil {
+		return "", "", api.ErrValidation("flag_context must be a valid Gregale Flags propagation envelope")
+	}
+	canonical, err := flags.EncodePropagationHeader(propagated)
+	if err != nil {
+		return "", "", api.ErrValidation("flag_context must be a valid Gregale Flags propagation envelope")
+	}
+	return canonical, propagated.CustomerID, nil
 }
 
 func (s *server) replaceableQueueWorkCount(ctx context.Context, app state.App, work *api.InvokeWork) (int, *api.Problem) {
@@ -521,6 +583,9 @@ func (s *server) replaceableQueueWorkCount(ctx context.Context, app state.App, w
 // the drain completes a row, returns the row's id + payload. 204 on
 // timeout (no event during the wait window — the client retries).
 func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -530,68 +595,63 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
 		return
 	}
-	// ADR-093 / PR-D: 30s long-poll becomes child of inbound budget
-	// when one is attached. min(parentRemaining, 30s). No-budget
-	// path keeps the legacy 30s WaitFor ceiling.
-	waitCtx, cancel := budgetCtx(r.Context(), 30*time.Second)
-	defer cancel()
-	payload, err := s.notif.WaitFor(waitCtx, db.NotifyInvocationDone,
-		func(p string) bool {
-			// Canonical match on app_id — substring tests would let a
-			// 32-char id tail collide with an unrelated id (review
-			// finding on PR #191).
-			invocationID, got := extractNotifyFields(p)
-			if got != app.ID || invocationID == "" {
-				return false
-			}
-			inv, err := s.store.InvocationByID(waitCtx, invocationID)
-			return err == nil && inv.AccountID == acct.ID && inv.AppID == app.ID && inv.Source == state.InvocationQueue
-		},
-		30*time.Second)
+	inv, err := s.receiveProductionQueueInvocation(r, acct, app)
 	if errors.Is(err, db.ErrWaitTimeout) {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrInvocationNotFound(inv.ID))
 		return
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("queue receive"))
 		return
 	}
-	invID := extractInvocationID(payload)
-	inv, ferr := s.store.InvocationByID(r.Context(), invID)
-	if ferr != nil || inv.AccountID != acct.ID || inv.AppID != app.ID || inv.Source != state.InvocationQueue {
-		// Don't leak ownership — the predicate matches on app_id, but
-		// cross-account reads must surface 404, not 200 with a foreign
-		// row.
-		api.WriteProblem(w, api.ErrInvocationNotFound(invID))
-		return
+	var headers map[string]string
+	_ = json.Unmarshal(inv.Headers, &headers)
+	writeJSON(w, http.StatusOK, api.QueueReceiveResponse{ID: inv.ID, Payload: inv.Payload, Result: inv.Result, TraceID: headers[api.TraceIDHeader], Traceparent: headers["traceparent"]})
+}
+
+func (s *server) receiveProductionQueueInvocation(r *http.Request, acct state.Account, app state.App) (state.Invocation, error) {
+	// The notification is an untrusted hint. Recheck ownership after waiting.
+	waitCtx, cancel := budgetCtx(r.Context(), 30*time.Second)
+	defer cancel()
+	payload, err := s.notif.WaitFor(waitCtx, db.NotifyInvocationDone, func(p string) bool {
+		id, got := extractNotifyFields(p)
+		if got != app.ID || id == "" {
+			return false
+		}
+		inv, err := s.store.ProductionQueueInvocationByID(waitCtx, id)
+		return err == nil && inv.AccountID == acct.ID && inv.AppID == app.ID
+	}, 30*time.Second)
+	if err != nil {
+		return state.Invocation{}, err
 	}
-	var traceHeaders map[string]string
-	if len(inv.Headers) > 0 {
-		_ = json.Unmarshal(inv.Headers, &traceHeaders)
+	id := extractInvocationID(payload)
+	inv, err := s.store.ProductionQueueInvocationByID(r.Context(), id)
+	if err != nil || inv.AccountID != acct.ID || inv.AppID != app.ID {
+		return state.Invocation{ID: id}, state.ErrNotFound
 	}
-	writeJSON(w, http.StatusOK, api.QueueReceiveResponse{
-		ID:          inv.ID,
-		Payload:     inv.Payload,
-		Result:      inv.Result,
-		TraceID:     traceHeaders[api.TraceIDHeader],
-		Traceparent: traceHeaders["traceparent"],
-	})
+	return inv, nil
 }
 
 // queueAck is a no-op state change (the row is already completed when
 // invocation_done fires). The handler exists for symmetry with the
 // SDK surface and to give a customer a stable place to instrument
-// "received + handled" — we stamp completed_at+1ns so a subsequent
-// attempt can see the ack.
+// "received + handled". Acknowledgement is informational only.
 //
 // Idempotent: a re-ack is a 204.
 func (s *server) queueAck(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
 	id := r.PathValue("id")
-	inv, err := s.store.InvocationByID(r.Context(), id)
+	inv, err := s.store.ProductionQueueInvocationByID(r.Context(), id)
 	if err != nil || inv.AccountID != acct.ID || inv.AppID != app.ID || inv.Source != state.InvocationQueue {
 		api.WriteProblem(w, api.ErrInvocationNotFound(id))
 		return
@@ -605,84 +665,6 @@ func (s *server) queueAck(w http.ResponseWriter, r *http.Request, acct state.Acc
 type queueSendRequest = api.QueueSendRequest
 
 type delayedTaskRequest = api.DelayedTaskRequest
-
-// resolveQueueSendName keeps the legacy single per-app queue ergonomic while
-// making named queues deterministic once an app has more than one binding.
-// An explicit queue_name is always preferred; an omitted name adopts the
-// only active binding/trigger when there is one, otherwise it retains the
-// legacy empty queue name.
-func (s *server) resolveQueueSendName(ctx context.Context, acct state.Account, app state.App, requested string) (string, *api.Problem) {
-	if requested != "" {
-		if prob := validateQueueBindingName("queue_name", requested); prob != nil {
-			return "", prob
-		}
-		if bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID); err == nil {
-			active := 0
-			for _, binding := range bindings {
-				if !binding.Enabled {
-					continue
-				}
-				active++
-				if binding.QueueName == requested {
-					return requested, nil
-				}
-			}
-			if active > 0 {
-				return "", queueBindingProblem(fmt.Sprintf("queue_name %q is not an enabled binding for this app", requested))
-			}
-		}
-		if triggers, err := s.store.ListTriggersForApp(ctx, app.ID); err == nil {
-			active := 0
-			for _, trigger := range triggers {
-				if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Enabled || !trigger.Source.Valid || trigger.Source.String != string(state.InvocationQueue) {
-					continue
-				}
-				active++
-				if trigger.Slug == requested {
-					return requested, nil
-				}
-			}
-			if active > 0 {
-				return "", queueBindingProblem(fmt.Sprintf("queue_name %q is not an enabled queue consumer for this app", requested))
-			}
-		}
-		return requested, nil
-	}
-	bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID)
-	if err == nil {
-		active := make([]state.QueueBinding, 0, len(bindings))
-		for _, binding := range bindings {
-			if binding.Enabled {
-				active = append(active, binding)
-			}
-		}
-		if len(active) == 1 {
-			return active[0].QueueName, nil
-		}
-		if len(active) > 1 {
-			return "", queueBindingProblem("queue_name is required when an app has multiple enabled queue bindings")
-		}
-	}
-	// Compatibility for pre-binding queue triggers. The old API exposed one
-	// app-scoped queue and used the trigger slug only as a label.
-	triggers, err := s.store.ListTriggersForApp(ctx, app.ID)
-	if err == nil {
-		var queueName string
-		for _, trigger := range triggers {
-			if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Enabled || !trigger.Source.Valid || trigger.Source.String != string(state.InvocationQueue) {
-				continue
-			}
-			if queueName != "" {
-				return "", queueBindingProblem("queue_name is required when an app has multiple enabled queue consumers")
-			}
-			queueName = trigger.Slug
-		}
-		if queueName != "" {
-			return queueName, nil
-		}
-	}
-	return "", nil
-}
 
 // extractInvocationID parses {"invocation_id":"<uuid>"} out of a
 // pg_notify payload. Defensive against partial / extra-key payloads;
@@ -1105,65 +1087,11 @@ func (s *server) getInvocation(w http.ResponseWriter, r *http.Request, acct stat
 // invocation (no information leak about whether the app or the
 // invocation was the foreign object).
 func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	id := r.PathValue("id")
-	orig, err := s.store.InvocationByID(r.Context(), id)
-	if err != nil || orig.AccountID != acct.ID {
-		// Same 404 path as getInvocation — IDOR-safe. Don't
-		// surface 403 on a cross-tenant attempt; that would
-		// leak the existence of the row.
-		api.WriteProblem(w, api.ErrInvocationNotFound(id))
+	orig, app, problem := s.plainReplayTarget(r, acct)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	// Re-verify the original's app still belongs to the replayer's
-	// account. The original's AccountID may match the replayer's
-	// while the app has been transferred to a different account;
-	// without this check, the replay would land on a foreign app.
-	app, err := s.store.AppByID(r.Context(), orig.AppID)
-	if err != nil || app.AccountID != acct.ID {
-		// Same 404 surface as the invocation check — never 403.
-		api.WriteProblem(w, api.ErrInvocationNotFound(id))
-		return
-	}
-	if !app.AcceptsRequestInvocations() {
-		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
-		return
-	}
-	if orig.State != state.InvocationFailed && orig.State != state.InvocationDeadLetter {
-		api.WriteProblem(w, api.ErrInvocationNotReplayable(string(orig.State)))
-		return
-	}
-	// Re-issue the original against the same app; DueAt is "now"
-	// (the customer is replaying interactively, not on a schedule).
-	// Attempts is reset to 0 — the drain increments it on the new
-	// lifecycle. LeaseExpiresAt / ReceivedAt / CompletedAt / Result /
-	// LastError / AckURL are nil on a fresh INSERT; the drain
-	// populates them as the row flows through dispatch.
-	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), orig.Headers)
-	if err != nil {
-		api.WriteProblem(w, api.ErrValidation("original invocation headers must be a JSON object of string values"))
-		return
-	}
-	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), nil, state.Invocation{
-		AppID:                orig.AppID,
-		AccountID:            acct.ID,
-		PlatformTenantID:     orig.PlatformTenantID,
-		Source:               state.InvocationReplay,
-		Method:               orig.Method,
-		Path:                 orig.Path,
-		Payload:              orig.Payload,
-		Headers:              invocationHeaders,
-		DueAt:                time.Now().UTC(),
-		RetryPolicyJSON:      effectiveInvocationRetryPolicy(app, nil, api.MustLimitsFor(acct.Plan).MaxQueueAttempts),
-		DeadlineAt:           deadlineForRequest(nil, acct),
-		ResultRetentionUntil: retentionForRequest(nil, acct),
-	}, "enqueue replay invocation")
-	if versionProblem != nil {
-		api.WriteProblem(w, versionProblem)
-		return
-	}
-	setInvocationVersionResponseHeaders(w, inv)
-	writeJSON(w, http.StatusAccepted, api.AsyncInvokeResponse{
-		ID:        inv.ID,
-		StatusURL: "/v1/invocations/" + inv.ID,
-	})
+	s.servePlainReplay(w, r, acct, orig,
+		effectiveInvocationRetryPolicy(app, nil, api.MustLimitsFor(acct.Plan).MaxQueueAttempts), "/v1/invocations/")
 }

@@ -77,6 +77,8 @@ def sync_detailed(
     Args:
         slug (str):
         body (CreateObjectUploadRouteRequest): Upload policy declaration for POST /uploads/{name}.
+            Optional owned encryption is captured per receipt; encrypted routes require a tracked
+            capable provider and use the configured single PUT limit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -115,6 +117,8 @@ def sync(
     Args:
         slug (str):
         body (CreateObjectUploadRouteRequest): Upload policy declaration for POST /uploads/{name}.
+            Optional owned encryption is captured per receipt; encrypted routes require a tracked
+            capable provider and use the configured single PUT limit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -148,6 +152,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         body (CreateObjectUploadRouteRequest): Upload policy declaration for POST /uploads/{name}.
+            Optional owned encryption is captured per receipt; encrypted routes require a tracked
+            capable provider and use the configured single PUT limit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,6 +190,8 @@ async def asyncio(
     Args:
         slug (str):
         body (CreateObjectUploadRouteRequest): Upload policy declaration for POST /uploads/{name}.
+            Optional owned encryption is captured per receipt; encrypted routes require a tracked
+            capable provider and use the configured single PUT limit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // TestDeploymentLogsSSE_Pagination confirms the initial page of a
@@ -2029,6 +2031,94 @@ func TestRollbackApp_ExplicitTarget_ZeroTrafficLiveRevision(t *testing.T) {
 	}
 }
 
+// TestRollbackApp_DefaultNamesZeroTrafficCandidates reproduces production-us:
+// after a traffic split and `traffic promote`, the former production
+// deployment stays live at 0% instead of superseded, and a plain rollback
+// answered "deploy at least twice". It must name the 0% deployments and the
+// explicit command, without guessing which of them used to serve.
+// TestRollbackApp_DefaultReturnsToReleaseDemotedByPromote — after `traffic
+// promote` the former release stays live at 0%. Default rollback answered
+// "deploy at least twice" on production-us. A live 0% release that served
+// before is now the default target.
+func TestRollbackApp_DefaultReturnsToReleaseDemotedByPromote(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	former := mustSeedDeployment(t, e, "rb-promoted")
+	if err := e.store.MarkDeploymentLive(ctx, former.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(ctx, "rb-promoted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serving, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("e", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, serving.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateDeploymentTraffic(ctx, serving.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+	formerNow, err := e.store.DeploymentByID(ctx, former.ID)
+	if err != nil || formerNow.Status != state.DeployLive || formerNow.TrafficPercent != 0 {
+		t.Fatalf("setup: former deployment = %+v, err=%v; want live at 0%%", formerNow, err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/rb-promoted/rollback", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("rollback after promote = %d %s, want 202", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), former.ID) {
+		t.Fatalf("rollback after promote did not target the demoted release %s:\n%s", former.ID, rec.Body)
+	}
+}
+
+// TestRollbackApp_DefaultNamesZeroTrafficCandidates — a dark deploy (live at
+// 0%, never served) is not a default target. With no other release, the 409
+// names it with the explicit --to command.
+func TestRollbackApp_DefaultNamesZeroTrafficCandidates(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	serving := mustSeedDeployment(t, e, "rb-dark")
+	if err := e.store.MarkDeploymentLive(ctx, serving.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(ctx, "rb-dark")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dark, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("e", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, dark.ID); err != nil {
+		t.Fatal(err)
+	}
+	darkNow, err := e.store.DeploymentByID(ctx, dark.ID)
+	if err != nil || darkNow.Status != state.DeployLive || darkNow.TrafficPercent != 0 {
+		t.Fatalf("setup: dark deployment = %+v, err=%v; want live at 0%%", darkNow, err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/rb-dark/rollback", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeNoRollbackTarget)
+	want := fmt.Sprintf("v%d", darkNow.Revision)
+	if darkNow.Revision <= 0 {
+		want = dark.ID
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, want) || !strings.Contains(body, "gregale rollback rb-dark --to "+want) {
+		t.Fatalf("rollback problem must name %s and the explicit command:\n%s", want, body)
+	}
+}
+
 func TestRollbackApp_ZeroTrafficLiveNotificationFailureRestoresTarget(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	ctx := context.Background()
@@ -2356,6 +2446,41 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	}
 	if len(deliveries) != 0 {
 		t.Fatalf("wake deliveries = %+v, want none before scheduler completion", deliveries)
+	}
+}
+
+// schedd treats a wake for an app with a routable running instance as
+// satisfied and stamps no new instance, so a queued wake for a warm app never
+// completed and `gregale wake --wait` timed out on production. The API now
+// reports the running instance and its wake id instead of queueing.
+func TestWakeApp_AlreadyRunningReportsInstanceWithoutQueueing(t *testing.T) {
+	e, notif := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "wake-warm")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	running, err := e.store.CreateInstance(t.Context(), dep.AppID, dep.ID, string(state.StateRunning), 256, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/apps/wake-warm/wake", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var response api.AppWakeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.AlreadyRunning || response.InstanceID != running.ID || response.WakeID != running.WakeID || response.WakeID == "" {
+		t.Fatalf("response = %+v, want already_running for instance %s with its wake id %s", response, running.ID, running.WakeID)
+	}
+	assertLifecycleAuditCount(t, e, "app.wake_requested", 0)
+	notif.mu.Lock()
+	defer notif.mu.Unlock()
+	for _, emitted := range notif.emitted {
+		if emitted.Channel == db.NotifyAppWake {
+			t.Fatalf("warm app queued a wake: %+v", emitted)
+		}
 	}
 }
 
@@ -2904,6 +3029,50 @@ func TestCreateCron_HappyPath(t *testing.T) {
 	}
 }
 
+// Production: `gregale crons list --app e2e-probe` printed the account's
+// four crons from four different apps because listCrons ignored ?slug=.
+func TestListCrons_ScopedToApp(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	first := mustSeedApp(t, e, "cron-first")
+	second := mustSeedApp(t, e, "cron-second")
+	for _, c := range []api.CreateCronRequest{
+		{AppID: first, Schedule: "*/5 * * * *", Path: "/first"},
+		{AppID: second, Schedule: "*/5 * * * *", Path: "/second"},
+	} {
+		if rec := e.do(t, "POST", "/v1/crons", c, nil); rec.Code != http.StatusCreated {
+			t.Fatalf("create cron: %d %s", rec.Code, rec.Body)
+		}
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"", []string{"/first", "/second"}},
+		{"?slug=cron-second", []string{"/second"}},
+		{"?slug=" + first, []string{"/first"}},
+	} {
+		rec := e.do(t, "GET", "/v1/crons"+tc.query, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /v1/crons%s: %d %s", tc.query, rec.Code, rec.Body)
+		}
+		var out []api.CronResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, c := range out {
+			got = append(got, c.Path)
+		}
+		sort.Strings(got)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("GET /v1/crons%s paths = %v, want %v", tc.query, got, tc.want)
+		}
+	}
+	if rec := e.do(t, "GET", "/v1/crons?slug=not-mine", nil, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown app: status %d, want 404", rec.Code)
+	}
+}
+
 func TestCreateCron_OptionsRoundTrip(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "cron-options")
@@ -2920,6 +3089,63 @@ func TestCreateCron_OptionsRoundTrip(t *testing.T) {
 	}
 	if out.Timezone != "America/New_York" || !out.SkipIfRunning {
 		t.Fatalf("options = timezone %q skip=%t", out.Timezone, out.SkipIfRunning)
+	}
+}
+
+func TestCreateAndUpdateHTTPCronSchedulePolicy(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-schedule-policy")
+	policy := &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "skip", StartDeadlineSeconds: 120, MissedRuns: "coalesce_latest"}
+	initialFailureRules := &workpolicy.FailureRules{
+		Version: workpolicy.Version, Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{"temporary_error"}, Action: "retry"}},
+		UnmatchedFailure: "fail_partition", UncertainOutcome: "hold",
+	}
+	rec := e.do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{
+		AppID: appID, Schedule: "*/5 * * * *", Path: "/sync", SchedulePolicy: policy, FailureRules: initialFailureRules,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create HTTP Cron policy = %d: %s", rec.Code, rec.Body)
+	}
+	var created api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created Cron: %v", err)
+	}
+	if created.SchedulePolicy == nil || created.SchedulePolicy.Overlap != "skip" || created.SchedulePolicy.StartDeadlineSeconds != 120 {
+		t.Fatalf("created HTTP Cron policy = %+v", created.SchedulePolicy)
+	}
+	if created.FailureRules == nil || created.FailureRules.Rules[0].OutcomeCodes[0] != "temporary_error" {
+		t.Fatalf("created HTTP Cron failure rules = %+v", created.FailureRules)
+	}
+	stored, err := e.store.CronByID(context.Background(), created.ID)
+	if err != nil || stored.SchedulePolicy == nil || stored.SchedulePolicy.MissedRuns != "coalesce_latest" || stored.FailureRules == nil || stored.FailureRules.Rules[0].OutcomeCodes[0] != "temporary_error" {
+		t.Fatalf("stored HTTP Cron policies = schedule %+v failure %+v, %v", stored.SchedulePolicy, stored.FailureRules, err)
+	}
+	updatedPolicy := &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "replace", MissedRuns: "skip"}
+	update := e.do(t, http.MethodPatch, "/v1/crons/"+created.ID, api.UpdateCronRequest{SchedulePolicy: updatedPolicy}, nil)
+	if update.Code != http.StatusOK {
+		t.Fatalf("update HTTP Cron policy = %d: %s", update.Code, update.Body)
+	}
+	var updated api.CronResponse
+	if err := json.Unmarshal(update.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode updated Cron: %v", err)
+	}
+	if updated.SchedulePolicy == nil || updated.SchedulePolicy.Overlap != "replace" {
+		t.Fatalf("updated HTTP Cron policy = %+v", updated.SchedulePolicy)
+	}
+	failureRules := &workpolicy.FailureRules{
+		Version: workpolicy.Version, Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
+		UnmatchedFailure: "retry", UncertainOutcome: "hold",
+	}
+	updateFailureRules := e.do(t, http.MethodPatch, "/v1/crons/"+created.ID, api.UpdateCronRequest{FailureRules: failureRules}, nil)
+	if updateFailureRules.Code != http.StatusOK {
+		t.Fatalf("update HTTP Cron failure rules = %d: %s", updateFailureRules.Code, updateFailureRules.Body)
+	}
+	var updatedRules api.CronResponse
+	if err := json.Unmarshal(updateFailureRules.Body.Bytes(), &updatedRules); err != nil || updatedRules.FailureRules == nil || updatedRules.FailureRules.Rules[0].OutcomeCodes[0] != "invalid_record" {
+		t.Fatalf("updated HTTP Cron failure rules = %+v, err=%v", updatedRules.FailureRules, err)
+	}
+	if updatedRules.SchedulePolicy == nil || updatedRules.SchedulePolicy.Overlap != "replace" {
+		t.Fatalf("updated HTTP Cron schedule policy = %+v", updatedRules.SchedulePolicy)
 	}
 }
 
@@ -2950,13 +3176,16 @@ func TestCreateCron_CommandRunRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCreateCron_RetryOptionsRequireCommandCron(t *testing.T) {
+func TestCreateCron_HTTPRetryOptionsRequireCommandCron(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "cron-http-retry")
 	rec := e.do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{
 		AppID: appID, Schedule: "0 2 * * *", Path: "/heartbeat", RetryMax: 1,
 	}, nil)
 	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	if strings.Contains(rec.Body.String(), "retry options require a deployment command cron") == false {
+		t.Fatalf("HTTP cron retry error = %s", rec.Body)
+	}
 }
 
 func TestUpdateCommandCronRetryPolicyRoundTrip(t *testing.T) {

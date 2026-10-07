@@ -3,8 +3,16 @@
     daemon_reload: true
   failed_when: false
 
+# Every host alert depends on node_exporter, so a failed restart on a real
+# host must fail the run. Only the systemd-less image build skips it.
+- name: detect systemd for node_exporter restart
+  ansible.builtin.stat:
+    path: /run/systemd/system
+  register: node_exporter_handlers_systemd
+  listen: restart node_exporter
+
 - name: restart node_exporter
   ansible.builtin.service:
     name: node_exporter
     state: restarted
-  failed_when: false
+  when: node_exporter_handlers_systemd.stat.exists | default(false) | bool

@@ -163,6 +163,9 @@ func TestComputeWorkflowAddModifyRemoveAndOmission(t *testing.T) {
 		{"remove", []api.WorkflowSpec{one}, []api.WorkflowSpec{}, ChangeRemove},
 		{"omitted", []api.WorkflowSpec{one}, nil, ""},
 		{"equal", []api.WorkflowSpec{one}, []api.WorkflowSpec{one}, ""},
+		// production-us hunt #4: a first function deploy (no baseline
+		// workflows) with an empty pending list printed "[] → []".
+		{"none before, empty pending", nil, []api.WorkflowSpec{}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

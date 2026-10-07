@@ -1,0 +1,3 @@
+ok  	github.com/onebox-faas/faas/pkg/sched	33.238s
+ok  	github.com/onebox-faas/faas/pkg/scheddgrpc	9.268s
+ok  	github.com/onebox-faas/faas/pkg/state	2.323s

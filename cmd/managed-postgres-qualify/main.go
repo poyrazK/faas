@@ -238,7 +238,7 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		_, _ = fmt.Fprintln(errorOutput, "configured backend cannot produce a qualification spec")
 		return 2
 	}
-	timeout := 10 * time.Minute
+	timeout := 20 * time.Minute
 	if value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")); value != "" {
 		timeout, err = time.ParseDuration(value)
 		if err != nil || timeout <= 0 {
@@ -251,12 +251,18 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		_, _ = fmt.Fprintln(errorOutput, managedpostgres.QualificationApprovalTTLEnv+" must be positive and no longer than 90 days")
 		return 2
 	}
+	continueAfterUsageFailure, err := parseContinueAfterUsageFailure(getenv)
+	if err != nil {
+		_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_CONTINUE_AFTER_USAGE_FAILURE must be a boolean")
+		return 2
+	}
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), backend.Provider, managedpostgres.QualificationOptions{
-		ProviderName: backend.Driver,
-		ResourceID:   resourceID,
-		Spec:         spec,
-		Timeout:      timeout,
-		Mutating:     true,
+		ProviderName:              backend.Driver,
+		ResourceID:                resourceID,
+		Spec:                      spec,
+		Timeout:                   timeout,
+		Mutating:                  true,
+		ContinueAfterUsageFailure: continueAfterUsageFailure,
 	})
 	result := qualificationOutput{BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: spec, Report: report}
 	if qualificationErr == nil && isLifecycleQualificationEnabled(getenv) {
@@ -342,6 +348,14 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 	return 0
 }
 
+func parseContinueAfterUsageFailure(getenv func(string) string) (bool, error) {
+	value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_CONTINUE_AFTER_USAGE_FAILURE"))
+	if value == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(value)
+}
+
 const (
 	qualificationApprovalTTLDefault = 24 * time.Hour
 	qualificationApprovalTTLMax     = 90 * 24 * time.Hour
@@ -373,6 +387,7 @@ func parseQualificationApprovalTTL(getenv func(string) string) (time.Duration, e
 func approvalEnvironment(approval managedpostgres.QualificationApproval) map[string]string {
 	values := map[string]string{
 		managedpostgres.QualificationEnv:            "true",
+		managedpostgres.QualificationVersionEnv:     strconv.Itoa(approval.Version),
 		managedpostgres.QualificationBackendEnv:     approval.BackendID,
 		managedpostgres.QualificationFingerprintEnv: approval.BackendFingerprint,
 		managedpostgres.QualificationUntilEnv:       approval.ExpiresAt.UTC().Format(time.RFC3339),

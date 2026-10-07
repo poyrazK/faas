@@ -29,10 +29,13 @@ func previousMemServiceRolloutRow(target Deployment, rows []memServiceRolloutLiv
 	var previous memServiceRolloutLiveRow
 	found := false
 	for _, row := range rows {
+		if pinned := target.ServiceRolloutHandoff.PredecessorDeploymentID; pinned != "" && row.id != pinned {
+			continue
+		}
 		if row.id == target.ID || row.service {
 			continue
 		}
-		if !row.createdAt.Before(target.CreatedAt) && !target.CreatedAt.IsZero() {
+		if target.ServiceRolloutHandoff.PredecessorDeploymentID == "" && !row.createdAt.Before(target.CreatedAt) && !target.CreatedAt.IsZero() {
 			continue
 		}
 		if !found || row.createdAt.After(previous.createdAt) ||
@@ -71,7 +74,7 @@ func (m *MemStore) serviceRolloutTargetLocked(id string) (Deployment, []memServi
 // FinalizeServiceRollout is the in-memory mirror of PgStore's atomic
 // readiness-gated promotion. m.mu covers both the sibling cleanup and the
 // target promotion, so a concurrent reconcile cannot observe a split state.
-func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deployment, error) {
+func (m *MemStore) FinalizeServiceRollout(ctx context.Context, id string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	target, rows, err := m.serviceRolloutTargetLocked(id)
@@ -81,6 +84,11 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 	before := target
 	if target.ServiceRolloutHandoff.ActiveAbort() {
 		return target, ErrServiceRolloutInvalid
+	}
+	previous, _ := previousMemServiceRolloutRow(target, rows)
+	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionPromote, target.ID, previous.id, "")
+	if err != nil {
+		return target, err
 	}
 	for _, row := range rows {
 		if row.id == id {
@@ -92,14 +100,14 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 			if _, exists := m.revisionPins[row.id]; !exists {
 				m.revisionPins[row.id] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
 			}
-			other.Status = DeployLive
-		} else if m.deploymentInUsableReleaseLocked(row.id) {
+		}
+		if m.deploymentRevisionRetainedLocked(row.id) || m.deploymentInUsableReleaseLocked(row.id) {
 			other.Status = DeployLive
 		} else {
 			other.Status = DeploySuperseded
 		}
 		other.TrafficPercent = 0
-		m.deployments[row.id] = other
+		m.putDeploymentLocked(row.id, other)
 	}
 	now := time.Now().UTC()
 	target.TrafficPercent = 100
@@ -114,7 +122,7 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 	handoff.UpdatedAt = &now
 	handoff.CompletedAt = &now
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[id] = target
+	m.putDeploymentLocked(id, target)
 	m.enqueueRolloutOutcomeWebhooksLocked(before, target)
 	return target, nil
 }
@@ -122,15 +130,27 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 // BeginServiceRolloutCutover mirrors the PostgreSQL two-phase handoff. It
 // changes only traffic weights; every generation remains live until the
 // scheduler completes the gateway acknowledgement and request-drain barriers.
-func (m *MemStore) BeginServiceRolloutCutover(_ context.Context, id string) (Deployment, error) {
+func (m *MemStore) BeginServiceRolloutCutover(ctx context.Context, id string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.beginServiceRolloutCutoverLocked(ctx, id)
+}
+func (m *MemStore) beginServiceRolloutCutoverLocked(ctx context.Context, id string) (Deployment, error) {
 	target, rows, err := m.serviceRolloutTargetLocked(id)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if target.ServiceRolloutHandoff.ActiveAbort() {
 		return target, ErrServiceRolloutInvalid
+	}
+	previous, _ := previousMemServiceRolloutRow(target, rows)
+	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionPromote, target.ID, previous.id, "")
+	if err != nil {
+		return target, err
+	}
+	target, err = m.completeServiceBindingLocked(ctx, target)
+	if err != nil {
+		return target, err
 	}
 	for _, row := range rows {
 		other := m.deployments[row.id]
@@ -145,9 +165,8 @@ func (m *MemStore) BeginServiceRolloutCutover(_ context.Context, id string) (Dep
 			}
 			other.TrafficPercent = 0
 		}
-		m.deployments[row.id] = other
+		m.putDeploymentLocked(row.id, other)
 	}
-	previous, _ := previousMemServiceRolloutRow(target, rows)
 	now := time.Now().UTC()
 	handoff := target.ServiceRolloutHandoff
 	if handoff.StartedAt == nil || handoff.Action != ServiceRolloutActionPromote {
@@ -160,13 +179,13 @@ func (m *MemStore) BeginServiceRolloutCutover(_ context.Context, id string) (Dep
 	handoff.LastError = ""
 	handoff.UpdatedAt = &now
 	handoff.CompletedAt = nil
-	target = m.deployments[target.ID]
+	target.TrafficPercent = 100
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[target.ID] = target
+	m.putDeploymentLocked(target.ID, target)
 	return m.deployments[target.ID], nil
 }
 
-func (m *MemStore) BeginServiceRolloutAbort(_ context.Context, id string) (Deployment, error) {
+func (m *MemStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	target, rows, err := m.serviceRolloutTargetLocked(id)
@@ -180,6 +199,14 @@ func (m *MemStore) BeginServiceRolloutAbort(_ context.Context, id string) (Deplo
 	if !found || (target.ServiceRolloutHandoff.PredecessorDeploymentID != "" && target.ServiceRolloutHandoff.PredecessorDeploymentID != previous.id) {
 		return target, ErrServiceRolloutInvalid
 	}
+	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionAbort, previous.id, previous.id, target.ServiceRolloutHandoff.Reason)
+	if err != nil {
+		return target, err
+	}
+	target, err = m.completeServiceBindingLocked(ctx, target)
+	if err != nil {
+		return target, err
+	}
 	for _, row := range rows {
 		other := m.deployments[row.id]
 		if row.id == previous.id {
@@ -187,7 +214,7 @@ func (m *MemStore) BeginServiceRolloutAbort(_ context.Context, id string) (Deplo
 		} else {
 			other.TrafficPercent = 0
 		}
-		m.deployments[row.id] = other
+		m.putDeploymentLocked(row.id, other)
 	}
 	now := time.Now().UTC()
 	handoff := target.ServiceRolloutHandoff
@@ -197,9 +224,9 @@ func (m *MemStore) BeginServiceRolloutAbort(_ context.Context, id string) (Deplo
 	handoff.LastError = ""
 	handoff.UpdatedAt = &now
 	handoff.CompletedAt = nil
-	target = m.deployments[target.ID]
+	target.TrafficPercent = 0
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[target.ID] = target
+	m.putDeploymentLocked(target.ID, target)
 	return target, nil
 }
 
@@ -219,15 +246,16 @@ func (m *MemStore) UpdateServiceRolloutHandoff(_ context.Context, id string, han
 	if !serviceRolloutHandoffCanReplace(target.ServiceRolloutHandoff, handoff) {
 		return target, ErrServiceRolloutInvalid
 	}
+	handoff.BindingsCheck = target.ServiceRolloutHandoff.BindingsCheck
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[id] = target
+	m.putDeploymentLocked(id, target)
 	return target, nil
 }
 
 // AbortServiceRollout is the in-memory mirror of PgStore's atomic rollback.
 // It restores the newest older stable live row and closes every other live
 // sibling so a failed rollout cannot leave an ambiguous serving set.
-func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (Deployment, error) {
+func (m *MemStore) AbortServiceRollout(ctx context.Context, id, reason string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	target, rows, err := m.serviceRolloutTargetLocked(id)
@@ -236,6 +264,10 @@ func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (De
 	}
 	before := target
 	previous, _ := previousMemServiceRolloutRow(target, rows)
+	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionAbort, previous.id, previous.id, reason)
+	if err != nil {
+		return target, err
+	}
 	delete(m.revisionPins, previous.id)
 	previousID := previous.id
 	for _, row := range rows {
@@ -246,17 +278,20 @@ func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (De
 		if row.id == previousID {
 			other.Status = DeployLive
 			other.TrafficPercent = 100
-		} else if m.deploymentInUsableReleaseLocked(row.id) {
+		} else if m.deploymentRevisionRetainedLocked(row.id) || m.deploymentInUsableReleaseLocked(row.id) {
 			other.Status = DeployLive
 			other.TrafficPercent = 0
 		} else {
 			other.Status = DeploySuperseded
 			other.TrafficPercent = 0
 		}
-		m.deployments[row.id] = other
+		m.putDeploymentLocked(row.id, other)
 	}
 	now := time.Now().UTC()
 	target.Status = DeploySuperseded
+	if m.operationRetainsDeploymentLocked(target.ID) {
+		target.Status = DeployLive
+	}
 	target.TrafficPercent = 0
 	target.RolloutState = "aborted"
 	target.RolloutCompletedAt = nil
@@ -270,7 +305,7 @@ func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (De
 	handoff.UpdatedAt = &now
 	handoff.CompletedAt = &now
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[id] = target
+	m.putDeploymentLocked(id, target)
 	m.enqueueRolloutOutcomeWebhooksLocked(before, target)
 	return target, nil
 }

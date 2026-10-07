@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"hash/crc32"
 	"io"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -32,10 +34,65 @@ const (
 )
 
 type gatewayTestStore struct {
-	credential state.ObjectS3Credential
-	bucket     state.ObjectBucket
-	touched    int
-	admitted   []string
+	state.ObjectDeletionStore
+	credential                          state.ObjectS3Credential
+	bucket                              state.ObjectBucket
+	touched                             int
+	admitted                            []string
+	activityMu                          sync.Mutex
+	activity                            map[string]state.ObjectBucketMutation
+	fenced                              bool
+	activityBeginErr, activityFinishErr error
+}
+
+// Deletion admission owns the same source hold as generic mutation admission
+// in the production stores. Keep both seams on this fixture's barrier.
+func (s *gatewayTestStore) BeginObjectDeletion(ctx context.Context, input state.ObjectDeletion, policy api.ObjectStoragePolicy) (state.ObjectDeletion, bool, error) {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return state.ObjectDeletion{}, false, err
+	}
+	if s.activityBeginErr != nil {
+		return state.ObjectDeletion{}, false, s.activityBeginErr
+	}
+	if s.fenced {
+		return state.ObjectDeletion{}, false, state.ErrObjectBucketWriteFenced
+	}
+	return s.ObjectDeletionStore.BeginObjectDeletion(ctx, input, policy)
+}
+
+func (s *gatewayTestStore) BeginObjectBucketMutation(ctx context.Context, b state.ObjectBucket, kind string) (state.ObjectBucketMutation, error) {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return state.ObjectBucketMutation{}, err
+	}
+	if s.activityBeginErr != nil {
+		return state.ObjectBucketMutation{}, s.activityBeginErr
+	}
+	if s.fenced {
+		return state.ObjectBucketMutation{}, state.ErrObjectBucketWriteFenced
+	}
+	if s.activity == nil {
+		s.activity = map[string]state.ObjectBucketMutation{}
+	}
+	receipt := state.ObjectBucketMutation{ID: uuid.NewString(), Bucket: b, Kind: kind}
+	s.activity[receipt.ID] = receipt
+	return receipt, nil
+}
+
+func (s *gatewayTestStore) FinishObjectBucketMutation(ctx context.Context, receipt state.ObjectBucketMutation) error {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.activityFinishErr != nil {
+		return s.activityFinishErr
+	}
+	delete(s.activity, receipt.ID)
+	return nil
 }
 
 func (s *gatewayTestStore) CreateObjectS3Credential(context.Context, state.ObjectS3Credential, int) (state.ObjectS3Credential, error) {
@@ -63,10 +120,16 @@ func (s *gatewayTestStore) AdmitObjectURL(_ context.Context, _, _, key string, _
 }
 
 type gatewayTestProvider struct {
+	multipartMu      sync.Mutex
+	keepPartsOnAbort bool
+	multipartListErr error
+	multipartSignErr error
 	objects          objectstorage.ObjectPage
 	objectSize       int64
 	copyRequests     []objectstorage.CopyObjectRequest
 	presignRequests  []objectstorage.SignRequest
+	conditions       []objectstorage.ObjectWriteConditions
+	listRequests     []objectstorage.ObjectListRequest
 	tags             map[string]string
 	deleted          []string
 	deleteErrors     map[string]error
@@ -111,6 +174,16 @@ func (p *gatewayTestProvider) DeleteObject(_ context.Context, _ string, key stri
 	p.deleted = append(p.deleted, key)
 	return p.deleteErrors[key]
 }
+func (p *gatewayTestProvider) DeleteMutableObject(ctx context.Context, bucket, key, selector string) (objectstorage.MutableDeleteResult, error) {
+	if selector != "" {
+		return objectstorage.MutableDeleteResult{}, objectstorage.ErrUnsupported
+	}
+	e := p.DeleteObject(ctx, bucket, key)
+	if errors.Is(e, objectstorage.ErrNotFound) {
+		e = nil
+	}
+	return objectstorage.MutableDeleteResult{}, e
+}
 func (p *gatewayTestProvider) Presign(_ context.Context, bucket string, request objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
 	p.presignRequests = append(p.presignRequests, request)
 	return objectstorage.SignedRequest{URL: "https://provider.invalid/" + bucket + "/" + request.Key, Method: request.Method, Headers: map[string]string{"Content-Type": request.ContentType}}, nil
@@ -127,6 +200,8 @@ func (p *gatewayTestProvider) DeleteObjectTags(context.Context, string, string) 
 	return nil
 }
 func (p *gatewayTestProvider) EnsureMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartCreateRequest) (string, error) {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
 	p.multipartCreates = append(p.multipartCreates, r)
 	if p.multipart == nil {
 		p.multipart = map[string]map[int32]objectstorage.MultipartPart{}
@@ -138,6 +213,11 @@ func (p *gatewayTestProvider) EnsureMultipartUpload(_ context.Context, _ string,
 	return id, nil
 }
 func (p *gatewayTestProvider) PresignMultipartPart(_ context.Context, _ string, r objectstorage.MultipartPartRequest) (objectstorage.SignedRequest, error) {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
+	if p.multipartSignErr != nil {
+		return objectstorage.SignedRequest{}, p.multipartSignErr
+	}
 	if p.multipart == nil {
 		p.multipart = map[string]map[int32]objectstorage.MultipartPart{}
 	}
@@ -151,6 +231,11 @@ func (p *gatewayTestProvider) PresignMultipartPart(_ context.Context, _ string, 
 	return objectstorage.SignedRequest{URL: "https://provider.invalid/upload/" + r.ProviderUploadID + "/" + strconv.FormatInt(int64(r.PartNumber), 10), Method: http.MethodPut, Headers: map[string]string{"Content-Length": strconv.FormatInt(r.SizeBytes, 10)}}, nil
 }
 func (p *gatewayTestProvider) ListMultipartParts(_ context.Context, _ string, r objectstorage.MultipartListPartsRequest) (objectstorage.MultipartPartsPage, error) {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
+	if p.multipartListErr != nil {
+		return objectstorage.MultipartPartsPage{}, p.multipartListErr
+	}
 	parts := make([]objectstorage.MultipartPart, 0, len(p.multipart[r.ProviderUploadID]))
 	for _, part := range p.multipart[r.ProviderUploadID] {
 		if part.PartNumber > r.PartNumberMarker {
@@ -165,11 +250,18 @@ func (p *gatewayTestProvider) ListMultipartParts(_ context.Context, _ string, r 
 	return objectstorage.MultipartPartsPage{Items: parts}, nil
 }
 func (p *gatewayTestProvider) CompleteMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartCompleteRequest) error {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
 	p.completedUploads = append(p.completedUploads, r.ProviderUploadID)
 	return nil
 }
 func (p *gatewayTestProvider) AbortMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartAbortRequest) error {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
 	p.abortedUploads = append(p.abortedUploads, r.ProviderUploadID)
+	if !p.keepPartsOnAbort {
+		delete(p.multipart, r.ProviderUploadID)
+	}
 	return nil
 }
 
@@ -178,12 +270,16 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type gatewayMultipartStore struct {
-	mu      sync.Mutex
-	uploads map[string]state.ObjectMultipartUpload
+	pending          map[string]map[int32]string
+	mu               sync.Mutex
+	uploads          map[string]state.ObjectMultipartUpload
+	partGrants       []int64
+	completionGrants []int64
+	capacityError    error
 }
 
 func newGatewayMultipartStore() *gatewayMultipartStore {
-	return &gatewayMultipartStore{uploads: map[string]state.ObjectMultipartUpload{}}
+	return &gatewayMultipartStore{uploads: map[string]state.ObjectMultipartUpload{}, pending: map[string]map[int32]string{}}
 }
 
 func (s *gatewayMultipartStore) ReserveObjectMultipartUpload(_ context.Context, upload state.ObjectMultipartUpload, _ int) (state.ObjectMultipartUpload, error) {
@@ -234,11 +330,14 @@ func (s *gatewayMultipartStore) ClaimObjectMultipartUpload(_ context.Context, ac
 	if !ok || upload.AccountID != account || upload.AppID != app || upload.BucketID != bucket || token == "" {
 		return state.ObjectMultipartUpload{}, state.ErrConflict
 	}
-	if operation == state.ObjectMultipartInitiating && upload.State != state.ObjectMultipartInitiating || operation == state.ObjectMultipartCompleting && upload.State != state.ObjectMultipartActive || operation == state.ObjectMultipartAborting && upload.State != state.ObjectMultipartActive {
+	if upload.LeaseToken != "" || upload.RetryAt.After(time.Now()) {
+		return state.ObjectMultipartUpload{}, state.ErrConflict
+	}
+	if operation == state.ObjectMultipartInitiating && upload.State != state.ObjectMultipartInitiating || state.ObjectMultipartIsCompleting(operation) && upload.State != state.ObjectMultipartActive && upload.State != operation || operation == state.ObjectMultipartAborting && upload.State != state.ObjectMultipartActive && upload.State != state.ObjectMultipartAborting {
 		return state.ObjectMultipartUpload{}, state.ErrConflict
 	}
 	upload.State, upload.LeaseToken = operation, token
-	if operation == state.ObjectMultipartCompleting {
+	if state.ObjectMultipartIsCompleting(operation) {
 		upload.Parts = append([]api.ObjectMultipartCompletedPart(nil), parts...)
 	}
 	s.uploads[id] = upload
@@ -261,7 +360,7 @@ func (s *gatewayMultipartStore) SetObjectMultipartUploadSize(_ context.Context, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	upload, ok := s.uploads[id]
-	if !ok || upload.State != state.ObjectMultipartCompleting || upload.LeaseToken != token {
+	if !ok || !state.ObjectMultipartIsCompleting(upload.State) || upload.LeaseToken != token {
 		return state.ErrConflict
 	}
 	upload.SizeBytes = size
@@ -281,8 +380,18 @@ func (s *gatewayMultipartStore) FinishObjectMultipartUpload(_ context.Context, i
 	return nil
 }
 
-func (*gatewayMultipartStore) RetryObjectMultipartUpload(context.Context, string, string, string, time.Duration) error {
-	return state.ErrConflict
+func (s *gatewayMultipartStore) RetryObjectMultipartUpload(_ context.Context, id, token, code string, delay time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.uploads[id]
+	if u.LeaseToken != token {
+		return state.ErrConflict
+	}
+	u.LeaseToken = ""
+	u.LastErrorCode = code
+	u.RetryAt = time.Now().Add(delay)
+	s.uploads[id] = u
+	return nil
 }
 
 func (*gatewayMultipartStore) DueObjectMultipartUploads(context.Context, int32) ([]state.ObjectMultipartUpload, error) {
@@ -294,7 +403,7 @@ func newGatewayTestHandler(t *testing.T, permission string, roundTrip roundTripF
 	provider := &gatewayTestProvider{objects: objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "folder/a.txt", Size: 3, LastModified: time.Date(2026, 9, 7, 1, 2, 3, 0, time.UTC)}}}}
 	registry, err := objectstorage.NewRegistry(objectstorage.Config{
 		DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "test"}, MaxUploadBytes: 16 << 20,
-		Backends: []objectstorage.BackendConfig{{ID: "test", Driver: "test", Region: "us-east-1", Namespace: "fixture"}},
+		Backends: []objectstorage.BackendConfig{{ID: "test", Driver: "test", Region: "us-east-1", Namespace: "fixture", AllowedOrigins: []string{"https://console.example.test"}}},
 	}, func(string) string { return "" }, map[string]objectstorage.Factory{"test": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
 		return provider, nil
 	}})
@@ -305,9 +414,28 @@ func newGatewayTestHandler(t *testing.T, permission string, roundTrip roundTripF
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &gatewayTestStore{
-		credential: state.ObjectS3Credential{ID: "credential", AccountID: "account", BucketID: "bucket-id", AccessKeyID: testAccess, SecretSealed: []byte("sealed"), Permission: permission, Status: state.ObjectS3CredentialStatusActive},
-		bucket:     state.ObjectBucket{ID: "bucket-id", AccountID: "account", Name: "assets", PhysicalName: "gregale-physical", State: "ready", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, CreatedAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)},
+	journal := state.NewMemStore()
+	account, e := journal.CreateAccount(t.Context(), uuid.NewString()+"@example.test", api.PlanPro)
+	if e != nil {
+		t.Fatal(e)
+	}
+	app, e := journal.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "delete-fixture", Status: state.AppActive})
+	if e != nil {
+		t.Fatal(e)
+	}
+	b, e := journal.ReserveObjectBucket(t.Context(), state.ObjectBucket{ID: uuid.NewString(), AccountID: account.ID, AppID: app.ID, Name: "assets", Scope: "default", Region: "us-east-1", PhysicalName: "gregale-physical", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint}, 10)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = journal.ClaimObjectBucket(t.Context(), account.ID, app.ID, b.ID, "create", "provisioning"); e != nil {
+		t.Fatal(e)
+	}
+	if e = journal.FinishObjectBucket(t.Context(), b.ID, "create", "ready"); e != nil {
+		t.Fatal(e)
+	}
+	b.State = "ready"
+	store := &gatewayTestStore{ObjectDeletionStore: journal,
+		credential: state.ObjectS3Credential{ID: "credential", AccountID: account.ID, BucketID: b.ID, AccessKeyID: testAccess, SecretSealed: []byte("sealed"), Permission: permission, Status: state.ObjectS3CredentialStatusActive}, bucket: b,
 	}
 	handler, err := New(Config{
 		Registry: registry, Store: store, Host: "s3.gregale.dev", Region: "us-east-1", SpoolDir: t.TempDir(),
@@ -336,7 +464,7 @@ func signedGatewayRequest(t *testing.T, method, target string, body []byte, payl
 	if method == http.MethodPut {
 		request.Header.Set("Content-Type", "application/octet-stream")
 	}
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	return request
@@ -380,7 +508,7 @@ func awsChunkedGatewayRequest(t *testing.T, target, payloadHash, trailer string,
 	if trailer != "" {
 		request.Header.Set("X-Amz-Trailer", trailer)
 	}
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	return request
@@ -487,7 +615,7 @@ func TestGatewayCopyObjectWithReplacementMetadata(t *testing.T) {
 	request.Header.Set("Content-Type", "text/plain")
 	request.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	request.Header.Set("X-Amz-Date", "20260907T120000Z")
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
@@ -508,7 +636,7 @@ func TestGatewayPutMetadataAndObjectTags(t *testing.T) {
 	var upstreamHeaders http.Header
 	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		upstreamHeaders = r.Header.Clone()
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"ETag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 	body := []byte("hello")
 	sum := sha256.Sum256(body)
@@ -520,7 +648,7 @@ func TestGatewayPutMetadataAndObjectTags(t *testing.T) {
 	request.Header.Set("X-Amz-Tagging", "env=prod&team=core")
 	request.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))
 	request.Header.Set("X-Amz-Date", "20260907T120000Z")
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
@@ -612,12 +740,16 @@ func TestGatewayRejectsUnsupportedSemanticHeaders(t *testing.T) {
 			request.Header.Set(test.header, test.value)
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
-			if recorder.Code != http.StatusNotImplemented || !strings.Contains(recorder.Body.String(), "NotImplemented") {
+			status, code := http.StatusNotImplemented, "NotImplemented"
+			if test.header == "X-Amz-Server-Side-Encryption" {
+				status, code = http.StatusBadRequest, "InvalidRequest"
+			}
+			if recorder.Code != status || !strings.Contains(recorder.Body.String(), code) {
 				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
 			}
 		})
 	}
-	request := signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/key?x-amz-checksum-mode=ENABLED", nil, "UNSIGNED-PAYLOAD")
+	request := signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/key?x-amz-checksum-mode=INVALID", nil, "UNSIGNED-PAYLOAD")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNotImplemented || len(provider.presignRequests) != 0 {
@@ -665,7 +797,7 @@ func TestGatewayPermissionAndUnsupportedMultipart(t *testing.T) {
 func TestGatewayRejectsTamperedSignatureAndAcceptsPresignedRequests(t *testing.T) {
 	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPut {
-			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Length": {"5"}}, Body: io.NopCloser(strings.NewReader("hello")), Request: r}, nil
 	})
@@ -707,7 +839,7 @@ func TestGatewayAcceptsAWSChunkedChecksumTrailer(t *testing.T) {
 	var uploaded []byte
 	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		uploaded, _ = io.ReadAll(r.Body)
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"ETag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 	encoded := []byte("b\r\nhello world\r\n0\r\nx-amz-checksum-crc32:DUoRhQ==\r\n\r\n")
 	request := awsChunkedGatewayRequest(t, "https://s3.gregale.dev/assets/chunked.txt", streamingUnsignedTrailer, "x-amz-checksum-crc32", 11, encoded)
@@ -733,7 +865,7 @@ func TestGatewayAcceptsSignedAWSChunkedPayload(t *testing.T) {
 	var uploaded []byte
 	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		uploaded, _ = io.ReadAll(r.Body)
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 	body := []byte("hello world")
 	placeholder := []byte("b;chunk-signature=" + strings.Repeat("0", 64) + "\r\nhello world\r\n0;chunk-signature=" + strings.Repeat("0", 64) + "\r\n\r\n")
@@ -765,7 +897,7 @@ func TestGatewayAcceptsSignedAWSChunkedTrailer(t *testing.T) {
 	var uploaded []byte
 	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		uploaded, _ = io.ReadAll(r.Body)
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 	body := []byte("hello world")
 	checksumValue := "DUoRhQ=="
@@ -816,7 +948,7 @@ func TestGatewayDeleteObjects(t *testing.T) {
 	_, _ = checksum.Write(body)
 	request.Header.Set("X-Amz-Checksum-Crc32", base64.StdEncoding.EncodeToString(checksum.Sum(nil)))
 	request.Header.Set("X-Amz-Sdk-Checksum-Algorithm", "CRC32")
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -896,7 +1028,7 @@ func TestGatewayAcceptsBotocoreCanonicalHeaderFixture(t *testing.T) {
 
 func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
 	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 
 	body := []byte("hello")
@@ -912,7 +1044,7 @@ func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
 	headerRequest.Header.Set("Content-Type", "text/plain")
 	headerRequest.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))
 	headerRequest.Header.Set("X-Amz-Date", "20260907T120000Z")
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, headerRequest, hex.EncodeToString(sum[:]), "s3", "us-east-1", signedAt); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, headerRequest, hex.EncodeToString(sum[:]), "s3", "us-east-1", signedAt); err != nil {
 		t.Fatal(err)
 	}
 	headerRequest.ContentLength = int64(len(body))
@@ -1072,4 +1204,81 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	if recorder.Code != http.StatusNoContent || len(provider.abortedUploads) != 1 {
 		t.Fatalf("abort = %d %s aborted=%v", recorder.Code, recorder.Body.String(), provider.abortedUploads)
 	}
+}
+
+func (s *gatewayMultipartStore) BeginObjectMultipartPart(ctx context.Context, account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
+	if err := s.AdmitObjectMultipartPart(ctx, account, bucket, id, part, size, maxObject, p); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.uploads[id]
+	if u.State != state.ObjectMultipartActive || s.pending[id][part] != "" {
+		return state.ErrConflict
+	}
+	if s.pending[id] == nil {
+		s.pending[id] = map[int32]string{}
+	}
+	s.pending[id][part] = token
+	u.PartRevision++
+	s.uploads[id] = u
+	return nil
+}
+func (s *gatewayMultipartStore) SettleObjectMultipartPart(_ context.Context, account, id string, part int32, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.uploads[id].AccountID != account || s.pending[id][part] != token {
+		return state.ErrConflict
+	}
+	delete(s.pending[id], part)
+	return nil
+}
+func (s *gatewayMultipartStore) PrepareObjectMultipartCompletion(ctx context.Context, u state.ObjectMultipartUpload, token string, size int64, parts []api.ObjectMultipartCompletedPart, p api.ObjectStoragePolicy) (state.ObjectMultipartUpload, error) {
+	s.mu.Lock()
+	pending := len(s.pending[u.ID]) != 0 || s.uploads[u.ID].PartRevision != u.PartRevision
+	s.mu.Unlock()
+	if pending {
+		return state.ObjectMultipartUpload{}, state.ErrConflict
+	}
+	if err := s.AdmitObjectMultipartCompletion(ctx, u.AccountID, u.BucketID, u.ID, u.Key, size, p); err != nil {
+		return state.ObjectMultipartUpload{}, err
+	}
+	operation := state.ObjectMultipartCompleting
+	if !u.CompletionConditions.Empty() {
+		operation = state.ObjectMultipartCompletingConditional
+	}
+	claimed, err := s.ClaimObjectMultipartUpload(ctx, u.AccountID, u.AppID, u.BucketID, u.ID, token, operation, parts, false)
+	if err == nil {
+		err = s.SetObjectMultipartUploadSize(ctx, u.ID, token, size)
+		claimed.SizeBytes = size
+		claimed.CompletionConditions = u.CompletionConditions
+		s.mu.Lock()
+		s.uploads[u.ID] = claimed
+		s.mu.Unlock()
+	}
+	return claimed, err
+}
+func (s *gatewayMultipartStore) ObjectMultipartAbortReady(_ context.Context, id, token string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.uploads[id]
+	if u.State != state.ObjectMultipartAborting || u.LeaseToken != token {
+		return false, state.ErrConflict
+	}
+	return len(s.pending[id]) == 0, nil
+}
+func (s *gatewayMultipartStore) FinishVerifiedObjectMultipartAbort(ctx context.Context, id, token string) error {
+	return s.FinishObjectMultipartUpload(ctx, id, token, state.ObjectMultipartAborted)
+}
+
+func (s *gatewayMultipartStore) RejectObjectMultipartCompletion(_ context.Context, id, token, code string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.uploads[id]
+	if u.State != state.ObjectMultipartCompletingConditional || u.LeaseToken != token {
+		return state.ErrConflict
+	}
+	u.State, u.CompletionErrorCode, u.LeaseToken = state.ObjectMultipartAborting, code, ""
+	s.uploads[id] = u
+	return nil
 }

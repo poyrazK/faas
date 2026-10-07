@@ -127,6 +127,55 @@ type AccountSpendSnapshot struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type ActiveEnvironmentGitSource struct {
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	RepositoryID           int64
+	InstallationID         int64
+	Repository             string
+	SourceRef              string
+	ManifestPath           string
+	Mode                   string
+	ApprovalPolicy         string
+	Prune                  bool
+	Suspended              bool
+	Generation             int64
+	IntentVersion          int64
+	ApprovedRevisionID     pgtype.UUID
+	AppliedRevisionID      pgtype.UUID
+	SourceCheckedAt        pgtype.Timestamptz
+	SourceErrorCode        string
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	SourceCommitSha        string
+	SourceDefinitionDigest string
+	SourceVerifiedAt       pgtype.Timestamptz
+	Detached               bool
+}
+
+type AgentExecutionWorkflow struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	RunsPrincipalID pgtype.UUID
+	WorkflowID      string
+	PlanID          string
+	Status          string
+	StepCount       int16
+	NextStep        int16
+	SealedPlan      []byte
+	PayloadKid      string
+	LeaseToken      pgtype.UUID
+	LeaseOwner      pgtype.Text
+	LeaseExpiresAt  pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	LastError       string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+}
+
 type AlertDelivery struct {
 	ID             pgtype.UUID
 	RuleID         pgtype.UUID
@@ -142,6 +191,11 @@ type AlertDelivery struct {
 	FiredAt        pgtype.Timestamptz
 	DeliveredAt    pgtype.Timestamptz
 	IsTest         bool
+}
+
+type AlertHistoricalRollbackClaim struct {
+	DeploymentID pgtype.UUID
+	FireID       pgtype.UUID
 }
 
 type AlertPreset struct {
@@ -161,27 +215,36 @@ type AlertPreset struct {
 	UpdatedAt              pgtype.Timestamptz
 }
 
+type AlertRollbackAction struct {
+	FireID    pgtype.UUID
+	AppID     pgtype.UUID
+	Status    string
+	Receipt   []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AlertRule struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	Name                string
-	Enabled             bool
-	Metric              string
-	Comparison          string
-	Threshold           float64
-	WindowSpec          string
-	FailureSource       pgtype.Text
-	WebhookUrl          string
-	WebhookSecretSealed []byte
-	CooldownMinutes     int32
-	State               string
-	LastFiredAt         pgtype.Timestamptz
-	LastEvaluatedAt     pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	OrgID               pgtype.UUID
-	Action              string
+	ID                              pgtype.UUID
+	AccountID                       pgtype.UUID
+	AppID                           pgtype.UUID
+	Name                            string
+	Enabled                         bool
+	Metric                          string
+	Comparison                      string
+	Threshold                       float64
+	WindowSpec                      string
+	FailureSource                   pgtype.Text
+	WebhookUrl                      string
+	WebhookSecretSealed             []byte
+	CooldownMinutes                 int32
+	State                           string
+	LastFiredAt                     pgtype.Timestamptz
+	LastEvaluatedAt                 pgtype.Timestamptz
+	CreatedAt                       pgtype.Timestamptz
+	UpdatedAt                       pgtype.Timestamptz
+	OrgID                           pgtype.UUID
+	Action                          string
+	PostDeployRollbackWindowSeconds int32
 }
 
 type ApiConsumer struct {
@@ -268,21 +331,23 @@ type ApiConsumerUsageStatementHandoff struct {
 }
 
 type ApiKey struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	KeySha256     []byte
-	Label         pgtype.Text
-	LastUsedAt    pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	Scopes        []string
-	OrgID         pgtype.UUID
-	ExpiresAt     pgtype.Timestamptz
-	Status        string
-	RevokedAt     pgtype.Timestamptz
-	RotatedFromID pgtype.UUID
-	CreatedIp     *netip.Addr
-	CreatedUa     pgtype.Text
-	ParentKeyID   pgtype.UUID
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	KeySha256       []byte
+	Label           pgtype.Text
+	LastUsedAt      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	Scopes          []string
+	OrgID           pgtype.UUID
+	ExpiresAt       pgtype.Timestamptz
+	Status          string
+	RevokedAt       pgtype.Timestamptz
+	RotatedFromID   pgtype.UUID
+	CreatedIp       *netip.Addr
+	CreatedUa       pgtype.Text
+	ParentKeyID     pgtype.UUID
+	RunsPrincipalID pgtype.UUID
+	DisplayPrefix   pgtype.Text
 }
 
 type App struct {
@@ -366,13 +431,16 @@ type App struct {
 	// Optional app-wide edge token-bucket refill override. NULL inherits the account plan.
 	RequestRateLimitRps pgtype.Int4
 	// Optional app-wide edge token-bucket burst override. NULL inherits the account plan.
-	RequestRateLimitBurst  pgtype.Int4
-	GithubOwnerID          pgtype.Int8
-	GithubRepoID           pgtype.Int8
-	ParkTransitionID       pgtype.UUID
-	WakeTransitionID       pgtype.UUID
-	EgressPorts            []int32
-	PlatformTenantRequired bool
+	RequestRateLimitBurst             pgtype.Int4
+	GithubOwnerID                     pgtype.Int8
+	GithubRepoID                      pgtype.Int8
+	ParkTransitionID                  pgtype.UUID
+	WakeTransitionID                  pgtype.UUID
+	EgressPorts                       []int32
+	PlatformTenantRequired            bool
+	ManagedPostgresAdmissionCutoverID pgtype.UUID
+	ManagedPostgresAdmissionFencedAt  pgtype.Timestamptz
+	ServiceAddressIndex               pgtype.Int4
 }
 
 type AppApiRoute struct {
@@ -382,6 +450,32 @@ type AppApiRoute struct {
 	FirstSeen     pgtype.Timestamptz
 	LastSeen      pgtype.Timestamptz
 	RequestCount  int64
+}
+
+type AppBindingPromotionRevision struct {
+	AppID           pgtype.UUID
+	Epoch           pgtype.UUID
+	Revision        int64
+	ServiceRevision int64
+}
+
+type AppBindingReleasePolicy struct {
+	AppID                 pgtype.UUID
+	Scope                 string
+	Mode                  string
+	Revision              int64
+	MaxAgeSeconds         int64
+	RequireApplicationAck bool
+	Reason                string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type AppBindingReleasePolicyHistory struct {
+	AppID     pgtype.UUID
+	Scope     string
+	Revision  int64
+	Policy    []byte
+	ChangedAt pgtype.Timestamptz
 }
 
 type AppCpuPolicyNodeStatus struct {
@@ -424,6 +518,38 @@ type AppEnv struct {
 	UpdatedAt pgtype.Timestamptz
 	OrgID     pgtype.UUID
 	Scope     string
+}
+
+type AppEnvironmentSecretRef struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Key           string
+	SecretName    string
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type AppEnvironmentSecretRefSuppression struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Key           string
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type AppEnvironmentWorkloadIntent struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	Source         []byte
+	Runtime        []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	SourceRevision pgtype.Text
 }
 
 type AppError struct {
@@ -491,6 +617,21 @@ type AppIssue struct {
 	FixedDeploymentID        pgtype.UUID
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
+}
+
+type AppIssueImpactAlertPolicy struct {
+	AppID            pgtype.UUID
+	MinimumCustomers int32
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type AppIssueOwnershipRule struct {
+	AppID             pgtype.UUID
+	RuleOrder         int32
+	ExceptionType     pgtype.Text
+	SourceKind        pgtype.Text
+	RoutePrefix       pgtype.Text
+	AssigneeAccountID pgtype.UUID
 }
 
 type AppLogDrain struct {
@@ -609,6 +750,12 @@ type AppRuntimeConfigChange struct {
 	ChangedAt pgtype.Timestamptz
 }
 
+type AppRuntimeConfigScopeChange struct {
+	AppID     pgtype.UUID
+	Scope     string
+	ChangedAt pgtype.Timestamptz
+}
+
 type AppScalingPolicySchedulerStatus struct {
 	AppID            pgtype.UUID
 	SchedulerNodeID  pgtype.UUID
@@ -671,57 +818,80 @@ type AppSecretRevocationTarget struct {
 	ErrorCode     pgtype.Text
 }
 
+type AppSecretRuntimeProcess struct {
+	InstanceID   pgtype.UUID
+	AppID        pgtype.UUID
+	WorkloadName string
+	Generation   string
+	Active       bool
+	StartedAt    pgtype.Timestamptz
+}
+
 type AppSecretRuntimeReloadObservation struct {
-	AppID                   pgtype.UUID
-	Scope                   string
-	Key                     string
-	InstanceID              pgtype.UUID
-	SecretVersion           int64
-	Projection              string
-	Signal                  string
-	ObservedAt              pgtype.Timestamptz
-	ErrorCode               pgtype.Text
-	ApplicationAckVersion   pgtype.Int8
-	ApplicationAckStatus    pgtype.Text
-	ApplicationAckAt        pgtype.Timestamptz
-	ApplicationAckErrorCode pgtype.Text
-	WorkloadName            string
+	AppID                    pgtype.UUID
+	Scope                    string
+	Key                      string
+	InstanceID               pgtype.UUID
+	SecretVersion            int64
+	Projection               string
+	Signal                   string
+	ObservedAt               pgtype.Timestamptz
+	ErrorCode                pgtype.Text
+	ApplicationAckVersion    pgtype.Int8
+	ApplicationAckStatus     pgtype.Text
+	ApplicationAckAt         pgtype.Timestamptz
+	ApplicationAckErrorCode  pgtype.Text
+	WorkloadName             string
+	ApplicationAckGeneration string
+}
+
+type AppServiceAddressCursor struct {
+	AccountID pgtype.UUID
+	LastIndex int32
 }
 
 type AppTask struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	DeploymentID        pgtype.UUID
-	Kind                string
-	Command             []string
-	CommandShell        bool
-	DeploymentScope     string
-	ArtifactKey         string
-	ImageDigest         string
-	Status              string
-	TimeoutSeconds      int32
-	MaxOutputBytes      int32
-	LeaseToken          pgtype.UUID
-	LeaseOwner          pgtype.Text
-	LeaseExpiresAt      pgtype.Timestamptz
-	CancelRequestedAt   pgtype.Timestamptz
-	StdoutTail          string
-	StderrTail          string
-	OutputTruncated     bool
-	ExitCode            pgtype.Int4
-	FailureCode         pgtype.Text
-	FailureMessage      pgtype.Text
-	StartedAt           pgtype.Timestamptz
-	FinishedAt          pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	CronID              pgtype.UUID
-	ScheduledFor        pgtype.Timestamptz
-	RetryMax            int32
-	RetryBackoffSeconds int32
-	AttemptCount        int32
-	RetryAt             pgtype.Timestamptz
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	Kind                 string
+	Command              []string
+	CommandShell         bool
+	DeploymentScope      string
+	ArtifactKey          string
+	ImageDigest          string
+	Status               string
+	TimeoutSeconds       int32
+	MaxOutputBytes       int32
+	LeaseToken           pgtype.UUID
+	LeaseOwner           pgtype.Text
+	LeaseExpiresAt       pgtype.Timestamptz
+	CancelRequestedAt    pgtype.Timestamptz
+	StdoutTail           string
+	StderrTail           string
+	OutputTruncated      bool
+	ExitCode             pgtype.Int4
+	FailureCode          pgtype.Text
+	FailureMessage       pgtype.Text
+	StartedAt            pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	CronID               pgtype.UUID
+	ScheduledFor         pgtype.Timestamptz
+	RetryMax             int32
+	RetryBackoffSeconds  int32
+	AttemptCount         int32
+	RetryAt              pgtype.Timestamptz
+	FailureRules         []byte
+	OccurrenceID         pgtype.UUID
+	StartDeadlineAt      pgtype.Timestamptz
+	WorkDecision         []byte
+	OutcomeCode          string
+	ExclusiveOperationID pgtype.UUID
+	ExclusiveGeneration  pgtype.Int8
+	BindingVerification  []byte
 }
 
 type AppTcpListener struct {
@@ -735,6 +905,18 @@ type AppTcpListener struct {
 	Enabled      bool
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	TlsMode      string
+	TlsHostname  string
+}
+
+type AppTcpListenerTlsObservation struct {
+	ListenerID      pgtype.UUID
+	EdgeID          string
+	Hostname        string
+	IntentUpdatedAt pgtype.Timestamptz
+	ObservedAt      pgtype.Timestamptz
+	Ready           bool
+	NotAfter        pgtype.Timestamptz
 }
 
 type AppTrustedSigner struct {
@@ -744,6 +926,19 @@ type AppTrustedSigner struct {
 	CosignPublicKey  []byte
 	AddedAt          pgtype.Timestamptz
 	AddedByAccountID pgtype.UUID
+}
+
+type AppUdpListener struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	ListenerName string
+	GuestPort    int32
+	PublicPort   int32
+	Protocol     string
+	Enabled      bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type AppWakeTransition struct {
@@ -859,6 +1054,28 @@ type AuditLog struct {
 	Data         []byte
 }
 
+type AutomaticRouteCheck struct {
+	DeploymentID       pgtype.UUID
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	RequestID          pgtype.UUID
+	CompletedRequestID pgtype.UUID
+	ClaimedRequestID   pgtype.UUID
+	LeaseToken         pgtype.UUID
+	LeaseUntil         pgtype.Timestamptz
+	Attempts           int32
+	LastErrorCode      string
+	QueuedAt           pgtype.Timestamptz
+	NextAttemptAt      pgtype.Timestamptz
+	CheckedAt          pgtype.Timestamptz
+	CaptureSha256      string
+	CaptureTruncated   bool
+	LatestCheck        []byte
+	SafetyState        string
+	FindingBaseline    []byte
+	LatestChanges      []byte
+}
+
 type BillingIdentity struct {
 	AccountID      pgtype.UUID
 	Provider       string
@@ -944,6 +1161,14 @@ type BuilderVmCleanup struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type CanaryRouteGate struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Mode      string
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
+}
+
 type CliAuthCode struct {
 	TokenHash  []byte
 	AccountID  pgtype.UUID
@@ -961,6 +1186,59 @@ type ClusterSigningKey struct {
 	CreatedAt    pgtype.Timestamptz
 	RotatedAt    pgtype.Timestamptz
 	RetiredAt    pgtype.Timestamptz
+}
+
+type CommitBlockedEvent struct {
+	AccountID   pgtype.UUID
+	SourceID    pgtype.UUID
+	EventID     pgtype.UUID
+	EventType   string
+	BlockedCode string
+	CreatedAt   pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+}
+
+type CommitReceipt struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceID       pgtype.UUID
+	EventID        pgtype.UUID
+	EventType      string
+	Payload        []byte
+	InvocationID   pgtype.UUID
+	OperationState string
+	CompletedAt    pgtype.Timestamptz
+	AcceptedAt     pgtype.Timestamptz
+	OperationID    pgtype.UUID
+	Routing        []byte
+}
+
+type CommitReplayRequest struct {
+	AccountID   pgtype.UUID
+	SourceID    pgtype.UUID
+	EventID     pgtype.UUID
+	State       string
+	Generation  int64
+	RequestedAt pgtype.Timestamptz
+}
+
+type CommitSource struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Name                 string
+	Enabled              bool
+	SealedConnection     []byte
+	CredentialRevision   int64
+	RelayStatus          string
+	LastCheckedAt        pgtype.Timestamptz
+	PendingEvents        pgtype.Int8
+	BlockedEvents        pgtype.Int8
+	OldestPendingAt      pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	OperationPolicy      pgtype.Text
+	ContractVersion      int32
+	AllowTenantSelection bool
 }
 
 type ComputeNode struct {
@@ -1001,7 +1279,8 @@ type ComputeNode struct {
 	RecoveryInitiatedAt pgtype.Timestamptz
 	LastRecoveryOutcome pgtype.Text
 	// vmmd-registered IPv4 address on the operator-managed regional overlay
-	OverlayIp *netip.Addr
+	OverlayIp             *netip.Addr
+	ServiceAddressReadyAt pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {
@@ -1126,6 +1405,9 @@ type Cron struct {
 	CommandMaxOutputBytes int32
 	RetryMax              int32
 	RetryBackoffSeconds   int32
+	SchedulePolicy        []byte
+	FailureRules          []byte
+	ScheduleRevision      int64
 }
 
 type CronFireNowRequest struct {
@@ -1138,6 +1420,7 @@ type CronFireNowRequest struct {
 	Error        pgtype.Text
 	FinishedAt   pgtype.Timestamptz
 	TaskID       pgtype.UUID
+	OperationID  pgtype.UUID
 }
 
 type CustomDomain struct {
@@ -1157,6 +1440,12 @@ type CustomDomain struct {
 	VerificationAttempts          int32
 	VerificationExpiresAt         pgtype.Timestamptz
 	EnvironmentID                 pgtype.UUID
+}
+
+type CustomDomainTlsHost struct {
+	Host           interface{}
+	WildcardDomain interface{}
+	AdmittedAt     pgtype.Timestamptz
 }
 
 type CustomerOperation struct {
@@ -1193,6 +1482,16 @@ type CustomerOperationDefinition struct {
 	Spec             []byte
 	CreatedAt        pgtype.Timestamptz
 	WorkflowSnapshot []byte
+}
+
+type CustomerOperationDeliveryRetry struct {
+	OperationID              pgtype.UUID
+	RetryID                  string
+	DeliveryID               pgtype.UUID
+	ExpectedReplayGeneration int32
+	ReplayGeneration         int32
+	QueuedAt                 pgtype.Timestamptz
+	ExpiresAt                pgtype.Timestamptz
 }
 
 type CustomerOperationEvent struct {
@@ -1346,22 +1645,23 @@ type DataUpstreamProbesDefault struct {
 }
 
 type DeadLetterEvent struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	Source        string
-	SourceID      pgtype.UUID
-	Origin        string
-	TriggerID     pgtype.UUID
-	EventPayload  []byte
-	Headers       []byte
-	ErrorKind     string
-	ErrorDetail   []byte
-	RetryCount    int32
-	FirstFailedAt pgtype.Timestamptz
-	LastFailedAt  pgtype.Timestamptz
-	ReplayedAt    pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Source           string
+	SourceID         pgtype.UUID
+	Origin           string
+	TriggerID        pgtype.UUID
+	EventPayload     []byte
+	Headers          []byte
+	ErrorKind        string
+	ErrorDetail      []byte
+	RetryCount       int32
+	FirstFailedAt    pgtype.Timestamptz
+	LastFailedAt     pgtype.Timestamptz
+	ReplayedAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	EnvironmentOwned bool
 }
 
 type DebugRegressionObservation struct {
@@ -1396,101 +1696,103 @@ type DeployToken struct {
 }
 
 type Deployment struct {
-	ID                       pgtype.UUID
-	AppID                    pgtype.UUID
-	BuildID                  pgtype.UUID
-	ImageDigest              string
-	RootfsPath               pgtype.Text
-	RootfsBytes              pgtype.Int8
-	Status                   string
-	Error                    pgtype.Text
-	CreatedAt                pgtype.Timestamptz
-	Kind                     string
-	SourcePath               pgtype.Text
-	SourceBytes              pgtype.Int8
-	Handler                  pgtype.Text
-	LogPath                  pgtype.Text
-	ErrorCode                pgtype.Text
-	RootfsKey                string
-	SourceUrl                pgtype.Text
-	CommitSha                pgtype.Text
-	OverrideEntrypoint       []string
-	OverrideCmd              []string
-	OverrideEnv              []byte
-	OverrideEnvSecrets       []byte
-	OverridePort             pgtype.Int4
-	OverrideHealthcheck      []byte
-	Sidecars                 []byte
-	MinInstances             int32
-	ScanResult               []byte
-	ScanStatus               pgtype.Text
-	ScannedAt                pgtype.Timestamptz
-	OverrideLivenessProbe    []byte
-	ParkedReason             pgtype.Text
-	ParkedAt                 pgtype.Timestamptz
-	TrafficPercent           int32
-	Scope                    string
-	SecretFindings           []byte
-	SecretScannedAt          pgtype.Timestamptz
-	ErrorHint                pgtype.Text
-	ErrorWhy                 pgtype.Text
-	ErrorFix                 pgtype.Text
-	ErrorRelevantLogs        []byte
-	StageState               []byte
-	DeployedByUserID         pgtype.UUID
-	DeployedVia              string
-	DeployedFromIp           *netip.Addr
-	PusherLogin              pgtype.Text
-	Reason                   pgtype.Text
-	Tag                      pgtype.Text
-	DeployedBy               pgtype.Text
-	PrNumber                 pgtype.Int4
-	RollbackOn5xx            bool
-	FirstWakeAt              pgtype.Timestamptz
-	First5xxWindowEndsAt     pgtype.Timestamptz
-	First5xxCount            int32
-	LastAutoRollbackAt       pgtype.Timestamptz
-	LastAutoRollbackReason   pgtype.Text
-	LivenessRestartCount     int32
-	CanaryPreset             string
-	CanaryStep               int32
-	CanaryTotalSteps         int32
-	CanaryStepStartedAt      pgtype.Timestamptz
-	RolloutState             string
-	RolloutStartedAt         pgtype.Timestamptz
-	RolloutCompletedAt       pgtype.Timestamptz
-	RolloutAbortedAt         pgtype.Timestamptz
-	RolloutAbortedReason     pgtype.Text
-	CancelledAt              pgtype.Timestamptz
-	CancelledByPrincipal     pgtype.Text
-	CancelReason             pgtype.Text
-	DeletedAt                pgtype.Timestamptz
-	DeletedByPrincipal       pgtype.Text
-	Priority                 int32
-	ReorderedAt              pgtype.Timestamptz
-	ReorderedByPrincipal     pgtype.Text
-	CanaryStages             []byte
-	SnapshotMissCount        int32
-	SnapshotMissLastAt       pgtype.Timestamptz
-	SnapshotMissBackoffUntil pgtype.Timestamptz
-	Workflows                []byte
-	SourceRoot               pgtype.Text
-	FullRootfsAllowAuto      bool
-	FullRootfsOverride       pgtype.Bool
-	SourceSha256             pgtype.Text
-	ApiHostingReceipt        []byte
-	InferredProfile          []byte
-	TrafficPercentExplicit   bool
-	Revision                 int32
-	ServiceRolloutHandoff    []byte
-	ReleaseCommand           []string
-	ReleaseCommandShell      bool
-	DisableStartupCpuBoost   bool
-	OverrideMainDependsOn    []byte
-	OverrideReadinessProbe   []byte
-	SecretReloadSignal       pgtype.Text
-	GithubSourceRef          pgtype.Text
-	GithubInstallationID     pgtype.Int8
+	ID                         pgtype.UUID
+	AppID                      pgtype.UUID
+	BuildID                    pgtype.UUID
+	ImageDigest                string
+	RootfsPath                 pgtype.Text
+	RootfsBytes                pgtype.Int8
+	Status                     string
+	Error                      pgtype.Text
+	CreatedAt                  pgtype.Timestamptz
+	Kind                       string
+	SourcePath                 pgtype.Text
+	SourceBytes                pgtype.Int8
+	Handler                    pgtype.Text
+	LogPath                    pgtype.Text
+	ErrorCode                  pgtype.Text
+	RootfsKey                  string
+	SourceUrl                  pgtype.Text
+	CommitSha                  pgtype.Text
+	OverrideEntrypoint         []string
+	OverrideCmd                []string
+	OverrideEnv                []byte
+	OverrideEnvSecrets         []byte
+	OverridePort               pgtype.Int4
+	OverrideHealthcheck        []byte
+	Sidecars                   []byte
+	MinInstances               int32
+	ScanResult                 []byte
+	ScanStatus                 pgtype.Text
+	ScannedAt                  pgtype.Timestamptz
+	OverrideLivenessProbe      []byte
+	ParkedReason               pgtype.Text
+	ParkedAt                   pgtype.Timestamptz
+	TrafficPercent             int32
+	Scope                      string
+	SecretFindings             []byte
+	SecretScannedAt            pgtype.Timestamptz
+	ErrorHint                  pgtype.Text
+	ErrorWhy                   pgtype.Text
+	ErrorFix                   pgtype.Text
+	ErrorRelevantLogs          []byte
+	StageState                 []byte
+	DeployedByUserID           pgtype.UUID
+	DeployedVia                string
+	DeployedFromIp             *netip.Addr
+	PusherLogin                pgtype.Text
+	Reason                     pgtype.Text
+	Tag                        pgtype.Text
+	DeployedBy                 pgtype.Text
+	PrNumber                   pgtype.Int4
+	RollbackOn5xx              bool
+	FirstWakeAt                pgtype.Timestamptz
+	First5xxWindowEndsAt       pgtype.Timestamptz
+	First5xxCount              int32
+	LastAutoRollbackAt         pgtype.Timestamptz
+	LastAutoRollbackReason     pgtype.Text
+	LivenessRestartCount       int32
+	CanaryPreset               string
+	CanaryStep                 int32
+	CanaryTotalSteps           int32
+	CanaryStepStartedAt        pgtype.Timestamptz
+	RolloutState               string
+	RolloutStartedAt           pgtype.Timestamptz
+	RolloutCompletedAt         pgtype.Timestamptz
+	RolloutAbortedAt           pgtype.Timestamptz
+	RolloutAbortedReason       pgtype.Text
+	CancelledAt                pgtype.Timestamptz
+	CancelledByPrincipal       pgtype.Text
+	CancelReason               pgtype.Text
+	DeletedAt                  pgtype.Timestamptz
+	DeletedByPrincipal         pgtype.Text
+	Priority                   int32
+	ReorderedAt                pgtype.Timestamptz
+	ReorderedByPrincipal       pgtype.Text
+	CanaryStages               []byte
+	SnapshotMissCount          int32
+	SnapshotMissLastAt         pgtype.Timestamptz
+	SnapshotMissBackoffUntil   pgtype.Timestamptz
+	Workflows                  []byte
+	SourceRoot                 pgtype.Text
+	FullRootfsAllowAuto        bool
+	FullRootfsOverride         pgtype.Bool
+	SourceSha256               pgtype.Text
+	ApiHostingReceipt          []byte
+	InferredProfile            []byte
+	TrafficPercentExplicit     bool
+	Revision                   int32
+	ServiceRolloutHandoff      []byte
+	ReleaseCommand             []string
+	ReleaseCommandShell        bool
+	DisableStartupCpuBoost     bool
+	OverrideMainDependsOn      []byte
+	OverrideReadinessProbe     []byte
+	SecretReloadSignal         pgtype.Text
+	GithubSourceRef            pgtype.Text
+	GithubInstallationID       pgtype.Int8
+	EnvironmentWorkloadRuntime []byte
+	ServingEndedAt             pgtype.Timestamptz
 }
 
 type DeploymentAlias struct {
@@ -1516,6 +1818,26 @@ type DeploymentCodePinDeadline struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	ExpiresAt    interface{}
+}
+
+type DeploymentDependencyGate struct {
+	DeploymentID pgtype.UUID
+	Pins         []byte
+	StartedAt    pgtype.Timestamptz
+	DeadlineAt   pgtype.Timestamptz
+	Status       string
+	Blocker      string
+}
+
+type DeploymentImagePreparation struct {
+	DeploymentID pgtype.UUID
+	NodeName     string
+	InputPath    string
+	InputKey     string
+	InputBytes   int64
+	ClaimToken   pgtype.UUID
+	Phase        string
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type DeploymentLog struct {
@@ -1549,11 +1871,42 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentRecoveryLineage struct {
+	DeploymentID            pgtype.UUID
+	PredecessorDeploymentID pgtype.UUID
+}
+
 type DeploymentRevisionPin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	ExpiresAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
+}
+
+type DeploymentRollbackOperation struct {
+	ID                  pgtype.UUID
+	AppID               pgtype.UUID
+	Scope               string
+	TargetDeploymentID  pgtype.UUID
+	CurrentDeploymentID pgtype.UUID
+	Status              string
+	Receipt             []byte
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type DeploymentRoutePolicySnapshot struct {
+	DeploymentID  pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Snapshot      []byte
+	Sha256        string
+	SchemaVersion int32
+	CapturedAt    pgtype.Timestamptz
+}
+
+type DeploymentRuntimeEnvironmentOwner struct {
+	DeploymentID  pgtype.UUID
+	EnvironmentID pgtype.UUID
 }
 
 type DeploymentScopeExclusion struct {
@@ -1695,6 +2048,231 @@ type EmailVerificationToken struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type EnvironmentDesiredRevision struct {
+	ID               pgtype.UUID
+	SourceID         pgtype.UUID
+	CommitSha        string
+	DefinitionDigest string
+	Definition       []byte
+	ApprovedBy       string
+	ApprovedAt       pgtype.Timestamptz
+}
+
+type EnvironmentExternalFieldOwner struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+	ManagerID     string
+}
+
+type EnvironmentGitRevisionApproval struct {
+	ID                 pgtype.UUID
+	SourceID           pgtype.UUID
+	RevisionID         pgtype.UUID
+	ApprovedGeneration int64
+	DefinitionDigest   string
+	Evidence           []byte
+	PollLeaseToken     pgtype.UUID
+	RecordedAt         pgtype.Timestamptz
+}
+
+type EnvironmentGitSource struct {
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	RepositoryID           int64
+	InstallationID         int64
+	Repository             string
+	SourceRef              string
+	ManifestPath           string
+	Mode                   string
+	ApprovalPolicy         string
+	Prune                  bool
+	Suspended              bool
+	Generation             int64
+	IntentVersion          int64
+	ApprovedRevisionID     pgtype.UUID
+	AppliedRevisionID      pgtype.UUID
+	SourceCheckedAt        pgtype.Timestamptz
+	SourceErrorCode        string
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	SourceCommitSha        string
+	SourceDefinitionDigest string
+	SourceVerifiedAt       pgtype.Timestamptz
+	Detached               bool
+}
+
+type EnvironmentGitSourcePoll struct {
+	SourceID   pgtype.UUID
+	NextPollAt pgtype.Timestamptz
+	LeaseToken pgtype.UUID
+	LeaseUntil pgtype.Timestamptz
+}
+
+type EnvironmentGitopsEffect struct {
+	ID                pgtype.UUID
+	SourceID          pgtype.UUID
+	RevisionID        pgtype.UUID
+	Generation        int64
+	IntentVersion     int64
+	PlanHash          string
+	AppID             pgtype.UUID
+	Kind              string
+	GatewayGeneration int64
+	MatchHosts        []string
+	ExpectedNodes     []string
+	AcknowledgedNodes []string
+	CreatedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+}
+
+type EnvironmentGitopsEvent struct {
+	ID        pgtype.UUID
+	SourceID  pgtype.UUID
+	Actor     string
+	Kind      string
+	Details   []byte
+	CreatedAt pgtype.Timestamptz
+}
+
+type EnvironmentGitopsJob struct {
+	SourceID          pgtype.UUID
+	DesiredGeneration int64
+	ClaimedGeneration int64
+	NextAttemptAt     pgtype.Timestamptz
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	AttemptCount      int32
+}
+
+type EnvironmentGitopsQueueBinding struct {
+	SourceID  pgtype.UUID
+	Resource  string
+	FieldPath string
+	BindingID pgtype.UUID
+}
+
+type EnvironmentGitopsResource struct {
+	SourceID        pgtype.UUID
+	LogicalName     string
+	AppID           pgtype.UUID
+	CreatedBySource bool
+	CreatedAt       pgtype.Timestamptz
+}
+
+type EnvironmentGitopsRun struct {
+	ID          pgtype.UUID
+	SourceID    pgtype.UUID
+	RevisionID  pgtype.UUID
+	Generation  int64
+	LeaseToken  string
+	Status      string
+	Plan        []byte
+	Steps       []byte
+	ErrorCode   string
+	StartedAt   pgtype.Timestamptz
+	CompletedAt pgtype.Timestamptz
+}
+
+type EnvironmentGitopsRuntimeEffect struct {
+	ID              pgtype.UUID
+	SourceID        pgtype.UUID
+	RevisionID      pgtype.UUID
+	Generation      int64
+	IntentVersion   int64
+	PlanHash        string
+	AppID           pgtype.UUID
+	EnvironmentSlug string
+	RequiredAt      pgtype.Timestamptz
+	WakeID          pgtype.UUID
+	RequestedAt     pgtype.Timestamptz
+	NextRequestAt   pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+}
+
+type EnvironmentGitopsRuntimeTarget struct {
+	SourceID          pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Resource          string
+	EnvironmentSlug   string
+	RequiredAt        interface{}
+	StaleResidents    int64
+	StartingResidents int64
+	StaleSnapshots    int64
+}
+
+type EnvironmentManagedField struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+	ManagerKind   string
+	ManagerID     string
+	SourceID      pgtype.UUID
+	DesiredValue  []byte
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type EnvironmentManagementOverride struct {
+	ID            pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+	AuthorizedBy  string
+	Reason        string
+	ExpiresAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
+type EnvironmentQualificationExecution struct {
+	InstanceID      pgtype.UUID
+	RequestID       pgtype.UUID
+	Frame           []byte
+	CleanupToken    pgtype.UUID
+	DispatchStarted bool
+	Retirement      []byte
+	CreatedAt       pgtype.Timestamptz
+	RetiredAt       pgtype.Timestamptz
+}
+
+type EnvironmentWorkloadGraph struct {
+	ID               pgtype.UUID
+	SourceID         pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	RevisionID       pgtype.UUID
+	Generation       int64
+	IntentVersion    int64
+	PlanHash         string
+	DefinitionDigest string
+	Members          []byte
+	ResourceIds      []byte
+	Phase            string
+	ErrorCode        string
+	CreatedAt        pgtype.Timestamptz
+	PreparedAt       pgtype.Timestamptz
+}
+
+type EnvironmentWorkloadQualificationRequest struct {
+	ID                 pgtype.UUID
+	GraphID            pgtype.UUID
+	DeploymentID       pgtype.UUID
+	AppID              pgtype.UUID
+	Resource           string
+	Artifact           []byte
+	FrozenInputs       []byte
+	ExecutionMode      string
+	Phase              string
+	CreatedAt          pgtype.Timestamptz
+	WorkerID           string
+	LeaseToken         string
+	LeaseUntil         pgtype.Timestamptz
+	Attempt            int64
+	ReservedInstanceID pgtype.UUID
+}
+
 type Event struct {
 	ID             int64
 	At             pgtype.Timestamptz
@@ -1707,39 +2285,178 @@ type Event struct {
 	OutboxID       pgtype.Int8
 }
 
-type EventFanoutAttemptHistory struct {
-	ID             int64
-	OutboxID       int64
+type EventDeliveryCapacity struct {
+	AccountID     pgtype.UUID
+	ConsumerLimit int32
+	AppLimit      int32
+	AccountLimit  int32
+}
+
+type EventDeliverySlot struct {
+	InvocationID   pgtype.UUID
+	AccountID      pgtype.UUID
 	AppID          pgtype.UUID
 	SubscriptionID string
-	Action         string
-	State          string
-	Attempts       int32
-	FailureCode    string
-	Retryable      bool
-	LastError      string
-	OccurredAt     pgtype.Timestamptz
+}
+
+type EventFanoutAttemptHistory struct {
+	ID                int64
+	OutboxID          int64
+	AppID             pgtype.UUID
+	SubscriptionID    string
+	Action            string
+	State             string
+	Attempts          int32
+	FailureCode       string
+	Retryable         bool
+	LastError         string
+	OccurredAt        pgtype.Timestamptz
+	CapacityScope     string
+	CapacityDeferrals int64
+	DetailsTruncated  bool
+	HistoryBytes      int64
+}
+
+type EventFanoutHistorySummary struct {
+	OutboxID                 int64
+	SubscriptionID           string
+	AppID                    pgtype.UUID
+	ObservedOutcomes         int64
+	CapacityDeferrals        int64
+	CoalescedOutcomes        int64
+	CompactedOutcomes        int64
+	CompactedThroughID       int64
+	CompactedThroughAt       pgtype.Timestamptz
+	FirstCapacityWaitAt      pgtype.Timestamptz
+	LastCapacityWaitAt       pgtype.Timestamptz
+	LastCapacityScope        string
+	LastOutcomeCapacityScope string
+	LastWasCoalesced         bool
+	LatestID                 int64
+	LatestFailureID          int64
+	LatestReplayID           int64
+	NextPruneAt              pgtype.Timestamptz
 }
 
 type EventFanoutOutbox struct {
-	ID                int64
+	ID                   int64
+	AccountID            pgtype.UUID
+	Source               string
+	EventID              string
+	EventType            string
+	SchemaVersion        pgtype.Text
+	EventData            []byte
+	Payload              []byte
+	State                string
+	Attempts             int32
+	AvailableAt          pgtype.Timestamptz
+	LeaseUntil           pgtype.Timestamptz
+	ClaimToken           pgtype.UUID
+	LastError            pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	DeliveredAt          pgtype.Timestamptz
+	RecipientSnapshot    []byte
+	RecipientProgress    []byte
+	RecipientClaims      bool
+	CustomerStorageBytes int64
+}
+
+type EventFanoutRecipient struct {
+	OutboxID                    int64
+	SubscriptionID              string
+	AppID                       pgtype.UUID
+	Recipient                   []byte
+	State                       string
+	Generation                  int64
+	Attempts                    int32
+	TotalAttempts               int32
+	AvailableAt                 pgtype.Timestamptz
+	ClaimToken                  pgtype.UUID
+	LeaseUntil                  pgtype.Timestamptz
+	CapacityDeferrals           int32
+	GenerationCapacityDeferrals int32
+	BackfillJobID               pgtype.UUID
+}
+
+type EventReplayJob struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	SubscriptionID        pgtype.UUID
+	SubscriptionRevision  string
+	Recipient             []byte
+	FromAt                pgtype.Timestamptz
+	UntilAt               pgtype.Timestamptz
+	CutoffAt              pgtype.Timestamptz
+	EarliestRetainedAt    pgtype.Timestamptz
+	CursorAt              pgtype.Timestamptz
+	CursorOutboxID        int64
+	DuplicatePolicy       string
+	State                 string
+	ScanComplete          bool
+	ScannedCount          int64
+	MatchedCount          int64
+	FilteredCount         int64
+	SkippedCapturedCount  int64
+	SkippedUnknownCount   int64
+	SkippedExistingCount  int64
+	SkippedUnsettledCount int64
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	CompletedAt           pgtype.Timestamptz
+}
+
+type EventReplayJobItem struct {
+	JobID         pgtype.UUID
+	OutboxID      int64
+	AcceptedAt    pgtype.Timestamptz
+	EventSource   string
+	EventID       string
+	EventType     string
+	SchemaVersion string
+	State         string
+	Attempts      int32
+	FailureCode   string
+	LastError     string
+	Retryable     bool
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type EventRoutingBacklog struct {
+	OutboxID          int64
+	SubscriptionID    string
 	AccountID         pgtype.UUID
-	Source            string
-	EventID           string
-	EventType         string
-	SchemaVersion     pgtype.Text
-	EventData         []byte
-	Payload           []byte
-	State             string
+	AppID             pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+	RoutingMode       string
+	RoutingState      string
+	CapacityScope     string
 	Attempts          int32
-	AvailableAt       pgtype.Timestamptz
+	CapacityDeferrals int32
+	NextAttemptAt     pgtype.Timestamptz
 	LeaseUntil        pgtype.Timestamptz
-	ClaimToken        pgtype.UUID
-	LastError         pgtype.Text
-	CreatedAt         pgtype.Timestamptz
-	DeliveredAt       pgtype.Timestamptz
-	RecipientSnapshot []byte
-	RecipientProgress []byte
+}
+
+type EventRoutingBacklogSource struct {
+	OutboxID          int64
+	SubscriptionID    interface{}
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+	RoutingMode       string
+	RoutingState      interface{}
+	CapacityScope     string
+	Attempts          interface{}
+	CapacityDeferrals interface{}
+	NextAttemptAt     pgtype.Timestamptz
+	LeaseUntil        interface{}
+}
+
+type EventRoutingFairness struct {
+	AccountID      pgtype.UUID
+	SubscriptionID string
+	LastClaimedAt  pgtype.Timestamptz
 }
 
 type EventSchema struct {
@@ -1749,6 +2466,10 @@ type EventSchema struct {
 	Version   string
 	Schema    []byte
 	CreatedAt pgtype.Timestamptz
+}
+
+type EventStorageAdmission struct {
+	AccountID pgtype.UUID
 }
 
 type EventSubscription struct {
@@ -1772,40 +2493,143 @@ type EventSubscriptionWorkBinding struct {
 	FairnessKeySelector string
 }
 
-type Execution struct {
+type ExclusiveWorkEffect struct {
+	ID          pgtype.UUID
+	OperationID pgtype.UUID
+	Generation  int64
+	Name        string
+	Payload     []byte
+	CreatedAt   pgtype.Timestamptz
+	WebhookID   pgtype.UUID
+	EventType   pgtype.Text
+}
+
+type ExclusiveWorkKey struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	PolicyID      pgtype.UUID
+	ScopeID       pgtype.UUID
+	EnvironmentID string
+	KeyDigest     []byte
+	Generation    int64
+	NextSequence  int64
+}
+
+type ExclusiveWorkOperation struct {
 	ID                pgtype.UUID
 	AccountID         pgtype.UUID
-	Runtime           string
-	Status            string
-	NetworkMode       string
-	TimeoutMs         int32
-	MemoryMb          int32
-	CpuMillicores     int32
-	EphemeralDiskMb   int32
-	MaxOutputBytes    int32
-	PidsMax           int32
-	SourceBytes       int32
-	InputBytes        int32
-	DeadlineAt        pgtype.Timestamptz
-	LeaseToken        pgtype.UUID
-	LeaseOwner        pgtype.Text
+	KeyID             pgtype.UUID
+	AppID             pgtype.UUID
+	PlatformTenantID  pgtype.UUID
+	Sequence          int64
+	State             string
+	PolicyRevision    int64
+	Configuration     []byte
+	Request           []byte
+	RequestDigest     []byte
+	EquivalenceDigest []byte
+	IdempotencyDigest []byte
+	Generation        int64
+	ClaimToken        pgtype.UUID
+	IncarnationID     string
 	LeaseExpiresAt    pgtype.Timestamptz
-	CancelRequestedAt pgtype.Timestamptz
+	AttemptDeadline   pgtype.Timestamptz
 	Result            []byte
-	ResultBytes       int32
-	Stdout            string
-	Stderr            string
-	OutputTruncated   bool
-	ExitCode          pgtype.Int4
-	FailureCode       pgtype.Text
-	FailureMessage    pgtype.Text
-	WallTimeMs        int64
-	CpuTimeMs         int64
-	PeakMemoryMb      int32
-	StartedAt         pgtype.Timestamptz
-	FinishedAt        pgtype.Timestamptz
+	LastError         string
 	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+	DueAt             pgtype.Timestamptz
+	Attempts          int32
+	QuotaReserved     bool
+	JobID             pgtype.UUID
+}
+
+type ExclusiveWorkPolicy struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Name          string
+	Revision      int64
+	Configuration []byte
+	Retired       bool
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type ExclusiveWorkSubmission struct {
+	KeyID             pgtype.UUID
+	IdempotencyDigest []byte
+	OperationID       pgtype.UUID
+}
+
+type ExclusiveWorkTriggerBinding struct {
+	Source           string
+	TriggerID        pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	PolicyID         pgtype.UUID
+	PolicyName       string
+	PlatformTenantID pgtype.UUID
+	BusinessKey      []byte
+	EquivalenceKey   string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	JobID            pgtype.UUID
+}
+
+type Execution struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	Runtime            string
+	Status             string
+	NetworkMode        string
+	TimeoutMs          int32
+	MemoryMb           int32
+	CpuMillicores      int32
+	EphemeralDiskMb    int32
+	MaxOutputBytes     int32
+	PidsMax            int32
+	SourceBytes        int32
+	InputBytes         int32
+	DeadlineAt         pgtype.Timestamptz
+	LeaseToken         pgtype.UUID
+	LeaseOwner         pgtype.Text
+	LeaseExpiresAt     pgtype.Timestamptz
+	CancelRequestedAt  pgtype.Timestamptz
+	Result             []byte
+	ResultBytes        int32
+	Stdout             string
+	Stderr             string
+	OutputTruncated    bool
+	ExitCode           pgtype.Int4
+	FailureCode        pgtype.Text
+	FailureMessage     pgtype.Text
+	WallTimeMs         int64
+	CpuTimeMs          int64
+	PeakMemoryMb       int32
+	StartedAt          pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	Artifacts          []byte
+	Profile            string
+	RuntimeImageDigest pgtype.Text
+	RunsPrincipalID    pgtype.UUID
+	WorkflowID         pgtype.Text
+	StepLabel          pgtype.Text
+}
+
+type ExecutionArtifactGrant struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	SourceExecutionID   pgtype.UUID
+	ArtifactName        string
+	CreatorPrincipalID  pgtype.UUID
+	TokenHash           []byte
+	ExpiresAt           pgtype.Timestamptz
+	RedeemedAt          pgtype.Timestamptz
+	RedeemedExecutionID pgtype.UUID
+	RevokedAt           pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
 }
 
 type ExecutionEvent struct {
@@ -1815,6 +2639,11 @@ type ExecutionEvent struct {
 	EventType   string
 	Payload     []byte
 	CreatedAt   pgtype.Timestamptz
+}
+
+type ExecutionOutboundIntegration struct {
+	ExecutionID   pgtype.UUID
+	IntegrationID pgtype.UUID
 }
 
 type ExecutionPayload struct {
@@ -1848,6 +2677,70 @@ type FeatureFlagVersion struct {
 	Actor         string
 	RestoredFrom  pgtype.Int8
 	CreatedAt     pgtype.Timestamptz
+}
+
+type FinancialBudgetPolicy struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Revision  int64
+	Spec      []byte
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
+}
+
+type FinancialBudgetRevision struct {
+	AccountID  pgtype.UUID
+	PolicyID   pgtype.UUID
+	Revision   int64
+	Actor      string
+	Mutation   string
+	Spec       []byte
+	RecordedAt pgtype.Timestamptz
+}
+
+type FinancialEvidenceCoverage struct {
+	Singleton    bool
+	RetainedFrom pgtype.Timestamptz
+}
+
+type FinancialPriceSnapshot struct {
+	AccountID     pgtype.UUID
+	PeriodStart   pgtype.Timestamptz
+	PeriodEnd     pgtype.Timestamptz
+	Meter         string
+	Version       string
+	Plan          string
+	EffectiveFrom pgtype.Timestamptz
+	DeliveryMode  string
+	Price         []byte
+	RecordedAt    pgtype.Timestamptz
+}
+
+type FinancialSamplingWindow struct {
+	Minute          pgtype.Timestamptz
+	ComputeComplete bool
+	EgressComplete  bool
+	ObservedAt      pgtype.Timestamptz
+}
+
+type FinancialUsageEvidence struct {
+	ID               int64
+	AccountID        pgtype.UUID
+	InstanceID       pgtype.UUID
+	SourceID         string
+	Meter            string
+	Unit             string
+	Quantity         int64
+	SourceStart      pgtype.Timestamptz
+	SourceEnd        pgtype.Timestamptz
+	Plan             string
+	Attribution      []byte
+	ObservedAt       pgtype.Timestamptz
+	PriceVersion     pgtype.Text
+	CorrectsSourceID pgtype.Text
+	AdjustmentActor  pgtype.Text
+	AdjustmentReason pgtype.Text
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
@@ -2017,32 +2910,36 @@ type InboundWebhookEndpoint struct {
 }
 
 type Instance struct {
-	ID                   pgtype.UUID
-	AppID                pgtype.UUID
-	DeploymentID         pgtype.UUID
-	State                string
-	Netns                pgtype.Text
-	GuestUid             pgtype.Int4
-	HostIp               *netip.Addr
-	RamMb                int32
-	StartedAt            pgtype.Timestamptz
-	LastRequestAt        pgtype.Timestamptz
-	ParkedAt             pgtype.Timestamptz
-	TerminalAt           pgtype.Timestamptz
-	NodeID               pgtype.UUID
-	WakeID               pgtype.UUID
-	OrgID                pgtype.UUID
-	MigratedFromNodeID   pgtype.UUID
-	MigratedAt           pgtype.Timestamptz
-	LeaseToken           pgtype.Text
-	FrameworkReadyAt     pgtype.Timestamptz
-	TailCount            int32
-	RequestCount         int64
-	Kind                 string
-	JobID                pgtype.UUID
-	Mode                 string
-	MigrationStartedAt   pgtype.Timestamptz
-	StartupCpuBoostUntil pgtype.Timestamptz
+	ID                      pgtype.UUID
+	AppID                   pgtype.UUID
+	DeploymentID            pgtype.UUID
+	State                   string
+	Netns                   pgtype.Text
+	GuestUid                pgtype.Int4
+	HostIp                  *netip.Addr
+	RamMb                   int32
+	StartedAt               pgtype.Timestamptz
+	LastRequestAt           pgtype.Timestamptz
+	ParkedAt                pgtype.Timestamptz
+	TerminalAt              pgtype.Timestamptz
+	NodeID                  pgtype.UUID
+	WakeID                  pgtype.UUID
+	OrgID                   pgtype.UUID
+	MigratedFromNodeID      pgtype.UUID
+	MigratedAt              pgtype.Timestamptz
+	LeaseToken              pgtype.Text
+	FrameworkReadyAt        pgtype.Timestamptz
+	TailCount               int32
+	RequestCount            int64
+	Kind                    string
+	JobID                   pgtype.UUID
+	Mode                    string
+	MigrationStartedAt      pgtype.Timestamptz
+	StartupCpuBoostUntil    pgtype.Timestamptz
+	ExclusiveCaptureBlocked bool
+	CapacityRamMb           int64
+	CapacityCpuMillicores   int64
+	CapacityVcpu            int32
 }
 
 type InstanceBillingInterval struct {
@@ -2050,6 +2947,19 @@ type InstanceBillingInterval struct {
 	InstanceID pgtype.UUID
 	StartedAt  pgtype.Timestamptz
 	EndedAt    pgtype.Timestamptz
+}
+
+type InstanceRuntimeConfigReceipt struct {
+	InstanceID            pgtype.UUID
+	WakeID                pgtype.UUID
+	Scope                 string
+	BoundaryAt            pgtype.Timestamptz
+	Variables             []byte
+	SecretVersions        []byte
+	AllSecrets            bool
+	AcknowledgedAt        pgtype.Timestamptz
+	SecretRefs            []byte
+	SidecarSecretVersions []byte
 }
 
 type Invocation struct {
@@ -2093,7 +3003,71 @@ type Invocation struct {
 	WorkFairnessDigest       []byte
 	WorkFairnessLimit        pgtype.Int4
 	PlatformTenantID         pgtype.UUID
+	FailureRules             []byte
+	OccurrenceID             pgtype.UUID
+	StartDeadlineAt          pgtype.Timestamptz
+	WorkDecision             []byte
 	OperationID              pgtype.UUID
+	DeploymentScope          string
+	QueueBindingID           pgtype.UUID
+	ReplayGeneration         int64
+	OutcomeCode              string
+	EnvironmentID            pgtype.UUID
+	ReplayRootInvocationID   pgtype.UUID
+	ReplayRootCreatedAt      pgtype.Timestamptz
+}
+
+type InvocationAttemptHistory struct {
+	ID               int64
+	InvocationID     pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	RootInvocationID pgtype.UUID
+	RootCreatedAt    pgtype.Timestamptz
+	ReplayGeneration int64
+	Attempt          int32
+	StartedAt        pgtype.Timestamptz
+	FinishedAt       pgtype.Timestamptz
+	Outcome          string
+	ErrorDetail      string
+	NextAttemptAt    pgtype.Timestamptz
+	RetainUntil      pgtype.Timestamptz
+}
+
+type InvocationEnvironmentQueueAdmission struct {
+	InvocationID   pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	ConsumerID     pgtype.UUID
+	RuntimeSetID   pgtype.UUID
+	DeploymentID   pgtype.UUID
+	WorkloadSpecID pgtype.UUID
+	PinHash        string
+	SettingsHash   string
+	DefinitionHash string
+	QueueName      string
+	AdmittedAt     pgtype.Timestamptz
+}
+
+type InvocationEnvironmentQueueReceipt struct {
+	InvocationID   pgtype.UUID
+	Attempt        int32
+	TokenHash      string
+	OwnerHash      string
+	IssuedAt       pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+}
+
+type InvocationKeyedReplay struct {
+	ParentInvocationID pgtype.UUID
+	ReplayInvocationID pgtype.UUID
+}
+
+type InvocationPlainReplay struct {
+	ParentInvocationID pgtype.UUID
+	ReplayInvocationID pgtype.UUID
+	ReplayCreatedAt    pgtype.Timestamptz
 }
 
 type InvocationWorkCancellation struct {
@@ -2103,6 +3077,29 @@ type InvocationWorkCancellation struct {
 	KeyDigest      []byte
 	CancelledCount int64
 	CreatedAt      pgtype.Timestamptz
+}
+
+type InvocationWorkEnvironmentAdmission struct {
+	InvocationID   pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	WorkloadSpecID pgtype.UUID
+	SettingsHash   string
+	AppID          pgtype.UUID
+	PolicyName     string
+	PolicyRevision int64
+	KeyDigest      []byte
+	FairnessDigest []byte
+	FairnessLimit  int32
+	CreatedAt      pgtype.Timestamptz
+}
+
+type InvocationWorkEnvironmentDomain struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	PolicyName    string
+	Kind          string
+	Digest        []byte
+	CreatedAt     pgtype.Timestamptz
 }
 
 type InvocationWorkFairnessLane struct {
@@ -2149,6 +3146,8 @@ type Invoice struct {
 	AmountRefundedCents      int64
 	CreditsAppliedCents      int64
 	AmountRefundPendingCents int64
+	Details                  []byte
+	DetailLifecycle          []byte
 }
 
 type InvoiceRefund struct {
@@ -2245,6 +3244,9 @@ type Job struct {
 	CronSchedule                      pgtype.Text
 	CronTimezone                      string
 	LastScheduledAt                   pgtype.Timestamptz
+	SchedulePolicy                    []byte
+	FailureRules                      []byte
+	ScheduleRevision                  int64
 }
 
 type JobRegistryCredential struct {
@@ -2293,7 +3295,12 @@ type JobRun struct {
 	SourceRunID                 pgtype.UUID
 	InputManifestUri            pgtype.Text
 	InputManifestSha256         pgtype.Text
+	FailureRules                []byte
+	OccurrenceID                pgtype.UUID
+	StartDeadlineAt             pgtype.Timestamptz
 	OperationID                 pgtype.UUID
+	ExclusiveOperationID        pgtype.UUID
+	ExclusiveGeneration         pgtype.Int8
 }
 
 type JobTask struct {
@@ -2318,6 +3325,8 @@ type JobTask struct {
 	InputRef        pgtype.Text
 	OutputManifest  []byte
 	SourceTaskIndex pgtype.Int4
+	WorkDecision    []byte
+	OutcomeCode     string
 }
 
 type JobTaskAttempt struct {
@@ -2334,6 +3343,16 @@ type JobTaskAttempt struct {
 	LogContent     string
 	LogTruncated   bool
 	OutputManifest []byte
+	WorkDecision   []byte
+	OutcomeCode    string
+}
+
+type LayerArtifactRetention struct {
+	StorageKey        string
+	State             string
+	DeletionID        pgtype.UUID
+	DeletedAt         pgtype.Timestamptz
+	DeleteRequestedAt pgtype.Timestamptz
 }
 
 type LogEvent struct {
@@ -2359,7 +3378,7 @@ type LogEvent struct {
 	Fields        []byte
 }
 
-type LogEvents202609 struct {
+type LogEvents202610 struct {
 	ID            pgtype.UUID
 	OccurredAt    pgtype.Timestamptz
 	AccountID     pgtype.UUID
@@ -2382,7 +3401,7 @@ type LogEvents202609 struct {
 	Fields        []byte
 }
 
-type LogEvents202610 struct {
+type LogEvents202611 struct {
 	ID            pgtype.UUID
 	OccurredAt    pgtype.Timestamptz
 	AccountID     pgtype.UUID
@@ -2446,6 +3465,28 @@ type MailSuppression struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ManagedPostgresAccountingReconciliation struct {
+	AccountID          pgtype.UUID
+	ReconciliationID   pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	ActorID            string
+	Reason             string
+	EvidenceReference  string
+	EvidenceSha256     string
+	RequestSha256      string
+	PreviewRevision    string
+	Request            []byte
+	Policy             []byte
+	BeforeCatalog      []byte
+	AfterCatalog       []byte
+	CoverageBefore     []byte
+	Result             []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
 type ManagedPostgresBinding struct {
 	ID                         pgtype.UUID
 	AccountID                  pgtype.UUID
@@ -2469,36 +3510,170 @@ type ManagedPostgresBinding struct {
 	RotationPreviousGeneration pgtype.Int8
 	RotationWakeID             pgtype.UUID
 	RotationCleanupReady       bool
+	CutoverID                  pgtype.UUID
+}
+
+type ManagedPostgresCheckpointMaintenance struct {
+	ID                       pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	ReservedByOperationID    pgtype.UUID
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	State                    string
+	OwnerOid                 pgtype.Int8
+	DatabaseOid              pgtype.Int8
+	RoleRequestedAt          pgtype.Timestamptz
+	DatabaseRequestedAt      pgtype.Timestamptz
+	ActivationRequestedAt    pgtype.Timestamptz
+	ReadyAt                  pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+}
+
+type ManagedPostgresCreationReceipt struct {
+	Kind               string
+	ResourceID         string
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Generation         int64
+	PointInTime        pgtype.Timestamptz
+	SourceResourceID   string
+	ProviderResourceID string
+	ProviderCreatedAt  pgtype.Timestamptz
+	RecordedAt         pgtype.Timestamptz
+	CleanupStartedAt   pgtype.Timestamptz
+}
+
+type ManagedPostgresCutover struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Scope                    string
+	SourceDatabaseID         pgtype.UUID
+	TargetDatabaseID         pgtype.UUID
+	SourceBackendID          string
+	SourceBackendFingerprint string
+	SourceResourceID         string
+	SourceGeneration         int64
+	TargetBackendID          string
+	TargetBackendFingerprint string
+	TargetResourceID         string
+	TargetGeneration         int64
+	State                    string
+	LastErrorCode            pgtype.Text
+	LeaseToken               pgtype.Text
+	LeaseUntil               pgtype.Timestamptz
+	AttemptCount             int32
+	RetryAt                  pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	VerifiedAt               pgtype.Timestamptz
+}
+
+type ManagedPostgresCutoverCredential struct {
+	ID                         pgtype.UUID
+	CutoverID                  pgtype.UUID
+	SourceBindingID            pgtype.UUID
+	SourceCredentialGeneration int64
+	EnvironmentKey             string
+	Access                     string
+	State                      string
+	ProviderIdentityID         pgtype.Text
+	CredentialRef              pgtype.Text
+	Ciphertext                 []byte
+	Kid                        pgtype.Text
+	ValueHash                  pgtype.Text
+	VerifiedAt                 pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabase struct {
-	ID                      pgtype.UUID
-	AccountID               pgtype.UUID
-	Name                    string
-	Region                  string
-	PostgresMajor           int16
-	ServiceClass            string
-	Availability            string
-	ScaleToZero             bool
-	StorageLimitBytes       int64
-	RestoreWindowSeconds    int64
-	BackendID               string
-	BackendFingerprint      string
-	ProviderResourceID      pgtype.Text
-	State                   string
-	DesiredGeneration       int64
-	ObservedGeneration      int64
-	LastErrorCode           pgtype.Text
-	LeaseToken              pgtype.Text
-	LeaseUntil              pgtype.Timestamptz
-	CreatedAt               pgtype.Timestamptz
-	UpdatedAt               pgtype.Timestamptz
-	DeletedAt               pgtype.Timestamptz
-	AttemptCount            int32
-	RetryAt                 pgtype.Timestamptz
-	RestoreSourceDatabaseID pgtype.UUID
-	RestoreSourceResourceID pgtype.Text
-	RestorePointInTime      pgtype.Timestamptz
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	Name                        string
+	Region                      string
+	PostgresMajor               int16
+	ServiceClass                string
+	Availability                string
+	ScaleToZero                 bool
+	StorageLimitBytes           int64
+	RestoreWindowSeconds        int64
+	BackendID                   string
+	BackendFingerprint          string
+	ProviderResourceID          pgtype.Text
+	State                       string
+	DesiredGeneration           int64
+	ObservedGeneration          int64
+	LastErrorCode               pgtype.Text
+	LeaseToken                  pgtype.Text
+	LeaseUntil                  pgtype.Timestamptz
+	CreatedAt                   pgtype.Timestamptz
+	UpdatedAt                   pgtype.Timestamptz
+	DeletedAt                   pgtype.Timestamptz
+	AttemptCount                int32
+	RetryAt                     pgtype.Timestamptz
+	RestoreSourceDatabaseID     pgtype.UUID
+	RestoreSourceResourceID     pgtype.Text
+	RestorePointInTime          pgtype.Timestamptz
+	CutoverID                   pgtype.UUID
+	EnvironmentCloneOperationID pgtype.UUID
+	DataResourceID              pgtype.Text
+	CloneResourceRole           string
+	AccountingRequired          bool
+}
+
+type ManagedPostgresHealth struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DesiredGeneration  int64
+	ProviderStatus     string
+	ComputeState       string
+	CheckedAt          pgtype.Timestamptz
+	LastSuccessAt      pgtype.Timestamptz
+	LastErrorCode      pgtype.Text
+	NextCheckAt        pgtype.Timestamptz
+	LeaseToken         pgtype.Text
+	LeaseUntil         pgtype.Timestamptz
+	AttemptCount       int32
+}
+
+type ManagedPostgresResize struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DataResourceID     string
+	SourceSpec         []byte
+	TargetClass        string
+	Generation         int64
+	State              string
+	CreatedAt          pgtype.Timestamptz
+	CompletedAt        pgtype.Timestamptz
+	TargetScaleToZero  pgtype.Bool
+}
+
+type ManagedPostgresRestoreProof struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	OperationID        pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	SourceDatabaseID   pgtype.UUID
+	SourceResourceID   string
+	PointInTime        pgtype.Timestamptz
+	Spec               []byte
+	Generation         int64
+	ObservedAt         pgtype.Timestamptz
+	DataResourceID     pgtype.Text
 }
 
 type ManagedPostgresUsage struct {
@@ -2512,6 +3687,34 @@ type ManagedPostgresUsage struct {
 	Meter              string
 	Quantity           int64
 	CostMillicents     int64
+}
+
+type ManagedPostgresUsageCoverage struct {
+	DatabaseID       pgtype.UUID
+	WindowSeconds    int64
+	CollectedFrom    pgtype.Timestamptz
+	CollectedUntil   pgtype.Timestamptz
+	ObservedAt       pgtype.Timestamptz
+	SourceDatabaseID pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type ManagedPostgresUsageImport struct {
+	AccountID         pgtype.UUID
+	ImportID          pgtype.UUID
+	DatabaseID        pgtype.UUID
+	ActorID           string
+	Reason            string
+	EvidenceReference string
+	EvidenceSha256    string
+	RequestSha256     string
+	PreviewRevision   string
+	Request           []byte
+	Policy            []byte
+	BeforeRecords     []byte
+	AfterRecords      []byte
+	Result            []byte
+	CreatedAt         pgtype.Timestamptz
 }
 
 type ManagedRealtimeChannelHead struct {
@@ -2678,30 +3881,31 @@ type MigrationLease struct {
 }
 
 type MirrorInvocationResult struct {
-	ID                   pgtype.UUID
-	MirrorRuleID         pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	SourceDeploymentID   pgtype.UUID
-	MirrorDeploymentID   pgtype.UUID
-	InstanceID           pgtype.Text
-	SourceInstanceID     pgtype.Text
-	StatusCode           pgtype.Int4
-	SourceStatusCode     pgtype.Int4
-	LatencyMs            pgtype.Int4
-	SourceLatencyMs      pgtype.Int4
-	BodyHash             []byte
-	SourceBodyHash       []byte
-	SchemaHash           []byte
-	SourceSchemaHash     []byte
-	StatusDiff           bool
-	SchemaDiff           bool
-	BodyDiff             bool
-	Crashed              bool
-	RequestID            string
-	CompletedAt          pgtype.Timestamptz
-	RollupCounted        bool
-	ComparisonIncomplete bool
+	ID                     pgtype.UUID
+	MirrorRuleID           pgtype.UUID
+	AccountID              pgtype.UUID
+	AppID                  pgtype.UUID
+	SourceDeploymentID     pgtype.UUID
+	MirrorDeploymentID     pgtype.UUID
+	InstanceID             pgtype.Text
+	SourceInstanceID       pgtype.Text
+	StatusCode             pgtype.Int4
+	SourceStatusCode       pgtype.Int4
+	LatencyMs              pgtype.Int4
+	SourceLatencyMs        pgtype.Int4
+	BodyHash               []byte
+	SourceBodyHash         []byte
+	SchemaHash             []byte
+	SourceSchemaHash       []byte
+	StatusDiff             bool
+	SchemaDiff             bool
+	BodyDiff               bool
+	Crashed                bool
+	RequestID              string
+	CompletedAt            pgtype.Timestamptz
+	RollupCounted          bool
+	ComparisonIncomplete   bool
+	AdmissionFailureReason string
 }
 
 type MirrorInvocationSummary struct {
@@ -2731,6 +3935,13 @@ type MirrorRule struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	AllowUnsafeMethods bool
+}
+
+type MirrorSlotLease struct {
+	LeaseID      pgtype.UUID
+	MirrorRuleID pgtype.UUID
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
 }
 
 type NodeJoinJob struct {
@@ -2795,6 +4006,182 @@ type ObjectBucket struct {
 	PublicRead                     bool
 	ServeAt                        pgtype.Text
 	EnvironmentCloneSourceBucketID pgtype.UUID
+	EnvironmentCloneOperationID    pgtype.UUID
+}
+
+type ObjectBucketEncryption struct {
+	BucketID           pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	State              string
+	Revision           int64
+	EncryptionSnapshot []byte
+	DesiredSnapshot    []byte
+	LeaseToken         string
+	LeaseUntil         pgtype.Timestamptz
+	RetryAt            pgtype.Timestamptz
+	Dispatched         bool
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type ObjectBucketLifecycle struct {
+	BucketID   pgtype.UUID
+	Revision   int64
+	Rules      []byte
+	NextScanAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type ObjectBucketMutation struct {
+	ID                    pgtype.UUID
+	BucketID              pgtype.UUID
+	Kind                  string
+	BackendID             string
+	BackendFingerprint    string
+	PhysicalName          string
+	CreatedAt             pgtype.Timestamptz
+	UploadID              pgtype.UUID
+	MultipartUploadID     pgtype.UUID
+	MultipartPartWriterID pgtype.UUID
+}
+
+type ObjectBucketNotification struct {
+	BucketID pgtype.UUID
+	Revision int64
+	Rules    []byte
+}
+
+type ObjectBucketObjectLock struct {
+	BucketID              pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	State                 string
+	Revision              int64
+	EnabledRequired       bool
+	NativeEnabledObserved bool
+	ObservedKnown         bool
+	ObservedSnapshot      []byte
+	DesiredSnapshot       []byte
+	LeaseToken            string
+	LeaseUntil            pgtype.Timestamptz
+	RetryAt               pgtype.Timestamptz
+	Dispatched            bool
+	LastErrorCode         string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type ObjectBucketVersioning struct {
+	BucketID         pgtype.UUID
+	DesiredStatus    string
+	ObservedStatus   string
+	State            string
+	Revision         int64
+	VersionsRequired bool
+	Dispatched       bool
+	PropagationUntil pgtype.Timestamptz
+	CapacityJobID    pgtype.UUID
+	LeaseToken       string
+	LeaseUntil       pgtype.Timestamptz
+	RetryAt          pgtype.Timestamptz
+	LastErrorCode    string
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type ObjectBucketWriteFence struct {
+	BucketID           pgtype.UUID
+	Token              pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CreatedAt          pgtype.Timestamptz
+	CloneOperationID   pgtype.UUID
+}
+
+type ObjectDeletion struct {
+	ID                      pgtype.UUID
+	BucketID                pgtype.UUID
+	ObjectKey               string
+	Selector                string
+	State                   string
+	ProviderStatus          string
+	Baseline                []byte
+	ProviderVersionID       string
+	VersionID               string
+	DeleteMarker            bool
+	ReservedBytes           int64
+	LeaseToken              string
+	LeaseUntil              pgtype.Timestamptz
+	RetryAt                 pgtype.Timestamptz
+	LastErrorCode           string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	LifecycleScanID         pgtype.UUID
+	LifecycleBinding        []byte
+	TargetProviderVersionID string
+	RecoveryClaimed         bool
+	ProtectionRequired      bool
+	ProtectionVerified      bool
+	DeletionVerified        bool
+}
+
+type ObjectLifecycleScan struct {
+	ID             pgtype.UUID
+	BucketID       pgtype.UUID
+	Revision       int64
+	Rules          []byte
+	State          string
+	LastKey        string
+	ScannedKeys    int64
+	LeaseToken     string
+	LeaseUntil     pgtype.Timestamptz
+	RetryAt        pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	Phase          string
+	LastUploadID   pgtype.UUID
+	ScannedUploads int64
+}
+
+type ObjectMultipartInitiationDispatch struct {
+	MultipartUploadID pgtype.UUID
+	Dispatched        bool
+	DispatchToken     string
+	ProviderUploadID  string
+}
+
+type ObjectMultipartPartWriter struct {
+	ID                 pgtype.UUID
+	UploadID           pgtype.UUID
+	PartNumber         int32
+	TransferToken      string
+	Managed            bool
+	Dispatched         bool
+	Settled            bool
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CopyIntent         []byte
+	PutIntent          []byte
+	BodySha256         string
+}
+
+type ObjectS3CopySourceEpoch struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+type ObjectS3CopySourceGrant struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	CredentialID   pgtype.UUID
+	BucketID       pgtype.UUID
+	SourceBucketID pgtype.UUID
+	Prefix         string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type ObjectStorageAccessGrant struct {
@@ -2843,17 +4230,45 @@ type ObjectStorageBillingPeriod struct {
 }
 
 type ObjectStorageBucketUsage struct {
-	BucketID      pgtype.UUID
-	BaselineBytes int64
-	BaselineKeys  int64
-	GrantedBytes  int64
-	GrantedKeys   int64
-	ObservedBytes int64
-	ObservedKeys  int64
-	ObservedAt    pgtype.Timestamptz
-	AttemptAt     pgtype.Timestamptz
-	LeaseUntil    pgtype.Timestamptz
-	Token         string
+	BucketID       pgtype.UUID
+	BaselineBytes  int64
+	BaselineKeys   int64
+	GrantedBytes   int64
+	GrantedKeys    int64
+	ObservedBytes  int64
+	ObservedKeys   int64
+	ObservedAt     pgtype.Timestamptz
+	AttemptAt      pgtype.Timestamptz
+	LeaseUntil     pgtype.Timestamptz
+	Token          string
+	InventoryScope string
+}
+
+type ObjectStorageCapacityReconciliation struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	DeadlineAt        pgtype.Timestamptz
+	BeforeBytes       int64
+	BeforeKeys        int64
+	AfterBytes        int64
+	AfterKeys         int64
+	ReclaimedBytes    int64
+	ReclaimedKeys     int64
+	PendingWrites     int64
+	LastErrorCode     string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	InventoryScope    string
+	InventoryCursor   string
+	InventoryVerified bool
+	ScannedPages      int64
+	ScannedBytes      int64
+	ScannedVersions   int64
 }
 
 type ObjectStorageCustomerUsageReportsV2 struct {
@@ -2881,33 +4296,69 @@ type ObjectStorageInventorySample struct {
 }
 
 type ObjectStorageKeyGrant struct {
-	BucketID pgtype.UUID
-	KeyHash  string
-	MaxBytes int64
+	BucketID    pgtype.UUID
+	KeyHash     string
+	MaxBytes    int64
+	Reclaimable bool
+	LastWriteID pgtype.UUID
+}
+
+type ObjectStorageMultipartPartGrant struct {
+	UploadID          pgtype.UUID
+	PartNumber        int32
+	MaxBytes          int64
+	CleanupTracked    bool
+	TransferToken     pgtype.Text
+	UnsafeUntil       pgtype.Timestamptz
+	UrlCredentialID   pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	SourceCopyGrantID pgtype.UUID
+	SourceSubjectID   string
+	SourceKey         string
 }
 
 type ObjectStorageMultipartUpload struct {
-	ID               pgtype.UUID
-	AccountID        pgtype.UUID
-	AppID            pgtype.UUID
-	BucketID         pgtype.UUID
-	ObjectKey        string
-	SizeBytes        int64
-	PartSizeBytes    int64
-	PartCount        int32
-	ContentType      string
-	ProviderUploadID string
-	CompletionParts  []byte
-	State            string
-	ExpiresAt        pgtype.Timestamptz
-	LeaseToken       pgtype.Text
-	LeaseUntil       pgtype.Timestamptz
-	AttemptCount     int32
-	RetryAt          pgtype.Timestamptz
-	LastErrorCode    string
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	ObjectMetadata   []byte
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	AppID                      pgtype.UUID
+	BucketID                   pgtype.UUID
+	ObjectKey                  string
+	SizeBytes                  int64
+	PartSizeBytes              int64
+	PartCount                  int32
+	ContentType                string
+	ProviderUploadID           string
+	CompletionParts            []byte
+	State                      string
+	ExpiresAt                  pgtype.Timestamptz
+	LeaseToken                 pgtype.Text
+	LeaseUntil                 pgtype.Timestamptz
+	AttemptCount               int32
+	RetryAt                    pgtype.Timestamptz
+	LastErrorCode              string
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	ObjectMetadata             []byte
+	PartRevision               int64
+	CompletionIfMatch          string
+	CompletionIfNoneMatch      string
+	CompletionErrorCode        string
+	CompletionEtag             string
+	CompletionVersionID        string
+	CompletionRecoveryCursor   string
+	CompletionVersionsObserved bool
+	CompletionDispatched       bool
+	PartUrlUnsafeUntil         pgtype.Timestamptz
+	LifecycleScanID            pgtype.UUID
+	LifecycleBinding           []byte
+	EncryptionSnapshot         []byte
+	EncryptionLeaseToken       string
+	EncryptionVerified         bool
+	FixedAdmission             bool
+	EncryptionDefaultRevision  int64
+	ProtectionSnapshot         []byte
+	ProtectionLeaseToken       string
+	ProtectionVerified         bool
 }
 
 type ObjectStorageRequestMetric struct {
@@ -2936,6 +4387,30 @@ type ObjectStorageS3Credential struct {
 	RotationParentID  pgtype.UUID
 	RotationWakeID    pgtype.UUID
 	RotationStampedAt pgtype.Timestamptz
+	UrlRequest        []byte
+	UrlApiKeyID       pgtype.UUID
+	UrlExpiresAt      pgtype.Timestamptz
+	UrlReceiptID      pgtype.UUID
+}
+
+type ObjectStorageUploadGrant struct {
+	ID                 pgtype.UUID
+	BucketID           pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	TokenHash          string
+	Kind               string
+	ObjectKey          string
+	SizeBytes          int64
+	Headers            []byte
+	UploadID           pgtype.UUID
+	ProviderUploadID   pgtype.Text
+	PartNumber         int32
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
 }
 
 type ObjectStorageUsageHead struct {
@@ -2958,23 +4433,67 @@ type ObjectStorageUsageReport struct {
 	CostMillicents     int64
 }
 
+type ObjectStorageVersionInventoryCursor struct {
+	JobID      pgtype.UUID
+	CursorHash string
+}
+
+type ObjectStorageVersionInventoryEntry struct {
+	JobID        pgtype.UUID
+	IdentityHash string
+	Bytes        int64
+}
+
+type ObjectStorageWriteAdmission struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	KeyHash           string
+	Kind              string
+	State             string
+	MultipartUploadID pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	SettledAt         pgtype.Timestamptz
+	RouteReceipt      bool
+	NativeVersion     bool
+	NativeBytes       int64
+}
+
 type ObjectUploadCompletion struct {
-	ID                 pgtype.UUID
-	RouteID            pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	BucketID           pgtype.UUID
-	SubjectID          string
-	ObjectKey          string
-	Bytes              int64
-	ContentType        string
-	Etag               string
-	Status             string
-	ErrorCode          string
-	RequestID          string
-	CreatedAt          pgtype.Timestamptz
-	IdempotencyKey     string
-	RequestFingerprint string
+	ID                        pgtype.UUID
+	RouteID                   pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	BucketID                  pgtype.UUID
+	SubjectID                 string
+	ObjectKey                 string
+	Bytes                     int64
+	ContentType               string
+	Etag                      string
+	Status                    string
+	ErrorCode                 string
+	RequestID                 string
+	CreatedAt                 pgtype.Timestamptz
+	IdempotencyKey            string
+	RequestFingerprint        string
+	WritePhase                string
+	RecoveryToken             string
+	RecoveryLeaseUntil        pgtype.Timestamptz
+	RecoveryRetryAt           pgtype.Timestamptz
+	Origin                    string
+	SourceKey                 string
+	SourceEtag                string
+	RecoveryCursor            string
+	RecoveryVersionsObserved  bool
+	VersionID                 string
+	EncryptionSnapshot        []byte
+	EncryptionDispatched      bool
+	EncryptionVerified        bool
+	EncryptionDefaultRevision int64
+	SourceBucketID            pgtype.UUID
+	SourceCopyGrantID         pgtype.UUID
+	ProtectionSnapshot        []byte
+	ProtectionDispatched      bool
+	ProtectionVerified        bool
 }
 
 type ObjectUploadRoute struct {
@@ -2989,6 +4508,36 @@ type ObjectUploadRoute struct {
 	Enabled             bool
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	EncryptionSnapshot  []byte
+}
+
+type ObjectVersionProtection struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	ObjectKey         string
+	PublicVersionID   string
+	NativeVersionID   string
+	Intent            []byte
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	Dispatched        bool
+	LastErrorCode     string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	EventHoldBaseline []byte
+}
+
+type ObjectVersionReference struct {
+	ID               pgtype.UUID
+	BucketID         pgtype.UUID
+	ObjectKey        string
+	NativeVersionID  string
+	VersionsObserved bool
+	CreatedAt        pgtype.Timestamptz
 }
 
 type OidcExchangedToken struct {
@@ -3176,6 +4725,7 @@ type OutboundIntegration struct {
 	CircuitBreakerOpenSeconds      int32
 	RetryBudgetPerMinute           int32
 	ResponseCacheTtlSeconds        int32
+	RunsEnabled                    bool
 }
 
 type OutboundIntegrationApp struct {
@@ -3189,6 +4739,14 @@ type OutboundIntegrationCredential struct {
 	AccountID           pgtype.UUID
 	AuthorizationSealed []byte
 	UpdatedAt           pgtype.Timestamptz
+}
+
+type OutboundIntegrationProbePolicy struct {
+	IntegrationID  pgtype.UUID
+	AccountID      pgtype.UUID
+	Method         string
+	Path           string
+	ExpectedStatus int32
 }
 
 type PaddleOverageDedupe struct {
@@ -3370,6 +4928,19 @@ type PlatformTenantUsageMinute struct {
 	SourceKind       string
 }
 
+type PlatformTenantWorkflowScheduleCursor struct {
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	WorkflowName     string
+	DeploymentID     pgtype.UUID
+	TriggerSnapshot  []byte
+	LastEvaluatedAt  pgtype.Timestamptz
+	ScheduledFor     pgtype.Timestamptz
+	Status           string
+	LastRunID        pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type PrPreviewSet struct {
 	InstallationID int64
 	RepoFullName   string
@@ -3434,6 +5005,79 @@ type PrivateNetworkPeering struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type ProductionDeadLetterEvent struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Source           string
+	SourceID         pgtype.UUID
+	Origin           string
+	TriggerID        pgtype.UUID
+	EventPayload     []byte
+	Headers          []byte
+	ErrorKind        string
+	ErrorDetail      []byte
+	RetryCount       int32
+	FirstFailedAt    pgtype.Timestamptz
+	LastFailedAt     pgtype.Timestamptz
+	ReplayedAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	EnvironmentOwned bool
+}
+
+type ProductionInvocationWork struct {
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	AccountID                pgtype.UUID
+	Source                   string
+	State                    string
+	Payload                  []byte
+	Headers                  []byte
+	DueAt                    pgtype.Timestamptz
+	Method                   string
+	Path                     string
+	CronID                   pgtype.UUID
+	ScheduledAt              pgtype.Timestamptz
+	AckUrl                   pgtype.Text
+	Result                   []byte
+	LeaseExpiresAt           pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	CompletedAt              pgtype.Timestamptz
+	InstanceID               pgtype.Text
+	Attempts                 int32
+	LastError                pgtype.Text
+	CreatedAt                pgtype.Timestamptz
+	OrgID                    pgtype.UUID
+	Outcome                  pgtype.Text
+	DeadlineAt               pgtype.Timestamptz
+	RetryPolicy              []byte
+	ResultRetentionUntil     pgtype.Timestamptz
+	ReplayedFromInvocationID pgtype.UUID
+	LastReplayedAt           pgtype.Timestamptz
+	OnSuccessDestinationID   pgtype.UUID
+	OnFailureDestinationID   pgtype.UUID
+	QueueName                string
+	QuotaReserved            bool
+	WorkPolicyName           pgtype.Text
+	WorkKeyDigest            []byte
+	WorkExpiresAt            pgtype.Timestamptz
+	WorkSequence             pgtype.Int8
+	WorkPolicyRevision       pgtype.Int8
+	WorkFairnessDigest       []byte
+	WorkFairnessLimit        pgtype.Int4
+	PlatformTenantID         pgtype.UUID
+	FailureRules             []byte
+	OccurrenceID             pgtype.UUID
+	StartDeadlineAt          pgtype.Timestamptz
+	WorkDecision             []byte
+	OperationID              pgtype.UUID
+	DeploymentScope          string
+	QueueBindingID           pgtype.UUID
+	ReplayGeneration         int64
+	OutcomeCode              string
+	EnvironmentID            pgtype.UUID
+}
+
 type Project struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -3481,6 +5125,501 @@ type ProjectEnvironmentCleanupJob struct {
 	LeaseToken      string
 	LeaseUntil      pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+}
+
+type ProjectEnvironmentCloneConfigurationCapture struct {
+	OperationID       pgtype.UUID
+	Version           int32
+	ConfigurationHash string
+	Configuration     []byte
+}
+
+type ProjectEnvironmentCloneConfigurationClock struct {
+	Singleton  bool
+	Generation int64
+}
+
+type ProjectEnvironmentCloneConfigurationGuard struct {
+	ProjectID          pgtype.UUID
+	AccountID          pgtype.UUID
+	Generation         int64
+	OperationID        pgtype.UUID
+	State              string
+	SourceEnvironment  string
+	SourceRevisionHash string
+	HeldAt             pgtype.Timestamptz
+}
+
+type ProjectEnvironmentCloneLayerPin struct {
+	OperationID pgtype.UUID
+	AppID       pgtype.UUID
+	StorageKey  string
+	Bytes       int64
+}
+
+type ProjectEnvironmentCloneMaterialization struct {
+	OperationID      pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	WorkloadSettings []byte
+	CreatedAt        pgtype.Timestamptz
+}
+
+type ProjectEnvironmentCloneObjectCredential struct {
+	OperationID        pgtype.UUID
+	SourceCredentialID pgtype.UUID
+	TargetCredentialID pgtype.UUID
+	PreparationHash    string
+	Preparation        []byte
+}
+
+type ProjectEnvironmentCloneObjectEntry struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	ObjectKey      string
+	SourceVersion  string
+	SourceObject   []byte
+	CopiedAt       pgtype.Timestamptz
+	TargetEtag     string
+	VerifiedSha256 string
+}
+
+type ProjectEnvironmentCloneObjectGrantRevocation struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	RequestID        pgtype.UUID
+	Plan             []byte
+	PlanSha256       string
+	State            string
+	RevocationID     string
+	RetainedAt       pgtype.Timestamptz
+	RequestStartedAt pgtype.Timestamptz
+	ObservedAt       pgtype.Timestamptz
+	DrainedAt        pgtype.Timestamptz
+}
+
+type ProjectEnvironmentCloneObjectManifest struct {
+	OperationID     pgtype.UUID
+	SourceBucketID  pgtype.UUID
+	TargetBucketID  pgtype.UUID
+	CapturedAt      pgtype.Timestamptz
+	CapturedAtExact string
+	ManifestHash    string
+	ObjectCount     int32
+	CreatedAt       pgtype.Timestamptz
+}
+
+type ProjectEnvironmentCloneOperation struct {
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	ProjectID                   pgtype.UUID
+	SourceEnvironment           string
+	TargetEnvironment           string
+	IdempotencyKey              string
+	SourceRevisionHash          string
+	SourceReleaseSetID          pgtype.UUID
+	Status                      string
+	Revision                    int64
+	Resources                   []byte
+	ErrorCode                   string
+	CreatedAt                   pgtype.Timestamptz
+	UpdatedAt                   pgtype.Timestamptz
+	TargetReleaseSetID          pgtype.UUID
+	LeaseToken                  pgtype.UUID
+	LeaseUntil                  pgtype.Timestamptz
+	AttemptCount                int32
+	NextAttemptAt               pgtype.Timestamptz
+	ConfigurationCaptureVersion int32
+}
+
+type ProjectEnvironmentClonePostgresArchive struct {
+	OperationID          pgtype.UUID
+	SourceDatabaseID     pgtype.UUID
+	DatabaseOid          int64
+	AccountID            pgtype.UUID
+	ProjectID            pgtype.UUID
+	OwnerID              pgtype.UUID
+	Scope                []byte
+	InventoryFingerprint string
+	KeyID                string
+	StorageID            string
+	StorageFingerprint   string
+	StorageKey           string
+	ReservedBytes        int64
+	State                string
+	UploadStartedAt      pgtype.Timestamptz
+	PlaintextBytes       pgtype.Int8
+	CiphertextBytes      pgtype.Int8
+	CiphertextSha256     pgtype.Text
+	RetainedAt           pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresBinding struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+	TargetBindingID pgtype.UUID
+	ReservationHash string
+	PreparationHash pgtype.Text
+	Preparation     []byte
+}
+
+type ProjectEnvironmentClonePostgresCheckpointSelection struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	MaintenanceID    pgtype.UUID
+	Scope            []byte
+	Fingerprint      string
+	KeyID            string
+	CiphertextSha256 string
+	Ciphertext       []byte
+	RetainedAt       pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresContent struct {
+	OperationID               pgtype.UUID
+	SourceDatabaseID          pgtype.UUID
+	DatabaseOid               int64
+	AccountID                 pgtype.UUID
+	ProjectID                 pgtype.UUID
+	OwnerID                   pgtype.UUID
+	Scope                     []byte
+	InventoryFingerprint      string
+	InventoryCiphertextSha256 string
+	ArchiveOwnerID            pgtype.UUID
+	ArchiveReservationSha256  string
+	ReaderOwnerID             pgtype.UUID
+	ReaderIdentitySha256      string
+	KeyID                     string
+	ReservedBytes             int64
+	State                     string
+	Fingerprint               pgtype.Text
+	Ciphertext                []byte
+	CiphertextSha256          pgtype.Text
+	CapturedAt                pgtype.Timestamptz
+	CreatedAt                 pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresCopyReader struct {
+	OperationID         pgtype.UUID
+	SourceDatabaseID    pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectID           pgtype.UUID
+	CaptureDatabaseID   pgtype.UUID
+	Scope               []byte
+	OwnerID             pgtype.UUID
+	State               string
+	RequestStartedAt    pgtype.Timestamptz
+	EndpointID          pgtype.Text
+	EndpointCreatedAt   pgtype.Timestamptz
+	Available           bool
+	ObservedAt          pgtype.Timestamptz
+	CleanupRequestedAt  pgtype.Timestamptz
+	CleanupDispatchedAt pgtype.Timestamptz
+	DeleteOperationIds  []byte
+	CaptureOperationIds []byte
+	RetiredAt           pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresCopyTarget struct {
+	OperationID        pgtype.UUID
+	SourceDatabaseID   pgtype.UUID
+	AccountID          pgtype.UUID
+	CaptureDatabaseID  pgtype.UUID
+	TargetDatabaseID   pgtype.UUID
+	State              string
+	RequestStartedAt   pgtype.Timestamptz
+	ProviderResourceID pgtype.Text
+	ProviderCreatedAt  pgtype.Timestamptz
+	ObservedAt         pgtype.Timestamptz
+	PreparedAt         pgtype.Timestamptz
+	RetiredAt          pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	DeletionStartedAt  pgtype.Timestamptz
+	DeletionObservedAt pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresDatabasePlan struct {
+	OperationID                pgtype.UUID
+	SourceDatabaseID           pgtype.UUID
+	AccountID                  pgtype.UUID
+	ProjectID                  pgtype.UUID
+	TargetDatabaseID           pgtype.UUID
+	Scope                      []byte
+	InventoryFingerprint       string
+	InventoryCiphertextSha256  string
+	TargetFingerprint          string
+	TargetPinsCiphertextSha256 string
+	RolePlanCiphertextSha256   string
+	KeyID                      string
+	Ciphertext                 []byte
+	CiphertextSha256           string
+	CapturedAt                 pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresDatabaseSqlPin struct {
+	OperationID                  pgtype.UUID
+	SourceDatabaseID             pgtype.UUID
+	DatabaseOid                  int64
+	AccountID                    pgtype.UUID
+	ProjectID                    pgtype.UUID
+	TargetDatabaseID             pgtype.UUID
+	ArchiveOwnerID               pgtype.UUID
+	ArchiveReservationSha256     string
+	DatabasePlanCiphertextSha256 string
+	TargetProviderResourceID     string
+	TargetProviderCreatedAt      pgtype.Timestamptz
+	Scope                        []byte
+	InventoryFingerprint         string
+	TargetFingerprint            string
+	KeyID                        string
+	Ciphertext                   []byte
+	CiphertextSha256             string
+	CapturedAt                   pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresImport struct {
+	OperationID                     pgtype.UUID
+	SourceDatabaseID                pgtype.UUID
+	DatabaseOid                     int64
+	AccountID                       pgtype.UUID
+	ProjectID                       pgtype.UUID
+	ImportID                        pgtype.UUID
+	ArchiveOwnerID                  pgtype.UUID
+	ArchiveCiphertextSha256         string
+	TargetDatabaseID                pgtype.UUID
+	TargetProviderResourceID        string
+	TargetProviderCreatedAt         pgtype.Timestamptz
+	TargetFingerprint               string
+	State                           string
+	ImportStartedAt                 pgtype.Timestamptz
+	ExecutedAt                      pgtype.Timestamptz
+	CreatedAt                       pgtype.Timestamptz
+	DatabaseSqlPinsCiphertextSha256 pgtype.Text
+	DatabasePlanCiphertextSha256    pgtype.Text
+	ArchiveReservationSha256        pgtype.Text
+}
+
+type ProjectEnvironmentClonePostgresInventory struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	AccountID         pgtype.UUID
+	ProjectID         pgtype.UUID
+	CaptureDatabaseID pgtype.UUID
+	Scope             []byte
+	Fingerprint       string
+	KeyID             string
+	Ciphertext        []byte
+	CiphertextSha256  string
+	CapturedAt        pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresMembershipPlan struct {
+	OperationID                pgtype.UUID
+	SourceDatabaseID           pgtype.UUID
+	AccountID                  pgtype.UUID
+	ProjectID                  pgtype.UUID
+	TargetDatabaseID           pgtype.UUID
+	Scope                      []byte
+	InventoryFingerprint       string
+	InventoryCiphertextSha256  string
+	TargetFingerprint          string
+	TargetPinsCiphertextSha256 string
+	RolePlanCiphertextSha256   string
+	KeyID                      string
+	Ciphertext                 []byte
+	CiphertextSha256           string
+	CapturedAt                 pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresRolePlan struct {
+	OperationID                pgtype.UUID
+	SourceDatabaseID           pgtype.UUID
+	AccountID                  pgtype.UUID
+	ProjectID                  pgtype.UUID
+	TargetDatabaseID           pgtype.UUID
+	Scope                      []byte
+	InventoryFingerprint       string
+	InventoryCiphertextSha256  string
+	TargetFingerprint          string
+	TargetPinsCiphertextSha256 string
+	KeyID                      string
+	Ciphertext                 []byte
+	CiphertextSha256           string
+	CapturedAt                 pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresSnapshot struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	SourceVersion            string
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	CapturePoint             pgtype.Timestamptz
+	ProviderSnapshotID       pgtype.Text
+	State                    string
+	SnapshotCreatedAt        pgtype.Timestamptz
+	ObservedAt               pgtype.Timestamptz
+	CleanupObservedAt        pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	RequestStartedAt         pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresSnapshotRestore struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	AccountID                pgtype.UUID
+	TargetOwnerID            pgtype.UUID
+	BackendID                string
+	BackendFingerprint       string
+	State                    string
+	TargetProviderResourceID pgtype.Text
+	TargetCreatedAt          pgtype.Timestamptz
+	RequestStartedAt         pgtype.Timestamptz
+	ObservedAt               pgtype.Timestamptz
+	RestoredAt               pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	DeletionStartedAt        pgtype.Timestamptz
+	DeletedAt                pgtype.Timestamptz
+	DeleteOperationIds       []byte
+	AdoptedDatabaseID        pgtype.UUID
+	AdoptedAt                pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresTargetSqlPin struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	AccountID                pgtype.UUID
+	ProjectID                pgtype.UUID
+	TargetDatabaseID         pgtype.UUID
+	TargetProviderResourceID string
+	TargetProviderCreatedAt  pgtype.Timestamptz
+	Scope                    []byte
+	InventoryFingerprint     string
+	TargetFingerprint        string
+	KeyID                    string
+	Ciphertext               []byte
+	CiphertextSha256         string
+	CapturedAt               pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresVerification struct {
+	OperationID                     pgtype.UUID
+	SourceDatabaseID                pgtype.UUID
+	DatabaseOid                     int64
+	AccountID                       pgtype.UUID
+	ProjectID                       pgtype.UUID
+	VerificationID                  pgtype.UUID
+	Scope                           []byte
+	ContentsOwnerID                 pgtype.UUID
+	ContentsCiphertextSha256        string
+	ManifestFingerprint             string
+	ImportID                        pgtype.UUID
+	ImportStartedAt                 pgtype.Timestamptz
+	DatabaseSqlPinsCiphertextSha256 string
+	DatabasePlanCiphertextSha256    string
+	ArchiveReservationSha256        string
+	TargetFingerprint               string
+	KeyID                           string
+	ReservedBytes                   int64
+	State                           string
+	RequestStartedAt                pgtype.Timestamptz
+	WindowOpenedAt                  pgtype.Timestamptz
+	TargetDatabaseOid               pgtype.Int8
+	Fingerprint                     pgtype.Text
+	Ciphertext                      []byte
+	CiphertextSha256                pgtype.Text
+	ComparedAt                      pgtype.Timestamptz
+	NativeClosedAt                  pgtype.Timestamptz
+	VerifiedAt                      pgtype.Timestamptz
+	CreatedAt                       pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresVerificationAttempt struct {
+	OperationID            pgtype.UUID
+	SourceDatabaseID       pgtype.UUID
+	DatabaseOid            int64
+	OriginalVerificationID pgtype.UUID
+	Attempt                int16
+	VerificationID         pgtype.UUID
+	PreviousAttempt        pgtype.Int2
+	PreviousVerificationID pgtype.UUID
+	PreviousOpenedAt       pgtype.Timestamptz
+	PreviousClosedAt       pgtype.Timestamptz
+	KeyID                  string
+	ReservedBytes          int64
+	State                  string
+	RequestStartedAt       pgtype.Timestamptz
+	WindowOpenedAt         pgtype.Timestamptz
+	TargetDatabaseOid      pgtype.Int8
+	Fingerprint            pgtype.Text
+	Ciphertext             []byte
+	CiphertextSha256       pgtype.Text
+	ComparedAt             pgtype.Timestamptz
+	NativeClosedAt         pgtype.Timestamptz
+	VerifiedAt             pgtype.Timestamptz
+	FailedAt               pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresVerificationReadBudget struct {
+	OperationID            pgtype.UUID
+	SourceDatabaseID       pgtype.UUID
+	DatabaseOid            int64
+	OriginalVerificationID pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	ReadBytes              int64
+	SortMemoryBytes        int64
+	SortDiskBytes          int64
+	CreatedAt              pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresVerificationReadDebit struct {
+	OperationID            pgtype.UUID
+	SourceDatabaseID       pgtype.UUID
+	DatabaseOid            int64
+	OriginalVerificationID pgtype.UUID
+	Attempt                int16
+	VerificationID         pgtype.UUID
+	RetryAttempt           pgtype.Int2
+	RetryVerificationID    pgtype.UUID
+	ReadBytes              int64
+	SortMemoryBytes        int64
+	SortDiskBytes          int64
+	CreatedAt              pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresWriteFence struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	SourceVersion            string
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	State                    string
+	RemoteTerminalState      pgtype.Text
+	RemoteReleasedAt         pgtype.Timestamptz
+	ReleasedAt               pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+}
+
+type ProjectEnvironmentCloneWorkload struct {
+	OperationID        pgtype.UUID
+	AppID              pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+	SourceHash         string
+	Snapshot           []byte
+	TargetDeploymentID pgtype.UUID
+	TargetSettingsHash string
 }
 
 type ProjectEnvironmentConfigVersion struct {
@@ -3543,6 +5682,16 @@ type ProjectEnvironmentPromotion struct {
 	SourceQualificationID        pgtype.UUID
 }
 
+type ProjectEnvironmentPromotionFeatureFlag struct {
+	PromotionID            pgtype.UUID
+	SourceSnapshot         []byte
+	PreviousTargetSnapshot []byte
+	SourceHash             string
+	PreviousTargetHash     string
+	TargetVersion          int64
+	RollbackVersion        int64
+}
+
 type ProjectEnvironmentPromotionWorkload struct {
 	ID                           pgtype.UUID
 	PromotionID                  pgtype.UUID
@@ -3563,6 +5712,17 @@ type ProjectEnvironmentPromotionWorkload struct {
 	PreviousTargetTrafficPercent int32
 }
 
+type ProjectEnvironmentPromotionWorkloadSpec struct {
+	PromotionID      pgtype.UUID
+	AppID            pgtype.UUID
+	DeploymentID     pgtype.UUID
+	PreparedSpecID   pgtype.UUID
+	PreviousSpecID   pgtype.UUID
+	SourceHash       string
+	PreviousHash     string
+	PreviousSettings []byte
+}
+
 type ProjectEnvironmentQualification struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID
@@ -3576,6 +5736,33 @@ type ProjectEnvironmentQualification struct {
 	ConfigurationVersion int64
 	ConfigurationHash    string
 	SecretRevisionHashes []byte
+	WorkloadConfigHashes []byte
+}
+
+type ProjectEnvironmentQueueConsumer struct {
+	ID             pgtype.UUID
+	RuntimeSetID   pgtype.UUID
+	Name           string
+	QueueName      string
+	Definition     []byte
+	DefinitionHash string
+	CreatedAt      pgtype.Timestamptz
+}
+
+type ProjectEnvironmentQueueRuntimeSet struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	AppID          pgtype.UUID
+	DeploymentID   pgtype.UUID
+	WorkloadSpecID pgtype.UUID
+	SettingsHash   string
+	QueueRevision  int64
+	BindingCount   int32
+	BookHash       string
+	State          string
+	CreatedAt      pgtype.Timestamptz
 }
 
 type ProjectEnvironmentRoutePolicy struct {
@@ -3587,6 +5774,27 @@ type ProjectEnvironmentRoutePolicy struct {
 	DeclaredRoutes          []byte
 	CreatedAt               pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
+}
+
+type ProjectEnvironmentWorkloadDeploymentSpec struct {
+	DeploymentID pgtype.UUID
+	SpecID       pgtype.UUID
+}
+
+type ProjectEnvironmentWorkloadHead struct {
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	SpecID        pgtype.UUID
+}
+
+type ProjectEnvironmentWorkloadSpec struct {
+	ID            pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	Revision      int64
+	ConfigHash    string
+	Settings      []byte
+	CreatedAt     pgtype.Timestamptz
 }
 
 type ProjectReleaseMember struct {
@@ -3613,18 +5821,21 @@ type ProvisionedStaticEgressIp struct {
 }
 
 type QueueBinding struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	Name           string
-	QueueName      string
-	Mode           string
-	WorkloadClass  string
-	Enabled        bool
-	MaxConcurrency int32
-	RetryPolicy    []byte
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	QueueName       string
+	Mode            string
+	WorkloadClass   string
+	Enabled         bool
+	MaxConcurrency  int32
+	RetryPolicy     []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	RetiredAt       pgtype.Timestamptz
+	DeploymentScope string
+	EnvironmentID   pgtype.UUID
 }
 
 type RecentBuildClaim struct {
@@ -3673,43 +5884,6 @@ type RequestIDJournal struct {
 }
 
 type RequestTelemetry struct {
-	ID                          pgtype.UUID
-	AccountID                   pgtype.UUID
-	AppID                       pgtype.UUID
-	DeploymentID                pgtype.UUID
-	Route                       string
-	Method                      string
-	Status                      int32
-	LatencyMs                   int32
-	ColdBoot                    bool
-	TraceID                     pgtype.Text
-	SpansSummary                []byte
-	ReceivedAt                  pgtype.Timestamptz
-	Count                       int32
-	UaFamily                    string
-	ReferrerHost                string
-	Country                     string
-	WakeID                      pgtype.Text
-	InstanceID                  pgtype.Text
-	GuestDurationMs             int32
-	GuestRuntime                string
-	GuestOutcome                string
-	GuestErrorClass             string
-	ConsumerID                  pgtype.UUID
-	NodeID                      string
-	Region                      string
-	CommitSha                   string
-	DeploymentTag               string
-	DeploymentCreatedAt         string
-	ImageDigest                 string
-	PlatformTenantID            pgtype.UUID
-	GuestCpuTimeMs              int32
-	GuestPeakRssMb              int32
-	GuestResourceUsageAvailable bool
-	FlagEvidence                []byte
-}
-
-type RequestTelemetry202609 struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
 	AppID                       pgtype.UUID
@@ -3820,6 +5994,43 @@ type RequestTelemetry202611 struct {
 	FlagEvidence                []byte
 }
 
+type RequestTelemetry202612 struct {
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	DeploymentID                pgtype.UUID
+	Route                       string
+	Method                      string
+	Status                      int32
+	LatencyMs                   int32
+	ColdBoot                    bool
+	TraceID                     pgtype.Text
+	SpansSummary                []byte
+	ReceivedAt                  pgtype.Timestamptz
+	Count                       int32
+	UaFamily                    string
+	ReferrerHost                string
+	Country                     string
+	WakeID                      pgtype.Text
+	InstanceID                  pgtype.Text
+	GuestDurationMs             int32
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	ConsumerID                  pgtype.UUID
+	NodeID                      string
+	Region                      string
+	CommitSha                   string
+	DeploymentTag               string
+	DeploymentCreatedAt         string
+	ImageDigest                 string
+	PlatformTenantID            pgtype.UUID
+	GuestCpuTimeMs              int32
+	GuestPeakRssMb              int32
+	GuestResourceUsageAvailable bool
+	FlagEvidence                []byte
+}
+
 type RequestTelemetryDefault struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
@@ -3891,6 +6102,84 @@ type ResponseCachePurgeChangeLog struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type RouteCheckHistory struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	CheckedAt    pgtype.Timestamptz
+	EncodedBytes int32
+	Entry        []byte
+}
+
+type RouteHealthGate struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	Mode         string
+	Revision     int64
+	Routes       []byte
+	UpdatedAt    pgtype.Timestamptz
+	OnRegression string
+}
+
+type RouteHealthHistory struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DecisionKey  string
+	CheckedAt    pgtype.Timestamptz
+	EncodedBytes int32
+	Entry        []byte
+}
+
+type RouteHealthNotificationState struct {
+	DeploymentID      pgtype.UUID
+	AppID             pgtype.UUID
+	AccountID         pgtype.UUID
+	ContextKey        string
+	Status            string
+	BlockedDecisionID pgtype.UUID
+	UpdatedAt         pgtype.Timestamptz
+}
+
+type RouteMonitor struct {
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	Enabled               bool
+	Revision              int64
+	Routes                []byte
+	UpdatedAt             pgtype.Timestamptz
+	NextCheckAt           pgtype.Timestamptz
+	LastDeploymentID      pgtype.UUID
+	ActiveIncidentID      pgtype.UUID
+	CustomerGroupBy       string
+	CustomerRecoveryState []byte
+}
+
+type RouteMonitorIncident struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	Revision     int64
+	Status       string
+	OpenedAt     pgtype.Timestamptz
+	ClosedAt     pgtype.Timestamptz
+	EncodedBytes int64
+	Entry        []byte
+}
+
+type RoutePolicyReceipt struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	IdempotencyKey string
+	RequestSha256  string
+	Receipt        []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
 type RuntimeConfigEntry struct {
 	ID             pgtype.UUID
 	ConfigKey      string
@@ -3944,6 +6233,26 @@ type RuntimeConfigRevision struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type RuntimeEnvironmentScalingState struct {
+	AppID          pgtype.UUID
+	EnvironmentKey string
+	EnvironmentID  pgtype.UUID
+	Scope          string
+	LastScaleInAt  pgtype.Timestamptz
+	LastScaleOutAt pgtype.Timestamptz
+}
+
+type RuntimeInstanceConfigProof struct {
+	InstanceID        pgtype.UUID
+	WakeID            pgtype.UUID
+	NodeID            pgtype.UUID
+	DeploymentID      pgtype.UUID
+	EnvironmentID     pgtype.UUID
+	Scope             string
+	SecretFingerprint string
+	ConfigFingerprint string
+}
+
 type RuntimeSnapshot struct {
 	ID                  pgtype.UUID
 	CatalogKey          string
@@ -3965,6 +6274,7 @@ type RuntimeSnapshot struct {
 	CreatedAt           pgtype.Timestamptz
 	PublishedAt         pgtype.Timestamptz
 	RetiredAt           pgtype.Timestamptz
+	Profile             string
 }
 
 type SafeReleaseWorkerLease struct {
@@ -3973,11 +6283,46 @@ type SafeReleaseWorkerLease struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
-type ScenarioTestMember struct {
-	AccountID    pgtype.UUID
-	RunID        string
-	WorkloadName string
+type SavedRouteRequirement struct {
 	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	Revision     int64
+	Sha256       string
+	Requirements []byte
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type ScenarioTestMember struct {
+	AccountID      pgtype.UUID
+	RunID          string
+	WorkloadName   string
+	AppID          pgtype.UUID
+	ChaosRules     []byte
+	ChaosExpiresAt pgtype.Timestamptz
+}
+
+type ScheduleOccurrence struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	CronID               pgtype.UUID
+	JobID                pgtype.UUID
+	ScheduleRevision     int64
+	ScheduledFor         pgtype.Timestamptz
+	StartDeadlineAt      pgtype.Timestamptz
+	SchedulePolicy       []byte
+	Status               string
+	Reason               string
+	BlockingOccurrenceID pgtype.UUID
+	InvocationID         pgtype.UUID
+	AppTaskID            pgtype.UUID
+	JobRunID             pgtype.UUID
+	StartedAt            pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	OutcomeCode          string
+	WorkDecision         []byte
+	ExclusiveOperationID pgtype.UUID
 }
 
 type ServiceCallerKey struct {
@@ -3994,6 +6339,27 @@ type ServiceCallerKeyHistory struct {
 	NodeID       string
 	PublicKeyPem string
 	RetireAfter  pgtype.Timestamptz
+}
+
+type ServiceCapacityPolicy struct {
+	Singleton        bool
+	Enabled          bool
+	OverheadMb       int32
+	CpuOvercommit    int32
+	StartupCpu       int32
+	HeartbeatSeconds int32
+	PlanVcpus        []byte
+}
+
+type ServiceRecovery struct {
+	AppID         pgtype.UUID
+	Revision      string
+	ClaimToken    pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	Status        string
+	Failures      int32
+	NextAttemptAt pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type Session struct {
@@ -4062,6 +6428,17 @@ type SnapshotRestorePressureLease struct {
 	LeaseID   pgtype.UUID
 	NodeID    pgtype.UUID
 	ExpiresAt pgtype.Timestamptz
+}
+
+type SnapshotRuntimeConfigReceipt struct {
+	SnapshotID            pgtype.UUID
+	Scope                 string
+	BoundaryAt            pgtype.Timestamptz
+	Variables             []byte
+	SecretVersions        []byte
+	AllSecrets            bool
+	SecretRefs            []byte
+	SidecarSecretVersions []byte
 }
 
 // Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-049 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.
@@ -4154,23 +6531,26 @@ type TenantSurface struct {
 }
 
 type Trigger struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	Kind                 string
-	Slug                 string
-	Enabled              bool
-	Config               []byte
-	BatchSizeMax         int32
-	BatchWindowMs        int32
-	MaxAttempts          int32
-	CronID               pgtype.UUID
-	Source               pgtype.Text
-	CreatedAt            pgtype.Timestamptz
-	UpdatedAt            pgtype.Timestamptz
-	PayloadMaxBytes      int32
-	BrokerPoisonStrategy string
-	FilterCriteria       []byte
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	Kind                      string
+	Slug                      string
+	Enabled                   bool
+	Config                    []byte
+	BatchSizeMax              int32
+	BatchWindowMs             int32
+	MaxAttempts               int32
+	CronID                    pgtype.UUID
+	Source                    pgtype.Text
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	PayloadMaxBytes           int32
+	BrokerPoisonStrategy      string
+	FilterCriteria            []byte
+	QueueBindingID            pgtype.UUID
+	QueueBindingScope         string
+	QueueBindingEnvironmentID pgtype.UUID
 }
 
 type TriggerConsumerHealth struct {
@@ -4185,12 +6565,13 @@ type TriggerConsumerHealth struct {
 }
 
 type TriggerDeadLetter struct {
-	RecordID  pgtype.UUID
-	TriggerID pgtype.UUID
-	Reason    string
-	RoutedTo  string
-	Detail    []byte
-	CreatedAt pgtype.Timestamptz
+	RecordID       pgtype.UUID
+	TriggerID      pgtype.UUID
+	Reason         string
+	RoutedTo       string
+	Detail         []byte
+	CreatedAt      pgtype.Timestamptz
+	FailureHistory []byte
 }
 
 type TriggerRecord struct {
@@ -4334,6 +6715,28 @@ type WebhookDelivery struct {
 	ExpiresAt  pgtype.Timestamptz
 }
 
+type WorkflowAutomationDefinition struct {
+	AppID            pgtype.UUID
+	Name             string
+	Version          int64
+	Draft            []byte
+	Published        []byte
+	PublishedVersion int64
+	Enabled          bool
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type WorkflowAutomationRevision struct {
+	AppID                pgtype.UUID
+	Name                 string
+	Version              int64
+	Definition           []byte
+	RecordedAt           pgtype.Timestamptz
+	LegacySnapshot       bool
+	PublishedByAccountID pgtype.UUID
+	PublishedByApiKeyID  pgtype.UUID
+}
+
 type WorkflowCallbackWebhookBinding struct {
 	ID         pgtype.UUID
 	EndpointID pgtype.UUID
@@ -4352,38 +6755,95 @@ type WorkflowEvent struct {
 	ReceivedAt pgtype.Timestamptz
 }
 
+type WorkflowEventReceipt struct {
+	OutboxID    int64
+	RecipientID pgtype.UUID
+	RunID       pgtype.UUID
+	AdmittedAt  pgtype.Timestamptz
+}
+
+type WorkflowOperationEffect struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	RunID       pgtype.UUID
+	StepName    string
+	OperationID pgtype.UUID
+	Generation  int64
+	Name        string
+	Payload     []byte
+	WebhookID   pgtype.UUID
+	EventType   string
+	CreatedAt   pgtype.Timestamptz
+}
+
 type WorkflowRun struct {
-	ID                 pgtype.UUID
-	AppID              pgtype.UUID
-	WorkflowName       string
-	Status             string
-	CurrentStep        pgtype.Text
-	Input              []byte
-	Output             []byte
-	DefinitionSnapshot []byte
-	ScheduledFor       pgtype.Timestamptz
-	StartedAt          pgtype.Timestamptz
-	FinishedAt         pgtype.Timestamptz
-	LastError          pgtype.Text
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	LeaseUntil         pgtype.Timestamptz
-	OperationID        pgtype.UUID
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	WorkflowName             string
+	Status                   string
+	CurrentStep              pgtype.Text
+	Input                    []byte
+	Output                   []byte
+	DefinitionSnapshot       []byte
+	ScheduledFor             pgtype.Timestamptz
+	StartedAt                pgtype.Timestamptz
+	FinishedAt               pgtype.Timestamptz
+	LastError                pgtype.Text
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	LeaseUntil               pgtype.Timestamptz
+	OperationID              pgtype.UUID
+	ResumeCount              int32
+	CancelledAt              pgtype.Timestamptz
+	PlatformTenantID         pgtype.UUID
+	CreateIdempotencyKey     pgtype.Text
+	CreateRequestFingerprint []byte
+}
+
+type WorkflowRunResume struct {
+	RunID          pgtype.UUID
+	ResumeNumber   int32
+	AccountID      pgtype.UUID
+	PreviousStatus string
+	PreviousError  pgtype.Text
+	ResumedSteps   []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
+type WorkflowScheduleCursor struct {
+	AppID           pgtype.UUID
+	WorkflowName    string
+	DeploymentID    pgtype.UUID
+	TriggerSnapshot []byte
+	LastEvaluatedAt pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	Status          string
+	LastRunID       pgtype.UUID
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type WorkflowStep struct {
-	RunID       pgtype.UUID
-	StepName    string
-	Status      string
-	Attempt     int32
-	Input       []byte
-	Output      []byte
-	StartedAt   pgtype.Timestamptz
-	FinishedAt  pgtype.Timestamptz
-	Error       pgtype.Text
-	CreatedAt   pgtype.Timestamptz
-	NextCheckAt pgtype.Timestamptz
-	NextRetryAt pgtype.Timestamptz
+	RunID                pgtype.UUID
+	StepName             string
+	Status               string
+	Attempt              int32
+	Input                []byte
+	Output               []byte
+	StartedAt            pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+	Error                pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	NextCheckAt          pgtype.Timestamptz
+	NextRetryAt          pgtype.Timestamptz
+	OutboundAttemptToken pgtype.UUID
+	ForeachParent        pgtype.Text
+	ForeachIndex         pgtype.Int4
+	ForeachCount         pgtype.Int4
+	RetryBase            int32
+	WhenMatched          pgtype.Bool
+	WhenEvaluatedAt      pgtype.Timestamptz
+	SkipReason           pgtype.Text
 }
 
 type WorkflowStepAttempt struct {
@@ -4396,4 +6856,26 @@ type WorkflowStepAttempt struct {
 	FinishedAt    pgtype.Timestamptz
 	NextAttemptAt pgtype.Timestamptz
 	Error         pgtype.Text
+}
+
+type WorkflowWebhookBinding struct {
+	EndpointID   pgtype.UUID
+	WorkflowName string
+	EventType    string
+	Filter       []byte
+	Version      int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type WorkflowWebhookReceipt struct {
+	EndpointID      pgtype.UUID
+	ProviderEventID string
+	ReceiptID       pgtype.UUID
+	BodyHash        []byte
+	WorkflowName    string
+	RecipientID     pgtype.UUID
+	OutboxID        int64
+	Status          string
+	IgnoredReason   pgtype.Text
+	AcceptedAt      pgtype.Timestamptz
 }

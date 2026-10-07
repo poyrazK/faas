@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ComposeHealthcheck } from './ComposeHealthcheck.js';
 import type { PlanDetectedBy } from './PlanDetectedBy.js';
 import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
@@ -22,11 +23,23 @@ export type PlanWorkload = {
    */
   root_dir: string;
   dockerfile?: string;
+  /**
+   * Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker before materialization; stateful images remain managed requirements. Image deployments return a deployment_id without a build_id.
+   */
+  image?: string;
+  /**
+   * Compose healthcheck override for prebuilt image workloads, captured per deployment.
+   */
+  image_healthcheck?: ComposeHealthcheck;
   command: Array<string>;
   /**
    * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies.
    */
   depends_on?: Array<string>;
+  /**
+   * Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment.
+   */
+  depends_on_conditions?: Record<string, 'service_started' | 'service_healthy'>;
   /**
    * Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted.
    */

@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AdvanceCanaryRequest } from '../models/AdvanceCanaryRequest.js';
+import type { BindingPromotionRequest } from '../models/BindingPromotionRequest.js';
+import type { BindingPromotionResponse } from '../models/BindingPromotionResponse.js';
 import type { BuildListResponse } from '../models/BuildListResponse.js';
 import type { BuildProvenanceResponse } from '../models/BuildProvenanceResponse.js';
 import type { BuildResponse } from '../models/BuildResponse.js';
@@ -20,6 +22,7 @@ import type { LatestDeploymentsByAppResponse } from '../models/LatestDeployments
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
+import type { RollbackOperation } from '../models/RollbackOperation.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
 import type { ScanResult } from '../models/ScanResult.js';
@@ -248,6 +251,68 @@ export class DeploymentsService {
     });
   }
   /**
+   * Deploy an immutable image after CI publishes it.
+   * Requires deploy:write or admin and the normal deployment authentication
+   * checks. App-bound deploy tokens and CI bearer tokens are accepted.
+   * The app must be a project workload configured with image:. The required
+   * image is a full registry/repository@sha256:digest reference matching that
+   * workload's declared registry and repository. A digest-pinned declaration
+   * accepts only its declared digest. Tags are rejected; send the digest
+   * returned by the build/push step after publication completes.
+   *
+   * App, normalized deployment scope, and image reference form a durable
+   * delivery identity. First delivery creates one pending OCI deployment
+   * without a source build. Repeated deliveries return the original row and
+   * its current status, including terminal states, without creating a new
+   * deployment. The first accepted configuration wins for this identity;
+   * use ordinary deployment or retry endpoints for intentional redeploys.
+   * Changing scope creates an independent delivery.
+   *
+   * Normal signature, security, plan, traffic, and account deploy-rate
+   * admission apply. The Compose main container port defaults the port
+   * override. Omitted workflows and the source release command inherit from
+   * the latest image deployment in the same scope. Image commands, service
+   * bindings, and scoped environment settings use the existing app contract.
+   * Optional overrides and rollout policies follow CreateDeploymentRequest.
+   * The project image declaration is retained. This is a CI handoff endpoint;
+   * native registry webhook payloads and registry polling are not supported.
+   *
+   * @returns DeploymentResponse The original deployment for an already accepted image delivery.
+   * @throws ApiError
+   */
+  public static publishAppImage({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateDeploymentRequest,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/image-published',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
+        404: `code: not_found`,
+        422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * Fetch a deployment release summary and diff.
    * Returns the selected deployment, its immediately preceding release,
    * a stable field-level diff of non-secret release metadata, and the
@@ -368,6 +433,10 @@ export class DeploymentsService {
       dockerfile?: boolean;
       runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
       handler?: string;
+      /**
+       * Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector.
+       */
+      healthcheck?: string;
       source_root?: string;
       /**
        * Named environment scope read by the deployment; omitted uses default.
@@ -596,13 +665,21 @@ export class DeploymentsService {
    *
    * With `target_deployment_id` in the body, rolls back to the
    * named deployment. The id must belong to this app and the row
-   * must have `status='superseded'`. Rolling back to the
+   * must be superseded or live with zero traffic. Rolling back to the
    * already-current live deployment is rejected (409
    * `rollback_target_already_live`). A target whose snapshot has
    * been garbage-collected is rejected (409
    * `rollback_target_snapshot_expired`).
+   * With both `target_deployment_id` and `expected_current_deployment_id`,
+   * starts an exact checked rollback. The expected deployment must still
+   * serve all traffic with no active rollout in this scope. A 202 response
+   * includes `rollback_operation`, confirming durable intent. Readiness,
+   * artifact and API contract checks precede a zero-traffic activation;
+   * fresh binding evidence is checked at the traffic transaction. Service
+   * completion also waits for the existing gateway ACK and drain handoff.
+   * Stored binding enforcement requires this exact workflow.
    *
-   * @returns DeploymentResponse The deployment that was created by rolling back to the previous version.
+   * @returns DeploymentResponse The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
    * @throws ApiError
    */
   public static rollbackApp({
@@ -646,6 +723,48 @@ export class DeploymentsService {
     });
   }
   /**
+   * Read an exact historical rollback operation.
+   * Read-only progress for a pinned deployment pair. Complete includes a committed routing audit; service completion also requires the matching handoff to finish. Blocked operations retry fresh evidence without choosing another deployment.
+   * @returns RollbackOperation Durable rollback progress.
+   * @throws ApiError
+   */
+  public static getRollbackOperation({
+    slug,
+    operation,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the accepted historical rollback operation.
+     */
+    operation: string,
+  }): CancelablePromise<RollbackOperation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rollbacks/{operation}',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Operator manual rollout recovery (SAFE-RELEASES-R, issue
    * The operator escape hatch for a stuck canary rollout. Three
    * closed-set actions:
@@ -676,6 +795,23 @@ export class DeploymentsService {
    * so the operator's terminal can echo `audit_id=…`. Plan-tier
    * gated to Pro+ (Hobby / Free get 403
    * `plan_traffic_split_not_allowed`).
+   *
+   * For an exact canary abort, supply both `deployment_id` and
+   * `expected_predecessor_deployment_id`. The older predecessor must
+   * remain live and serving in the same app/scope. If its stored binding
+   * release policy enforces verification, recovery checks that exact
+   * recipient's fresh evidence and rechecks policy revisions and expiry
+   * inside the recovery transaction. Missing or changed evidence leaves
+   * traffic unchanged. Success restores the predecessor to 100 percent,
+   * aborts the selected canary, and includes an exact recovery receipt.
+   * For an exact service abort, the pinned predecessor may remain live
+   * at zero weight after cutover. The response is 202 with a
+   * `service_recovery` receipt confirming the durable request only.
+   * APID checks that recipient and ready service capacity before publishing
+   * routes; schedd then completes gateway acknowledgement and request drain.
+   * GET the exact deployment to observe `service_rollout_handoff` progress
+   * and bounded `bindings_check` blockers. Restarted workers resume the same
+   * request and never substitute a different predecessor.
    *
    * @returns RolloutTransitionResponse The post-recovery deployment + audit row id.
    * @throws ApiError
@@ -1096,6 +1232,112 @@ export class DeploymentsService {
     });
   }
   /**
+   * Promote a deployment after an atomic bindings check.
+   * Available on all supported plans. Evaluate the exact live, materialized candidate using
+   * the bindings preflight policy, then compare its binding/configuration,
+   * probe and runtime revision inside the traffic transaction. Blockers,
+   * expired evidence or changed observations return 409 without changing
+   * traffic. No probes or restarts are scheduled. Queue/outbound probe
+   * coverage requires an explicit allow_unsupported waiver and remains
+   * partial. A successful receipt confirms the applied policy and check.
+   * An optional serving expectation is checked under the traffic locks.
+   * An already promoted target still requires a passed bindings check;
+   * it returns an idempotent receipt without requiring the previous
+   * deployment to remain at 100%. Active managed canaries cannot be bypassed.
+   * This dedicated route prevents older servers from ignoring the bindings gate.
+   * For require_application_ack use promote-with-application-ack so an older
+   * server cannot silently ignore the new policy field.
+   *
+   * @returns BindingPromotionResponse Promoted deployment and the server-enforced bindings check.
+   * @throws ApiError
+   */
+  public static promoteDeploymentWithBindings({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Deployment UUID in canonical or 32-hex form.
+     */
+    id: string,
+    requestBody: BindingPromotionRequest,
+  }): CancelablePromise<BindingPromotionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/promote',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid JSON request.`,
+        401: `code: unauthorized`,
+        403: `Traffic promotion is not allowed by the account plan or token scope.`,
+        404: `code: not_found`,
+        409: `Bindings check failed or changed, target is unavailable, serving expectation changed, or a managed canary owns traffic. Binding failures include a structured bindings_check report.`,
+        422: `Invalid policy duration or deployment identifier.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        500: `The check or transaction could not complete; traffic is unchanged.`,
+        503: `The binding catalogs cannot enforce the promotion fence.`,
+      },
+    });
+  }
+  /**
+   * Promote after atomic bindings and application acknowledgement checks.
+   * Always require current version-bound application acknowledgements from
+   * every authorized resident workload of PostgreSQL and object-storage
+   * bindings in the candidate scope, including a resident candidate target
+   * for each binding. Missing, stale, failed, disabled or unknown receipts
+   * block promotion. Application receipts are self-attestations, distinct
+   * from connectivity probes and guest projection/signal outcomes.
+   * require_application_ack is forced true even if the request omits it or
+   * supplies false. All normal bindings checks, permissions and atomic
+   * traffic fences also apply. Changes to credentials, authorized workload
+   * rosters, reload support or receipts invalidate the check at the write.
+   * Use this route for strict promotion; older servers return 404 before
+   * changing traffic. Never fall back to the ordinary promotion route.
+   *
+   * @returns BindingPromotionResponse Traffic receipt confirming bindings checks and required current application acknowledgements.
+   * @throws ApiError
+   */
+  public static promoteDeploymentWithApplicationAck({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Candidate UUID for strict adoption promotion; canonical and compact hexadecimal forms are accepted.
+     */
+    id: string,
+    requestBody: BindingPromotionRequest,
+  }): CancelablePromise<BindingPromotionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/promote-with-application-ack',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `The strict promotion policy body could not be decoded.`,
+        401: `code: unauthorized`,
+        403: `Strict adoption promotion requires an eligible account and deployment write permission.`,
+        404: `code: not_found`,
+        409: `The strict binding/application policy failed or changed, or the candidate, serving expectation or managed canary prevents promotion. A bindings_check report accompanies adoption failures.`,
+        422: `The strict promotion request supplied an invalid evidence age or deployment expectation.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        500: `Application adoption promotion could not finish its observation read or traffic transaction.`,
+        503: `Strict promotion cannot share a transaction fence across its binding catalogs and traffic backend.`,
+      },
+    });
+  }
+  /**
    * Advance one persisted canary stage.
    * Atomically advances the deployment's canary ladder by one stage.
    * The caller supplies the canary_step it observed; APID resolves the
@@ -1104,6 +1346,10 @@ export class DeploymentsService {
    * sibling traffic rebalance, terminal promotion, and deployment audit
    * row are committed together. Pro/Scale only — Free/Hobby are rejected
    * at 403 `plan_traffic_split_not_allowed`.
+   * Enforced route gates require complete, current, satisfied evidence for
+   * this candidate under policy, intent and capture locks. Missing or stale
+   * evidence durably requests a fresh check without increasing traffic.
+   * A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
    *
    * @returns CanaryAdvanceResponse The atomically advanced deployment and audit row id.
    * @throws ApiError
@@ -1131,7 +1377,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `Plan tier gate tripped (Hobby / Free).`,
         404: `code: not_found`,
-        409: `Stale canary step, invalid rollout state, or traffic sum conflict.`,
+        409: `Stale canary step, invalid rollout state, traffic sum conflict or enforced route gate blocked.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

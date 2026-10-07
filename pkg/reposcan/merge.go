@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"maps"
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -46,16 +47,18 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 
 	// Group seeds by (RootDir, Name) keeping first-arrival order.
 	type bucket struct {
-		name         string
-		rootDir      string
-		tier         Tier   // highest tier seen (=first arrival under the sort)
-		source       string // highest-tier seed's source
-		dockerfile   string // highest-tier seed's dockerfile
-		image        string // highest-tier seed's prebuilt image
-		class        Class
-		command      []string
-		commandShell bool
-		dependsOn    []string
+		name                string
+		rootDir             string
+		tier                Tier   // highest tier seen (=first arrival under the sort)
+		source              string // highest-tier seed's source
+		dockerfile          string // highest-tier seed's dockerfile
+		image               string // highest-tier seed's prebuilt image
+		healthcheck         *api.ComposeHealthcheck
+		class               Class
+		command             []string
+		commandShell        bool
+		dependsOn           []string
+		dependsOnConditions map[string]string
 
 		serviceBindingPolicy      ServiceBindingPolicy
 		serviceBindingTransport   ServiceBindingTransport
@@ -68,6 +71,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		schedules []CronSchedule
 		ports     []int
 		envKeys   []string
+		// internalPorts follows the same first-declaration-wins rule.
+		internalPorts    []api.WorkloadPort
+		internalPortsSet bool
 		// Whether each per-field slot is filled. We never overwrite
 		// an already-filled field — first non-empty per tier order wins.
 		classSet bool
@@ -134,8 +140,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.dockerfile = s.dockerfile
 			b.dfSet = true
 		}
-		if !b.imageSet && s.image != "" {
+		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
+			b.healthcheck = s.healthcheck.Clone()
 			b.imageSet = true
 		}
 		// Per-field: first non-empty wins (and never overwrites).
@@ -151,6 +158,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		// Dependency edges are additive across detectors. A Compose seed
 		// may merge with a Procfile/workspace seed for the same workload;
 		// retaining the union avoids silently dropping an explicit edge.
+		if b.dependsOnConditions == nil && s.dependsOnConditions != nil {
+			b.dependsOnConditions = maps.Clone(s.dependsOnConditions)
+		}
 		for _, dep := range s.dependsOn {
 			if !containsString(b.dependsOn, dep) {
 				b.dependsOn = append(b.dependsOn, dep)
@@ -196,6 +206,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.ports = append([]int(nil), s.ports...)
 			b.portsSet = true
 		}
+		if !b.internalPortsSet && s.internalPorts != nil {
+			b.internalPorts = append([]api.WorkloadPort{}, s.internalPorts...)
+			b.internalPortsSet = true
+		}
 		if !b.envSet && len(s.envKeys) > 0 {
 			b.envKeys = append([]string(nil), s.envKeys...)
 			b.envSet = true
@@ -225,13 +239,15 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			primarySchedule = b.schedules[0].Expression
 		}
 		out = append(out, Workload{
-			Name:         b.name,
-			RootDir:      b.rootDir,
-			Dockerfile:   b.dockerfile,
-			Image:        b.image,
-			Command:      b.command,
-			CommandShell: b.commandShell,
-			DependsOn:    b.dependsOn,
+			Name:                b.name,
+			RootDir:             b.rootDir,
+			Dockerfile:          b.dockerfile,
+			Image:               b.image,
+			Command:             b.command,
+			CommandShell:        b.commandShell,
+			ImageHealthcheck:    b.healthcheck.Clone(),
+			DependsOn:           b.dependsOn,
+			DependsOnConditions: maps.Clone(b.dependsOnConditions),
 
 			ServiceBindingPolicy:      b.serviceBindingPolicy,
 			ServiceBindingTransport:   b.serviceBindingTransport,
@@ -240,6 +256,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
+			InternalPorts:             b.internalPorts,
 
 			Class:     cls,
 			Schedule:  primarySchedule,

@@ -1,3 +1,4 @@
+// adr: 568 — environment policy batches retain session locks on the direct pool.
 package db
 
 import (
@@ -171,20 +172,22 @@ func TestSameDSNSessionPoolPreservesJSONBEncoding(t *testing.T) {
 // client, and nothing fails loudly — so a new pinned Acquire has to be a
 // deliberate decision rather than something a reviewer has to notice.
 var sessionScopedAcquire = map[string]string{
-	"pkg/db/notify_hub.go":       "LISTEN: the hub parks one connection per daemon",
-	"pkg/db/notify.go":           "LISTEN: legacy per-subscriber path",
-	"pkg/db/wait_for.go":         "LISTEN: short-lived per-request wait",
-	"pkg/db/migrate_advisory.go": "session pg_advisory_lock held across statements",
-	"pkg/state/pgstore.go":       "session pg_advisory_lock for the edge-rule mutation fence",
+	"pkg/db/notify_hub.go":                      "LISTEN: the hub parks one connection per daemon",
+	"pkg/db/notify.go":                          "LISTEN: legacy per-subscriber path",
+	"pkg/db/wait_for.go":                        "LISTEN: short-lived per-request wait",
+	"pkg/db/migrate_advisory.go":                "session pg_advisory_lock held across statements",
+	"pkg/state/pgstore.go":                      "session pg_advisory_lock for the edge-rule mutation fence",
+	"pkg/state/pgstore_edge_rule_batch_lock.go": "session pg_advisory_lock for all apps in an environment policy batch",
 }
 
 // pooledAcquireOK records Acquires that are deliberately on the ordinary
 // pool. Acquiring a connection is not by itself session-scoped; what matters
 // is whether anything session-scoped happens on it before release.
 var pooledAcquireOK = map[string]string{
-	"pkg/db/warmup.go":          "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
-	"pkg/db/pgtest/pgtest.go":   "test harness; never runs against a pooler",
-	"pkg/db/pgtest/template.go": "test harness; never runs against a pooler",
+	"pkg/db/warmup.go":                                   "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
+	"pkg/db/pgtest/pgtest.go":                            "test harness; never runs against a pooler",
+	"pkg/db/pgtest/template.go":                          "test harness; never runs against a pooler",
+	"pkg/managedpostgres/neon/checkpoint_connections.go": "private customer maintenance pool: opened from the authenticated direct provider endpoint, never the control-plane transaction pooler",
 }
 
 // TestSessionScopedAcquiresRouteThroughDirectPool is the gate.

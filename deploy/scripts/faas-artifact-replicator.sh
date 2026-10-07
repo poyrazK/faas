@@ -55,7 +55,7 @@ fi
 
 ssh_args=(
   -o BatchMode=yes
-  -o StrictHostKeyChecking=no
+  -o StrictHostKeyChecking=accept-new
   -o ConnectTimeout=20
   -p "$ssh_port"
 )

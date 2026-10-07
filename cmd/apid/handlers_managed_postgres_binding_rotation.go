@@ -30,7 +30,7 @@ func (s *server) rotateManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		managedPostgresProblem(w, managedpostgres.ErrConflict)
 		return
 	}
-	if !binding.RotationCleanupReady {
+	if binding.Access != managedpostgres.CredentialMigration && !binding.RotationCleanupReady {
 		if _, err := state.InvalidateAppSnapshotsAtExistingStamp(r.Context(), s.store, app.ID); err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
 			return

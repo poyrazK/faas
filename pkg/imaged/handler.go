@@ -105,6 +105,10 @@ type Handler struct {
 	// It keeps the safety invariant in the handler rather than relying only on
 	// cmd/imaged wiring: a misconfigured verifier fails the candidate closed.
 	hostingSmokeRequired bool
+	// hostingVerificationNow permits deterministic recovery/restart tests.
+	// Nil uses the process clock; the persisted deadline remains authoritative.
+	hostingVerificationNow func() time.Time
+	dependencyGateNow      func() time.Time
 	// githubSourceRefVerifier is queried immediately before a source-ref branch
 	// deployment switches traffic. Nil fails closed for branch-backed rows.
 	githubSourceRefVerifier GitHubSourceRefVerifier
@@ -290,6 +294,10 @@ type Handler struct {
 	// stay anonymous (matches the Free plan / no-credential case).
 	secretboxIdentity   *age.X25519Identity
 	secretboxIdentities []*age.X25519Identity
+	// baseConvergence (ADR-567) tracks the bases this daemon staged so the
+	// convergence loop can keep each local copy byte-identical to the
+	// shared publication.
+	baseConvergence baseConvergenceState
 }
 
 // New returns a Handler. The OCI puller is injected so tests can substitute
@@ -1325,6 +1333,12 @@ func (h *Handler) storageFor() (storage.StorageBackend, error) {
 // with older narrow Store test doubles. Production stores expose the active
 // CAS variant so cancellation/supersede cannot race a late layer completion.
 func (h *Handler) setDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if captureImagePublication(ctx, id, path, key, bytes) {
+		return nil
+	}
 	if fenced, ok := h.store.(state.ActiveDeploymentRootfsStore); ok {
 		return fenced.SetDeploymentRootfsIfActive(ctx, id, path, key, bytes)
 	}
@@ -1422,10 +1436,19 @@ func isDeploymentIDSafe(id string) bool {
 // worker passes it through to its retry path.
 func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) error {
 	switch n.Channel {
-	case db.NotifyDeploymentChanged:
+	case db.NotifyDeploymentChanged, db.NotifyEnvironmentWorkloadImage:
 		var p deploymentChangedPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
-			return fmt.Errorf("decode deployment_changed payload: %w", err)
+			return fmt.Errorf("decode %s payload: %w", n.Channel, err)
+		}
+		if n.Channel == db.NotifyEnvironmentWorkloadImage {
+			dep, err := h.store.DeploymentByID(ctx, p.To)
+			if err != nil {
+				return err
+			}
+			if !dep.EnvironmentWorkloadHeld() || dep.AppID != p.AppID || dep.Kind != state.DeploymentKindImage || p.Kind != "image" {
+				return state.ErrInvalidArgument
+			}
 		}
 		// This event exists only to refresh gateway routing before the public
 		// smoke. Re-entering the image pipeline would create a self-notify loop.
@@ -1454,7 +1477,7 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 			h.log.Debug("imaged: ignoring snapshot_boot for sibling node",
 				"owner_node", p.NodeID, "local_node", h.nodeName,
 				"deployment", p.DeploymentID)
-			return nil
+			return db.ErrNotificationNotOwned
 		}
 		if err := h.handleSnapshotBoot(ctx, p); err != nil {
 			return fmt.Errorf("handle snapshot boot %s: %w", p.DeploymentID, err)
@@ -1773,12 +1796,11 @@ type snapshotBootPayload struct {
 // accepts an unlabelled event during a rolling upgrade, because older
 // builderd versions did not include node_id yet.
 func handlesSnapshotBoot(localNode, ownerNode string) bool {
-	localNode = strings.TrimSpace(localNode)
-	ownerNode = strings.TrimSpace(ownerNode)
-	return localNode == "" || ownerNode == "" || localNode == ownerNode
+	return db.NotificationMatchesNode(localNode, ownerNode)
 }
 
-// handleDeployment advances a deployment up to the point where a snapshot
+// handleDeploymentLegacy advances narrow stores without checkpoint support
+// up to the point where a snapshot
 // is needed. Two paths:
 //
 //   - kind=image + app.Type=app    → pull OCI digest, build app-layer ext4.
@@ -1790,7 +1812,7 @@ func handlesSnapshotBoot(localNode, ownerNode string) bool {
 // Both paths share the same imaging→snapshotting→live handshake via
 // snapshot_prime (ADR-018). Tarball/dockerfile deployments start via
 // build_queued and skip this function.
-func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPayload) (err error) {
+func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChangedPayload) (err error) {
 	if p.Kind != string(state.DeploymentKindImage) {
 		// Tarball/dockerfile deployments start via build_queued; apid also
 		// fires deployment_changed as a hint, but imaged reads the
@@ -1808,9 +1830,13 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	if dep.Status != state.DeployPending {
 		return nil
 	}
-	app, err := h.store.AppByID(ctx, p.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app: %w", err)
+	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil {
+		return err
 	}
 	acct, err := h.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
@@ -1903,6 +1929,11 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 // deployment cannot silently skip its declared command. Deployments without
 // release intent keep the historical zero-query fast path.
 func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep state.Deployment) error {
+	if dep.EnvironmentWorkloadHeld() {
+		// Artifact assembly does not authorize a customer process, release
+		// command, queue consumer or serving deployment to execute.
+		return nil
+	}
 	if len(dep.ReleaseCommand) > 0 {
 		if !h.releasePhaseEnabled {
 			return h.failReleasePhaseUnavailable(ctx, dep)
@@ -2150,6 +2181,11 @@ func (h *Handler) markRegistryCredentialUsed(ctx context.Context, app state.App,
 // to docker.io/library/sha256:... and dials the wrong host for non-Docker
 // deploys (issue #53 / M5 acceptance on Lima).
 func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+	var frozenErr error
+	app, frozenErr = state.AppForDeploymentRuntime(app, dep)
+	if frozenErr != nil {
+		return frozenErr
+	}
 	ref := dep.ImageDigest
 
 	// Issue #461 / ADR-062: resolve the per-app private-registry Basic
@@ -2205,6 +2241,9 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return err
 	}
 	ref = selectedRef
+	// Every subsequent read, including the full-rootfs fallback, uses the
+	// selected immutable child. The durable row retains the signed source.
+	dep.ImageDigest = selectedRef
 	// Issue #461 / ADR-062: best-effort mark credential used on
 	// successful authenticated pull. Best-effort so a transient
 	// mark-used failure cannot abort an otherwise-successful
@@ -2227,7 +2266,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return fmt.Errorf("imaged: pull image config: %w", err)
 	}
 
-	manifest, err := manifestFromImageConfigWithApp(imageCfg, app)
+	manifest, err := manifestFromImageConfigWithDeployment(imageCfg, app, dep)
 	if err != nil {
 		// Image declares neither Entrypoint nor Cmd — oci.ManifestFromConfig
 		// already wrapped it with ErrImageManifestInvalid; mark the deploy
@@ -2251,6 +2290,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
 	manifest = applyAppLifecycle(manifest, app)
+	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
+	if err != nil {
+		return fmt.Errorf("imaged: scoped runtime: %w", err)
+	}
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
@@ -2259,7 +2302,8 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
 	}
-	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 {
+	requiresImageHealthcheck := manifest.Healthcheck != nil && len(manifest.Healthcheck.Test) > 0 && manifest.Healthcheck.Test[0] != "NONE"
+	if dep.Kind == state.DeploymentKindImage && (requiresImageHealthcheck || (isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0)) {
 		// The image config may advertise a single non-8080 TCP port. The
 		// guest manifest already has that port, but schedd reads the durable
 		// deployment row to configure vmmd's host:8080 -> guest:<port> DNAT.
@@ -2267,13 +2311,14 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// first-boot readiness probe targets the wrong guest port.
 		profile, marshalErr := json.Marshal(frameworkprofile.Profile{
 			Version: frameworkprofile.Version, Framework: "unknown", Port: manifest.Port,
+			ImageHealthcheckRequired: requiresImageHealthcheck,
 		})
 		if marshalErr != nil {
 			return fmt.Errorf("imaged: encode OCI runtime profile: %w", marshalErr)
 		}
 		if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, profile); err != nil {
-			_ = h.markDeployFailed(ctx, dep.ID, err, "persist OCI runtime port")
-			return fmt.Errorf("imaged: persist OCI runtime port: %w", err)
+			_ = h.markDeployFailed(ctx, dep.ID, err, "persist OCI runtime contract")
+			return fmt.Errorf("imaged: persist OCI runtime contract: %w", err)
 		}
 	}
 
@@ -2661,16 +2706,17 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 	}
 
 	manifest, err := oci.ManifestFromConfig(oci.Config{
-		Env:                cloneEnvMap(cfg.Env),
-		Entrypoint:         entrypoint,
-		Cmd:                cmd,
-		WorkingDir:         cfg.WorkingDir,
-		User:               cfg.User,
-		ExposedPorts:       cfg.ExposedPorts,
-		Healthcheck:        cfg.Healthcheck,
-		StopSignal:         cfg.StopSignal,
-		StopGracePeriodS:   cfg.StopGracePeriodS,
-		SecretReloadSignal: cfg.SecretReloadSignal,
+		Env:                   cloneEnvMap(cfg.Env),
+		Entrypoint:            entrypoint,
+		Cmd:                   cmd,
+		WorkingDir:            cfg.WorkingDir,
+		User:                  cfg.User,
+		ExposedPorts:          cfg.ExposedPorts,
+		Healthcheck:           cfg.Healthcheck,
+		StopSignal:            cfg.StopSignal,
+		StopGracePeriodS:      cfg.StopGracePeriodS,
+		SecretReloadSignal:    cfg.SecretReloadSignal,
+		SecretReloadReadiness: cfg.SecretReloadReadiness,
 	})
 	if err != nil {
 		return api.AppManifest{}, err
@@ -2701,6 +2747,11 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 // path is empty — silent omission meant production function deploys were
 // shipping a layer without /usr/local/bin/faas-runner (M8 readiness).
 func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+	var frozenErr error
+	app, frozenErr = state.AppForDeploymentRuntime(app, dep)
+	if frozenErr != nil {
+		return frozenErr
+	}
 	// Stage ownership lives in handleDeployment (for direct image/function
 	// deploys) and handleSnapshotBoot (for builderd handoffs). Direct unit
 	// callers and legacy producers may still enter here before that boundary,
@@ -2836,6 +2887,10 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
 	manifest = applyAppLifecycle(manifest, app)
+	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
+	if err != nil {
+		return fmt.Errorf("imaged: scoped runtime: %w", err)
+	}
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
@@ -2991,16 +3046,17 @@ func runtimeToEnvSuffix(runtime string) string {
 // is the customer's call).
 func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 	manifest, err := oci.ManifestFromConfig(oci.Config{
-		Env:                cloneEnvMap(cfg.Env),
-		Entrypoint:         append([]string(nil), cfg.Entrypoint...),
-		Cmd:                append([]string(nil), cfg.Cmd...),
-		WorkingDir:         cfg.WorkingDir,
-		User:               cfg.User,
-		ExposedPorts:       cfg.ExposedPorts,
-		Healthcheck:        cfg.Healthcheck,
-		StopSignal:         cfg.StopSignal,
-		SecretReloadSignal: cfg.SecretReloadSignal,
-		StopGracePeriodS:   cfg.StopGracePeriodS,
+		Env:                   cloneEnvMap(cfg.Env),
+		Entrypoint:            append([]string(nil), cfg.Entrypoint...),
+		Cmd:                   append([]string(nil), cfg.Cmd...),
+		WorkingDir:            cfg.WorkingDir,
+		User:                  cfg.User,
+		ExposedPorts:          cfg.ExposedPorts,
+		Healthcheck:           cfg.Healthcheck,
+		StopSignal:            cfg.StopSignal,
+		SecretReloadSignal:    cfg.SecretReloadSignal,
+		SecretReloadReadiness: cfg.SecretReloadReadiness,
+		StopGracePeriodS:      cfg.StopGracePeriodS,
 	})
 	if err != nil {
 		return api.AppManifest{}, err
@@ -3078,15 +3134,14 @@ func (h *Handler) handleDeploymentReady(ctx context.Context, p deploymentReadyPa
 }
 
 func hasEphemeralSecretForDeployment(ctx context.Context, store state.Store, app state.App, dep state.Deployment) (bool, error) {
-	scope := dep.Scope
-	if scope == "" {
-		scope = api.DefaultEnvScope
-	}
-	secrets, err := store.ListAppSecretsInScope(ctx, app.AccountID, app.ID, scope)
+	values, err := store.RuntimeAppValuesForDeployment(ctx, app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		return false, err
 	}
-	for _, secret := range secrets {
+	if values.AccountID != app.AccountID || values.AppID != app.ID || values.DeploymentID != dep.ID {
+		return false, state.ErrConflict
+	}
+	for _, secret := range values.Secrets {
 		if secret.SecretClass == state.SecretClassEphemeral {
 			return true, nil
 		}
@@ -3155,7 +3210,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)
 	}
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	if ready == nil && (dep.Status == state.DeployFailed || dep.Status == state.DeployCancelled) {
+		// Failed/cancelled attempts cannot publish or read runtime values. Ack
+		// their outbox redelivery before policy lookup, preserving referenced
+		// artifacts while discarding an unused modern capture.
+		h.log.Info("imaged: snapshot publication skipped for inactive deployment", "deployment_id", dep.ID, "status", dep.Status)
+		return h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier})
+	}
+	if dep.EnvironmentWorkloadHeld() {
+		return fmt.Errorf("imaged: %w: environment workload graph is not qualified", state.ErrInvalidArgument)
+	}
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app for deployment activation: %w", err)
 	}
@@ -3396,6 +3461,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
+	if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
+		return gateErr
+	}
 	// Snapshot candidates are verified through the gateway's authenticated,
 	// deployment-pinned smoke path before the live pointer moves. Keeping the
 	// predecessor live during this phase is the zero-downtime boundary: a slow
@@ -3409,7 +3477,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	}
 	if hostingReceiptEnabled {
 		var appErr error
-		hostingApp, appErr = h.store.AppByID(ctx, dep.AppID)
+		hostingApp, appErr = state.AppForDeployment(ctx, h.store, dep)
 		if appErr != nil {
 			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
 		}
@@ -3451,59 +3519,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		return fmt.Errorf("imaged: load current live deployment: %w", liveErr)
 	}
 	if hostingReceiptEnabled {
-		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(hostingApp, dep), ErrorCode: apihostingreceipt.SmokeErrorNotConfigured}
-		if smoke.Path == "" {
-			smoke.Path = defaultHealthzPath
-		}
-		if h.hostingSmoke == nil && smokeRequired {
-			smoke.Status = apihostingreceipt.SmokeFailed
-			smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
-			smoke.Error = "public hosting smoke verifier is required but not configured"
-		}
-		if h.hostingSmoke != nil {
-			var smokeErr error
-			smoke, smokeErr = h.hostingSmoke(ctx, hostingApp, dep)
-			if smokeErr == nil && smokeRequired && smoke.Status != apihostingreceipt.SmokeVerified {
-				if smoke.ErrorCode == "" {
-					smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
-				}
-				if smoke.Error == "" {
-					smoke.Error = "public hosting smoke verifier did not verify deployment"
-				}
-				smoke.Status = apihostingreceipt.SmokeFailed
+		if err := h.verifyHostingCandidate(ctx, hostingApp, dep, smokeRequired, verificationStarted); err != nil {
+			if errors.Is(err, errHostingVerificationFinalized) {
+				return nil
 			}
-			if smokeErr == nil {
-				smokeErr = hostingSmokeFailure(smoke)
-			}
-			if smokeErr != nil {
-				if h.ops != nil {
-					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
-				}
-				_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
-				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
-				h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
-				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
-			}
-		}
-		if h.hostingSmoke == nil && smokeRequired {
-			if h.ops != nil {
-				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
-			}
-			_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
-			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, smoke.Error)
-			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
-			return fmt.Errorf("imaged: post-readiness smoke: %s", smoke.Error)
-		}
-		if err := h.persistHostingReceipt(ctx, hostingApp, dep, smoke); err != nil {
-			if h.ops != nil {
-				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
-			}
-			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "hosting receipt persistence failed: "+err.Error())
-			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
-			return fmt.Errorf("imaged: hosting receipt: %w", err)
-		}
-		if h.ops != nil {
-			h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeComplete, time.Since(verificationStarted))
+			return err
 		}
 	}
 
@@ -3512,8 +3532,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
+	checkedRollback := false
+	if rollbacks, ok := h.store.(state.CheckedRollbackStore); ok {
+		operation, err := rollbacks.CheckedRollbackForTarget(ctx, dep.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("imaged: read checked rollback: %w", err)
+		}
+		checkedRollback = err == nil && operation.Status == "preparing"
+	}
+
 	var promoteErr error
-	if dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
+	if !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindImage) && dep.GitHubSourceRef != "" {
 		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
 		if stale || verifyErr != nil {
 			code := api.CodeSourceRefStale
@@ -3529,8 +3558,8 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			return nil
 		}
 	}
-	if dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview {
-		promoteErr = h.store.MarkGitDrivenDeploymentLiveIfLatest(ctx, dep.ID)
+	if !checkedRollback && dep.Kind.RequiresLatestRevision() {
+		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}
@@ -3539,6 +3568,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		return nil
 	}
 	if promoteErr != nil {
+		var dependencyBlocker *state.DependencyGateError
+		if errors.As(promoteErr, &dependencyBlocker) {
+			// Refresh the durable blocker after a dependency changed during
+			// smoke, before finalizing the failed or deferred activation.
+			if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
+				return gateErr
+			}
+		}
+		if stop, gateErr := h.handleProjectDependencyBlocker(ctx, dep, promoteErr); stop {
+			return gateErr
+		}
 		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
@@ -3676,7 +3716,7 @@ func (h *Handler) notifyDeploymentRoute(ctx context.Context, appID, deploymentID
 	}
 }
 
-// handleSnapshotBoot is the canonical builderd-driven path (F4). builderd
+// handleSnapshotBootLegacy preserves the pre-checkpoint path for narrow stores. builderd
 // has finished its build VM, stamped the OCI image tarball onto
 // deployments.rootfs_path, and emitted NotifySnapshotBoot. imaged:
 //
@@ -3690,7 +3730,7 @@ func (h *Handler) notifyDeploymentRoute(ctx context.Context, appID, deploymentID
 // notification, apid has already advanced the row to `building` (apid's
 // POST /v1/apps/{app}/deployments handler flips it). imaged picks up at
 // `imaging` to keep the state-machine CHECK constraints happy.
-func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload) (err error) {
+func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPayload) (err error) {
 	if p.DeploymentID == "" {
 		return errors.New("imaged: snapshot_boot missing deployment_id")
 	}
@@ -3766,9 +3806,13 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	// while the snapshot_prime notifier fails, and the deployment
 	// row would otherwise be left in DeployBuilding indefinitely.
 	defer h.markFailedOnUnhandledError(ctx, dep.ID, &err)
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app: %w", err)
+	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil {
+		return err
 	}
 	acct, err := h.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
@@ -3881,6 +3925,9 @@ func (h *Handler) ensureDeploymentRuntimeBase(ctx context.Context, app state.App
 // transition is the only place imaged writes to deployments.status. Keeps
 // the state machine auditable.
 func (h *Handler) transition(ctx context.Context, depID string, status state.DeploymentStatus, errMsg string) error {
+	if handled, err := transitionImagePreparation(ctx, depID, status); handled {
+		return err
+	}
 	if err := h.store.UpdateDeploymentStatus(ctx, depID, status, errMsg); err != nil {
 		return fmt.Errorf("imaged: set %s: %w", status, err)
 	}
@@ -3991,6 +4038,11 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 // branch on a stable string rather than parsing the free-text
 // deployments.error.
 func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error, prefix string) error {
+	// A daemon shutdown must leave its checkpointed preparation recoverable.
+	if _, preparing := ctx.Value(imagePreparationClaimKey{}).(imagePreparationClaim); preparing && ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	code, _ := oci.SentinelToCode(err)
 	if errors.Is(err, errSecurityScanBlocked) {
 		code = api.CodeSecurityScanBlocked
@@ -4350,7 +4402,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup load deployment: %w", err)
 	}
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup load app: %w", err)
 	}
@@ -4367,9 +4419,8 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 		h.log.Warn("imaged: cleanup storageFor", "deployment", dep.ID, "err", err)
 		return err
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
-	if err := be.Delete(ctx, appsKey); err != nil {
-		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
+	if err := h.deleteDeploymentLayers(ctx, be, dep, app.Slug); err != nil {
+		h.log.Warn("imaged: cleanup layers", "deployment", dep.ID, "err", err)
 	}
 	if !keepSnap {
 		h.cleanupSnapshotCaptures(ctx, be, dep.ID)
@@ -4386,7 +4437,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 }
 
 // cleanupAppFiles walks every deployment for the app, drops the per-app ext4
-// AND the snap blobs for each, then unlinks the per-app directory entirely.
+// and snapshot blobs for each through the storage backend.
 //
 // A missing app row is treated as a silent no-op (logs at Info level when
 // the store surfaces ErrNotFound). app_changed notifications can fire on
@@ -4402,6 +4453,11 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 		}
 		return fmt.Errorf("imaged: cleanup load app: %w", err)
 	}
+	// Notifications are hints. A delayed or replayed delete must not remove
+	// snapshot captures for an app that is still active in the store.
+	if app.Status != state.AppDeleted {
+		return nil
+	}
 	deps, err := h.store.ListDeploymentsForApp(ctx, appID, 0, 0)
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup list deployments: %w", err)
@@ -4414,29 +4470,8 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 		return fmt.Errorf("imaged: app cleanup storageFor: %w", err)
 	}
 	for _, d := range deps {
-		appsKey := sched.AppLayerKey(app.Slug, d.ID)
-		if err := be.Delete(ctx, appsKey); err != nil {
-			h.log.Warn("imaged: app cleanup ext4", "key", appsKey, "err", err)
-		}
-		// Issue #463 / ADR-069 / PR-B: walk the deployment's
-		// per-workload sidecar ext4 set and delete each. The
-		// store-side FK CASCADE on `deployment_sidecar_layers`
-		// keeps the row consistent; this loop removes the
-		// storage artifact that the row used to reference.
-		// We swallow List errors as Warn (the FK-side cascade
-		// means the row goes with the deployment even if the
-		// storage sweep fails, and a future rebuild would
-		// generate fresh keys).
-		if layers, listErr := h.store.ListDeploymentSidecarLayers(ctx, d.ID); listErr == nil {
-			for _, l := range layers {
-				if delErr := be.Delete(ctx, l.StorageKey); delErr != nil {
-					h.log.Warn("imaged: app cleanup sidecar ext4",
-						"key", l.StorageKey, "sidecar", l.SidecarName, "err", delErr)
-				}
-			}
-		} else {
-			h.log.Warn("imaged: app cleanup list sidecar layers",
-				"deployment", d.ID, "err", listErr)
+		if err := h.deleteDeploymentLayers(ctx, be, d, app.Slug); err != nil {
+			h.log.Warn("imaged: app cleanup layers", "deployment", d.ID, "err", err)
 		}
 		h.cleanupSnapshotCaptures(ctx, be, d.ID)
 		memKey := state.SnapMemKey(d.ID)
@@ -4848,6 +4883,7 @@ func (h *Handler) buildFullRootfsLayer(
 		StorageKey:     appsKey,
 		SBOMRun:        sbomRun,
 		SBOMStorageKey: sbomKey,
+		CommandPATH:    fullRootfsCommandPATH(ctx, h.store, app, dep, manifest),
 		// BuildFullRootfs derives the image's merged /etc/passwd resolver
 		// while applying the pulled layers; no host-side passwd data is used.
 		Resolver: nil,

@@ -5,7 +5,7 @@
 //   - the reserved sentinel "__all__" is rejected even though it
 //     would otherwise be a valid slug-like string
 //   - the empty string is rejected
-//   - strings that fail EnvScopePattern (3..40 lowercase alnum +
+//   - strings that fail EnvScopePattern (1..40 lowercase alnum +
 //     dash, no leading/trailing dash) are rejected
 //   - strings that exceed MaxEnvScopeLen are rejected
 //   - well-formed scope names are accepted
@@ -80,7 +80,7 @@ func TestValidateScope_TooLong_Rejected(t *testing.T) {
 // CHECK + this test.
 func TestValidateScope_PatternFailures_Rejected(t *testing.T) {
 	cases := []struct{ name, in string }{
-		{"too_short_2", "ab"},
+		{"dash_only", "-"},
 		{"leading_dash", "-foo"},
 		{"trailing_dash", "foo-"},
 		{"uppercase", "Staging"},
@@ -107,16 +107,16 @@ func TestValidateScope_PatternFailures_Rejected(t *testing.T) {
 // well-formed scope must return nil so a future bug that
 // accidentally rejects a valid slug trips this seam.
 //
-// The regex `^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$` admits exactly
-// 3..40 chars; shorter or longer strings belong in the rejection
-// table. We pin a few mid-range variants + the exact 3-char and
+// The scope contract admits 1..40 chars. We pin catalog short and numeric
+// names as well as legacy mid-range variants and the
 // 40-char boundaries.
 func TestValidateScope_Accepts(t *testing.T) {
 	cases := []string{
-		"default",               // 7 chars
-		"staging",               // 7 chars
-		"prod-eu",               // 8 chars
-		"abc",                   // exact 3-char lower bound
+		"a", "1", "ab", "12", "1a", // short catalog names
+		"default", // 7 chars
+		"staging", // 7 chars
+		"prod-eu", // 8 chars
+		"abc",
 		strings.Repeat("a", 40), // exact 40-char upper bound
 		"a-1",                   // mixed alnum + dash
 		"prod-us-west-2",        // 15 chars
@@ -139,10 +139,21 @@ func TestValidateScope_Accepts(t *testing.T) {
 // test catches a refactor that changes the constant without a
 // paired migration.
 func TestEnvScopePattern_Stable(t *testing.T) {
-	if EnvScopePattern != `^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$` {
+	if EnvScopePattern != `^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$` {
 		t.Errorf("EnvScopePattern drifted: got %q, want the migration's CHECK shape", EnvScopePattern)
 	}
 	if MaxEnvScopeLen != 40 {
-		t.Errorf("MaxEnvScopeLen drifted: got %d, want 40 (mirrors CHECK 3..40 char lower+upper bound)", MaxEnvScopeLen)
+		t.Errorf("MaxEnvScopeLen drifted: got %d, want 40 (mirrors CHECK upper bound)", MaxEnvScopeLen)
+	}
+}
+
+func TestCatalogEnvironmentNamesAreValidRuntimeScopes(t *testing.T) {
+	for _, scope := range []string{"a", "1", "ab", "12", "1a", "a-1", strings.Repeat("a", 33)} {
+		if !ValidProjectEnvironmentSlug(scope) || ValidateScope(scope) != nil {
+			t.Fatalf("catalog/runtime scope mismatch for %q", scope)
+		}
+	}
+	if ValidProjectEnvironmentSlug(DefaultEnvScope) || ValidateScope(DefaultEnvScope) != nil {
+		t.Fatal("default must remain a runtime scope and reserved in the catalog")
 	}
 }

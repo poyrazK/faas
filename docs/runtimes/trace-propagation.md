@@ -38,6 +38,27 @@ to extract `traceparent`, `tracestate`, and `baggage` from each request.
 Do not use `process.env.TRACEPARENT` (or expect `TRACESTATE`/`BAGGAGE`
 environment variables) for per-request correlation.
 
+## Export spans to Gregale
+
+Set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to
+`https://<your-gregale-api-host>/v1/otel/v1/traces` and configure the exporter
+with `Authorization: Bearer <api-key>` using its headers option. Telemetry
+plan and per-account request limits still apply.
+
+The endpoint accepts OTLP/HTTP JSON (hexadecimal IDs) and binary protobuf,
+including gzip-compressed and multi-trace batches. Successful responses use
+`ExportTraceServiceResponse`; if a trace cannot be accepted without crossing
+account ownership, the response reports `partialSuccess.rejectedSpans`.
+The OTLP client must not retry a partial-success response. Errors use
+`google.rpc.Status` in the request encoding. Empty exports succeed.
+
+Acceptance stages spans for the existing request debugger's in-memory
+coalescing and slowest-span summary. It does not promise durable raw-span
+storage. Metrics and OTLP/gRPC ingress are outside this endpoint's contract.
+Historical requests without Content-Type retain ordinary-protobuf JSON input
+support; new integrations must set a standard OTLP Content-Type. The previous
+custom success-body counters have moved to `X-Gregale-Accepted-Spans`.
+
 ## Deployment identity
 
 Every wake, restore, and migration stamps the workload with reserved
@@ -260,6 +281,12 @@ filtering for the durable HTTP log ledger; `gregale trace <trace-id>` renders
 the correlated events without client-side app fan-out. The command
 `gregale logs <app> --trace <trace-id>` selects the HTTP access events for one
 app and supports the usual route/status filters.
+
+When a producer includes an SDK-generated `flag_context` with a queue or
+app-inbox message, the durable invocation also retains its customer-bound flag
+decisions. Synthetic delivery restores the customer header and bounded flag
+context for the worker; retries keep the original decision and configuration
+version.
 
 For queue and async invocations, the trace projection includes the most recent
 claim time (`started_at`). The CLI waterfall separates enqueue-to-latest-claim

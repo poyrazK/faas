@@ -12,8 +12,8 @@
 //     must NOT call githubd.ExchangeOAuthCode on a mismatch.
 //  3. githubd transport error: cookie matches, but the gRPC call
 //     fails → 502 + audit auth.install.token_exchange_failed.
-//  4. missing GitHub App installation: the connect handler and the
-//     callback race both redirect to GitHub's installation flow.
+//  4. missing GitHub App installation: authorize first, then use the
+//     callback's GitHub discovery to redirect to the installation flow.
 //
 // Plus a missing-state and missing-code branch as the cheap 400
 // guards against malformed queries.
@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -34,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -56,11 +58,13 @@ type oauthCodeCallbackFake struct {
 	gotCode      string
 	gotState     string
 	gotCalls     int
+	stateCalls   int
 }
 
 // GithubdClient surface, with the methods we don't use falling
 // through to not-ready problems so accidental calls fail loudly.
 func (f *oauthCodeCallbackFake) GetInstallState(context.Context, string) (InstallState, string, string, error) {
+	f.stateCalls++
 	return f.installState, "", "", f.installStateErr
 }
 func (f *oauthCodeCallbackFake) ExchangeOAuthCode(_ context.Context, accountID, code, state string) (string, string, error) {
@@ -282,78 +286,89 @@ func TestRenderOAuthCodeCallback_MissingInstallationResumesInstallFlow(t *testin
 	}
 }
 
-func TestStartConnectGitHub_RedirectsToInstallationWhenNeeded(t *testing.T) {
-	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "client-123")
-	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
-	gh := &oauthCodeCallbackFake{installState: InstallStateNotInstalled}
-	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
-	connectToken, err := middleware.IssueForAuthenticatedNamed(mgr, githubConnectAction, accountID, githubConnectCSRFCookie)
-	if err != nil {
-		t.Fatalf("issue connect csrf: %v", err)
-	}
-
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader("csrf_token="+url.QueryEscape(connectToken)))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.AddCookie(sessionCookie)
-	r.AddCookie(&http.Cookie{Name: githubConnectCSRFCookie, Value: connectToken})
-	srv.ServeHTTP(rec, r)
-
-	if rec.Code != http.StatusFound {
-		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
-	}
-	loc, err := url.Parse(rec.Header().Get("Location"))
-	if err != nil {
-		t.Fatalf("parse Location: %v", err)
-	}
-	if loc.Path != "/apps/test-app/installations/new" {
-		t.Errorf("Location path = %q, want /apps/test-app/installations/new", loc.Path)
-	}
-	stateToken := loc.Query().Get("state")
-	if stateToken == "" {
-		t.Fatal("installation redirect missing state")
-	}
-	if stateCookie := findCookie(rec.Result().Cookies(), oauthCodeStateCookie); stateCookie == nil || stateCookie.Value != stateToken {
-		t.Errorf("state cookie = %#v, want value matching redirect state %q", stateCookie, stateToken)
-	}
-}
-
-func TestStartConnectGitHub_AuthorizesInstalledApp(t *testing.T) {
+func TestStartConnectGitHub_DiscoversInstallationAfterAuthorization(t *testing.T) {
 	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "client-123")
 	t.Setenv("FAAS_GITHUB_APP_REDIRECT_URI", "https://gregale.dev/oauth/code-callback")
 	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
-	gh := &oauthCodeCallbackFake{installState: InstallStateInstalled}
-	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
-	connectToken, err := middleware.IssueForAuthenticatedNamed(mgr, githubConnectAction, accountID, githubConnectCSRFCookie)
-	if err != nil {
-		t.Fatalf("issue connect csrf: %v", err)
-	}
+	for _, tc := range []struct {
+		name        string
+		localState  InstallState
+		lookupErr   error
+		exchangeErr error
+	}{
+		{name: "existing GitHub installation unknown to Gregale"},
+		{name: "existing GitHub installation locally missing", localState: InstallStateNotInstalled},
+		{name: "installed", localState: InstallStateInstalled},
+		{name: "bound", localState: InstallStateBound},
+		{name: "local lookup unavailable", lookupErr: errors.New("install store unavailable")},
+		{name: "no GitHub installation", exchangeErr: errors.New("githubd: " + githubNoAppInstallError)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gh := &oauthCodeCallbackFake{
+				installState: tc.localState, installStateErr: tc.lookupErr,
+				installID: "9999", defaultBranch: "main", exchangeErr: tc.exchangeErr,
+			}
+			srv, _, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+			connectToken, connectCookie := browserConnectCSRF(t, srv, sessionCookie)
+			body := url.Values{"csrf_token": {connectToken}, "return_to": {"/dashboard/settings?section=integrations"}}
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader(body.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.AddCookie(sessionCookie)
+			r.AddCookie(connectCookie)
+			srv.ServeHTTP(rec, r)
+			if rec.Code != http.StatusFound {
+				t.Fatalf("connect: status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			loc, err := url.Parse(rec.Header().Get("Location"))
+			if err != nil {
+				t.Fatalf("parse Location: %v", err)
+			}
+			if loc.Host != "github.com" || loc.Path != "/login/oauth/authorize" {
+				t.Fatalf("must discover existing installations through OAuth, got %s", loc)
+			}
+			if loc.Query().Get("client_id") != "client-123" || loc.Query().Get("redirect_uri") != "https://gregale.dev/oauth/code-callback" {
+				t.Fatalf("incorrect OAuth configuration: %s", loc)
+			}
+			stateToken := loc.Query().Get("state")
+			stateCookie := findCookie(rec.Result().Cookies(), oauthCodeStateCookie)
+			if stateToken == "" || stateCookie == nil || stateCookie.Value != stateToken || !stateCookie.HttpOnly {
+				t.Fatal("OAuth state must match the HttpOnly cookie")
+			}
+			if gh.stateCalls != 0 {
+				t.Fatal("local connection state cannot determine whether GitHub has an installation")
+			}
 
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader("csrf_token="+url.QueryEscape(connectToken)))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.AddCookie(sessionCookie)
-	r.AddCookie(&http.Cookie{Name: githubConnectCSRFCookie, Value: connectToken})
-	srv.ServeHTTP(rec, r)
-
-	if rec.Code != http.StatusFound {
-		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
-	}
-	loc, err := url.Parse(rec.Header().Get("Location"))
-	if err != nil {
-		t.Fatalf("parse Location: %v", err)
-	}
-	if loc.Path != "/login/oauth/authorize" {
-		t.Errorf("Location path = %q, want /login/oauth/authorize", loc.Path)
-	}
-	if got := loc.Query().Get("client_id"); got != "client-123" {
-		t.Errorf("client_id = %q, want client-123", got)
-	}
-	if got := loc.Query().Get("redirect_uri"); got != "https://gregale.dev/oauth/code-callback" {
-		t.Errorf("redirect_uri = %q, want configured callback", got)
-	}
-	if loc.Query().Get("state") == "" {
-		t.Error("authorize redirect missing state")
+			callback := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code&state="+stateToken, nil)
+			callback.AddCookie(sessionCookie)
+			callback.AddCookie(stateCookie)
+			callback.AddCookie(findCookie(rec.Result().Cookies(), githubConnectReturnCookie))
+			result := httptest.NewRecorder()
+			srv.ServeHTTP(result, callback)
+			if result.Code != http.StatusFound || gh.gotCalls != 1 || gh.gotAccountID != accountID || gh.gotState != stateToken {
+				t.Fatalf("callback failed: status = %d, body = %s", result.Code, result.Body.String())
+			}
+			redirect, err := url.Parse(result.Header().Get("Location"))
+			if err != nil {
+				t.Fatalf("parse callback Location: %v", err)
+			}
+			if tc.exchangeErr != nil {
+				freshState := redirect.Query().Get("state")
+				var freshCookie *http.Cookie
+				for _, cookie := range result.Result().Cookies() {
+					if cookie.Name == oauthCodeStateCookie && cookie.MaxAge > 0 {
+						freshCookie = cookie
+					}
+				}
+				if redirect.Path != "/apps/test-app/installations/new" || freshState == "" || freshState == stateToken || freshCookie == nil || freshCookie.Value != freshState {
+					t.Fatalf("missing installation must start a fresh installation flow: %s", redirect)
+				}
+				return
+			}
+			if redirect.Path != "/dashboard/settings" || redirect.Query().Get("section") != "integrations" || redirect.Query().Get("github") != "connected" || redirect.Query().Get("install") != "9999" {
+				t.Fatalf("existing installation must return connected to settings: %s", redirect)
+			}
+		})
 	}
 }
 
@@ -425,5 +440,66 @@ func TestRenderOAuthCodeCallback_CSRFComparisonIsConstantTime(t *testing.T) {
 	// package's test scope.
 	if subtle.ConstantTimeCompare([]byte("a"), []byte("a")) != 1 {
 		t.Fatal("crypto/subtle import broken or zero")
+	}
+}
+
+// Exercise the public browser API rather than minting a proof inside the test.
+func browserConnectCSRF(t *testing.T, srv http.Handler, sessionCookie *http.Cookie) (string, *http.Cookie) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/csrf?action=connect_github", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("issue connect csrf: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var payload api.CSRFTokenResponse
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode connect csrf: %v", err)
+	}
+	cookie := findCookie(rec.Result().Cookies(), githubConnectCSRFCookie)
+	if cookie == nil || !cookie.HttpOnly || cookie.Value != payload.CSRFToken || payload.CSRFToken == "" {
+		t.Fatalf("connect csrf cookie must be HttpOnly and match the response: %#v", cookie)
+	}
+	if findCookie(rec.Result().Cookies(), middleware.CookieNameAuthenticated) != nil {
+		t.Fatal("connect issuance must not overwrite the generic mutation cookie")
+	}
+	return payload.CSRFToken, cookie
+}
+
+func TestStartConnectGitHub_RejectsInvalidBrowserProof(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		body     bool
+		cookie   bool
+		mismatch bool
+	}{
+		{name: "missing proof"},
+		{name: "missing body", cookie: true},
+		{name: "missing cookie", body: true},
+		{name: "mismatched proof", body: true, cookie: true, mismatch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, &oauthCodeCallbackFake{})
+			token, cookie := browserConnectCSRF(t, srv, sessionCookie)
+			body := url.Values{}
+			if tc.body {
+				if tc.mismatch {
+					token += "invalid"
+				}
+				body.Set("csrf_token", token)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader(body.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.AddCookie(sessionCookie)
+			if tc.cookie {
+				req.AddCookie(cookie)
+			}
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, req)
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard/account?github=connect-forbidden" {
+				t.Fatalf("invalid proof: status = %d, location = %q", rec.Code, rec.Header().Get("Location"))
+			}
+		})
 	}
 }

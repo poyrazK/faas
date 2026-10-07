@@ -5,7 +5,7 @@
 // caller-supplied handle with the dead node ID. The interesting
 // policy (admission + cooldown + per-tick cap + conditional
 // UPDATE + metric + rebalanced notify) lives in
-// Engine.RebalanceOrphanedApps (engine.go); this watcher
+// Engine.RebalanceOrphanedApps (ownership_recovery.go); this watcher
 // keeps to the "filter + dispatch" loop pattern shared with
 // pkg/sched/router_watcher.go.
 //
@@ -35,13 +35,15 @@ package sched
 import (
 	"context"
 	"encoding/json"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
 // RebalancerHandle is the per-dead-node work function the
-// watcher invokes. The cold-start sweep in cmd/schedd calls
-// Engine.RebalanceOrphanedApps directly with deadNodeID="";
+// watcher invokes. RunSweep calls Engine.RebalanceOrphanedApps
+// with deadNodeID="" at startup and periodically;
 // the live watcher supplies the populated deadNodeID from the
 // pg_notify payload. A nil return is success; non-nil is
 // logged-and-continued by the watcher.
@@ -59,11 +61,41 @@ type RebalancerLogger interface {
 // Rebalancer consumes compute_node_changed events where
 // active=false and hands the dead node ID to handle. Failures
 // log Warn and never propagate; the loop is expected to
-// outlive transient blips and be reconciled on next boot by
-// the cold-start sweep in cmd/schedd.
+// outlive transient blips. RunSweep independently rediscovers orphaned apps
+// from durable state even when the notification connection is unavailable.
 type Rebalancer struct {
 	handle RebalancerHandle
 	log    RebalancerLogger
+	// SweepInterval is an optional cadence override; zero uses the ADR-421
+	// default. RunSweep is independent of the notification connection.
+	SweepInterval time.Duration
+}
+
+// RunSweep reconciles durable orphan ownership at startup and periodically.
+// A failed batch or disconnected notification feed cannot disable recovery.
+func (r *Rebalancer) RunSweep(ctx context.Context) error {
+	interval := r.SweepInterval
+	if interval <= 0 {
+		interval = time.Duration(api.OwnershipRecoveryIntervalSeconds) * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, time.Duration(api.OwnershipRecoveryTimeoutSeconds)*time.Second)
+		err := r.handle(attemptCtx, "")
+		cancel()
+		if err != nil && ctx.Err() == nil && r.log != nil {
+			r.log.Warn("sched: periodic ownership recovery failed", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // NewRebalancer wires the watcher with handle + log. handle
@@ -86,9 +118,7 @@ func NewRebalancer(handle RebalancerHandle, log RebalancerLogger) *Rebalancer {
 // or the channel closes. Returns ctx.Err() on cancellation.
 // Each "keep going" decision is deliberate: pg_notify is
 // best-effort, the apps table is the source of truth, and the
-// cold-start sweep at cmd/schedd's startup
-// (Engine.RebalanceOrphanedApps(ctx, "")) reconciles any
-// notify that was lost to a schedd restart.
+// independent startup/periodic RunSweep reconciles any lost notification.
 func (r *Rebalancer) Run(ctx context.Context, notif <-chan db.Notification) error {
 	for {
 		select {

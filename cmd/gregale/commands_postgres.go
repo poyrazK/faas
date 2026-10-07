@@ -19,28 +19,46 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|usage|create|get|delete|restore|bindings|attach>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|delete|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover>", "postgres")
 		return 1
 	}
 	switch args[0] {
 	case subList:
 		return cmdPostgresList(args[1:])
+	case "capabilities":
+		return cmdPostgresCapabilities(args[1:])
 	case "usage":
 		return cmdPostgresUsage(args[1:])
+	case "diagnostics":
+		return cmdPostgresDiagnostics(args[1:])
+	case "usage-import":
+		return cmdPostgresUsageImport(args[1:])
+	case "reconcile":
+		return cmdPostgresReconcile(args[1:])
 	case subCreate:
 		return cmdPostgresCreate(args[1:])
 	case subGet:
 		return cmdPostgresGet(args[1:])
 	case "delete":
 		return cmdPostgresDelete(args[1:])
+	case "compute-policy":
+		return cmdPostgresComputePolicy(args[1:])
+	case "compute-policy-status":
+		return cmdPostgresComputePolicyStatus(args[1:])
+	case "resize":
+		return cmdPostgresResize(args[1:])
+	case "resize-status":
+		return cmdPostgresResizeStatus(args[1:])
 	case subRestore:
 		return cmdPostgresRestore(args[1:])
+	case "cutover":
+		return cmdPostgresCutover(args[1:])
 	case "bindings":
 		return cmdPostgresBindings(args[1:])
 	case "attach", "bind":
 		return cmdPostgresAttach(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown postgres subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -55,7 +73,7 @@ func cmdPostgresAttach(args []string) int {
 	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise production)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -69,7 +87,7 @@ func cmdPostgresAttach(args []string) int {
 	*scope = resolvedScope
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -331,7 +349,7 @@ func cmdPostgresBindings(args []string) int {
 	case "delete":
 		return cmdPostgresBindingsDelete(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown postgres bindings subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown postgres bindings subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -368,12 +386,12 @@ func cmdPostgresBindingsCreate(args []string) int {
 	app := fs.String("app", "", "app ID (required)")
 	scope := fs.String("scope", "", "environment scope (required)")
 	environmentKey := fs.String("environment-key", "", "environment variable name (required)")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -510,7 +528,9 @@ func postgresAvailabilityOK(value string) bool {
 	return value == "single_zone" || value == "high_availability"
 }
 
-func postgresAccessOK(value string) bool { return value == "read_write" || value == "read_only" }
+func postgresAccessOK(value string) bool {
+	return value == "read_write" || value == "read_only" || value == "migration" || value == "data_api"
+}
 
 func formatPostgresStorage(bytes int64) string {
 	if bytes <= 0 {
@@ -534,6 +554,19 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	_, _ = fmt.Fprintf(w, "  storage_limit:    %s\n", formatPostgresStorage(database.StorageLimitBytes))
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))
 	_, _ = fmt.Fprintf(w, "  state:            %s\n", database.State)
+	if health := database.Health; health != nil {
+		_, _ = fmt.Fprintf(w, "  provider_health:  %s (fresh=%t)\n", health.Status, health.Fresh)
+		_, _ = fmt.Fprintf(w, "  compute_state:    %s\n", health.ComputeState)
+		if health.CheckedAt != "" {
+			_, _ = fmt.Fprintf(w, "  health_checked:   %s\n", health.CheckedAt)
+		}
+		if health.LastSuccessAt != "" {
+			_, _ = fmt.Fprintf(w, "  health_success:   %s\n", health.LastSuccessAt)
+		}
+		if health.LastErrorCode != "" {
+			_, _ = fmt.Fprintf(w, "  health_error:     %s\n", health.LastErrorCode)
+		}
+	}
 	if database.LastErrorCode != "" {
 		_, _ = fmt.Fprintf(w, "  last_error_code:  %s\n", database.LastErrorCode)
 	}

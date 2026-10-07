@@ -26,6 +26,15 @@ service Vmmd {
   // first-boot path (M2). Equivalent to Wake with Snapshot == nil.
   rpc CreateColdBoot(CreateColdBootRequest) returns (WakeResponse);
 
+  // ADR-568: these methods carry one immutable private qualification attempt.
+  // Generic boot/destroy never substitutes for either operation. Host journal
+  // ownership must be configured before creation or retirement is available.
+  rpc CreateEnvironmentQualification(CreateEnvironmentQualificationRequest) returns (CreateEnvironmentQualificationResponse);
+  rpc RetireEnvironmentQualification(RetireEnvironmentQualificationRequest) returns (RetireEnvironmentQualificationResponse);
+  // Captures the original VM in a vmmd-chosen immutable namespace. This
+  // acknowledges capture only, never smoke/restore or graph qualification.
+  rpc CaptureEnvironmentQualification(CaptureEnvironmentQualificationRequest) returns (CaptureEnvironmentQualificationResponse);
+
   // JobColdBoot starts a non-listening job-task VM. Jobs own their image,
   // command, environment, and timeout, so they use a dedicated flat wire
   // shape instead of AppSpec and never enter the snapshot/readiness path.
@@ -41,6 +50,13 @@ service Vmmd {
   // It carries bounded stdout/stderr chunks as they arrive, followed by one
   // terminal response. The unary RPC remains available for older schedulers.
   rpc ExecuteExecutionStream(ExecuteExecutionRequest) returns (stream ExecuteExecutionEvent);
+
+  // ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
+  // the one-shot execution exchange. The first client frame must be start;
+  // subsequent client frames carry responses to host-authorized outbound
+  // calls. Signed identity assertions are emitted only to schedd, never to the
+  // guest.
+  rpc ExecuteExecutionBrokerStream(stream ExecuteExecutionBrokerRequest) returns (stream ExecuteExecutionBrokerEvent);
 
   // RestoreExecution creates a fresh, networkless disposable execution VM.
   // The envelope contains only immutable machine/artifact metadata; caller
@@ -349,6 +365,11 @@ service Vmmd {
   // half-closes the gRPC stream to half-close the guest socket.
   rpc ForwardTCPStream(stream ForwardTCPRequest) returns (stream ForwardTCPResponse);
 
+  // ForwardUDPStream carries one datagram per frame for an admitted peer.
+  // The edge validates declared listener ownership before opening the RPC.
+  // Closing the stream ends the peer session; UDP has no half-close.
+  rpc ForwardUDPStream(stream ForwardUDPRequest) returns (stream ForwardUDPResponse);
+
   // MountParentExt4ReadOnly (ADR-053) is the staging-only path that
   // lets imaged compose the per-runtime base ext4 from a shared
   // debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -565,6 +586,8 @@ message AppSpec {
   // A separate bool distinguishes an enabled probe with the default
   // empty service (overall server health) from the disabled state.
   bool healthcheck_grpc = 25;
+  // ADR-683: require a fresh command check from this boot/restore.
+  bool image_healthcheck_required = 30;
   // healthcheck_grpc_service is the optional service name sent in the
   // health.v1 Check request; empty checks overall server health.
   string healthcheck_grpc_service = 26;
@@ -772,6 +795,9 @@ message SidecarProbeSpec {
 message SealedSecret {
   string key        = 1;
   bytes  ciphertext = 2;
+  // ADR-423: alias destination is key; source_key must match the single key
+  // inside its sealed envelope. Empty preserves the legacy envelope contract.
+  string source_key = 3;
 }
 
 // APIEnvEntry is one (key, value) plaintext pair from app_envs
@@ -889,6 +915,12 @@ message WakeResponse {
   // Closed value: after_restore_failed. No callback URL or error text crosses
   // the customer telemetry boundary; empty on other wake paths.
   string restore_fallback_reason = 14;
+  // ADR-423: the serving handler understands source_key alias delivery.
+  bool supports_secret_aliases = 15;
+  // A fresh command check passed in this serving boot, never in a paused reservation.
+  bool image_healthcheck_verified = 16;
+  bool supports_image_healthcheck = 17;
+  bool supports_image_healthcheck_monitoring = 18;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
@@ -896,6 +928,8 @@ message WakeResponse {
 enum WakeMethod {
   WAKE_COLD_BOOT = 0;
   WAKE_RESTORE   = 1;
+  // An explicit unavailable result; zero remains cold boot for wire compatibility.
+  WAKE_UNKNOWN   = 2;
 }
 
 message CreateFromSnapshotRequest {
@@ -934,6 +968,99 @@ message CreateFromSnapshotRequest {
   // resuming guest execution. The scheduler later resumes this VM in place
   // when it promotes the warm reservation to serving capacity.
   bool keep_paused = 8;
+}
+
+// Cleanup authority is private to schedd/vmmd. Preserve every field exactly,
+// including the original placement after source deletion or supersession.
+// contract_version=1 is the only supported immutable frame profile.
+message EnvironmentQualificationExecution {
+  uint32 contract_version = 1;
+  string instance_id = 2;
+  string request_id = 3;
+  string graph_id = 4;
+  string app_id = 5;
+  string deployment_id = 6;
+  string node_id = 7;
+  string wake_id = 8;
+  string source_id = 9;
+  string environment_id = 10;
+  string revision_id = 11;
+  string resource = 12;
+  string scope = 13;
+  string plan_hash = 14;
+  int64 generation = 15;
+  int64 intent_version = 16;
+  int64 attempt = 17;
+  int32 ram_mb = 18;
+  EnvironmentQualificationArtifact artifact = 19;
+  string cleanup_token = 20;
+}
+
+message EnvironmentQualificationArtifact {
+  string rootfs_path = 1;
+  string rootfs_key = 2;
+  int64 rootfs_bytes = 3;
+  string image_digest = 4;
+  string build_id = 5;
+  string kind = 6;
+  string commit_sha = 7;
+}
+
+message CreateEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+  AppSpec app = 2;
+  string plan = 3;
+  string account_id = 4;
+}
+
+// Boot acknowledges only the runtime of this attempt; it grants no readiness,
+// smoke, snapshot or graph activation authority.
+message CreateEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  WakeResponse wake = 2;
+}
+
+message RetireEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+}
+
+// The host may emit this only after the original physical generation proves
+// process exit and complete resource removal. Absence is not a receipt.
+message EnvironmentQualificationRetirement {
+  string kind = 1;
+  string receipt_id = 2;
+  string native_generation = 3;
+  string kernel_boot_id = 4;
+  bool processes_exited = 5;
+  bool resources_removed = 6;
+}
+
+message RetireEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  EnvironmentQualificationRetirement retirement = 2;
+}
+
+message CaptureEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+}
+
+message EnvironmentQualificationSnapshot {
+  uint32 contract_version = 1;
+  string capture_id = 2;
+  string native_generation = 3;
+  string kernel_boot_id = 4;
+  string storage_key = 5;
+  string vmstate_storage_key = 6;
+  string drive_storage_key = 7;
+  string backing_storage_key = 8;
+  int64 mem_bytes = 9;
+  int64 vmstate_bytes = 10;
+  int64 stored_bytes = 11;
+}
+
+message CaptureEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  EnvironmentQualificationSnapshot snapshot = 2;
 }
 
 message CreateColdBootRequest {
@@ -1269,6 +1396,10 @@ message PingRequest {}
 message PingResponse {
   string fc_version = 1;
   google.protobuf.Timestamp server_time = 2;
+  // Callers require this before sending source_key aliases to this node.
+  bool supports_secret_aliases = 3;
+  bool supports_image_healthcheck = 4;
+  bool supports_image_healthcheck_monitoring = 5;
 }
 
 // ForwardHTTPRequest and ForwardHTTPResponse were removed in PR-D
@@ -1839,6 +1970,8 @@ message AdoptMigratedInstanceRequest {
   string account_id = 7;
   string deployment_id = 8;
   string fc_version = 9;
+  // Destination wake identity, distinct from the source's boot attempt.
+  string wake_id = 10;
 }
 
 // AdoptMigratedInstanceResponse carries the network identifiers
@@ -1847,18 +1980,20 @@ message AdoptMigratedInstanceRequest {
 // re-derive the runtime state.
 message AdoptMigratedInstanceResponse {
   // The new owner's host IP for this instance (the /30 vethHost
-  // address inside the new owner's tenant netns). schedd
-  // currently doesn't write this anywhere on the migration path
-  // — the instances table's host_ip column is set at wake time
-  // and stays — but it's included on the wire so the vmmd's
-  // audit log can correlate.
+  // address inside the new owner's tenant netns). schedd publishes it with
+  // destination ownership and runtime input evidence.
   string host_ip = 1;
-  // The new owner's netns path the vmmd created. Same caveat
-  // as host_ip.
+  // The new owner's netns path the vmmd created.
   string netns = 2;
-  // The new owner's per-VM guest UID (20000-29999). Same
-  // caveat as host_ip.
+  // The new owner's per-VM guest UID (20000-29999).
   int32 guest_uid = 3;
+  // Actual Manager.Wake result. A requested restore can cold-boot instead.
+  // Older peers omit this field; callers must not infer input acknowledgement.
+  WakeMethod method = 4;
+  string wake_id = 5;
+  bool supports_secret_aliases = 6;
+  bool image_healthcheck_verified = 7;
+  bool supports_image_healthcheck_monitoring = 8;
 }
 
 // AcknowledgeMigrationRequest (Tier A5 / ADR-065) is the input
@@ -1991,6 +2126,26 @@ message ExecuteExecutionRequest {
   int32 timeout_ms = 7;
   int32 max_output_bytes = 8;
   string network_mode = 9;
+  string entrypoint = 10;
+  repeated ExecutionSourceFile files = 11;
+  repeated string output_files = 12;
+  string profile = 13;
+  // outbound_enabled exposes only the in-guest helper endpoint. It carries no
+  // integration IDs or identity material; vmmd still authorizes each call
+  // from the live restore grant.
+  bool outbound_enabled = 14;
+}
+
+message ExecutionSourceFile {
+  string path = 1;
+  bytes content = 2;
+}
+
+message ExecutionArtifact {
+  string name = 1;
+  int32 size_bytes = 2;
+  string sha256 = 3;
+  bytes content = 4;
 }
 
 // ExecuteExecutionResponse contains only bounded guest output and terminal
@@ -2008,6 +2163,7 @@ message ExecuteExecutionResponse {
   int64 wall_time_ms = 10;
   int64 cpu_time_ms = 11;
   int32 peak_memory_mb = 12;
+  repeated ExecutionArtifact artifacts = 13;
 }
 
 // ExecuteExecutionEvent is one frame from the live execution stream. Output
@@ -2027,6 +2183,46 @@ message ExecuteExecutionOutputChunk {
   bytes chunk = 2;
 }
 
+// ExecuteExecutionBrokerRequest is a client frame on the full-duplex Runs
+// execution stream. Start occurs exactly once and before any response frame.
+message ExecuteExecutionBrokerRequest {
+  oneof frame {
+    ExecuteExecutionRequest start = 1;
+    ExecuteExecutionOutboundResponse outbound_response = 2;
+  }
+}
+
+// ExecuteExecutionBrokerEvent is a server frame on the full-duplex Runs
+// execution stream.
+message ExecuteExecutionBrokerEvent {
+  oneof frame {
+    ExecuteExecutionOutputChunk output = 1;
+    ExecuteExecutionOutboundCall outbound_call = 2;
+    ExecuteExecutionResponse terminal = 3;
+  }
+}
+
+// ExecuteExecutionOutboundCall carries a bounded guest request and the
+// execution-scoped assertion schedd presents to outboundd. The assertion is
+// host-only and must never be copied into the guest response.
+message ExecuteExecutionOutboundCall {
+  uint64 id = 1;
+  string integration_id = 2;
+  string method = 3;
+  string path = 4;
+  bytes body = 5;
+  string execution_identity = 6;
+}
+
+// ExecuteExecutionOutboundResponse is the bounded safe subset of an outbound
+// provider response returned by schedd to the live guest broker.
+message ExecuteExecutionOutboundResponse {
+  uint64 id = 1;
+  int32 status = 2;
+  map<string, string> headers = 3;
+  bytes body = 4;
+}
+
 // RestoreExecutionRequest is the payload-free machine envelope for one
 // disposable execution. All fields are resolved by schedd from the runtime
 // snapshot catalog; source and input are intentionally absent.
@@ -2042,6 +2238,10 @@ message RestoreExecutionRequest {
   int32 vcpu_count = 9;
   int32 mem_size_mib = 10;
   int32 cpu_millicores = 11;
+  // Host-only broker metadata for the current scheduler lease. These fields
+  // are never included in the guest manifest or execution payload.
+  string lease_token = 12;
+  repeated string outbound_integration_ids = 13;
 }
 
 // RestoreExecutionResponse confirms the dedicated VM identity. Network
@@ -2155,11 +2355,14 @@ message PrivateNetworkFirewallRule {
 // ResumeWarmInstanceRequest identifies a paused warm-pool VM by instance id.
 message ResumeWarmInstanceRequest {
   string instance = 1;
+  bool image_healthcheck_required = 2;
 }
 
 // ResumeWarmInstanceResponse acknowledges the in-place resume.
 message ResumeWarmInstanceResponse {
   string instance = 1;
+  bool image_healthcheck_verified = 2;
+  bool supports_image_healthcheck_monitoring = 3;
 }
 
 // RestoreAppTaskRequest is the command-free preparation envelope for a
@@ -2177,6 +2380,7 @@ message RestoreAppTaskResponse {
   string instance = 1;
   int32 lease_uid = 2;
   WakeMethod method = 3;
+  bool supports_secret_aliases = 4;
 }
 
 // ExecuteAppTaskRequest contains only dispatch-time data. In particular it
@@ -2201,6 +2405,7 @@ message ExecuteAppTaskResponse {
   string failure_message = 6;
   bytes stdout = 7;
   bytes stderr = 8;
+  string outcome_code = 9;
 }
 
 message ExecuteAppTaskEvent {
@@ -2225,4 +2430,33 @@ message AllowResolvedEgressRequest {
 message AllowResolvedEgressAck {
   // matched is false when no live instance owns source_ip.
   bool matched = 1;
+}
+
+// ForwardUDPRequestInit targets one admitted instance-local UDP listener.
+// Optional caps may tighten the receiver defaults; they cannot raise them.
+message ForwardUDPRequestInit {
+  string instance = 1;
+  uint32 port = 2;
+  int64 max_bytes = 3;
+  uint64 max_datagrams = 4;
+}
+
+message ForwardUDPRequest {
+  oneof frame {
+    ForwardUDPRequestInit init = 1;
+    // Presence is significant: empty bytes are a real empty datagram.
+    bytes datagram = 2;
+  }
+}
+
+message ForwardUDPResponseInit {
+  // Reports helper readiness, not application receipt of a UDP packet.
+  string error = 1;
+}
+
+message ForwardUDPResponse {
+  oneof frame {
+    ForwardUDPResponseInit init = 1;
+    bytes datagram = 2;
+  }
 }

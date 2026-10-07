@@ -4,9 +4,41 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
+
+// `gregale keys list` showed revoked keys exactly like live ones.
+func TestKeysListMarksRevokedKeys(t *testing.T) {
+	resetJSONOut(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":"a","label":"live-key","prefix":"fp_live_aaaaaaaa","status":"active"},` +
+			`{"id":"b","label":"old-key","prefix":"fp_live_bbbbbbbb","status":"revoked"}]`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = writer
+	code := cmdKeys([]string{"list"})
+	os.Stdout = oldStdout
+	_ = writer.Close()
+	var out bytes.Buffer
+	_, _ = out.ReadFrom(reader)
+	if code != 0 {
+		t.Fatalf("keys list = %d: %s", code, out.String())
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 || strings.Contains(lines[0], "active") || !strings.HasSuffix(strings.TrimSpace(lines[1]), "revoked") {
+		t.Fatalf("keys list output = %q, want the live row unchanged and the revoked row marked", out.String())
+	}
+}
 
 func TestKeysListHelpNeverRequestsAPI(t *testing.T) {
 	cases := []struct {

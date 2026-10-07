@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": 1,
   "comment": "Tier 3 (issue #197 B3.5 + B3.6). The FROM line in each Dockerfile below this lock is digest-pinned; this lock is the source of truth. `make images-lock-update` resolves the current registry digest and updates BOTH the lock and the FROM line. CI runs `make images-lock-check` to fail any PR that drifts (either a Dockerfile with a non-digest-pinned FROM, or a Dockerfile whose FROM line doesn't match the lock's `pinned_in_dockerfile` field). The PLACEHOLDER digests below fail the check by design \u2014 the operator runs `make images-lock-update` once at PR-merge time, before this file is squashed into main. `scratch` is the canonical empty image and is exempt from the lock (audit_dockerfile_froms.py whitelists it).",
-  "generated_at": "2026-09-01T15:01:12Z",
+  "generated_at": "2026-10-06T15:24:35Z",
   "generated_by": "make images-lock-update",
   "pinned": [
     {
@@ -56,8 +56,8 @@
       "resolved_repo": "docker.io/library/debian",
       "resolved_tag": "12-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
-      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"
+      "digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
+      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91"
     },
     {
       "dockerfile": "images/base-minimal.Dockerfile",
@@ -67,8 +67,8 @@
       "resolved_tag": "1.37.0-musl",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23",
-      "pinned_in_dockerfile": "FROM busybox:1.37.0-musl@sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23 AS busybox"
+      "digest": "sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092",
+      "pinned_in_dockerfile": "FROM busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS busybox"
     },
     {
       "dockerfile": "images/base-minimal.Dockerfile",
@@ -77,8 +77,8 @@
       "resolved_repo": "docker.io/library/debian",
       "resolved_tag": "12-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
-      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867 AS build"
+      "digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
+      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91 AS build"
     },
     {
       "dockerfile": "images/runner-node22.Dockerfile",
@@ -97,8 +97,8 @@
       "resolved_repo": "docker.io/library/python",
       "resolved_tag": "3.12-slim-bookworm",
       "platform": "linux/amd64",
-      "digest": "sha256:9c47360a2a0355e2da18516d0b1c2126ec22c195d2185e97347c9d98398c5bef",
-      "pinned_in_dockerfile": "FROM python:3.12-slim-bookworm@sha256:9c47360a2a0355e2da18516d0b1c2126ec22c195d2185e97347c9d98398c5bef"
+      "digest": "sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d",
+      "pinned_in_dockerfile": "FROM python:3.12-slim-bookworm@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d"
     },
     {
       "dockerfile": "images/runner-go124.Dockerfile",
@@ -127,11 +127,21 @@
       "resolved_repo": "docker.io/library/node",
       "resolved_tag": "24-bookworm-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:6642ef280aebc09c4541bee0b15c9f89f0f3f3c247ddee79ae1d37eddfdcbbaa",
-      "pinned_in_dockerfile": "FROM node:24-bookworm-slim@sha256:6642ef280aebc09c4541bee0b15c9f89f0f3f3c247ddee79ae1d37eddfdcbbaa"
+      "digest": "sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd",
+      "pinned_in_dockerfile": "FROM node:24-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd"
     },
     {
       "dockerfile": "images/runner-python313.Dockerfile",
+      "instruction": "FROM",
+      "alias": "cgr.dev/chainguard/wolfi-base:latest",
+      "resolved_repo": "cgr.dev/chainguard/wolfi-base",
+      "resolved_tag": "latest",
+      "platform": "linux/amd64",
+      "digest": "sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042"
+    },
+    {
+      "dockerfile": "images/execution-python-data-v1.Dockerfile",
       "instruction": "FROM",
       "alias": "cgr.dev/chainguard/wolfi-base:latest",
       "resolved_repo": "cgr.dev/chainguard/wolfi-base",

@@ -98,11 +98,12 @@ const (
 // Workload is one discoverable unit of work. Stable, deterministic
 // fields; the confirm table in Phase 3 reads these verbatim.
 type Workload struct {
-	Name       string   // service name; deterministic sort key
-	RootDir    string   // build context relative to repo root; "" = root
-	Dockerfile string   // explicit path if declared (relative to RootDir)
-	Image      string   // prebuilt OCI image when the source declares one
-	Command    []string // start-command override (compose `command:`, Procfile rhs)
+	Name             string                  // service name; deterministic sort key
+	RootDir          string                  // build context relative to repo root; "" = root
+	Dockerfile       string                  // explicit path if declared (relative to RootDir)
+	Image            string                  // prebuilt OCI image when the source declares one
+	ImageHealthcheck *api.ComposeHealthcheck // partial Compose override for prebuilt images
+	Command          []string                // start-command override (compose `command:`, Procfile rhs)
 	// CommandShell distinguishes shell-form strings from exec-form argv. The
 	// plan wire keeps Command as an array, while reconciliation uses this bit
 	// to preserve argument boundaries when persisting start_command.
@@ -117,10 +118,9 @@ type Workload struct {
 	// project request.
 	SourceSHA256 string
 	// DependsOn contains service names declared by Compose's depends_on.
-	// Conditions are intentionally normalized to a name-only edge here; the
-	// deploy planner uses the graph for deterministic ordering while runtime
-	// readiness is provided by the private service proxy.
-	DependsOn []string
+	// The graph orders admission; explicit conditions also gate release.
+	DependsOn           []string
+	DependsOnConditions map[string]string
 	// ServiceBindingPolicy is the caller-side internal-service authorization
 	// mode declared by Compose's x-gregale-service-policy extension. Empty is
 	// the backwards-compatible account policy.
@@ -143,6 +143,10 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// InternalPorts are internal-only TCP listeners from compose expose:
+	// (ADR-576). Nil means the source declares none, so reconcile keeps the
+	// app's existing internal listeners; non-nil replaces them.
+	InternalPorts []api.WorkloadPort
 
 	Class    Class  // http|graphql|grpc|job|worker|server|unknown
 	Schedule string // primary cron expression retained for the existing plan wire
@@ -455,6 +459,9 @@ func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
 	// Dockerfile so a failed enqueue remains retryable even when the source
 	// bytes themselves did not move.
 	_, _ = fmt.Fprintf(h, "root=%s\x00dockerfile=%s\x00shell=%t\x00release_shell=%t\x00", workload.RootDir, workload.Dockerfile, workload.CommandShell, workload.ReleaseCommandShell)
+	if workload.Image != "" {
+		_, _ = fmt.Fprintf(h, "image=%s\x00", workload.Image)
+	}
 	for _, arg := range workload.Command {
 		_, _ = fmt.Fprintf(h, "arg=%d:%s\x00", len(arg), arg)
 	}

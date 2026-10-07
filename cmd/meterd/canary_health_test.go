@@ -28,13 +28,17 @@ type canaryHealthTestStore struct {
 	state.Store
 	live      []state.Deployment
 	summaries map[string]canaryHealthSummary
+	since     map[string]time.Time
 }
 
 func (s *canaryHealthTestStore) LiveDeployments(_ context.Context, _ string) ([]state.Deployment, error) {
 	return s.live, nil
 }
 
-func (s *canaryHealthTestStore) RequestTelemetryCircuitBreakerSummary(_ context.Context, _, deploymentID string, _, _ time.Time) (int64, int64, float64, int64, float64, int64, int64, error) {
+func (s *canaryHealthTestStore) RequestTelemetryCircuitBreakerSummary(_ context.Context, _, deploymentID string, since, _ time.Time) (int64, int64, float64, int64, float64, int64, int64, error) {
+	if s.since != nil {
+		s.since[deploymentID] = since
+	}
 	if summary, ok := s.summaries[deploymentID]; ok {
 		return summary.requests, summary.serverErrors, summary.p95LatencyMS, summary.coldBootRequests, summary.coldBootP95LatencyMS, summary.cpuUsec, summary.cpuRequests, nil
 	}
@@ -58,6 +62,35 @@ func (p *canaryHealthPromQL) QueryScalar(_ context.Context, query string) (float
 	value := p.values[0]
 	p.values = p.values[1:]
 	return value, nil
+}
+
+// TestCanaryHealthWindowAlignsToTelemetryMinute reproduces the production-us
+// hold: request telemetry is collapsed per minute, and a window starting at the
+// step start (21:30:31) skipped the whole 21:30 bucket, so a 60 s stage saw
+// "candidate=0 stable=0" and never advanced. Both deployments must be read
+// from the start of the step's minute.
+func TestCanaryHealthWindowAlignsToTelemetryMinute(t *testing.T) {
+	appID, candidateID, stableID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	store := &canaryHealthTestStore{
+		live: []state.Deployment{
+			{ID: candidateID, AppID: appID, Scope: "production", TrafficPercent: 20},
+			{ID: stableID, AppID: appID, Scope: "production", TrafficPercent: 80},
+		},
+		summaries: map[string]canaryHealthSummary{},
+		since:     map[string]time.Time{},
+	}
+	stepStart := time.Date(2026, 10, 4, 21, 30, 31, 0, time.UTC)
+	row := canary.CanaryRow{ID: candidateID, AppID: appID, Scope: "production", RolloutStarted: stepStart}
+	prom := &canaryHealthPromQL{values: []float64{0}}
+	if _, err := (&canaryStoreAdapter{store: store, promQL: prom}).CircuitBreakerObservation(context.Background(), row, stepStart, stepStart.Add(100*time.Second)); err != nil {
+		t.Fatalf("CircuitBreakerObservation: %v", err)
+	}
+	want := time.Date(2026, 10, 4, 21, 30, 0, 0, time.UTC)
+	for name, id := range map[string]string{"candidate": candidateID, "stable": stableID} {
+		if got := store.since[id]; !got.Equal(want) {
+			t.Errorf("%s telemetry window starts at %s, want the bucket minute %s", name, got.Format(time.TimeOnly), want.Format(time.TimeOnly))
+		}
+	}
 }
 
 func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) {

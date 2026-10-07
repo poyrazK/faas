@@ -46,6 +46,11 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	if h == nil || h.responseCache == nil || h.edgeRules == nil {
 		return false, nil
 	}
+	// No matched rule means no capture writer or stale fallback either.
+	// Candidate evidence must come from the candidate's upstream response.
+	if h.authorizedDeploymentSmoke(r, app) {
+		return false, nil
+	}
 	// Deployment-preview URLs promise the exact immutable artifact named by
 	// the hostname. The response cache is currently populated before target
 	// selection and its v1 key is app-scoped, so consulting it here could replay

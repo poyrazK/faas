@@ -121,8 +121,11 @@ func TestTouchedFileRangesOwnMapping(t *testing.T) {
 	for _, r := range got {
 		near := false
 		for _, off := range touched {
-			w := off / window * window
-			if r.Off >= w && r.Off+r.Len <= w+window {
+			// Fault-around aligns virtual addresses, not file offsets. mmap's
+			// page-aligned base need not be aligned to the larger window.
+			base := int64(uintptr(unsafe.Pointer(&b[0])))
+			w := (base+off)/window*window - base
+			if r.Off >= max(0, w) && r.Off+r.Len <= min(size, w+window) {
 				near = true
 			}
 		}

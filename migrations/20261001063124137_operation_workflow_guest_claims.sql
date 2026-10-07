@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS customer_operation_workflow_guest_claims (
     PRIMARY KEY(workflow_run_id,step_name,step_attempt),
     FOREIGN KEY(workflow_run_id,step_name,step_attempt)
         REFERENCES workflow_step_attempts(run_id,step_name,attempt) ON DELETE CASCADE,
-    FOREIGN KEY(operation_id,generation,workflow_run_id,execution_kind)
+    CONSTRAINT customer_operation_workflow_guest_claims_execution_identity_fkey
+        FOREIGN KEY(operation_id,generation,workflow_run_id,execution_kind)
         REFERENCES customer_operation_executions(operation_id,generation,execution_id,execution_kind) ON DELETE CASCADE
 );
 -- Preserve a consumed binding when an instance is deleted: deletion must not

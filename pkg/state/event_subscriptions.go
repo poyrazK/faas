@@ -359,7 +359,14 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 }
 
 func sameMemUUID(left, right string) bool {
-	return left == right || canonicalMemUUID(left) == canonicalMemUUID(right)
+	if left == right {
+		return true
+	}
+	leftID, rightID := parseSubjectID(left), parseSubjectID(right)
+	if leftID != nil && rightID != nil {
+		return *leftID == *rightID
+	}
+	return canonicalMemUUID(left) == canonicalMemUUID(right)
 }
 
 func (m *MemStore) DeleteEventSubscription(_ context.Context, id, accountID, appID string) error {

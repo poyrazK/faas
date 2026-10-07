@@ -16,6 +16,7 @@ package reconcile
 
 import (
 	"maps"
+	"reflect"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -273,6 +274,23 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if a.Manifest.BuildDockerfile != w.Dockerfile {
 		changed = append(changed, "dockerfile")
 	}
+	imageManifest := state.AppManifest{}
+	applyProjectImage(&imageManifest, w)
+	if a.Manifest.ProjectImage != imageManifest.ProjectImage {
+		changed = append(changed, "image")
+	}
+	if a.Manifest.ProjectImagePort != imageManifest.ProjectImagePort {
+		changed = append(changed, "image_port")
+	}
+	if !reflect.DeepEqual(a.Manifest.ProjectImageHealthcheck, imageManifest.ProjectImageHealthcheck) {
+		changed = append(changed, "image_healthcheck")
+	}
+	if !maps.Equal(a.Manifest.ProjectDependencyConditions, w.DependsOnConditions) {
+		changed = append(changed, "dependency_conditions")
+	}
+	if w.Image != "" && a.Manifest.ExecutionMode == "" && projectImageExecutionMode(w) != "" {
+		changed = append(changed, "image_execution_mode")
+	}
 	var serviceNames map[string]struct{}
 	if len(available) > 0 {
 		serviceNames = available[0]
@@ -301,6 +319,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	}
 	if !allowedServiceCallScopesEqual(a.Manifest.AllowedServiceCallScopes, w.AllowedServiceCallScopes) {
 		changed = append(changed, "allowed_service_call_scopes")
+	}
+	if internalPortsChanged(a.Manifest.Ports, w.InternalPorts) {
+		changed = append(changed, "internal_ports")
 	}
 	return changed
 }

@@ -162,14 +162,26 @@ func superviseJobCommandWithOutput(m JobManifest, env []string, grace time.Durat
 			_ = signalJobProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
 			reapJobChildren(250 * time.Millisecond)
 			payload := jobExitPayloadFromWait(waitResult, reason, stopSignal, m.LeaseToken)
-			if payload.ErrorClass == "succeeded" && m.Env["GREGALE_OUTPUT_MANIFEST_PATH"] != "" {
+			if m.Env["GREGALE_OUTPUT_MANIFEST_PATH"] != "" {
 				output, err := readGuestJobOutputManifest(m.Env["GREGALE_OUTPUT_MANIFEST_PATH"])
 				if err != nil {
 					log.Error("runJob: invalid output manifest", "err", err)
-					payload.ExitCode = 65
-					payload.ErrorClass = "failed"
+					if payload.ErrorClass == "succeeded" {
+						payload.ExitCode = 65
+						payload.ErrorClass = "failed"
+					}
 				} else {
-					payload.OutputManifest = output
+					if len(output) > 0 {
+						manifest, _ := jobresult.Validate(output) // validated by readGuestJobOutputManifest
+						if payload.ErrorClass != "succeeded" && len(manifest.Artifacts) > 0 {
+							// Artifact bytes are committed only with a successful task. Keep
+							// the structured outcome code from failed tasks while dropping
+							// artifact claims that the host will not publish.
+							manifest.Artifacts = []jobresult.Artifact{}
+							output, _ = json.Marshal(manifest)
+						}
+						payload.OutputManifest = output
+					}
 				}
 			}
 			return payload

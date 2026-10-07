@@ -66,7 +66,7 @@ func cmdAdd(args []string) int {
 	case "bucket":
 		return cmdAddBucket(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown add resource %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown add resource %q\n", args[0])
 		return 1
 	}
 }
@@ -298,7 +298,7 @@ func cmdAddPostgres(args []string) int {
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")
 	storage := fs.Int64("storage-bytes", 0, "storage limit in bytes (0 uses plan allowance)")
 	restoreWindow := fs.Int64("restore-window-seconds", 0, "point-in-time restore window (0 uses plan allowance)")
-	access := fs.String("access", "read_write", "credential access: read_write|read_only")
+	access := fs.String("access", "read_write", "credential access: read_write|read_only|migration|data_api")
 	waitTimeout := fs.Duration("wait-timeout", addResourceDefaultWait, "maximum time to wait for the database and binding to become ready")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -308,7 +308,7 @@ func cmdAddPostgres(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only] [--wait-timeout DURATION]"
+	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api] [--wait-timeout DURATION]"
 	if fs.NArg() != 0 && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, usage, "add")
 		return 1

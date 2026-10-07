@@ -39,6 +39,8 @@ class ProjectEnvironmentStateWorkloadResponse:
     """Effective declared-route contract and whether it is environment-owned."""
     policies: ProjectEnvironmentEdgePolicyResponse
     """Headers/CORS policy ownership and rules. Other edge-rule kinds remain application-owned."""
+    workload_config_hash: str | Unset = UNSET
+    workload_config_revision: int | Unset = UNSET
     app_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -73,6 +75,10 @@ class ProjectEnvironmentStateWorkloadResponse:
 
         policies = self.policies.to_dict()
 
+        workload_config_hash = self.workload_config_hash
+
+        workload_config_revision = self.workload_config_revision
+
         app_id: str | Unset = UNSET
         if not isinstance(self.app_id, Unset):
             app_id = str(self.app_id)
@@ -92,6 +98,10 @@ class ProjectEnvironmentStateWorkloadResponse:
                 "policies": policies,
             }
         )
+        if workload_config_hash is not UNSET:
+            field_dict["workload_config_hash"] = workload_config_hash
+        if workload_config_revision is not UNSET:
+            field_dict["workload_config_revision"] = workload_config_revision
         if app_id is not UNSET:
             field_dict["app_id"] = app_id
 
@@ -146,6 +156,10 @@ class ProjectEnvironmentStateWorkloadResponse:
 
         policies = ProjectEnvironmentEdgePolicyResponse.from_dict(d.pop("policies"))
 
+        workload_config_hash = d.pop("workload_config_hash", UNSET)
+
+        workload_config_revision = d.pop("workload_config_revision", UNSET)
+
         _app_id = d.pop("app_id", UNSET)
         app_id: UUID | Unset
         if isinstance(_app_id, Unset):
@@ -163,6 +177,8 @@ class ProjectEnvironmentStateWorkloadResponse:
             domains=domains,
             routes=routes,
             policies=policies,
+            workload_config_hash=workload_config_hash,
+            workload_config_revision=workload_config_revision,
             app_id=app_id,
         )
 

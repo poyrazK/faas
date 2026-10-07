@@ -435,9 +435,15 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	//
 	// Handing over an *os.File lets the parent hash in place and
 	// upload from the same fd. One write, not two.
-	written, spoolErr := copyArtifactContext(ctx, tmp, r, key)
-	if spoolErr != nil {
-		return fmt.Errorf("storage: cache: put %q: spool: %w", key, spoolErr)
+	// ADR-633: a snapshot drive handed over as a file is cloned rather than
+	// copied, so the cache entry keeps sharing the app layer's blocks.
+	written, cloned := cloneSpool(tmp, r, key)
+	if !cloned {
+		var spoolErr error
+		written, spoolErr = copyArtifactContext(ctx, tmp, r, key)
+		if spoolErr != nil {
+			return fmt.Errorf("storage: cache: put %q: spool: %w", key, spoolErr)
+		}
 	}
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("storage: cache: put %q: fsync spool: %w", key, err)
@@ -797,7 +803,7 @@ func (c *LocalCacheBackend) openCache(key string) (io.ReadCloser, bool) {
 	// a frequently restored app layer was evicted merely because it had been
 	// downloaded before an inactive layer.
 	c.touchCacheFile(path)
-	return f, true
+	return &cacheFileReader{File: f, cache: c}, true
 }
 
 // touchCacheFile queues the mtime update used by the byte-budget eviction
@@ -891,7 +897,43 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 	if err != nil {
 		return nil, fmt.Errorf("cache open %q: %w", path, err)
 	}
-	return f, nil
+	return &cacheFileReader{File: f, cache: c}, nil
+}
+
+// cacheFileReader can retain its opened inode without another full copy.
+// Serialize the link with this backend's eviction/refresh, then verify inode
+// identity because other daemons also share and can replace the cache path.
+type cacheFileReader struct {
+	*os.File
+	cache *LocalCacheBackend
+}
+
+func (r *cacheFileReader) LinkTo(path string) error {
+	r.cache.mu.Lock()
+	defer r.cache.mu.Unlock()
+	return linkOpenCacheFile(r.File, path)
+}
+
+func linkOpenCacheFile(file *os.File, path string) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("cache stat opened file: %w", err)
+	}
+	if !opened.Mode().IsRegular() {
+		return fmt.Errorf("cache link: opened file is not regular")
+	}
+	if err := os.Link(file.Name(), path); err != nil {
+		return fmt.Errorf("cache retain opened file: %w", err)
+	}
+	linked, err := os.Lstat(path)
+	if err != nil || !os.SameFile(opened, linked) {
+		_ = os.Remove(path)
+		if err != nil {
+			return fmt.Errorf("cache stat retained file: %w", err)
+		}
+		return fmt.Errorf("cache retain opened file: cache path was replaced")
+	}
+	return nil
 }
 
 // cacheTempReader removes an oversized, non-cached materialization when the
@@ -899,6 +941,10 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 type cacheTempReader struct {
 	*os.File
 	path string
+}
+
+func (r *cacheTempReader) LinkTo(path string) error {
+	return linkOpenCacheFile(r.File, path)
 }
 
 func (r *cacheTempReader) Close() error {
@@ -939,26 +985,31 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 	if err != nil {
 		return err
 	}
-	var total int64
+	var allocated int64
 	for _, e := range entries {
-		total += e.size
+		allocated += e.size
 	}
-	if total <= c.maxBytes {
+	if allocated <= c.maxBytes {
+		// Per-file allocation never undercounts shared blocks, so a cache
+		// under budget by that measure needs no extent scan.
 		return nil
 	}
 	// Sort oldest-first; evict until budget restored.
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].modTime.Before(entries[j].modTime)
 	})
-	for _, e := range entries {
-		if total <= c.maxBytes {
+	// ADR-633: count blocks shared between entries (a snapshot drive and
+	// its app layer) once.
+	footprint := newCacheFootprint(entries)
+	for i, e := range entries {
+		if footprint.total() <= c.maxBytes {
 			break
 		}
 		if e.pinned {
 			continue
 		}
 		if err := os.Remove(e.path); err == nil {
-			total -= e.size
+			footprint.drop(i)
 		}
 		metaPath := e.path + ".meta"
 		if err := os.Remove(metaPath); err == nil {

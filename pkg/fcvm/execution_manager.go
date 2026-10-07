@@ -37,6 +37,13 @@ func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req exe
 // while the guest is still running; returning an error aborts the exchange and
 // still triggers the normal disposable teardown.
 func (m *Manager) ExecuteExecutionWithOutput(ctx context.Context, instance string, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	return m.ExecuteExecutionWithBroker(ctx, instance, req, receive, nil)
+}
+
+// ExecuteExecutionWithBroker adds a host-mediated outbound capability to the
+// live-output exchange. The callback receives only bounded guest request
+// data; vmmd's gRPC adapter derives and signs identity from the live VM.
+func (m *Manager) ExecuteExecutionWithBroker(ctx context.Context, instance string, req executionproto.Request, receive executionproto.OutputReceiver, broker executionproto.OutboundCallFunc) (executionproto.Result, error) {
 	var zero executionproto.Result
 	if err := req.Validate(); err != nil {
 		return zero, err
@@ -55,6 +62,9 @@ func (m *Manager) ExecuteExecutionWithOutput(ctx context.Context, instance strin
 	inst, ok := m.live[instance]
 	m.mu.Unlock()
 	if !ok || inst == nil || !inst.ExecutionOnly {
+		return zero, ErrExecutionInstanceNotFound
+	}
+	if req.OutboundEnabled && len(inst.ExecutionOutboundIntegrationIDs) == 0 {
 		return zero, ErrExecutionInstanceNotFound
 	}
 
@@ -85,7 +95,7 @@ func (m *Manager) ExecuteExecutionWithOutput(ctx context.Context, instance strin
 		return zero, nilSessionErr
 	}
 
-	result, executeErr := session.ExecuteWithOutput(requestCtx, req, receive)
+	result, executeErr := session.ExecuteWithOutputAndBroker(requestCtx, req, receive, broker)
 	destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionDestroyTimeout)
 	sessionDestroyErr := session.Destroy(destroyCtx)
 	// ExecutionSession's destroy hook tears down Firecracker, while Manager

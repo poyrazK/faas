@@ -118,13 +118,13 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	}
 	if request.AccountID == "" || request.DatabaseID == "" || request.AppID == "" ||
 		!validBindingScope(request.Scope) || !validEnvironmentKey(request.EnvironmentKey) ||
-		(request.Access != CredentialReadWrite && request.Access != CredentialReadOnly) {
+		(request.Access != CredentialReadWrite && request.Access != CredentialReadOnly && request.Access != CredentialMigration && request.Access != CredentialDataAPI) {
 		return Binding{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
 		return Binding{}, false, ErrUnavailable
 	}
-	database, err := s.databases.Get(ctx, request.AccountID, request.DatabaseID)
+	database, err := customerDatabase(ctx, s.databases, request.AccountID, request.DatabaseID)
 	if err != nil {
 		return Binding{}, false, err
 	}
@@ -186,7 +186,7 @@ func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string
 	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
 		return Binding{}, ErrUnavailable
 	}
-	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	binding, err := s.Get(ctx, accountID, bindingID)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -229,6 +229,12 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	default:
 		return Binding{}, ErrConflict
 	}
+	// A private clone binding is prepared by its owning worker and atomic
+	// receipt sink. Ordinary reconciliation must not issue credentials or
+	// invalidate the source app's runtime configuration while it is pending.
+	if _, err := customerDatabase(ctx, s.databases, accountID, binding.DatabaseID); err != nil {
+		return Binding{}, err
+	}
 
 	now := s.now()
 	binding, err = s.bindings.ClaimBinding(ctx, accountID, bindingID, s.newLeaseToken(), BindingStateProvisioning, now, now.Add(s.leaseDuration))
@@ -253,7 +259,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "credential_access_unsupported", err, time.Hour)
 	}
 
-	credentialRequest := bindingCredentialRequest(binding, database.ProviderResourceID)
+	credentialRequest := bindingCredentialRequest(binding, databaseDataResource(database))
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	material, err := backend.Provider.IssueCredentials(providerContext, credentialRequest)
 	cancel()
@@ -282,7 +288,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 }
 
 func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string) (Binding, error) {
-	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	binding, err := s.Get(ctx, accountID, bindingID)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -315,7 +321,7 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 		if generation < 1 {
 			continue
 		}
-		credentialRequest := bindingCredentialRequestForGeneration(binding, database.ProviderResourceID, generation)
+		credentialRequest := bindingCredentialRequestForGeneration(binding, databaseDataResource(database), generation)
 		providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 		err = backend.Provider.RevokeCredentials(providerContext, credentialRequest)
 		cancel()
@@ -361,7 +367,7 @@ func (s *BindingService) ReconcileRotationCleanup(ctx context.Context, accountID
 	if err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateRetiring, "backend_unavailable", ErrUnavailable, time.Hour)
 	}
-	request := bindingCredentialRequestForGeneration(binding, database.ProviderResourceID, binding.RotationPreviousGeneration)
+	request := bindingCredentialRequestForGeneration(binding, databaseDataResource(database), binding.RotationPreviousGeneration)
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	err = backend.Provider.RevokeCredentials(providerContext, request)
 	cancel()
@@ -372,12 +378,22 @@ func (s *BindingService) ReconcileRotationCleanup(ctx context.Context, accountID
 }
 
 func (s *BindingService) Get(ctx context.Context, accountID, bindingID string) (Binding, error) {
-	return s.bindings.GetBinding(ctx, accountID, bindingID)
+	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if _, err := customerDatabase(ctx, s.databases, accountID, binding.DatabaseID); err != nil {
+		return Binding{}, err
+	}
+	return binding, nil
 }
 
 func (s *BindingService) List(ctx context.Context, accountID, databaseID string) ([]Binding, error) {
 	if accountID == "" || databaseID == "" {
 		return nil, ErrInvalid
+	}
+	if _, err := customerDatabase(ctx, s.databases, accountID, databaseID); err != nil {
+		return nil, err
 	}
 	return s.bindings.ListBindings(ctx, accountID, databaseID)
 }

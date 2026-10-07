@@ -1,0 +1,8 @@
+operations:
+  - name: customer-export
+    method: POST
+    path: /exports
+    owner: platform_tenant
+    input_schema: schemas/export-input.json
+    output_schema: schemas/export-output.json
+    progress_stages: [generating, complete]

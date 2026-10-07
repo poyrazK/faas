@@ -2,6 +2,8 @@ package imaged
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -62,6 +64,12 @@ func manifestFromLocalOCIConfig(config oci.Config, dep state.Deployment) (api.Ap
 // image that omitted both Entrypoint and Cmd, then applies that command with
 // the same precedence used by source-built apps.
 func manifestFromImageConfigWithApp(config oci.ImageConfig, app state.App) (api.AppManifest, error) {
+	if app.Manifest.ProjectImage != "" {
+		if app.Manifest.ProjectImageCommand != nil {
+			config.Cmd = append([]string(nil), app.Manifest.ProjectImageCommand...)
+		}
+		return manifestFromImageConfig(config)
+	}
 	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
 		if start := strings.TrimSpace(app.StartCommand); start != "" {
 			config.Cmd = shellCommand(start)
@@ -72,6 +80,48 @@ func manifestFromImageConfigWithApp(config oci.ImageConfig, app state.App) (api.
 		return api.AppManifest{}, err
 	}
 	return applyAppStartCommand(manifest, app), nil
+}
+
+func manifestFromImageConfigWithDeployment(config oci.ImageConfig, app state.App, dep state.Deployment) (api.AppManifest, error) {
+	frozen, err := dep.ScopedWorkloadRuntime()
+	if err != nil {
+		return api.AppManifest{}, err
+	}
+	// A reviewed entrypoint can supply the executable for a base image that
+	// deliberately declares no command. ApplyDeploymentRuntime still stamps
+	// the explicit contract after all other manifest overlays.
+	if frozen != nil && len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+		if raw, explicit := frozen.Runtime["entrypoint"]; explicit {
+			if err := json.Unmarshal(raw, &config.Entrypoint); err != nil {
+				return api.AppManifest{}, state.ErrInvalidArgument
+			}
+		}
+	}
+	check, err := frameworkprofile.ImageHealthcheckFromProfile(dep.InferredProfile)
+	if err != nil {
+		return api.AppManifest{}, fmt.Errorf("imaged: frozen image healthcheck: %w", err)
+	}
+	var override *api.ComposeHealthcheck
+	if check != nil {
+		override = check.Override
+	} else if app.Manifest.ProjectImage != "" {
+		override = app.Manifest.ProjectImageHealthcheck
+	}
+	config, err = oci.ApplyComposeHealthcheck(config, override)
+	if err != nil {
+		return api.AppManifest{}, fmt.Errorf("imaged: project image healthcheck: %w", err)
+	}
+	command, err := frameworkprofile.ImageCommandFromProfile(dep.InferredProfile)
+	if err != nil {
+		return api.AppManifest{}, fmt.Errorf("imaged: frozen image command: %w", err)
+	}
+	if command != nil {
+		if command.Cmd != nil {
+			config.Cmd = slices.Clone(command.Cmd)
+		}
+		return manifestFromImageConfig(config)
+	}
+	return manifestFromImageConfigWithApp(config, app)
 }
 
 // applyAppStartCommand enforces the documented app-level command override.

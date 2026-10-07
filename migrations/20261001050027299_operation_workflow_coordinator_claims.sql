@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS customer_operation_workflow_claims (
     attempt integer NOT NULL CHECK (attempt>0),
     capability_digest text NOT NULL CHECK (capability_digest ~ '^[0-9a-f]{64}$'),
     lease_until timestamptz NOT NULL CHECK (isfinite(lease_until)),
-    FOREIGN KEY(operation_id,generation,workflow_run_id,execution_kind)
+    CONSTRAINT customer_operation_workflow_claims_execution_identity_fkey
+        FOREIGN KEY(operation_id,generation,workflow_run_id,execution_kind)
         REFERENCES customer_operation_executions(operation_id,generation,execution_id,execution_kind) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS customer_operation_workflow_claim_expiry_idx ON customer_operation_workflow_claims(lease_until,workflow_run_id);

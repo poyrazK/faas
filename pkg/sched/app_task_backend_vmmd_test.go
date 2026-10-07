@@ -1,10 +1,13 @@
 // adr: 230
+// adr: 462
 
 package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +32,7 @@ func (r *recordingRoutedAppTaskVMM) RestoreAppTask(_ context.Context, nodeID str
 func (r *recordingRoutedAppTaskVMM) ExecuteAppTask(_ context.Context, nodeID, _ string, request apptaskproto.Request) (apptaskproto.Result, error) {
 	r.executeNode, r.executeRequest = nodeID, request
 	exit := 0
-	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, Stdout: []byte("done\n")}, nil
+	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, OutcomeCode: "accepted", Stdout: []byte("done\n")}, nil
 }
 
 func (r *recordingRoutedAppTaskVMM) ExecuteAppTaskWithOutput(ctx context.Context, nodeID, instance string, request apptaskproto.Request, _ apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
@@ -42,6 +45,7 @@ func (r *recordingRoutedAppTaskVMM) Destroy(_ context.Context, nodeID, _ string)
 	return nil
 }
 
+// adr: 385 — structured application outcomes survive the routed VM boundary.
 func TestRoutedVmmdAppTaskBackendKeepsCommandOutOfRestoreAndPinsSession(t *testing.T) {
 	router := &recordingRoutedAppTaskVMM{}
 	var resolved AppTaskRestoreRequest
@@ -74,7 +78,7 @@ func TestRoutedVmmdAppTaskBackendKeepsCommandOutOfRestoreAndPinsSession(t *testi
 		len(router.executeRequest.Command) != 2 || router.executeRequest.Command[0] != "bin/migrate" {
 		t.Fatalf("execute route = %#v", router)
 	}
-	if outcome.Status != state.AppTaskSucceeded || outcome.StdoutTail != "done\n" || outcome.ExitCode == nil || *outcome.ExitCode != 0 {
+	if outcome.Status != state.AppTaskSucceeded || outcome.StdoutTail != "done\n" || outcome.ExitCode == nil || *outcome.ExitCode != 0 || outcome.OutcomeCode != "accepted" {
 		t.Fatalf("outcome = %#v", outcome)
 	}
 	if err := session.Destroy(context.Background()); err != nil {
@@ -186,5 +190,65 @@ func TestAppTaskRefusedAfterAccountSuspension(t *testing.T) {
 	}
 	if row.Status != state.AppTaskFailed || row.FailureCode == nil || *row.FailureCode != accountInactiveFailureCode {
 		t.Fatalf("task = %s/%v, want failed/%s", row.Status, row.FailureCode, accountInactiveFailureCode)
+	}
+}
+
+func TestMigrationCredentialsOnlyReachPersistedReleaseTasks(t *testing.T) {
+	store, account, app, dep, tasks := newAppTaskCoordinatorFixture(t, 1, 30, 2048)
+	ctx := context.Background()
+	for _, row := range []state.AppSecret{
+		{AccountID: account.ID, AppID: app.ID, Scope: dep.Scope, Key: "DATABASE_URL", Ciphertext: []byte("runtime"), ManagedPostgresBindingID: "rw", ManagedPostgresAccess: "read_write", ManagedCredentialRef: "rw-secret", ManagedCredentialGeneration: 1},
+		{AccountID: account.ID, AppID: app.ID, Scope: dep.Scope, Key: "SCHEMA_DSN", Ciphertext: []byte("ddl"), ManagedPostgresBindingID: "ddl", ManagedPostgresAccess: "migration", ManagedCredentialRef: "ddl-secret", ManagedCredentialGeneration: 1},
+	} {
+		if err := store.PutManagedPostgresSecret(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	loaded, err := engine.loadSealedEnvDeliveryFor(ctx, account.ID, app.ID, dep.Scope, nil)
+	if err != nil || len(loaded.Entries) != 1 || len(loaded.Candidates) != 1 || loaded.Entries[0].Key != "DATABASE_URL" {
+		t.Fatalf("serving delivery = %+v, %v", loaded, err)
+	}
+	if _, err := engine.loadSealedEnvDeliveryFor(ctx, account.ID, app.ID, dep.Scope, map[string]string{"SCHEMA_DSN": "secret:SCHEMA_DSN"}); err == nil {
+		t.Fatal("explicit serving/sidecar reference admitted DDL")
+	}
+	release, err := store.CreateAppTask(ctx, state.CreateAppTaskParams{AccountID: account.ID, AppID: app.ID, DeploymentID: dep.ID, Kind: state.AppTaskKindRelease, Command: []string{"bin/migrate"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range []state.AppTask{tasks[0], release} {
+		request := AppTaskRestoreRequest{ID: task.ID, AccountID: account.ID, AppID: app.ID, DeploymentID: dep.ID, Kind: task.Kind, DeploymentScope: task.DeploymentScope, ArtifactKey: task.ArtifactKey, ImageDigest: task.ImageDigest}
+		resolved, err := engine.ResolveAppTaskRuntime(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 1
+		if task.Kind == state.AppTaskKindRelease {
+			want = 2
+		}
+		if len(resolved.Spec.App.SealedEnv) != want {
+			t.Fatalf("%s task got %d secrets, want %d", task.Kind, len(resolved.Spec.App.SealedEnv), want)
+		}
+		resolved.release()
+		if task.Kind != state.AppTaskKindRelease {
+			request.Kind = state.AppTaskKindRelease
+			if _, err := engine.ResolveAppTaskRuntime(ctx, request); !errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
+				t.Fatalf("forged release kind = %v", err)
+			}
+		}
+	}
+	// A serving allowlist must not accidentally omit the release's DDL binding.
+	if _, err := engine.loadSealedEnvDeliveryForTask(ctx, account.ID, app.ID, dep.Scope, map[string]string{"DATABASE_URL": "secret:DATABASE_URL"}, true); err != nil {
+		t.Fatal(err)
+	}
+	// Companion grants use the same policy and cannot elevate their audience.
+	dep.Sidecars = json.RawMessage(`[{"name":"worker","image":"r/x@sha256:01","type":"sidecar","env_secrets":{"SCHEMA_DSN":"secret:SCHEMA_DSN"}}]`)
+	if _, err := store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
+		DeploymentID: dep.ID, SidecarName: "worker", StorageKey: "apps/app/worker.ext4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := engine.sidecarsForDeployment(ctx, dep, account.ID); err == nil || !strings.Contains(err.Error(), "restricted to release tasks") {
+		t.Fatalf("sidecar migration grant = %v, want release restriction", err)
 	}
 }

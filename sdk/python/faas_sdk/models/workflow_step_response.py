@@ -7,6 +7,10 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.workflow_step_response_skip_reason import (
+    WorkflowStepResponseSkipReason,
+    check_workflow_step_response_skip_reason,
+)
 from ..models.workflow_step_response_status import WorkflowStepResponseStatus, check_workflow_step_response_status
 from ..types import UNSET, Unset
 
@@ -21,8 +25,21 @@ class WorkflowStepResponse:
     status: WorkflowStepResponseStatus
     attempt: int
     created_at: datetime.datetime
+    retry_base: int | Unset = UNSET
+    """Attempt number at the latest resume; attempts since this number consume the current retry budget."""
+    for_each_parent: str | Unset = UNSET
+    """Parent step name for a persisted iteration item."""
+    for_each_index: int | Unset = UNSET
+    """Stable zero-based index within the snapshotted list."""
+    for_each_count: int | Unset = UNSET
+    """Snapshotted item count on an initialized parent; zero is an empty batch."""
     input_: Any | Unset = UNSET
     output: Any | Unset = UNSET
+    when_matched: bool | Unset = UNSET
+    """Persisted guard decision; absent when the guard has not run or a dependency was skipped."""
+    when_evaluated_at: datetime.datetime | Unset = UNSET
+    skip_reason: WorkflowStepResponseSkipReason | Unset = UNSET
+    """Why a pending step was skipped; contains no referenced customer values."""
     started_at: datetime.datetime | None | Unset = UNSET
     next_check_at: datetime.datetime | None | Unset = UNSET
     next_retry_at: datetime.datetime | None | Unset = UNSET
@@ -39,9 +56,27 @@ class WorkflowStepResponse:
 
         created_at = self.created_at.isoformat()
 
+        retry_base = self.retry_base
+
+        for_each_parent = self.for_each_parent
+
+        for_each_index = self.for_each_index
+
+        for_each_count = self.for_each_count
+
         input_ = self.input_
 
         output = self.output
+
+        when_matched = self.when_matched
+
+        when_evaluated_at: str | Unset = UNSET
+        if not isinstance(self.when_evaluated_at, Unset):
+            when_evaluated_at = self.when_evaluated_at.isoformat()
+
+        skip_reason: str | Unset = UNSET
+        if not isinstance(self.skip_reason, Unset):
+            skip_reason = self.skip_reason
 
         started_at: None | str | Unset
         if isinstance(self.started_at, Unset):
@@ -91,10 +126,24 @@ class WorkflowStepResponse:
                 "created_at": created_at,
             }
         )
+        if retry_base is not UNSET:
+            field_dict["retry_base"] = retry_base
+        if for_each_parent is not UNSET:
+            field_dict["for_each_parent"] = for_each_parent
+        if for_each_index is not UNSET:
+            field_dict["for_each_index"] = for_each_index
+        if for_each_count is not UNSET:
+            field_dict["for_each_count"] = for_each_count
         if input_ is not UNSET:
             field_dict["input"] = input_
         if output is not UNSET:
             field_dict["output"] = output
+        if when_matched is not UNSET:
+            field_dict["when_matched"] = when_matched
+        if when_evaluated_at is not UNSET:
+            field_dict["when_evaluated_at"] = when_evaluated_at
+        if skip_reason is not UNSET:
+            field_dict["skip_reason"] = skip_reason
         if started_at is not UNSET:
             field_dict["started_at"] = started_at
         if next_check_at is not UNSET:
@@ -119,9 +168,33 @@ class WorkflowStepResponse:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        retry_base = d.pop("retry_base", UNSET)
+
+        for_each_parent = d.pop("for_each_parent", UNSET)
+
+        for_each_index = d.pop("for_each_index", UNSET)
+
+        for_each_count = d.pop("for_each_count", UNSET)
+
         input_ = d.pop("input", UNSET)
 
         output = d.pop("output", UNSET)
+
+        when_matched = d.pop("when_matched", UNSET)
+
+        _when_evaluated_at = d.pop("when_evaluated_at", UNSET)
+        when_evaluated_at: datetime.datetime | Unset
+        if isinstance(_when_evaluated_at, Unset):
+            when_evaluated_at = UNSET
+        else:
+            when_evaluated_at = datetime.datetime.fromisoformat(_when_evaluated_at)
+
+        _skip_reason = d.pop("skip_reason", UNSET)
+        skip_reason: WorkflowStepResponseSkipReason | Unset
+        if isinstance(_skip_reason, Unset):
+            skip_reason = UNSET
+        else:
+            skip_reason = check_workflow_step_response_skip_reason(_skip_reason)
 
         def _parse_started_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -205,8 +278,15 @@ class WorkflowStepResponse:
             status=status,
             attempt=attempt,
             created_at=created_at,
+            retry_base=retry_base,
+            for_each_parent=for_each_parent,
+            for_each_index=for_each_index,
+            for_each_count=for_each_count,
             input_=input_,
             output=output,
+            when_matched=when_matched,
+            when_evaluated_at=when_evaluated_at,
+            skip_reason=skip_reason,
             started_at=started_at,
             next_check_at=next_check_at,
             next_retry_at=next_retry_at,
