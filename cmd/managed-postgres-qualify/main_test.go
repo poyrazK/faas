@@ -228,3 +228,18 @@ func containsString(values []string, wanted string) bool {
 	}
 	return false
 }
+
+func TestUsageDiagnosticOptionIsExplicitAndValidated(t *testing.T) {
+	for _, test := range []struct {
+		value   string
+		want    bool
+		invalid bool
+	}{
+		{"", false, false}, {"false", false, false}, {"true", true, false}, {" invalid ", false, true},
+	} {
+		got, err := parseContinueAfterUsageFailure(func(string) string { return test.value })
+		if got != test.want || (err != nil) != test.invalid {
+			t.Fatalf("value=%q: %v, %v", test.value, got, err)
+		}
+	}
+}

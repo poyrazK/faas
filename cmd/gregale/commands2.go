@@ -2123,12 +2123,18 @@ type deployExecution struct {
 	onSourceSync        func(time.Duration, error)
 	onStage             func(string, string, int64, string)
 	onTerminal          func(api.DeploymentResponse) int
+	onWaitEnd           func()
 	onFailure           func(api.DeploymentResponse, string, string)
 	onError             func(error)
 	prefixBuildLogs     bool
+	compactProgress     bool // Guided sessions own their review and progress display.
 	streamLogsOnJSON    bool
 	developerSource     *devSourceSyncState
 	extraSourceExcludes []string
+	// Long-lived sessions can finish the same source doctor checks before
+	// presenting their review. Reuse that result instead of repeating prose
+	// that cannot see the session's validated secrets-file keys.
+	sourcePreflightChecked bool
 }
 
 func (e deployExecution) notifyQueued(dep api.DeploymentResponse) {
@@ -2150,6 +2156,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if len(executions) > 0 {
 		execution = executions[0]
 	}
+	doctorPreflightRan = execution.sourcePreflightChecked
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	developerSync := execution.developerSource
@@ -3227,7 +3234,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// zero-config) does the gate skip — in that case the server-side validators
 	// on upload are the catch.
 	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
-	if doctorEnabled && sourceDir != "" {
+	if doctorEnabled && sourceDir != "" && (!execution.sourcePreflightChecked || *doctorStrict) {
 		doctorShape := resolvedShape
 		if !deployFunction && !deployApp {
 			doctorShape = detectShape(sourceDir)
@@ -3345,7 +3352,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					} else {
 						deployHandler = hnd
 					}
-					if !jsonOutput {
+					if !jsonOutput && !execution.compactProgress {
 						PrintOK(osStdout, "Detected: function, runtime=%s, handler=%s, class=function", displayRuntime, displayHandler)
 					}
 				}
@@ -3401,7 +3408,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if _, _, manifestErr := gregalemanifest.Load(sourceDir); manifestErr != nil {
 				return printErr("Invalid deploy manifest", manifestErr)
 			}
-			detected, rt, hnd, err := resolveDeployShape(sourceDir, deployFunction, deployApp, jsonOutput, deployRuntime, deployHandler)
+			detected, rt, hnd, err := resolveDeployShape(sourceDir, deployFunction, deployApp, jsonOutput || execution.compactProgress, deployRuntime, deployHandler)
 			if err != nil {
 				return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 			}
@@ -3489,7 +3496,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// trigger staging, or source upload. Project deploys and read-only previews
 	// already have dedicated plan renderers; developer watch mode has its own
 	// per-sync receipt and must not repeat this block on every save.
-	if !jsonOutput && !*diff && !projectRequested && developerSync == nil {
+	if !jsonOutput && !*diff && !projectRequested && developerSync == nil && !execution.compactProgress {
 		source, localChanges := deployPreflightSource(
 			prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath,
 		)
@@ -4023,9 +4030,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		code := streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 			onStage:         execution.onStage,
 			onTerminal:      execution.onTerminal,
+			onWaitEnd:       execution.onWaitEnd,
 			onFailure:       execution.onFailure,
 			prefixBuildLogs: execution.prefixBuildLogs,
-			quiet:           streamLogsOnJSON,
+			quiet:           streamLogsOnJSON || execution.compactProgress,
 			waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 			waitForRollout:  *safeDeploy,
 			darkDeploy:      *noTraffic,
@@ -4117,9 +4125,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	code := streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 		onStage:         execution.onStage,
 		onTerminal:      execution.onTerminal,
+		onWaitEnd:       execution.onWaitEnd,
 		onFailure:       execution.onFailure,
 		prefixBuildLogs: execution.prefixBuildLogs,
-		quiet:           streamLogsOnJSON,
+		quiet:           streamLogsOnJSON || execution.compactProgress,
 		waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 		waitForRollout:  *safeDeploy,
 		darkDeploy:      *noTraffic,
@@ -6741,6 +6750,7 @@ func topPatterns(patterns map[string]int, n int) []string {
 type streamDeployOptions struct {
 	onStage         func(string, string, int64, string)
 	onTerminal      func(api.DeploymentResponse) int
+	onWaitEnd       func()
 	onFailure       func(api.DeploymentResponse, string, string)
 	prefixBuildLogs bool
 	quiet           bool
@@ -6756,6 +6766,22 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
 	defer cancel()
+	finishWaiting := func() {
+		if opts.onWaitEnd != nil {
+			finish := opts.onWaitEnd
+			opts.onWaitEnd = nil
+			finish()
+		}
+	}
+	defer finishWaiting()
+	warnWaitTimeout := func() {
+		finishWaiting()
+		warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+	}
+	warnWaitStopped := func(format string, args ...any) {
+		finishWaiting()
+		PrintWarn(os.Stderr, format, args...)
+	}
 	if !opts.quiet {
 		PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
 	}
@@ -6769,6 +6795,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 				final, ok := waitForDeploymentRollout(waitCtx, c, d)
 				if !ok {
 					if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+						finishWaiting()
 						warnDeploymentRolloutTimeout(appSlug, dep.ID, waitTimeout)
 						return 3
 					}
@@ -6780,6 +6807,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 				return renderSuccessfulDeployment(ctx, c, d, appSlug)
 			}
 		}
+		finishWaiting()
 		if d.Status == deploymentStatusFailed && opts.onFailure != nil {
 			opts.onFailure(d, phase, reason)
 		}
@@ -6818,7 +6846,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 	if err != nil {
 		if waitCtx.Err() != nil {
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+				warnWaitTimeout()
 				return 3
 			}
 			return 130
@@ -6836,7 +6864,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		if final, ok := pollDeploymentFinalContext(waitCtx, c, dep); ok {
 			return terminalDeployment(final)
 		}
-		PrintWarn(os.Stderr, "stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
+		warnWaitStopped("stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
 	}
 	defer func() { _ = body.Close() }()
@@ -6853,17 +6881,26 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 	defer ticker.Close()
 	failedStage := ""
 	failedReason := ""
+	events, streamErrors := dec.Events(), dec.Errors()
+	var streamErr error
 streamLoop:
 	for {
 		select {
 		case <-waitCtx.Done():
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+				warnWaitTimeout()
 				return 3
 			}
 			return 130
-		case e, ok := <-dec.Events():
+		case e, ok := <-events:
 			if !ok {
+				if streamErrors != nil {
+					streamErr = <-streamErrors
+				}
+				if waitCtx.Err() == nil && streamErr != nil && !errors.Is(streamErr, io.EOF) {
+					warnWaitStopped("stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
+					return 3
+				}
 				break streamLoop
 			}
 			// Move 3: switch on the typed Event name. The decoder
@@ -6937,12 +6974,12 @@ streamLoop:
 				var end struct {
 					Reason string `json:"reason"`
 				}
-				if json.Unmarshal([]byte(e.Data), &end) == nil && end.Reason != "" {
+				if !opts.quiet && json.Unmarshal([]byte(e.Data), &end) == nil && end.Reason != "" {
 					PrintWarn(os.Stderr, "build log stream ended (%s); checking deployment status…", end.Reason)
 				}
 				break streamLoop
 			case streamEventError:
-				PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
+				warnWaitStopped("stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 				return 3
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
@@ -6956,24 +6993,22 @@ streamLoop:
 					}
 				}
 			}
-		case err := <-dec.Errors():
+		case err := <-streamErrors:
 			if waitCtx.Err() != nil {
 				if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-					warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+					warnWaitTimeout()
 					return 3
 				}
 				return 130
 			}
-			if errors.Is(err, io.EOF) {
-				break streamLoop
-			}
-			PrintWarn(os.Stderr, "stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
-			return 3
+			// The parser can finish before its buffered events are consumed.
+			// Drain those frames before handling EOF or a transport error.
+			streamErr, streamErrors = err, nil
 		}
 	}
 	if waitCtx.Err() != nil {
 		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+			warnWaitTimeout()
 			return 3
 		}
 		return 130
@@ -6997,10 +7032,10 @@ streamLoop:
 		return terminalDeployment(final)
 	}
 	if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-		warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+		warnWaitTimeout()
 		return 3
 	}
-	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
+	warnWaitStopped("stream ended without a terminal frame; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 	return 3
 }
 

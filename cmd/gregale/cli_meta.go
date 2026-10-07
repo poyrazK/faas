@@ -127,7 +127,7 @@ func cliHelpGroup(command cliCommand) string {
 	switch command.Name {
 	case "account", "billing", "capabilities", "context", "dashboard", "doctor", "invitations", "invoices", "keys", "link", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "unlink", "upload-cache", "usage", "version", "completion", "man", "whoami":
 		return "Core"
-	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "mcp", "openapi", "preview", "projects", "registry", "rollback", "routes", "scan", "secrets", "tenant-surfaces", "platform-tenants", "trusted-publishers":
+	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "mcp", "openapi", "preview", "projects", "registry", "rollback", "routes", "scan", "secrets", "start", "tenant-surfaces", "platform-tenants", "trusted-publishers":
 		return "API"
 	case "add", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
@@ -283,6 +283,10 @@ var templateNames13 = []string{
 // sync mechanism per ADR-083 §Decision 4.
 var cliCommands = []cliCommand{
 	mcpCLICommand(),
+	{
+		Name: "start", DocSlug: "deploy", Short: "Get your first app live with a few guided prompts",
+		Examples: []string{"gregale start"},
+	},
 	{
 		Name:    "account",
 		DocSlug: "account",
@@ -2225,8 +2229,8 @@ var cliCommands = []cliCommand{
 				{Name: "replay", Short: "re-issue failed unkeyed work"},
 				{Name: "replay-keyed", Short: "recover failed keyed work in its captured policy lane"},
 			}},
-			{Name: "wait", Short: "Wait for one invocation to finish", Positionals: []string{"<id>"}, Flags: []cliFlag{
-				{Name: "timeout", Value: "D", Short: "stop waiting after this duration (0 waits indefinitely)"},
+			{Name: "wait", Short: "Wait for one invocation to finish (exit 124 on timeout, 130 on Ctrl-C)", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "timeout", Value: "D", Short: "stop waiting without canceling the invocation (0 waits indefinitely)"},
 				{Name: "interval", Value: "D", Short: "time between status checks (default 1s)"},
 			}},
 		},

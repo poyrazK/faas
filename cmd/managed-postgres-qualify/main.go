@@ -251,12 +251,18 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		_, _ = fmt.Fprintln(errorOutput, managedpostgres.QualificationApprovalTTLEnv+" must be positive and no longer than 90 days")
 		return 2
 	}
+	continueAfterUsageFailure, err := parseContinueAfterUsageFailure(getenv)
+	if err != nil {
+		_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_CONTINUE_AFTER_USAGE_FAILURE must be a boolean")
+		return 2
+	}
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), backend.Provider, managedpostgres.QualificationOptions{
-		ProviderName: backend.Driver,
-		ResourceID:   resourceID,
-		Spec:         spec,
-		Timeout:      timeout,
-		Mutating:     true,
+		ProviderName:              backend.Driver,
+		ResourceID:                resourceID,
+		Spec:                      spec,
+		Timeout:                   timeout,
+		Mutating:                  true,
+		ContinueAfterUsageFailure: continueAfterUsageFailure,
 	})
 	result := qualificationOutput{BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: spec, Report: report}
 	if qualificationErr == nil && isLifecycleQualificationEnabled(getenv) {
@@ -340,6 +346,14 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func parseContinueAfterUsageFailure(getenv func(string) string) (bool, error) {
+	value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_CONTINUE_AFTER_USAGE_FAILURE"))
+	if value == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(value)
 }
 
 const (

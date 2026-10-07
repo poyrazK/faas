@@ -5,6 +5,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | Command | What it does |
 |---|---|
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
+| [`start`](#start) | Get your first app live with a few guided prompts |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
@@ -416,6 +417,19 @@ Examples:
 
 ```sh
 gregale mcp diff --before baseline.json --after candidate.json --check --json
+```
+
+
+## start
+
+Get your first app live with a few guided prompts
+
+`gregale start`
+
+Examples:
+
+```sh
+gregale start
 ```
 
 
@@ -4990,13 +5004,13 @@ Show or recover one invocation
 
 ### invocations wait
 
-Wait for one invocation to finish
+Wait for one invocation to finish (exit 124 on timeout, 130 on Ctrl-C)
 
 `gregale invocations wait [--timeout <D>] [--interval <D>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--timeout <D>` | stop waiting after this duration (0 waits indefinitely) |  |
+| `--timeout <D>` | stop waiting without canceling the invocation (0 waits indefinitely) |  |
 | `--interval <D>` | time between status checks (default 1s) |  |
 
 

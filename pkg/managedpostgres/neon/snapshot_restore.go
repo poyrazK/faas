@@ -49,7 +49,8 @@ func (p *Provider) restoreSnapshot(ctx context.Context, definition managedpostgr
 		return managedpostgres.SnapshotRestoreObservation{}, err
 	}
 	name := p.restoreBranchName(request.ResourceID)
-	actual, err := p.findSnapshotRestoreBranch(ctx, source.projectID, targetID, name)
+	actual, err := p.findOwnedBranch(ctx, source.projectID, targetID, name)
+	readRequired := false
 	if errors.Is(err, managedpostgres.ErrNotFound) && create && targetID == "" {
 		// Explicitly preview the new fork. Production computes and identity
 		// move only during finalize, which this path never requests.
@@ -62,13 +63,10 @@ func (p *Provider) restoreSnapshot(ctx context.Context, definition managedpostgr
 		path := "/projects/" + url.PathEscape(source.projectID) + "/snapshots/" + url.PathEscape(snapshotID) + "/restore"
 		postErr := p.doJSON(ctx, http.MethodPost, path, nil, payload, &accepted, http.StatusOK)
 		if postErr == nil {
-			if _, err := snapshotRestoreObservation(source, snapshotID, name, retained, accepted.Branch); err != nil {
-				return managedpostgres.SnapshotRestoreObservation{}, err
-			}
-			actual, err = p.findSnapshotRestoreBranch(ctx, source.projectID, accepted.Branch.ID, name)
+			actual, err, readRequired = accepted.Branch, nil, true
 		} else if errors.Is(postErr, managedpostgres.ErrUnavailable) && ctx.Err() == nil {
 			// One discovery recovers a lost response. Never repeat POST here.
-			actual, err = p.findSnapshotRestoreBranch(ctx, source.projectID, "", name)
+			actual, err = p.findOwnedBranch(ctx, source.projectID, "", name)
 			if errors.Is(err, managedpostgres.ErrNotFound) {
 				err = managedpostgres.ErrUnavailable
 			}
@@ -79,7 +77,7 @@ func (p *Provider) restoreSnapshot(ctx context.Context, definition managedpostgr
 	if err != nil {
 		return managedpostgres.SnapshotRestoreObservation{}, err
 	}
-	result, err := snapshotRestoreObservation(source, snapshotID, name, retained, actual)
+	result, err := p.awaitSnapshotRestoreObservation(ctx, source, snapshotID, name, retained, actual, readRequired)
 	if err != nil {
 		return managedpostgres.SnapshotRestoreObservation{}, err
 	}
@@ -87,6 +85,44 @@ func (p *Provider) restoreSnapshot(ctx context.Context, definition managedpostgr
 		return managedpostgres.SnapshotRestoreObservation{}, err
 	}
 	return result, nil
+}
+
+// Recover incomplete restore metadata on the original identity. Readiness is
+// still observed independently: an authenticated pending fork is returned as
+// pending, while a name/source/snapshot change stops recovery immediately.
+func (p *Provider) awaitSnapshotRestoreObservation(ctx context.Context, source resourceRef, snapshotID, name string, retained managedpostgres.DatabaseSnapshot, actual branch, readRequired bool) (managedpostgres.SnapshotRestoreObservation, error) {
+	ctx, cancel := context.WithTimeout(ctx, restoreLineageTimeout)
+	defer cancel()
+	id := actual.ID
+	for {
+		observed, err := snapshotRestoreObservation(source, snapshotID, name, retained, actual)
+		if err != nil && !errors.Is(err, managedpostgres.ErrUnavailable) || err == nil && !readRequired {
+			return observed, err
+		}
+		if !validProviderID.MatchString(id) {
+			return managedpostgres.SnapshotRestoreObservation{}, managedpostgres.ErrUnavailable
+		}
+		target, err := p.findOwnedBranch(ctx, source.projectID, id, name)
+		if err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
+			if ctx.Err() != nil {
+				err = managedpostgres.ErrUnavailable
+			}
+			return managedpostgres.SnapshotRestoreObservation{}, err
+		}
+		if err == nil {
+			actual, readRequired = target, false
+			if _, err := snapshotRestoreObservation(source, snapshotID, name, retained, actual); !errors.Is(err, managedpostgres.ErrUnavailable) {
+				continue
+			}
+		}
+		timer := time.NewTimer(p.credentialPollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return managedpostgres.SnapshotRestoreObservation{}, managedpostgres.ErrUnavailable
+		case <-timer.C:
+		}
+	}
 }
 
 func (p *Provider) snapshotRestoreSelectors(definition managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotRestoreRequest) (resourceRef, string, string, error) {
@@ -126,69 +162,14 @@ func (p *Provider) snapshotRestorePlacement(ctx context.Context, projectID strin
 	return nil
 }
 
-func (p *Provider) findSnapshotRestoreBranch(ctx context.Context, projectID, id, name string) (branch, error) {
-	path := "/projects/" + url.PathEscape(projectID) + "/branches"
-	if id != "" {
-		var response struct {
-			Branch branch `json:"branch"`
-		}
-		if err := p.doJSON(ctx, http.MethodGet, path+"/"+url.PathEscape(id), nil, nil, &response, http.StatusOK); err != nil {
-			return branch{}, err
-		}
-		if response.Branch.ID != id || response.Branch.Name != name {
-			return branch{}, managedpostgres.ErrConflict
-		}
-		return response.Branch, nil
-	}
-	seen := map[string]bool{}
-	cursor := ""
-	var found branch
-	for {
-		var response struct {
-			Branches   []branch `json:"branches"`
-			Pagination struct {
-				Next string `json:"next"`
-			} `json:"pagination"`
-		}
-		query := url.Values{"search": {name}, "limit": {"10000"}}
-		if cursor != "" {
-			query.Set("cursor", cursor)
-		}
-		if err := p.doJSON(ctx, http.MethodGet, path, query, nil, &response, http.StatusOK); err != nil {
-			return branch{}, err
-		}
-		if response.Branches == nil {
-			return branch{}, managedpostgres.ErrUnavailable
-		}
-		for _, candidate := range response.Branches {
-			if candidate.Name != name {
-				continue
-			}
-			if found.ID != "" || !validProviderID.MatchString(candidate.ID) {
-				return branch{}, managedpostgres.ErrConflict
-			}
-			found = candidate
-		}
-		cursor = response.Pagination.Next
-		if cursor == "" {
-			break
-		}
-		if seen[cursor] {
-			return branch{}, managedpostgres.ErrUnavailable
-		}
-		seen[cursor] = true
-	}
-	if found.ID == "" {
-		return branch{}, managedpostgres.ErrNotFound
-	}
-	return found, nil
-}
-
 func snapshotRestoreObservation(source resourceRef, snapshotID, name string, retained managedpostgres.DatabaseSnapshot, actual branch) (managedpostgres.SnapshotRestoreObservation, error) {
-	if !validProviderID.MatchString(actual.ID) || actual.ID == source.branchID || actual.ProjectID != source.projectID || actual.Name != name ||
+	if actual.ID != "" && !validProviderID.MatchString(actual.ID) || actual.ID == source.branchID || actual.ProjectID != "" && actual.ProjectID != source.projectID || actual.Name != "" && actual.Name != name ||
 		actual.RestoredFrom != "" && actual.RestoredFrom != snapshotID || actual.RestoredAs != "" && actual.RestoredAs != source.branchID || actual.Default ||
 		actual.RestoreStatus == "finalized" {
 		return managedpostgres.SnapshotRestoreObservation{}, managedpostgres.ErrConflict
+	}
+	if actual.ID == "" || actual.ProjectID == "" || actual.Name == "" {
+		return managedpostgres.SnapshotRestoreObservation{}, managedpostgres.ErrUnavailable
 	}
 	created, err := time.Parse(time.RFC3339Nano, actual.CreatedAt)
 	if err != nil || created.IsZero() || created.Before(retained.CreatedAt) || created.After(time.Now()) {

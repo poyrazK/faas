@@ -227,6 +227,11 @@ func writeNodeKeyFiles(privPath, pubPath string, privPEM, pubPEM []byte, force b
 		_ = os.Remove(privPath)
 		return fmt.Errorf("write public key %s (mode 0444): %w", pubPath, err)
 	}
+	if err := os.Chmod(pubPath, 0o444); err != nil {
+		_ = os.Remove(privPath)
+		_ = os.Remove(pubPath)
+		return fmt.Errorf("chmod public key %s to 0o444 after write: %w", pubPath, err)
+	}
 	return nil
 }
 

@@ -1105,18 +1105,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The legacy reapers do not supply pinned exit or resource receipts and
 	// therefore cannot remove jails or clones behind that ownership.
 	if store != nil && !cfg.NativeProcessRecovery {
-		isLiveInstance := func(ctx context.Context, instanceID string) (bool, error) {
-			ins, err := store.InstanceByID(ctx, instanceID)
-			if err != nil {
-				// A row that is genuinely gone is not live; anything else is
-				// unknown and must not authorise resource removal.
-				if errors.Is(err, state.ErrNotFound) {
-					return false, nil
-				}
-				return false, err
-			}
-			return state.IsLive(ins.State), nil
-		}
+		isLiveInstance := durableInstanceLive(store)
 		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
 			JailRoot: jailer.JailRoot(),
 			Runner:   wire.ExecRunner{},
@@ -1133,24 +1122,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				"skipped_young", rep.SkippedYoung,
 				"skipped_unknown", rep.SkippedUnknown)
 		}
+	}
+	// ADR-631: writable layer clones that nothing owns — not this Manager,
+	// not a resource-journal record, not durable state — are reclaimed on
+	// startup and periodically, including host-path clones beside
+	// /srv/fc/base drives that the cache-bucket sweep never saw; failed
+	// teardowns are retried. Journal-owned resources stay with verified
+	// recovery (ADR-477) in both recovery modes.
+	if store != nil {
+		cloneRoot := ""
 		if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
-			cloneRep, cloneErr := fcvm.ReapOrphanedLayerClones(ctx, fcvm.LayerCloneReapOptions{
-				Root:   cacheBackend.Root(),
-				IsLive: isLiveInstance,
-				Log:    log,
-			})
-			if cloneErr != nil {
-				log.Warn("vmmd: orphan layer clone reap failed", "err", cloneErr)
-			} else if cloneRep.Scanned > 0 {
-				log.Info("vmmd: orphan layer clone reap complete",
-					"scanned", cloneRep.Scanned, "reaped", cloneRep.Reaped,
-					"reclaimed_logical_bytes", cloneRep.ReclaimedLogicalBytes,
-					"skipped_live", cloneRep.SkippedLive,
-					"skipped_young", cloneRep.SkippedYoung,
-					"skipped_unknown", cloneRep.SkippedUnknown,
-					"failed", cloneRep.Failed)
-			}
+			cloneRoot = cacheBackend.Root()
 		}
+		cloneGate := layerCloneOwnershipGate(durableInstanceLive(store), mgr, resourceJournal)
+		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath), cloneGate, mgr)
 	}
 
 	// Orphan sweep — schedule via a context-bound goroutine that
