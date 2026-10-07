@@ -3756,7 +3756,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// Audit-log it under kind="wake_boot_error" so a query for
 		// `kind='wake_boot_error'` finds both this and the
 		// SetInstanceRuntime-failure case below.
-		transitionCtx := ctx
+		// The caller's deadline usually is the error: a wake that outlives
+		// it fails with the same expired context. Write FAILED on a bounded,
+		// detached context, or the row stays WAKING until the watchdog
+		// (production-us 2026-10-07: "transition: load instance … context
+		// deadline exceeded" after a 10 s restore fallback).
+		transitionCtx, transitionCancel := context.WithTimeout(context.WithoutCancel(ctx), DestroyTimeout)
+		defer transitionCancel()
 		if mode == string(state.InstanceModeMirror) {
 			// The gateway's mirror deadline can cancel this RPC after
 			// schedd has inserted and admitted the shadow row. The VMMD
