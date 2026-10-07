@@ -2312,6 +2312,37 @@ const resumeHookMsgResume uint32 = 1
 // application recovery failed after the platform resume work succeeded.
 const resumeHookAckAfterRestore byte = 13
 
+// resumeHookAckUserspaceReseed: a registered Node or Python process did not
+// confirm its userspace RNG reseed (ADR-680). Keep in sync with
+// guest/init/listen_resume_linux.go.
+const resumeHookAckUserspaceReseed byte = 15
+
+// resumeCapUserspaceReseed is the capability bit a guest-init running the
+// ADR-680 userspace reseed barrier sends right after its OK ack.
+const (
+	resumeCapUserspaceReseed = byte(0x01)
+	resumeCapabilityWait     = 100 * time.Millisecond
+)
+
+// ErrGuestLacksRestoreReseed means the restored guest-init did not advertise
+// the userspace reseed barrier (ADR-680): it predates the barrier, or its
+// barrier never started. Its Node and Python processes may replay the
+// snapshot's random state, so the restore is refused. The manager cold-boots
+// and schedd marks the snapshot stale, so the next park captures a snapshot
+// from the current guest-init. It deliberately does not wrap io.EOF: an old
+// guest closes right after its ack, and a transport retry would resend the
+// resume request.
+var ErrGuestLacksRestoreReseed = errors.New("vmm: restored guest-init lacks the userspace RNG reseed barrier (ADR-680)")
+
+func readResumeCapabilities(conn net.Conn) error {
+	_ = conn.SetReadDeadline(time.Now().Add(resumeCapabilityWait))
+	caps := make([]byte, 1)
+	if _, err := io.ReadFull(conn, caps); err != nil || caps[0]&resumeCapUserspaceReseed == 0 {
+		return ErrGuestLacksRestoreReseed
+	}
+	return nil
+}
+
 // extensionHookMsgEvent is the host-initiated lifecycle notification type.
 // It shares the resume listener's CONNECT handshake and is consumed by the
 // guest extension bridge (guest/init/listen_resume_linux.go).
@@ -2543,7 +2574,13 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 		if ack[0] == resumeHookAckAfterRestore {
 			return fmt.Errorf("vmm: %w (ack=%d)", ErrAfterRestoreHook, ack[0])
 		}
+		if ack[0] == resumeHookAckUserspaceReseed {
+			return fmt.Errorf("vmm: resume hook failed: a Node or Python process did not confirm its userspace RNG reseed (ack=%d)", ack[0])
+		}
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
+	}
+	if err := readResumeCapabilities(conn); err != nil {
+		return err
 	}
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.

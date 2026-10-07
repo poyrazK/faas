@@ -12,6 +12,6 @@ export type CreateManagedPostgresBindingRequest = {
   /**
    * Portable credential mode. Unsupported modes are rejected before a binding is reserved.
    */
-  access: 'read_write' | 'read_only' | 'migration';
+  access: 'read_write' | 'read_only' | 'migration' | 'data_api';
 };
 

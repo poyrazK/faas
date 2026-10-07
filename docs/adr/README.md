@@ -56,6 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
 | 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
 | 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
@@ -65,6 +66,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 641 | [Edge health follows the last instance](641-edge-health-follows-last-instance.md) | proposed | A parked app's edge health answer comes from its last instance (only FAILED is unhealthy), cached 15 s per gateway, instead of the process-local wake outcome that went unknown after every restart |
 | 642 | [Restore-safe guest timers](642-restore-safe-guest-timers.md) | proposed | Guests boot with kvm-clock and the one-shot LAPIC timer because Firecracker 1.7 restores lost TSC-deadline interrupts; backing identity v2 refuses captures booted with the old profile |
 | 643 | [Park-to-admit for refused wakes](643-park-to-admit-refused-wakes.md) | proposed | A gateway wake refused for fleet capacity parks one idle, floor-respecting instance of another owned app and retries once, instead of answering 503 until the idle timeout |
+| 680 | [Restored processes reseed their userspace random generators before serving](680-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
 | 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
 | 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
 | 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |

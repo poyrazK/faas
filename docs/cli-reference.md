@@ -79,6 +79,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
+| [`data-api`](#data-api) | Create schema-generated PostgreSQL APIs and export application types |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect queues and manage first-class queue bindings |
 | [`dlq`](#dlq) | Inspect, replay, or purge unified dead-letter events |
@@ -696,7 +697,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add bucket
@@ -3625,7 +3626,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `data-api` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -5178,7 +5179,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `data-api` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -6564,6 +6565,48 @@ gregale park my-api
 Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 
 `gregale plan`
+
+
+## data-api
+
+Create schema-generated PostgreSQL APIs and export application types
+
+`gregale data-api [<subcommand>]`
+
+### data-api create
+
+Deploy a managed PostgREST Data API
+
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] --issuer <HTTPS_URL> --jwks-url <HTTPS_URL> --audience <AUDIENCE> [--origins <ORIGINS>] [--resume] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--database <DATABASE>` | ready managed database name or ID | required |
+| `--schema <SCHEMA>` | exposed schema (api) |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--issuer <HTTPS_URL>` | application JWT issuer | required |
+| `--jwks-url <HTTPS_URL>` | application JWKS URL | required |
+| `--audience <AUDIENCE>` | application JWT audience | required |
+| `--origins <ORIGINS>` | comma-separated browser origins |  |
+| `--resume` | resume configuration and deployment of an existing app |  |
+
+### data-api types
+
+Generate types in an owner-authenticated app task
+
+`gregale data-api types [--output <FILE>] [--check] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output <FILE>` | generated TypeScript output |  |
+| `--check` | fail if the output file is stale |  |
+| `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+### data-api refresh
+
+Request a fresh restart to reload the database schema
+
+`gregale data-api refresh <name>`
 
 
 ## ps

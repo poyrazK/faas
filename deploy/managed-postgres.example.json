@@ -31,6 +31,7 @@
       "driver": "neon",
       "region": "eu-central-1",
       "namespace": "org-replace-with-neon-org-id",
+      "data_api_enabled": false,
       "settings": {
         "region_id": "aws-eu-central-1",
         "database_name": "gregale",

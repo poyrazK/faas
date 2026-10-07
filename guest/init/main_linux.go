@@ -297,6 +297,12 @@ func boot() error {
 	if err := startFrameworkReadyProxy(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
 		slog.Default().Warn("framework_ready proxy unavailable", "err", err)
 	}
+	// ADR-680: without the reseed server, Node and Python processes restored
+	// from a snapshot replay the captured random state. Env stamping injects
+	// no preload when this fails, so a failure is loud but not fatal.
+	if err := startRestoreReseedServer(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
+		slog.Default().Error("restore reseed server unavailable", "err", err)
+	}
 
 	// G2: read /etc/faas/secrets.env (unsealed JSON, written by vmmd at
 	// wake time) and stash the entry count on the supervisor via a small
@@ -474,6 +480,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
+	env = StampRestoreReseedEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
 	if trustErr != nil {

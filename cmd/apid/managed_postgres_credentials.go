@@ -192,7 +192,7 @@ func selectManagedPostgresEndpoint(access managedpostgres.CredentialAccess, endp
 		}
 		return managedpostgres.Endpoint{}, false
 	}
-	if access != managedpostgres.CredentialReadWrite && access != managedpostgres.CredentialReadOnly {
+	if access != managedpostgres.CredentialReadWrite && access != managedpostgres.CredentialReadOnly && access != managedpostgres.CredentialDataAPI {
 		return managedpostgres.Endpoint{}, false
 	}
 	for _, preferred := range []managedpostgres.EndpointRole{managedpostgres.EndpointPooled, managedpostgres.EndpointDirect} {
