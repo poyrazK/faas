@@ -15,6 +15,7 @@
 //	[1B type=0x04][1B outcome][6B reserved][8B elapsed_ms BE uint64]
 //	[1B type=0x05][json envelope: workload_oom]                          ← NEW (Cluster C / ADR-121)
 //	[1B type=0x06][json envelope: disk telemetry]
+//	[1B type=0x09][json envelope: qualification config receipt]
 //
 // The host strips the NUL-terminated runtime and uses the
 // preceding 4 bytes (if present) as the warmup_ms duration for
@@ -27,7 +28,7 @@
 // workload_OOM channel: the guest-init cgroup.events listener
 // emits a JSON envelope {peak_mb, plan_mb} when the per-VM
 // cgroup v2 leaf detects an oom_kill event. Type outside the
-// closed set {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08} is dropped with a
+// closed set {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09} is dropped with a
 // Warn (forward-compatible with future event classes).
 //
 // Each connection carries one EOF-delimited frame. Lifecycle telemetry is
@@ -37,8 +38,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -46,6 +50,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // VsockFrameworkReadyHostPort mirrors the guest-side
@@ -96,6 +101,9 @@ const (
 	// VsockFrameworkReadyHostTypeSidecarHealth carries a sidecar lifecycle
 	// transition from guest-init.
 	VsockFrameworkReadyHostTypeSidecarHealth byte = 0x08
+	// VsockFrameworkReadyHostTypeQualificationConfig acknowledges that
+	// guest-init parsed the private qualification runtime configuration.
+	VsockFrameworkReadyHostTypeQualificationConfig byte = 0x09
 )
 
 // Sidecar init-exit status closed enum (issue #463 / ADR-069 /
@@ -208,6 +216,21 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 		r.dispatchDiskUsage(instance, msg.Disk)
 	case parseFWReadyKindEventPublish:
 		r.dispatchEventPublish(instance, msg.EventPublish)
+	case parseFWReadyKindQualificationConfig:
+		if r.mgr == nil {
+			r.log.Warn("qualification config receipt has no manager", "instance", instance)
+			return "protocol", fmt.Errorf("qualification config receipt manager is unavailable")
+		}
+		if err := r.mgr.MarkEnvironmentQualificationConfigApplied(instance, msg.QualificationConfig); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				// A receipt arriving after its qualification waiter was
+				// canceled or timed out is stale. It must not poison the
+				// shared VM event receiver's health.
+				return "", nil
+			}
+			r.log.Debug("qualification config receipt rejected", "instance", instance, "err", err)
+			return "protocol", err
+		}
 	}
 	return "", nil
 }
@@ -436,7 +459,8 @@ func (r *FrameworkReadyReceiver) dispatchEventPublish(instance string, payload [
 // ADR-121). Closed set: OK for type=0x01, InitExit for
 // type=0x02, Restart for type=0x03, Tail for type=0x04,
 // WorkloadOOM for type=0x05, DiskTelemetry for type=0x06,
-// EventPublish for type=0x07, and SidecarHealth for type=0x08.
+// EventPublish for type=0x07, SidecarHealth for type=0x08, and the private
+// qualification config receipt for type=0x09.
 type parseFWKind uint8
 
 const (
@@ -459,6 +483,7 @@ const (
 	// parseFWReadyKindSidecarHealth carries bounded guest-init sidecar
 	// lifecycle transitions (type=0x08).
 	parseFWReadyKindSidecarHealth
+	parseFWReadyKindQualificationConfig
 )
 
 // tailEventOutcome (issue #667 / ADR-078) mirrors the
@@ -506,9 +531,10 @@ type parseFWReadyMsg struct {
 	// CodeAppRuntimeOOM Observed closure template. Zero
 	// values are tolerated at the wire (the engine guard
 	// is downstream).
-	WorkloadOOM  workloadOOMWire
-	Disk         diskUsageWire
-	EventPublish []byte
+	WorkloadOOM         workloadOOMWire
+	Disk                diskUsageWire
+	EventPublish        []byte
+	QualificationConfig fcvm.EnvironmentQualificationConfigReceipt
 }
 
 type diskUsageWire struct {
@@ -574,6 +600,8 @@ func (m parseFWReadyMsg) TypeLabel() string {
 		return fmt.Sprintf("event_publish(0x%02x)", VsockFrameworkReadyHostTypeEventPublish)
 	case parseFWReadyKindSidecarHealth:
 		return fmt.Sprintf("sidecar_health(0x%02x)", VsockFrameworkReadyHostTypeSidecarHealth)
+	case parseFWReadyKindQualificationConfig:
+		return fmt.Sprintf("qualification_config(0x%02x)", VsockFrameworkReadyHostTypeQualificationConfig)
 	default:
 		return "unknown"
 	}
@@ -705,10 +733,30 @@ func parseFrameworkReadyDatagram(b []byte) (parseFWReadyMsg, error) {
 		}
 		msg.Kind = parseFWReadyKindEventPublish
 		msg.EventPublish = append([]byte(nil), rest...)
+	case VsockFrameworkReadyHostTypeQualificationConfig:
+		if len(rest) > frameworkReadyMaxDatagram-1 {
+			return msg, fmt.Errorf("qualification_config: body too large: %d", len(rest))
+		}
+		if err := json.Unmarshal(rest, &msg.QualificationConfig); err != nil {
+			return msg, fmt.Errorf("qualification_config: %w", err)
+		}
+		if len(msg.QualificationConfig.Token) != 36 || !validSHA256Hex(msg.QualificationConfig.APIEnvSHA256) ||
+			!validSHA256Hex(msg.QualificationConfig.SecretKeysMAC) {
+			return msg, fmt.Errorf("qualification_config: invalid receipt fields")
+		}
+		msg.Kind = parseFWReadyKindQualificationConfig
 	default:
 		return msg, fmt.Errorf("unknown msg sub-type 0x%02x", b[0])
 	}
 	return msg, nil
+}
+
+func validSHA256Hex(value string) bool {
+	if len(value) != hex.EncodedLen(sha256.Size) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func indexNUL(b []byte) int {

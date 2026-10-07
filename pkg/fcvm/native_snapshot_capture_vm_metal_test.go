@@ -133,6 +133,25 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	m := NewManager(runner, v, Paths{Kernel: kernel}, version, nil, nil).WithNativeQualificationNodeID(frame.NodeID)
 	m.WithStorage(canonical)
 	m.alloc.free = []int{MaxSlots - 1}
+	if err := v.RegisterGuestVsockStreamHandler(VsockGuestEventHostPort, func(instance string, conn net.Conn) (string, error) {
+		body, err := io.ReadAll(io.LimitReader(conn, 1025))
+		if err != nil {
+			return "read", err
+		}
+		if len(body) == 0 || body[0] != 0x09 {
+			return "", nil
+		}
+		var receipt EnvironmentQualificationConfigReceipt
+		if err := json.Unmarshal(body[1:], &receipt); err != nil {
+			return "protocol", err
+		}
+		if err := m.MarkEnvironmentQualificationConfigApplied(instance, receipt); err != nil {
+			return "protocol", err
+		}
+		return "", nil
+	}); err != nil {
+		t.Fatal("register private qualification config receipt receiver:", err)
+	}
 	var restoredManager *Manager
 	restoredID := uuid.NewString()
 	t.Cleanup(func() {

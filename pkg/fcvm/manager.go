@@ -757,6 +757,11 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// qualificationConfigReceiptWaiters binds the guest-init environment
+	// acknowledgement to one private qualification boot attempt. The key is
+	// the reserved instance ID; the random token and per-instance vsock channel
+	// fence stale acknowledgements from other boots.
+	qualificationConfigReceiptWaiters map[string]*qualificationConfigReceiptWaiter
 	// appResolved is each app's recently resolved addresses on this node
 	// with their expiry (ADR-373), used to seed a new instance's
 	// egress_resolved set: a restored snapshot may reconnect to addresses
@@ -1172,20 +1177,21 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
 	return &Manager{
-		alloc:                NewAllocator(),
-		run:                  run,
-		vmm:                  vmm,
-		paths:                paths,
-		fcVersion:            fcVersion,
-		log:                  log,
-		live:                 make(map[string]*Instance),
-		readinessLoopCancels: make(map[string]context.CancelFunc),
-		appCPUPolicies:       make(map[string]appCPUPolicy),
-		instanceFlights:      make(map[string]*instanceFlight),
-		pendingProcessExits:  make(map[string]int),
-		processGenerations:   make(map[string]uint64),
-		waking:               make(map[string]struct{}),
-		exportDirs:           make(map[string]string),
+		alloc:                             NewAllocator(),
+		run:                               run,
+		vmm:                               vmm,
+		paths:                             paths,
+		fcVersion:                         fcVersion,
+		log:                               log,
+		live:                              make(map[string]*Instance),
+		qualificationConfigReceiptWaiters: make(map[string]*qualificationConfigReceiptWaiter),
+		readinessLoopCancels:              make(map[string]context.CancelFunc),
+		appCPUPolicies:                    make(map[string]appCPUPolicy),
+		instanceFlights:                   make(map[string]*instanceFlight),
+		pendingProcessExits:               make(map[string]int),
+		processGenerations:                make(map[string]uint64),
+		waking:                            make(map[string]struct{}),
+		exportDirs:                        make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
 		// for the framework_ready DGRAM receipt path. See the
 		// cidToID field comment for the lifecycle.

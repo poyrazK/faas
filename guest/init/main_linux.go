@@ -320,6 +320,17 @@ func boot() error {
 	if apiErr != nil {
 		slog.Default().Warn("env.json could not be loaded; proceeding without api env", "err_kind", errorKind(apiErr))
 	}
+	qualificationReceiptToken, qualificationReceiptMACKey, qualificationReceiptErr := takeQualificationConfigReceiptControl(apiEnv)
+	if qualificationReceiptErr != nil {
+		slog.Default().Warn("qualification configuration receipt control is invalid")
+	} else if qualificationReceiptToken != "" {
+		if secErr != nil || apiErr != nil {
+			slog.Default().Warn("qualification configuration was not fully loaded; withholding receipt")
+		} else {
+			emitQualificationConfigReceipt(slog.Default(), qualificationReceiptToken, qualificationReceiptMACKey, apiEnv, secrets)
+		}
+		clear(qualificationReceiptMACKey)
+	}
 
 	// Issue #463 / ADR-069 / PR-B: discover the workload roster
 	// (deployment-level main + sidecars). A missing

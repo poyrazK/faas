@@ -57,14 +57,14 @@ func TestParseFrameworkReadyDatagram(t *testing.T) {
 		{
 			name: "unknown type byte (closed-set guard)",
 			// Sidecar health extends the closed set to
-			// {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}. Anything outside
+			// {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09}. Anything outside
 			// the closed set is rejected with the
 			// "unknown msg sub-type" sentinel. A future event
-			// class picks the next free byte (0x09+) and adds
+			// class picks the next free byte (0x0a+) and adds
 			// a dispatch arm in lockstep. This test pins the
 			// closed-set tripwire.
-			body: []byte{0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 'n'},
-			want: want{err: true, errSub: "unknown msg sub-type 0x09"},
+			body: []byte{0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 'n'},
+			want: want{err: true, errSub: "unknown msg sub-type 0x0a"},
 		},
 		{
 			name: "type-only, no warmup, no runtime",
@@ -138,6 +138,21 @@ func TestParseFrameworkReadyDatagram(t *testing.T) {
 				t.Errorf("Runtime = %q, want %q", got.Runtime, tc.want.runtime)
 			}
 		})
+	}
+}
+
+func TestParseQualificationConfigReceipt(t *testing.T) {
+	token := "123e4567-e89b-12d3-a456-426614174000"
+	digest := strings.Repeat("a", 64)
+	body := append([]byte{VsockFrameworkReadyHostTypeQualificationConfig}, []byte(`{"token":"`+token+`","api_env_sha256":"`+digest+`","secrets_file_read":false,"secret_keys_mac":"`+digest+`"}`)...)
+	msg, err := parseFrameworkReadyDatagram(body)
+	if err != nil || msg.Kind != parseFWReadyKindQualificationConfig || msg.QualificationConfig.Token != token ||
+		msg.QualificationConfig.APIEnvSHA256 != digest || msg.QualificationConfig.SecretsFileRead || msg.QualificationConfig.SecretKeysMAC != digest {
+		t.Fatalf("qualification config receipt parse = %+v, %v", msg, err)
+	}
+	invalid := append([]byte{VsockFrameworkReadyHostTypeQualificationConfig}, []byte(`{"token":"`+token+`","api_env_sha256":"short","secrets_file_read":false,"secret_keys_mac":"`+digest+`"}`)...)
+	if _, err := parseFrameworkReadyDatagram(invalid); err == nil {
+		t.Fatal("accepted malformed config digest")
 	}
 }
 

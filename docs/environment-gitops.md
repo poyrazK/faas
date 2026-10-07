@@ -140,6 +140,16 @@ scheduler-to-VMMD restore dispatch, guest configuration delivery, application
 acknowledgement and readiness are still required before a restored workload can
 qualify.
 
+Fresh qualification boots now wait for a one-time guest-init receipt before
+publishing runtime inputs. The receipt is bound to the private instance and
+attempt token, checks the canonical digest of the main non-secret API env and a
+MAC of the selected secret-key set, and contains no environment values, secret
+values, or secret names. The per-attempt MAC key stays out of the receipt. The
+guest removes both internal controls before constructing the application
+process environment. This closes the host-only delivery gap for the main
+workload; it does not prove application behavior, sidecar-specific projections,
+smoke, restore, or activation.
+
 The internal graph assessment reports prepared artifacts and current capture
 counts separately. A partial cohort, changed artifact or stale runtime input
 cannot borrow another member's evidence. Even a complete capture cohort remains

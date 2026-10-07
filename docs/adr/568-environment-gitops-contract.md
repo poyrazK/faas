@@ -91,8 +91,14 @@
    reservation limits. Attempt-bound runtime publication and a bounded scheduler
    VM execution primitive and bounded node-owned page consumer are now available.
    Durable attempt-bound capture receipts now preserve original native producer
-   identity and fresh runtime inputs. Production polling, isolated smoke/restore
-   completion receipts, release commands and activation remain to be implemented. Retry and crash recovery resume the journaled operation;
+   identity and fresh runtime inputs. A fresh qualification boot now waits for
+   guest-init to acknowledge the attempt token, main API-env digest and a
+   per-attempt MAC of the selected secret-key set before publishing that host
+   runtime receipt. The temporary MAC key is removed before workload start and
+   is not included in the guest receipt. This proves guest loading only;
+   sidecar delivery, isolated smoke/restore completion receipts,
+   release commands and activation remain to be implemented. Production polling
+   is also still absent. Retry and crash recovery resume the journaled operation;
    an older generation cannot activate a replacement approved graph. Release coordination
    must expose partial execution across database, edge and runtime boundaries.
    Host lifecycle consumers must use the same frozen contract as the guest.

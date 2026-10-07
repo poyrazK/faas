@@ -58,11 +58,23 @@ func (m *Manager) WakeEnvironmentQualification(ctx context.Context, frame state.
 	if err := m.RecoverNativeProcesses(ctx); err != nil {
 		return nil, err
 	}
+	req, receiptWaiter, err := m.prepareQualificationConfigReceipt(req)
+	if err != nil {
+		return nil, fmt.Errorf("native qualification: prepare guest configuration receipt: %w", err)
+	}
+	defer m.clearQualificationConfigReceipt(frame.InstanceID, receiptWaiter)
 	record, err := j.claim(ctx, frame)
 	if err != nil {
 		return nil, err
 	}
-	return m.Wake(nativeQualificationContext(ctx, record), req)
+	inst, err := m.Wake(nativeQualificationContext(ctx, record), req)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.waitForQualificationConfigReceipt(ctx, frame.InstanceID, receiptWaiter); err != nil {
+		return nil, err
+	}
+	return inst, nil
 }
 
 // RetireEnvironmentQualification revokes delayed creation, joins Manager's
