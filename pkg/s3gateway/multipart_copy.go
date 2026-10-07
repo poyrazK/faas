@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -146,6 +147,11 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 	if req.copySource == nil && !h.recordProviderRequest(w, r, req) {
 		return
 	}
+	receipt, err := objectstorageactivity.Begin(ctx, h.store, req.bucket, state.ObjectBucketMutationRequest)
+	if err != nil {
+		h.providerError(w, r, req, err, upload.Key)
+		return
+	}
 	safeToSettle = false
 	var result objectstorage.CopyObjectResult
 	if req.copySource != nil {
@@ -157,6 +163,12 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 	}
 	if err != nil {
 		safeToSettle = errors.Is(err, objectstorage.ErrWriteRejected)
+		if safeToSettle {
+			if finishErr := objectstorageactivity.Finish(ctx, h.store, receipt); finishErr != nil {
+				h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
+				return
+			}
+		}
 		if !safeToSettle {
 			h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
 		} else if errors.Is(err, objectstorage.ErrPreconditionFailed) {
@@ -167,6 +179,10 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	if !validGatewayETag(result.ETag) {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
+		return
+	}
+	if err := objectstorageactivity.Finish(ctx, h.store, receipt); err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
 		return
 	}

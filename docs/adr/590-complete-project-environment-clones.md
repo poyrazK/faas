@@ -7408,3 +7408,42 @@ recovery on memory and PostgreSQL. SQLC v1.31.1 parity, migration-ID and reposit
 policy checks pass; pinned golangci-lint v2.4.0 reports zero issues across state,
 object storage, activity wrappers, S3 gateway and APID. Optional Packer/live nft
 checks remain skipped. No live provider or common-point qualification is claimed.
+
+### Retain independent part receipts until validated proof (2026-10-07)
+
+An acknowledgment audit exposed a prerequisite gap in the remaining part-writer
+work: gateway part PUTs retired their request receipt on an HTTP success code,
+before checking the body, ETag and supplied encryption headers. Part copies had
+transfer fencing but no independent bucket mutation receipt. Both paths now
+reserve a pinned request receipt before provider IO and retire only that receipt
+when the caller has validated synchronous evidence. Multipart PUTs require HTTP
+200 and one valid, bounded ETag. The S3 copy adapter also requires HTTP 200;
+HTTP 202 with an otherwise plausible copy result remains uncertain. Copies may
+retire their receipt on the adapter's explicit proof of rejection without
+mutation. Errors, malformed acknowledgments and lost replies retain custody.
+
+The shared HTTP helper now returns its receipt for caller-owned validation.
+Legacy single PUTs and fixed-admission multipart proxies also validate their
+acknowledgment before recording receipt completion. Receipt settlement retains
+the bounded context that survives caller cancellation. A receipt admission
+failure before part PUT dispatch can release its transfer reservation; provider
+uncertainty cannot. A database acknowledgment failure reports unavailability
+and leaves the receipt outstanding.
+
+These are independent request receipts, not yet bindings to durable part
+transfer identities. A transfer timeout, parent completion or verified abort
+cannot erase an unknown independent receipt. Recovery through the original
+transfer, immutable attempt ownership and qualified reconciliation remain next
+work, followed by live R2/OVH and common-checkpoint qualification. Fully copyable
+public capture remains gated.
+
+Validation: race-enabled memory/PostgreSQL AWS SDK tests acquire a capture hold
+inside the native part writer and prove its receipt exists before IO. Validated
+PUT/copy results and proven copy rejection drain only their own receipt;
+missing, oversized or duplicate ETags, asynchronous acceptance and lost replies
+retain it alongside the parent and an unrelated writer. Held retries dispatch
+no new part write. Multipart, copy and encryption adapter/activity regressions
+pass under the race detector, as does the complete S3 gateway suite. Pinned
+golangci-lint v2.4.0 reports zero issues for object storage, activity and gateway
+packages; repository policy checks pass. Optional Packer/live nft checks were
+skipped. These are local tests, not live qualification.

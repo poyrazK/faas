@@ -19,7 +19,8 @@ func Begin(ctx context.Context, store any, bucket state.ObjectBucket, kind strin
 	return st.BeginObjectBucketMutation(ctx, bucket, kind)
 }
 
-// Finish is called only after synchronous provider success. It intentionally
+// Finish is called only after a validated synchronous acknowledgment or proof
+// that the write was rejected without mutation. It intentionally
 // outlives request cancellation for a bounded database acknowledgement. Errors
 // and lost provider replies leave the writer outstanding; no TTL drains it.
 func Finish(ctx context.Context, store any, receipt state.ObjectBucketMutation) error {

@@ -190,8 +190,9 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		upstream.Header.Set(name, value)
 	}
 	safeToSettle = false
-	response, err := h.doMutationRequest(upstream, req)
+	response, receipt, err := h.doMutationRequest(upstream, req)
 	if err != nil {
+		safeToSettle = receipt.ID == "" // Admission failed before any provider IO.
 		if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
 			return
 		}
@@ -209,16 +210,24 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		writeS3Error(w, http.StatusBadRequest, "IncompleteBody", "You did not provide the number of bytes specified by Content-Length.", r.URL.Path, req.requestID)
 		return
 	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+	if response.StatusCode != http.StatusOK {
+		if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+			h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+			return
+		}
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return
 	}
 	etag := response.Header.Get("ETag")
-	if etag == "" {
+	if len(response.Header.Values("ETag")) != 1 || !validGatewayETag(etag) {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
 	if !h.multipartPartEncryption(w, r, req, upload, response.Header) {
+		return
+	}
+	if err := objectstorageactivity.Finish(transferCtx, h.store, receipt); err != nil {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
 	safeToSettle = true
@@ -559,7 +568,7 @@ func (h *Handler) proxyMultipartPart(w http.ResponseWriter, r *http.Request, req
 	for name, value := range signed.Headers {
 		upstream.Header.Set(name, value)
 	}
-	response, err := h.doMutationRequest(upstream, req)
+	response, receipt, err := h.doMutationRequest(upstream, req)
 	if err != nil {
 		if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
 			return
@@ -578,12 +587,20 @@ func (h *Handler) proxyMultipartPart(w http.ResponseWriter, r *http.Request, req
 		writeS3Error(w, http.StatusBadRequest, "IncompleteBody", "You did not provide the number of bytes specified by Content-Length.", r.URL.Path, req.requestID)
 		return
 	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+	if response.StatusCode != http.StatusOK {
+		if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+			h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+			return
+		}
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return
 	}
 	etag := response.Header.Get("ETag")
-	if etag == "" {
+	if len(response.Header.Values("ETag")) != 1 || !validGatewayETag(etag) {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
+	if err := objectstorageactivity.Finish(r.Context(), h.store, receipt); err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
