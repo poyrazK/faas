@@ -365,3 +365,51 @@ Capability-matrix entries land at `internal` and may not be promoted to
 retry converting a 502 into a 200 against a killed instance, and a
 recorded run showing egress reject latency under 10 ms against a
 blackholed upstream versus the unbroken TCP timeout.
+
+---
+
+## Amendment 2026-10-07 — the breaker reaches the public path, rules tune it, gates on (H4-68)
+
+Production-us hunt #4 found that §2 had shipped only half-wired:
+
+- `MatchCircuitBreaker` had no caller.
+- A `kind=circuit_breaker` rule's compiled values never reached `pkg/circuit`.
+- The public picker never consulted a breaker.
+- Production never set any of the §4 gates, so stored `kind=retry` and
+  `kind=circuit_breaker` rules were listed as enabled but did nothing.
+
+**Decision:**
+
+- **One shared breaker.** With `FAAS_GATEWAY_CIRCUIT_BREAKER` on, gatewayd-internal
+  builds one `DefaultConfig` breaker group. The service proxy and the public
+  handler share it, keyed `appID\x00instanceID`. A transport failure on
+  either path counts against the instance.
+- **The public picker skips open circuits.** If the picked instance's circuit
+  is open, the handler re-picks up to 4 times (keeping the version key).
+  When every candidate is open it answers `503 circuit_open` with
+  `Retry-After: 5`.
+  - Exact-deployment smokes are never re-picked.
+  - A reserved half-open probe is released if the request ends before
+    reaching the target (`Group.Admit` reports which admission holds the
+    probe).
+  - Any guest answer records a success, the stale-target signal records a
+    failure, and a client that left records nothing.
+- **Rules tune the breaker; they do not create a separate one.** Breaker state
+  is per instance, so an app's highest-priority enabled `kind=circuit_breaker`
+  rule tunes all of that app's breakers. Its path, method and header
+  selectors do not partition the state. `Group.WithConfigFor` applies the
+  rule. The lookup never blocks: it uses the cached tuning, refreshed in the
+  background from `ListEdgeRulesForApp` at most every 30 s. Until the first
+  load, `DefaultConfig` applies.
+- **Gates on.** The gatewayd-internal drop-in sets `FAAS_GATEWAY_RETRY=true` and
+  `FAAS_GATEWAY_CIRCUIT_BREAKER=true` (ansible vars `faas_gateway_retry`,
+  `faas_gateway_circuit_breaker`). Retry is unchanged: the operator default
+  stays zero attempts, so only apps with a `kind=retry` rule replay, and only
+  after a transport failure.
+- **Idle keys.** The public path prunes idle breaker keys at the service
+  proxy's cadence, so an app with no internal traffic does not keep one key
+  for every instance it ever served.
+
+**Evidence still owed (§4):** a recorded run showing a retry turning a 502
+into a 200 against a killed instance, now runnable on production-us. The
+egress breaker (`FAAS_EGRESS_CIRCUIT_BREAKER`) stays off.

@@ -183,6 +183,9 @@ func (m *MemStore) ListWorkflowRuns(_ context.Context, appID string, opts ListWo
 		if r.AppID != appID {
 			continue
 		}
+		if opts.PlatformTenantID != "" && r.PlatformTenantID != opts.PlatformTenantID {
+			continue
+		}
 		if opts.Status != "" && r.Status != opts.Status {
 			continue
 		}
@@ -1200,7 +1203,18 @@ func (m *MemStore) ResolveWorkflowEventWait(ctx context.Context, runID, stepName
 	return nil, true, nil
 }
 
-func (m *MemStore) CompleteWorkflowCallback(_ context.Context, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
+func (m *MemStore) CompleteWorkflowCallback(ctx context.Context, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
+	return m.completeWorkflowCallback(ctx, "", runID, stepName, eventName, eventID, timeout, payload)
+}
+
+func (m *MemStore) CompleteTenantWorkflowCallback(ctx context.Context, tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
+	if tenantID == "" {
+		return false, ErrWorkflowInvalidRecord
+	}
+	return m.completeWorkflowCallback(ctx, tenantID, runID, stepName, eventName, eventID, timeout, payload)
+}
+
+func (m *MemStore) completeWorkflowCallback(_ context.Context, tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
 	if runID == "" || stepName == "" || eventName == "" || eventID == "" || timeout <= 0 {
 		return false, ErrWorkflowInvalidRecord
 	}
@@ -1215,6 +1229,13 @@ func (m *MemStore) CompleteWorkflowCallback(_ context.Context, runID, stepName, 
 	run, ok := m.workflowRuns[runID]
 	if !ok {
 		return false, ErrWorkflowRunNotFound
+	}
+	if tenantID != "" {
+		app := m.apps[run.AppID]
+		if canonicalMemUUID(run.PlatformTenantID) != canonicalMemUUID(tenantID) ||
+			!m.workflowOutboundTenantLinkActiveLocked(app.AccountID, tenantID, app.ID) {
+			return false, ErrWorkflowRunNotFound
+		}
 	}
 	for _, events := range m.workflowEvents {
 		for _, event := range events {
@@ -1253,7 +1274,18 @@ func (m *MemStore) CompleteWorkflowCallback(_ context.Context, runID, stepName, 
 }
 
 // InsertWorkflowEvent appends an external event to a run's event log.
-func (m *MemStore) InsertWorkflowEvent(_ context.Context, e *WorkflowEvent) error {
+func (m *MemStore) InsertWorkflowEvent(ctx context.Context, e *WorkflowEvent) error {
+	return m.insertWorkflowEvent(ctx, "", e)
+}
+
+func (m *MemStore) InsertTenantWorkflowEvent(ctx context.Context, tenantID string, e *WorkflowEvent) error {
+	if tenantID == "" {
+		return ErrWorkflowInvalidRecord
+	}
+	return m.insertWorkflowEvent(ctx, tenantID, e)
+}
+
+func (m *MemStore) insertWorkflowEvent(_ context.Context, tenantID string, e *WorkflowEvent) error {
 	if e == nil {
 		return fmt.Errorf("%w: nil event", ErrWorkflowInvalidRecord)
 	}
@@ -1265,8 +1297,19 @@ func (m *MemStore) InsertWorkflowEvent(_ context.Context, e *WorkflowEvent) erro
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.workflowRuns[e.RunID]; !ok {
+	run, ok := m.workflowRuns[e.RunID]
+	if !ok {
 		return ErrWorkflowRunNotFound
+	}
+	if tenantID != "" {
+		app := m.apps[run.AppID]
+		if canonicalMemUUID(run.PlatformTenantID) != canonicalMemUUID(tenantID) ||
+			!m.workflowOutboundTenantLinkActiveLocked(app.AccountID, tenantID, app.ID) {
+			return ErrWorkflowRunNotFound
+		}
+		if run.Status != WorkflowRunStatusPending && run.Status != WorkflowRunStatusRunning && run.Status != WorkflowRunStatusAwaitingEvent {
+			return ErrWorkflowNotRunning
+		}
 	}
 
 	if e.ID == "" {

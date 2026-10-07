@@ -5,6 +5,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | Command | What it does |
 |---|---|
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
+| [`start`](#start) | Get your first app live with a few guided prompts |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
@@ -416,6 +417,19 @@ Examples:
 
 ```sh
 gregale mcp diff --before baseline.json --after candidate.json --check --json
+```
+
+
+## start
+
+Get your first app live with a few guided prompts
+
+`gregale start`
+
+Examples:
+
+```sh
+gregale start
 ```
 
 
@@ -2192,7 +2206,7 @@ List CORS rules bound to &lt;slug&gt; (defaults to linked context)
 
 Delete a CORS rule by id
 
-`gregale cors rm <rule-id>`
+`gregale cors rm [<slug>] <rule-id>`
 
 ### cors show
 
@@ -2210,6 +2224,12 @@ Manage scheduled HTTP requests and deployment commands
 ### crons list
 
 List cron rules
+
+`gregale crons list --app <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 ### crons add
 
@@ -3170,14 +3190,14 @@ gregale deployment summary v42 --app my-api --json
 
 Wait until a deployment is live (or safe rollout completes)
 
-`gregale deployment wait [--app <SLUG>] [--rollout] [--progress] [--timeout <SECONDS>] <id|vN>`
+`gregale deployment wait [--app <SLUG>] [--rollout] [--progress] [--timeout <SECONDS|DURATION>] <id|vN>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug for a vN revision outside a linked project |  |
 | `--rollout` | wait for safe rollout to reach 100% traffic |  |
 | `--progress` | print rollout transitions while waiting (human output only) |  |
-| `--timeout <SECONDS>` | maximum seconds to wait |  |
+| `--timeout <SECONDS|DURATION>` | maximum wait (seconds, or a duration such as 10m) |  |
 
 Examples:
 
@@ -3190,7 +3210,11 @@ gregale deployment wait 00000000000000000000000000000001 --rollout --progress
 
 Set the per-deployment cold-wake floor
 
-`gregale deployment set-min-instances <id>`
+`gregale deployment set-min-instances --min <N> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--min <N>` | minimum warm instances for this deployment | required |
 
 
 ## deploys
@@ -3268,6 +3292,15 @@ Hide one deployment from the list
 
 Hide obsolete deployments older than a cutoff
 
+`gregale deploys clear-obsolete --app <slug> [--older-than <D>] [--dry-run] [--force]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--older-than <D>` | cutoff age (default 168h) |  |
+| `--dry-run` | list what would be hidden |  |
+| `--force` | skip the confirmation |  |
+
 ### deploys retry
 
 Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
@@ -3323,7 +3356,7 @@ Deploy an app, function, or project
 | `--persist-exclude` | save --exclude slugs for future project deploys |  |
 | `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
 | `--canary-preset <PRESET>` | canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `custom` |
-| `--canary-stages <STAGES>` | custom percent@duration canary stages |  |
+| `--canary-stages <STAGES>` | custom percent@duration canary stages (requires --canary-preset custom) |  |
 | `--safe` | deploy with the balanced health-gated rollout and first-wake 5xx rollback |  |
 | `--require-authn` | require bearer auth on every request |  |
 | `--no-require-authn` | drop the token requirement |  |
@@ -3849,13 +3882,13 @@ gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.
 
 Wait for a preview deployment to become ready
 
-`gregale preview wait [--progress] [--open] [--timeout <SECONDS>] <preview-slug>`
+`gregale preview wait [--progress] [--open] [--timeout <SECONDS|DURATION>] <preview-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--progress` | print deployment transitions while waiting |  |
 | `--open` | open the preview URL after it becomes ready |  |
-| `--timeout <SECONDS>` | maximum seconds to wait |  |
+| `--timeout <SECONDS|DURATION>` | maximum wait (seconds, or a duration such as 10m) |  |
 
 Examples:
 
@@ -4172,7 +4205,7 @@ Add an edge rule
 | `--cache-stale-while-revalidate-seconds <N>` | kind=cache: serve stale during a background refresh (max 300) |  |
 | `--budget-ms <MS>` | kind=budget: per-request wall-clock budget in ms (max 30000) |  |
 | `--retry-max-attempts <N>` | kind=retry: total attempts including the original (default 2; max 3) |  |
-| `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the breaker (default 0.5) |  |
+| `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the app&#39;s instance-health breaker (default 0.5); the highest-priority rule tunes every instance, selectors do not partition it |  |
 | `--circuit-open-seconds <N>` | kind=circuit_breaker: first open interval (default 5) |  |
 | `--respond-status <CODE>` | kind=respond: response status (default 200) |  |
 | `--respond-body <JSON>` | kind=respond: JSON response body (max 64 KiB) |  |
@@ -5027,13 +5060,13 @@ Show or recover one invocation
 
 ### invocations wait
 
-Wait for one invocation to finish
+Wait for one invocation to finish (exit 124 on timeout, 130 on Ctrl-C)
 
 `gregale invocations wait [--timeout <D>] [--interval <D>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--timeout <D>` | stop waiting after this duration (0 waits indefinitely) |  |
+| `--timeout <D>` | stop waiting without canceling the invocation (0 waits indefinitely) |  |
 | `--interval <D>` | time between status checks (default 1s) |  |
 
 
@@ -5098,21 +5131,23 @@ Read evidence and release history
 
 Assign an issue to an account
 
-`gregale issues assign --app <SLUG> <issue-id>`
+`gregale issues assign --app <SLUG> [--assignee <UUID>] <issue-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--assignee <UUID>` | owner account UUID (empty unassigns) |  |
 
 ### issues resolve
 
 Resolve in a deployment
 
-`gregale issues resolve --app <SLUG> <issue-id>`
+`gregale issues resolve --app <SLUG> --deployment <UUID> <issue-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--deployment <UUID>` | deployment UUID that fixed the issue | required |
 
 ### issues reopen
 
@@ -5128,11 +5163,12 @@ Reopen an issue
 
 Ignore until a timestamp
 
-`gregale issues ignore --app <SLUG> <issue-id>`
+`gregale issues ignore --app <SLUG> --until <RFC3339> <issue-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--until <RFC3339>` | ignore until (RFC3339) | required |
 
 ### issues impact-alert
 
@@ -5168,11 +5204,12 @@ List ingest credentials
 
 Create a deployment-bound ingest credential
 
-`gregale issues create-token --app <SLUG>`
+`gregale issues create-token --app <SLUG> --deployment <UUID>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--deployment <UUID>` | deployment UUID the credential is bound to | required |
 
 ### issues revoke-token
 
@@ -6470,20 +6507,25 @@ Manage realtime endpoints, policies, connections, channels, and auth
 
 List managed realtime endpoints
 
+`gregale realtime list <app>`
+
 ### realtime get
 
 Show one endpoint and safe auth-rotation status
+
+`gregale realtime get <app> <endpoint-id>`
 
 ### realtime create
 
 Create a managed realtime endpoint
 
-`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--max-connections <N>] <slug>`
+`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--max-connections <N>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--callback-url <URL>` | application callback URL | required |
-| `--callback-auth-token-stdin` | read the callback bearer token from stdin |  |
+| `--callback-auth-token-stdin` | read the callback bearer token from stdin (this or --callback-auth-token is required) |  |
+| `--callback-auth-token <TOKEN>` | callback bearer token your app verifies (prefer --callback-auth-token-stdin) |  |
 | `--connect-path <PATH>` | callback path for connect events |  |
 | `--message-path <PATH>` | callback path for message events |  |
 | `--disconnect-path <PATH>` | callback path for disconnect events |  |
@@ -6495,15 +6537,23 @@ Create a managed realtime endpoint
 
 Update endpoint callback, auth, or connection policy
 
+`gregale realtime update <app> <endpoint-id>`
+
 ### realtime delete
 
 Delete a managed realtime endpoint
+
+`gregale realtime delete --yes <value> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes <value>` | confirm the deletion | required |
 
 ### realtime connections
 
 List live connections for an endpoint
 
-`gregale realtime connections [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--limit <N>] [--cursor <TOKEN>]`
+`gregale realtime connections [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--limit <N>] [--cursor <TOKEN>] <app> <endpoint-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6516,7 +6566,7 @@ List live connections for an endpoint
 
 Close a bounded, filtered set of live connections
 
-`gregale realtime drain --reason <TEXT> [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--connection-id <ID>] [--limit <N>] [--dry-run] [--allow-partial] [--wait] [--timeout <DURATION>]`
+`gregale realtime drain --reason <TEXT> [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--connection-id <ID>] [--limit <N>] [--dry-run] [--allow-partial] [--wait] [--timeout <DURATION>] <app> <endpoint-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6534,7 +6584,7 @@ Close a bounded, filtered set of live connections
 
 Show or wait for a durable realtime drain
 
-`gregale realtime drain-status [--wait] [--timeout <DURATION>]`
+`gregale realtime drain-status [--wait] [--timeout <DURATION>] <app> <endpoint-id> <operation-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6545,21 +6595,47 @@ Show or wait for a durable realtime drain
 
 Send a message to one live connection
 
+`gregale realtime send [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id> <connection-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--data <DATA>` | message text (or --data-stdin) |  |
+| `--data-stdin` | read the message from stdin |  |
+| `--binary` | send as a binary frame |  |
+
 ### realtime close
 
 Close one live connection
+
+`gregale realtime close [--reason <TEXT>] <app> <endpoint-id> <connection-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--reason <TEXT>` | close reason |  |
 
 ### realtime subscribe
 
 Subscribe one live connection to a channel
 
+`gregale realtime subscribe <app> <endpoint-id> <connection-id> <channel>`
+
 ### realtime unsubscribe
 
 Remove one live connection from a channel
 
+`gregale realtime unsubscribe <app> <endpoint-id> <connection-id> <channel>`
+
 ### realtime publish
 
 Publish a message to a channel
+
+`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id> <channel>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--data <DATA>` | message text (or --data-stdin) |  |
+| `--data-stdin` | read the message from stdin |  |
+| `--binary` | send as a binary frame |  |
 
 ### realtime auth
 
@@ -6937,7 +7013,7 @@ Plan a promotion
 
 Promote workloads
 
-`gregale projects environments promote --from <ENV> --to <ENV> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS>]`
+`gregale projects environments promote --from <ENV> --to <ENV> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS|DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6948,7 +7024,7 @@ Promote workloads
 | `--idempotency-key <KEY>` | stable key for retrying this promotion |  |
 | `--wait` | wait for the promotion to reach a terminal status |  |
 | `--progress` | print promotion transitions while waiting (human output only) |  |
-| `--timeout <SECONDS>` | maximum seconds to wait for promotion completion |  |
+| `--timeout <SECONDS|DURATION>` | maximum wait for promotion completion (seconds, or a duration such as 10m) |  |
 
 #### projects environments status
 
@@ -7115,7 +7191,7 @@ gregale secrets set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemera
 
 ### secrets unset
 
-Remove a sealed secret
+Remove a sealed secret (alias: rm)
 
 `gregale secrets unset --app <slug> [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] <KEY>`
 
@@ -7573,7 +7649,13 @@ Manage app and account release webhooks (webhooks account &lt;verb&gt;)
 
 ### webhooks list
 
-List webhooks
+List an app&#39;s webhooks (slug defaults to linked context)
+
+`gregale webhooks list [--app <slug>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (alternative to the positional) |  |
 
 ### webhooks add
 

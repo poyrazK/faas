@@ -18,6 +18,7 @@ workflows:
         report: daily
       overlap: skip
       enabled: true
+      tenant_configurable: true # optional: let each linked customer adjust this schedule
     steps:
       - name: generate
         run: generate_report
@@ -74,11 +75,34 @@ Only the live default deployment schedules work. Preview deployments do not
 create background copies. A new or redeployed schedule first arms when the
 scheduler observes it, then fires at its next eligible minute. Missed minutes
 during downtime are discarded; recovery does not enqueue a backlog. Set
-`enabled: false` and redeploy to stop new scheduled starts. Existing runs
+`enabled: false` and redeploy to stop app-owned scheduled starts. Existing runs
 continue. Account suspension, abuse holds, Free-plan downgrade, and maintenance
-mode block admission. Tenant-required apps are excluded because this trigger
-does not supply platform-tenant identity. Schedule definitions use the existing
-workflow-definition quota rather than the separate HTTP/command-cron quota.
+mode block admission. Tenant-required apps start one run for each active linked
+tenant; their cursors and overlap checks are independent, while the app-wide
+workflow concurrency quota remains shared.
+
+An app owner can add `tenant_configurable: true` to a schedule trigger to let a
+linked customer manage its own cron expression, timezone, overlap behavior, and
+enabled state. The customer token needs `platform_tenant:automations:read` to
+list opted-in schedules and `platform_tenant:automations:manage` to update one:
+
+```http
+GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules
+Authorization: Bearer <tenant-token>
+
+PUT /v1/platform-tenant-self/apps/{slug}/workflows/schedules/daily_report
+Authorization: Bearer <tenant-token>
+Content-Type: application/json
+
+{"expected_version":0,"schedule":"0 6 * * 1-5","timezone":"Europe/Istanbul","overlap":"skip"}
+```
+
+Use the returned `version` as `expected_version` on each update; zero creates
+the tenant's first override and stale versions return 409. Customers cannot
+change workflow steps, credentials, the app-owned fixed input, or shared app
+quota. Without the owner's opt-in, the published cadence remains in control.
+Schedule definitions use the existing workflow-definition quota rather than
+the separate HTTP/command-cron quota.
 
 Workflow steps retain their existing at-least-once execution contract. Use the
 stable workflow idempotency header for external effects even though duplicate

@@ -540,8 +540,14 @@ func TestThrottleRec_LogInjectionGuard(t *testing.T) {
 	if strings.Contains(src, "\r") || strings.Contains(src, "\n") {
 		t.Errorf("returned Source has CR/LF: %q", src)
 	}
-	if !strings.Contains(src, "evilINJECTED") {
-		t.Errorf("Source = %q, want CR/LF stripped from the err", src)
+	// production-us hunt #4: query errors carry the internal Prometheus URL
+	// and PromQL, so the response gets only the generic reason; the
+	// sanitised detail stays in the server log checked below.
+	if src != "degraded: telemetry unavailable" {
+		t.Errorf("Source = %q, want the generic degraded reason", src)
+	}
+	if !strings.Contains(buf.String(), "evilINJECTED") {
+		t.Errorf("log lost the sanitised query error: %s", buf.String())
 	}
 	// Walk the captured JSON envelope: extract the "err" field's
 	// value and check it has no CR/LF. slog framing (newlines

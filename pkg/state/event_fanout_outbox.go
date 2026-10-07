@@ -53,6 +53,7 @@ type PublishedEventRecipient struct {
 	ID                   string                             `json:"id"`
 	AccountID            string                             `json:"account_id"`
 	AppID                string                             `json:"app_id"`
+	PlatformTenantID     string                             `json:"platform_tenant_id,omitempty"`
 	Source               string                             `json:"source"`
 	Type                 string                             `json:"type"`
 	Filter               json.RawMessage                    `json:"filter"`
@@ -505,11 +506,14 @@ func normalizeEventFanoutReplayLimit(limit int) int {
 }
 
 type publishedEventIdentity struct {
-	Source        string          `json:"source"`
-	ID            string          `json:"id"`
-	Type          string          `json:"type"`
-	SchemaVersion string          `json:"schemaversion"`
-	Data          json.RawMessage `json:"data"`
+	Source           string          `json:"source"`
+	ID               string          `json:"id"`
+	Type             string          `json:"type"`
+	SchemaVersion    string          `json:"schemaversion"`
+	Data             json.RawMessage `json:"data"`
+	AppID            string          `json:"appid,omitempty"`
+	PlatformTenantID string          `json:"platformtenantid,omitempty"`
+	TenantEventID    string          `json:"tenanteventid,omitempty"`
 }
 
 // appendEventFanoutAttemptLocked mirrors the durable attempt-history insert.
@@ -556,14 +560,19 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	if m.eventFanout == nil {
 		m.eventFanout = make(map[string]*PublishedEventWork)
 	}
+	if (event.AppID == "") != (event.PlatformTenantID == "") {
+		return false, fmt.Errorf("tenant event requires both app and platform tenant identity")
+	}
 	candidates := make([]EventSubscription, 0)
-	for _, subscription := range m.eventSubscriptions {
-		app, exists := m.eventSubscriptionAppLocked(subscription.AppID)
-		if !sameMemUUID(subscription.AccountID, subject.String()) || !subscription.Enabled || !exists || app.Status == AppDeleted {
-			continue
-		}
-		if eventSubscriptionPatternMatches(subscription.Source, event.Source) && eventSubscriptionPatternMatches(subscription.Type, event.Type) {
-			candidates = append(candidates, subscription)
+	if event.PlatformTenantID == "" {
+		for _, subscription := range m.eventSubscriptions {
+			app, exists := m.eventSubscriptionAppLocked(subscription.AppID)
+			if !sameMemUUID(subscription.AccountID, subject.String()) || !subscription.Enabled || !exists || app.Status == AppDeleted {
+				continue
+			}
+			if eventSubscriptionPatternMatches(subscription.Source, event.Source) && eventSubscriptionPatternMatches(subscription.Type, event.Type) {
+				candidates = append(candidates, subscription)
+			}
 		}
 	}
 	sort.Slice(candidates, func(i, j int) bool {
@@ -588,7 +597,11 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 		}
 		recipients = append(recipients, recipient)
 	}
-	recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
+	if event.PlatformTenantID != "" {
+		recipients = append(recipients, m.tenantWorkflowEventRecipientsLocked(subject.String(), event.AppID, event.PlatformTenantID, event.Source, event.Type)...)
+	} else {
+		recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
+	}
 	var storageBytes int64
 	if !strings.HasPrefix(event.Source, "gregale.") {
 		snapshot, err := json.Marshal(recipients)

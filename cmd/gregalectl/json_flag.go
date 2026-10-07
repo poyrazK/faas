@@ -33,6 +33,9 @@ func applyJSONFlag(args []string) []string {
 		jsonOutput = true
 	}
 	for i, a := range args {
+		if a == "--" {
+			break
+		}
 		switch {
 		case a == "--json" || a == "-j":
 			jsonOutput = true

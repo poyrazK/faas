@@ -198,6 +198,7 @@ export type { CancelPendingWorkRequest } from './CancelPendingWorkRequest.js';
 export type { CancelPendingWorkResponse } from './CancelPendingWorkResponse.js';
 export type { CapabilitiesResponse } from './CapabilitiesResponse.js';
 export type { CapabilityStatus } from './CapabilityStatus.js';
+export type { ChangeManagedPostgresComputePolicyRequest } from './ChangeManagedPostgresComputePolicyRequest.js';
 export type { ChangeMemberRoleRequest } from './ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './ChangePlanRequest.js';
 export type { CheckRouteRequirementsRequest } from './CheckRouteRequirementsRequest.js';
@@ -656,6 +657,7 @@ export type { ListOrgActivityResponse } from './ListOrgActivityResponse.js';
 export type { ListScheduleOccurrencesResponse } from './ListScheduleOccurrencesResponse.js';
 export type { ListSecretsForAccountResponse } from './ListSecretsForAccountResponse.js';
 export type { ListTenantSurfacesResponse } from './ListTenantSurfacesResponse.js';
+export type { ListTenantWorkflowSchedulesResponse } from './ListTenantWorkflowSchedulesResponse.js';
 export type { ListTriggerDeadLetterResponse } from './ListTriggerDeadLetterResponse.js';
 export type { ListTriggerRecordsResponse } from './ListTriggerRecordsResponse.js';
 export type { ListWorkflowCallbacksResponse } from './ListWorkflowCallbacksResponse.js';
@@ -692,6 +694,7 @@ export type { ManagedPostgresAccountingReconciliationResult } from './ManagedPos
 export type { ManagedPostgresBinding } from './ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './ManagedPostgresBindingList.js';
 export type { ManagedPostgresCapabilities } from './ManagedPostgresCapabilities.js';
+export type { ManagedPostgresComputePolicyChange } from './ManagedPostgresComputePolicyChange.js';
 export type { ManagedPostgresCutover } from './ManagedPostgresCutover.js';
 export type { ManagedPostgresCutoverID } from './ManagedPostgresCutoverID.js';
 export type { ManagedPostgresCutoverMember } from './ManagedPostgresCutoverMember.js';
@@ -916,6 +919,7 @@ export type { PlatformTenantOffboardingPlanResponse } from './PlatformTenantOffb
 export type { PlatformTenantOffboardingReceiptListResponse } from './PlatformTenantOffboardingReceiptListResponse.js';
 export type { PlatformTenantOffboardingReceiptResponse } from './PlatformTenantOffboardingReceiptResponse.js';
 export type { PlatformTenantOffboardingReceiptSummary } from './PlatformTenantOffboardingReceiptSummary.js';
+export type { PlatformTenantPublishEventResponse } from './PlatformTenantPublishEventResponse.js';
 export type { PlatformTenantRateCardListResponse } from './PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './PlatformTenantRateCardResponse.js';
 export type { PlatformTenantReconciliationAppliedWebhookPayload } from './PlatformTenantReconciliationAppliedWebhookPayload.js';
@@ -1315,6 +1319,7 @@ export type { TCPListenerTLSStatusResponse } from './TCPListenerTLSStatusRespons
 export type { TemplateView } from './TemplateView.js';
 export type { TenantHostnameResponse } from './TenantHostnameResponse.js';
 export type { TenantSurfaceResponse } from './TenantSurfaceResponse.js';
+export type { TenantWorkflowScheduleResponse } from './TenantWorkflowScheduleResponse.js';
 export type { TestAlertPresetResponse } from './TestAlertPresetResponse.js';
 export type { ThrottlePreviewRow } from './ThrottlePreviewRow.js';
 export type { ThrottleSuggestionRow } from './ThrottleSuggestionRow.js';
@@ -1361,6 +1366,7 @@ export type { UpdateProjectEnvironmentRoutePolicyRequest } from './UpdateProject
 export type { UpdateProjectRequest } from './UpdateProjectRequest.js';
 export type { UpdateQueueBindingRequest } from './UpdateQueueBindingRequest.js';
 export type { UpdateTCPListenerRequest } from './UpdateTCPListenerRequest.js';
+export type { UpdateTenantWorkflowScheduleRequest } from './UpdateTenantWorkflowScheduleRequest.js';
 export type { UpdateTriggerRequest } from './UpdateTriggerRequest.js';
 export type { UpdateUDPListenerRequest } from './UpdateUDPListenerRequest.js';
 export type { UpdateUpstreamCircuitBreakerRequest } from './UpdateUpstreamCircuitBreakerRequest.js';

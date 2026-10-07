@@ -146,6 +146,7 @@ type Loop struct {
 	floor                       *floor.Trigger                          // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
 	prewarm                     *prewarm.Trigger                        // scheduled/predicted demand-window capacity restore; nil opts out
 	recentLoad                  *recentload.RecentLoad                  // issue #171 aggressive-reaper signal mirror; nil opts out
+	fleetRates                  fleetRequestRates                       // H4-70 fleet-wide demand from instances.request_count
 	livenessWindow              *LivenessWindow                         // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
 	appDelete                   *AppDeleteSubscriber                    // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
 	privateNetwork              *PrivateNetworkAttachmentSubscriber     // durable private-route detach handler; nil = no-op dispatch
@@ -206,13 +207,18 @@ type Loop struct {
 
 	// workflowsDispatched is the FAAS_WORKFLOWS_ENABLED opt-in for the
 	// workflow dispatch tick (ADR-081).
-	workflowsDispatched      bool
-	workflowScheduleMinute   int64
-	workflowScheduleAfter    string
-	workflowScheduleComplete bool
-	workflowScheduleFailed   bool
-	workflowOrch             *WorkflowOrchestrator
-	workflowRetention        *WorkflowRetention
+	workflowsDispatched               bool
+	workflowScheduleMinute            int64
+	workflowScheduleAfter             string
+	workflowScheduleComplete          bool
+	workflowScheduleFailed            bool
+	tenantWorkflowScheduleMinute      int64
+	tenantWorkflowScheduleAfterApp    string
+	tenantWorkflowScheduleAfterTenant string
+	tenantWorkflowScheduleComplete    bool
+	tenantWorkflowScheduleFailed      bool
+	workflowOrch                      *WorkflowOrchestrator
+	workflowRetention                 *WorkflowRetention
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -2533,6 +2539,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				PrewarmMinInstances:    appPrewarmFloor[a.ID],
 				OpenConns:              open,
 				InflightRequests:       inflightRequests,
+				RequestCount:           ins.RequestCount,
 				FlowSummaries:          flowSummaries,
 				FlowSummaryDegraded:    flowSummaryDegraded,
 				FlowCountDegraded:      flowCountDegraded,
@@ -2890,6 +2897,7 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 	consideredAppIDs := map[string]struct{}{}
 	desiredByApp := map[string]int{}
 	vmmdInflightByApp := map[string]int64{}
+	fleetRPS := l.fleetRates.observe(runningReaperInstances(snapshot), now)
 	planByApp := map[string]api.Plan{}
 	for _, s := range snapshot {
 		if s.State != state.StateRunning {
@@ -2922,6 +2930,10 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 			continue
 		}
 		if demand := l.inflightDemandReplicas(a.ID, planByApp[a.ID], vmmdInflightByApp[a.ID], now); demand > desired {
+			desired = demand
+		}
+		// H4-70: the local gateway and vmmd see only this node's share.
+		if demand := fleetDemandReplicas(fleetRPS[a.ID], a.AutoscaleTargetRPS); demand > desired {
 			desired = demand
 		}
 		consideredAppIDs[a.ID] = struct{}{}

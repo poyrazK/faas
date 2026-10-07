@@ -8,6 +8,8 @@
 # report, while the second pass enforces the caller's publication policy.
 # Actionable fixed matches remain the default. Hardened runtime callers can set
 # GRYPE_ONLY_FIXED=false to match vmmd's fail-closed CRITICAL admission policy.
+# GRYPE_CONFIG names a per-image exception file applied to the gate pass only;
+# the full report above it stays unfiltered so every finding remains visible.
 
 set -euo pipefail
 
@@ -17,6 +19,14 @@ platform=${3:-linux/amd64}
 fail_on=${GRYPE_FAIL_ON:-critical}
 grype_bin=${GRYPE_BIN:-grype}
 only_fixed=${GRYPE_ONLY_FIXED:-true}
+gate_config_args=()
+if [[ -n "${GRYPE_CONFIG:-}" ]]; then
+  if [[ ! -f "${GRYPE_CONFIG}" ]]; then
+    echo "GRYPE_CONFIG ${GRYPE_CONFIG} does not exist" >&2
+    exit 2
+  fi
+  gate_config_args=(-c "${GRYPE_CONFIG}")
+fi
 
 case "${only_fixed}" in
   true) gate_fix_args=(--only-fixed) ;;
@@ -56,4 +66,5 @@ fi
   --platform "${platform}" \
   --fail-on "${fail_on}" \
   "${gate_fix_args[@]}" \
+  ${gate_config_args[@]+"${gate_config_args[@]}"} \
   -o table

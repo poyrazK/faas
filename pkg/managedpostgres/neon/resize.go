@@ -10,12 +10,13 @@ import (
 
 type updateComputeRequest struct {
 	Endpoint struct {
-		MinimumCU float64 `json:"autoscaling_limit_min_cu"`
-		MaximumCU float64 `json:"autoscaling_limit_max_cu"`
+		SuspendTimeoutSecond *int64   `json:"suspend_timeout_seconds,omitempty"`
+		MinimumCU            *float64 `json:"autoscaling_limit_min_cu,omitempty"`
+		MaximumCU            *float64 `json:"autoscaling_limit_max_cu,omitempty"`
 	} `json:"endpoint"`
 }
 
-// Update converges only the pinned primary's class. An uncertain PATCH is
+// Update converges one pinned primary compute field family at a time. An uncertain PATCH is
 // recovered by reading the configuration; it is never blindly replayed.
 func (p *Provider) Update(ctx context.Context, request managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
 	if request.Generation < 2 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 {
@@ -28,7 +29,12 @@ func (p *Provider) Update(ctx context.Context, request managedpostgres.UpdateReq
 		return managedpostgres.ObservedDatabase{}, err
 	}
 	previous := request.PreviousSpec
-	previous.Class = request.Spec.Class
+	policyChange := previous.ScaleToZero != request.Spec.ScaleToZero
+	if policyChange {
+		previous.ScaleToZero = request.Spec.ScaleToZero
+	} else {
+		previous.Class = request.Spec.Class
+	}
 	if previous != request.Spec {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
 	}
@@ -41,7 +47,12 @@ func (p *Provider) Update(ctx context.Context, request managedpostgres.UpdateReq
 	}
 	payload := updateComputeRequest{}
 	profile := profiles[request.Spec.Class]
-	payload.Endpoint.MinimumCU, payload.Endpoint.MaximumCU = profile.minimumCU, profile.maximumCU
+	if policyChange {
+		timeout := endpointSettingsForSpec(request.Spec).SuspendTimeoutSecond
+		payload.Endpoint.SuspendTimeoutSecond = &timeout
+	} else {
+		payload.Endpoint.MinimumCU, payload.Endpoint.MaximumCU = &profile.minimumCU, &profile.maximumCU
+	}
 	ref, _ := parseResourceRef(request.ResourceID)
 	path := "/projects/" + url.PathEscape(ref.projectID) + "/endpoints/" + url.PathEscape(primary.ID)
 	// The mutation response is not readiness evidence. A worker also takes this
@@ -69,9 +80,6 @@ func (p *Provider) resizeObservation(ctx context.Context, request managedpostgre
 	metadata, err := p.readDatabaseMetadata(ctx, data, true)
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, endpoint{}, err
-	}
-	if metadata.operations.Pagination.Cursor != "" {
-		return managedpostgres.ObservedDatabase{}, endpoint{}, managedpostgres.ErrUnavailable
 	}
 	selected, primary, ready := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, data.branchID)
 	if selected.ID != data.branchID || !validProviderID.MatchString(primary.ID) ||

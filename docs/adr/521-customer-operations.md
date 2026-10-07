@@ -79,12 +79,33 @@ park/restore, scheduler restart, and leakcheck; both are required for the comple
 end-to-end goal. Rollback disables new admission while preserving reads, reports,
 delivery, and recovery for already admitted operations.
 
-Private code retention uses owned operation references and separate code-pin
-receipts. Admission and safe recovery lock the bounded release graph before
-execution rows. Active operations retain their code and idempotency identity
-through long waits; settled work reserves the full documented replay window.
-Code cleanup and rollout changes preserve those references without extending
-the configured public revision or release-header access window.
+Private code retention derives from an owned operation and its immutable
+definition, including every verified member of the selected release graph.
+Accepted/running work retains code and idempotency identity past timestamp
+expiry; stopped work retains code through its result/recovery window. Cutover,
+abort and rollback remove weighted traffic while preserving these references.
+Private cleanup receipts use `customer_operation_code_pins`, separate from
+public revision deadlines. Admission, claim renewal, progress, recovery and
+settlement never extend the public revision-header window or native release-set
+deadline. The canonical private-pin migration preserves existing public
+timestamps and backfills private receipts only from owned operation references,
+including their full release graph.
+
+Pin cleanup locks apps before deployments and rechecks owned references in a
+fresh READ COMMITTED statement after acquiring the app locks. Retained references
+are excluded before paging, and a page considers at most
+`api.RevisionPinCleanupPageMax` (500) deployment IDs, each with at most one
+public and one private receipt. Both deadlines must expire, and each receipt
+present in the cleanup snapshot must actually be deleted before code is retired.
+A concurrent receipt renewal therefore preserves code. Expiry, owner deletion
+and inconsistent admission metadata release the private reference without an
+unlimited timestamp pin or a renewal heartbeat.
+
+Fresh admission and safe retry lock every owned release app in ID order before
+its deployments and execution rows, then revalidate all members and release
+usability. A release selected by the definition receives the same checks as an
+explicit request; locking only the originating app cannot protect another graph
+member from code cleanup.
 
 Customer HTTP operation claims use `X-Gregale-Customer-Operation-Id`. Managed
 exclusive operations retain their own identity and result negotiation. A
@@ -178,3 +199,59 @@ identity/payload conflicts, unsafe files, invalid acknowledgements and expired
 unconfirmed receipts fail closed. `queued` describes the decision at its recorded
 time. Callers must inspect the delivery for live transport status. No decision
 repeats business work or relaxes receiver cooldown/delivery policy.
+
+## Backend execution identity ledger — 2026-10-06
+
+Each operation generation binds exactly one real backend execution: an HTTP
+invocation, workflow run, or Job run. The ledger derives its execution ID and
+kind from mutually exclusive backend foreign keys. The current projection must
+match the binding's operation, generation, ID and kind. Events and report
+receipts reference a binding owned by the same operation. Workflow/Job runs
+retain permanent operation markers after projection GC; binding queries also
+check their app/account ownership and workflows' platform tenant. Backend
+adapters must lock their execution row before the common operation row. HTTP writers that predate the common
+identity fields retain their invocation identity through generated-column
+fallbacks. This schema seam does not itself enable workflow or Job admission.
+
+Active work retains its customer projection and submission key even when an
+initial result or identity window has elapsed. Result/event windows reset when
+work settles or stops for reconciliation; the full idempotency window is
+reserved from that settlement in the same transaction. Event history remains
+bounded and may require snapshot resynchronization during a long wait. Once
+work is stopped, ordinary projection/tombstone retention can release capacity.
+Adapters must also preserve usable deployment/release pins across long waits;
+an unlimited timestamp pin is not a substitute for checking active ownership.
+
+## Workflow definition snapshots — 2026-10-06
+
+A definition selects exactly one target: an ordinary HTTP method/path or a
+named workflow from its owner-scoped deployment. Workflow targets declare a
+result step and aggregate progress stage. A private nullable snapshot column
+retains the selected deployment DAG; HTTP definitions keep a null snapshot.
+The ledger checks the target shape and matching snapshot name, and deployment
+lookup checks both the owning app and account. Definition adapters must validate
+the bounded DAG, waits, dependencies and exception routes, and include the
+snapshot content in the immutable revision. Customers cannot supply a private
+snapshot. This schema seam does not enable workflow execution: native admission
+and dispatch remain unavailable until their complete recovery contract is
+qualified.
+
+## Controlled native workflow admission source — 2026-10-06
+
+The trusted adapter must commit the native run, verified tenant, immutable input
+and bounded DAG, initial steps, operation projection, backend binding, acceptance
+event, scoped receipt and private code references in one transaction. It creates
+no HTTP invocation. Native and operation admission share the app active-run quota
+and advisory key; that lock precedes code app locks to avoid an app foreign-key
+lock cycle. Owner and tenant binding remain mandatory.
+
+The private SQL helpers exclude permanently marked runs from legacy claims and
+recovery, including after operation projection GC, and retain bound native
+history. Legacy recovery must preserve the canonical resumed, foreach and
+outbound semantics: lock an unmarked run, mark uncertain unsafe outbound effects,
+close their attempts, then reset eligible running steps in the same transaction.
+The helper queries are unwired; the public PgStore runtime does not acquire these
+isolation guards merely because they exist. Controlled adapter validation and
+public claim, advancement, recovery and cancellation guards remain activation
+gates. Native admission stays unavailable until those gates and native lifecycle
+qualification pass. These source seams do not establish exactly-once execution.

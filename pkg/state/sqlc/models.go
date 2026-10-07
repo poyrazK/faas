@@ -1459,6 +1459,9 @@ type CustomerOperation struct {
 	Record              []byte
 	ExpiresAt           pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+	CurrentExecutionID  pgtype.UUID
+	ExecutionKind       string
+	ExecutionGeneration int32
 }
 
 type CustomerOperationCodePin struct {
@@ -1468,16 +1471,17 @@ type CustomerOperationCodePin struct {
 }
 
 type CustomerOperationDefinition struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	Scope        string
-	Name         string
-	Revision     string
-	DeploymentID pgtype.UUID
-	ReleaseID    string
-	Spec         []byte
-	CreatedAt    pgtype.Timestamptz
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Name             string
+	Revision         string
+	DeploymentID     pgtype.UUID
+	ReleaseID        string
+	Spec             []byte
+	CreatedAt        pgtype.Timestamptz
+	WorkflowSnapshot []byte
 }
 
 type CustomerOperationDeliveryRetry struct {
@@ -1501,10 +1505,14 @@ type CustomerOperationEvent struct {
 }
 
 type CustomerOperationExecution struct {
-	OperationID  pgtype.UUID
-	Generation   int32
-	InvocationID pgtype.UUID
-	CreatedAt    pgtype.Timestamptz
+	OperationID   pgtype.UUID
+	Generation    int32
+	InvocationID  pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	WorkflowRunID pgtype.UUID
+	JobRunID      pgtype.UUID
+	ExecutionID   pgtype.UUID
+	ExecutionKind string
 }
 
 type CustomerOperationIdempotency struct {
@@ -3256,6 +3264,7 @@ type JobRun struct {
 	FailureRules                []byte
 	OccurrenceID                pgtype.UUID
 	StartDeadlineAt             pgtype.Timestamptz
+	OperationID                 pgtype.UUID
 	ExclusiveOperationID        pgtype.UUID
 	ExclusiveGeneration         pgtype.Int8
 }
@@ -3598,6 +3607,7 @@ type ManagedPostgresResize struct {
 	State              string
 	CreatedAt          pgtype.Timestamptz
 	CompletedAt        pgtype.Timestamptz
+	TargetScaleToZero  pgtype.Bool
 }
 
 type ManagedPostgresRestoreProof struct {
@@ -4839,6 +4849,19 @@ type PlatformTenantUsageMinute struct {
 	BillableUnits    int64
 	UpdatedAt        pgtype.Timestamptz
 	SourceKind       string
+}
+
+type PlatformTenantWorkflowScheduleCursor struct {
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	WorkflowName     string
+	DeploymentID     pgtype.UUID
+	TriggerSnapshot  []byte
+	LastEvaluatedAt  pgtype.Timestamptz
+	ScheduledFor     pgtype.Timestamptz
+	Status           string
+	LastRunID        pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type PrPreviewSet struct {
@@ -6676,12 +6699,13 @@ type WorkflowRun struct {
 	LastError                pgtype.Text
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
-	CreateIdempotencyKey     pgtype.Text
-	CreateRequestFingerprint []byte
 	LeaseUntil               pgtype.Timestamptz
+	OperationID              pgtype.UUID
 	ResumeCount              int32
 	CancelledAt              pgtype.Timestamptz
 	PlatformTenantID         pgtype.UUID
+	CreateIdempotencyKey     pgtype.Text
+	CreateRequestFingerprint []byte
 }
 
 type WorkflowRunResume struct {

@@ -24,7 +24,7 @@ func TestFreezeSnapshotDriveUsesPrivateBackingAtPauseBoundary(t *testing.T) {
 		"instance": {{source: source, mountpoint: mountpoint}},
 	}}
 
-	frozen, size, err := v.freezeSnapshotDrive(root, "instance")
+	frozen, size, _, err := v.freezeSnapshotDrive(root, "instance")
 	if err != nil {
 		t.Fatal(err)
 	}

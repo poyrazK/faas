@@ -17,6 +17,7 @@ import type { EventReplayPreviewResponse } from '../models/EventReplayPreviewRes
 import type { EventSchema } from '../models/EventSchema.js';
 import type { EventStorageUsageResponse } from '../models/EventStorageUsageResponse.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
+import type { PlatformTenantPublishEventResponse } from '../models/PlatformTenantPublishEventResponse.js';
 import type { PreviewEventRequest } from '../models/PreviewEventRequest.js';
 import type { PreviewEventResponse } from '../models/PreviewEventResponse.js';
 import type { PublishEventRequest } from '../models/PublishEventRequest.js';
@@ -118,6 +119,112 @@ export class EventsService {
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Publish an event for an automation linked to this tenant.
+   * Requires platform_tenant:events:manage. The tenant identity comes from
+   * the bearer token, and the app must be actively linked to that tenant.
+   * The platform scopes the event to that app's published event-triggered
+   * workflows; it does not fan out to other apps' subscriptions. The caller's
+   * id is scoped by tenant, app, and source, so repeating the same identity
+   * and content returns the original durable receipt. The response exposes
+   * both the canonical platform id and the caller's client_event_id.
+   *
+   * @returns PlatformTenantPublishEventResponse Event accepted for tenant-scoped workflow routing.
+   * @throws ApiError
+   */
+  public static publishPlatformTenantSelfEvent({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PublishEventRequest,
+  }): CancelablePromise<PlatformTenantPublishEventResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/apps/{slug}/events:publish',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read routing and workflow-start evidence for a tenant event.
+   * Requires platform_tenant:events:read. Receipts are visible only to the authenticated tenant that published the event for this linked app. Account-operator recovery actions are omitted.
+   * @returns EventReceiptResponse Tenant-scoped event receipt and captured workflow recipients.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfEventReceipt({
+    slug,
+    eventId,
+    source,
+    limit = 100,
+    after,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical event id returned by tenant event publication.
+     */
+    eventId: string,
+    /**
+     * Event source used with event_id to identify the receipt.
+     */
+    source: string,
+    /**
+     * Maximum captured workflow recipients to return in this page.
+     */
+    limit?: number,
+    /**
+     * Opaque continuation cursor returned in next_after.
+     */
+    after?: string,
+  }): CancelablePromise<EventReceiptResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/apps/{slug}/events/receipts/{event_id}',
+      path: {
+        'slug': slug,
+        'event_id': eventId,
+      },
+      query: {
+        'source': source,
+        'limit': limit,
+        'after': after,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        500: `code: capacity — server-side error; retry with backoff.`,
       },
     });
   }

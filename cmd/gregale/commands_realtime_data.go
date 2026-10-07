@@ -117,7 +117,11 @@ func cmdRealtimeSubscription(args []string, subscribe bool) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
-	PrintOK(osStdout, "Realtime connection %s %s from channel %s.", args[2], verb, args[3])
+	preposition := "to"
+	if verb == "unsubscribed" {
+		preposition = "from"
+	}
+	PrintOK(osStdout, "Realtime connection %s %s %s channel %s.", args[2], verb, preposition, args[3])
 	return 0
 }
 
