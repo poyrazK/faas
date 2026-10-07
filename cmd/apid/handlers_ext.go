@@ -2794,7 +2794,18 @@ func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool
 	return true, nil
 }
 
+// restartClaimReleaseTimeout bounds the release write once it is detached from
+// the request.
+const restartClaimReleaseTimeout = 10 * time.Second
+
+// releaseAppRestartClaim returns a claimed app to active. It runs detached
+// from the caller's context: the release follows a failure, which is often
+// the request's own deadline, and a release on that context fails too and
+// leaves a live app parked; the reaper then stops every serving instance
+// (production-us hunt #5, H5-35).
 func releaseAppRestartClaim(ctx context.Context, store state.Store, appID string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restartClaimReleaseTimeout)
+	defer cancel()
 	if atomicStore, ok := store.(appStatusCompareAndSetter); ok {
 		_, err := atomicStore.CompareAndSetAppStatus(ctx, appID, state.AppEvictedCold, state.AppActive)
 		return err
