@@ -202,6 +202,38 @@ func TestEnvironmentQualificationGraphCaptureFailureKeepsPartialCohortUnqualifie
 	}
 }
 
+func TestEnvironmentQualificationGraphVisitorFailureDoesNotCapture(t *testing.T) {
+	store, _, requests := queuedQualificationExecutionFixtureWithBindings(t,
+		map[string]api.EnvironmentServiceBinding{"backend": {Workload: "api2", EnvKey: "BACKEND_URL"}}, api.ExecutionModeRequest, api.ExecutionModeService)
+	var callerID string
+	for _, request := range requests {
+		if request.Resource == "workload/api" {
+			callerID = request.AppID
+		}
+	}
+	v := &qualificationGraphVMM{qualificationRuntimeVMM: newQualificationRuntimeVMM(&fakeVMM{}), callerID: callerID}
+	e := newEngine(t, store, v, &fakeNotifier{}, "test-fc").WithEnvironmentQualificationServiceProxy(
+		func(context.Context, string) (string, error) { return "http://10.100.0.1:10081", nil })
+	visitorErr := errors.New("isolated graph smoke failed")
+	instances := map[string]state.Instance{}
+	page, err := e.DispatchEnvironmentWorkloadQualificationGraphs(t.Context(), e.defaultLocalNodeID, "graph-scheduler", "", 1,
+		func(_ context.Context, live map[string]state.Instance) error {
+			instances = live
+			return visitorErr
+		})
+	if !errors.Is(err, visitorErr) || page.Claimed != 1 || page.Executed != 0 || len(v.captures) != 0 {
+		t.Fatalf("failed graph behavior check reached capture: page=%+v captures=%v err=%v", page, v.captures, err)
+	}
+	if fmt.Sprint(v.retired) != "[workload/api workload/api2]" || e.ledger.ResidentRAM() != 0 {
+		t.Fatalf("failed graph visitor did not retire the whole cohort: retired=%v ram=%d", v.retired, e.ledger.ResidentRAM())
+	}
+	for _, request := range requests {
+		if _, err := store.EnvironmentQualificationSnapshotReceipt(t.Context(), instances[request.Resource].ID); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("failed graph visitor left capture evidence for %s: %v", request.Resource, err)
+		}
+	}
+}
+
 func TestEnvironmentQualificationGraphDispatchRequiresCaptureBeforeClaim(t *testing.T) {
 	store, _, requests := queuedQualificationExecutionFixtureWithBindings(t,
 		map[string]api.EnvironmentServiceBinding{"backend": {Workload: "api2", EnvKey: "BACKEND_URL"}}, api.ExecutionModeRequest, api.ExecutionModeService)

@@ -2921,13 +2921,14 @@ cohort. Retirement errors now identify the workload whose durable execution
 retirement failed.
 
 Focused scheduler tests cover complete and partial cohorts, exact capture to
-retirement generation matching, capture replay/substitution, and refusal before
-claim when the durable capture adapter is absent. The environment-qualification
-scheduler test family passes on the local development host. This does not lift
-the native capture gate: the vmmd backend still fails closed until artifact
-retirement and qualification restore acceptance are implemented. Qualification
-polling, isolated smoke, restored readiness, graph activation and serving
-convergence remain gated; the combined PR remains deferred.
+retirement generation matching, visitor failure before capture, capture
+replay/substitution, and refusal before claim when the durable capture adapter
+is absent. The environment-qualification scheduler test family passes on the
+local development host. This does not lift the native capture gate: vmmd still
+fails closed until artifact retirement and qualification restore acceptance
+are implemented. Qualification polling, isolated smoke, restored readiness,
+graph activation and serving convergence remain gated; the combined PR remains
+deferred.
 
 
 ### Original artifact receipt validation (2026-10-06)
