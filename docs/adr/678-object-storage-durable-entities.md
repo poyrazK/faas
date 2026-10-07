@@ -1,4 +1,4 @@
-# ADR-638 · Object-storage durable entities
+# ADR-678 · Object-storage durable entities
 
 - **Status:** accepted for an internal prototype and opt-in invocation/alarm/maintenance/inventory preview; native runtime and provider qualification pending
 - **Date:** 2026-10-07
@@ -27,6 +27,11 @@ not the clock, fence publication after takeover. Callbacks compute a transition
 and may not perform external effects. The first milestone bounded inline request
 receipts; the journal milestone below removes that count ceiling while preserving
 the original retry contract.
+
+This preview implements the conditional-state capability for S3 only. The native
+GCS provider does not yet implement it, so selecting GCS fails startup when the
+preview is enabled. GCS generation fencing and live-bucket qualification are
+follow-up work; ordinary GCS object storage support does not qualify entity state.
 
 Alarm deadlines persist with state. The opt-in alarm milestone below adds
 discovery/delivery; owner-affinity routing, metering,

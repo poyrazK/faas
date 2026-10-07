@@ -1,4 +1,4 @@
-// A trusted development harness for ADR-638. Customer handlers will execute
+// A trusted development harness for ADR-678. Customer handlers will execute
 // inside Gregale workloads when runtime integration is implemented.
 package main
 
