@@ -306,7 +306,7 @@ func TestEventBackfillReceiptPositionMigration(t *testing.T) {
 	if n, err := f.store.PruneEventReplayBackfills(ctx, time.Now().Add(31*24*time.Hour), 100); err != nil || n != 1 {
 		t.Fatalf("job prune=%d %v", n, err)
 	}
-	raw, err := migrations.FS.ReadFile("20261007130000000_event_backfill_receipt_positions.sql")
+	raw, err := migrations.FS.ReadFile("20261007231622122_event_backfill_receipt_positions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
