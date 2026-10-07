@@ -28,6 +28,21 @@ const (
 	EventReplayPreviewReadTimeout    = 5 * time.Second
 )
 
+// Historical backfills pin only the bounded settled-receipt retention window.
+const (
+	EventReplayBackfillMaxRange            = 30 * 24 * time.Hour
+	EventReplayBackfillPageSize            = 100
+	EventReplayBackfillInFlightMax         = 100
+	EventReplayBackfillActiveJobsMax       = 3
+	EventReplayBackfillJobRetention        = 30 * 24 * time.Hour
+	EventReplayBackfillPruneBatch          = 100
+	EventReplayBackfillRetryMax            = 100
+	EventReplayBackfillItemsPageDefault    = 50
+	EventReplayBackfillItemsPageMax        = 100
+	EventReplayBackfillItemsCursorMaxBytes = 4096
+	EventReplayBackfillRequestTimeout      = 5 * time.Second
+)
+
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
 const (
 	EventBacklogPageDefault      = 100

@@ -8,6 +8,11 @@ import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAtt
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
 import type { EventReceiptReplayHistoryResponse } from '../models/EventReceiptReplayHistoryResponse.js';
 import type { EventReceiptResponse } from '../models/EventReceiptResponse.js';
+import type { EventReplayBackfillItemsResponse } from '../models/EventReplayBackfillItemsResponse.js';
+import type { EventReplayBackfillJobResponse } from '../models/EventReplayBackfillJobResponse.js';
+import type { EventReplayBackfillRequest } from '../models/EventReplayBackfillRequest.js';
+import type { EventReplayBackfillRetryRequest } from '../models/EventReplayBackfillRetryRequest.js';
+import type { EventReplayBackfillRetryResponse } from '../models/EventReplayBackfillRetryResponse.js';
 import type { EventReplayPreviewResponse } from '../models/EventReplayPreviewResponse.js';
 import type { EventSchema } from '../models/EventSchema.js';
 import type { EventStorageUsageResponse } from '../models/EventStorageUsageResponse.js';
@@ -610,6 +615,181 @@ export class EventsService {
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `Retained-event read failed or exceeded the five-second deadline (event_replay_preview_read_timeout).`,
+      },
+    });
+  }
+  /**
+   * Create a resumable historical event backfill.
+   * Creates a durable job for one current enabled ordinary subscription.
+   * The target declaration is snapshotted at creation, the half-open range
+   * uses platform acceptance time, and a fixed cutoff excludes later
+   * events. Only surviving retained envelopes are considered; this does
+   * not create a complete archive. The required duplicate policy is
+   * skip_existing: events originally captured for the target, legacy events
+   * with unknown membership, prior target rows, and unsettled receipts are
+   * skipped. Only settled receipts with captured snapshots and definitively
+   * absent target membership can create deliveries. The scheduler scans at
+   * most 100 envelopes per page and holds at most 100 target deliveries
+   * pending or processing per job. At most three jobs may run per account,
+   * with one active job per subscription. Active jobs protect their
+   * requested range from normal settled-receipt pruning. Routing uses the
+   * existing recipient lease, capacity, retry, and handler lifecycle.
+   * Work-bound subscriptions are unsupported. `enqueued` means the handler
+   * invocation was admitted, not completed. Responses use no-store.
+   *
+   * @returns EventReplayBackfillJobResponse Durable replay job accepted.
+   * @throws ApiError
+   */
+  public static createEventReplayBackfill({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Current ordinary subscription owned by this app and account.
+     */
+    subscriptionId: string,
+    requestBody: EventReplayBackfillRequest,
+  }): CancelablePromise<EventReplayBackfillJobResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Target subscription is disabled or work-bound (event_replay_backfill_disabled, event_replay_backfill_unsupported).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Durable job creation timed out.`,
+      },
+    });
+  }
+  /**
+   * Read durable event backfill progress.
+   * Returns account-scoped scan and per-envelope routing counts without exposing payloads.
+   * @returns EventReplayBackfillJobResponse Current replay job progress.
+   * @throws ApiError
+   */
+  public static getEventReplayBackfill({
+    jobId,
+  }: {
+    /**
+     * Durable backfill job identifier returned at creation.
+     */
+    jobId: string,
+  }): CancelablePromise<EventReplayBackfillJobResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-replays/{jobID}',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Job status read timed out.`,
+      },
+    });
+  }
+  /**
+   * List per-envelope outcomes for a durable backfill.
+   * Returns stable, acceptance-ordered metadata pages. Event identity and routing outcomes remain readable after the source envelope is pruned; event payloads are never returned.
+   * @returns EventReplayBackfillItemsResponse One metadata-only page of backfill outcomes.
+   * @throws ApiError
+   */
+  public static listEventReplayBackfillItems({
+    jobId,
+    state,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * Durable backfill job identifier.
+     */
+    jobId: string,
+    /**
+     * Filter items to one durable routing outcome.
+     */
+    state?: 'pending' | 'processing' | 'enqueued' | 'filtered' | 'failed' | 'skipped_captured' | 'skipped_unknown' | 'skipped_existing' | 'skipped_unsettled',
+    /**
+     * Opaque continuation cursor. Keep the job and state filter unchanged.
+     */
+    after?: string,
+    /**
+     * Maximum items returned in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<EventReplayBackfillItemsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-replays/{jobID}/items',
+      path: {
+        'jobID': jobId,
+      },
+      query: {
+        'state': state,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Item read timed out.`,
+      },
+    });
+  }
+  /**
+   * Retry a bounded batch of failed backfill deliveries.
+   * Resets up to 100 failed routing recipients in this job with a fresh routing generation; handler retries and dead letters remain independent.
+   * @returns EventReplayBackfillRetryResponse Failed routing deliveries requeued.
+   * @throws ApiError
+   */
+  public static retryFailedEventReplayBackfill({
+    jobId,
+    requestBody,
+  }: {
+    /**
+     * Backfill job whose eligible failed routing deliveries are being retried.
+     */
+    jobId: string,
+    requestBody: EventReplayBackfillRetryRequest,
+  }): CancelablePromise<EventReplayBackfillRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/event-replays/{jobID}/retry-failed',
+      path: {
+        'jobID': jobId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Job has not completed with failures (event_replay_backfill_state).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Retry request timed out.`,
       },
     });
   }

@@ -1067,6 +1067,11 @@ var methodRouteMap = map[string]string{
 
 	// ADR-624: historical subscription replay is a metadata-only preview.
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview": "PreviewEventReplay",
+	// ADR-625: historical subscription replay is a bounded durable backfill.
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays": "CreateEventReplayBackfill",
+	"GET /v1/event-replays/{jobID}":                                     "GetEventReplayBackfill",
+	"GET /v1/event-replays/{jobID}/items":                               "ListEventReplayBackfillItems",
+	"POST /v1/event-replays/{jobID}/retry-failed":                       "RetryFailedEventReplayBackfill",
 
 	// Issue #279 — operator credits. The auto-derivation produces
 	// "PostAdminAccountsIdCredits" which reads as a Swagger-style

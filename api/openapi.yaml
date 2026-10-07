@@ -24547,6 +24547,178 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays:
+    post:
+      tags: [events]
+      operationId: createEventReplayBackfill
+      summary: Create a resumable historical event backfill.
+      description: |
+        Creates a durable job for one current enabled ordinary subscription.
+        The target declaration is snapshotted at creation, the half-open range
+        uses platform acceptance time, and a fixed cutoff excludes later
+        events. Only surviving retained envelopes are considered; this does
+        not create a complete archive. The required duplicate policy is
+        skip_existing: events originally captured for the target, legacy events
+        with unknown membership, prior target rows, and unsettled receipts are
+        skipped. Only settled receipts with captured snapshots and definitively
+        absent target membership can create deliveries. The scheduler scans at
+        most 100 envelopes per page and holds at most 100 target deliveries
+        pending or processing per job. At most three jobs may run per account,
+        with one active job per subscription. Active jobs protect their
+        requested range from normal settled-receipt pruning. Routing uses the
+        existing recipient lease, capacity, retry, and handler lifecycle.
+        Work-bound subscriptions are unsupported. `enqueued` means the handler
+        invocation was admitted, not completed. Responses use no-store.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: subscriptionID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Current ordinary subscription owned by this app and account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventReplayBackfillRequest' }
+      responses:
+        '202':
+          description: Durable replay job accepted.
+          headers:
+            Location:
+              schema: { type: string }
+              description: URL of the replay job progress resource.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReplayBackfillJobResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Target subscription is disabled or work-bound (event_replay_backfill_disabled, event_replay_backfill_unsupported).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Durable job creation timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-replays/{jobID}:
+    get:
+      tags: [events]
+      operationId: getEventReplayBackfill
+      summary: Read durable event backfill progress.
+      description: Returns account-scoped scan and per-envelope routing counts without exposing payloads.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Durable backfill job identifier returned at creation.
+      responses:
+        '200':
+          description: Current replay job progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReplayBackfillJobResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Job status read timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-replays/{jobID}/items:
+    get:
+      tags: [events]
+      operationId: listEventReplayBackfillItems
+      summary: List per-envelope outcomes for a durable backfill.
+      description: Returns stable, acceptance-ordered metadata pages. Event identity and routing outcomes remain readable after the source envelope is pruned; event payloads are never returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Durable backfill job identifier.
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [pending, processing, enqueued, filtered, failed, skipped_captured, skipped_unknown, skipped_existing, skipped_unsettled]
+          description: Filter items to one durable routing outcome.
+        - name: after
+          in: query
+          schema: { type: string }
+          description: Opaque continuation cursor. Keep the job and state filter unchanged.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Maximum items returned in this page.
+      responses:
+        '200':
+          description: One metadata-only page of backfill outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReplayBackfillItemsResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Item read timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-replays/{jobID}/retry-failed:
+    post:
+      tags: [events]
+      operationId: retryFailedEventReplayBackfill
+      summary: Retry a bounded batch of failed backfill deliveries.
+      description: Resets up to 100 failed routing recipients in this job with a fresh routing generation; handler retries and dead letters remain independent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Backfill job whose eligible failed routing deliveries are being retried.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventReplayBackfillRetryRequest' }
+      responses:
+        '200':
+          description: Failed routing deliveries requeued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReplayBackfillRetryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Job has not completed with failures (event_replay_backfill_state).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Retry request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-deliveries:
     get:
       tags: [events]
@@ -42929,6 +43101,100 @@ components:
           maxItems: 100
           items: { $ref: '#/components/schemas/EventReplayPreviewMatch' }
         next_after: { type: string, description: Continue even if this page has no matches; absent when no more currently retained candidates follow. }
+
+    EventReplayBackfillRequest:
+      description: Acceptance-time range for a durable subscription event backfill.
+      type: object
+      additionalProperties: false
+      required: [from, until]
+      properties:
+        from: { type: string, format: date-time, description: Inclusive platform acceptance-time lower bound. }
+        until: { type: string, format: date-time, description: Exclusive upper bound; future values are capped at creation time. The range may not exceed 30 days. }
+    EventReplayBackfillRetryRequest:
+      description: Bound for the number of failed routing recipients requeued in this call.
+      type: object
+      additionalProperties: false
+      properties:
+        limit: { type: integer, minimum: 1, maximum: 100, default: 100, description: Maximum failed routing recipients to requeue in this call. }
+    EventReplayBackfillItemResponse:
+      description: Metadata-only outcome for one envelope included in a durable backfill.
+      type: object
+      additionalProperties: false
+      required: [event_source, event_id, event_type, accepted_at, state, attempts, retryable, updated_at]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        event_type: { type: string }
+        schema_version: { type: string }
+        accepted_at: { type: string, format: date-time }
+        state: { type: string, enum: [pending, processing, enqueued, filtered, failed, skipped_captured, skipped_unknown, skipped_existing, skipped_unsettled] }
+        attempts: { type: integer, minimum: 0 }
+        failure_code: { type: string }
+        last_error: { type: string, description: Routing diagnostic clipped to at most 1024 UTF-8 bytes. }
+        details_truncated: { type: boolean, description: Whether the failure code or routing diagnostic was clipped. }
+        retryable: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    EventReplayBackfillItemsResponse:
+      description: Stable acceptance-ordered page of per-envelope outcomes for one backfill job.
+      type: object
+      additionalProperties: false
+      required: [job_id, items]
+      properties:
+        job_id: { type: string, format: uuid }
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventReplayBackfillItemResponse' }
+        next_after: { type: string, description: Continue with the same job and state filter; absent when the page is final. }
+    EventReplayBackfillProgress:
+      description: Durable scan outcomes and current routing state for a backfill job.
+      type: object
+      additionalProperties: false
+      required: [scanned, matched, filtered, pending, processing, enqueued, failed, retryable_failed, skipped_captured, skipped_unknown, skipped_existing, skipped_unsettled]
+      properties:
+        scanned: { type: integer, format: int64, minimum: 0 }
+        matched: { type: integer, format: int64, minimum: 0 }
+        filtered: { type: integer, format: int64, minimum: 0 }
+        pending: { type: integer, format: int64, minimum: 0 }
+        processing: { type: integer, format: int64, minimum: 0 }
+        enqueued: { type: integer, format: int64, minimum: 0, description: Routing admitted an invocation; handler completion is separate. }
+        failed: { type: integer, format: int64, minimum: 0 }
+        retryable_failed: { type: integer, format: int64, minimum: 0, description: Failed recipient deliveries eligible for the retry-failed operation. }
+        skipped_captured: { type: integer, format: int64, minimum: 0 }
+        skipped_unknown: { type: integer, format: int64, minimum: 0 }
+        skipped_existing: { type: integer, format: int64, minimum: 0 }
+        skipped_unsettled: { type: integer, format: int64, minimum: 0 }
+    EventReplayBackfillJobResponse:
+      description: Progress and immutable selection details for one durable event backfill.
+      type: object
+      additionalProperties: false
+      required: [id, app_slug, subscription_id, subscription_revision, from, until, cutoff_at, history_complete, duplicate_policy, state, scan_complete, progress, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_slug: { type: string }
+        subscription_id: { type: string, format: uuid }
+        subscription_revision: { type: string, description: Fingerprint of the subscription declaration snapshotted when the job was created. }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        cutoff_at: { type: string, format: date-time, description: Fixed exclusive acceptance cutoff. }
+        earliest_retained_at: { type: string, format: date-time, description: Account-wide earliest event surviving when the job was created; does not establish complete coverage. }
+        history_complete: { type: boolean, enum: [false], description: Always false; retained receipts are not an archive. }
+        duplicate_policy: { type: string, enum: [skip_existing] }
+        state: { type: string, enum: [running, completed, completed_with_failures] }
+        scan_complete: { type: boolean, description: Whether the retained range has been fully examined. }
+        progress: { $ref: '#/components/schemas/EventReplayBackfillProgress' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    EventReplayBackfillRetryResponse:
+      description: Number of failed deliveries retried and the resulting job status.
+      type: object
+      additionalProperties: false
+      required: [retried_count, remaining_retryable_count, job]
+      properties:
+        retried_count: { type: integer, format: int64, minimum: 0 }
+        remaining_retryable_count: { type: integer, format: int64, minimum: 0, description: Failed routing items that can still be requeued from this job. }
+        job: { $ref: '#/components/schemas/EventReplayBackfillJobResponse' }
 
     EventSubscriptionResponse:
       description: One manifest-declared event subscription reconciled for an app.

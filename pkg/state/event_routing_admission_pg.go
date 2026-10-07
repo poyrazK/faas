@@ -44,6 +44,13 @@ func (s *PgStore) AdmitPublishedEventRecipient(ctx context.Context, claim Publis
 	if err != nil {
 		return PublishedEventRoutingResult{}, err
 	}
+	if claim.BackfillJobID != "" {
+		recipient, err := eventReplayBackfillClaimTarget(ctx, q, s.pool, claim)
+		if err != nil {
+			return PublishedEventRoutingResult{}, err
+		}
+		receipt.replayRecipients = map[string]PublishedEventRecipient{claim.SubscriptionID: recipient}
+	}
 	plan, err := newEventAdmissionPlan(ctx, receipt, claim)
 	if err != nil {
 		return eventAdmissionResult(plan, PublishedEventRecipientProgress{}, false, false), err
@@ -61,6 +68,11 @@ func (s *PgStore) AdmitPublishedEventRecipient(ctx context.Context, claim Publis
 		return PublishedEventRoutingResult{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if claim.BackfillJobID != "" {
+		if _, err := q.EventReplayBackfillLockJob(ctx, tx, mustPgUUID(claim.BackfillJobID)); err != nil {
+			return PublishedEventRoutingResult{}, err
+		}
+	}
 	if plan.matched && !plan.prior && plan.invocation.WorkPolicyName != "" {
 		if _, err := lockWorkAdmissionLane(ctx, tx, plan.invocation.AppID, plan.invocation.WorkPolicyName, plan.invocation.WorkKeyDigest); err != nil {
 			return PublishedEventRoutingResult{}, err
@@ -82,6 +94,23 @@ func (s *PgStore) AdmitPublishedEventRecipient(ctx context.Context, claim Publis
 	return admitEventRecipientTx(ctx, q, tx, claim, plan, limits)
 }
 
+func eventReplayBackfillClaimTarget(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, claim PublishedEventRoutingClaim) (PublishedEventRecipient, error) {
+	encoded, err := q.EventReplayBackfillClaimTarget(ctx, db, sqlc.EventReplayBackfillClaimTargetParams{
+		JobID: mustPgUUID(claim.BackfillJobID), OutboxID: claim.OutboxID, SubscriptionID: mustPgUUID(claim.SubscriptionID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PublishedEventRecipient{}, ErrNotFound
+	}
+	if err != nil {
+		return PublishedEventRecipient{}, err
+	}
+	var recipient PublishedEventRecipient
+	if err := json.Unmarshal(encoded, &recipient); err != nil || recipient.ID != claim.SubscriptionID || !recipient.WorkSnapshotCaptured || recipient.Work != nil || recipient.ObjectNotification != nil || len(recipient.Workflow) != 0 {
+		return PublishedEventRecipient{}, ErrConflict
+	}
+	return recipient, nil
+}
+
 func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, claim PublishedEventRoutingClaim, p eventAdmissionPlan, limits api.EventDeliveryLimits) (PublishedEventRoutingResult, error) {
 	row, err := q.EventRoutingLockReceipt(ctx, tx, claim.OutboxID)
 	if err != nil {
@@ -90,6 +119,9 @@ func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, clai
 	receipt, err := routingReceiptFromSQL(row)
 	if err != nil {
 		return PublishedEventRoutingResult{}, err
+	}
+	if claim.BackfillJobID != "" {
+		receipt.replayRecipients = map[string]PublishedEventRecipient{claim.SubscriptionID: p.recipient}
 	}
 	if _, err := routingRecipient(receipt, claim); err != nil {
 		return PublishedEventRoutingResult{}, err
@@ -147,7 +179,11 @@ func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, clai
 			return PublishedEventRoutingResult{}, err
 		}
 	}
-	if err := recordEventRecipientOutcome(ctx, q, tx, claim.OutboxID, p.recipient.AppID, claim.SubscriptionID, EventFanoutAttemptActionAttempt, progress); err != nil {
+	action := EventFanoutAttemptActionAttempt
+	if claim.BackfillJobID != "" {
+		action = EventFanoutAttemptActionBackfill
+	}
+	if err := recordEventRecipientOutcome(ctx, q, tx, claim.OutboxID, p.recipient.AppID, claim.SubscriptionID, action, progress); err != nil {
 		return PublishedEventRoutingResult{}, err
 	}
 	// History writes and target updates can themselves wait. Recheck the lease
@@ -174,6 +210,18 @@ func validateEventRoutingClaim(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, 
 	}
 	if !valid {
 		return ErrConflict
+	}
+	if claim.BackfillJobID != "" {
+		valid, err := q.EventReplayBackfillClaimValid(ctx, tx, sqlc.EventReplayBackfillClaimValidParams{
+			JobID: mustPgUUID(claim.BackfillJobID), OutboxID: claim.OutboxID,
+			SubscriptionID: mustPgUUID(claim.SubscriptionID), Generation: claim.Generation, ClaimToken: mustPgUUID(claim.ClaimToken),
+		})
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return ErrConflict
+		}
 	}
 	return nil
 }
@@ -214,6 +262,21 @@ func settleEventAdmissionTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, cla
 		}
 		if n == 0 {
 			return false, ErrConflict
+		}
+		if claim.BackfillJobID != "" {
+			updated, err := q.EventReplayBackfillFinishItem(ctx, tx, sqlc.EventReplayBackfillFinishItemParams{
+				JobID: mustPgUUID(claim.BackfillJobID), OutboxID: claim.OutboxID, State: progress.State,
+				Attempts: int32(progress.Attempts), FailureCode: progress.FailureCode, LastError: progress.LastError, Retryable: progress.Retryable,
+			})
+			if err != nil {
+				return false, err
+			}
+			if updated == 0 {
+				return false, ErrConflict
+			}
+			if err := q.EventReplayBackfillFinalize(ctx, tx, mustPgUUID(claim.BackfillJobID)); err != nil {
+				return false, err
+			}
 		}
 		if err := q.EventRecipientSettleReceipt(ctx, tx, claim.OutboxID); err != nil {
 			return false, err

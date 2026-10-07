@@ -475,6 +475,13 @@ export type { EventReceiptRecoveryResponse } from './models/EventReceiptRecovery
 export type { EventReceiptReplayHistoryResponse } from './models/EventReceiptReplayHistoryResponse.js';
 export type { EventReceiptResponse } from './models/EventReceiptResponse.js';
 export type { EventReceiptRoutingResponse } from './models/EventReceiptRoutingResponse.js';
+export type { EventReplayBackfillItemResponse } from './models/EventReplayBackfillItemResponse.js';
+export type { EventReplayBackfillItemsResponse } from './models/EventReplayBackfillItemsResponse.js';
+export type { EventReplayBackfillJobResponse } from './models/EventReplayBackfillJobResponse.js';
+export type { EventReplayBackfillProgress } from './models/EventReplayBackfillProgress.js';
+export type { EventReplayBackfillRequest } from './models/EventReplayBackfillRequest.js';
+export type { EventReplayBackfillRetryRequest } from './models/EventReplayBackfillRetryRequest.js';
+export type { EventReplayBackfillRetryResponse } from './models/EventReplayBackfillRetryResponse.js';
 export type { EventReplayPreviewMatch } from './models/EventReplayPreviewMatch.js';
 export type { EventReplayPreviewResponse } from './models/EventReplayPreviewResponse.js';
 export type { EventReplayPreviewRetention } from './models/EventReplayPreviewRetention.js';

@@ -973,6 +973,60 @@ rows between pages, and delayed commits of older acceptances can change visible
 membership. This preview does not pin events or provide a frozen export. See
 [ADR-624](adr/624-subscription-retained-event-replay-preview.md) for the contract.
 
+To create actual independent deliveries for eligible historical events, start
+a durable backfill for the same ordinary subscription:
+
+```bash
+gregale events backfill APP --subscription-id SUBSCRIPTION_UUID \
+  --from 2026-10-01T00:00:00Z --until 2026-10-06T00:00:00Z --yes
+gregale events backfill-status JOB_UUID
+```
+
+Backfill uses platform acceptance time and the half-open range `[from, until)`;
+the server records a fixed cutoff when the job is created. The requested range
+can span at most 30 days. The target must be a current enabled ordinary
+subscription; work-bound subscriptions are unsupported. The job snapshots its
+target declaration, so later subscription changes do not change that job.
+
+The duplicate policy is `skip_existing`. If the original acceptance snapshot
+already captured this consumer, membership is unknown, a target recipient row
+already exists, or the original receipt is not settled, that envelope is
+skipped. Only matching, settled receipts with a known snapshot and a definitely
+absent target can create a new recipient. Gregale leaves the original
+`recipient_snapshot` unchanged. Backfill uses the normal independent recipient
+lease, capacity, retry and handler lifecycle; it does not establish FIFO
+ordering. `enqueued` means the invocation was admitted, not that the handler
+completed.
+
+The job scans at most 100 envelopes per page and holds at most 100 pending or
+processing target deliveries at once. Up to three jobs can run per account,
+with one active job per subscription. Active jobs protect their requested
+range from normal settled-receipt pruning. Retryable failed deliveries keep
+their source receipts through the job’s 30-day recovery window; other payloads
+follow ordinary retention while the job’s per-envelope outcome counts remain
+available for 30 days after completion. `earliest_retained_at` is a coverage
+warning, not proof of a complete archive; already expired envelopes cannot be
+recovered. Poll status until `completed` or `completed_with_failures`; the
+status includes a separate `retryable_failed` count. Retry a bounded batch of
+eligible routing failures with
+`gregale events backfill-retry JOB_UUID --limit 100 --yes`; handler failures,
+retries and dead letters continue through their existing lifecycle. Completed
+job metadata and per-envelope outcomes are retained for 30 days. See
+[ADR-625](adr/625-durable-subscription-event-backfill.md) for the full contract.
+
+Inspect outcomes when you need to locate a failed or skipped event:
+
+```bash
+gregale events backfill-items JOB_UUID --state failed --limit 50
+```
+
+The command prints a continuation command when another page is available. Keep
+the job and state filter unchanged when following its cursor. Each item shows
+the event identity, acceptance time, routing state, attempts and bounded
+failure details; it never includes event data and remains readable after the
+source envelope expires. Item states are live while a job is running, so for a
+complete filtered view, inspect after the job reaches a terminal state.
+
 Inspect one published event across every captured consumer:
 
 ```bash

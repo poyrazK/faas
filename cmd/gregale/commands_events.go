@@ -21,7 +21,7 @@ const eventFanoutReplayBatchMax = 100
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <preview|replay-preview|publish|backlog|inspect|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <preview|replay-preview|backfill|backfill-status|backfill-items|backfill-retry|publish|backlog|inspect|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
@@ -31,6 +31,14 @@ func cmdEvents(args []string) int {
 		return cmdEventsPreview(args[1:])
 	case "replay-preview":
 		return cmdEventsReplayPreview(args[1:])
+	case "backfill":
+		return cmdEventsBackfill(args[1:])
+	case "backfill-status":
+		return cmdEventsBackfillStatus(args[1:])
+	case "backfill-items":
+		return cmdEventsBackfillItems(args[1:])
+	case "backfill-retry":
+		return cmdEventsBackfillRetry(args[1:])
 	case "inspect":
 		return cmdEventsInspect(args[1:])
 	case "attempts":
