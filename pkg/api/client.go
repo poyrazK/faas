@@ -2252,6 +2252,7 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 
 // PatchDeploymentTrafficIfServing updates traffic only if the named live
 // sibling still owns all production traffic at the transaction boundary.
+// An empty servingID requires no live sibling with positive traffic.
 func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string, percent int, servingID string) (DeploymentResponse, error) {
 	var out DeploymentResponse
 	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",

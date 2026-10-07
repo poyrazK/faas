@@ -23,7 +23,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|policy|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -31,6 +31,8 @@ func cmdMCP(args []string) int {
 		return cmdMCPInit(args[1:])
 	case "deploy":
 		return cmdMCPDeploy(args[1:])
+	case "policy":
+		return cmdMCPPolicy(args[1:])
 	case "lock":
 		return cmdMCPLock(args[1:])
 	case "diff":
@@ -535,6 +537,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 
 type mcpDeployOptions struct {
 	path, slug, profile, tokenEnv, secretsFile string
+	releasePolicy                              string
 	timeout                                    int
 }
 
@@ -546,6 +549,7 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.profile, "profile", "", "app resource profile")
 	fs.StringVar(&o.tokenEnv, "token-env", "", "MCP client token for post-deployment verification")
 	fs.StringVar(&o.secretsFile, "secrets-file", "", "sealed app secrets configured before deployment")
+	fs.StringVar(&o.releasePolicy, "release-policy", "", "role-specific catalog baselines to verify before promotion")
 	fs.IntVar(&o.timeout, "timeout", 1200, "deployment wait timeout in seconds")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -572,6 +576,10 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if cfg.Auth.Mode == "external-oauth" && token == "" {
 		return printErr("MCP verification", errors.New("external-oauth deploy requires --token-env with a client access token for verification"))
 	}
+	roles, err := loadMCPReleasePolicy(o.releasePolicy)
+	if err != nil {
+		return printErr("MCP release policy", err)
+	}
 	c, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -587,7 +595,7 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)
 	}
-	deployArgs := []string{"--path", dir, "--source=worktree", "--name", o.slug, "--app", "--wait", "--timeout", strconv.Itoa(o.timeout)}
+	deployArgs := []string{"--path", dir, "--source=worktree", "--name", o.slug, "--app", "--wait", "--no-traffic", "--timeout", strconv.Itoa(o.timeout)}
 	if o.profile != "" {
 		deployArgs = append(deployArgs, "--profile", o.profile)
 	}
@@ -595,66 +603,17 @@ func runMCPDeploy(o mcpDeployOptions) int {
 		deployArgs = append(deployArgs, "--secrets-file", o.secretsFile)
 	}
 	// Preserve the existing ingress gate until the new app passes readiness.
-	code := quietMCPDeploy(deployArgs)
+	var candidate api.DeploymentResponse
+	code := quietMCPDeploy(deployArgs, deployExecution{onQueued: func(dep api.DeploymentResponse) { candidate = dep }})
 	if code != 0 {
 		return code
 	}
-	return finishMCPDeploy(ctx, c, o.slug, cfg, token)
+	return finishMCPDeploy(ctx, c, o.slug, candidate.ID, cfg, token, roles)
 }
 
-func quietMCPDeploy(args []string) int {
+func quietMCPDeploy(args []string, execution deployExecution) int {
 	old := osStdout
 	osStdout = io.Discard
 	defer func() { osStdout = old }()
-	return cmdDeployTarball(args)
-}
-
-func finishMCPDeploy(ctx context.Context, c *Client, slug string, cfg mcphosting.Config, token string) int {
-	app, err := c.GetApp(ctx, slug)
-	if err != nil {
-		return printErr("MCP app lookup", err)
-	}
-	endpoint, err := cfg.URL(canonicalAppURL(app))
-	if err != nil {
-		return printErr("MCP endpoint", err)
-	}
-	if cfg.Auth.Mode == "external-oauth" && cfg.Auth.Resource != endpoint {
-		return printErr("MCP audience mismatch", fmt.Errorf("auth.resource must match the app's canonical endpoint %s", endpoint))
-	}
-	if app.MaintenanceMode {
-		return printErr("MCP app in maintenance", errors.New("review the failure and clear maintenance with `gregale app <slug> --no-maintenance` before activating a deployment"))
-	}
-	enabled, require := true, false
-	_, err = c.UpdateApp(ctx, slug, api.UpdateAppRequest{StreamingEnabled: &enabled, RequireAuthn: &require, PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}})
-	if err != nil {
-		return printErr("MCP ingress configuration", err)
-	}
-	probe, err := mcphosting.NewClient(endpoint, token, mcphosting.ProtocolVersion)
-	if err != nil {
-		return printErr("MCP endpoint", err)
-	}
-	if cfg.Auth.Mode == "external-oauth" {
-		probe.ExpectedAuth = &cfg.Auth
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	report := mcphosting.Doctor(probeCtx, probe, cfg.Legacy, "", nil)
-	cancel()
-	receipt := map[string]any{"app": slug, "endpoint": endpoint, "auth_mode": cfg.Auth.Mode, "verification": report, "connection": mcphosting.ConnectionConfig(slug, endpoint)}
-	if !report.OK {
-		maintenance := true
-		_, closeErr := c.UpdateApp(ctx, slug, api.UpdateAppRequest{MaintenanceMode: &maintenance})
-		if closeErr == nil {
-			receipt["verification_failure_action"] = "maintenance_enabled"
-		} else {
-			receipt["verification_failure_action"] = "maintenance_unconfirmed"
-			receipt["recovery_command"] = "gregale app " + slug + " --maintenance"
-		}
-	}
-	if code := jsonOut(writeJSON(receipt)); code != 0 {
-		return code
-	}
-	if !report.OK {
-		return 1
-	}
-	return 0
+	return cmdDeployTarballToExisting(context.Background(), args, false, execution)
 }

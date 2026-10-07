@@ -7800,13 +7800,15 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if len(expectedServingID) > 0 {
 		servingID := ""
 		servingCount := 0
+		servingPercent := 0
 		for _, sibling := range siblings {
-			if sibling.Prior == 100 {
+			if sibling.Prior > 0 {
 				servingID = sibling.ID
+				servingPercent = sibling.Prior
 				servingCount++
 			}
 		}
-		if servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) {
+		if (expectedServingID[0] == "" && servingCount != 0) || (expectedServingID[0] != "" && (servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) || servingPercent != 100)) {
 			return Deployment{}, fmt.Errorf("state: expected serving deployment %s, found %s: %w",
 				expectedServingID[0], servingID, ErrTrafficServingChanged)
 		}
@@ -9416,7 +9418,7 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("state: mark manual split live iterate siblings: %w", err)
 		}
-		if len(siblings) == 0 && dep.TrafficPercent != 100 {
+		if len(siblings) == 0 && dep.TrafficPercent != 100 && dep.TrafficPercent != 0 {
 			return fmt.Errorf("state: manual split has no live base deployment: %w", ErrTrafficPercentSumInvalid)
 		}
 
@@ -9428,6 +9430,12 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 			return fmt.Errorf("state: mark manual split live: %w", err)
 		}
 		newWeights := RedistributeTraffic(siblings, 100-dep.TrafficPercent)
+		// Zero-traffic staging preserves every sibling, including an empty pool.
+		if dep.TrafficPercent == 0 {
+			for i, sibling := range siblings {
+				newWeights[i] = sibling.Prior
+			}
+		}
 		for i, sibling := range siblings {
 			if _, err := tx.Exec(ctx,
 				`update deployments set traffic_percent = $2 where id = $1`,
