@@ -127,7 +127,7 @@ const (
 	ImageSignatureVerificationTTL                   = 24 * time.Hour
 )
 
-// Historical replay preview bounds retained-envelope reads (ADR-638).
+// Historical replay preview bounds retained-envelope reads (ADR-646).
 const (
 	EventReplayPreviewPageDefault    = 50
 	EventReplayPreviewPageMax        = 100

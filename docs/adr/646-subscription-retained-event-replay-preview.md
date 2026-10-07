@@ -1,4 +1,4 @@
-# ADR-638: Subscription-scoped retained-event replay preview
+# ADR-646: Subscription-scoped retained-event replay preview
 
 - **Status:** accepted
 - **Date:** 2026-10-06
