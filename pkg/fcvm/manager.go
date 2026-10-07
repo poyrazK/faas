@@ -5365,6 +5365,10 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	m.cancelFrameworkReadyLoop(instance)
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err == nil {
+		// The migration destination verifies this capture's backing identity
+		// like any restore (ADR-510). Without it every live migration was
+		// refused and cold-booted on the destination (H5-12).
+		m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
 		return info, nil
 	}
 	// Preserve best-effort recovery after an expired RPC, but let Destroy

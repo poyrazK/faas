@@ -3817,8 +3817,8 @@ func (v *JailerVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateS
 		return fmt.Errorf("vmm: delete warm snapshot: storage backend unavailable")
 	}
 	var errs []error
-	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: storageKey})
-	for _, key := range []string{storageKey, vmstateStorageKey, driveKey} {
+	capture := state.Snapshot{StorageKey: storageKey}
+	for _, key := range []string{storageKey, vmstateStorageKey, state.SnapshotDriveKey(capture), state.SnapshotBackingKey(capture)} {
 		if key == "" {
 			continue
 		}
