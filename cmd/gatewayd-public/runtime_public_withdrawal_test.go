@@ -95,7 +95,7 @@ func withdrawalProxy(t *testing.T, h2 bool, h http.Handler, s *publicWithdrawalF
 	}
 	p := ingressTestProxy(t, h2, ingress.Wrap(h, identity), s)
 	getenv := publicWithdrawalEnv(uuid.NewString())
-	o, err := prepareRuntimePublicEdgeObserver(p, s, publicEdgeConfig(internalUpstreamUnix, h2, defaultListenAddr, nil, getenv), getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	o, err := prepareRuntimePublicEdgeObserver(t.Context(), p, s, publicEdgeConfig(internalUpstreamUnix, h2, defaultListenAddr, nil, getenv), getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestPublicWithdrawalRequiresDependenciesStoreAndProtocolFingerprint(t *test
 	}
 	for _, missing := range []string{"FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY", "FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_CONFIRMATION"} {
 		p := ingressTestProxy(t, true, h, s)
-		if _, err := prepareRuntimePublicEdgeObserver(p, s, config, func(k string) string {
+		if _, err := prepareRuntimePublicEdgeObserver(t.Context(), p, s, config, func(k string) string {
 			if k == missing {
 				return ""
 			}
@@ -150,11 +150,11 @@ func TestPublicWithdrawalRequiresDependenciesStoreAndProtocolFingerprint(t *test
 		}
 	}
 	p := ingressTestProxy(t, true, h, s)
-	if _, err := prepareRuntimePublicEdgeObserver(p, s.publicActivityFixture, config, getenv, log); err == nil {
+	if _, err := prepareRuntimePublicEdgeObserver(t.Context(), p, s.publicActivityFixture, config, getenv, log); err == nil {
 		t.Fatal("missing withdrawal store accepted")
 	}
 	p = ingressTestProxy(t, true, h, s)
-	o, err := prepareRuntimePublicEdgeObserver(p, s, config, getenv, log)
+	o, err := prepareRuntimePublicEdgeObserver(t.Context(), p, s, config, getenv, log)
 	if err != nil || o.withdrawalStore != s || o.activity == nil {
 		t.Fatal(o, err)
 	}
@@ -165,7 +165,7 @@ func TestPublicWithdrawalRequiresDependenciesStoreAndProtocolFingerprint(t *test
 		}
 		return getenv(k)
 	}
-	before, err := prepareRuntimePublicEdgeObserver(plain, s, config, defaultEnv, log)
+	before, err := prepareRuntimePublicEdgeObserver(t.Context(), plain, s, config, defaultEnv, log)
 	if err != nil || before.withdrawalStore != nil || before.member.ConfigSHA256 == o.member.ConfigSHA256 {
 		t.Fatal("withdrawal default or installed fingerprint incorrect", err)
 	}

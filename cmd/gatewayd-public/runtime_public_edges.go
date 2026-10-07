@@ -66,9 +66,13 @@ type runtimePublicEdgeObserver struct {
 	activityStore   state.RuntimeUpgradePublicEdgeActivityStore
 	withdrawalStore state.RuntimeUpgradePublicEdgeWithdrawalStore
 	identity        http.Handler
+	nativeIdentity  http.Handler
 }
 
 func publicEdgeProtocol(getenv func(string) string) string {
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_NATIVE_IDENTITY") == "1" {
+		return "adr624/native-startup-v1"
+	}
 	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_IDENTITY") == "1" {
 		return "adr616/public-identity-v1"
 	}
@@ -81,7 +85,10 @@ func publicEdgeProtocol(getenv func(string) string) string {
 	return "adr612/guard-v1"
 }
 
-func prepareRuntimePublicEdgeObserver(proxy *gateway.InternalReverseProxy, store state.RuntimeUpgradePublicEdgeGuardStore, config runtimePublicEdgeConfig, getenv func(string) string, log *slog.Logger) (*runtimePublicEdgeObserver, error) {
+func prepareRuntimePublicEdgeObserver(ctx context.Context, proxy *gateway.InternalReverseProxy, store state.RuntimeUpgradePublicEdgeGuardStore, config runtimePublicEdgeConfig, getenv func(string) string, log *slog.Logger) (*runtimePublicEdgeObserver, error) {
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_NATIVE_IDENTITY") == "1" && getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_IDENTITY") != "1" {
+		return nil, fmt.Errorf("native public edge identity requires public edge identity")
+	}
 	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_IDENTITY") == "1" && getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL") != "1" {
 		return nil, fmt.Errorf("public edge identity requires public edge withdrawal")
 	}
@@ -123,14 +130,14 @@ func prepareRuntimePublicEdgeObserver(proxy *gateway.InternalReverseProxy, store
 			return nil, fmt.Errorf("public edge withdrawal requires PostgreSQL withdrawal store")
 		}
 	}
-	if err := o.configureIdentity(getenv); err != nil {
+	if err := o.configureIdentity(ctx, getenv); err != nil {
 		return nil, err
 	}
 	log.Info("private public edge guard awaits inventory review", "public_edge_slot_id", slot, "public_edge_session_id", session, "config_sha256", member.ConfigSHA256)
 	return o, nil
 }
 
-func (o *runtimePublicEdgeObserver) configureIdentity(getenv func(string) string) error {
+func (o *runtimePublicEdgeObserver) configureIdentity(ctx context.Context, getenv func(string) string) error {
 	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_IDENTITY") != "1" {
 		return nil
 	}
@@ -140,7 +147,30 @@ func (o *runtimePublicEdgeObserver) configureIdentity(getenv func(string) string
 		return err
 	}
 	o.identity = h
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_NATIVE_IDENTITY") == "1" {
+		return o.configureNativeIdentity(ctx, getenv("FAAS_RUNTIME_UPGRADE_INGRESS_TOKEN"), ingress.NewNativePublicIdentityHandler)
+	}
 	return nil
+}
+
+type nativePublicIdentityFactory func(context.Context, string, ingress.PublicEdgeIdentity) (http.Handler, ingress.NativePublicStartup, error)
+
+func (o *runtimePublicEdgeObserver) configureNativeIdentity(ctx context.Context, token string, factory nativePublicIdentityFactory) error {
+	id := ingress.PublicEdgeIdentity{SlotID: o.member.SlotID, SessionID: o.member.SessionID, ConfigSHA256: o.member.ConfigSHA256}
+	h, startup, err := factory(ctx, token, id)
+	if err != nil || h == nil || ctx == nil || ctx.Err() != nil || ingress.ValidateNativePublicStartup(startup) != nil || startup.SlotID != id.SlotID || startup.SessionID != id.SessionID || startup.ConfigSHA256 != id.ConfigSHA256 {
+		return ingress.ErrNativeStartupUnverified
+	}
+	o.nativeIdentity = h
+	o.log.Info("private native public startup awaits attribution review", "public_edge_slot_id", id.SlotID, "public_edge_session_id", id.SessionID, "config_sha256", id.ConfigSHA256, "machine_id", startup.Epoch.MachineID, "boot_id", startup.Epoch.BootID, "pid", startup.Epoch.PID, "start_ticks", startup.Epoch.StartTicks, "pid_namespace", startup.Epoch.PIDNamespace, "net_namespace", startup.Epoch.NetNamespace)
+	return nil
+}
+
+func (o *runtimePublicEdgeObserver) nativeIdentityHandler() http.Handler {
+	if o == nil {
+		return nil
+	}
+	return o.nativeIdentity
 }
 
 func (o *runtimePublicEdgeObserver) identityHandler() http.Handler {

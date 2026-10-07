@@ -37,7 +37,7 @@ func TestPublicIdentityRequiresWithdrawalAndInstalledMechanisms(t *testing.T) {
 			}
 			return base(key)
 		}
-		if _, err := prepareRuntimePublicEdgeObserver(p, s, runtimePublicEdgeConfig{}, getenv, log); err == nil {
+		if _, err := prepareRuntimePublicEdgeObserver(t.Context(), p, s, runtimePublicEdgeConfig{}, getenv, log); err == nil {
 			t.Fatal("identity enabled without dependency", missing)
 		}
 	}
@@ -45,7 +45,7 @@ func TestPublicIdentityRequiresWithdrawalAndInstalledMechanisms(t *testing.T) {
 	// withdrawal mechanism is explicitly enabled.
 	s := newPublicWithdrawalFixture()
 	p := ingressTestProxy(t, false, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), s)
-	o, err := prepareRuntimePublicEdgeObserver(p, s, runtimePublicEdgeConfig{}, publicWithdrawalEnv(uuid.NewString()), log)
+	o, err := prepareRuntimePublicEdgeObserver(t.Context(), p, s, runtimePublicEdgeConfig{}, publicWithdrawalEnv(uuid.NewString()), log)
 	if err != nil || o.identityHandler() != nil {
 		t.Fatal("default-off endpoint installed", err)
 	}
@@ -67,7 +67,7 @@ func TestPublicIdentityUsesActualPublicListenerAndLeavesControlAndCustomerPaths(
 			if config.Protocol != "adr616/public-identity-v1" {
 				t.Fatal(config.Protocol)
 			}
-			o, err := prepareRuntimePublicEdgeObserver(p, s, config, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			o, err := prepareRuntimePublicEdgeObserver(t.Context(), p, s, config, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			if err != nil {
 				t.Fatal(err)
 			}

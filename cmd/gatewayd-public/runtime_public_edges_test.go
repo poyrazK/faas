@@ -39,7 +39,7 @@ func (p *publicGuardFactProbe) RecordRuntimeUpgradePublicEdgeGuard(ctx context.C
 func TestPublicEdgeConfirmationRequiresInstalledGuardAndFreshIdentity(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	plain := gateway.NewInternalReverseProxy(gateway.NewTCPDialer("127.0.0.1:1"), nil, log, true)
-	if o, err := prepareRuntimePublicEdgeObserver(plain, nil, runtimePublicEdgeConfig{}, func(string) string { return "" }, log); err != nil || o != nil {
+	if o, err := prepareRuntimePublicEdgeObserver(t.Context(), plain, nil, runtimePublicEdgeConfig{}, func(string) string { return "" }, log); err != nil || o != nil {
 		t.Fatal("default off changed behavior", o, err)
 	}
 	slot := uuid.NewString()
@@ -53,27 +53,27 @@ func TestPublicEdgeConfirmationRequiresInstalledGuardAndFreshIdentity(t *testing
 		return ""
 	}
 	probe := &publicGuardFactProbe{}
-	if _, err := prepareRuntimePublicEdgeObserver(plain, probe, runtimePublicEdgeConfig{}, getenv, log); err == nil {
+	if _, err := prepareRuntimePublicEdgeObserver(t.Context(), plain, probe, runtimePublicEdgeConfig{}, getenv, log); err == nil {
 		t.Fatal("unguarded process claimed an observation")
 	}
 	store := &ingressBindingFixture{slot: uuid.NewString(), session: uuid.NewString()}
 	proxy := ingressTestProxy(t, true, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }), store)
 	config := publicEdgeConfig(internalUpstreamUnix, true, defaultListenAddr, nil, func(string) string { return "" })
-	first, err := prepareRuntimePublicEdgeObserver(proxy, probe, config, getenv, log)
+	first, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, probe, config, getenv, log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := prepareRuntimePublicEdgeObserver(proxy, probe, config, getenv, log)
+	second, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, probe, config, getenv, log)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.member.SlotID != slot || first.member.SessionID == second.member.SessionID || first.member.ConfigSHA256 != second.member.ConfigSHA256 || len(first.member.ConfigSHA256) != sha256.Size*2 {
 		t.Fatal(first.member, second.member)
 	}
-	if _, err := prepareRuntimePublicEdgeObserver(proxy, nil, config, getenv, log); err == nil {
+	if _, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, nil, config, getenv, log); err == nil {
 		t.Fatal("missing fact store accepted")
 	}
-	if _, err := prepareRuntimePublicEdgeObserver(proxy, probe, config, func(key string) string {
+	if _, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, probe, config, func(key string) string {
 		if key == "FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_SLOT_ID" {
 			return "bad"
 		}
@@ -82,7 +82,7 @@ func TestPublicEdgeConfirmationRequiresInstalledGuardAndFreshIdentity(t *testing
 		t.Fatal("bad slot accepted")
 	}
 	proxy.Dialer = plain.Dialer
-	if _, err := prepareRuntimePublicEdgeObserver(proxy, probe, config, getenv, log); err == nil {
+	if _, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, probe, config, getenv, log); err == nil {
 		t.Fatal("unguarded upgrade path accepted")
 	}
 }

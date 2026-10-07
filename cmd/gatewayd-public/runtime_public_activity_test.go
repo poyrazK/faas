@@ -75,10 +75,10 @@ func TestPublicActivityRequiresDependentFlagsStoreAndVersionedConfig(t *testing.
 	if config.Protocol != "adr614/generation-v1" {
 		t.Fatal(config)
 	}
-	if _, err := prepareRuntimePublicEdgeObserver(proxy, &publicGuardFactProbe{}, config, getenv, log); err == nil {
+	if _, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, &publicGuardFactProbe{}, config, getenv, log); err == nil {
 		t.Fatal("missing generation store accepted")
 	}
-	if _, err := prepareRuntimePublicEdgeObserver(proxy, nil, config, func(k string) string {
+	if _, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, nil, config, func(k string) string {
 		if k == "FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY" {
 			return "1"
 		}
@@ -87,7 +87,7 @@ func TestPublicActivityRequiresDependentFlagsStoreAndVersionedConfig(t *testing.
 		t.Fatal("missing dependent flag accepted")
 	}
 	store := &publicActivityFixture{ingressBindingFixture: base, revision: uuid.NewString()}
-	o, err := prepareRuntimePublicEdgeObserver(proxy, store, config, getenv, log)
+	o, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, store, config, getenv, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestPublicActivityRequiresDependentFlagsStoreAndVersionedConfig(t *testing.
 	})
 	plainProxy := ingressTestProxy(t, true, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), base)
 	before := plainProxy.Dialer
-	plain, err := prepareRuntimePublicEdgeObserver(plainProxy, store, plainConfig, func(k string) string {
+	plain, err := prepareRuntimePublicEdgeObserver(t.Context(), plainProxy, store, plainConfig, func(k string) string {
 		if k == "FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY" {
 			return ""
 		}
@@ -125,7 +125,7 @@ func TestPublicActivityBindsActualProxyAndRejectsUnreviewedEdge(t *testing.T) {
 		var forwarded atomic.Int32
 		proxy := ingressTestProxy(t, h2, ingress.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwarded.Add(1); _, _ = io.WriteString(w, "reply") }), identity), store)
 		getenv := publicActivityEnv(uuid.NewString())
-		o, err := prepareRuntimePublicEdgeObserver(proxy, store, publicEdgeConfig(internalUpstreamUnix, h2, defaultListenAddr, nil, getenv), getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		o, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, store, publicEdgeConfig(internalUpstreamUnix, h2, defaultListenAddr, nil, getenv), getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +192,7 @@ func TestPublicActivityRawUpgradeOutlivesDialContextAndRetainsOldGeneration(t *t
 		_, _ = io.Copy(conn, rw)
 	}), identity), store)
 	getenv := publicActivityEnv(uuid.NewString())
-	o, err := prepareRuntimePublicEdgeObserver(proxy, store, publicEdgeConfig(internalUpstreamUnix, true, defaultListenAddr, nil, getenv), getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	o, err := prepareRuntimePublicEdgeObserver(t.Context(), proxy, store, publicEdgeConfig(internalUpstreamUnix, true, defaultListenAddr, nil, getenv), getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
