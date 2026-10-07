@@ -8291,6 +8291,37 @@ func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, no
 	return column_1, err
 }
 
+const customerOperationWorkflowGuestInstance = `-- name: CustomerOperationWorkflowGuestInstance :one
+SELECT i.id,i.app_id,i.deployment_id,i.state FROM instances i
+JOIN apps a ON a.id=i.app_id AND a.status<>'deleted'
+JOIN accounts c ON c.id=a.account_id AND c.status IN ('active','past_due') AND c.abuse_hold_at IS NULL
+WHERE i.id=$1::uuid AND a.account_id=$2::uuid
+`
+
+type CustomerOperationWorkflowGuestInstanceParams struct {
+	InstanceID pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+type CustomerOperationWorkflowGuestInstanceRow struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	State        string
+}
+
+func (q *Queries) CustomerOperationWorkflowGuestInstance(ctx context.Context, db DBTX, arg CustomerOperationWorkflowGuestInstanceParams) (CustomerOperationWorkflowGuestInstanceRow, error) {
+	row := db.QueryRow(ctx, customerOperationWorkflowGuestInstance, arg.InstanceID, arg.AccountID)
+	var i CustomerOperationWorkflowGuestInstanceRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+	)
+	return i, err
+}
+
 const customerOperationWorkflowHasRunningStep = `-- name: CustomerOperationWorkflowHasRunningStep :one
 SELECT EXISTS(SELECT 1 FROM workflow_steps WHERE run_id=$1::uuid AND status='running')
 `
@@ -14845,6 +14876,38 @@ func (q *Queries) GetCustomerOperationWorkflowCustody(ctx context.Context, db DB
 	return i, err
 }
 
+const getCustomerOperationWorkflowGuest = `-- name: GetCustomerOperationWorkflowGuest :one
+SELECT workflow_run_id, step_name, step_attempt, operation_id, generation, execution_kind, coordinator_attempt, instance_id, capability_digest, deadline_at, bound_at FROM customer_operation_workflow_guest_claims
+WHERE workflow_run_id=$1::uuid AND step_name=$2::text AND step_attempt=$3::integer
+`
+
+type GetCustomerOperationWorkflowGuestParams struct {
+	RunID       pgtype.UUID
+	StepName    string
+	StepAttempt int32
+}
+
+// One dispatch binding per native attempt; no upsert or replacement after a
+// lost response. The parent run lock serializes binding and report mutations.
+func (q *Queries) GetCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowGuestParams) (CustomerOperationWorkflowGuestClaim, error) {
+	row := db.QueryRow(ctx, getCustomerOperationWorkflowGuest, arg.RunID, arg.StepName, arg.StepAttempt)
+	var i CustomerOperationWorkflowGuestClaim
+	err := row.Scan(
+		&i.WorkflowRunID,
+		&i.StepName,
+		&i.StepAttempt,
+		&i.OperationID,
+		&i.Generation,
+		&i.ExecutionKind,
+		&i.CoordinatorAttempt,
+		&i.InstanceID,
+		&i.CapabilityDigest,
+		&i.DeadlineAt,
+		&i.BoundAt,
+	)
+	return i, err
+}
+
 const getCustomerOperationWorkflowStep = `-- name: GetCustomerOperationWorkflowStep :one
 SELECT run_id, step_name, status, attempt, input, output, started_at, finished_at, error, created_at, next_check_at, next_retry_at, outbound_attempt_token, foreach_parent, foreach_index, foreach_count, retry_base, when_matched, when_evaluated_at, skip_reason FROM workflow_steps WHERE run_id=$1::uuid AND step_name=$2::text
 `
@@ -17273,6 +17336,41 @@ func (q *Queries) InsertCustomerOperationWorkflowExecution(ctx context.Context, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const insertCustomerOperationWorkflowGuest = `-- name: InsertCustomerOperationWorkflowGuest :exec
+INSERT INTO customer_operation_workflow_guest_claims
+(workflow_run_id,step_name,step_attempt,operation_id,generation,coordinator_attempt,instance_id,capability_digest,deadline_at)
+VALUES($1::uuid,$2::text,$3::integer,$4::uuid,
+$5::integer,$6::integer,$7::uuid,
+$8::text,$9::timestamptz)
+`
+
+type InsertCustomerOperationWorkflowGuestParams struct {
+	RunID              pgtype.UUID
+	StepName           string
+	StepAttempt        int32
+	OperationID        pgtype.UUID
+	Generation         int32
+	CoordinatorAttempt int32
+	InstanceID         pgtype.UUID
+	CapabilityDigest   string
+	DeadlineAt         pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowGuestParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationWorkflowGuest,
+		arg.RunID,
+		arg.StepName,
+		arg.StepAttempt,
+		arg.OperationID,
+		arg.Generation,
+		arg.CoordinatorAttempt,
+		arg.InstanceID,
+		arg.CapabilityDigest,
+		arg.DeadlineAt,
+	)
+	return err
 }
 
 const insertCustomerOperationWorkflowRun = `-- name: InsertCustomerOperationWorkflowRun :exec

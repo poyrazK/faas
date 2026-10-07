@@ -16135,6 +16135,25 @@ UPDATE job_runs j SET operation_id=o.id FROM customer_operations o
 WHERE j.id=sqlc.arg(run_id)::uuid AND o.id=sqlc.arg(operation_id)::uuid AND j.account_id=o.account_id AND o.execution_kind='job'
 AND (j.operation_id IS NULL OR j.operation_id=o.id);
 
+-- One dispatch binding per native attempt; no upsert or replacement after a
+-- lost response. The parent run lock serializes binding and report mutations.
+-- name: GetCustomerOperationWorkflowGuest :one
+SELECT * FROM customer_operation_workflow_guest_claims
+WHERE workflow_run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text AND step_attempt=sqlc.arg(step_attempt)::integer;
+
+-- name: InsertCustomerOperationWorkflowGuest :exec
+INSERT INTO customer_operation_workflow_guest_claims
+(workflow_run_id,step_name,step_attempt,operation_id,generation,coordinator_attempt,instance_id,capability_digest,deadline_at)
+VALUES(sqlc.arg(run_id)::uuid,sqlc.arg(step_name)::text,sqlc.arg(step_attempt)::integer,sqlc.arg(operation_id)::uuid,
+sqlc.arg(generation)::integer,sqlc.arg(coordinator_attempt)::integer,sqlc.arg(instance_id)::uuid,
+sqlc.arg(capability_digest)::text,sqlc.arg(deadline_at)::timestamptz);
+
+-- name: CustomerOperationWorkflowGuestInstance :one
+SELECT i.id,i.app_id,i.deployment_id,i.state FROM instances i
+JOIN apps a ON a.id=i.app_id AND a.status<>'deleted'
+JOIN accounts c ON c.id=a.account_id AND c.status IN ('active','past_due') AND c.abuse_hold_at IS NULL
+WHERE i.id=sqlc.arg(instance_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid;
+
 -- name: InsertCustomerOperationJobExecution :execrows
 INSERT INTO customer_operation_executions(operation_id,generation,job_run_id)
 SELECT o.id,sqlc.arg(generation)::integer,j.id FROM customer_operations o

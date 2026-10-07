@@ -98,7 +98,7 @@ Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
 canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand. Version 6
+passes; rerun qualification instead of extending it by hand. Version 7
 artifacts require runtime DML and RLS enforcement, denied DDL/administration,
 stable migration ownership, and preserved data after migration login retirement.
 When read-only access is advertised, approval also requires actual existing and
@@ -106,8 +106,9 @@ future table/sequence reads, denied mutations/DDL/administration and RLS bypass,
 stable recovered passwords, rotation preserving data, and revoked old sessions
 and fresh logins. A capability declaration alone is insufficient.
 They also require a restore timestamp inside the disposable source's lifetime,
-target readiness, earlier committed data, rejection of source credentials on
-the target, and completed deletion. Versions 1–5 cannot authorize this release.
+exact source and point lineage on creation and readiness, and same-target
+restore replay. Earlier committed data, rejection of source credentials on
+the target, and completed deletion. Versions 1–6 cannot authorize this release.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against
@@ -115,7 +116,7 @@ the configured backend and current canary list. The artifact is authoritative:
 missing, malformed, stale, tampered, or mismatched approval keeps provisioning
 disabled even if the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED*` variables look
 valid. Those variables are a fallback only when no approval path is set and
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=6` matches the current contract.
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=7` matches the current contract.
 Unversioned environment approvals remain blocked.
 Restart `apid` after replacing the artifact so the new document is loaded.
 
@@ -152,6 +153,15 @@ records that aggregate once against the source and skips restore descendants,
 marking them `included_in_source`; this supports aggregate COGS guardrails but
 does not provide per-database restore cost attribution. Do not enable guarded
 restores for a provider whose qualification reports neither accounting mode.
+
+Neon may publish a parent WAL position while its timestamp is absent or refers
+to an earlier rounded commit. ADR-677 requires a matching independently routed
+historical source position before publishing the requested restore point.
+Gregale pins the source branch and endpoint, uses verified TLS, rejects writable
+or current-primary connections, and rechecks the exact target after reading the
+position. A missing mapping keeps recovery unavailable; it cannot be replaced
+with the request timestamp. Creation custody still permits safe compensation
+when verification fails. Worker restarts repeat verification before readiness.
 
 ## Account deletion
 
@@ -221,10 +231,10 @@ settle missing windows, final corrections, budget headroom, or provider invoices
 
 Apply `20261001105914375_managed_postgres_migration_credentials.sql` before
 using `migration` bindings. Keep the staging provisioning gate closed until a
-fresh version 6 live Neon qualification passes. Local PostgreSQL tests establish
+fresh version 7 live Neon qualification passes. Local PostgreSQL tests establish
 SQL behavior; they do not establish Neon password recovery or branch isolation.
 
-Version 6 replaces prior approvals, including version 4; keep provisioning
+Version 7 replaces prior approvals, including version 6; keep provisioning
 closed until the new disposable live run and lifecycle smoke pass. Inspect
 `gregale postgres capabilities --json` before adoption: `read_only` is configured
 support, while `provisioning_enabled` reflects the current rollout gate.
@@ -286,7 +296,7 @@ and rollout gates; local PostgreSQL evidence does not replace them.
 
 ## Compute resize recovery (ADR-623)
 
-Use a fresh version 6 qualification approval before allowing new Neon intents.
+Use a fresh version 7 qualification approval before allowing new Neon intents.
 The qualification changes the disposable primary's class and restores it,
 checking data, existing logins and read-only permissions after both changes.
 Existing pending resizes remain reconciled when provisioning is disabled.
@@ -306,7 +316,7 @@ Monitor the `updating` database reconciliation metrics and pending request's
 
 Apply the additive compute-policy migration and deploy the matching apid and
 reconciler binaries before enabling this capability. Keep provisioning closed
-until fresh qualification v6 proves both idle policy directions, actual
+until fresh qualification v7 proves both idle policy directions, actual
 suspend/wake, preserved data and credentials, stable replay and restoration.
 Earlier approval artifacts cannot authorize this contract. Qualification now
 defaults to twenty minutes; an explicit timeout must leave room for two real

@@ -370,6 +370,7 @@ type Querier interface {
 	CustomerOperationReleaseMemberCount(ctx context.Context, db DBTX, arg CustomerOperationReleaseMemberCountParams) (int64, error)
 	CustomerOperationStateMetrics(ctx context.Context, db DBTX, now pgtype.Timestamptz) ([]CustomerOperationStateMetricsRow, error)
 	CustomerOperationStreamMetric(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
+	CustomerOperationWorkflowGuestInstance(ctx context.Context, db DBTX, arg CustomerOperationWorkflowGuestInstanceParams) (CustomerOperationWorkflowGuestInstanceRow, error)
 	CustomerOperationWorkflowHasRunningStep(ctx context.Context, db DBTX, runID pgtype.UUID) (bool, error)
 	CustomerOperationWorkflowTenantStatus(ctx context.Context, db DBTX, arg CustomerOperationWorkflowTenantStatusParams) (string, error)
 	CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
@@ -768,6 +769,9 @@ type Querier interface {
 	GetCustomerOperationRecovery(ctx context.Context, db DBTX, arg GetCustomerOperationRecoveryParams) (string, error)
 	GetCustomerOperationReport(ctx context.Context, db DBTX, arg GetCustomerOperationReportParams) (string, error)
 	GetCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, runID pgtype.UUID) (CustomerOperationWorkflowClaim, error)
+	// One dispatch binding per native attempt; no upsert or replacement after a
+	// lost response. The parent run lock serializes binding and report mutations.
+	GetCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowGuestParams) (CustomerOperationWorkflowGuestClaim, error)
 	GetCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepParams) (WorkflowStep, error)
 	GetCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepAttemptParams) (WorkflowStepAttempt, error)
 	// Single-row read for the dashboard's "edit upstream"
@@ -931,6 +935,7 @@ type Querier interface {
 	InsertCustomerOperationReport(ctx context.Context, db DBTX, arg InsertCustomerOperationReportParams) error
 	InsertCustomerOperationStream(ctx context.Context, db DBTX, arg InsertCustomerOperationStreamParams) error
 	InsertCustomerOperationWorkflowExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowExecutionParams) (int64, error)
+	InsertCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowGuestParams) error
 	InsertCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowRunParams) error
 	InsertCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowStepParams) error
 	InsertCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowStepAttemptParams) error

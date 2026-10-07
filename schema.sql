@@ -12971,6 +12971,32 @@ CREATE TABLE public.customer_operation_workflow_claims (
 
 
 --
+-- Name: customer_operation_workflow_guest_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_workflow_guest_claims (
+    workflow_run_id uuid NOT NULL,
+    step_name text NOT NULL,
+    step_attempt integer NOT NULL,
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    execution_kind text DEFAULT 'workflow'::text NOT NULL,
+    coordinator_attempt integer NOT NULL,
+    instance_id uuid,
+    capability_digest text NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    bound_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operation_workflow_guest_cla_coordinator_attempt_check CHECK ((coordinator_attempt > 0)),
+    CONSTRAINT customer_operation_workflow_guest_claim_capability_digest_check CHECK ((capability_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_workflow_guest_claims_bound_at_check CHECK (isfinite(bound_at)),
+    CONSTRAINT customer_operation_workflow_guest_claims_deadline_at_check CHECK (isfinite(deadline_at)),
+    CONSTRAINT customer_operation_workflow_guest_claims_execution_kind_check CHECK ((execution_kind = 'workflow'::text)),
+    CONSTRAINT customer_operation_workflow_guest_claims_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_workflow_guest_claims_step_attempt_check CHECK ((step_attempt > 0))
+);
+
+
+--
 -- Name: data_upstream_probes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23508,6 +23534,14 @@ ALTER TABLE ONLY public.customer_operation_workflow_claims
 
 
 --
+-- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
+    ADD CONSTRAINT customer_operation_workflow_guest_claims_pkey PRIMARY KEY (workflow_run_id, step_name, step_attempt);
+
+
+--
 -- Name: customer_operations customer_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29116,6 +29150,13 @@ CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_o
 --
 
 CREATE INDEX customer_operation_workflow_claim_expiry_idx ON public.customer_operation_workflow_claims USING btree (lease_until, workflow_run_id);
+
+
+--
+-- Name: customer_operation_workflow_guest_instance_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_workflow_guest_instance_idx ON public.customer_operation_workflow_guest_claims USING btree (instance_id) WHERE (instance_id IS NOT NULL);
 
 
 --
@@ -38193,6 +38234,30 @@ ALTER TABLE ONLY public.customer_operation_workflow_claims
 
 ALTER TABLE ONLY public.customer_operation_workflow_claims
     ADD CONSTRAINT customer_operation_workflow_claims_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_guest_claims customer_operation_workflow_g_workflow_run_id_step_name_st_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
+    ADD CONSTRAINT customer_operation_workflow_g_workflow_run_id_step_name_st_fkey FOREIGN KEY (workflow_run_id, step_name, step_attempt) REFERENCES public.workflow_step_attempts(run_id, step_name, attempt) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_execution_identity_fke; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
+    ADD CONSTRAINT customer_operation_workflow_guest_claims_execution_identity_fke FOREIGN KEY (operation_id, generation, workflow_run_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, workflow_run_id, execution_kind) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
+    ADD CONSTRAINT customer_operation_workflow_guest_claims_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE SET NULL;
 
 
 --
