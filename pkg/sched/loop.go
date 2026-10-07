@@ -1796,7 +1796,13 @@ func (l *Loop) observeAppScalingPolicy(ctx context.Context, appID string) {
 	if app.ScalingPolicyRevision <= 0 {
 		return
 	}
-	if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, l.engine.OwnerNodeID(), app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
+	// Every schedd hears app_changed, but only the owner may acknowledge
+	// the revision; the others warned on every change (H5-17).
+	owner := l.engine.OwnerNodeID()
+	if owner != "" && app.NodeID != owner {
+		return
+	}
+	if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, owner, app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
 		l.log.Warn("scaling policy observation: record changed app", "app", app.ID, "revision", app.ScalingPolicyRevision, "err", err)
 	}
 }
