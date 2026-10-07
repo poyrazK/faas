@@ -51,6 +51,7 @@ type GCS struct {
 	origins        []string
 	sign           func(context.Context, []byte) ([]byte, error)
 	now            func() time.Time
+	encryption     EncryptionConfig
 }
 
 type gcsBucketSpec struct {
@@ -72,6 +73,7 @@ type gcsObjectState struct {
 	MetaVersion  int64
 	ValidUntil   time.Time
 	Metadata     map[string]string
+	KMSKeyName   string
 }
 
 type gcsStore interface {
@@ -150,6 +152,7 @@ func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
 		projectID:      c.Namespace,
 		managedLabel:   fingerprint(c)[:32],
 		origins:        append([]string(nil), c.AllowedOrigins...),
+		encryption:     cloneEncryptionConfig(c.Encryption),
 		now:            func() time.Time { return time.Now().UTC() },
 	}
 	p.sign = (&gcsIAMBlobSigner{client: signClient, serviceAccount: c.GCSServiceAccount, endpoint: gcsIAMSignEndpoint}).Sign
@@ -175,7 +178,7 @@ func (s *googleGCSStore) CreateBucket(ctx context.Context, bucket string, spec g
 }
 
 func (s *googleGCSStore) BucketState(ctx context.Context, bucket string) (gcsBucketState, error) {
-	attrs, err := s.client.Bucket(bucket).Attrs(ctx)
+	attrs, err := s.client.Bucket(bucket).Retryer(storage.WithPolicy(storage.RetryNever)).Attrs(ctx)
 	if err != nil {
 		return gcsBucketState{}, err
 	}
@@ -228,7 +231,7 @@ func (s *googleGCSStore) ListObjectsStartingAfter(ctx context.Context, bucket st
 }
 
 func (s *googleGCSStore) ListObjectVersions(ctx context.Context, bucket, cursor string, limit int32) ([]gcsObjectState, string, error) {
-	iter := s.client.Bucket(bucket).Objects(ctx, &storage.Query{Versions: true, Projection: storage.ProjectionNoACL})
+	iter := s.client.Bucket(bucket).Retryer(storage.WithPolicy(storage.RetryNever)).Objects(ctx, &storage.Query{Versions: true, Projection: storage.ProjectionNoACL})
 	pager := iterator.NewPager(iter, int(limit), cursor)
 	var attrs []*storage.ObjectAttrs
 	next, err := pager.NextPage(&attrs)
@@ -240,7 +243,7 @@ func (s *googleGCSStore) ListObjectVersions(ctx context.Context, bucket, cursor 
 		objects = append(objects, gcsObjectState{
 			Key: attr.Name, ETag: attr.Etag, Size: attr.Size,
 			LastModified: attr.Created, ValidUntil: attr.Deleted,
-			Version: attr.Generation, MetaVersion: attr.Metageneration, Metadata: attr.Metadata,
+			Version: attr.Generation, MetaVersion: attr.Metageneration, Metadata: attr.Metadata, KMSKeyName: attr.KMSKeyName,
 		})
 	}
 	return objects, next, nil
@@ -259,7 +262,9 @@ func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, bo
 	if err != nil {
 		return UploadResult{}, err
 	}
-	w := s.client.Bucket(bucket).Object(key).NewWriter(context.WithValue(ctx, gcsObjectStreamContextKey{}, true))
+	writeCtx, cancel := context.WithCancel(context.WithValue(ctx, gcsObjectStreamContextKey{}, true))
+	defer cancel()
+	w := s.client.Bucket(bucket).Object(key).Retryer(storage.WithPolicy(storage.RetryNever)).NewWriter(writeCtx)
 	w.ContentType = metadata.ContentType
 	w.CacheControl = metadata.CacheControl
 	w.ContentDisposition = metadata.ContentDisposition
@@ -267,23 +272,22 @@ func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, bo
 	w.ContentLanguage = metadata.ContentLanguage
 	w.Metadata = attrs
 	n, copyErr := io.Copy(w, io.LimitReader(body, size+1))
-	closeErr := w.Close()
-	if copyErr != nil {
-		_ = s.client.Bucket(bucket).Object(key).Delete(context.WithoutCancel(ctx))
-		return UploadResult{}, normalizeGCS(copyErr)
-	}
-	if closeErr != nil {
-		return UploadResult{}, normalizeGCS(closeErr)
-	}
-	if n != size {
-		_ = s.client.Bucket(bucket).Object(key).Delete(context.WithoutCancel(ctx))
+	if copyErr != nil || n != size {
+		cancel()
+		_ = w.Close()
+		if copyErr != nil {
+			return UploadResult{}, normalizeGCS(copyErr)
+		}
 		return UploadResult{}, ErrInvalid
 	}
-	out, err := s.client.Bucket(bucket).Object(key).Attrs(ctx)
-	if err != nil {
+	if err := w.Close(); err != nil {
 		return UploadResult{}, normalizeGCS(err)
 	}
-	return UploadResult{ETag: out.Etag}, nil
+	out := w.Attrs()
+	if out == nil || out.Generation <= 0 || !validUploadETag(out.Etag) {
+		return UploadResult{}, ErrUnavailable
+	}
+	return UploadResult{ETag: out.Etag, ProviderVersionID: strconv.FormatInt(out.Generation, 10)}, nil
 }
 
 func (s *googleGCSStore) ObjectState(ctx context.Context, bucket, key string) (gcsObjectState, error) {
@@ -292,7 +296,7 @@ func (s *googleGCSStore) ObjectState(ctx context.Context, bucket, key string) (g
 	if err != nil {
 		return gcsObjectState{}, err
 	}
-	return gcsObjectState{Key: attr.Name, ETag: attr.Etag, Size: attr.Size, LastModified: attr.Updated, Metadata: attr.Metadata}, nil
+	return gcsStateFromAttrs(attr), nil
 }
 
 func (s *googleGCSStore) UpdateObjectMetadata(ctx context.Context, bucket, key string, metadata map[string]string) (gcsObjectState, error) {
@@ -664,6 +668,10 @@ func cloneMetadata(metadata map[string]string) map[string]string {
 }
 
 func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
+	return p.presignGCS(ctx, bucket, r, nil)
+}
+
+func (p *GCS) presignGCS(ctx context.Context, bucket string, r SignRequest, private http.Header) (SignedRequest, error) {
 	if r.Encryption != nil || r.Protection != nil {
 		return SignedRequest{}, ErrUnsupported
 	}
@@ -717,6 +725,13 @@ func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (Signed
 		opts.QueryParameters.Set("response-content-disposition", "attachment")
 		opts.QueryParameters.Set("response-content-type", "application/octet-stream")
 	}
+	for name, values := range private {
+		if len(values) != 1 {
+			return SignedRequest{}, ErrInvalid
+		}
+		opts.Headers = append(opts.Headers, strings.ToLower(name)+":"+values[0])
+		result.Headers[name] = values[0]
+	}
 	value, err := p.signedURL(ctx, bucket, r.Key, opts)
 	if err != nil {
 		return SignedRequest{}, err
@@ -743,7 +758,7 @@ func (p *GCS) PresignObjectRead(ctx context.Context, bucket, method, key string,
 	if err != nil {
 		return SignedRequest{}, err
 	}
-	return SignedRequest{URL: value, Method: method, Headers: map[string]string{}, ExpiresAt: expiresAt}, nil
+	return SignedRequest{URL: value, Method: method, Headers: map[string]string{"Accept-Encoding": "gzip"}, ExpiresAt: expiresAt}, nil
 }
 
 func gcsMetadataHeaders(metadata map[string]string) []string {
@@ -795,6 +810,10 @@ func (p *GCS) signedURL(ctx context.Context, bucket, key string, opts storage.Si
 }
 
 func (p *GCS) EnsureMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {
+	return p.ensureGCSMultipart(ctx, bucket, r, nil)
+}
+
+func (p *GCS) ensureGCSMultipart(ctx context.Context, bucket string, r MultipartCreateRequest, encryption *ResolvedObjectEncryption) (string, error) {
 	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateObjectMetadata(r.Metadata) != nil {
 		return "", ErrInvalid
 	}
@@ -808,6 +827,11 @@ func (p *GCS) EnsureMultipartUpload(ctx context.Context, bucket string, r Multip
 			query.Set("upload-id-marker", uploadMarker)
 		}
 		var listed gcsListMultipartUploadsResult
+		if r.BeforeRequest != nil {
+			if err := r.BeforeRequest(ctx); err != nil {
+				return "", err
+			}
+		}
 		if err := p.xmlRequest(ctx, http.MethodGet, bucket, "", query, nil, nil, &listed); err != nil {
 			return "", normalizeGCS(err)
 		}
@@ -850,6 +874,14 @@ func (p *GCS) EnsureMultipartUpload(ctx context.Context, bucket string, r Multip
 		headers.Set("x-goog-meta-"+ReservedObjectTagsMetadataKey, tagging)
 	}
 	var initiated gcsInitiateMultipartUploadResult
+	if encryption != nil {
+		headers.Set("x-goog-meta-"+ReservedObjectEncryptionMetadataKey, encryption.Proof())
+	}
+	if r.BeforeRequest != nil {
+		if err := r.BeforeRequest(ctx); err != nil {
+			return "", err
+		}
+	}
 	if err := p.xmlRequest(ctx, http.MethodPost, bucket, r.Key, url.Values{"uploads": {""}}, headers, nil, &initiated); err != nil {
 		return "", normalizeGCS(err)
 	}
@@ -916,7 +948,12 @@ func (p *GCS) CompleteMultipartUpload(ctx context.Context, bucket string, r Mult
 var _ MultipartResultCompleter = (*GCS)(nil)
 
 func (p *GCS) CompleteMultipartWithResult(ctx context.Context, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) (MultipartCompletionResult, error) {
-	result := MultipartCompletionResult{}
+	result := MultipartCompletionResult{RecoveryCursor: r.RecoveryCursor}
+	if r.Encryption != nil {
+		if err := p.CheckEncryptionKey(ctx, *r.Encryption); err != nil {
+			return result, err
+		}
+	}
 	if !c.Valid() {
 		return result, ErrInvalid
 	}
@@ -924,7 +961,7 @@ func (p *GCS) CompleteMultipartWithResult(ctx context.Context, bucket string, r 
 		return result, ErrUnsupported
 	}
 
-	if r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || r.SizeBytes > api.MaxObjectUploadBytes || r.RecoveryCursor != "" || len(r.Parts) < 1 || len(r.Parts) > api.MaxMultipartParts {
+	if r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || r.SizeBytes > api.MaxObjectUploadBytes || len(r.Parts) < 1 || len(r.Parts) > api.MaxMultipartParts {
 		return result, ErrInvalid
 	}
 	body := gcsCompleteMultipartUpload{Parts: make([]gcsCompletedPart, 0, len(r.Parts))}
@@ -935,6 +972,12 @@ func (p *GCS) CompleteMultipartWithResult(ctx context.Context, bucket string, r 
 		}
 		previousPart = part.PartNumber
 		body.Parts = append(body.Parts, gcsCompletedPart(part))
+	}
+	if _, err := decodeGCSHistoryCursor(bucket, multipartHistoryRequest(r)); err != nil {
+		return result, err
+	}
+	if r.RecoveryCursor != "" {
+		return p.recoverGCSMultipart(ctx, bucket, r, "")
 	}
 	payload, err := xml.Marshal(body)
 	if err != nil {
@@ -952,24 +995,12 @@ func (p *GCS) CompleteMultipartWithResult(ctx context.Context, bucket string, r 
 		if !validUploadETag(out.ETag) {
 			return result, ErrUnavailable
 		}
-		result.ETag = out.ETag
-		return result, nil
+		return p.recoverGCSMultipart(ctx, bucket, r, out.ETag)
 	}
 	if !errors.Is(normalizeGCS(err), ErrNotFound) {
 		return result, normalizeGCS(err)
 	}
-	if err = multipartBeforeRequest(ctx, r); err != nil {
-		return result, err
-	}
-	object, attrErr := p.store.ObjectState(ctx, bucket, r.Key)
-	if attrErr != nil {
-		return result, normalizeGCS(attrErr)
-	}
-	if object.Size != r.SizeBytes || object.Metadata[ReservedMultipartSessionMetadataKey] != r.SessionID || !validUploadETag(object.ETag) {
-		return result, ErrConflict
-	}
-	result.ETag = object.ETag
-	return result, nil
+	return p.recoverGCSMultipart(ctx, bucket, r, "")
 }
 
 func (p *GCS) AbortMultipartUpload(ctx context.Context, bucket string, r MultipartAbortRequest) error {
@@ -1043,7 +1074,10 @@ func (p *GCS) xmlRequest(ctx context.Context, method, bucket, key string, query 
 			req.Header.Add(name, value)
 		}
 	}
-	resp, err := p.httpClient.Do(req)
+	req.GetBody = nil
+	client := *p.httpClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

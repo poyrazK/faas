@@ -353,6 +353,10 @@ type CopySourceSnapshot struct {
 	// A non-null native version is immutable. It remains private and binds
 	// both metadata admission and the provider copy to the inspected object.
 	ProviderVersionID string `json:"-"`
+	// GCS metadata can change independently of immutable object data. These
+	// private observations preserve metadata and date predicates during copy.
+	ProviderMetadataVersion string    `json:"-"`
+	LastModified            time.Time `json:"-"`
 }
 
 // TrackedObjectCopier must issue one copy with a fresh private receipt and the

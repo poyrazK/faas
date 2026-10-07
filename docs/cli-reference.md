@@ -503,6 +503,60 @@ Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle
 
 `gregale bucket [<subcommand>]`
 
+### bucket uploads
+
+Inspect owned multipart upload sessions and parts
+
+#### bucket uploads list
+
+List multipart sessions
+
+`gregale bucket uploads list [--limit <N>] [--cursor <ID>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--cursor <ID>` | next page cursor |  |
+
+#### bucket uploads status
+
+Inspect a multipart session returned by an upload
+
+`gregale bucket uploads status <app> <bucket-id> <upload-id>`
+
+#### bucket uploads parts
+
+List uploaded multipart parts
+
+`gregale bucket uploads parts [--limit <N>] [--part-number-marker <N>] <app> <bucket-id> <upload-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--part-number-marker <N>` | last part from the previous page |  |
+
+### bucket upload
+
+Upload a file, using multipart above the single PUT limit
+
+`gregale bucket upload [--content-type <TYPE>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--content-type <TYPE>` | object MIME type |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket download
+
+Download an object to a file after a complete transfer
+
+`gregale bucket download [--force] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--force` | replace destination after a complete transfer |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
 ### bucket copy-sources
 
 Manage copy-only owned source grants
@@ -7242,6 +7296,10 @@ Per-day breakdown
 ### usage storage
 
 Per-app storage bytes
+
+### usage object-storage
+
+Account object storage observations, safety policy and billing state
 
 ### usage summary
 

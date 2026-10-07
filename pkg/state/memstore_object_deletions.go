@@ -84,8 +84,14 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 	}
 	if !immutableDeletion(j) {
 		j.ProviderStatus = v.ObservedStatus
+		if j.NativeGCS && j.Selector == "" {
+			if v.ObservedStatus == "" {
+				return ObjectDeletion{}, false, ErrConflict
+			}
+			j.ProviderStatus = "GCS_" + v.ObservedStatus
+		}
 	}
-	if j.Selector == "" && j.ProviderStatus != "" {
+	if j.Selector == "" && j.ProviderStatus != "" && !nativeGCSDeletionStatus(j.ProviderStatus) {
 		j.ReservedBytes = int64(len(j.Key))
 		if _, _, err := checkObjectAdmission(m.objectUsageLocked(j.AccountID, m.clock()), b.ID, j.ReservedBytes, 0, false, true, policy, m.clock()); err != nil {
 			return ObjectDeletion{}, false, err

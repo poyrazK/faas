@@ -59,6 +59,10 @@ func (s *server) issueSignedBucketObject(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *server) prepareObjectURLCredential(r *http.Request, b state.ObjectBucket, req objectstorage.SignRequest, permission string) (state.ObjectS3Credential, state.ObjectUploadCompletion, string, error) {
+	return s.prepareObjectURLCredentialWithLimit(r, b, req, permission, s.objectStorage.MaxSinglePutBytes)
+}
+
+func (s *server) prepareObjectURLCredentialWithLimit(r *http.Request, b state.ObjectBucket, req objectstorage.SignRequest, permission string, maxBytes int64) (state.ObjectS3Credential, state.ObjectUploadCompletion, string, error) {
 	c := state.ObjectS3Credential{ID: uuid.NewString(), AccountID: b.AccountID, BucketID: b.ID, Label: "signed-url", Permission: permission, Status: state.ObjectS3CredentialStatusActive}
 	receipt := state.ObjectUploadCompletion{}
 	if setSecretRecipient == nil {
@@ -93,7 +97,7 @@ func (s *server) prepareObjectURLCredential(r *http.Request, b state.ObjectBucke
 		selection := encryption.Clone().Selection
 		req.Encryption = &selection
 	}
-	req, err = objectstorage.NormalizePublicSignRequest(req, s.objectStorage.MaxSinglePutBytes)
+	req, err = objectstorage.NormalizePublicSignRequest(req, maxBytes)
 	if err != nil {
 		return c, receipt, "", err
 	}

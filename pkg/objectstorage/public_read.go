@@ -208,6 +208,12 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if _, gcs := backend.Provider.(*GCS); gcs {
+		if _, err := ProviderReadEncryption(backend.Provider, backend.Encryption, bucket.AccountID, response.Header); err != nil || response.Uncompressed {
+			http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
 	if r.Method == http.MethodGet && h.registry.Accounting.GatewaySafety() {
 		if err := ReserveGatewayRead(r.Context(), h.requestMetrics, bucket.ID, response, h.registry.Accounting, h.now()); err != nil {
 			w.Header().Del("Content-Length")
