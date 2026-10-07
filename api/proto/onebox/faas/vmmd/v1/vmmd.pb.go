@@ -169,7 +169,7 @@ type AppSpec struct {
 	// A separate bool distinguishes an enabled probe with the default
 	// empty service (overall server health) from the disabled state.
 	HealthcheckGrpc bool `protobuf:"varint,25,opt,name=healthcheck_grpc,json=healthcheckGrpc,proto3" json:"healthcheck_grpc,omitempty"`
-	// ADR-643: require a fresh command check from this boot/restore.
+	// ADR-683: require a fresh command check from this boot/restore.
 	ImageHealthcheckRequired bool `protobuf:"varint,30,opt,name=image_healthcheck_required,json=imageHealthcheckRequired,proto3" json:"image_healthcheck_required,omitempty"`
 	// healthcheck_grpc_service is the optional service name sent in the
 	// health.v1 Check request; empty checks overall server health.

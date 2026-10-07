@@ -1,6 +1,6 @@
 // Package healthcheckproto defines fresh, host-initiated image readiness and
 // recurring runtime checks.
-// adr:643
+// adr:683
 package healthcheckproto
 
 import (

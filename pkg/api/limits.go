@@ -4534,7 +4534,7 @@ const (
 	// validation.
 	WorkloadDependencyCapMax = SidecarCapMax + 1
 
-	// Project dependency release gates (ADR-646) are bounded independently
+	// Project dependency release gates (ADR-685) are bounded independently
 	// of same-VM companion startup dependencies.
 	ProjectDependencyGateCapMax  = 100
 	ProjectDependencyGateTimeout = 15 * time.Minute

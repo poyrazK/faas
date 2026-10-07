@@ -1,4 +1,4 @@
-# ADR-640: Freeze Compose commands per image deployment
+# ADR-680: Freeze Compose commands per image deployment
 
 - **Status:** accepted
 - **Date:** 2026-10-07
@@ -33,6 +33,6 @@
   Compose command parsing, scoped environment values, secret rotation, security
   admission, and lifecycle controls retain their existing contracts.
 
-This extends [ADR-638](638-compose-prebuilt-image-workloads.md) and the
-[ADR-639 CI handoff](639-image-published-deployment-trigger.md) without adding a
+This extends [ADR-678](678-compose-prebuilt-image-workloads.md) and the
+[ADR-679 CI handoff](679-image-published-deployment-trigger.md) without adding a
 VM lifecycle or executing customer commands at admission.

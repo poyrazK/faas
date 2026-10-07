@@ -1,4 +1,4 @@
-# ADR-642: Compose healthchecks for prebuilt image workloads
+# ADR-682: Compose healthchecks for prebuilt image workloads
 
 - **Status:** accepted
 - **Date:** 2026-10-07
@@ -26,10 +26,10 @@
   Existing profile-copy paths preserve it for stage retries and rollback.
   Removing the image declaration clears current app metadata while accepted
   image releases keep their captured check.
-- **Follow-up:** [ADR-643](643-image-healthcheck-readiness.md) adds a fresh host
+- **Follow-up:** [ADR-683](683-image-healthcheck-readiness.md) adds a fresh host
   readiness gate for newly assembled primary image deployments. The boundary
   below records the scope of the initial import change.
-  [ADR-646](646-compose-dependency-release-gates.md) later adds captured
+  [ADR-685](685-compose-dependency-release-gates.md) later adds captured
   `service_healthy` gates between separate project apps.
 - **Boundaries:** This imports checks into the existing guest OCI healthcheck
   execution and startup/dependency behavior. It does not add a new host command

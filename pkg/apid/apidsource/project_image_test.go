@@ -1,4 +1,4 @@
-// adr: 638, 640, 642
+// adr: 678, 680, 682
 package apidsource
 
 import (

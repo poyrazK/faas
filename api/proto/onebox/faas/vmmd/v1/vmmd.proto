@@ -586,7 +586,7 @@ message AppSpec {
   // A separate bool distinguishes an enabled probe with the default
   // empty service (overall server health) from the disabled state.
   bool healthcheck_grpc = 25;
-  // ADR-643: require a fresh command check from this boot/restore.
+  // ADR-683: require a fresh command check from this boot/restore.
   bool image_healthcheck_required = 30;
   // healthcheck_grpc_service is the optional service name sent in the
   // health.v1 Check request; empty checks overall server health.

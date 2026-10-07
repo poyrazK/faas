@@ -1,4 +1,4 @@
-# ADR-641 · Fence image deployment promotion against newer accepted releases
+# ADR-681 · Fence image deployment promotion against newer accepted releases
 
 - **Status:** accepted
 - **Date:** 2026-10-07
@@ -36,4 +36,4 @@
 
 This extends [ADR-311](311-github-push-freshness-and-promotion-fence.md),
 [ADR-316](316-source-ref-branch-freshness-before-promotion.md), and the
-[ADR-639 image handoff](639-image-published-deployment-trigger.md).
+[ADR-679 image handoff](679-image-published-deployment-trigger.md).

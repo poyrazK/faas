@@ -1,4 +1,4 @@
-# ADR-639: Image-published deployment trigger
+# ADR-679: Image-published deployment trigger
 
 - **Status:** accepted
 - **Date:** 2026-10-07
@@ -34,7 +34,7 @@
   registry webhook bodies. CI owns publication ordering and sends the pushed
   digest. New scopes have no prior release/workflow defaults. Direct ephemeral
   deployment overrides are not inferred from previous releases. Source-defined
-  operations on image workloads retain ADR-638's boundary. Normal deployment
+  operations on image workloads retain ADR-678's boundary. Normal deployment
   authorization and environment semantics apply.
 
 See [the CI handoff](../image-published-deployments.md) for usage.

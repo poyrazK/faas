@@ -1,5 +1,5 @@
 // Legacy OCI healthcheck DGRAM decoder (ADR-139). The unsolicited wire has
-// no boot challenge and is not production readiness evidence. ADR-643 uses
+// no boot challenge and is not production readiness evidence. ADR-683 uses
 // the fresh host-initiated STREAM protocol in image_readiness.go instead.
 // The decoder remains available for wire compatibility and telemetry tests.
 

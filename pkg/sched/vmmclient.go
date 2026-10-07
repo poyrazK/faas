@@ -499,7 +499,7 @@ type AppSpec struct {
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
-	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-643).
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
 	ImageHealthcheckRequired bool
 	// ReadinessProbeJSON carries the optional continuous primary-app
 	// readiness policy. It is separate from HealthcheckPath/GRPC, which

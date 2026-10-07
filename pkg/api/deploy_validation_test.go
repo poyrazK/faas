@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// adr: 638
+// adr: 678
 func TestValidProjectImage(t *testing.T) {
 	for _, tc := range []struct {
 		ref  string

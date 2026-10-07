@@ -1,8 +1,8 @@
-# ADR-643: Fresh image healthchecks gate readiness
+# ADR-683: Fresh image healthchecks gate readiness
 
 - **Status:** implemented; native boot/restore qualification pending
 - **Date:** 2026-10-07
-- **Problem:** Importing OCI and Compose checks (ADR-642) did not make their
+- **Problem:** Importing OCI and Compose checks (ADR-682) did not make their
   results authoritative for main workload readiness. A container could accept
   TCP connections while its declared command failed, and an unsolicited pass
   carried no identity for a new boot or snapshot restore.
@@ -46,12 +46,12 @@
   receipt retain legacy readiness; reassembly/redeployment records the receipt.
   `NONE` and absent command checks preserve normal network readiness. Runtime
   profile updates remain constrained to the image materialization stages;
-  accepted Compose contracts and profile-copy paths retain ADR-642 semantics.
+  accepted Compose contracts and profile-copy paths retain ADR-682 semantics.
 - **Scope:** This applies to primary image deployments. It does not add command
   execution on a host, a new VM lifecycle owner, recurring command-driven
   eviction, or Compose overrides for source-built workloads.
 
-[ADR-644](644-image-healthcheck-runtime-recovery.md) adds recurring command
+[ADR-684](684-image-healthcheck-runtime-recovery.md) adds recurring command
 monitoring and scheduler recovery after serving startup.
 
 Portable regression coverage includes command execution with runtime context,

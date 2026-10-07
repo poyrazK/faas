@@ -1,4 +1,4 @@
-# ADR-638: Compose prebuilt image workloads
+# ADR-678: Compose prebuilt image workloads
 
 - **Status:** accepted
 - **Date:** 2026-10-07

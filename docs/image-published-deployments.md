@@ -71,13 +71,13 @@ Partial timing settings inherit omitted values from that digest's image
 healthcheck; disabling or replacing the check remains stable after app edits,
 retries, and rollback. Existing guest execution applies, while TCP/HTTP readiness
 and public-route verification continue to govern traffic promotion. See
-[ADR-642](adr/642-compose-image-healthchecks.md).
+[ADR-682](adr/682-compose-image-healthchecks.md).
 Explicit deployment command overrides keep their existing precedence.
 Newly assembled image releases require a fresh successful effective OCI or
 Compose command healthcheck before readiness and promotion. A failed or missing
 check leaves the serving release in place. Startup grace, retries and command
 timeouts fit within the startup deadline; restores cannot reuse earlier passes.
-See [ADR-643](adr/643-image-healthcheck-readiness.md) for compatibility and the
+See [ADR-683](adr/683-image-healthcheck-readiness.md) for compatibility and the
 pending native qualification gate.
 For a new scope, supply workflows explicitly if required; no prior release
 command is inferred. Previous per-deployment overrides are not automatically
@@ -89,7 +89,7 @@ superseded and leaves the current serving release intact. This also applies
 when the newer intent fails or is cancelled. Explicit rollback can still select
 an older release. The order is Gregale's acceptance order; CI must sequence its
 publication calls when overlapping builds finish out of order. See
-[ADR-641](adr/641-image-deployment-promotion-ordering.md).
+[ADR-681](adr/681-image-deployment-promotion-ordering.md).
 
 The first delivery returns **202** and a deployment. Repeating the same app,
 scope, and digest returns **200** with the original deployment's current
@@ -100,4 +100,4 @@ returns the original row; it does not undo that outcome. Use the normal retry
 or deploy command for an intentional retry or configuration-only redeploy.
 
 This endpoint is the CI handoff. Native registry webhook payloads and automatic
-registry polling are outside this first slice. See [ADR-639](adr/639-image-published-deployment-trigger.md).
+registry polling are outside this first slice. See [ADR-679](adr/679-image-published-deployment-trigger.md).

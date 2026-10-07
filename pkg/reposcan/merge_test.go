@@ -6,7 +6,7 @@ import (
 	"testing/fstest"
 )
 
-// adr: 638
+// adr: 678
 func TestMergeComposeBuildIgnoresLowerPriorityImage(t *testing.T) {
 	workloads := mergeByKey([]workloadSeed{
 		{tier: TierCompose, det: detCompose, name: "gateway", dockerfile: "Dockerfile", imageSet: true},

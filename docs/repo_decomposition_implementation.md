@@ -260,7 +260,7 @@ image worker, returning a deployment ID without a source build ID. Tags are
 resolved and pinned before materialization; registry credentials, signatures,
 Linux/amd64 selection, and full-rootfs plan gates use the existing container
 path. A service with both `build:` and `image:` still builds from source. See
-[ADR-638](adr/638-compose-prebuilt-image-workloads.md).
+[ADR-678](adr/678-compose-prebuilt-image-workloads.md).
 
 ---
 
@@ -399,7 +399,7 @@ not starve tenant wakes under `make test-load`.
 - **Compose readiness conditions:** `service_healthy` now gates initial project
   release activation against captured dependency deployment IDs, with durable
   waits and unchanged predecessor traffic on failure
-  ([ADR-646](adr/646-compose-dependency-release-gates.md)). It does not hold VM
+  ([ADR-685](adr/685-compose-dependency-release-gates.md)). It does not hold VM
   boot or continuously monitor another service. `service_started` retains
   admission ordering; completion conditions and healthy managed targets are
   rejected explicitly.

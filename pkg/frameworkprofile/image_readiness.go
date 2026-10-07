@@ -1,4 +1,4 @@
-// adr:643
+// adr:683
 package frameworkprofile
 
 import "encoding/json"

@@ -1,8 +1,8 @@
-# ADR-644: Image healthchecks drive runtime recovery
+# ADR-684: Image healthchecks drive runtime recovery
 
 - **Status:** implemented; native lifecycle qualification pending
 - **Date:** 2026-10-07
-- **Problem:** ADR-643 gates serving startup on a fresh command success, but a
+- **Problem:** ADR-683 gates serving startup on a fresh command success, but a
   main image's later command failures did not reach scheduler recovery. An
   HTTP listener could remain open while its declared check failed.
 - **Decision:** A required primary image check also runs throughout each
@@ -19,7 +19,7 @@
   must match both challenge and process incarnation. A process replacement
   clears prior failures and obtains a new configuration. No cached or
   unsolicited report counts as a command result.
-- **Execution:** The ADR-643 runtime preserves identity, open workload cgroup,
+- **Execution:** The ADR-683 runtime preserves identity, open workload cgroup,
   working directory, runtime environment, and refreshed secret bindings.
   Single-attempt requests retain command timeouts and startup grace without
   repeating the image's retries inside each request. Nanosecond intervals,
@@ -68,7 +68,7 @@ snapshot invalidation/retry with idempotent restart accounting.
 Native qualification extends TestMetalImageHealthcheckAcrossSnapshots with a
 still-listening guest that becomes unhealthy and requests runtime recovery.
 Run on the isolated native x86_64 KVM host described in
-[ADR-643](643-image-healthcheck-readiness.md):
+[ADR-683](683-image-healthcheck-readiness.md):
 
 ~~~sh
 FAAS_TEST_IMAGE_HEALTHCHECK=1 \

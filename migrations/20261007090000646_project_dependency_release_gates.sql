@@ -1,4 +1,4 @@
--- ADR-646: admission-owned dependency pins and restart-safe readiness waits.
+-- ADR-685: admission-owned dependency pins and restart-safe readiness waits.
 -- +goose Up
 CREATE TABLE deployment_dependency_gates (
     deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,

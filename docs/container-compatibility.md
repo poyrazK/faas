@@ -100,7 +100,7 @@ After CI pushes an image, the [image-published trigger](image-published-deployme
 deploys its exact digest with durable per-workload and scope deduplication.
 New project image deployments also capture their accepted Compose CMD contract;
 queued images and retries retain it after app configuration changes. See
-[ADR-640](adr/640-frozen-project-image-commands.md). Historical deployments without
+[ADR-680](adr/680-frozen-project-image-commands.md). Historical deployments without
 that record keep their existing command behavior.
 
 Compose `depends_on: {backend: {condition: service_healthy}}` now holds the
@@ -112,7 +112,7 @@ blocker. This gates release activation; candidate processes can boot while
 waiting. Declarations allow at most 100 dependency conditions per workload.
 Completion conditions, optional healthy dependencies, and healthy managed or job
 targets are rejected.
-See [ADR-646](adr/646-compose-dependency-release-gates.md).
+See [ADR-685](adr/685-compose-dependency-release-gates.md).
 
 Compose `healthcheck:` overrides are also retained for prebuilt image workloads:
 
@@ -148,8 +148,8 @@ reassembly or redeployment to gain this gate. Native boot/restore qualification
 remains pending. Compose dependency release gates are described above. Compose
 healthcheck overrides on source-built services are not applied and produce a
 scan warning.
-See [ADR-642](adr/642-compose-image-healthchecks.md) and
-[ADR-643](adr/643-image-healthcheck-readiness.md).
+See [ADR-682](adr/682-compose-image-healthchecks.md) and
+[ADR-683](adr/683-image-healthcheck-readiness.md).
 
 Required primary image checks also drive runtime recovery. Each serving
 instance executes fresh command attempts using the effective interval, timeout,
@@ -164,13 +164,13 @@ The existing restart circuit limits repeated confirmed failures. Failure
 diagnostics use image_healthcheck_unhealthy without publishing command output.
 Matching guest and vmmd support is required; older image rootfs releases need
 reassembly. Native lifecycle qualification remains pending. See
-[ADR-644](adr/644-image-healthcheck-runtime-recovery.md).
+[ADR-684](adr/684-image-healthcheck-runtime-recovery.md).
 
 Automatic image promotion also checks for newer accepted releases in the same
 app and environment scope. Older in-flight candidates become superseded, and
 GitHub-triggered images recheck their recorded source branch before cutover.
 Explicit rollback retains its existing behavior. See
-[ADR-641](adr/641-image-deployment-promotion-ordering.md).
+[ADR-681](adr/681-image-deployment-promotion-ordering.md).
 
 | Concern | Current contract | Qualification boundary |
 |---|---|---|

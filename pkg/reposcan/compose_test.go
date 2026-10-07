@@ -212,7 +212,7 @@ func TestDetectComposeRejectsInvalidAllowedServiceCallScope(t *testing.T) {
 	}
 }
 
-// adr: 638
+// adr: 678
 func TestDetectCompose_PrebuiltWithoutBuild(t *testing.T) {
 	t.Parallel()
 	body := `services:

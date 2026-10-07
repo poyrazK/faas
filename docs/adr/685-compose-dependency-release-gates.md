@@ -1,4 +1,4 @@
-# ADR-646: Compose dependency readiness gates for project releases
+# ADR-685: Compose dependency readiness gates for project releases
 
 - **Status:** implemented
 - **Date:** 2026-10-07
@@ -55,7 +55,7 @@
   Jobs cannot certify service health through their artifact-only readiness.
   Held environment clone/promotion deployments cannot acquire ordinary gates;
   graph-wide dependency integration remains separate. Source-built Compose
-  healthcheck override support remains the ADR-642 boundary.
+  healthcheck override support remains the ADR-682 boundary.
 
 Rollout applies the schema migration before the admission and imaged updates.
 Enable new declarations after those components are updated. Deployments accepted
