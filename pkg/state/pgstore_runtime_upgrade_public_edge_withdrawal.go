@@ -33,6 +33,13 @@ func (s *PgStore) RepairRuntimeUpgradePublicEdgeWithdrawal(ctx context.Context, 
 	if err != nil {
 		return false, err
 	}
+	// Permanent external proof already resolved this epoch. Do not install a
+	// competing local fence or manufacture its activity version (ADR-622).
+	if _, err := q.ReadRuntimeUpgradeExternalFenceReceipt(ctx, tx, w.ID); err == nil {
+		return true, ErrConflict
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return true, err
+	}
 	a, err := install(pgUUIDString(w.ID))
 	if err != nil {
 		return true, err

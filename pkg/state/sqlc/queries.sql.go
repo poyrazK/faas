@@ -19057,6 +19057,82 @@ func (q *Queries) InsertRoutePolicyReceipt(ctx context.Context, db DBTX, arg Ins
 	return err
 }
 
+const insertRuntimeUpgradeExternalFenceAuthority = `-- name: InsertRuntimeUpgradeExternalFenceAuthority :exec
+INSERT INTO runtime_upgrade_external_fence_authorities(id,public_key) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING
+`
+
+type InsertRuntimeUpgradeExternalFenceAuthorityParams struct {
+	ID        pgtype.UUID
+	PublicKey []byte
+}
+
+func (q *Queries) InsertRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeExternalFenceAuthorityParams) error {
+	_, err := db.Exec(ctx, insertRuntimeUpgradeExternalFenceAuthority, arg.ID, arg.PublicKey)
+	return err
+}
+
+const insertRuntimeUpgradeExternalFenceIntent = `-- name: InsertRuntimeUpgradeExternalFenceIntent :exec
+INSERT INTO runtime_upgrade_external_fence_intents(id,withdrawal_id,authority_id,challenge,gateway_revision,public_revision,machine_id,boot_id,resource_id,scope_sha256)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING
+`
+
+type InsertRuntimeUpgradeExternalFenceIntentParams struct {
+	ID              pgtype.UUID
+	WithdrawalID    pgtype.UUID
+	AuthorityID     pgtype.UUID
+	Challenge       pgtype.UUID
+	GatewayRevision pgtype.UUID
+	PublicRevision  pgtype.UUID
+	MachineID       string
+	BootID          pgtype.UUID
+	ResourceID      string
+	ScopeSha256     string
+}
+
+func (q *Queries) InsertRuntimeUpgradeExternalFenceIntent(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeExternalFenceIntentParams) error {
+	_, err := db.Exec(ctx, insertRuntimeUpgradeExternalFenceIntent,
+		arg.ID,
+		arg.WithdrawalID,
+		arg.AuthorityID,
+		arg.Challenge,
+		arg.GatewayRevision,
+		arg.PublicRevision,
+		arg.MachineID,
+		arg.BootID,
+		arg.ResourceID,
+		arg.ScopeSha256,
+	)
+	return err
+}
+
+const insertRuntimeUpgradeExternalFenceReceipt = `-- name: InsertRuntimeUpgradeExternalFenceReceipt :exec
+INSERT INTO runtime_upgrade_external_fence_receipts(withdrawal_id,intent_id,receipt_id,envelope,envelope_sha256,enforced_at,issued_at,observed_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,clock_timestamp())
+`
+
+type InsertRuntimeUpgradeExternalFenceReceiptParams struct {
+	WithdrawalID   pgtype.UUID
+	IntentID       pgtype.UUID
+	ReceiptID      pgtype.UUID
+	Envelope       []byte
+	EnvelopeSha256 string
+	EnforcedAt     pgtype.Timestamptz
+	IssuedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) InsertRuntimeUpgradeExternalFenceReceipt(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeExternalFenceReceiptParams) error {
+	_, err := db.Exec(ctx, insertRuntimeUpgradeExternalFenceReceipt,
+		arg.WithdrawalID,
+		arg.IntentID,
+		arg.ReceiptID,
+		arg.Envelope,
+		arg.EnvelopeSha256,
+		arg.EnforcedAt,
+		arg.IssuedAt,
+	)
+	return err
+}
+
 const insertRuntimeUpgradeGatewayRoster = `-- name: InsertRuntimeUpgradeGatewayRoster :one
 INSERT INTO runtime_upgrade_gateway_rosters(revision,slot_ids,gateway_sessions) VALUES ($1,$2,$3) RETURNING revision, slot_ids, gateway_sessions, created_at
 `
@@ -31062,6 +31138,40 @@ func (q *Queries) LockRuntimeUpgradeDrainDeployments(ctx context.Context, db DBT
 	return items, nil
 }
 
+const lockRuntimeUpgradeExternalFenceAuthority = `-- name: LockRuntimeUpgradeExternalFenceAuthority :one
+SELECT id, public_key, created_at, revoked_at FROM runtime_upgrade_external_fence_authorities WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceAuthority, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeExternalFenceAuthority, id)
+	var i RuntimeUpgradeExternalFenceAuthority
+	err := row.Scan(
+		&i.ID,
+		&i.PublicKey,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const lockRuntimeUpgradeExternalFenceWithdrawal = `-- name: LockRuntimeUpgradeExternalFenceWithdrawal :one
+SELECT id, slot_id, public_session_id, config_sha256, roster_revision, created_at FROM runtime_upgrade_public_edge_withdrawals WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradeExternalFenceWithdrawal(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradePublicEdgeWithdrawal, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeExternalFenceWithdrawal, id)
+	var i RuntimeUpgradePublicEdgeWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.SlotID,
+		&i.PublicSessionID,
+		&i.ConfigSha256,
+		&i.RosterRevision,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const lockRuntimeUpgradeGatewayRosterHead = `-- name: LockRuntimeUpgradeGatewayRosterHead :one
 SELECT revision FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR UPDATE
 `
@@ -31190,7 +31300,7 @@ func (q *Queries) LockRuntimeUpgradePublicEdgeRosterHead(ctx context.Context, db
 }
 
 const lockRuntimeUpgradePublicEdgeWithdrawal = `-- name: LockRuntimeUpgradePublicEdgeWithdrawal :one
-SELECT id, slot_id, public_session_id, config_sha256, roster_revision, created_at FROM runtime_upgrade_public_edge_withdrawals WHERE slot_id=$1 AND public_session_id=$2 AND config_sha256=$3 FOR SHARE
+SELECT id, slot_id, public_session_id, config_sha256, roster_revision, created_at FROM runtime_upgrade_public_edge_withdrawals WHERE slot_id=$1 AND public_session_id=$2 AND config_sha256=$3 FOR UPDATE
 `
 
 type LockRuntimeUpgradePublicEdgeWithdrawalParams struct {
@@ -44766,7 +44876,7 @@ func (q *Queries) ReadManagedWorkflowStepForUpdate(ctx context.Context, db DBTX,
 }
 
 const readPendingRuntimeUpgradePublicEdgeWithdrawals = `-- name: ReadPendingRuntimeUpgradePublicEdgeWithdrawals :many
-SELECT w.id, w.slot_id, w.public_session_id, w.config_sha256, w.roster_revision, w.created_at FROM runtime_upgrade_public_edge_withdrawals w WHERE NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id) ORDER BY w.id LIMIT $1
+SELECT w.id, w.slot_id, w.public_session_id, w.config_sha256, w.roster_revision, w.created_at FROM runtime_upgrade_public_edge_withdrawals w WHERE NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id) AND NOT EXISTS(SELECT 1 FROM runtime_upgrade_external_fence_receipts r WHERE r.withdrawal_id=w.id) ORDER BY w.id LIMIT $1
 `
 
 func (q *Queries) ReadPendingRuntimeUpgradePublicEdgeWithdrawals(ctx context.Context, db DBTX, limit int32) ([]RuntimeUpgradePublicEdgeWithdrawal, error) {
@@ -47949,6 +48059,49 @@ func (q *Queries) ReadRuntimeUpgradeEligibleFailureFallback(ctx context.Context,
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const readRuntimeUpgradeExternalFenceIntent = `-- name: ReadRuntimeUpgradeExternalFenceIntent :one
+SELECT id, withdrawal_id, authority_id, challenge, gateway_revision, public_revision, machine_id, boot_id, resource_id, scope_sha256, created_at FROM runtime_upgrade_external_fence_intents WHERE id=$1
+`
+
+func (q *Queries) ReadRuntimeUpgradeExternalFenceIntent(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceIntent, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeExternalFenceIntent, id)
+	var i RuntimeUpgradeExternalFenceIntent
+	err := row.Scan(
+		&i.ID,
+		&i.WithdrawalID,
+		&i.AuthorityID,
+		&i.Challenge,
+		&i.GatewayRevision,
+		&i.PublicRevision,
+		&i.MachineID,
+		&i.BootID,
+		&i.ResourceID,
+		&i.ScopeSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readRuntimeUpgradeExternalFenceReceipt = `-- name: ReadRuntimeUpgradeExternalFenceReceipt :one
+SELECT withdrawal_id, intent_id, receipt_id, envelope, envelope_sha256, enforced_at, issued_at, observed_at FROM runtime_upgrade_external_fence_receipts WHERE withdrawal_id=$1
+`
+
+func (q *Queries) ReadRuntimeUpgradeExternalFenceReceipt(ctx context.Context, db DBTX, withdrawalID pgtype.UUID) (RuntimeUpgradeExternalFenceReceipt, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeExternalFenceReceipt, withdrawalID)
+	var i RuntimeUpgradeExternalFenceReceipt
+	err := row.Scan(
+		&i.WithdrawalID,
+		&i.IntentID,
+		&i.ReceiptID,
+		&i.Envelope,
+		&i.EnvelopeSha256,
+		&i.EnforcedAt,
+		&i.IssuedAt,
+		&i.ObservedAt,
+	)
+	return i, err
 }
 
 const readRuntimeUpgradeGatewayDeployments = `-- name: ReadRuntimeUpgradeGatewayDeployments :many
@@ -54223,6 +54376,18 @@ func (q *Queries) RevokeRuntimeReleaseQualification(ctx context.Context, db DBTX
 	return i, err
 }
 
+const revokeRuntimeUpgradeExternalFenceAuthority = `-- name: RevokeRuntimeUpgradeExternalFenceAuthority :execrows
+UPDATE runtime_upgrade_external_fence_authorities SET revoked_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, revokeRuntimeUpgradeExternalFenceAuthority, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeSession = `-- name: RevokeSession :one
 update sessions set revoked_at = coalesce(revoked_at, now())
 where id = $1 and account_id = $2 and revoked_at is null
@@ -56248,6 +56413,22 @@ func (q *Queries) SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg Set
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const shareRuntimeUpgradeExternalFenceAuthority = `-- name: ShareRuntimeUpgradeExternalFenceAuthority :one
+SELECT id, public_key, created_at, revoked_at FROM runtime_upgrade_external_fence_authorities WHERE id=$1 FOR SHARE
+`
+
+func (q *Queries) ShareRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceAuthority, error) {
+	row := db.QueryRow(ctx, shareRuntimeUpgradeExternalFenceAuthority, id)
+	var i RuntimeUpgradeExternalFenceAuthority
+	err := row.Scan(
+		&i.ID,
+		&i.PublicKey,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
 }
 
 const shareRuntimeUpgradeGatewayRosterHead = `-- name: ShareRuntimeUpgradeGatewayRosterHead :one

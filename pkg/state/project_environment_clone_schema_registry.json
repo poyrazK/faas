@@ -6758,6 +6758,47 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "runtime_upgrade_external_fence_authorities",
+    "columns": [
+      "created_at",
+      "id",
+      "public_key",
+      "revoked_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_external_fence_intents",
+    "columns": [
+      "authority_id",
+      "boot_id",
+      "challenge",
+      "created_at",
+      "gateway_revision",
+      "id",
+      "machine_id",
+      "public_revision",
+      "resource_id",
+      "scope_sha256",
+      "withdrawal_id"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_external_fence_receipts",
+    "columns": [
+      "enforced_at",
+      "envelope",
+      "envelope_sha256",
+      "intent_id",
+      "issued_at",
+      "observed_at",
+      "receipt_id",
+      "withdrawal_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "runtime_upgrade_gateway_drains",
     "columns": [
       "active_forwards",

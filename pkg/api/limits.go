@@ -8824,6 +8824,13 @@ const (
 	RuntimeUpgradeNativeActivationTimeout     = 60 * time.Second
 )
 
+// Private irreversible external host-epoch receipts (ADR-622).
+const (
+	RuntimeUpgradeExternalFenceEnvelopeMaxBytes = 16 << 10
+	RuntimeUpgradeExternalFenceResourceMaxBytes = 256
+	RuntimeUpgradeExternalFenceMaxAge           = 60 * time.Second
+)
+
 // Private runtime qualification collector budgets (ADR-601).
 const (
 	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)

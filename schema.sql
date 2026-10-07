@@ -956,11 +956,11 @@ BEGIN
  ON CONFLICT (public_session_id) DO NOTHING;
  GET DIAGNOSTICS added=ROW_COUNT;
  IF added > 0 AND (SELECT count(*) FROM (SELECT 1 FROM runtime_upgrade_public_edge_withdrawals w
-  WHERE NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id) LIMIT 65) pending) > 64 THEN
+  WHERE NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id)
+   AND NOT EXISTS (SELECT 1 FROM runtime_upgrade_external_fence_receipts r WHERE r.withdrawal_id=w.id)
+  LIMIT 65) pending) > 64 THEN
   RAISE EXCEPTION 'public edge withdrawal capacity exceeded' USING ERRCODE='23514';
  END IF;
- -- Direct head publication must also invalidate current facts. Otherwise a
- -- topology-only revision round trip could borrow an older zero-activity fact.
  IF NEW.revision IS DISTINCT FROM OLD.revision THEN
   DELETE FROM runtime_upgrade_public_edge_guards;
   DELETE FROM runtime_upgrade_public_edge_activity;
@@ -5417,6 +5417,83 @@ $$;
 
 
 --
+-- Name: guard_runtime_upgrade_external_fence_authority(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_external_fence_authority() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' OR (TG_OP='INSERT' AND (NEW.revoked_at IS NOT NULL OR NEW.created_at>clock_timestamp())) THEN
+  RAISE EXCEPTION 'external authority history cannot be erased or pre-revoked' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL OR NEW.revoked_at>clock_timestamp()
+  OR (to_jsonb(NEW)-'revoked_at') IS DISTINCT FROM (to_jsonb(OLD)-'revoked_at')) THEN
+  RAISE EXCEPTION 'authority key is immutable and revocation is irreversible' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_external_fence_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_external_fence_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE withdrawn runtime_upgrade_public_edge_withdrawals;
+BEGIN
+ IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'external fence intent is immutable' USING ERRCODE='23514'; END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=NEW.gateway_revision FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'external fence internal head changed' USING ERRCODE='23514'; END IF;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton AND revision=NEW.public_revision FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'external fence public head changed' USING ERRCODE='23514'; END IF;
+ SELECT * INTO withdrawn FROM runtime_upgrade_public_edge_withdrawals WHERE id=NEW.withdrawal_id FOR UPDATE;
+ IF NOT FOUND OR NEW.created_at<withdrawn.created_at OR NEW.created_at>clock_timestamp()
+  OR EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts WHERE withdrawal_id=NEW.withdrawal_id)
+  OR EXISTS(SELECT 1 FROM runtime_upgrade_external_fence_receipts WHERE withdrawal_id=NEW.withdrawal_id) THEN
+  RAISE EXCEPTION 'external fence requires unresolved exact withdrawal' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_external_fence_authorities WHERE id=NEW.authority_id AND revoked_at IS NULL FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'external fence authority unavailable' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_external_fence_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_external_fence_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE reviewed runtime_upgrade_external_fence_intents;
+BEGIN
+ IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'external fence receipt is immutable' USING ERRCODE='23514'; END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ SELECT * INTO reviewed FROM runtime_upgrade_external_fence_intents WHERE id=NEW.intent_id FOR SHARE;
+ IF NOT FOUND OR reviewed.withdrawal_id<>NEW.withdrawal_id THEN
+  RAISE EXCEPTION 'external receipt intent mismatch' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_public_edge_withdrawals WHERE id=NEW.withdrawal_id FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts WHERE withdrawal_id=NEW.withdrawal_id)
+  OR NOT EXISTS(SELECT 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=reviewed.gateway_revision)
+  OR NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton AND revision=reviewed.public_revision) THEN
+  RAISE EXCEPTION 'external receipt resolved elsewhere or head changed' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_external_fence_authorities WHERE id=reviewed.authority_id AND revoked_at IS NULL FOR SHARE;
+ IF NOT FOUND OR NEW.enforced_at<reviewed.created_at OR NEW.observed_at>clock_timestamp()
+  OR clock_timestamp()-NEW.issued_at>interval '60 seconds'
+  OR encode(sha256(NEW.envelope),'hex')<>NEW.envelope_sha256 THEN
+  RAISE EXCEPTION 'external receipt authority, clock or bytes invalid' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_runtime_upgrade_gateway_roster(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5621,15 +5698,14 @@ CREATE FUNCTION public.guard_runtime_upgrade_public_edge_withdrawal_receipt() RE
     AS $$
 DECLARE withdrawn runtime_upgrade_public_edge_withdrawals;
 BEGIN
- IF TG_OP <> 'INSERT' THEN
-  RAISE EXCEPTION 'immutable public edge withdrawal receipt' USING ERRCODE='23514';
- END IF;
+ IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'immutable public edge withdrawal receipt' USING ERRCODE='23514'; END IF;
  PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
  PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
- SELECT * INTO withdrawn FROM runtime_upgrade_public_edge_withdrawals WHERE id=NEW.withdrawal_id FOR SHARE;
+ SELECT * INTO withdrawn FROM runtime_upgrade_public_edge_withdrawals WHERE id=NEW.withdrawal_id FOR UPDATE;
  IF NOT FOUND OR NEW.observed_at < withdrawn.created_at OR NEW.observed_at > clock_timestamp()
+  OR EXISTS(SELECT 1 FROM runtime_upgrade_external_fence_receipts WHERE withdrawal_id=NEW.withdrawal_id)
   OR EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision WHERE withdrawn.public_session_id=ANY(r.public_sessions)) THEN
-  RAISE EXCEPTION 'withdrawal receipt requires an absent reviewed process and current clock' USING ERRCODE='23514';
+  RAISE EXCEPTION 'withdrawal receipt requires an absent unresolved process and current clock' USING ERRCODE='23514';
  END IF;
  RETURN NEW;
 END $$;
@@ -19438,6 +19514,70 @@ CREATE TABLE public.runtime_snapshots (
 
 
 --
+-- Name: runtime_upgrade_external_fence_authorities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_external_fence_authorities (
+    id uuid NOT NULL,
+    public_key bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT runtime_upgrade_external_fence_authorities_check CHECK (((revoked_at IS NULL) OR (isfinite(revoked_at) AND (revoked_at >= created_at)))),
+    CONSTRAINT runtime_upgrade_external_fence_authorities_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_external_fence_authorities_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_external_fence_authorities_public_key_check CHECK (((octet_length(public_key) = 32) AND (public_key <> decode(repeat('00'::text, 32), 'hex'::text))))
+);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_external_fence_intents (
+    id uuid NOT NULL,
+    withdrawal_id uuid NOT NULL,
+    authority_id uuid NOT NULL,
+    challenge uuid NOT NULL,
+    gateway_revision uuid NOT NULL,
+    public_revision uuid NOT NULL,
+    machine_id text NOT NULL,
+    boot_id uuid NOT NULL,
+    resource_id text NOT NULL,
+    scope_sha256 text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_external_fence_intents_boot_id_check CHECK ((boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_external_fence_intents_challenge_check CHECK ((challenge <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_external_fence_intents_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_external_fence_intents_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_external_fence_intents_machine_id_check CHECK (((machine_id ~ '^[0-9a-f]{32}$'::text) AND (machine_id <> repeat('0'::text, 32)))),
+    CONSTRAINT runtime_upgrade_external_fence_intents_resource_id_check CHECK ((((octet_length(resource_id) >= 1) AND (octet_length(resource_id) <= 256)) AND (resource_id ~ '^[A-Za-z0-9._:/@-]+$'::text))),
+    CONSTRAINT runtime_upgrade_external_fence_intents_scope_sha256_check CHECK ((scope_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_external_fence_receipts (
+    withdrawal_id uuid NOT NULL,
+    intent_id uuid NOT NULL,
+    receipt_id uuid NOT NULL,
+    envelope bytea NOT NULL,
+    envelope_sha256 text NOT NULL,
+    enforced_at timestamp with time zone NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_external_fence_receipts_check CHECK ((isfinite(issued_at) AND (issued_at >= enforced_at))),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_check1 CHECK ((isfinite(observed_at) AND (observed_at >= issued_at))),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_enforced_at_check CHECK (isfinite(enforced_at)),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_envelope_check CHECK (((octet_length(envelope) >= 1) AND (octet_length(envelope) <= 16384))),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_envelope_sha256_check CHECK ((envelope_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_receipt_id_check CHECK ((receipt_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: runtime_upgrade_gateway_drains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25422,6 +25562,62 @@ ALTER TABLE ONLY public.runtime_snapshots
 
 
 --
+-- Name: runtime_upgrade_external_fence_authorities runtime_upgrade_external_fence_authorities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_authorities
+    ADD CONSTRAINT runtime_upgrade_external_fence_authorities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_authorities runtime_upgrade_external_fence_authorities_public_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_authorities
+    ADD CONSTRAINT runtime_upgrade_external_fence_authorities_public_key_key UNIQUE (public_key);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_challenge_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_challenge_key UNIQUE (challenge);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_pkey PRIMARY KEY (withdrawal_id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_receipt_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_receipt_id_key UNIQUE (receipt_id);
+
+
+--
 -- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30830,6 +31026,13 @@ CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USI
 
 
 --
+-- Name: runtime_upgrade_external_fence_intents_withdrawal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_external_fence_intents_withdrawal ON public.runtime_upgrade_external_fence_intents USING btree (withdrawal_id);
+
+
+--
 -- Name: runtime_upgrade_gateway_drains_expiry; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33907,6 +34110,27 @@ CREATE TRIGGER runtime_upgrade_cutover_immutable BEFORE DELETE OR UPDATE ON publ
 --
 
 CREATE TRIGGER runtime_upgrade_cutover_operation_guard BEFORE INSERT ON public.deployment_runtime_upgrade_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_operation_effect();
+
+
+--
+-- Name: runtime_upgrade_external_fence_authorities runtime_upgrade_external_fence_authority_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_external_fence_authority_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_external_fence_authorities FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_external_fence_authority();
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intent_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_external_fence_intent_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_external_fence_intents FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_external_fence_intent();
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_external_fence_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_external_fence_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_external_fence_receipt();
 
 
 --
@@ -40237,6 +40461,54 @@ ALTER TABLE ONLY public.runtime_instance_config_proofs
 
 ALTER TABLE ONLY public.runtime_release_qualifications
     ADD CONSTRAINT runtime_release_qualifications_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_authority_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_authority_id_fkey FOREIGN KEY (authority_id) REFERENCES public.runtime_upgrade_external_fence_authorities(id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_gateway_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_gateway_revision_fkey FOREIGN KEY (gateway_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_public_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_public_revision_fkey FOREIGN KEY (public_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_withdrawal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_withdrawal_id_fkey FOREIGN KEY (withdrawal_id) REFERENCES public.runtime_upgrade_public_edge_withdrawals(id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.runtime_upgrade_external_fence_intents(id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_withdrawal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_withdrawal_id_fkey FOREIGN KEY (withdrawal_id) REFERENCES public.runtime_upgrade_public_edge_withdrawals(id);
 
 
 --

@@ -5996,6 +5996,38 @@ type RuntimeSnapshot struct {
 	Profile             string
 }
 
+type RuntimeUpgradeExternalFenceAuthority struct {
+	ID        pgtype.UUID
+	PublicKey []byte
+	CreatedAt pgtype.Timestamptz
+	RevokedAt pgtype.Timestamptz
+}
+
+type RuntimeUpgradeExternalFenceIntent struct {
+	ID              pgtype.UUID
+	WithdrawalID    pgtype.UUID
+	AuthorityID     pgtype.UUID
+	Challenge       pgtype.UUID
+	GatewayRevision pgtype.UUID
+	PublicRevision  pgtype.UUID
+	MachineID       string
+	BootID          pgtype.UUID
+	ResourceID      string
+	ScopeSha256     string
+	CreatedAt       pgtype.Timestamptz
+}
+
+type RuntimeUpgradeExternalFenceReceipt struct {
+	WithdrawalID   pgtype.UUID
+	IntentID       pgtype.UUID
+	ReceiptID      pgtype.UUID
+	Envelope       []byte
+	EnvelopeSha256 string
+	EnforcedAt     pgtype.Timestamptz
+	IssuedAt       pgtype.Timestamptz
+	ObservedAt     pgtype.Timestamptz
+}
+
 type RuntimeUpgradeGatewayDrain struct {
 	AppID                 pgtype.UUID
 	GatewaySessionID      pgtype.UUID

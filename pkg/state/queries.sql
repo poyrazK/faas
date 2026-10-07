@@ -14384,7 +14384,7 @@ SELECT * FROM runtime_upgrade_public_edge_activity WHERE public_roster_revision=
 SELECT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawals WHERE public_session_id=$1);
 
 -- name: LockRuntimeUpgradePublicEdgeWithdrawal :one
-SELECT * FROM runtime_upgrade_public_edge_withdrawals WHERE slot_id=$1 AND public_session_id=$2 AND config_sha256=$3 FOR SHARE;
+SELECT * FROM runtime_upgrade_public_edge_withdrawals WHERE slot_id=$1 AND public_session_id=$2 AND config_sha256=$3 FOR UPDATE;
 
 -- name: RecordRuntimeUpgradePublicEdgeWithdrawalReceipt :execrows
 INSERT INTO runtime_upgrade_public_edge_withdrawal_receipts(withdrawal_id,fence_id,activity_version,admission_closed,coverage_known,active_forwards,observed_at)
@@ -14394,4 +14394,33 @@ VALUES ($1,$2,$3,true,true,0,clock_timestamp()) ON CONFLICT (withdrawal_id) DO N
 SELECT * FROM runtime_upgrade_public_edge_withdrawal_receipts WHERE withdrawal_id=$1;
 
 -- name: ReadPendingRuntimeUpgradePublicEdgeWithdrawals :many
-SELECT w.* FROM runtime_upgrade_public_edge_withdrawals w WHERE NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id) ORDER BY w.id LIMIT $1;
+SELECT w.* FROM runtime_upgrade_public_edge_withdrawals w WHERE NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id) AND NOT EXISTS(SELECT 1 FROM runtime_upgrade_external_fence_receipts r WHERE r.withdrawal_id=w.id) ORDER BY w.id LIMIT $1;
+
+-- name: InsertRuntimeUpgradeExternalFenceAuthority :exec
+INSERT INTO runtime_upgrade_external_fence_authorities(id,public_key) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING;
+
+-- name: ShareRuntimeUpgradeExternalFenceAuthority :one
+SELECT * FROM runtime_upgrade_external_fence_authorities WHERE id=$1 FOR SHARE;
+
+-- name: LockRuntimeUpgradeExternalFenceAuthority :one
+SELECT * FROM runtime_upgrade_external_fence_authorities WHERE id=$1 FOR UPDATE;
+
+-- name: RevokeRuntimeUpgradeExternalFenceAuthority :execrows
+UPDATE runtime_upgrade_external_fence_authorities SET revoked_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL;
+
+-- name: LockRuntimeUpgradeExternalFenceWithdrawal :one
+SELECT * FROM runtime_upgrade_public_edge_withdrawals WHERE id=$1 FOR UPDATE;
+
+-- name: ReadRuntimeUpgradeExternalFenceIntent :one
+SELECT * FROM runtime_upgrade_external_fence_intents WHERE id=$1;
+
+-- name: InsertRuntimeUpgradeExternalFenceIntent :exec
+INSERT INTO runtime_upgrade_external_fence_intents(id,withdrawal_id,authority_id,challenge,gateway_revision,public_revision,machine_id,boot_id,resource_id,scope_sha256)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING;
+
+-- name: ReadRuntimeUpgradeExternalFenceReceipt :one
+SELECT * FROM runtime_upgrade_external_fence_receipts WHERE withdrawal_id=$1;
+
+-- name: InsertRuntimeUpgradeExternalFenceReceipt :exec
+INSERT INTO runtime_upgrade_external_fence_receipts(withdrawal_id,intent_id,receipt_id,envelope,envelope_sha256,enforced_at,issued_at,observed_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,clock_timestamp());
