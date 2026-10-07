@@ -17,6 +17,7 @@ func TestWorkflowBacklogAlertMigrationPreservesRulesAndRejectsActions(t *testing
 	pool := pgtest.OpenMigrated(t)
 	defer pool.Close()
 	ctx := t.Context()
+	migrateUpOnce(ctx, t, pool)
 	account := seedAccount(t, ctx, pool)
 	app := seedApp(t, ctx, pool, account)
 	raw, err := migrations.FS.ReadFile("20261007151150594_workflow_backlog_alert.sql")
