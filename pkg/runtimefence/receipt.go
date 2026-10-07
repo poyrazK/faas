@@ -96,8 +96,18 @@ func NewVerifier(authority string, publicKey []byte) (*Verifier, error) {
 }
 
 func (v *Verifier) Verify(intent Intent, now time.Time, raw []byte) (VerifiedReceipt, error) {
+	r, err := v.verifyAuthenticity(intent, raw)
+	if err != nil || now.IsZero() || r.claim.IssuedAtMicros > now.UnixMicro() || now.UnixMicro()-r.claim.IssuedAtMicros > api.RuntimeUpgradeExternalFenceMaxAge.Microseconds() {
+		return VerifiedReceipt{}, ErrUnverified
+	}
+	return r, nil
+}
+
+// Delivery authenticates historical bytes without granting first acceptance.
+// Only Verify, with the locked database clock, applies the freshness window.
+func (v *Verifier) verifyAuthenticity(intent Intent, raw []byte) (VerifiedReceipt, error) {
 	digest, err := IntentDigest(intent)
-	if err != nil || v == nil || v.authority != intent.AuthorityID || len(v.key) != ed25519.PublicKeySize || now.IsZero() || len(raw) == 0 || len(raw) > api.RuntimeUpgradeExternalFenceEnvelopeMaxBytes {
+	if err != nil || v == nil || v.authority != intent.AuthorityID || len(v.key) != ed25519.PublicKeySize || len(raw) == 0 || len(raw) > api.RuntimeUpgradeExternalFenceEnvelopeMaxBytes {
 		return VerifiedReceipt{}, ErrUnverified
 	}
 	// Freeze before decoding, hashing or retaining the caller-owned bytes.
@@ -113,7 +123,7 @@ func (v *Verifier) Verify(intent Intent, now time.Time, raw []byte) (VerifiedRec
 		return VerifiedReceipt{}, ErrUnverified
 	}
 	c := envelope.Claim
-	if c.Version != 1 || c.Contract != Contract || c.AuthorityID != v.authority || !CanonicalID(c.ReceiptID) || c.IntentID != intent.ID || c.IntentSHA256 != digest || c.Challenge != intent.Challenge || c.EnforcedAtMicros < intent.CreatedAtMicros || c.IssuedAtMicros < c.EnforcedAtMicros || c.IssuedAtMicros > now.UnixMicro() || now.UnixMicro()-c.IssuedAtMicros > api.RuntimeUpgradeExternalFenceMaxAge.Microseconds() {
+	if c.Version != 1 || c.Contract != Contract || c.AuthorityID != v.authority || !CanonicalID(c.ReceiptID) || c.IntentID != intent.ID || c.IntentSHA256 != digest || c.Challenge != intent.Challenge || c.EnforcedAtMicros < intent.CreatedAtMicros || c.IssuedAtMicros < c.EnforcedAtMicros {
 		return VerifiedReceipt{}, ErrUnverified
 	}
 	signature, err := base64.RawURLEncoding.Strict().DecodeString(envelope.Signature)

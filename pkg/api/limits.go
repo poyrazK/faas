@@ -8831,6 +8831,15 @@ const (
 	RuntimeUpgradeExternalFenceMaxAge           = 60 * time.Second
 )
 
+// Private authenticated external receipt delivery (ADR-623).
+const (
+	RuntimeUpgradeExternalFenceTLSMaterialMaxBytes = 64 << 10
+	RuntimeUpgradeExternalFenceEndpointMaxBytes    = 2048
+	RuntimeUpgradeExternalFenceHeaderMaxBytes      = 16 << 10
+	RuntimeUpgradeExternalFenceDeliveryTimeout     = 10 * time.Second
+	RuntimeUpgradeExternalFenceDeliveryConnections = 4
+)
+
 // Private runtime qualification collector budgets (ADR-601).
 const (
 	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)
