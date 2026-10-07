@@ -1,25 +1,34 @@
 -- +goose Up
 -- ADR-648: workflow-private code retention never extends public revision TTLs.
-ALTER TABLE workflow_runs ADD COLUMN deployment_id uuid
-    CHECK (deployment_id IS NULL OR deployment_id <> '00000000-0000-0000-0000-000000000000');
-ALTER TABLE workflow_runs ADD CONSTRAINT workflow_runs_deployment_owner_fk
-    FOREIGN KEY(deployment_id,app_id) REFERENCES deployments(id,app_id) DEFERRABLE INITIALLY DEFERRED;
-CREATE INDEX workflow_runs_deployment_retention_idx ON workflow_runs(deployment_id) WHERE deployment_id IS NOT NULL;
-CREATE TABLE workflow_code_pins (
+ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS deployment_id uuid;
+-- +goose StatementBegin
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='workflow_runs'::regclass AND conname='workflow_runs_deployment_id_check') THEN
+        ALTER TABLE workflow_runs ADD CONSTRAINT workflow_runs_deployment_id_check
+            CHECK (deployment_id IS NULL OR deployment_id <> '00000000-0000-0000-0000-000000000000');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='workflow_runs'::regclass AND conname='workflow_runs_deployment_owner_fk') THEN
+        ALTER TABLE workflow_runs ADD CONSTRAINT workflow_runs_deployment_owner_fk
+            FOREIGN KEY(deployment_id,app_id) REFERENCES deployments(id,app_id) DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+END $$;
+-- +goose StatementEnd
+CREATE INDEX IF NOT EXISTS workflow_runs_deployment_retention_idx ON workflow_runs(deployment_id) WHERE deployment_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS workflow_code_pins (
     deployment_id uuid PRIMARY KEY,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     expires_at timestamptz NOT NULL CHECK(isfinite(expires_at)),
     FOREIGN KEY(deployment_id,app_id) REFERENCES deployments(id,app_id) ON DELETE CASCADE
 );
-CREATE INDEX workflow_code_pins_app_expiry_idx ON workflow_code_pins(app_id,expires_at);
-CREATE TABLE workflow_event_code_refs (
+CREATE INDEX IF NOT EXISTS workflow_code_pins_app_expiry_idx ON workflow_code_pins(app_id,expires_at);
+CREATE TABLE IF NOT EXISTS workflow_event_code_refs (
     outbox_id bigint NOT NULL REFERENCES event_fanout_outbox(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     deployment_id uuid NOT NULL,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     PRIMARY KEY(outbox_id,deployment_id),
     FOREIGN KEY(deployment_id,app_id) REFERENCES deployments(id,app_id) ON DELETE CASCADE
 );
-CREATE INDEX workflow_event_code_refs_deployment_idx ON workflow_event_code_refs(deployment_id);
+CREATE INDEX IF NOT EXISTS workflow_event_code_refs_deployment_idx ON workflow_event_code_refs(deployment_id);
 
 -- Normalize captured identities once; retirement must not expand all retained
 -- event JSON for every deployment. Missing/foreign identities cannot retain code.
@@ -28,11 +37,12 @@ SELECT DISTINCT o.id,d.id,a.id FROM event_fanout_outbox o
 CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) r
 JOIN apps a ON a.id::text=r->>'app_id' AND a.account_id=o.account_id AND a.account_id::text=r->>'account_id' AND a.status<>'deleted'
 JOIN deployments d ON d.id::text=r->>'deployment_id' AND d.app_id=a.id
-WHERE r ? 'workflow';
+WHERE r ? 'workflow'
+ON CONFLICT DO NOTHING;
 
 
 -- +goose StatementBegin
-CREATE VIEW workflow_retained_deployment_refs AS
+CREATE OR REPLACE VIEW workflow_retained_deployment_refs AS
 SELECT DISTINCT w.deployment_id FROM workflow_runs w
 JOIN apps a ON a.id=w.app_id AND a.status<>'deleted'
 JOIN deployments d ON d.id=w.deployment_id AND d.app_id=w.app_id
@@ -40,7 +50,7 @@ UNION
 SELECT DISTINCT r.deployment_id FROM workflow_event_code_refs r
 JOIN apps a ON a.id=r.app_id AND a.status<>'deleted';
 
-CREATE VIEW durable_work_retained_deployment_refs AS
+CREATE OR REPLACE VIEW durable_work_retained_deployment_refs AS
 SELECT deployment_id FROM customer_operation_retained_deployment_refs
 UNION SELECT deployment_id FROM workflow_retained_deployment_refs;
 
@@ -51,7 +61,7 @@ SELECT deployment_id,app_id,max(expires_at) AS expires_at FROM (
     UNION ALL SELECT deployment_id,app_id,expires_at FROM workflow_code_pins
 ) receipts GROUP BY deployment_id,app_id;
 
-CREATE FUNCTION pin_workflow_code(app uuid, deployment uuid) RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION pin_workflow_code(app uuid, deployment uuid) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
     IF deployment IS NULL THEN RETURN; END IF;
     -- Admission and retirement serialize app first, deployment second, then
@@ -70,7 +80,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION guard_workflow_code_pin() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_workflow_code_pin() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP='UPDATE' THEN
         IF NEW.deployment_id IS DISTINCT FROM OLD.deployment_id OR NEW.app_id IS DISTINCT FROM OLD.app_id THEN
@@ -82,10 +92,11 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS workflow_runs_code_guard ON workflow_runs;
 CREATE TRIGGER workflow_runs_code_guard BEFORE INSERT OR UPDATE OF deployment_id,app_id ON workflow_runs
 FOR EACH ROW EXECUTE FUNCTION guard_workflow_code_pin();
 
-CREATE FUNCTION guard_workflow_event_code_pins() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_workflow_event_code_pins() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE recipient jsonb;
 BEGIN
     DELETE FROM workflow_event_code_refs WHERE outbox_id=NEW.id;
@@ -103,6 +114,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS event_fanout_workflow_code_guard ON event_fanout_outbox;
 CREATE TRIGGER event_fanout_workflow_code_guard AFTER INSERT OR UPDATE OF recipient_snapshot ON event_fanout_outbox
 FOR EACH ROW EXECUTE FUNCTION guard_workflow_event_code_pins();
 

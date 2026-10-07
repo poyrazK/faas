@@ -11,6 +11,7 @@ ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_chk CHECK (metric IN (
     'pre_auth_target_signal_gap_pct', 'workflow_failures', 'workflow_schedule_quota_skips', 'workflow_pending_age_seconds', 'workflow_waiting_age_seconds'
 ));
 
+ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_workflow_notification_chk;
 ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_workflow_notification_chk
  CHECK (metric NOT IN ('workflow_failures', 'workflow_schedule_quota_skips', 'workflow_pending_age_seconds', 'workflow_waiting_age_seconds') OR action = 'webhook');
 
