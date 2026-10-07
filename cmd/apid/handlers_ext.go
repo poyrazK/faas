@@ -1514,6 +1514,13 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
 		} else {
+			// The caller only sees a generic 503; keep the cause. Under load,
+			// h4-edge's no-op idle updates and one deploy's app update failed
+			// intermittently here with nothing logged (production-us hunt #5,
+			// H5-42).
+			if s.log != nil {
+				s.log.Error("app update failed", "app", app.ID, "slug", logsanitize.Field(app.Slug), "err", err)
+			}
 			api.WriteProblem(w, api.ErrCapacity("could not update app"))
 		}
 		return
