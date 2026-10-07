@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -8282,12 +8283,13 @@ var edgeRuleJWTAllowedAlgs = map[string]struct{}{
 
 // EdgeRuleJWTAction validates an inbound Bearer JWT.
 type EdgeRuleJWTAction struct {
-	Issuer                         string            `json:"issuer"`
-	Audience                       []string          `json:"audience,omitempty"`
-	JWKSURL                        string            `json:"jwks_url"`
-	Algorithms                     []string          `json:"algorithms"`
-	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
-	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
+	Issuer                         string             `json:"issuer"`
+	Audience                       []string           `json:"audience,omitempty"`
+	JWKSURL                        string             `json:"jwks_url"`
+	Algorithms                     []string           `json:"algorithms"`
+	RequiredClaims                 map[string]string  `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string             `json:"platform_tenant_external_ref_claim,omitempty"`
+	MCP                            *MCPResourcePolicy `json:"mcp,omitempty"`
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes
@@ -8313,6 +8315,18 @@ var edgeRuleJWTAllowedJWKSURLPrefixes = []string{
 func (a *EdgeRuleJWTAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("jwt action is required")
+	}
+	if a.MCP != nil {
+		if err := a.MCP.Validate(); err != nil {
+			return ErrValidation(err.Error())
+		}
+		if len(a.Audience) != 1 || a.Audience[0] != a.MCP.Resource {
+			return ErrValidation("MCP JWT audience must contain exactly the canonical resource")
+		}
+		u, err := url.Parse(a.Issuer)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return ErrValidation("MCP issuer must be an HTTPS issuer URL")
+		}
 	}
 	if strings.TrimSpace(a.Issuer) == "" {
 		return ErrValidation("jwt action requires issuer")

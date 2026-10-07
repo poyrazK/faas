@@ -23,7 +23,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|policy|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -31,6 +31,8 @@ func cmdMCP(args []string) int {
 		return cmdMCPInit(args[1:])
 	case "deploy":
 		return cmdMCPDeploy(args[1:])
+	case "policy":
+		return cmdMCPPolicy(args[1:])
 	case "lock":
 		return cmdMCPLock(args[1:])
 	case "diff":
