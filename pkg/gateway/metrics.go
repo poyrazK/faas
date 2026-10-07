@@ -937,11 +937,11 @@ func NewMetrics() *Metrics {
 		}),
 		requestIDJournalWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_request_id_journal_write_total",
-			Help: "Synchronous exact public request-ID journal write outcomes; result is recorded or failed.",
+			Help: "Exact public request-ID journal write outcomes; result is recorded, failed, or dropped (the asynchronous queue was full, ADR-634).",
 		}, []string{"result"}),
 		requestIDJournalWriteTime: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_request_id_journal_write_duration_seconds",
-			Help:    "Time spent synchronously recording exact public request-ID mappings before guest work.",
+			Help:    "Time spent writing one exact public request-ID mapping to apid (asynchronous since ADR-634).",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2},
 		}),
 		usageOutboxPending:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_records", Help: "Unacknowledged financial usage events on local disk."}),
@@ -3643,6 +3643,15 @@ func (m *Metrics) ObserveRequestIDJournalWrite(duration time.Duration, err error
 	}
 	m.requestIDJournalWrites.WithLabelValues(result).Inc()
 	m.requestIDJournalWriteTime.Observe(duration.Seconds())
+}
+
+// IncRequestIDJournalDropped counts a journal record the queue had no room
+// for (ADR-634). The request was still served.
+func (m *Metrics) IncRequestIDJournalDropped() {
+	if m == nil || m.requestIDJournalWrites == nil {
+		return
+	}
+	m.requestIDJournalWrites.WithLabelValues("dropped").Inc()
 }
 
 func (m *Metrics) IncUsageOutboxFailure() {

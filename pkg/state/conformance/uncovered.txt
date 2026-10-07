@@ -404,7 +404,6 @@ MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
 MarkAppRegistryCredentialUsed
-MarkAutoRollback
 MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
@@ -530,7 +529,6 @@ SetProjectScanSource
 SoftDeleteOrg
 StampAppScaleIn
 StampAppScaleOut
-StampFirstWake
 StampInstanceInvocation
 StartProjectEnvironmentPromotionRollback
 StorageUsage

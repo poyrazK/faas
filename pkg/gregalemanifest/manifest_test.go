@@ -532,7 +532,7 @@ func TestLoad_YAMLEventSubscriptionsAreStrict(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	_, _, err := Load(dir)
-	if err == nil || !strings.Contains(err.Error(), "field typee not found") {
+	if err == nil || !strings.Contains(err.Error(), `unknown key "typee" under event_triggers:`) {
 		t.Fatalf("err = %v, want unknown event trigger field", err)
 	}
 }
@@ -624,7 +624,7 @@ func TestLoad_StrictUnknownField(t *testing.T) {
 	if err == nil {
 		t.Fatal("err = nil, want strict-decode error on unknown field")
 	}
-	if !strings.Contains(err.Error(), "field trigger not found") {
+	if !strings.Contains(err.Error(), `unknown key "trigger"; did you mean "triggers"?`) {
 		t.Errorf("err = %q, want strict-decode message", err)
 	}
 }
@@ -1587,5 +1587,31 @@ func TestAsyncRoutesManifestExplicitEmptyAndValidation(t *testing.T) {
 				t.Fatalf("Validate() = %v, want error containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestParseManifestErrorsNameKeysNotGoTypes reproduces production-us hunt
+// #4: a typo'd key surfaced as "decode: yaml: unmarshal errors: line 4:
+// field unknown_top_key not found in type gregalemanifest.Manifest".
+func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
+	for _, tc := range []struct {
+		yaml string
+		want []string
+	}{
+		{yaml: "trigers: []\n", want: []string{`line 1: unknown key "trigers"`, `did you mean "triggers"?`}},
+		{yaml: "function:\n  runtime: node22\n  memory_mb: 1\n", want: []string{`line 3: unknown key "memory_mb" under function:`}},
+	} {
+		_, err := ParseBytes([]byte(tc.yaml))
+		if err == nil {
+			t.Fatalf("ParseBytes(%q) succeeded, want an error", tc.yaml)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("ParseBytes(%q) error = %q, want it to contain %q", tc.yaml, err, want)
+			}
+		}
+		if strings.Contains(err.Error(), "gregalemanifest.") || strings.Contains(err.Error(), "unmarshal errors") {
+			t.Errorf("error still names Go internals: %q", err)
+		}
 	}
 }

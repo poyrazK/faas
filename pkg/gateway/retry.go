@@ -477,7 +477,7 @@ func (h *Handler) proxyAttempt(
 	app App,
 ) Target {
 	completed := target
-	unguarded := forward
+	unguarded := h.circuitObserved(app.ID, forward)
 	forward = func(dst http.ResponseWriter, req *http.Request, selected Target) {
 		ctx := req.Context()
 		req = requestForTarget(ctx, req, app, selected)
@@ -495,6 +495,9 @@ func (h *Handler) proxyAttempt(
 		recordTrafficAttempt(ctx)
 		unguarded(dst, req, selected)
 	}
+	// An authenticated candidate smoke owns its retry loop in imaged. The
+	// generic picker can select the currently serving sibling revision and
+	// must never replay a candidate probe there under the original identity.
 	if isStreaming || deploymentSmokeResponseID(r.Context()) != "" {
 		forward(w, r, target)
 		return completed

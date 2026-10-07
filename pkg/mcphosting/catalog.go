@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -13,7 +14,21 @@ type RPCError struct {
 	Code int
 }
 
-func (e *RPCError) Error() string { return fmt.Sprintf("MCP JSON-RPC error %d", e.Code) }
+func (e *RPCError) Error() string {
+	if e.Code == RPCMethodNotFound {
+		return fmt.Sprintf("MCP JSON-RPC error %d (method not found: the server does not implement this method)", e.Code)
+	}
+	return fmt.Sprintf("MCP JSON-RPC error %d", e.Code)
+}
+
+// RPCMethodNotFound is the JSON-RPC 2.0 code for an unsupported method.
+const RPCMethodNotFound = -32601
+
+// IsMethodNotFound reports whether err is the server declining a method.
+func IsMethodNotFound(err error) bool {
+	var rpcErr *RPCError
+	return errors.As(err, &rpcErr) && rpcErr.Code == RPCMethodNotFound
+}
 
 type ToolsCapability struct {
 	ListChanged bool `json:"listChanged,omitempty"`

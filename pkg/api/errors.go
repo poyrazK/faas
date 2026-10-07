@@ -3710,6 +3710,10 @@ const (
 	CodeTrafficRevocationUnavailable = "traffic_revocation_unavailable"
 	CodeTrafficDeadlineUnavailable   = "traffic_deadline_unavailable"
 	CodeTrafficDeadlineInvalid       = "traffic_deadline_invalid"
+	// CodeCircuitOpen is the 503 the public gateway answers when every
+	// candidate instance of an app has an open instance-health circuit
+	// (ADR-201 §2). It carries Retry-After.
+	CodeCircuitOpen = "circuit_open"
 	// Upload admission precedes guest execution, so upload failures have
 	// distinct stable codes and do not masquerade as app timeouts.
 	CodeRequestUploadTimeout  = "request_upload_timeout"

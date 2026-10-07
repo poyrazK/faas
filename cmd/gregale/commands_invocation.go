@@ -158,7 +158,12 @@ func invokeStatusOK(status string) bool {
 //
 // Empty payload is valid (handler accepts a zero-body invocation,
 // returns 200 with status=completed + empty result).
-func resolvePayload(s string) ([]byte, error) {
+func resolvePayload(s string) ([]byte, error) { return resolveJSONFlag("--payload", s) }
+
+// resolveJSONFlag reads a JSON flag value (inline, @file, or - for stdin) and
+// names flag in the validation error, so `send --data` and `triggers --config`
+// do not tell the user to fix a --payload they never passed.
+func resolveJSONFlag(flag, s string) ([]byte, error) {
 	if s == "" {
 		return nil, nil
 	}
@@ -183,7 +188,7 @@ func resolvePayload(s string) ([]byte, error) {
 	// payload surfaced as "marshal request: json: error calling MarshalJSON
 	// for type json.RawMessage: invalid character ...".
 	if len(bytes.TrimSpace(b)) > 0 && !json.Valid(b) {
-		return nil, errors.New("--payload must be valid JSON (inline, @file, or - for stdin)")
+		return nil, fmt.Errorf("%s must be valid JSON (inline, @file, or - for stdin)", flag)
 	}
 	return b, nil
 }

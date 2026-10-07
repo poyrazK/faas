@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -1134,6 +1135,11 @@ type Handler struct {
 	// Off by default; with it off, proxyAttempt calls the forwarder directly
 	// and the tree is byte-identical to the pre-ADR-201 path.
 	retryEnabled bool
+	// breaker is the instance-health breaker shared with the service proxy
+	// (ADR-201 §2). Nil when FAAS_GATEWAY_CIRCUIT_BREAKER is off.
+	breaker *circuit.Group
+	// circuitLastSweep paces idle breaker-key pruning on the public path.
+	circuitLastSweep atomic.Int64
 	// retryDefault is the policy applied when the gate is on and no
 	// kind=retry rule matched. Zero MaxAttempts means no replay, so an
 	// operator can enable the gate and roll the behaviour out per-app via
@@ -5385,6 +5391,26 @@ func (c *capWriter) WriteHeader(statusCode int) {
 		// only thing on the wire.
 		return
 	}
+	// Production-us hunt #4 (H4-67): a response that announces a body
+	// larger than the cap used to go out as a 2xx with the full
+	// Content-Length and then stop mid-body, which a client sees only as a
+	// truncated transfer. Refuse it before the headers are written.
+	if c.cap > 0 && statusCode >= http.StatusOK {
+		if n, err := strconv.ParseInt(c.Header().Get("Content-Length"), 10, 64); err == nil && n > c.cap {
+			if c.disabled.CompareAndSwap(false, true) {
+				for _, k := range []string{"Content-Length", "Content-Encoding", "Content-Range", "Etag", "Last-Modified", "Accept-Ranges"} {
+					c.Header().Del(k)
+				}
+				if c.onCap != nil {
+					c.onCap()
+				}
+				if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
+					c.onWarn("exceeded")
+				}
+			}
+			return
+		}
+	}
 	c.ResponseWriter.WriteHeader(statusCode)
 }
 
@@ -6938,6 +6964,21 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// ADR-201 §2 (H4-68): an instance whose circuit is open is not
+	// selectable. An exact-deployment smoke must reach its deployment and is
+	// never re-picked.
+	if !exactDeployment {
+		var allowed, probe bool
+		pick, allowed, probe = h.selectByCircuit(app.ID, pick, func() PickResult { return h.pickAfterCapacity(app, "", versionKey) })
+		if !allowed {
+			writeCircuitOpen(w)
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
+		if probe {
+			defer h.releaseCircuitProbe(app.ID, pick.Target.InstanceID)
+		}
+	}
 	// The wake admission result is now known. Replace the hot default before
 	// any response body is committed by the proxy.
 	w.Header().Set(wire.WakeHeader, wakeResponseValue(cold, wakeMethod))
@@ -7159,6 +7200,7 @@ haveApp:
 	// from a non-retry failure would make the two paths diverge in exactly the
 	// situation an operator is trying to read.
 	retireStaleTarget := func(failed Target) {
+		h.recordCircuitFailure(app.ID, failed.InstanceID)
 		// Evict synchronously with the transport failure so a
 		// concurrent request cannot pick this known-dead target.
 		// RecoverStaleTarget detaches and bounds lifecycle work in

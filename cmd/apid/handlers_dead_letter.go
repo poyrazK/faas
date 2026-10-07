@@ -37,6 +37,14 @@ func deadLetterEventResponseForApp(ev state.DeadLetterEvent, appSlug string) api
 	return out
 }
 
+// deadLetterMissing treats an id that cannot name a dead-letter event (PgStore
+// rejects a non-UUID with ErrInvalidArgument) like an unknown one. MemStore
+// already answered ErrNotFound for both. production-us hunt #4: `dlq inspect
+// <app> not-an-id` returned 500 Internal Error.
+func deadLetterMissing(err error) bool {
+	return errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument)
+}
+
 func deadLetterNotFound(id string) *api.Problem {
 	return api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 		"Dead-letter event not found", "no dead-letter event with id "+strconv.Quote(id)+" belongs to this app.")
@@ -75,7 +83,7 @@ func (s *server) getDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct
 	}
 	ev, err := s.store.DeadLetterEventByID(r.Context(), app.ID, r.PathValue("id"))
 	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
+		if deadLetterMissing(err) {
 			api.WriteProblem(w, deadLetterNotFound(r.PathValue("id")))
 			return
 		}
@@ -92,7 +100,7 @@ func (s *server) replayDeadLetterEvent(w http.ResponseWriter, r *http.Request, a
 	}
 	ev, err := s.store.ReplayDeadLetterEvent(r.Context(), acct.ID, app.ID, r.PathValue("id"))
 	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
+		if deadLetterMissing(err) {
 			s.ops.ObserveDLQReplay(app.Slug, "not_found")
 			api.WriteProblem(w, deadLetterNotFound(r.PathValue("id")))
 			return
@@ -146,7 +154,7 @@ func (s *server) deleteDeadLetterEvent(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	if err := s.store.DeleteDeadLetterEvent(r.Context(), acct.ID, app.ID, r.PathValue("id")); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
+		if deadLetterMissing(err) {
 			s.ops.ObserveDLQPurge(app.Slug, "not_found")
 			api.WriteProblem(w, deadLetterNotFound(r.PathValue("id")))
 			return

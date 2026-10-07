@@ -122,7 +122,7 @@ func (p *Provider) snapshotCopyReaderCaptureFromReceipt(ctx context.Context, d m
 	if err := p.snapshotRestorePlacement(ctx, source.projectID, d.Spec); err != nil {
 		return managedpostgres.SnapshotRestoreObservation{}, err
 	}
-	branch, err := p.findSnapshotRestoreBranch(ctx, source.projectID, targetID, p.restoreBranchName(r.Capture.ResourceID))
+	branch, err := p.findOwnedBranch(ctx, source.projectID, targetID, p.restoreBranchName(r.Capture.ResourceID))
 	if err != nil {
 		return managedpostgres.SnapshotRestoreObservation{}, err
 	}
