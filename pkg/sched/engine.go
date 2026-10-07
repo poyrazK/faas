@@ -3450,10 +3450,11 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// Per-deployment HTTP or gRPC readiness selection. Both probe
 		// modes target :8080 (ADR-009/portnorm); an empty override
 		// keeps the legacy TCP probe.
-		HealthcheckPath:        healthcheckPathFromDep(dep),
-		HealthcheckGRPC:        healthcheckGRPC,
-		HealthcheckGRPCService: healthcheckGRPCService,
-		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
+		HealthcheckPath:          healthcheckPathFromDep(dep),
+		HealthcheckGRPC:          healthcheckGRPC,
+		HealthcheckGRPCService:   healthcheckGRPCService,
+		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
+		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -5289,10 +5290,11 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		Port: deploymentRuntimePort(dep),
 		// Issue #460 / ADR-053, ADR-057 (PR-D): per-deployment
 		// override readiness probe path. "" = legacy TCP-accept.
-		HealthcheckPath:        healthcheckPathFromDep(dep),
-		HealthcheckGRPC:        healthcheckGRPC,
-		HealthcheckGRPCService: healthcheckGRPCService,
-		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
+		HealthcheckPath:          healthcheckPathFromDep(dep),
+		HealthcheckGRPC:          healthcheckGRPC,
+		HealthcheckGRPCService:   healthcheckGRPCService,
+		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
+		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto
@@ -8513,9 +8515,15 @@ func (e *Engine) DestroyForLivenessFailure(ctx context.Context, instanceID, reas
 	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
 		snap, terr := e.store.LatestSnapshotForTier(ctx, deploymentID, tier)
 		if terr != nil || snap.ID == "" {
+			if terr != nil && reason == fcvm.LivenessReasonImageHealthcheck && !errors.Is(terr, state.ErrNotFound) {
+				return fmt.Errorf("sched: image healthcheck: read %s snapshot: %w", tier, terr)
+			}
 			continue
 		}
 		if err := e.store.MarkSnapshotStale(ctx, snap.ID); err != nil {
+			if reason == fcvm.LivenessReasonImageHealthcheck {
+				return fmt.Errorf("sched: image healthcheck: invalidate snapshot %s: %w", snap.ID, err)
+			}
 			e.log.Warn("liveness: mark snapshot stale", "instance", instanceID, "snap_id", snap.ID, "tier", tier, "err", err)
 		}
 	}

@@ -459,6 +459,13 @@ func (c *Client) Deploy(ctx context.Context, slug string, req CreateDeploymentRe
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/deployments", req, &out)
 }
 
+// PublishAppImage deploys a published digest from the configured project image
+// repository. Repeated app/scope/digest deliveries return the original row.
+func (c *Client) PublishAppImage(ctx context.Context, slug string, req CreateDeploymentRequest) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/image-published", req, &out)
+}
+
 // GetDeployment returns a deployment by ID.
 func (c *Client) GetDeployment(ctx context.Context, id string) (DeploymentResponse, error) {
 	var out DeploymentResponse

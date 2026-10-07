@@ -1,33 +1,7 @@
-// Healthcheck wire-format decoder + host-side DGRAM receiver
-// (M-2 / ADR-139 §Decision 1, //code-review PR #1202 finding #3).
-//
-// The guest-init poll goroutine sends HealthcheckReport frames
-// over AF_VSOCK DGRAM to port 1029. This file mirrors the wire
-// format (guest/init/healthcheck_linux.go) on the host side so
-// vmmd can decode the report and gate waitReady on the first
-// 'pass' when the manifest declares Healthcheck (vs today's
-// TCP-accept / HTTP-probe on :8080).
-//
-// Frame layout (binary big-endian):
-//
-//	+------+----------+----------+----------+--------------+
-//	|  4B  |  4B seq  | 1B status|  4B olen  |  olen bytes  |
-//	+------+----------+----------+----------+--------------+
-//
-// The 4-byte msg-type discriminator is 0x05 (mirrors guest-init's
-// sendHealthcheckReport constant). We deliberately keep the
-// decoder pure-Go and AF_VSOCK-free so the unit test exercises
-// the wire shape on a non-Linux CI host (the same trick the
-// guest-init tests use).
-//
-// Production gating: the host-side consumer is wired behind
-// Manager.SetHealthcheckPollingEnabled(true). Default off — the
-// legacy :8080 TCP-accept / HTTP-probe path remains the source
-// of truth for waitReady so M-2 doesn't ship a behaviour change
-// for the common case (the manifest omits Healthcheck). When
-// the flag is on, the receiver dials vsock 1029 DGRAM on the
-// guest's CID and waits for the first pass within
-// Healthcheck.StartPeriodS (default 0 = plan default).
+// Legacy OCI healthcheck DGRAM decoder (ADR-139). The unsolicited wire has
+// no boot challenge and is not production readiness evidence. ADR-643 uses
+// the fresh host-initiated STREAM protocol in image_readiness.go instead.
+// The decoder remains available for wire compatibility and telemetry tests.
 
 package fcvm
 
@@ -44,8 +18,7 @@ import (
 // share compile-time symbols — they're separate binaries at
 // different stages of the boot chain — so the literal must be
 // hand-synced. A drift here is a silent "no healthcheck reports"
-// failure mode: the host filter ignores the DGRAM, the engine
-// times out and falls through to the :8080 TCP-accept probe.
+// failure mode for telemetry; DGRAM reports never authorize readiness.
 const VsockHealthcheckPort uint32 = 1029
 
 // VsockHealthcheckMaxOutput mirrors guest/init/healthcheck_linux.go's

@@ -11066,6 +11066,66 @@ paths:
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/image-published:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [deployments]
+      operationId: publishAppImage
+      summary: Deploy an immutable image after CI publishes it.
+      description: |
+        Requires deploy:write or admin and the normal deployment authentication
+        checks. App-bound deploy tokens and CI bearer tokens are accepted.
+        The app must be a project workload configured with image:. The required
+        image is a full registry/repository@sha256:digest reference matching that
+        workload's declared registry and repository. A digest-pinned declaration
+        accepts only its declared digest. Tags are rejected; send the digest
+        returned by the build/push step after publication completes.
+
+        App, normalized deployment scope, and image reference form a durable
+        delivery identity. First delivery creates one pending OCI deployment
+        without a source build. Repeated deliveries return the original row and
+        its current status, including terminal states, without creating a new
+        deployment. The first accepted configuration wins for this identity;
+        use ordinary deployment or retry endpoints for intentional redeploys.
+        Changing scope creates an independent delivery.
+
+        Normal signature, security, plan, traffic, and account deploy-rate
+        admission apply. The Compose main container port defaults the port
+        override. Omitted workflows and the source release command inherit from
+        the latest image deployment in the same scope. Image commands, service
+        bindings, and scoped environment settings use the existing app contract.
+        Optional overrides and rollout policies follow CreateDeploymentRequest.
+        The project image declaration is retained. This is a CI handoff endpoint;
+        native registry webhook payloads and registry polling are not supported.
+      x-faas-key-scope: [admin, deploy:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeploymentRequest'
+      responses:
+        '200':
+          description: The original deployment for an already accepted image delivery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+        '202':
+          description: A new image deployment was accepted and queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/DeploymentForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/DeployFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/deployments/{id}/summary:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -47806,6 +47866,19 @@ components:
           type: boolean
           description: "Override the customer identity policy for selected workloads (Hobby and above). Must match the scan override. Omitted uses Compose declarations and preserves existing app policy."
 
+    ComposeHealthcheck:
+      type: object
+      description: "Partial Compose override for a prebuilt image HEALTHCHECK. Empty test and zero timing/retry values inherit image settings. NONE disables the check. Durations retain nanosecond precision; positive durations must be at least 1ms."
+      properties:
+        test:
+          type: array
+          items: { type: string }
+          description: "CMD followed by argv, CMD-SHELL followed by one command, or NONE."
+        interval_ns: { type: integer, format: int64, minimum: 0 }
+        timeout_ns: { type: integer, format: int64, minimum: 0 }
+        start_period_ns: { type: integer, format: int64, minimum: 0 }
+        start_interval_ns: { type: integer, format: int64, minimum: 0 }
+        retries: { type: integer, minimum: 0 }
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -47820,6 +47893,13 @@ components:
           example: ""
           description: "Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages remain available outside this directory."
         dockerfile: { type: string, example: Dockerfile }
+        image:
+          type: string
+          description: "Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker before materialization; stateful images remain managed requirements. Image deployments return a deployment_id without a build_id."
+          example: docker.io/library/nginx:1.27
+        image_healthcheck:
+          $ref: '#/components/schemas/ComposeHealthcheck'
+          description: "Compose healthcheck override for prebuilt image workloads, captured per deployment."
         command:
           type: array
           items: { type: string }
@@ -47827,6 +47907,12 @@ components:
           type: array
           items: { type: string }
           description: "Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."
+        depends_on_conditions:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [service_started, service_healthy]
+          description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."

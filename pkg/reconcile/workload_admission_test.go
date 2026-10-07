@@ -1,3 +1,4 @@
+// adr: 638
 package reconcile
 
 import (
@@ -31,12 +32,16 @@ func TestWorkloadAdmissionReasons(t *testing.T) {
 			want: []string{"without an execution adapter"},
 		},
 		{
-			name: "prebuilt image requires explicit container deploy",
+			name: "prebuilt image is deployable",
 			workloads: []reposcan.Workload{{
 				Name:  "worker-api",
 				Image: "ghcr.io/example/api:v1",
 			}},
-			want: []string{"project apply currently supports source builds only"},
+		},
+		{
+			name:      "invalid image is rejected",
+			workloads: []reposcan.Workload{{Name: "worker-api", Image: "https://example.com/app:v1"}},
+			want:      []string{"invalid image reference"},
 		},
 		{
 			name:      "intended member update",

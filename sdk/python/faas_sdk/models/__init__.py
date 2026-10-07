@@ -407,6 +407,7 @@ from .commit_source_response_contract_version import CommitSourceResponseContrac
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
+from .compose_healthcheck import ComposeHealthcheck
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
@@ -1679,6 +1680,8 @@ from .plan_response_scan_source import PlanResponseScanSource
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
+from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
+from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
 from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
 from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
@@ -3124,6 +3127,7 @@ __all__ = (
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
+    "ComposeHealthcheck",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerKeyListResponse",
@@ -4372,6 +4376,8 @@ __all__ = (
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
+    "PlanWorkloadDependsOnConditions",
+    "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
     "PlatformTenantAccessTokenListResponse",
     "PlatformTenantAccessTokenResponse",

@@ -6,6 +6,17 @@ import (
 	"testing/fstest"
 )
 
+// adr: 638
+func TestMergeComposeBuildIgnoresLowerPriorityImage(t *testing.T) {
+	workloads := mergeByKey([]workloadSeed{
+		{tier: TierCompose, det: detCompose, name: "gateway", dockerfile: "Dockerfile", imageSet: true},
+		{tier: TierCompose, det: detK8s, name: "gateway", image: "example.com/gateway:v1"},
+	})
+	if len(workloads) != 1 || workloads[0].Image != "" || workloads[0].Dockerfile != "Dockerfile" {
+		t.Fatalf("Compose build strategy replaced by another detector: %+v", workloads)
+	}
+}
+
 // TestMerge_ComposeFillsProcfileClass — the canonical
 // compose+Procfile composition: a Procfile supplies class=http for
 // `web:`, and a compose.yaml supplies the same (RootDir="",

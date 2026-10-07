@@ -6682,11 +6682,14 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	Name       string   `json:"name"`
-	RootDir    string   `json:"root_dir"`
-	Dockerfile string   `json:"dockerfile,omitempty"`
-	Command    []string `json:"command"`
-	DependsOn  []string `json:"depends_on,omitempty"`
+	Name                string              `json:"name"`
+	RootDir             string              `json:"root_dir"`
+	Dockerfile          string              `json:"dockerfile,omitempty"`
+	Image               string              `json:"image,omitempty"`
+	ImageHealthcheck    *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
+	Command             []string            `json:"command"`
+	DependsOn           []string            `json:"depends_on,omitempty"`
+	DependsOnConditions map[string]string   `json:"depends_on_conditions,omitempty"`
 
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first

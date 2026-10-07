@@ -562,6 +562,13 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
+	retireImageReadiness := installImageReadinessRuntime(cmd, m, func() []string {
+		if processSecrets == nil {
+			return cmd.Env
+		}
+		return imageReadinessSecretEnvironment(cmd.Env, m, secrets, processSecrets.snapshot(), apiEnv)
+	})
+	defer retireImageReadiness()
 	if sup != nil {
 		sup.markStarted()
 		if sup.onHealthy != nil {

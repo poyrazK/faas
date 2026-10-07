@@ -212,12 +212,8 @@ func TestDetectComposeRejectsInvalidAllowedServiceCallScope(t *testing.T) {
 	}
 }
 
-// TestDetectCompose_SkipsPrebuiltWithoutBuild pins the tripwire
-// path: a service that declares image: but no build: AND is NOT
-// in the datastore denylist MUST emit a warning and NOT a workload.
-// The two-drive FROM-base constraint (ADR-040) rejects arbitrary
-// prebuilt base images; we surface that at discovery time.
-func TestDetectCompose_SkipsPrebuiltWithoutBuild(t *testing.T) {
+// adr: 638
+func TestDetectCompose_PrebuiltWithoutBuild(t *testing.T) {
 	t.Parallel()
 	body := `services:
   web:
@@ -230,17 +226,102 @@ func TestDetectCompose_SkipsPrebuiltWithoutBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detectCompose: %v", err)
 	}
-	if len(seeds) != 0 {
-		t.Errorf("seeds = %v, want none", names(seeds))
+	if len(seeds) != 1 || seeds[0].image != "docker.io/library/nginx:1.25" {
+		t.Fatalf("seeds = %+v, want normalized nginx image workload", seeds)
 	}
 	if len(managed) != 0 {
 		t.Errorf("managed = %v, want none", sortManagedNames(managed))
 	}
-	if len(warnings) != 1 {
-		t.Fatalf("warnings = %v, want 1", warnings)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
 	}
-	if !strings.Contains(warnings[0], "nginx") || !strings.Contains(warnings[0], "refusing arbitrary prebuilt") {
-		t.Errorf("warning text %q lacks 'nginx' or 'refusing arbitrary prebuilt'", warnings[0])
+}
+
+func TestScanComposeMixedImageWorkloads(t *testing.T) {
+	fsys := fstest.MapFS{
+		"compose.yaml": {Data: []byte(`services:
+  gateway:
+    image: "nginx:${VERSION}"
+    command: ["nginx", "-g", "daemon off;"]
+    ports: ["8080:80"]
+    expose: ["9090"]
+    environment: {TOKEN: "not-for-the-plan"}
+    depends_on: [worker, database]
+    x-gregale-service-policy: declared
+    x-gregale-service-transport: https
+    x-gregale-preview-calls: deny
+    x-gregale-allow-callers: [frontend]
+    x-gregale-platform-tenant-required: true
+  worker:
+    image: ghcr.io/example/worker:v1
+    command: "exec /app/worker --queue jobs"
+  frontend:
+    build: ./frontend
+    image: example/frontend:output-tag
+  database:
+    image: postgres:17
+`)},
+		".env":                {Data: []byte("VERSION=1.27\n")},
+		"frontend/Dockerfile": {Data: []byte("FROM scratch\n")},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Workloads) != 3 || len(result.Managed) != 1 || result.Managed[0].Name != "database" {
+		t.Fatalf("result = %+v", result)
+	}
+	byName := map[string]Workload{}
+	for _, w := range result.Workloads {
+		byName[w.Name] = w
+	}
+	w := byName["gateway"]
+	if w.Image != "docker.io/library/nginx:1.27" || w.Class != ClassHTTP || w.RootDir != "" ||
+		strings.Join(w.EnvKeys, ",") != "TOKEN" || strings.Join(w.DependsOn, ",") != "database,worker" ||
+		len(w.Ports) != 1 || w.Ports[0] != 80 || len(w.InternalPorts) != 1 || w.InternalPorts[0].Port != 9090 ||
+		w.ServiceBindingPolicy != "declared" || w.ServiceBindingTransport != "https" || w.PreviewServiceCallsPolicy != "deny" ||
+		w.AllowedServiceCallers == nil || w.PlatformTenantRequired == nil || !*w.PlatformTenantRequired {
+		t.Fatalf("gateway configuration = %+v", w)
+	}
+	if byName["worker"].Class != ClassWorker || !byName["worker"].CommandShell || byName["worker"].Image == "" {
+		t.Fatalf("worker = %+v", byName["worker"])
+	}
+	if byName["frontend"].Image != "" || byName["frontend"].RootDir != "frontend" {
+		t.Fatalf("build+image must build from source: %+v", byName["frontend"])
+	}
+	if order, err := DependencyOrder(result.Workloads, result.Managed); err != nil || strings.Join(order, ",") != "frontend,worker,gateway" {
+		t.Fatalf("dependency order = %v, %v", order, err)
+	}
+}
+
+func TestDetectComposeRejectsInvalidImageReference(t *testing.T) {
+	for _, ref := range []string{"https://example.com/app:v1", "example.com/app:bad tag", "example.com/app@sha256:short", "example.com/app?token=secret", "nginx:", "example.com/a/../app:v1"} {
+		t.Run(ref, func(t *testing.T) {
+			fsys := fstest.MapFS{"compose.yaml": {Data: []byte(fmt.Sprintf("services:\n  gateway:\n    image: %q\n", ref))}}
+			if _, _, _, err := detectCompose(fsys); err == nil || !strings.Contains(err.Error(), "invalid image reference") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestParseImagePortsUsesContainerTargets(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ports []any
+		want  string
+	}{
+		{"short", []any{"8080:80"}, "[80]"},
+		{"host address", []any{"127.0.0.1:8080:80/tcp"}, "[80]"},
+		{"long", []any{map[string]any{"target": 3000, "published": 8080}}, "[3000]"},
+		{"first declaration", []any{"9090:9000", "8080:80", "80"}, "[9000 80]"},
+		{"unsupported and invalid", []any{"53/udp", "8000-8010", "0", "65536", map[string]any{"target": 53, "protocol": "udp"}}, "[]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fmt.Sprint(parseImagePorts(tc.ports)); got != tc.want {
+				t.Fatalf("container targets = %s, want %s", got, tc.want)
+			}
+		})
 	}
 }
 

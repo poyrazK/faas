@@ -192,6 +192,8 @@ type RestoreSpec struct {
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-643).
+	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget. 0 means use the
 	// vmmd default, preserving restores from pre-M3 callers.
 	StartupDeadlineS int

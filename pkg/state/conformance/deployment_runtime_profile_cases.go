@@ -1,3 +1,4 @@
+// adr: 640, 642
 package conformance
 
 import (
@@ -5,14 +6,21 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func testImageRuntimeProfile(t *testing.T, fx *Fixture) {
 	t.Helper()
+	accepted, err := frameworkprofile.CaptureImageRuntime(nil, &api.ComposeHealthcheck{Test: []string{"NONE"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	dep, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
 		AppID: fx.App.ID, Kind: state.DeploymentKindImage,
 		ImageDigest: "sha256:runtime-profile", Status: state.DeployPending,
+		InferredProfile: accepted,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -30,6 +38,10 @@ func testImageRuntimeProfile(t *testing.T, fx *Fixture) {
 	}
 	if err := json.Unmarshal(stored.InferredProfile, &got); err != nil || got.Port != 5678 || stored.OverridePort != 0 {
 		t.Fatalf("runtime profile=%s override_port=%d err=%v", stored.InferredProfile, stored.OverridePort, err)
+	}
+	check, err := frameworkprofile.ImageHealthcheckFromProfile(stored.InferredProfile)
+	if err != nil || check == nil || check.Override == nil || len(check.Override.Test) != 1 || check.Override.Test[0] != "NONE" {
+		t.Fatalf("runtime profile lost its accepted healthcheck: %s, %v", stored.InferredProfile, err)
 	}
 	if err := fx.Store.SetDeploymentRuntimeProfile(fx.Ctx, dep.ID, []byte(`{bad`)); err == nil {
 		t.Fatal("invalid JSON was accepted")

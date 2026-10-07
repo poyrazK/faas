@@ -72,3 +72,41 @@ func TestWaitForProjectApply_DeadlineMarksEveryPendingBuild(t *testing.T) {
 		t.Fatalf("timeout result = %+v", got.Builds[0])
 	}
 }
+
+// adr: 638
+func TestWaitForProjectApply_ImageDeployment(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     string
+		wantStatus string
+		wantError  bool
+		timedOut   bool
+	}{
+		{"live", statusLive, statusLive, false, false},
+		{"failed", deploymentStatusFailed, deploymentStatusFailed, true, false},
+		{"pending", "queued", "timeout", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/v1/builds/") {
+					t.Error("image deployment requested a source build")
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "image-deployment", Status: tc.status})
+			}))
+			defer srv.Close()
+			deadline := time.Second
+			if tc.timedOut {
+				deadline = 20 * time.Millisecond
+			}
+			apply := api.ApplyResponse{Builds: []api.AppliedBuild{{Slug: "image", DeploymentID: "image-deployment"}}}
+			got, timedOut := waitForProjectApply(t.Context(), NewClient(srv.URL, "token"), apply, deadline)
+			result := got.Builds[0]
+			if timedOut != tc.timedOut || result.DeploymentStatus != tc.wantStatus || result.BuildStatus != "" || (result.Error != "") != tc.wantError {
+				t.Fatalf("image wait = %+v, timedOut=%v", result, timedOut)
+			}
+		})
+	}
+}

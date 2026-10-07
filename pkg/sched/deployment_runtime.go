@@ -95,6 +95,10 @@ func healthcheckGRPCFromDep(dep state.Deployment) (bool, string) {
 	return true, hc.GRPC.Service
 }
 
+func imageHealthcheckRequiredFromDep(dep state.Deployment) bool {
+	return dep.Kind == state.DeploymentKindImage && frameworkprofile.RequiresImageHealthcheck(dep.InferredProfile)
+}
+
 func validRuntimeHealthPath(path string) bool {
 	return strings.HasPrefix(path, "/") && !strings.ContainsAny(path, "\r\n")
 }

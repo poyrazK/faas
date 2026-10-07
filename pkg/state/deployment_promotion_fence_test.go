@@ -1,3 +1,4 @@
+// adr: 311, 641
 package state_test
 
 import (
@@ -28,7 +29,7 @@ func checkGitDrivenPromotionFence(t *testing.T, store state.Store, ctx context.C
 		t.Fatal(err)
 	}
 	older, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
-		CommitSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
+		CommitSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ImageDigest: "sha256:older"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,14 +37,18 @@ func checkGitDrivenPromotionFence(t *testing.T, store state.Store, ctx context.C
 		t.Fatal(err)
 	}
 	newer, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
-		CommitSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})
+		CommitSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", ImageDigest: "sha256:newer"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if newer.Revision <= older.Revision {
 		t.Fatalf("revisions older=%d newer=%d", older.Revision, newer.Revision)
 	}
-	if err := store.MarkGitDrivenDeploymentLiveIfLatest(ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+	promote := store.MarkGitDrivenDeploymentLiveIfLatest
+	if kind == state.DeploymentKindImage {
+		promote = store.MarkDeploymentLiveIfLatest
+	}
+	if err := promote(ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
 		t.Fatalf("older promotion = %v, want superseded", err)
 	}
 	oldRow, err := store.DeploymentByID(ctx, older.ID)
@@ -54,12 +59,15 @@ func checkGitDrivenPromotionFence(t *testing.T, store state.Store, ctx context.C
 	if err != nil || stableRow.Status != state.DeployLive {
 		t.Fatalf("stable row = (%+v, %v), want live until replacement", stableRow, err)
 	}
-	if err := store.MarkGitDrivenDeploymentLiveIfLatest(ctx, newer.ID); err != nil {
+	if err := promote(ctx, newer.ID); err != nil {
 		t.Fatalf("newest promotion: %v", err)
 	}
 	newRow, err := store.DeploymentByID(ctx, newer.ID)
 	if err != nil || newRow.Status != state.DeployLive {
 		t.Fatalf("newer row = (%+v, %v), want live", newRow, err)
+	}
+	if err := promote(ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+		t.Fatalf("late older promotion = %v, want superseded", err)
 	}
 	// An explicit operator rollback uses the existing method and can still
 	// intentionally promote a prior revision after the automatic fence.
@@ -84,6 +92,15 @@ func TestMemStorePreviewPromotionFence(t *testing.T) {
 func TestPgStorePreviewPromotionFence(t *testing.T) {
 	store, ctx := pgStore(t)
 	checkGitDrivenPromotionFence(t, store, ctx, "preview-pg", state.DeploymentKindPreview)
+}
+
+func TestMemStoreImagePromotionFence(t *testing.T) {
+	checkGitDrivenPromotionFence(t, state.NewMemStore(), t.Context(), "image-mem", state.DeploymentKindImage)
+}
+
+func TestPgStoreImagePromotionFence(t *testing.T) {
+	store, ctx := pgStore(t)
+	checkGitDrivenPromotionFence(t, store, ctx, "image-pg", state.DeploymentKindImage)
 }
 
 func TestMemStoreGitHubPromotionFenceIsScoped(t *testing.T) {

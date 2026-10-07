@@ -9,12 +9,13 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/oci"
 	"gopkg.in/yaml.v3"
 )
 
 // composeCandidate is the loose, decoded shape of one
 // docker-compose services entry. We read only the fields §3
-// commits to and ignore the rest — healthcheck, network_mode,
+// commits to and ignore the rest — network_mode,
 // volumes, secrets, etc. are out of scope at this phase (they
 // become env/ServiceTime/Limits in Phase 3's app row).
 //
@@ -37,6 +38,7 @@ type composeCandidate struct {
 	Expose      []any    `yaml:"expose"`     // "6379", 6379, "6379/tcp": internal-only listeners (ADR-576)
 	EnvFile     any      `yaml:"env_file"`
 	Environment any      `yaml:"environment"`
+	Healthcheck any      `yaml:"healthcheck"`
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
 
@@ -108,8 +110,7 @@ var composeFileNames = []string{
 // detectCompose reads the first present compose file from the
 // candidate list, decodes services, and emits one workloadSeed per
 // service plus one Managed for a denylisted prebuilt image (without
-// build:) and a warning for a non-denylisted prebuilt image (the
-// two-drive FROM-base rejection path).
+// build:). Stateless image services use the existing OCI deployment path.
 //
 // Env-key hygiene: environment can be `map[string]string` (KEY:
 // value), `[]string` (KEY alone or KEY=value), or absent. We pull
@@ -178,50 +179,64 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if s.Build != nil && !hasBuild {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s build configuration resolved empty", src, name)
 		}
+		image := ""
+		_, isManaged := denylistKind(s.Image)
+		if !hasBuild && s.Image != "" && !isManaged {
+			ref, err := oci.ParseReference(s.Image)
+			if err != nil || strings.HasSuffix(s.Image, ":") || !api.ValidProjectImage(ref.String()) {
+				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s has invalid image reference", src, name)
+			}
+			image = ref.String()
+		}
+		hasWorkload := hasBuild || image != ""
 		serviceBindingPolicy, policyErr := normalizeServiceBindingPolicy(s.ServiceBindingPolicy)
 		if policyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, policyErr)
 		}
-		if !hasBuild && serviceBindingPolicy != "" {
-			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-policy requires a build workload", src, name)
+		if !hasWorkload && serviceBindingPolicy != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-policy requires a deployable workload", src, name)
 		}
 		serviceBindingTransport, transportErr := normalizeServiceBindingTransport(s.ServiceBindingTransport)
 		if transportErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, transportErr)
 		}
-		if !hasBuild && serviceBindingTransport != "" {
-			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-transport requires a build workload", src, name)
+		if !hasWorkload && serviceBindingTransport != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-transport requires a deployable workload", src, name)
 		}
 		reliability, reliabilityErr := api.NormalizeServiceReliabilityPolicies(s.ServiceReliability, api.ServiceBindingsForTargets(dependencyNames(s.DependsOn)))
 		if reliabilityErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, reliabilityErr)
 		}
-		if !hasBuild && len(reliability) > 0 {
-			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-reliability requires a build workload", src, name)
+		if !hasWorkload && len(reliability) > 0 {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-reliability requires a deployable workload", src, name)
 		}
 		previewServiceCallsPolicy, previewPolicyErr := normalizePreviewServiceCallsPolicy(s.PreviewServiceCallsPolicy)
 		if previewPolicyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, previewPolicyErr)
 		}
-		if !hasBuild && previewServiceCallsPolicy != "" {
-			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-preview-calls requires a build workload", src, name)
+		if !hasWorkload && previewServiceCallsPolicy != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-preview-calls requires a deployable workload", src, name)
 		}
 		allowedCallers, callersErr := normalizeAllowedServiceCallers(s.AllowedServiceCallers)
 		if callersErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, callersErr)
 		}
-		if !hasBuild && allowedCallers != nil {
-			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-callers requires a build workload", src, name)
+		if !hasWorkload && allowedCallers != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-callers requires a deployable workload", src, name)
 		}
 		allowedCallScopes, scopesErr := normalizeAllowedServiceCallScopes(s.AllowedServiceCallScopes)
 		if scopesErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, scopesErr)
 		}
-		if !hasBuild && allowedCallScopes != nil {
-			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-call-scopes requires a build workload", src, name)
+		if !hasWorkload && allowedCallScopes != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-call-scopes requires a deployable workload", src, name)
 		}
-		if !hasBuild && s.PlatformTenantRequired != nil {
-			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-platform-tenant-required requires a build workload", src, name)
+		if !hasWorkload && s.PlatformTenantRequired != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-platform-tenant-required requires a deployable workload", src, name)
+		}
+		conditions, dependencyErr := composeDependencyConditions(s.DependsOn)
+		if dependencyErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, dependencyErr)
 		}
 		command, commandShell := commandSpec(s.Command)
 		if hasBuild {
@@ -242,10 +257,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 				" has no build: or image: — skipping")
 			continue
 		}
-		if !hasBuild && s.Image != "" {
-			// prebuilt image path: denylist hits → Managed,
-			// otherwise warning (the two-drive FROM-base
-			// constraint rejects arbitrary prebuilt base).
+		if !hasBuild && isManaged {
 			if hint, ok := denylistKind(s.Image); ok {
 				managed = append(managed, Managed{
 					Name:    name,
@@ -254,28 +266,42 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 					Source:  src + ": " + name,
 					Image:   s.Image,
 				})
-			} else {
-				warnings = append(warnings, "reposcan: "+src+": "+
-					name+" has image: without build: ("+
-					s.Image+") — refusing arbitrary prebuilt base")
 			}
 			continue
+		}
+		var healthcheck *api.ComposeHealthcheck
+		if image != "" {
+			var err error
+			healthcheck, err = composeHealthcheck(s.Healthcheck)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+			}
+		} else if s.Healthcheck != nil {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": Compose healthcheck overrides currently apply only to prebuilt images")
 		}
 		internalPorts, exposeWarnings := parseExpose(s.Expose)
 		for _, warning := range exposeWarnings {
 			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+		}
+		ports := parsePorts(s.Ports)
+		if image != "" {
+			ports = parseImagePorts(s.Ports)
 		}
 		// build: path — emit a workloadSeed. Class stays empty so an
 		// explicit hint from another detector can fill it. If no hint
 		// exists, mergeByKey infers HTTP from a published port and worker
 		// otherwise.
 		seeds = append(seeds, workloadSeed{
-			name:         name,
-			rootDir:      ctx,
-			dockerfile:   df,
-			command:      command,
-			commandShell: commandShell,
-			dependsOn:    dependencyNames(s.DependsOn),
+			name:                name,
+			rootDir:             ctx,
+			dockerfile:          df,
+			image:               image,
+			imageSet:            true,
+			healthcheck:         healthcheck,
+			command:             command,
+			commandShell:        commandShell,
+			dependsOn:           dependencyNames(s.DependsOn),
+			dependsOnConditions: conditions,
 
 			serviceBindingPolicy:      serviceBindingPolicy,
 			serviceBindingTransport:   serviceBindingTransport,
@@ -285,7 +311,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			allowedServiceCallScopes:  allowedCallScopes,
 			platformTenantRequired:    s.PlatformTenantRequired,
 
-			ports:         parsePorts(s.Ports),
+			ports:         ports,
 			internalPorts: internalPorts,
 			envKeys:       envKeys(s.Environment),
 			source:        src + ": " + name,
@@ -358,11 +384,8 @@ func normalizeAllowedServiceCallScopes(value *api.ServiceCallerScopes) (*api.Ser
 }
 
 // dependencyNames normalizes Compose's short and long depends_on forms.
-// Conditions (service_started/service_healthy/service_completed_successfully)
-// are deliberately not carried into the project graph: Gregale's separate
-// app VMs cannot share Compose's container lifecycle, so readiness is handled
-// by the internal service proxy and the caller can still use the generated
-// service URL. Names are sorted and deduplicated for stable plans.
+// Conditions are captured separately by composeDependencyConditions. Names
+// are sorted and deduplicated for stable ordering and service bindings.
 func dependencyNames(v any) []string {
 	var names []string
 	switch x := v.(type) {
@@ -586,6 +609,40 @@ func parsePorts(items []any) []int {
 		return nil
 	}
 	sort.Ints(out)
+	return out
+}
+
+// Image services listen on the container target, not the Compose host bind.
+// Keep declaration order so the first published TCP target is the main port.
+func parseImagePorts(items []any) []int {
+	var out []int
+	seen := map[int]bool{}
+	for _, item := range items {
+		var port int
+		switch value := item.(type) {
+		case string:
+			text, protocol, _ := strings.Cut(strings.TrimSpace(value), "/")
+			if protocol != "" && !strings.EqualFold(protocol, "tcp") {
+				continue
+			}
+			if colon := strings.LastIndexByte(text, ':'); colon >= 0 {
+				text = text[colon+1:]
+			}
+			port = intOf(text)
+		case map[string]any:
+			protocol, _ := value["protocol"].(string)
+			if protocol != "" && !strings.EqualFold(protocol, "tcp") {
+				continue
+			}
+			port = intOf(value["target"])
+		default:
+			port = intOf(value)
+		}
+		if port > 0 && port <= 65535 && !seen[port] {
+			out = append(out, port)
+			seen[port] = true
+		}
+	}
 	return out
 }
 

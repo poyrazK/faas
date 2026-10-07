@@ -169,6 +169,8 @@ type AppSpec struct {
 	// A separate bool distinguishes an enabled probe with the default
 	// empty service (overall server health) from the disabled state.
 	HealthcheckGrpc bool `protobuf:"varint,25,opt,name=healthcheck_grpc,json=healthcheckGrpc,proto3" json:"healthcheck_grpc,omitempty"`
+	// ADR-643: require a fresh command check from this boot/restore.
+	ImageHealthcheckRequired bool `protobuf:"varint,30,opt,name=image_healthcheck_required,json=imageHealthcheckRequired,proto3" json:"image_healthcheck_required,omitempty"`
 	// healthcheck_grpc_service is the optional service name sent in the
 	// health.v1 Check request; empty checks overall server health.
 	HealthcheckGrpcService string `protobuf:"bytes,26,opt,name=healthcheck_grpc_service,json=healthcheckGrpcService,proto3" json:"healthcheck_grpc_service,omitempty"`
@@ -387,6 +389,13 @@ func (x *AppSpec) GetHealthcheckPath() string {
 func (x *AppSpec) GetHealthcheckGrpc() bool {
 	if x != nil {
 		return x.HealthcheckGrpc
+	}
+	return false
+}
+
+func (x *AppSpec) GetImageHealthcheckRequired() bool {
+	if x != nil {
+		return x.ImageHealthcheckRequired
 	}
 	return false
 }
@@ -1274,8 +1283,12 @@ type WakeResponse struct {
 	RestoreFallbackReason string `protobuf:"bytes,14,opt,name=restore_fallback_reason,json=restoreFallbackReason,proto3" json:"restore_fallback_reason,omitempty"`
 	// ADR-423: the serving handler understands source_key alias delivery.
 	SupportsSecretAliases bool `protobuf:"varint,15,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// A fresh command check passed in this serving boot, never in a paused reservation.
+	ImageHealthcheckVerified           bool `protobuf:"varint,16,opt,name=image_healthcheck_verified,json=imageHealthcheckVerified,proto3" json:"image_healthcheck_verified,omitempty"`
+	SupportsImageHealthcheck           bool `protobuf:"varint,17,opt,name=supports_image_healthcheck,json=supportsImageHealthcheck,proto3" json:"supports_image_healthcheck,omitempty"`
+	SupportsImageHealthcheckMonitoring bool `protobuf:"varint,18,opt,name=supports_image_healthcheck_monitoring,json=supportsImageHealthcheckMonitoring,proto3" json:"supports_image_healthcheck_monitoring,omitempty"`
+	unknownFields                      protoimpl.UnknownFields
+	sizeCache                          protoimpl.SizeCache
 }
 
 func (x *WakeResponse) Reset() {
@@ -1409,6 +1422,27 @@ func (x *WakeResponse) GetRestoreFallbackReason() string {
 func (x *WakeResponse) GetSupportsSecretAliases() bool {
 	if x != nil {
 		return x.SupportsSecretAliases
+	}
+	return false
+}
+
+func (x *WakeResponse) GetImageHealthcheckVerified() bool {
+	if x != nil {
+		return x.ImageHealthcheckVerified
+	}
+	return false
+}
+
+func (x *WakeResponse) GetSupportsImageHealthcheck() bool {
+	if x != nil {
+		return x.SupportsImageHealthcheck
+	}
+	return false
+}
+
+func (x *WakeResponse) GetSupportsImageHealthcheckMonitoring() bool {
+	if x != nil {
+		return x.SupportsImageHealthcheckMonitoring
 	}
 	return false
 }
@@ -3873,9 +3907,11 @@ type PingResponse struct {
 	FcVersion  string                 `protobuf:"bytes,1,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
 	ServerTime *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=server_time,json=serverTime,proto3" json:"server_time,omitempty"`
 	// Callers require this before sending source_key aliases to this node.
-	SupportsSecretAliases bool `protobuf:"varint,3,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	SupportsSecretAliases              bool `protobuf:"varint,3,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
+	SupportsImageHealthcheck           bool `protobuf:"varint,4,opt,name=supports_image_healthcheck,json=supportsImageHealthcheck,proto3" json:"supports_image_healthcheck,omitempty"`
+	SupportsImageHealthcheckMonitoring bool `protobuf:"varint,5,opt,name=supports_image_healthcheck_monitoring,json=supportsImageHealthcheckMonitoring,proto3" json:"supports_image_healthcheck_monitoring,omitempty"`
+	unknownFields                      protoimpl.UnknownFields
+	sizeCache                          protoimpl.SizeCache
 }
 
 func (x *PingResponse) Reset() {
@@ -3925,6 +3961,20 @@ func (x *PingResponse) GetServerTime() *timestamppb.Timestamp {
 func (x *PingResponse) GetSupportsSecretAliases() bool {
 	if x != nil {
 		return x.SupportsSecretAliases
+	}
+	return false
+}
+
+func (x *PingResponse) GetSupportsImageHealthcheck() bool {
+	if x != nil {
+		return x.SupportsImageHealthcheck
+	}
+	return false
+}
+
+func (x *PingResponse) GetSupportsImageHealthcheckMonitoring() bool {
+	if x != nil {
+		return x.SupportsImageHealthcheckMonitoring
 	}
 	return false
 }
@@ -6307,11 +6357,13 @@ type AdoptMigratedInstanceResponse struct {
 	GuestUid int32 `protobuf:"varint,3,opt,name=guest_uid,json=guestUid,proto3" json:"guest_uid,omitempty"`
 	// Actual Manager.Wake result. A requested restore can cold-boot instead.
 	// Older peers omit this field; callers must not infer input acknowledgement.
-	Method                WakeMethod `protobuf:"varint,4,opt,name=method,proto3,enum=onebox.faas.vmmd.v1.WakeMethod" json:"method,omitempty"`
-	WakeId                string     `protobuf:"bytes,5,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
-	SupportsSecretAliases bool       `protobuf:"varint,6,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	Method                             WakeMethod `protobuf:"varint,4,opt,name=method,proto3,enum=onebox.faas.vmmd.v1.WakeMethod" json:"method,omitempty"`
+	WakeId                             string     `protobuf:"bytes,5,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
+	SupportsSecretAliases              bool       `protobuf:"varint,6,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
+	ImageHealthcheckVerified           bool       `protobuf:"varint,7,opt,name=image_healthcheck_verified,json=imageHealthcheckVerified,proto3" json:"image_healthcheck_verified,omitempty"`
+	SupportsImageHealthcheckMonitoring bool       `protobuf:"varint,8,opt,name=supports_image_healthcheck_monitoring,json=supportsImageHealthcheckMonitoring,proto3" json:"supports_image_healthcheck_monitoring,omitempty"`
+	unknownFields                      protoimpl.UnknownFields
+	sizeCache                          protoimpl.SizeCache
 }
 
 func (x *AdoptMigratedInstanceResponse) Reset() {
@@ -6382,6 +6434,20 @@ func (x *AdoptMigratedInstanceResponse) GetWakeId() string {
 func (x *AdoptMigratedInstanceResponse) GetSupportsSecretAliases() bool {
 	if x != nil {
 		return x.SupportsSecretAliases
+	}
+	return false
+}
+
+func (x *AdoptMigratedInstanceResponse) GetImageHealthcheckVerified() bool {
+	if x != nil {
+		return x.ImageHealthcheckVerified
+	}
+	return false
+}
+
+func (x *AdoptMigratedInstanceResponse) GetSupportsImageHealthcheckMonitoring() bool {
+	if x != nil {
+		return x.SupportsImageHealthcheckMonitoring
 	}
 	return false
 }
@@ -8926,10 +8992,11 @@ func (x *PrivateNetworkFirewallRule) GetPorts() []string {
 
 // ResumeWarmInstanceRequest identifies a paused warm-pool VM by instance id.
 type ResumeWarmInstanceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	Instance                 string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	ImageHealthcheckRequired bool                   `protobuf:"varint,2,opt,name=image_healthcheck_required,json=imageHealthcheckRequired,proto3" json:"image_healthcheck_required,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ResumeWarmInstanceRequest) Reset() {
@@ -8969,12 +9036,21 @@ func (x *ResumeWarmInstanceRequest) GetInstance() string {
 	return ""
 }
 
+func (x *ResumeWarmInstanceRequest) GetImageHealthcheckRequired() bool {
+	if x != nil {
+		return x.ImageHealthcheckRequired
+	}
+	return false
+}
+
 // ResumeWarmInstanceResponse acknowledges the in-place resume.
 type ResumeWarmInstanceResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                              protoimpl.MessageState `protogen:"open.v1"`
+	Instance                           string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	ImageHealthcheckVerified           bool                   `protobuf:"varint,2,opt,name=image_healthcheck_verified,json=imageHealthcheckVerified,proto3" json:"image_healthcheck_verified,omitempty"`
+	SupportsImageHealthcheckMonitoring bool                   `protobuf:"varint,3,opt,name=supports_image_healthcheck_monitoring,json=supportsImageHealthcheckMonitoring,proto3" json:"supports_image_healthcheck_monitoring,omitempty"`
+	unknownFields                      protoimpl.UnknownFields
+	sizeCache                          protoimpl.SizeCache
 }
 
 func (x *ResumeWarmInstanceResponse) Reset() {
@@ -9012,6 +9088,20 @@ func (x *ResumeWarmInstanceResponse) GetInstance() string {
 		return x.Instance
 	}
 	return ""
+}
+
+func (x *ResumeWarmInstanceResponse) GetImageHealthcheckVerified() bool {
+	if x != nil {
+		return x.ImageHealthcheckVerified
+	}
+	return false
+}
+
+func (x *ResumeWarmInstanceResponse) GetSupportsImageHealthcheckMonitoring() bool {
+	if x != nil {
+		return x.SupportsImageHealthcheckMonitoring
+	}
+	return false
 }
 
 // RestoreAppTaskRequest is the command-free preparation envelope for a
@@ -9888,8 +9978,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xdb\n" +
-	"\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x99\v\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
 	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
@@ -9907,7 +9996,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x04port\x18\n" +
 	" \x01(\rR\x04port\x12)\n" +
 	"\x10healthcheck_path\x18\v \x01(\tR\x0fhealthcheckPath\x12)\n" +
-	"\x10healthcheck_grpc\x18\x19 \x01(\bR\x0fhealthcheckGrpc\x128\n" +
+	"\x10healthcheck_grpc\x18\x19 \x01(\bR\x0fhealthcheckGrpc\x12<\n" +
+	"\x1aimage_healthcheck_required\x18\x1e \x01(\bR\x18imageHealthcheckRequired\x128\n" +
 	"\x18healthcheck_grpc_service\x18\x1a \x01(\tR\x16healthcheckGrpcService\x12\x18\n" +
 	"\aruntime\x18\f \x01(\tR\aruntime\x12<\n" +
 	"\bsidecars\x18\r \x03(\v2 .onebox.faas.vmmd.v1.SidecarSpecR\bsidecars\x12(\n" +
@@ -9993,7 +10083,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\vstorage_key\x18\x05 \x01(\tR\n" +
 	"storageKey\x12.\n" +
 	"\x13vmstate_storage_key\x18\x06 \x01(\tR\x11vmstateStorageKey\x12 \n" +
-	"\vnetworkless\x18\a \x01(\bR\vnetworklessJ\x04\b\x02\x10\x03\"\x84\x05\n" +
+	"\vnetworkless\x18\a \x01(\bR\vnetworklessJ\x04\b\x02\x10\x03\"\xd3\x06\n" +
 	"\fWakeResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x12\x17\n" +
@@ -10012,7 +10102,10 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"netnsTapMs\x12$\n" +
 	"\x0eguest_ready_ms\x18\r \x01(\x03R\fguestReadyMs\x126\n" +
 	"\x17restore_fallback_reason\x18\x0e \x01(\tR\x15restoreFallbackReason\x126\n" +
-	"\x17supports_secret_aliases\x18\x0f \x01(\bR\x15supportsSecretAliases\"\xc8\x02\n" +
+	"\x17supports_secret_aliases\x18\x0f \x01(\bR\x15supportsSecretAliases\x12<\n" +
+	"\x1aimage_healthcheck_verified\x18\x10 \x01(\bR\x18imageHealthcheckVerified\x12<\n" +
+	"\x1asupports_image_healthcheck\x18\x11 \x01(\bR\x18supportsImageHealthcheck\x12Q\n" +
+	"%supports_image_healthcheck_monitoring\x18\x12 \x01(\bR\"supportsImageHealthcheckMonitoring\"\xc8\x02\n" +
 	"\x19CreateFromSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12<\n" +
@@ -10226,13 +10319,15 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"%egress_new_destinations_limit_per_min\x18\x12 \x01(\x03R egressNewDestinationsLimitPerMin\x12W\n" +
 	"\x1aegress_flood_drops_per_min\x18\x13 \x01(\v2\x1b.google.protobuf.Int64ValueR\x16egressFloodDropsPerMin\x12E\n" +
 	" egress_flood_drops_limit_per_min\x18\x14 \x01(\x03R\x1begressFloodDropsLimitPerMin\"\r\n" +
-	"\vPingRequest\"\xa2\x01\n" +
+	"\vPingRequest\"\xb3\x02\n" +
 	"\fPingResponse\x12\x1d\n" +
 	"\n" +
 	"fc_version\x18\x01 \x01(\tR\tfcVersion\x12;\n" +
 	"\vserver_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"serverTime\x126\n" +
-	"\x17supports_secret_aliases\x18\x03 \x01(\bR\x15supportsSecretAliases\"2\n" +
+	"\x17supports_secret_aliases\x18\x03 \x01(\bR\x15supportsSecretAliases\x12<\n" +
+	"\x1asupports_image_healthcheck\x18\x04 \x01(\bR\x18supportsImageHealthcheck\x12Q\n" +
+	"%supports_image_healthcheck_monitoring\x18\x05 \x01(\bR\"supportsImageHealthcheckMonitoring\"2\n" +
 	"\x06Header\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"\x12\n" +
@@ -10374,14 +10469,16 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"fc_version\x18\t \x01(\tR\tfcVersion\x12\x17\n" +
 	"\awake_id\x18\n" +
-	" \x01(\tR\x06wakeId\"\xf5\x01\n" +
+	" \x01(\tR\x06wakeId\"\x86\x03\n" +
 	"\x1dAdoptMigratedInstanceResponse\x12\x17\n" +
 	"\ahost_ip\x18\x01 \x01(\tR\x06hostIp\x12\x14\n" +
 	"\x05netns\x18\x02 \x01(\tR\x05netns\x12\x1b\n" +
 	"\tguest_uid\x18\x03 \x01(\x05R\bguestUid\x127\n" +
 	"\x06method\x18\x04 \x01(\x0e2\x1f.onebox.faas.vmmd.v1.WakeMethodR\x06method\x12\x17\n" +
 	"\awake_id\x18\x05 \x01(\tR\x06wakeId\x126\n" +
-	"\x17supports_secret_aliases\x18\x06 \x01(\bR\x15supportsSecretAliases\"_\n" +
+	"\x17supports_secret_aliases\x18\x06 \x01(\bR\x15supportsSecretAliases\x12<\n" +
+	"\x1aimage_healthcheck_verified\x18\a \x01(\bR\x18imageHealthcheckVerified\x12Q\n" +
+	"%supports_image_healthcheck_monitoring\x18\b \x01(\bR\"supportsImageHealthcheckMonitoring\"_\n" +
 	"\x1bAcknowledgeMigrationRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x1f\n" +
@@ -10575,11 +10672,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\tdirection\x18\x01 \x01(\tR\tdirection\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12\x14\n" +
 	"\x05cidrs\x18\x03 \x03(\tR\x05cidrs\x12\x14\n" +
-	"\x05ports\x18\x04 \x03(\tR\x05ports\"7\n" +
+	"\x05ports\x18\x04 \x03(\tR\x05ports\"u\n" +
 	"\x19ResumeWarmInstanceRequest\x12\x1a\n" +
-	"\binstance\x18\x01 \x01(\tR\binstance\"8\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\x12<\n" +
+	"\x1aimage_healthcheck_required\x18\x02 \x01(\bR\x18imageHealthcheckRequired\"\xc9\x01\n" +
 	"\x1aResumeWarmInstanceResponse\x12\x1a\n" +
-	"\binstance\x18\x01 \x01(\tR\binstance\"\xbb\x01\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\x12<\n" +
+	"\x1aimage_healthcheck_verified\x18\x02 \x01(\bR\x18imageHealthcheckVerified\x12Q\n" +
+	"%supports_image_healthcheck_monitoring\x18\x03 \x01(\bR\"supportsImageHealthcheckMonitoring\"\xbb\x01\n" +
 	"\x15RestoreAppTaskRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12\x12\n" +
