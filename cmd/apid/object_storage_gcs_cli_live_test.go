@@ -306,7 +306,7 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 			return
 		}
 	}
-	// adr: 679
+	// adr: 688
 	for _, scenario := range []string{"killed process", "lost completion response"} {
 		if !t.Run("CLI resumable multipart "+scenario, func(t *testing.T) {
 			payload := append(bytes.Repeat([]byte("a"), int(api.MinMultipartPartBytes)), bytes.Repeat([]byte("b"), int(api.MinMultipartPartBytes))...)
@@ -417,7 +417,7 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 			return
 		}
 	}
-	// adr: 678
+	// adr: 687
 	if !t.Run("CLI immutable version history", func(t *testing.T) {
 		past := time.Now().UTC().Add(-20 * time.Minute)
 		st.SetClockForTest(func() time.Time { return past })

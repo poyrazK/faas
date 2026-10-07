@@ -1,4 +1,4 @@
-# ADR-679: Resumable CLI object uploads
+# ADR-688: Resumable CLI object uploads
 
 - **Status:** accepted
 - **Date:** 2026-10-07

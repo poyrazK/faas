@@ -1,3 +1,4 @@
+// adr: 650 — sealed Data API bindings retain credential custody and recovery.
 package main
 
 import (
@@ -15,6 +16,12 @@ import (
 )
 
 func TestManagedPostgresCredentialSinkSealsURLAndRecoversUncommittedPut(t *testing.T) {
+	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialDataAPI} {
+		t.Run(string(access), func(t *testing.T) { testManagedPostgresCredentialSinkSealsURL(t, access) })
+	}
+}
+
+func testManagedPostgresCredentialSinkSealsURL(t *testing.T, access managedpostgres.CredentialAccess) {
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +37,7 @@ func TestManagedPostgresCredentialSinkSealsURLAndRecoversUncommittedPut(t *testi
 	}
 	binding := managedpostgres.Binding{
 		ID: "binding-a", AccountID: "account-a", AppID: "app-a", Scope: "production",
-		EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite, CredentialGeneration: 1,
+		EnvironmentKey: "DATABASE_URL", Access: access, CredentialGeneration: 1,
 	}
 	material := managedpostgres.CredentialMaterial{
 		ProviderIdentityID: "provider-role-a", Username: "role/name", Password: "p@ss:/?#word", Database: "app/db", TLSMode: "require",

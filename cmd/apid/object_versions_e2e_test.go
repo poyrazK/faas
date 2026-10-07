@@ -22,7 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 678
+// adr: 687
 func TestObjectVersionsControlJourneyMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	objectVersionsControlJourney(t, e.s, e.store, e.acct, e.key, nil)

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// adr: 678
+// adr: 687
 func TestObjectVersionsClient(t *testing.T) {
 	const key, version = "目录 /+%.txt", "12345678-1234-4234-8234-123456789abc"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

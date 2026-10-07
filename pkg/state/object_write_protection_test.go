@@ -268,7 +268,7 @@ func writeProtectionMigration(t *testing.T) (string, string) {
 }
 
 // adr: 619
-// adr: 678
+// adr: 687
 func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 	_, pool, ctx := pgStoreWithPool(t)
 	// Each dependent validator replaces its predecessor's CHECK constraint.

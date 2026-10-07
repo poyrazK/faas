@@ -1,6 +1,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	faas "github.com/poyrazK/faas/sdk/go"
 	"net/http"
@@ -8,7 +9,7 @@ import (
 	"testing"
 )
 
-// adr: 678
+// adr: 687
 func TestObjectVersionsClient(t *testing.T) {
 	const key, version = "目录 /+%.txt", "12345678-1234-4234-8234-123456789abc"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +24,9 @@ func TestObjectVersionsClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.ListObjectBucketVersions(t.Context(), "demo", "bucket", faas.ObjectVersionListRequest{Prefix: "目录", Delimiter: "/", KeyMarker: key, VersionIDMarker: version, Limit: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out, err := client.ListObjectBucketVersions(ctx, "demo", "bucket", faas.ObjectVersionListRequest{Prefix: "目录", Delimiter: "/", KeyMarker: key, VersionIDMarker: version, Limit: 1})
 	if err != nil || len(out.Items) != 1 || out.Items[0].Key != key || out.Items[0].VersionID != version || out.NextKeyMarker != key || out.NextVersionIDMarker != version || out.CommonPrefixes == nil {
 		t.Fatal(out, err)
 	}

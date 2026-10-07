@@ -368,6 +368,22 @@ coverage: ## Aggregate coverage/cover-shard*.out and print a sorted table per pa
 migrations-check: ## Static legacy-contiguity + timestamp-ID checks (no Postgres needed)
 	$(GO) test -tags no_pg -race -count=1 -run 'TestMigrations' ./migrations/...
 
+RNG_ADDON_ZIG_VERSION := 0.16.0
+RNG_ADDON_FLAGS := -target x86_64-linux-gnu -shared -fPIC -nostdlib -fno-stack-protector -O2 -Wl,--build-id=none -s
+
+.PHONY: rng-addon rng-addon-check
+rng-addon: ## Rebuild guest-init's restore reseed addon from reseed.c (ADR-680; needs zig $(RNG_ADDON_ZIG_VERSION))
+	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
+	zig cc $(RNG_ADDON_FLAGS) -o guest/init/rngpreload/reseed.node guest/init/rngpreload/reseed.c
+
+rng-addon-check: ## Verify the committed reseed.node is the reproducible build of reseed.c (ADR-680)
+	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon-check: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
+	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
+	  zig cc $(RNG_ADDON_FLAGS) -o "$$tmp/reseed.node" guest/init/rngpreload/reseed.c && \
+	  cmp -s "$$tmp/reseed.node" guest/init/rngpreload/reseed.node || \
+	  { echo "rng-addon-check: committed reseed.node is not the build of reseed.c; run make rng-addon"; exit 1; }
+	@echo "rng-addon-check: OK"
+
 .PHONY: migration-new
 migration-new: ## Create timestamped migration: make migration-new NAME=add_job_priority
 	@test -n "$(NAME)" || (echo "NAME is required, e.g. make migration-new NAME=add_job_priority"; exit 1)
@@ -1025,7 +1041,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  trap 'rm -rf "$$tmp"' EXIT; \
 	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
-	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/state/event_replay_preview_queries.sql pkg/state/event_replay_jobs_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
@@ -1284,6 +1300,13 @@ terraform-provider-check: ## Build and test the Terraform/OpenTofu provider modu
 .PHONY: sdk-unit-node
 sdk-unit-node: ## Run Node SDK unit tests (no fixture required)
 	@cd sdk/node && npm ci && npm run test:unit
+
+.PHONY: data-api-check data-api-acceptance
+data-api-check: ## Runtime and typed application client unit checks
+	@bash scripts/test-data-api.sh
+
+data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
+	@bash scripts/test-data-api.sh --integration
 
 .PHONY: sdk-gen-python
 sdk-gen-python: ## Regenerate sdk/python/faas_sdk from api/openapi.yaml

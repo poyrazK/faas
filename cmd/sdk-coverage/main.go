@@ -494,6 +494,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/dev/test-runs/{run_id}/chaos":                                      "InjectScenarioTestChaos",
 	"GET /v1/dev/sessions/{project}/history":                                    "GetDevSyncHistory",
 	"POST /v1/apps/{slug}/deployments":                                          "Deploy",
+	"POST /v1/apps/{slug}/image-published":                                      "PublishAppImage",
 	"POST /v1/account/platform-tenants/{id}/reconciliation-plan/apply":          "ApplyPlatformTenantReconciliation",
 	"GET /v1/account/platform-tenants/{id}/reconciliations":                     "ListPlatformTenantReconciliationReceipts",
 	"GET /v1/account/platform-tenants/{id}/reconciliations/{receipt_id}":        "GetPlatformTenantReconciliationReceipt",

@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 678
+// adr: 687
 func TestBucketVersionsCLIJSONAndPagination(t *testing.T) {
 	bucket, version := uuid.NewString(), uuid.NewString()
 	want := api.ObjectVersionList{Items: []api.ObjectVersion{{Key: "目录 +%.txt", VersionID: version}}, CommonPrefixes: []string{"目录/"}, NextKeyMarker: "目录 +%.txt", NextVersionIDMarker: version}
@@ -47,7 +47,7 @@ func TestBucketVersionsCLIJSONAndPagination(t *testing.T) {
 	}
 }
 
-// adr: 678
+// adr: 687
 func TestBucketHistoricalDownloadChecksAcknowledgedVersion(t *testing.T) {
 	version := uuid.NewString()
 	for _, headers := range [][]string{{version}, nil, {uuid.NewString()}, {"native-generation"}, {version, version}} {

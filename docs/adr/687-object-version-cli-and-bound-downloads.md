@@ -1,4 +1,4 @@
-# ADR-678: Object version listing and bound historical downloads
+# ADR-687: Object version listing and bound historical downloads
 
 - **Status:** accepted
 - **Date:** 2026-10-07

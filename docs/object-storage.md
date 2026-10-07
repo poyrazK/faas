@@ -581,7 +581,7 @@ is excluded. GET/HEAD signed URL requests accept the same `version_id`. Stored
 URL authority, query signatures and the gateway all enforce that selector.
 Missing, foreign or deleted versions never fall back to the current object. A
 CLI download verifies the acknowledged public version before publishing the
-complete local file. See [ADR-678](adr/678-object-version-cli-and-bound-downloads.md).
+complete local file. See [ADR-687](adr/687-object-version-cli-and-bound-downloads.md).
 
 Use those IDs with standard SDK GetObject/HeadObject `VersionId` parameters,
 or AWS CLI `s3api get-object --bucket assets --key hello.txt --version-id ID
@@ -1355,7 +1355,7 @@ completion reuses exactly that manifest through the server's recovery journal.
 Expired, aborted, foreign, or uncheckpointed sessions are rejected. A lost create
 response before the first checkpoint still needs session inspection; this CLI
 path does not automatically create a replacement. Single PUTs continue to use
-their existing write-receipt inspection path. See [ADR-679](adr/679-resumable-cli-object-uploads.md).
+their existing write-receipt inspection path. See [ADR-688](adr/688-resumable-cli-object-uploads.md).
 
 GCS supports tracked PUT/copy recovery, native version controls and reads, copy
 grants and enrolled AES256. The GCS example enrolls AES256 explicitly. Adding

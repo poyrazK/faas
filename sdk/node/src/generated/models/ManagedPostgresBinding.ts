@@ -11,7 +11,7 @@ export type ManagedPostgresBinding = {
   app_id: string;
   scope: string;
   environment_key: string;
-  access: 'read_write' | 'read_only' | 'migration';
+  access: 'read_write' | 'read_only' | 'migration' | 'data_api';
   credential_generation: number;
   /**
    * The previous provider credential remains valid until the rolling app runtime refresh completes.

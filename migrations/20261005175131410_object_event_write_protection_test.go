@@ -10,7 +10,7 @@ import (
 )
 
 // adr: 622
-// adr: 678
+// adr: 687
 func TestObjectEventWriteProtectionMigration(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
