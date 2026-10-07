@@ -220,11 +220,11 @@ func cmdMCPTasksStatus(args []string) int {
 		scaling.Name == mcpTasksOutstandingMetric && scaling.Target > 0 &&
 		mcpTasksPolicyMatches(app.ScalingPolicy, scaling)
 	result := mcpTasksStatusResult{
-		AppSlug:                app.Slug,
-		Configured:             configured,
-		ScaleToZeroConfigured:  configured && scaling.Min == 0,
-		FreshnessSeconds: metrics.FreshnessS,
-		Scaling:                scaling,
+		AppSlug:               app.Slug,
+		Configured:            configured,
+		ScaleToZeroConfigured: configured && scaling.Min == 0,
+		FreshnessSeconds:      metrics.FreshnessS,
+		Scaling:               scaling,
 		Metrics: []mcpTasksMetricStatus{
 			{Name: mcpTasksOutstandingMetric},
 			{Name: mcpTasksOldestAgeMetric},
