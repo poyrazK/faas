@@ -35,12 +35,12 @@ const (
 	BaseRefMinimal     = "ghcr.io/poyrazk/base-minimal:latest"
 	BaseRefBuilder     = "ghcr.io/poyrazk/builder-base:latest"
 	// BaseRefDebianParent (ADR-053) is the staging-only parent
-	// runtime — its ext4 carries the shared debian:12-slim userland
+	// runtime — its ext4 carries the shared debian:13-slim userland
 	// (~150 MB of libc/openssl/ca-certs/busybox) that the four
 	// node/python runtime bases used to duplicate. The Dockerfile
-	// (images/base-debian-parent.Dockerfile) is `FROM debian:12-slim`
+	// (images/base-debian-parent.Dockerfile) is `FROM debian:13-slim`
 	// DIRECTLY — not scratch + COPY — so the first OCI layer in the
-	// parent's manifest is the literal debian:12-slim rootfs layer
+	// parent's manifest is the literal debian:13-slim rootfs layer
 	// and `oci.LayersAboveBase(parent.DiffIDs, child.DiffIDs)`
 	// succeeds (the chain-composability invariant documented in
 	// ADR-053).
