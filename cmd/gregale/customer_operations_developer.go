@@ -16,9 +16,9 @@ import (
 
 type customerOperationDeveloperCommand struct {
 	verb, action, app, deployment, name, dir, plan, input, definition, key, receipt, output string
-	checkTypes bool
-	self       bool
-	timeout    time.Duration
+	checkTypes                                                                              bool
+	self                                                                                    bool
+	timeout                                                                                 time.Duration
 }
 
 func parseCustomerOperationDeveloper(args []string) (customerOperationDeveloperCommand, error) {
