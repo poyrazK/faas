@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -140,6 +141,12 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 			return nil, errors.New("object storage: invalid accounting policy")
 		}
 		r.Accounting = *c.Accounting
+		if r.Accounting.GatewaySafety() && r.Accounting.GatewayMeteringSince.After(time.Now().UTC()) {
+			return nil, errors.New("object storage: gateway metering coverage cannot begin in the future")
+		}
+		if r.Accounting.GatewaySafety() && (c.Pricing != nil || c.PublicEndpoint == "" || r.Transfer.Profile != "proxied") {
+			return nil, errors.New("object storage: gateway safety accounting requires a public gateway, proxied transfers and no pricing")
+		}
 	}
 	if c.Pricing != nil {
 		if !c.Pricing.Valid() {
@@ -277,7 +284,7 @@ func (r *Registry) Backends() []Backend {
 // deployments can qualify accounting and safety budgets before choosing
 // customer prices.
 func (r *Registry) ChargeForUsage(usage api.ObjectStorageUsage) (*api.ObjectStorageCharge, error) {
-	if r == nil || r.Pricing == nil {
+	if r == nil || r.Pricing == nil || r.Accounting.GatewaySafety() {
 		return nil, nil
 	}
 	charge, err := CalculateCharge(*r.Pricing, usage)
@@ -336,7 +343,7 @@ func (r *Registry) CanProvision(region string) bool {
 		return false
 	}
 	backend, err := r.Default(region)
-	return err == nil && backend.UsageReportsPath != ""
+	return err == nil && (r.Accounting.GatewaySafety() || backend.UsageReportsPath != "")
 }
 
 // CanProvisionAllRegions is the conservative customer-facing availability
