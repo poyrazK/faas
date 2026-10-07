@@ -977,10 +977,11 @@ type Handler struct {
 	// headWakes is the process-wide opt-in for legacy HEAD wake behaviour;
 	// an App.HeadWakes value can enable it for one app.
 	headWakes bool
-	// healthState stores the last known wake outcome per app. It is deliberately
-	// process-local: a restarted gateway fails closed until it observes a live
-	// target or a successful wake.
-	healthState sync.Map
+	// healthState stores the last known wake outcome per app. It is
+	// process-local, so it is only the fallback when healthOutcomes (the
+	// app's last instance, ADR-636) is unwired or unavailable.
+	healthState    sync.Map
+	healthOutcomes *healthOutcomeCache
 	// mirrorRoundTripper (issue #72 / ADR-124 PR-A3) is the
 	// per-request HTTP forwarder the dispatch goroutine uses
 	// to reach the mirror VM. Defaults to

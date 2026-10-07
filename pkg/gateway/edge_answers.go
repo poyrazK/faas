@@ -71,9 +71,16 @@ func (h *Handler) markHealthFailure(appID string, err error) {
 	h.healthState.Store(appID, healthSnapshot{reason: reason})
 }
 
-func (h *Handler) healthSnapshotFor(app App) healthSnapshot {
+func (h *Handler) healthSnapshotFor(ctx context.Context, app App) healthSnapshot {
 	if h != nil && h.backend != nil && h.backend.HealthyCount(app.ID) > 0 {
 		return healthSnapshot{ready: true, reason: "live"}
+	}
+	// Every gateway sees the app's last instance; this process's wake
+	// observation is only a fallback (ADR-636).
+	if h != nil {
+		if snapshot, ok := h.healthOutcomes.snapshotFor(ctx, app.ID); ok {
+			return snapshot
+		}
 	}
 	if h != nil {
 		if value, ok := h.healthState.Load(app.ID); ok {
@@ -209,7 +216,7 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			return false
 		}
-		snapshot := h.healthSnapshotFor(app)
+		snapshot := h.healthSnapshotFor(r.Context(), app)
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Faas-Health-Source", "edge")
 		if snapshot.ready {
