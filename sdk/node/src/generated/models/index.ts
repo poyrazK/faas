@@ -668,6 +668,7 @@ export type { ListWorkflowStepAttemptsResponse } from './ListWorkflowStepAttempt
 export type { ListWorkflowStepsResponse } from './ListWorkflowStepsResponse.js';
 export type { LogExcerpt } from './LogExcerpt.js';
 export type { LogQueryEvent } from './LogQueryEvent.js';
+export type { MCPResourcePolicy } from './MCPResourcePolicy.js';
 export type { MFAConfirmRequest } from './MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './MFAConfirmResponse.js';
 export type { MFADisableEmailConfirmRequest } from './MFADisableEmailConfirmRequest.js';

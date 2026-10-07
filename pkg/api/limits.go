@@ -20,7 +20,19 @@ import (
 	"time"
 )
 
-// Historical replay preview bounds retained-envelope reads (ADR-638).
+// MCP task admission defaults are starter-owned namespace limits, not plan
+// quotas. Customer PostgreSQL stores enforce these atomically across replicas.
+const (
+	MCPTaskDefaultMaxOutstanding         = 1000
+	MCPTaskDefaultMaxOutstandingPerOwner = 100
+	MCPPolicyMaxEntries                  = 256
+	MCPPolicyMaxKeyBytes                 = 4096
+	MCPPolicyMaxRequestBytes             = 1 << 20
+	MCPReleaseMaxRoles                   = 32
+	MCPReleasePolicyMaxBytes             = 64 << 10
+)
+
+// Historical replay preview bounds retained-envelope reads (ADR-645).
 const (
 	EventReplayPreviewPageDefault    = 50
 	EventReplayPreviewPageMax        = 100

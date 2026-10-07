@@ -41676,7 +41676,7 @@ components:
           example: 25
         expected_serving_deployment_id:
           type: string
-          description: "Optional 32-hex or dashed deployment id. If this deployment is no longer the sole live 100% serving sibling at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."
+          description: "Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."
 
     AdvanceCanaryRequest:
       description: "Body for POST /v1/deployments/{id}/canary/advance (issue #976 / ADR-122). expected_step is the persisted canary step observed by the progression worker; APID derives the next traffic percentage and rejects stale observations."
@@ -49068,6 +49068,37 @@ components:
         # before the cap. The lower bound is unchanged (>= 0).
         max_age_seconds: { type: integer, minimum: 0, maximum: 86400 }
 
+    MCPResourcePolicy:
+      description: |
+        Opt-in MCP resource-server policy on a JWT edge rule. Requires a
+        canonical HTTPS resource, matching JWT audience, match_path=/**,
+        and no method or header selectors. The gateway serves OAuth resource
+        metadata, rejects expired credentials, and enforces JSON-RPC execution
+        scopes. Catalog filtering and task ownership remain application duties.
+      type: object
+      required: [resource]
+      properties:
+        resource: { type: string, format: uri }
+        scopes: { type: array, items: { type: string }, maxItems: 256 }
+        allowed_origins: { type: array, items: { type: string, format: uri } }
+        # Explicit unions preserve scope-map types in the pinned SDK generator.
+        tool_scopes:
+          oneOf:
+            - type: object
+              additionalProperties: { type: array, items: { type: string } }
+            - type: "null"
+        resource_scopes:
+          description: Absolute URIs or simple variable templates; every matching entry must authorize access.
+          oneOf:
+            - type: object
+              additionalProperties: { type: array, items: { type: string } }
+            - type: "null"
+        prompt_scopes:
+          oneOf:
+            - type: object
+              additionalProperties: { type: array, items: { type: string } }
+            - type: "null"
+
     EdgeRuleJWTAction:
       description: |
         Validates an inbound Bearer JWT against a JWKS endpoint. The
@@ -49095,6 +49126,8 @@ components:
         required_claims:
           type: object
           additionalProperties: { type: string }
+        mcp:
+          $ref: '#/components/schemas/MCPResourcePolicy'
         platform_tenant_external_ref_claim:
           type: string
           minLength: 1
