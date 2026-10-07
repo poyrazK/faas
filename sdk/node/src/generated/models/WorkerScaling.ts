@@ -27,3 +27,4 @@ export type WorkerScaling = {
    */
   target: number;
 };
+
