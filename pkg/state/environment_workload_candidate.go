@@ -129,16 +129,51 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 			return nil, fmt.Errorf("%w: frozen image source disagrees with candidate", ErrInvalidArgument)
 		}
 	}
-	// Re-run the source contract when reading a persisted candidate. Creation
-	// compiles the reviewed definition, but every later consumer must also fail
-	// closed if a corrupted or legacy row contains a non-canonical source.
-	source := *frozen.Source
-	compiled, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion,
-		Project: "candidate", Environment: "candidate", Workloads: map[string]api.EnvironmentWorkload{"candidate": {Source: &source}}})
-	if err != nil || compiled.Definition.Workloads["candidate"].Source == nil || *compiled.Definition.Workloads["candidate"].Source != *frozen.Source {
-		return nil, fmt.Errorf("%w: frozen workload source is invalid or non-canonical", ErrInvalidArgument)
+	// Re-run the reviewed source and runtime contract when reading a persisted
+	// candidate. Creation validates these values, but every later consumer must
+	// also fail closed if a corrupted or legacy row changes their semantics.
+	if err := validateFrozenWorkloadRuntime(frozen); err != nil {
+		return nil, fmt.Errorf("%w: frozen workload source or runtime is invalid", ErrInvalidArgument)
 	}
 	return &frozen, nil
+}
+
+func validateFrozenWorkloadRuntime(frozen EnvironmentWorkloadRuntime) error {
+	runtime := make(map[string]json.RawMessage, len(frozen.Runtime))
+	baseline := runtimeManifestValues(frozen.Baseline)
+	for key, value := range frozen.Runtime {
+		value = append(json.RawMessage(nil), value...)
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			// An unchanged nullable baseline may be explicitly owned as null.
+			// New nulls are rejected by intent validation and must remain so.
+			if prior, exists := baseline[key]; !exists || !bytes.Equal(bytes.TrimSpace(prior), []byte("null")) {
+				return ErrInvalidArgument
+			}
+			continue
+		}
+		runtime[key] = value
+	}
+	intent := EnvironmentWorkloadIntent{AppID: frozen.AppID, Source: frozen.Source, Runtime: runtime, ServiceBindings: frozen.ServiceBindings}
+	app := App{ID: frozen.AppID, Type: frozen.AppType, Runtime: frozen.RuntimeBase, Manifest: frozen.Baseline, WorkloadClass: frozen.WorkloadClass}
+	validated, err := validateWorkloadIntent(intent, app, frozen.Scope, api.PlanScale)
+	if err != nil || validated.Source == nil || *validated.Source != *frozen.Source || len(validated.Runtime) != len(runtime) {
+		return ErrInvalidArgument
+	}
+	for key, value := range runtime {
+		canonical, err := canonicalGitOpsValue(value)
+		if err != nil {
+			return ErrInvalidArgument
+		}
+		normalized, exists := validated.Runtime[key]
+		if !exists {
+			return ErrInvalidArgument
+		}
+		normalized, err = canonicalGitOpsValue(normalized)
+		if err != nil || !bytes.Equal(canonical, normalized) {
+			return ErrInvalidArgument
+		}
+	}
+	return nil
 }
 
 func workloadPreparationTypeSupported(appType AppType, runtime string) bool {

@@ -54,11 +54,28 @@ func TestEnvironmentGitOpsImageCandidatesFreezeInputsAndHoldExecution(t *testing
 		changedSource := *frozen
 		changedSource.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: otherImage}
 		changedSourceJSON, _ := json.Marshal(changedSource)
+		corruptRuntime := func(key string, value json.RawMessage) func(*state.Deployment) {
+			corrupted := *frozen
+			corrupted.Runtime = map[string]json.RawMessage{}
+			for name, raw := range frozen.Runtime {
+				corrupted.Runtime[name] = append(json.RawMessage(nil), raw...)
+			}
+			corrupted.Runtime[key] = value
+			raw, _ := json.Marshal(corrupted)
+			return func(candidate *state.Deployment) { candidate.EnvironmentWorkloadRuntime = string(raw) }
+		}
+		corruptBaseline := *frozen
+		corruptBaseline.Baseline.ExecutionMode = api.ExecutionModeWorker
+		corruptBaselineJSON, _ := json.Marshal(corruptBaseline)
 		for name, mutate := range map[string]func(*state.Deployment){
-			"frozen source digest":    func(candidate *state.Deployment) { candidate.EnvironmentWorkloadRuntime = string(changedSourceJSON) },
-			"deployment image digest": func(candidate *state.Deployment) { candidate.ImageDigest = otherImage },
-			"deployment kind":         func(candidate *state.Deployment) { candidate.Kind = state.DeploymentKindGitHub },
-			"orphan source metadata":  func(candidate *state.Deployment) { candidate.SourcePath = "/tmp/unreviewed.tar.gz" },
+			"frozen source digest":      func(candidate *state.Deployment) { candidate.EnvironmentWorkloadRuntime = string(changedSourceJSON) },
+			"deployment image digest":   func(candidate *state.Deployment) { candidate.ImageDigest = otherImage },
+			"deployment kind":           func(candidate *state.Deployment) { candidate.Kind = state.DeploymentKindGitHub },
+			"orphan source metadata":    func(candidate *state.Deployment) { candidate.SourcePath = "/tmp/unreviewed.tar.gz" },
+			"runtime type":              corruptRuntime("port", json.RawMessage(`"not-a-number"`)),
+			"runtime constraint":        corruptRuntime("port", json.RawMessage(`65536`)),
+			"runtime unsupported probe": corruptRuntime("healthcheck", json.RawMessage(`{"grpc":{"port":8080,"service":"internal"}}`)),
+			"baseline class mismatch":   func(candidate *state.Deployment) { candidate.EnvironmentWorkloadRuntime = string(corruptBaselineJSON) },
 		} {
 			t.Run("source identity "+name, func(t *testing.T) {
 				corrupted := dep
