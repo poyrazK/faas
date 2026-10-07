@@ -6,7 +6,7 @@ Accepted — 2026-10-06. Production admission remains disabled.
 
 ## Context
 
-ADR-638 retains confirmed workflow outputs across approved recovery. Export
+ADR-657 retains confirmed workflow outputs across approved recovery. Export
 customers also need private files. An HTTP invocation capability cannot grant
 workflow authority, and a successful storage write does not confirm that its
 workflow action completed. Lost responses must not cause file regeneration.

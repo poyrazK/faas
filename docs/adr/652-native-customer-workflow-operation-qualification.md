@@ -7,7 +7,7 @@ execution and leak receipts are pending.
 
 ## Context
 
-ADR-638–641 and ADR-651 implement workflow ownership, controlled resume,
+ADR-639–641, ADR-651, and ADR-657 implement workflow ownership, controlled resume,
 cooperative execution control and retained private files. Portable state/API
 tests cannot prove that real native dispatch preserves these contracts through
 guest process death, daemon restart and a change to the default deployment.

@@ -6,7 +6,7 @@ Accepted — 2026-10-06. Production admission remains disabled.
 
 ## Context
 
-ADR-638 fences interrupted native attempts and cancels scheduler HTTP calls.
+ADR-657 fences interrupted native attempts and cancels scheduler HTTP calls.
 ADR-639 retains verified result copies for approved recovery. A disconnected
 HTTP caller does not stop guest computation or the guest's storage requests.
 Workflow handlers need the same cooperative cancellation support as ordinary

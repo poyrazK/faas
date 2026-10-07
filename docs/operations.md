@@ -117,7 +117,7 @@ It includes history, reload recovery, step progress, cancellation, private downl
 and a receipt-backed operator recovery guide. Install the internal packed SDK as
 described in the [workflow export starter](../examples/customer-operation-workflow-export/README.md).
 See [ADR-653](adr/653-customer-workflow-operation-starter.md) and
-[ADR-638](adr/638-workflow-customer-operations.md). Admission remains closed.
+[ADR-657](adr/657-workflow-customer-operations.md). Admission remains closed.
 
 ## Contract
 

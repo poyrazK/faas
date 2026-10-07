@@ -14230,7 +14230,7 @@ WHERE id = sqlc.arg(id)::uuid AND account_id = sqlc.arg(account_id)::uuid
 -- name: ResetManagedPostgresReconciliationCoverage :exec
 DELETE FROM managed_postgres_usage_coverage WHERE database_id = $1;
 
--- ADR-638 workflow customer Operations adapter.
+-- ADR-657 workflow customer Operations adapter.
 -- name: CustomerOperationDeploymentWorkflows :one
 SELECT workflows FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid;
 
