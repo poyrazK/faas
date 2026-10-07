@@ -1,9 +1,9 @@
 -- +goose Up
 -- ADR-590: create one pinned provider receipt with each new tracked upload.
 -- Existing unknown receipts are not adopted or removed.
-ALTER TABLE object_bucket_mutations ADD COLUMN upload_id uuid UNIQUE REFERENCES object_upload_completions(id) ON DELETE RESTRICT;
+ALTER TABLE object_bucket_mutations ADD COLUMN IF NOT EXISTS upload_id uuid UNIQUE REFERENCES object_upload_completions(id) ON DELETE RESTRICT;
 -- +goose StatementBegin
-CREATE FUNCTION guard_bound_upload_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_bound_upload_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE u object_upload_completions%ROWTYPE;
 BEGIN
  IF TG_OP='UPDATE' THEN
@@ -36,9 +36,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_upload_mutation_guard ON object_bucket_mutations;
 CREATE TRIGGER object_upload_mutation_guard BEFORE INSERT OR UPDATE OR DELETE ON object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION guard_bound_upload_mutation();
 -- +goose StatementBegin
-CREATE FUNCTION compose_object_upload_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION compose_object_upload_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='INSERT' AND NEW.write_phase='prepared' AND NEW.status='pending' THEN
   INSERT INTO object_bucket_mutations(id,bucket_id,kind,backend_id,backend_fingerprint,physical_name,upload_id)
@@ -49,10 +50,11 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_upload_mutation_composition ON object_upload_completions;
 CREATE TRIGGER object_upload_mutation_composition AFTER INSERT OR UPDATE ON object_upload_completions FOR EACH ROW EXECUTE FUNCTION compose_object_upload_mutation();
 
 -- +goose StatementBegin
-CREATE FUNCTION protect_bound_upload_journal() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_bound_upload_journal() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE upload_id=OLD.id) AND
   ((to_jsonb(NEW)-ARRAY['route_id','status','etag','error_code','write_phase','recovery_token','recovery_lease_until','recovery_retry_at','recovery_cursor','recovery_versions_observed','version_id','protection_verified','protection_dispatched','encryption_dispatched','encryption_verified']) IS DISTINCT FROM
@@ -63,6 +65,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_upload_bound_journal ON object_upload_completions;
 CREATE TRIGGER object_upload_bound_journal BEFORE UPDATE ON object_upload_completions FOR EACH ROW EXECUTE FUNCTION protect_bound_upload_journal();
 
 -- +goose Down

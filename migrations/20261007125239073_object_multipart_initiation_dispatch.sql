@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: never infer that an existing initiating journal was not dispatched.
-CREATE TABLE object_multipart_initiation_dispatches (
+CREATE TABLE IF NOT EXISTS object_multipart_initiation_dispatches (
  multipart_upload_id uuid PRIMARY KEY REFERENCES object_storage_multipart_uploads(id) ON DELETE CASCADE,
  dispatched boolean NOT NULL DEFAULT false,
  dispatch_token text NOT NULL DEFAULT '',
@@ -9,11 +9,14 @@ CREATE TABLE object_multipart_initiation_dispatches (
  CHECK (octet_length(dispatch_token)<=128),
  CHECK (octet_length(provider_upload_id)<=4096)
 );
+DROP TRIGGER IF EXISTS object_multipart_initiation_dispatch_guard ON object_multipart_initiation_dispatches;
 INSERT INTO object_multipart_initiation_dispatches(multipart_upload_id,dispatched,provider_upload_id)
 SELECT u.id,true,u.provider_upload_id FROM object_storage_multipart_uploads u
-JOIN object_bucket_mutations m ON m.multipart_upload_id=u.id;
+JOIN object_bucket_mutations m ON m.multipart_upload_id=u.id
+WHERE NOT EXISTS(SELECT 1 FROM object_multipart_initiation_dispatches d WHERE d.multipart_upload_id=u.id)
+ON CONFLICT (multipart_upload_id) DO NOTHING;
 -- +goose StatementBegin
-CREATE FUNCTION guard_object_multipart_initiation_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_object_multipart_initiation_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE u object_storage_multipart_uploads%ROWTYPE;
 BEGIN
  IF TG_OP='DELETE' THEN
@@ -49,9 +52,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_multipart_initiation_dispatch_guard ON object_multipart_initiation_dispatches;
 CREATE TRIGGER object_multipart_initiation_dispatch_guard BEFORE INSERT OR UPDATE OR DELETE ON object_multipart_initiation_dispatches FOR EACH ROW EXECUTE FUNCTION guard_object_multipart_initiation_dispatch();
 -- +goose StatementBegin
-CREATE FUNCTION compose_object_multipart_initiation_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION compose_object_multipart_initiation_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.multipart_upload_id IS NOT NULL THEN
   INSERT INTO object_multipart_initiation_dispatches(multipart_upload_id) VALUES(NEW.multipart_upload_id);
@@ -59,9 +63,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_multipart_initiation_dispatch_composition ON object_bucket_mutations;
 CREATE TRIGGER object_multipart_initiation_dispatch_composition AFTER INSERT ON object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION compose_object_multipart_initiation_dispatch();
 -- +goose StatementBegin
-CREATE FUNCTION protect_object_multipart_initiation_result() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_multipart_initiation_result() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE d object_multipart_initiation_dispatches%ROWTYPE;
 BEGIN
  SELECT * INTO d FROM object_multipart_initiation_dispatches WHERE multipart_upload_id=OLD.id;
@@ -79,6 +84,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_multipart_initiation_result_guard ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_initiation_result_guard BEFORE UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_initiation_result();
 
 -- +goose Down

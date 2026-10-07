@@ -1,9 +1,15 @@
 -- +goose Up
 -- ADR-590: bind only newly reserved sessions; never adopt legacy receipts.
-ALTER TABLE object_bucket_mutations ADD COLUMN multipart_upload_id uuid UNIQUE REFERENCES object_storage_multipart_uploads(id) ON DELETE RESTRICT;
-ALTER TABLE object_bucket_mutations ADD CONSTRAINT object_mutation_single_owner CHECK(upload_id IS NULL OR multipart_upload_id IS NULL);
+ALTER TABLE object_bucket_mutations ADD COLUMN IF NOT EXISTS multipart_upload_id uuid UNIQUE REFERENCES object_storage_multipart_uploads(id) ON DELETE RESTRICT;
 -- +goose StatementBegin
-CREATE FUNCTION guard_bound_multipart_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='object_bucket_mutations'::regclass AND conname='object_mutation_single_owner') THEN
+  ALTER TABLE object_bucket_mutations ADD CONSTRAINT object_mutation_single_owner CHECK(upload_id IS NULL OR multipart_upload_id IS NULL);
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION guard_bound_multipart_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE u object_storage_multipart_uploads%ROWTYPE;
 BEGIN
  IF TG_OP='UPDATE' THEN
@@ -36,9 +42,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_multipart_mutation_guard ON object_bucket_mutations;
 CREATE TRIGGER object_multipart_mutation_guard BEFORE INSERT OR UPDATE OR DELETE ON object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION guard_bound_multipart_mutation();
 -- +goose StatementBegin
-CREATE FUNCTION compose_object_multipart_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION compose_object_multipart_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='INSERT' AND NEW.state='initiating' AND NEW.provider_upload_id='' THEN
   INSERT INTO object_bucket_mutations(id,bucket_id,kind,backend_id,backend_fingerprint,physical_name,multipart_upload_id)
@@ -49,9 +56,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_multipart_mutation_composition ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_mutation_composition AFTER INSERT OR UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION compose_object_multipart_mutation();
 -- +goose StatementBegin
-CREATE FUNCTION protect_bound_multipart_journal() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_bound_multipart_journal() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE multipart_upload_id=OLD.id) AND (
   (to_jsonb(NEW)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified']) IS DISTINCT FROM
@@ -65,6 +73,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_multipart_bound_journal ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_bound_journal BEFORE UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION protect_bound_multipart_journal();
 
 -- +goose Down

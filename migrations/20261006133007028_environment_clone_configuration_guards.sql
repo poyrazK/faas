@@ -5,7 +5,7 @@
 -- durable capture hold. It is independent of worker lease expiry. Writers
 -- retain a SHARE row lock through commit; acquisition takes UPDATE and reads
 -- the live catalogue without locking configuration rows in the opposite order.
-CREATE TABLE project_environment_clone_configuration_guards (
+CREATE TABLE IF NOT EXISTS project_environment_clone_configuration_guards (
     project_id uuid PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     generation bigint NOT NULL DEFAULT 1 CHECK (generation > 0),
@@ -18,19 +18,19 @@ CREATE TABLE project_environment_clone_configuration_guards (
         OR (state = 'held' AND operation_id IS NOT NULL AND source_environment <> '' AND source_revision_hash ~ '^[a-f0-9]{64}$' AND held_at IS NOT NULL))
 );
 INSERT INTO project_environment_clone_configuration_guards(project_id, account_id)
-SELECT id, account_id FROM projects;
+SELECT id, account_id FROM projects ON CONFLICT (project_id) DO NOTHING;
 
 -- Acquisition briefly serializes with configuration writers across projects,
 -- without holding their application rows. Updating this singleton also rejects
 -- stale repeatable-read ownership lookups (including newly added bindings).
-CREATE TABLE project_environment_clone_configuration_clock (
+CREATE TABLE IF NOT EXISTS project_environment_clone_configuration_clock (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     generation bigint NOT NULL DEFAULT 1 CHECK (generation > 0)
 );
-INSERT INTO project_environment_clone_configuration_clock DEFAULT VALUES;
+INSERT INTO project_environment_clone_configuration_clock DEFAULT VALUES ON CONFLICT (singleton) DO NOTHING;
 
 -- +goose StatementBegin
-CREATE FUNCTION initialize_clone_configuration_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION initialize_clone_configuration_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO project_environment_clone_configuration_guards(project_id, account_id)
     VALUES (NEW.id, NEW.account_id)
@@ -41,11 +41,12 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS initialize_clone_configuration_guard ON projects;
 CREATE TRIGGER initialize_clone_configuration_guard AFTER INSERT OR UPDATE OF account_id ON projects
 FOR EACH ROW EXECUTE FUNCTION initialize_clone_configuration_guard();
 
 -- +goose StatementBegin
-CREATE FUNCTION assert_clone_configuration_mutable(project uuid) RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION assert_clone_configuration_mutable(project uuid) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
     guard_state text;
 BEGIN
@@ -67,7 +68,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_clone_configuration_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_configuration_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     before_row jsonb := CASE WHEN TG_OP <> 'INSERT' THEN to_jsonb(OLD) ELSE '{}'::jsonb END;
     after_row jsonb := CASE WHEN TG_OP <> 'DELETE' THEN to_jsonb(NEW) ELSE '{}'::jsonb END;
@@ -146,11 +147,13 @@ BEGIN
         'managed_postgres_databases:database:id'
     ] LOOP
         parts := string_to_array(entry, ':');
+        EXECUTE format('DROP TRIGGER IF EXISTS clone_configuration_write_fence ON %I', parts[1]);
         EXECUTE format('CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION guard_clone_configuration_mutation(%L,%L)', parts[1], parts[2], parts[3]);
     END LOOP;
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS clone_configuration_write_fence ON projects;
 CREATE TRIGGER clone_configuration_write_fence BEFORE UPDATE OR DELETE ON projects
 FOR EACH ROW EXECUTE FUNCTION guard_clone_configuration_mutation('project', 'id');
 

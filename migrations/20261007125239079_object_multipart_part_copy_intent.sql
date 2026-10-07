@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-590: copy intent is recorded only in the original once-only dispatch.
 -- Existing uncertain attempts remain without intent; they cannot be adopted.
-ALTER TABLE object_multipart_part_writers ADD COLUMN copy_intent jsonb
+ALTER TABLE object_multipart_part_writers ADD COLUMN IF NOT EXISTS copy_intent jsonb
  CHECK(copy_intent IS NULL OR (dispatched AND COALESCE((jsonb_typeof(copy_intent)='object' AND copy_intent->>'schema'='1'),false)));
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION guard_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$

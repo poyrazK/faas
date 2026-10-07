@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-590: reserve attempt identity with the transfer, claim before IO, and
 -- retain uncertain dispatch forever. Existing transfers are never adopted.
-CREATE TABLE object_multipart_part_writers (
+CREATE TABLE IF NOT EXISTS object_multipart_part_writers (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  upload_id uuid NOT NULL REFERENCES object_storage_multipart_uploads(id) ON DELETE CASCADE,
  part_number integer NOT NULL CHECK(part_number BETWEEN 1 AND 10000),
@@ -16,15 +16,18 @@ CREATE TABLE object_multipart_part_writers (
  UNIQUE(upload_id,part_number,transfer_token),
  CHECK(managed OR dispatched)
 );
+DROP TRIGGER IF EXISTS object_multipart_part_writer_guard ON object_multipart_part_writers;
 INSERT INTO object_multipart_part_writers(upload_id,part_number,transfer_token,managed,dispatched,bucket_id,backend_id,backend_fingerprint,physical_name)
 SELECT g.upload_id,g.part_number,g.transfer_token,false,true,b.id,b.backend_id,b.backend_fingerprint,b.physical_name
 FROM object_storage_multipart_part_grants g JOIN object_storage_multipart_uploads u ON u.id=g.upload_id JOIN object_buckets b ON b.id=u.bucket_id
-WHERE g.transfer_token IS NOT NULL;
-ALTER TABLE object_bucket_mutations ADD COLUMN multipart_part_writer_id uuid UNIQUE REFERENCES object_multipart_part_writers(id) ON DELETE RESTRICT;
+WHERE g.transfer_token IS NOT NULL
+AND NOT EXISTS(SELECT 1 FROM object_multipart_part_writers d WHERE d.upload_id=g.upload_id AND d.part_number=g.part_number AND d.transfer_token=g.transfer_token)
+ON CONFLICT (upload_id,part_number,transfer_token) DO NOTHING;
+ALTER TABLE object_bucket_mutations ADD COLUMN IF NOT EXISTS multipart_part_writer_id uuid UNIQUE REFERENCES object_multipart_part_writers(id) ON DELETE RESTRICT;
 ALTER TABLE object_bucket_mutations DROP CONSTRAINT object_mutation_single_owner;
 ALTER TABLE object_bucket_mutations ADD CONSTRAINT object_mutation_single_owner CHECK(num_nonnulls(upload_id,multipart_upload_id,multipart_part_writer_id)<=1);
 -- +goose StatementBegin
-CREATE FUNCTION guard_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE u object_storage_multipart_uploads%ROWTYPE; g object_storage_multipart_part_grants%ROWTYPE;
 BEGIN
  IF TG_OP='DELETE' THEN
@@ -59,9 +62,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_part_writer_guard ON object_multipart_part_writers;
 CREATE TRIGGER object_multipart_part_writer_guard BEFORE INSERT OR UPDATE OR DELETE ON object_multipart_part_writers FOR EACH ROW EXECUTE FUNCTION guard_object_multipart_part_writer();
 
-CREATE FUNCTION guard_object_multipart_part_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_object_multipart_part_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' THEN
   IF OLD.multipart_part_writer_id IS NOT NULL AND EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE id=OLD.multipart_part_writer_id AND NOT settled) THEN
@@ -77,9 +81,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_part_receipt_guard ON object_bucket_mutations;
 CREATE TRIGGER object_multipart_part_receipt_guard BEFORE INSERT OR UPDATE OR DELETE ON object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION guard_object_multipart_part_receipt();
 
-CREATE FUNCTION compose_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION compose_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.dispatched AND NOT OLD.dispatched THEN
   INSERT INTO object_bucket_mutations(id,bucket_id,kind,backend_id,backend_fingerprint,physical_name,multipart_part_writer_id)
@@ -90,9 +95,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_part_writer_composition ON object_multipart_part_writers;
 CREATE TRIGGER object_multipart_part_writer_composition AFTER UPDATE ON object_multipart_part_writers FOR EACH ROW EXECUTE FUNCTION compose_object_multipart_part_writer();
 
-CREATE FUNCTION protect_object_multipart_part_transfer() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_multipart_part_transfer() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP<>'INSERT' AND EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE upload_id=OLD.upload_id AND part_number=OLD.part_number AND transfer_token=OLD.transfer_token AND dispatched AND NOT settled) AND (TG_OP='DELETE' OR NEW IS DISTINCT FROM OLD) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='An uncertain dispatched transfer cannot expire, change or be replaced';
@@ -100,9 +106,10 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_part_transfer_guard ON object_storage_multipart_part_grants;
 CREATE TRIGGER object_multipart_part_transfer_guard BEFORE UPDATE OR DELETE ON object_storage_multipart_part_grants FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_part_transfer();
 
-CREATE FUNCTION compose_object_multipart_part_transfer() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION compose_object_multipart_part_transfer() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP<>'INSERT' AND OLD.transfer_token IS NOT NULL AND (TG_OP='DELETE' OR NEW.transfer_token IS DISTINCT FROM OLD.transfer_token) THEN
   UPDATE object_multipart_part_writers SET settled=true WHERE upload_id=OLD.upload_id AND part_number=OLD.part_number AND transfer_token=OLD.transfer_token AND NOT dispatched AND NOT settled;
@@ -114,9 +121,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_part_transfer_composition ON object_storage_multipart_part_grants;
 CREATE TRIGGER object_multipart_part_transfer_composition AFTER INSERT OR UPDATE OR DELETE ON object_storage_multipart_part_grants FOR EACH ROW EXECUTE FUNCTION compose_object_multipart_part_transfer();
 
-CREATE FUNCTION protect_object_multipart_part_session() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_multipart_part_session() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF (NEW.state IN ('completed','aborted') AND EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE upload_id=OLD.id AND dispatched AND NOT settled)) OR (EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE upload_id=OLD.id AND NOT settled) AND (
   (NEW.account_id,NEW.app_id,NEW.bucket_id,NEW.object_key,NEW.provider_upload_id,NEW.encryption_snapshot,NEW.protection_snapshot) IS DISTINCT FROM
@@ -126,6 +134,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_part_session_guard ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_part_session_guard BEFORE UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_part_session();
 -- +goose StatementEnd
 

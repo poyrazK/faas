@@ -2,8 +2,8 @@
 -- ADR-590: preserve intended PUT size and signed hash; observe validated body
 -- identity without inventing provider ownership or draining unknown writes.
 ALTER TABLE object_multipart_part_writers
- ADD COLUMN put_intent jsonb CHECK(put_intent IS NULL OR (dispatched AND copy_intent IS NULL AND COALESCE(put_intent->'schema'='1'::jsonb,false))),
- ADD COLUMN body_sha256 text NOT NULL DEFAULT '' CHECK(body_sha256='' OR (put_intent IS NOT NULL AND body_sha256 ~ '^[0-9a-f]{64}$'));
+ ADD COLUMN IF NOT EXISTS put_intent jsonb CHECK(put_intent IS NULL OR (dispatched AND copy_intent IS NULL AND COALESCE(put_intent->'schema'='1'::jsonb,false))),
+ ADD COLUMN IF NOT EXISTS body_sha256 text NOT NULL DEFAULT '' CHECK(body_sha256='' OR (put_intent IS NOT NULL AND body_sha256 ~ '^[0-9a-f]{64}$'));
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION guard_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE u object_storage_multipart_uploads%ROWTYPE; g object_storage_multipart_part_grants%ROWTYPE;
