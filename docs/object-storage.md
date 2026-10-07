@@ -711,6 +711,19 @@ operator limits. It does not add an enable flag or account allowlist. Missing
 or null policy keeps metadata/cleanup usable but blocks new signed URLs.
 Policy changes require restarting API replicas with identical config.
 
+In `gateway_safety_v1`, customer native calls reserve the shared request budget
+before dispatch. Each multipart part-list page (including CLI resume), bucket
+configuration or version-protection probe, and tag request counts separately,
+even when the provider returns an error. Exhausted budgets return
+`object_storage_budget_reached`; unqualified accounting returns
+`object_storage_usage_stale`, before contacting the provider. Multipart session
+status/listing remain available without a native request. A denied resume keeps
+its checkpoint for retry after accounting recovers. Pending bucket configuration
+inspection may return persisted progress when its live probe is denied. S3
+object and part listings make one provider attempt; an explicit retry requires
+a new reservation. Accepted recovery,
+maintenance and cleanup keep recording attempts and can finish at the ceiling.
+
 Copy-source grants have a separate fixed ceiling of 32 source buckets per
 destination credential. The API reports `copy_sources_per_credential` with
 `limit` and `observed` values when an additional grant exceeds that ceiling.

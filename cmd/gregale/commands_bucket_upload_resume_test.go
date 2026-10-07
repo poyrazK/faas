@@ -35,6 +35,7 @@ type bucketResumeFixture struct {
 	lostComplete    bool
 	pendingComplete bool
 	pages           []api.ObjectMultipartPartList
+	listErr         error
 	onSign          func(int)
 }
 
@@ -54,6 +55,9 @@ func (c *bucketResumeFixture) ListObjectMultipartParts(_ context.Context, _, _, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.lists++
+	if c.listErr != nil {
+		return api.ObjectMultipartPartList{}, c.listErr
+	}
 	if c.pages != nil {
 		if len(c.pages) == 0 {
 			return api.ObjectMultipartPartList{}, errors.New("unexpected extra page")
@@ -351,5 +355,41 @@ func TestBucketUploadResumeAllowsRelocatedIdenticalSource(t *testing.T) {
 	o.path, o.resumeID, o.contentType = moved, pending.UploadID, "application/octet-stream"
 	if result, err := runBucketTransfer(t.Context(), c, o); err != nil || result.Status != "completed" || c.creates != 1 {
 		t.Fatal(result, err)
+	}
+}
+
+func TestBucketUploadResumeAccountingDenialPreservesCheckpoint(t *testing.T) {
+	for _, code := range []string{"object_storage_budget_reached", "object_storage_usage_stale"} {
+		t.Run(code, func(t *testing.T) {
+			c, o := newBucketResumeFixture(t)
+			c.failSign = 2
+			pending, err := runBucketTransfer(t.Context(), c, o)
+			if err == nil || pending.UploadID == "" {
+				t.Fatal("fixture did not interrupt", pending, err)
+			}
+			o.resumeID = pending.UploadID
+			path, err := bucketUploadCheckpointPath(c.BaseURL(), o.resumeID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.listErr = &api.Problem{Code: code}
+			result, err := runBucketTransfer(t.Context(), c, o)
+			if err == nil || !strings.Contains(err.Error(), code) || result.Status != "pending" || result.UploadID != pending.UploadID || c.creates != 1 || c.completes != 0 || !reflect.DeepEqual(c.writes, []int{1}) {
+				t.Fatal("accounting denial lost the session or repeated writes", result, err, c.writes)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("denial changed the checkpoint", err)
+			}
+			c.listErr = nil
+			result, err = runBucketTransfer(t.Context(), c, o)
+			if err != nil || result.Status != "completed" || c.creates != 1 || c.completes != 1 || !reflect.DeepEqual(c.writes, []int{1, 2, 3}) {
+				t.Fatal("resume after accounting recovery failed", result, err, c.writes)
+			}
+		})
 	}
 }
