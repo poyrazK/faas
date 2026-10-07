@@ -11,6 +11,17 @@ kernel backlog until the new process consumes the inherited descriptor. Keep
 the socket enabled with the service; binding port 8080 directly bypasses the
 zero-connection-refusal rollout contract (issue #607 / ADR-068).
 
+Private runtime-upgrade verification has a default-off public listener identity
+and a read-only selected Caddy handler collector (ADR-616). The collector requires
+an explicit loopback admin URL, a reviewed `/config/apps/http/servers/...` handler
+path and exact expected startup identities for every static loopback backend. It
+reads the selected scope twice around direct signed backend probes. It does not
+discover every route or verify DNS, and it does not modify Caddy or clear pending
+withdrawals. There is no automatic collector or public CLI. Deployment units keep
+the private identity flag disabled; see
+[ADR-616](../adr/616-selected-caddy-public-edge-binding.md) for bounds and pending
+native acceptance. A missing identity or unreachable socket remains unverified.
+
 Caddy must reduce the validated proxy chain to one address because the internal
 gateway deliberately rejects ambiguous `X-Forwarded-For` values. For a
 Cloudflare-fronted origin, configure Caddy with Cloudflare's current published

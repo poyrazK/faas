@@ -65,9 +65,13 @@ type runtimePublicEdgeObserver struct {
 	activity        *ingress.ActivityTracker
 	activityStore   state.RuntimeUpgradePublicEdgeActivityStore
 	withdrawalStore state.RuntimeUpgradePublicEdgeWithdrawalStore
+	identity        http.Handler
 }
 
 func publicEdgeProtocol(getenv func(string) string) string {
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_IDENTITY") == "1" {
+		return "adr616/public-identity-v1"
+	}
 	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL") == "1" {
 		return "adr615/withdrawal-v1"
 	}
@@ -78,6 +82,9 @@ func publicEdgeProtocol(getenv func(string) string) string {
 }
 
 func prepareRuntimePublicEdgeObserver(proxy *gateway.InternalReverseProxy, store state.RuntimeUpgradePublicEdgeGuardStore, config runtimePublicEdgeConfig, getenv func(string) string, log *slog.Logger) (*runtimePublicEdgeObserver, error) {
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_IDENTITY") == "1" && getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL") != "1" {
+		return nil, fmt.Errorf("public edge identity requires public edge withdrawal")
+	}
 	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL") == "1" && getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY") != "1" {
 		return nil, fmt.Errorf("public edge withdrawal requires public ingress activity")
 	}
@@ -116,8 +123,31 @@ func prepareRuntimePublicEdgeObserver(proxy *gateway.InternalReverseProxy, store
 			return nil, fmt.Errorf("public edge withdrawal requires PostgreSQL withdrawal store")
 		}
 	}
+	if err := o.configureIdentity(getenv); err != nil {
+		return nil, err
+	}
 	log.Info("private public edge guard awaits inventory review", "public_edge_slot_id", slot, "public_edge_session_id", session, "config_sha256", member.ConfigSHA256)
 	return o, nil
+}
+
+func (o *runtimePublicEdgeObserver) configureIdentity(getenv func(string) string) error {
+	if getenv("FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_IDENTITY") != "1" {
+		return nil
+	}
+	id := ingress.PublicEdgeIdentity{SlotID: o.member.SlotID, SessionID: o.member.SessionID, ConfigSHA256: o.member.ConfigSHA256}
+	h, err := ingress.NewPublicIdentityHandler(getenv("FAAS_RUNTIME_UPGRADE_INGRESS_TOKEN"), id)
+	if err != nil {
+		return err
+	}
+	o.identity = h
+	return nil
+}
+
+func (o *runtimePublicEdgeObserver) identityHandler() http.Handler {
+	if o == nil {
+		return nil
+	}
+	return o.identity
 }
 
 func (o *runtimePublicEdgeObserver) configureActivity(proxy *gateway.InternalReverseProxy, getenv func(string) string) error {

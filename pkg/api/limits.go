@@ -8756,8 +8756,11 @@ const (
 	RuntimeUpgradeIngressProbeTimeout          = 2 * time.Second // private connection identity + membership check (ADR-612)
 	RuntimeUpgradeIngressIdentityMaxBytes      = 1024
 	RuntimeUpgradeIngressTokenBytes            = 32
-	RuntimeUpgradePublicEdgeLimit              = 64 // reviewed public processes (ADR-613)
-	RuntimeUpgradePublicEdgeWithdrawalLimit    = 64 // unresolved withdrawn public sessions (ADR-615)
+	RuntimeUpgradePublicEdgeLimit              = 64               // reviewed public processes (ADR-613)
+	RuntimeUpgradePublicEdgeWithdrawalLimit    = 64               // unresolved withdrawn public sessions (ADR-615)
+	RuntimeUpgradePublicEdgeTopologyTimeout    = 10 * time.Second // read-only selected Caddy proxy binding (ADR-616)
+	RuntimeUpgradePublicEdgeProxyMaxBytes      = 64 << 10
+	RuntimeUpgradePublicEdgeConfigPathMaxBytes = 1024
 )
 
 // Private runtime qualification collector budgets (ADR-601).

@@ -1,5 +1,6 @@
 // Package ingress binds a private public-edge forward to the internal process
-// on that exact connection (ADR-612). It grants no whole-fleet or VM authority.
+// on that exact connection (ADR-612) and authenticates selected public listener
+// identities (ADR-616). It grants no whole-fleet or VM authority.
 package ingress
 
 import (

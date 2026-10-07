@@ -65,6 +65,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
+	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/oauthmetadata"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -671,6 +672,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	publicSrv.Handler = ingress.WrapPublicIdentity(publicSrv.Handler, edgeObserver.identityHandler())
 	defer edgeObserver.attach(ctx, publicSrv)()
 	// Tier A8 / ADR-083 (code-review fix #5): hook the public
 	// listener's ConnState to the in-flight tracker so the
