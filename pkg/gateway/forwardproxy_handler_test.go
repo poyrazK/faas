@@ -71,6 +71,18 @@ type stubVmmdClient struct {
 	rawStream grpc.BidiStreamingClient[vmmdpb.ForwardRawRequest, vmmdpb.ForwardRawResponse]
 }
 
+func (s *stubVmmdClient) CreateEnvironmentQualification(context.Context, *vmmdpb.CreateEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CreateEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot qualify workloads")
+}
+
+func (s *stubVmmdClient) RetireEnvironmentQualification(context.Context, *vmmdpb.RetireEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.RetireEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot qualify workloads")
+}
+
+func (s *stubVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot qualify workloads")
+}
+
 func (s *stubVmmdClient) ForwardHTTPStream(ctx context.Context, _ ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,6 +130,9 @@ func (s *stubVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecut
 }
 func (s *stubVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteExecutionEvent], error) {
 	panic("ExecuteExecutionStream: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by HTTP gateway tests")
 }
 func (s *stubVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed in handler integration test")
@@ -809,4 +824,8 @@ func rawStreamForwarder(t *testing.T, cli *stubVmmdClient, w http.ResponseWriter
 	if body != nil {
 		_, _ = w.Write(body.GetBodyChunk())
 	}
+}
+
+func (s *stubVmmdClient) ForwardUDPStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse], error) {
+	return nil, status.Error(codes.Unimplemented, "ForwardUDPStream is not used by HTTP gateway tests")
 }

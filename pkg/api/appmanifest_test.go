@@ -84,6 +84,8 @@ func TestManifestValidate(t *testing.T) {
 		{"neg port", AppManifest{Entrypoint: []string{"x"}, Port: -1}, false},
 		{"secret reload SIGHUP", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP"}, true},
 		{"secret reload SIGUSR1", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGUSR1"}, true},
+		{"secret reload readiness without signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadReadiness: true}, false},
+		{"secret reload readiness", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP", SecretReloadReadiness: true}, true},
 		{"secret reload invalid signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGTERM"}, false},
 		{"secret reload collides with stop signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP", StopSignal: "HUP"}, false},
 		{"protocol ports", AppManifest{Entrypoint: []string{"x"}, Ports: []WorkloadPort{
@@ -260,6 +262,21 @@ func TestManifestValidate(t *testing.T) {
 			ExecutionMode:  ExecutionModeWorker,
 			WorkerReplicas: &WorkerScaling{Min: 0, Max: 5, Metric: "queue_lag", Target: 100},
 		}, true},
+		{"worker_replicas custom valid", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4},
+		}, true},
+		{"worker_replicas custom requires name", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricCustom, Target: 4},
+		}, false},
+		{"worker_replicas name requires custom metric", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricQueueDepth, Name: "mcp_tasks_outstanding", Target: 4},
+		}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

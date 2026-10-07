@@ -154,3 +154,45 @@ func TestAcknowledgeNotificationPreventsOutboxReplay(t *testing.T) {
 		t.Fatalf("replay after fast-path ack = delivered %d, calls %d, err %v; want 0, 0, nil", delivered, calls, err)
 	}
 }
+
+func TestGetRuntimeConfigRestartStatusIsScopedAndProjectsCompletion(t *testing.T) {
+	pool, ctx := notificationOutboxPG(t)
+	requestedAt := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	const appID = "11111111-1111-4111-8111-111111111111"
+	const wakeID = "22222222-2222-4222-8222-222222222222"
+	const payload = `{"app_id":"11111111-1111-4111-8111-111111111111","wake_id":"22222222-2222-4222-8222-222222222222"}`
+
+	var id int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO notification_outbox (channel, payload, state, attempts, last_error, created_at)
+		VALUES ($1, $2, 'pending', 2, $3, $4)
+		RETURNING id`, NotifyRuntimeConfigRestart, payload, "reason=telemetry_missing", requestedAt).Scan(&id); err != nil {
+		t.Fatalf("insert restart outbox row: %v", err)
+	}
+
+	status, err := GetRuntimeConfigRestartStatus(ctx, pool, appID, wakeID)
+	if err != nil {
+		t.Fatalf("read pending restart status: %v", err)
+	}
+	if status.State != "pending" || status.Attempts != 2 || status.LastError != "reason=telemetry_missing" || !status.RequestedAt.Equal(requestedAt) || status.CompletedAt != nil {
+		t.Fatalf("pending status = %+v", status)
+	}
+	if _, err := GetRuntimeConfigRestartStatus(ctx, pool, "33333333-3333-4333-8333-333333333333", wakeID); !errors.Is(err, ErrRuntimeConfigRestartNotFound) {
+		t.Fatalf("cross-app status lookup error = %v, want not found", err)
+	}
+
+	completedAt := requestedAt.Add(3 * time.Minute)
+	if _, err := pool.Exec(ctx, `
+		UPDATE notification_outbox
+		   SET state = 'delivered', delivered_at = $2, last_error = NULL
+		 WHERE id = $1`, id, completedAt); err != nil {
+		t.Fatalf("complete restart outbox row: %v", err)
+	}
+	status, err = GetRuntimeConfigRestartStatus(ctx, pool, appID, wakeID)
+	if err != nil {
+		t.Fatalf("read completed restart status: %v", err)
+	}
+	if status.State != "delivered" || status.LastError != "" || status.CompletedAt == nil || !status.CompletedAt.Equal(completedAt) {
+		t.Fatalf("completed status = %+v", status)
+	}
+}

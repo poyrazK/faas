@@ -69,6 +69,10 @@ func (m *MemStore) PutProjectEnvironmentEdgePolicy(_ context.Context, policy Pro
 	if _, err := m.projectEnvironmentBySlugLocked(policy.ProjectID, policy.EnvironmentSlug); err != nil {
 		return ProjectEnvironmentEdgePolicy{}, err
 	}
+	memory, err := m.gitOpsGuardScopedWriteLocked(policy.AccountID, policy.AppID, policy.EnvironmentSlug, []string{"policies"})
+	if err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
+	}
 	key := projectEnvironmentRoutePolicyKey(policy.AppID, policy.EnvironmentSlug)
 	now := time.Now().UTC()
 	if old, ok := m.projectEnvironmentEdgePolicies[key]; ok {
@@ -79,6 +83,7 @@ func (m *MemStore) PutProjectEnvironmentEdgePolicy(_ context.Context, policy Pro
 	policy.UpdatedAt = now
 	policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
 	m.projectEnvironmentEdgePolicies[key] = policy
+	touchGitOpsMemoryIntent(memory)
 	policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
 	return policy, nil
 }

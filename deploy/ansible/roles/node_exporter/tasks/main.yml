@@ -75,13 +75,19 @@
     - daemon-reload
     - restart node_exporter
 
+# Every role that touches this directory declares the same owner and mode.
+# Root writers need nothing more; the non-root PostgreSQL collector joins the
+# node_exporter group (SupplementaryGroups in its unit). The postgres role used
+# to chown the directory to postgres while this role chowned it back, so any
+# convergence that stopped between the two left the collector unable to write
+# (production-us, 2026-10-05: "cannot create ... Permission denied").
 - name: node_exporter — create textfile collector directory
   ansible.builtin.file:
     path: /var/lib/node_exporter/textfile_collector
     state: directory
     owner: node_exporter
     group: node_exporter
-    mode: "0755"
+    mode: "0775"
 
 - name: node_exporter — read rendered systemd unit
   ansible.builtin.slurp:

@@ -1,0 +1,5 @@
+pkg/fcvm/restart_quarantine.go:130:3: ineffectual assignment to slot (ineffassign)
+		slot := -1
+		^
+1 issues:
+* ineffassign: 1

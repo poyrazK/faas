@@ -51,11 +51,15 @@ import (
 // kernel/base rootfs in (cheap) and link the per-app layer / snapshot files, then
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
-	chrootBase     string        // /srv/fc/jail
-	fcName         string        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout   time.Duration // WAKING/cold-boot readiness budget (spec §6)
-	destroyWait    time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
-	exportMaxBytes int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
+	nativeRecovery *nativeProcessRecoveryRuntime // opt-in, configured before admission
+	chrootBase     string                        // /srv/fc/jail
+	fcName         string                        // chroot dir name jailer derives from the exec-file basename
+	readyTimeout   time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
+	// tcpReadinessDial substitutes a deterministic probe in pure-Go tests.
+	// nil uses net.DialTimeout; configure only before the VMM is used.
+	tcpReadinessDial func(string, string, time.Duration) (net.Conn, error)
+	destroyWait      time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
+	exportMaxBytes   int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
 	// restoreSlots bounds the expensive Firecracker snapshot-load window. A
 	// small gate prevents admitted wake bursts from making every restore miss
 	// its latency SLO through CPU and mount contention. nil preserves the
@@ -84,9 +88,11 @@ type JailerVMM struct {
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
 
-	mu      sync.Mutex
-	proc    map[string]*exec.Cmd // instance -> running jailer process
-	clients map[string]*http.Client
+	mu              sync.Mutex
+	resourceJournal *ResourceJournal
+	ownedJails      map[string][]resourceAsset // live owner only; never reconstructed from storage
+	proc            map[string]*exec.Cmd       // instance -> running jailer process
+	clients         map[string]*http.Client
 	// cpuBoostTails owns the post-readiness quota-restoration timers. They live
 	// in vmmd rather than schedd so the wake RPC can return as soon as the app
 	// is ready; Kill cancels the timer before a cgroup can be reused.
@@ -131,23 +137,32 @@ type JailerVMM struct {
 	// budget. Production supplies a bounded async archive sink; the callback
 	// must not perform disk or network I/O while the ring mutex is held.
 	evictedLine func(instance string, line logbuf.Line)
+	// retiredLines receives the lines a ring still holds when its VM is
+	// torn down. Without it a log volume under the ring budget never
+	// reaches the archive, so a parked instance had no retained logs.
+	retiredLines func(instance string, lines []logbuf.Line)
 	// processExitSink receives the fact that a tracked Firecracker
 	// process has exited. Manager owns the lifecycle decision; the
 	// VMM only reports the reaped child. Kept outside the VMM
 	// interface so injected VMMs remain source-compatible.
-	processExitSink func(instance string, exitCode int)
+	processExitSink        func(instance string, exitCode int)
+	processExitAttemptSink func(instance string, generation uint64, exitCode int)
 	// materialisedTmp tracks tmp files materializeFromStorage created for
 	// each instance so Kill/DestroyWithExport can Remove them on teardown.
 	// Without this, the tmp files (in /tmp) outlive the chroot and leak
 	// across thousands of wakes on a busy box.
-	materialisedTmp map[string][]string
+	materialisedTmp      map[string][]string
+	materialisedIdentity map[string]resourceFileIdentity
 	// bindMounts tracks image bind mounts used when a source and the jail
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.
 	bindMounts map[string][]ephemeralBind
 	// bindSourceModes reference-counts temporary source permission widening
-	// when multiple VMs bind the same shared base image concurrently.
-	bindSourceModes map[string]bindSourceMode
+	// when multiple VMs bind the same shared base image concurrently. It is
+	// keyed by path and inode: the artifact cache can rename a refreshed file
+	// over a path while a running VM still holds the old inode, and the next
+	// boot must bind the new file rather than fail.
+	bindSourceModes map[bindSourceKey]bindSourceMode
 	// wakePhaseMetrics is the vmmd wake registry (ADR-098 C11), shared with
 	// the Manager. Optional; every observation site is nil-safe.
 	wakePhaseMetrics *WakePhaseMetrics
@@ -180,11 +195,27 @@ type ephemeralBind struct {
 	source     string
 	mountpoint string
 	mode       os.FileMode
+	file       resourceFileIdentity
+	mount      *resourceMountIdentity
+	target     *resourceFileIdentity // Placeholder behind the bind, before mounting.
+	tracked    bool                  // Image bind intent; TUN in the child namespace is separate.
+	released   bool                  // Permission reference released; journal retirement may still fail.
+}
+
+// bindSourceKey names one bound source file: its path and the inode that was
+// at the path when it was bound.
+type bindSourceKey struct {
+	path string
+	file resourceFileIdentity
 }
 
 type bindSourceMode struct {
 	mode os.FileMode
 	refs int
+	file resourceFileIdentity
+	// handle pins the original inode so teardown can restore its mode even
+	// when a snapshot writer atomically replaces the source pathname.
+	handle *os.File
 }
 
 // restoreTimingBreakdown is the vmmd-side breakdown of one successful
@@ -290,9 +321,11 @@ type coldBootArtifactTiming struct {
 // started in startJailer; reads in DestroyWithExport block until the watchdog
 // signals done via the cond.
 type instanceRecord struct {
+	waitErr     error // guarded by JailerVMM.mu; done alone cannot prove a failed Wait
 	cmd         *exec.Cmd
 	consolePath string        // serial console file used to detect a guest halt
 	isBuilder   bool          // builderd owns the expected process exit/export path
+	stopping    bool          // explicit stop owns the exit; guarded by JailerVMM.mu
 	exited      bool          // set by the watchdog when cmd.Wait completes
 	exitCode    int           // captured from cmd.Wait's ProcessState.ExitCode()
 	done        chan struct{} // closed by the watchdog; readers <-done to wake
@@ -503,11 +536,32 @@ func (v *JailerVMM) WithLogEvictionCallback(cb func(instance string, line logbuf
 	return v
 }
 
+// WithLogRetireCallback installs the callback that receives every line a
+// ring still holds when an app VM's ring is retired (park, destroy, failed
+// boot). The callback runs outside the ring lock.
+func (v *JailerVMM) WithLogRetireCallback(cb func(instance string, lines []logbuf.Line)) *JailerVMM {
+	v.mu.Lock()
+	v.retiredLines = cb
+	v.mu.Unlock()
+	return v
+}
+
 // WithProcessExitSink installs the callback for an unexpected Firecracker
 // process exit. Passing nil disables the callback.
 func (v *JailerVMM) WithProcessExitSink(cb func(instance string, exitCode int)) *JailerVMM {
 	v.mu.Lock()
 	v.processExitSink = cb
+	v.processExitAttemptSink = nil
+	v.mu.Unlock()
+	return v
+}
+
+// WithProcessExitAttemptSink includes the process attempt in each notification,
+// so a late exit cannot terminate a replacement VM with the same instance ID.
+func (v *JailerVMM) WithProcessExitAttemptSink(cb func(string, uint64, int)) *JailerVMM {
+	v.mu.Lock()
+	v.processExitAttemptSink = cb
+	v.processExitSink = nil
 	v.mu.Unlock()
 	return v
 }
@@ -516,14 +570,29 @@ func (v *JailerVMM) WithProcessExitSink(cb func(instance string, exitCode int)) 
 // — Kill/DestroyWithExport always call this so a park/unpark cycle frees
 // the byte budget (invariant §6.2-4: parked app = zero RAM).
 func (v *JailerVMM) unregisterRing(instance string) {
+	v.retireRing(instance, false)
+}
+
+// retireRing is unregisterRing that, when archive is set, hands the ring's
+// retained lines to the archive callback. Closing first freezes the ring, so
+// the snapshot is exactly what the VM wrote; evicted lines already went
+// through evictedLine and are not repeated.
+func (v *JailerVMM) retireRing(instance string, archive bool) {
 	v.mu.Lock()
 	r, ok := v.rings[instance]
 	if ok {
 		delete(v.rings, instance)
 	}
+	retired := v.retiredLines
 	v.mu.Unlock()
-	if ok {
-		_ = r.Close()
+	if !ok {
+		return
+	}
+	_ = r.Close()
+	if archive && retired != nil {
+		if lines := r.Snapshot(1); len(lines) > 0 { // Seq starts at 1; <=0 means "tail from now"
+			retired(instance, lines)
+		}
 	}
 }
 
@@ -549,7 +618,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		rings:                    make(map[string]*logbuf.Ring),
 		materialisedTmp:          make(map[string][]string),
 		bindMounts:               make(map[string][]ephemeralBind),
-		bindSourceModes:          make(map[string]bindSourceMode),
+		bindSourceModes:          make(map[bindSourceKey]bindSourceMode),
 		restorePrefetch:          newRestorePrefetchStore(),
 		preBoot:                  newPreBootLedger(),
 	}
@@ -751,6 +820,9 @@ func (v *JailerVMM) socketPath(instance string) string {
 // deferred Kill sweeps the tmp files alongside the chroot (which is
 // already on tmpfs, per spec §11).
 func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) (err error) {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
 	t0 := time.Now()
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: cold boot: %w", err)
@@ -838,13 +910,23 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
 	return v.boot(ctx, l, cfg, false, healthcheckPath, false, "", 0, "", nil, nil, nil, "", false, nil, nil)
 }
 
 func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+	if err := v.ensureNativeLaunch(ctx, l); err != nil {
+		return err
+	}
+	stagingOwner, err := v.nativeDriveStagingOwner(ctx, l.Instance)
+	if err != nil {
+		return err
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	bootStartedAt := time.Now()
-	root, err := v.mkChroot(l.Instance)
+	root, err := v.mkChrootForOwner(ctx, stagingOwner, l.Instance)
 	if err != nil {
 		return err
 	}
@@ -856,16 +938,16 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}()
 	_ = v.registerRing(l.Instance)
 
-	jailed, err := v.provision(root, cfg, l.UID, l.GID, l.Instance)
+	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
 	provisionedAt := time.Now()
-	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask); err != nil {
+	if err := v.stagePreBootFilesForOwner(ctx, stagingOwner, l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 	if jobManifest != nil {
-		if err := v.stageJobManifest(l.Instance, *jobManifest); err != nil {
+		if err := v.stageJobManifestForOwner(ctx, stagingOwner, l.Instance, *jobManifest); err != nil {
 			return fmt.Errorf("vmm: stage job manifest: %w", err)
 		}
 	}
@@ -900,7 +982,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	if len(cfg.NetworkInterfaces) > 0 {
-		if err = v.bindTunSource(root, l.Instance); err != nil {
+		if err = v.bindTunSourceForOwner(ctx, stagingOwner, root, l.Instance); err != nil {
 			return err
 		}
 	}
@@ -910,7 +992,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}
 	startedJailerAt := time.Now()
 	if len(cfg.NetworkInterfaces) > 0 {
-		if _, err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+		if _, err = v.bindTunDeviceInJailerForOwner(ctx, stagingOwner, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
 	}
@@ -1045,15 +1127,42 @@ func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec,
 // stagePreBootFilesUnless writes the pre-boot files, or skips the loop mount
 // when captureKey's drive is known to already hold byte-identical files
 // (restore only; cold boot passes ""). It reports whether it skipped.
-func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) (bool, error) {
+func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, measured ...*preBootStageTimings) (bool, error) {
+	if len(measured) > 0 && measured[0] != nil {
+		*measured[0] = preBootStageTimings{}
+	}
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return false, err
+	}
+	return v.stagePreBootFilesUnlessForOwner(ctx, owner, instance, captureKey, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, measured...)
+}
+
+func (v *JailerVMM) stagePreBootFilesForOwner(ctx context.Context, owner nativeLaunchRecord, instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) error {
+	_, err := v.stagePreBootFilesUnlessForOwner(ctx, owner, instance, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
+	return err
+}
+
+func (v *JailerVMM) stagePreBootFilesUnlessForOwner(ctx context.Context, owner nativeLaunchRecord, instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, measured ...*preBootStageTimings) (bool, error) {
+	timings := &preBootStageTimings{}
+	if len(measured) > 0 && measured[0] != nil {
+		timings = measured[0]
+		*timings = preBootStageTimings{}
+	}
+	started := time.Now()
+
 	writers, digest, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, v.serviceProxyCAPEM)
+	timings.Prepare = time.Since(started)
+	timings.FilesTotal = len(writers)
 	if err != nil {
 		return false, err
 	}
 	if len(writers) == 0 {
 		return false, nil
 	}
-	if v.preBoot.captureHas(captureKey, digest) {
+	if v.nativeRecovery == nil && v.preBoot.captureHas(captureKey, digest) {
 		v.preBoot.instanceHas(instance, digest)
 		return true, nil
 	}
@@ -1061,26 +1170,36 @@ func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloa
 	if err != nil {
 		return false, err
 	}
-	learn, present := v.preBoot.learnable(captureKey), false
-	err = loopMountSession(drive1, "faas-vmm-preboot-", func(mountRoot string) error {
-		if learn && preBootFilesPresent(mountRoot, writers) {
-			present = true
-			return nil
+	learn, present := v.nativeRecovery == nil && v.preBoot.learnable(captureKey), false
+	err = v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-preboot-", func(mountRoot string) error {
+		if learn {
+			started := time.Now()
+			present = preBootFilesPresent(mountRoot, writers)
+			timings.Check = time.Since(started)
+			if present {
+				return nil
+			}
+
 		}
+		started := time.Now()
+		defer func() { timings.Write = time.Since(started) }()
 		for _, w := range writers {
 			if err := w.write(mountRoot); err != nil {
 				return fmt.Errorf("%s: %w", w.what, err)
 			}
+			timings.FilesWritten++
 		}
 		return nil
-	})
+	}, &timings.loopMountTimings)
 	if err != nil {
 		return false, err
 	}
-	if present {
-		v.preBoot.learned(captureKey, digest)
+	if v.nativeRecovery == nil {
+		if present {
+			v.preBoot.learned(captureKey, digest)
+		}
+		v.preBoot.instanceHas(instance, digest)
 	}
-	v.preBoot.instanceHas(instance, digest)
 	return false, nil
 }
 
@@ -1180,25 +1299,6 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		}, path: workloadRosterPath, want: roster, mode: 0o400})
 	}
 	return writers, digest.sum(), nil
-}
-
-// loopMountSession loop-mounts an ext4 drive image read-write, runs fn
-// against the mountpoint, then unmounts and removes the mountpoint. vmmd is
-// the only root component, so the loopback mount is permitted by the §11
-// threat model. It is a package variable so the pure-Go test tier — which
-// has neither root nor a loop device — can substitute a plain directory
-// and count sessions.
-var loopMountSession = func(drive, prefix string, fn func(mountRoot string) error) error {
-	mp, err := os.MkdirTemp("", prefix)
-	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(mp) }()
-	if out, err := exec.Command("mount", "-o", "loop,rw", drive, mp).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
-	return fn(mp)
 }
 
 // openDriveRoot opens a mounted drive as an os.Root and returns target
@@ -1551,6 +1651,16 @@ func (v *JailerVMM) cancelStartupCPUBoostTail(instance string) {
 // HTTP GET <path> against <HostIP>:8080 and accepts 2xx as ready. The
 // Manager threads WakeRequest.HealthcheckPath into this field at bringUp.
 func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err error) {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
+	if err := v.ensureNativeLaunch(ctx, l); err != nil {
+		return err
+	}
+	stagingOwner, err := v.nativeDriveStagingOwner(ctx, l.Instance)
+	if err != nil {
+		return err
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	// Start the breakdown before any chroot or storage work. The manager's
 	// RestoreMs already covers this full method; keeping the detailed log on
@@ -1563,7 +1673,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	defer releaseRestoreSlot()
 	restoreAdmitted := time.Now()
-	root, err := v.mkChroot(l.Instance)
+	root, err := v.mkChrootForOwner(ctx, stagingOwner, l.Instance)
 	if err != nil {
 		return err
 	}
@@ -1691,10 +1801,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		resolvedWorkloads = append(resolvedWorkloads, resolvedArtifacts[i+2].path)
 	}
 	tResolve := time.Now()
-	if _, err := v.stageReadOnlyAs(root, kernelSrc, stableReadOnlyName(kernelSrc, kernelImageName), l.Instance); err != nil {
+	if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, kernelSrc, stableReadOnlyName(kernelSrc, kernelImageName), l.Instance); err != nil {
 		return fmt.Errorf("vmm: stage kernel: %w", err)
 	}
-	if _, err := v.stageReadOnlyAs(root, baseSrc, stableReadOnlyName(baseSrc, baseImageName), l.Instance); err != nil {
+	if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, baseSrc, stableReadOnlyName(baseSrc, baseImageName), l.Instance); err != nil {
 		return fmt.Errorf("vmm: stage base: %w", err)
 	}
 	// layerSrc is empty when cold-booting without a layer (cold path, no snapshot yet).
@@ -1702,10 +1812,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	tStageWritableStart := time.Now()
 	if layerSrc != "" {
 		if spec.EphemeralWritable && snapshotDriveKey == "" {
-			if _, err := v.stageEphemeralWritableAs(root, layerSrc, layerImageName, l.UID, l.GID, l.Instance); err != nil {
+			if _, err := v.stageEphemeralWritableAsForOwner(ctx, stagingOwner, root, layerSrc, layerImageName, l.UID, l.GID, l.Instance); err != nil {
 				return fmt.Errorf("vmm: stage ephemeral layer: %w", err)
 			}
-		} else if _, err := v.stageWritable(root, layerSrc, l.UID, l.GID, l.Instance); err != nil {
+		} else if _, err := v.stageWritableAsForOwner(ctx, stagingOwner, root, layerSrc, layerImageName, l.UID, l.GID, l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage layer: %w", err)
 		}
 	}
@@ -1716,12 +1826,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// cannot escape quota accounting by writing past its read-only
 	// boundary).
 	for i := 1; i < len(resolvedWorkloads); i++ {
-		if _, err := v.stageReadOnlyFor(root, resolvedWorkloads[i], l.Instance); err != nil {
+		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], filepath.Base(resolvedWorkloads[i]), l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage sidecar %d: %w", i-1, err)
 		}
 	}
 	tStageDrives := time.Now()
-	preBootSkipped, err := v.stagePreBootFilesUnless(l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false)
+	var preBootTimings preBootStageTimings
+	preBootSkipped, err := v.stagePreBootFilesUnlessForOwner(ctx, stagingOwner, l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false, &preBootTimings)
 	if err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
@@ -1730,11 +1841,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// Snapshot files are read-only inputs shared across the N instances a single
 	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
 	// rather than chown, which would rewrite the shared inode owner.
-	memName, err := v.stageReadOnlyAs(root, memSrc, memSnapshotName, l.Instance)
+	memName, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, memSrc, memSnapshotName, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: stage mem file: %w", err)
 	}
-	stateName, err := v.stageReadOnlyAs(root, stateSrc, vmstateSnapshotName, l.Instance)
+	stateName, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, stateSrc, vmstateSnapshotName, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: stage vmstate: %w", err)
 	}
@@ -1753,7 +1864,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	if !spec.Networkless {
-		if err = v.bindTunSource(root, l.Instance); err != nil {
+		if err = v.bindTunSourceForOwner(ctx, stagingOwner, root, l.Instance); err != nil {
 			return err
 		}
 	}
@@ -1770,7 +1881,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	tStartJailer := time.Now()
 	var tunTimings bindTunTimings
 	if !spec.Networkless {
-		if tunTimings, err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+		if tunTimings, err = v.bindTunDeviceInJailerForOwner(ctx, stagingOwner, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
 	}
@@ -1885,6 +1996,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"stage_writable_ms", tStageWritable.Sub(tStageWritableStart).Milliseconds(),
 		"stage_pre_boot_files_ms", breakdown.StagePreBootFilesMs,
 		"stage_pre_boot_files_skipped", preBootSkipped,
+		"pre_boot_prepare_us", preBootTimings.Prepare.Microseconds(),
+		"pre_boot_mount_ms", preBootTimings.Mount.Milliseconds(),
+		"pre_boot_check_us", preBootTimings.Check.Microseconds(),
+		"pre_boot_write_us", preBootTimings.Write.Microseconds(),
+		"pre_boot_unmount_ms", preBootTimings.Unmount.Milliseconds(),
+		"pre_boot_files_total", preBootTimings.FilesTotal,
+		"pre_boot_files_written", preBootTimings.FilesWritten,
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
 		"helper_ms", breakdown.HelperMs,
 		"start_jailer_ms", breakdown.StartJailerMs,
@@ -2750,6 +2868,12 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 // for the vmmd side, distinct from the engine's Destroy-the-VM
 // failure handler in pkg/sched.engine.captureWarmSnapshotLocked).
 func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec SnapshotSpec) (info SnapshotInfo, retErr error) {
+	if v.nativeRecovery != nil {
+		// This legacy path creates memory/state files before drive export.
+		// Native capture requires its original output/publication session;
+		// refuse before hooks, pause, file creation or failed-capture deletion.
+		return SnapshotInfo{}, fmt.Errorf("native recovery: snapshot publication producer is unavailable: %w", state.ErrConflict)
+	}
 	defer func() {
 		if retErr != nil {
 			v.cleanupFailedSnapshotCapture(ctx, spec)
@@ -2812,13 +2936,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// reading a CA bundle) after the first scaled/restored instance.
 	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
 	var frozenDrivePath string
-	var driveBytes int64
+	var driveBytes, driveWritten int64
 	if driveKey != "" {
 		if v.storage == nil {
 			return SnapshotInfo{}, errors.New("vmm: snapshot private drive requires storage backend")
 		}
 		var freezeErr error
-		frozenDrivePath, driveBytes, freezeErr = v.freezeSnapshotDrive(root, l.Instance)
+		frozenDrivePath, driveBytes, driveWritten, freezeErr = v.freezeSnapshotDrive(root, l.Instance)
 		if freezeErr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: freeze snapshot private drive: %w", freezeErr)
 		}
@@ -2872,7 +2996,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 					return SnapshotInfo{}, fmt.Errorf("vmm: prepare local snapshot path: %w", prepErr)
 				}
 				var moveErr error
-				memBytes, moveErr = moveOut(filepath.Join(root, memName), localPath)
+				memBytes, moveErr = publishLocalSnapshotMemory(filepath.Join(root, memName), localPath, syncLocalSnapshotMemory)
 				if moveErr != nil {
 					return SnapshotInfo{}, fmt.Errorf("vmm: publish local snapshot mem: %w", moveErr)
 				}
@@ -2978,8 +3102,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	storedBytes := allocatedBytesOrLogical(memPublishedPath, memBytes) +
 		allocatedBytesOrLogical(statePublishedPath, stateBytes)
 	if driveKey != "" {
-		drivePublishedPath := v.publishedLocalPath(driveKey, frozenDrivePath)
-		storedBytes += allocatedBytesOrLogical(drivePublishedPath, driveBytes)
+		storedBytes += snapshotDriveStoredBytes(driveWritten, v.publishedLocalPath(driveKey, frozenDrivePath), driveBytes)
 	}
 
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
@@ -2996,7 +3119,14 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 // mounts them into the tmpfs jail; cloning the backing source is therefore an
 // O(1) snapshot on XFS/Btrfs. The portable copy fallback is used only when the
 // host filesystem lacks reflink support.
-func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, size int64, err error) {
+//
+// written is the bytes of the drive that do not share blocks with any other
+// file, measured before the clone: for a drive cloned from its app layer, the
+// blocks the guest wrote. It is -1 when the filesystem cannot tell (ADR-633).
+func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, size, written int64, err error) {
+	if v.nativeRecovery != nil {
+		return "", 0, -1, errors.New("native recovery: snapshot drive export has no durable producer authority")
+	}
 	mountpoint := filepath.Join(root, layerImageName)
 	source := mountpoint
 	v.mu.Lock()
@@ -3014,43 +3144,47 @@ func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, siz
 	// fails while the snapshot is being published.
 	sourceFile, err := os.Open(source)
 	if err != nil {
-		return "", 0, err
+		return "", 0, -1, err
 	}
 	if err := sourceFile.Sync(); err != nil {
 		_ = sourceFile.Close()
-		return "", 0, err
+		return "", 0, -1, err
 	}
 	if err := sourceFile.Close(); err != nil {
-		return "", 0, err
+		return "", 0, -1, err
 	}
 
+	written = -1
+	if exclusive, ok := storage.ExclusiveBytes(source); ok {
+		written = exclusive
+	}
 	clone, cloned, err := reflinkCloneTemp(source, instance)
 	if err != nil {
-		return "", 0, err
+		return "", 0, -1, err
 	}
 	if cloned {
 		path = clone
 	} else {
 		out, createErr := os.CreateTemp(filepath.Dir(source), ".faas-snapshot-drive-*.ext4")
 		if createErr != nil {
-			return "", 0, createErr
+			return "", 0, -1, createErr
 		}
 		path = out.Name()
 		if closeErr := out.Close(); closeErr != nil {
 			_ = os.Remove(path)
-			return "", 0, closeErr
+			return "", 0, -1, closeErr
 		}
 		if copyErr := copyFile(source, path); copyErr != nil {
 			_ = os.Remove(path)
-			return "", 0, copyErr
+			return "", 0, -1, copyErr
 		}
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		_ = os.Remove(path)
-		return "", 0, err
+		return "", 0, -1, err
 	}
-	return path, info.Size(), nil
+	return path, info.Size(), written, nil
 }
 
 // publishedLocalPath returns the backend's local representation of key after a
@@ -3069,6 +3203,18 @@ func (v *JailerVMM) publishedLocalPath(key, fallback string) string {
 		return fallback
 	}
 	return path
+}
+
+// snapshotDriveStoredBytes is a published private drive's share of a
+// snapshot's footprint. The drive shares its unchanged blocks with the app
+// layer, which is accounted under the layer, so the snapshot adds only what
+// the guest wrote (ADR-633). Without that measurement (written < 0) it falls
+// back to the published copy's allocated blocks.
+func snapshotDriveStoredBytes(written int64, publishedPath string, logical int64) int64 {
+	if written >= 0 {
+		return written
+	}
+	return allocatedBytesOrLogical(publishedPath, logical)
 }
 
 // allocatedBytesOrLogical reads POSIX st_blocks (512-byte units). It falls
@@ -3177,72 +3323,94 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // Kill stops the jailer process (if any) and removes the chroot. Idempotent.
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
-func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
+func (v *JailerVMM) Kill(ctx context.Context, l Lease) error {
+	if v.nativeRecovery != nil {
+		return v.killNative(ctx, l)
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
-	v.closeGuestVsockListeners(l.Instance)
 	v.mu.Lock()
-	cmd, hasCmd := v.proc[l.Instance]
-	rec, hasRec := v.recs[l.Instance]
-	if hasCmd {
-		delete(v.proc, l.Instance)
+	cmd := v.proc[l.Instance]
+	rec := v.recs[l.Instance]
+	if rec != nil {
+		rec.stopping = true
 	}
 	v.mu.Unlock()
-	// Move 4 (issue #254): close the per-instance ring so subscribers
-	// see a clean EOF and the byte budget is released (invariant §6.2-4:
-	// parked app = zero RAM). Done BEFORE the chroot wipe because the
-	// ring holds host-side bytes; nothing else depends on it.
-	v.unregisterRing(l.Instance)
-
-	if hasCmd && cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
-	if hasRec && rec.done != nil {
-		// Wait for the watchdog to finish (it always does, since cmd.Process.Wait
-		// is observed by Go's runtime even on signal-induced exit). Bound by the
-		// same destroyWait so a wedged firecracker can't pin us.
-		select {
-		case <-rec.done:
-		case <-time.After(v.destroyWait):
+	if rec != nil {
+		if cmd == nil {
+			cmd = rec.cmd
 		}
-		v.mu.Lock()
-		delete(v.recs, l.Instance)
-		v.mu.Unlock()
+		l.IsBuilder = l.IsBuilder || rec.isBuilder
 	}
+	if err := killAndConfirmExit(cmd, recordDone(rec), v.destroyWait); err != nil {
+		// Keep the record and every resource until the watchdog proves exit.
+		return fmt.Errorf("vmm: kill %s: %w", l.Instance, err)
+	}
+	if rec != nil {
+		v.mu.Lock()
+		waitErr := rec.waitErr
+		v.mu.Unlock()
+		if waitErr != nil {
+			return fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
+		}
+	}
+	// Builder output is build-log evidence owned by builderd, not app logs.
+	v.retireRing(l.Instance, !l.IsBuilder)
+	v.closeGuestVsockListeners(l.Instance)
 	v.preBoot.forget(l.Instance)
 	v.closeClient(l.Instance)
-	v.unmountBindMounts(l.Instance)
-	// Chroot lives in tmpfs (spec §Gotchas); removing it frees the RAM it holds.
-	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
+	if err := v.checkOwnedJail(l.Instance); err != nil {
+		return err
+	}
+	if err := v.unmountBindMounts(l.Instance); err != nil {
+		return err
+	}
+	if err := v.removeOwnedJail(l.Instance); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
-	// Tmp files materialized from a StorageKey live in /tmp (not the chroot
-	// root) — sweep them explicitly so they don't leak across thousands of
-	// wakes.
-	v.sweepMaterialised(l.Instance)
-	// Remove the per-VM cgroup scope jailer created (--cgroup cpu.weight=…).
-	// Required by spec §6.2-4 ("parked = zero RAM") — a populated cgroup dir
-	// holds page-cache references. The scope name equals jailer --id
-	// (= Lease.Instance); see pkg/fcvm/cgroup.go for the matching write path.
-	// Idempotent; missing dir is fine.
-	//
-	// The parent path is plan-aware (issue #301 / ADR-044): the 3-level
-	// hierarchy is faas-tenant.slice/<plan-slice>/<instance>. ParentCgroupFor
-	// reads the lease's Plan; an empty plan falls back to the legacy 2-level
-	// path so pre-issue-301 callers keep working.
-	//
-	// EBUSY (or any other non-IsNotExist error) is logged and swallowed: the
-	// jailer process is already gone at this point, so we cannot rewind the
-	// teardown. A leftover cgroup dir leaks RAM only until the next cgroup
-	// pressure event reaps it; failing the whole call would mask the real
-	// teardown success.
-	parentCgroup := ParentCgroupFor(l.Plan)
-	if l.IsBuilder {
-		parentCgroup = BuilderCgroupParent
+	if err := v.sweepMaterialised(l.Instance); err != nil {
+		return err
 	}
-	scopePath := filepath.Join(cgroupRoot, parentCgroup, PerInstanceScope(l.Instance))
-	if err := os.RemoveAll(scopePath); err != nil && !os.IsNotExist(err) {
-		slog.Default().Warn("cgroup scope remove failed; continuing teardown",
-			"path", scopePath, "instance", l.Instance, "err", err)
+	parent := ParentCgroupFor(l.Plan)
+	if l.IsBuilder {
+		parent = BuilderCgroupParent
+	}
+	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(l.Instance))
+	if err := os.RemoveAll(scope); err != nil {
+		return fmt.Errorf("vmm: remove cgroup scope %s: %w", l.Instance, err)
+	}
+	v.mu.Lock()
+	delete(v.proc, l.Instance)
+	delete(v.recs, l.Instance)
+	v.mu.Unlock()
+	return nil
+}
+
+func recordDone(rec *instanceRecord) <-chan struct{} {
+	if rec == nil {
+		return nil
+	}
+	return rec.done
+}
+
+// A successful signal syscall is not an exit receipt. Only the single process
+// watchdog can confirm exit; a missing watchdog or timeout must retain ownership.
+func killAndConfirmExit(cmd *exec.Cmd, done <-chan struct{}, wait time.Duration) error {
+	if cmd != nil && cmd.Process != nil {
+		if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("signal kill: %w", err)
+		}
+		if done == nil {
+			return fmt.Errorf("process exit cannot be confirmed: missing watchdog")
+		}
+	}
+	if done != nil {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+			return fmt.Errorf("process exit not confirmed within %s", wait)
+		}
 	}
 	return nil
 }
@@ -3270,6 +3438,14 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 // grace timer races against the watchdog to fire SIGKILL on the
 // customer-configured deadline.
 func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
+	if v.nativeRecovery != nil {
+		v.mu.Lock()
+		rec := v.recs[l.Instance]
+		v.mu.Unlock()
+		if rec == nil {
+			return false, -1, v.Kill(ctx, l)
+		}
+	}
 	// Legacy Destroy shape: signal=0, grace=0. Delegate to Kill and
 	// report killSignalSent=true (the SIGKILL is what killed it).
 	if signal == 0 && grace == 0 {
@@ -3280,8 +3456,11 @@ func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.S
 	}
 
 	v.mu.Lock()
-	cmd, hasCmd := v.proc[l.Instance]
+	cmd := v.proc[l.Instance]
 	rec, hasRec := v.recs[l.Instance]
+	if rec != nil {
+		rec.stopping = true
+	}
 	v.mu.Unlock()
 
 	// Default signal: SIGTERM. The schedd's Engine.StopInstance (commit 6)
@@ -3302,24 +3481,10 @@ func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.S
 	}
 	killSignalSent, exitCode, err = signalAndKillRace(cmd, doneCh, signal, grace, v.destroyWait)
 	if err != nil {
-		return false, 0, err
+		return killSignalSent, exitCode, err
 	}
-
-	// Always run the destruction tail (chroot wipe, cgroup scope
-	// removal, ring unregister, etc.) — same invariant as Kill.
-	if killSignalSent {
-		if hasCmd && cmd != nil && cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		if hasRec && rec != nil && rec.done != nil {
-			select {
-			case <-rec.done:
-			case <-time.After(v.destroyWait):
-			}
-		}
-		if kerr := v.Kill(ctx, l); kerr != nil {
-			return killSignalSent, exitCode, kerr
-		}
+	if kerr := v.Kill(ctx, l); kerr != nil {
+		return killSignalSent, exitCode, kerr
 	}
 	return killSignalSent, exitCode, nil
 }
@@ -3370,30 +3535,10 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 			}
 			return false, exitCode, nil
 		case <-timer.C:
-			// Grace expired — escalate to SIGKILL.
-			if cmd != nil && cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-			if doneCh != nil {
-				select {
-				case <-doneCh:
-				case <-time.After(destroyWait):
-				}
-			}
-			return true, 0, nil
+			return true, 0, killAndConfirmExit(cmd, doneCh, destroyWait)
 		}
 	}
-	// No grace configured or no watchdog — escalate immediately.
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
-	if doneCh != nil {
-		select {
-		case <-doneCh:
-		case <-time.After(destroyWait):
-		}
-	}
-	return true, 0, nil
+	return true, 0, killAndConfirmExit(cmd, doneCh, destroyWait)
 }
 
 // DestroyWithExport is the build-VM teardown path (M6 / spec §4.5). It blocks
@@ -3410,11 +3555,14 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 	rec, ok := v.recs[l.Instance]
 	v.mu.Unlock()
 	if !ok {
-		// Unknown / already-torn-down instance: idempotent, no exit code to report.
-		v.closeGuestVsockListeners(l.Instance)
-		v.closeClient(l.Instance)
-		_ = os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance))
-		return 0, nil
+		if v.nativeRecovery != nil {
+			if exportDir != "" {
+				_, retireErr := v.nativeRetirementRecord(ctx, l)
+				return -1, errors.Join(retireErr, errors.New("native recovery: recovered builder has no artifact export provenance"))
+			}
+			return -1, v.Kill(ctx, l)
+		}
+		return 0, v.Kill(ctx, l)
 	}
 
 	// App VMs run until explicitly stopped; waiting for natural exit here
@@ -3483,7 +3631,11 @@ exited:
 
 	v.mu.Lock()
 	exitCode := rec.exitCode
+	waitErr := rec.waitErr
 	v.mu.Unlock()
+	if waitErr != nil {
+		return exitCode, fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
+	}
 
 	// 2. Artifact export (build VMs only). Loopback-mount the chroot-local
 	//    drive1.ext4 and copy out /etc/faas/build-done.json + /build/out/*.
@@ -3497,24 +3649,8 @@ exited:
 		}
 	}
 
-	// 3. Tear down the chroot + per-instance state.
-	v.mu.Lock()
-	delete(v.recs, l.Instance)
-	delete(v.proc, l.Instance)
-	v.mu.Unlock()
-	v.preBoot.forget(l.Instance)
-	// Move 4 (issue #254): close the per-instance ring so subscribers
-	// see EOF and the byte budget is released. Done before the chroot
-	// wipe for the same reason as in Kill.
-	v.unregisterRing(l.Instance)
-	v.closeGuestVsockListeners(l.Instance)
-	v.closeClient(l.Instance)
-	v.unmountBindMounts(l.Instance)
-	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
-		return exitCode, fmt.Errorf("vmm: remove chroot: %w", err)
-	}
-	v.sweepMaterialised(l.Instance)
-	return exitCode, exportErr
+	// Keep the record until cleanup is confirmed, even if the RPC expired.
+	return exitCode, errors.Join(exportErr, v.Kill(context.WithoutCancel(ctx), l))
 }
 
 // InterruptBuild stops the child without releasing its drives, chroot or
@@ -3524,6 +3660,9 @@ func (v *JailerVMM) InterruptBuild(ctx context.Context, instance string) (int32,
 	rec := v.recs[instance]
 	v.mu.Unlock()
 	if rec == nil {
+		if v.nativeRecovery != nil {
+			return -1, v.Kill(ctx, Lease{Instance: instance})
+		}
 		return 0, nil
 	}
 	v.killProcess(instance)
@@ -3719,6 +3858,9 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 // is fine; the chroot-local drive1.ext4 is owned by root after provision
 // (pkg/fcvm/vmm.go:stageWritable).
 func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr error) {
+	if v.nativeRecovery != nil {
+		return errors.New("native recovery: artifact export producer provenance is not implemented")
+	}
 	if err := os.MkdirAll(exportDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir export: %w", err)
 	}
@@ -3999,6 +4141,12 @@ func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
 // short-circuit is what lets an app with zero secrets proceed without any
 // extra mount/umount cost.
 func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
 	if len(jsonBlob) == 0 {
 		return nil
 	}
@@ -4006,7 +4154,7 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive1, "faas-vmm-secrets-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-secrets-", func(mp string) error {
 		return writeSecretsEnv(mp, jsonBlob)
 	})
 }
@@ -4024,6 +4172,12 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 // only consumer and there's no reason to give the customer code write
 // access to its own env file.
 func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
 	if len(jsonBlob) == 0 {
 		return nil
 	}
@@ -4031,7 +4185,7 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive1, "faas-vmm-apienv-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-apienv-", func(mp string) error {
 		return writeAPIEnv(mp, jsonBlob)
 	})
 }
@@ -4046,6 +4200,12 @@ const workloadEnvPath = "upper/etc/faas/workloads"
 // before Firecracker receives its config, so plaintext never lands in the
 // shared sidecar image or reaches guest-init through the wake wire.
 func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []byte) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
 	if len(jsonBlob) == 0 {
 		return nil
 	}
@@ -4056,7 +4216,7 @@ func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []b
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive1, "faas-vmm-workload-env-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-workload-env-", func(mp string) error {
 		return writeWorkloadEnv(mp, workloadName, jsonBlob)
 	})
 }
@@ -4098,24 +4258,28 @@ func validWorkloadName(name string) bool {
 // server runs on a unix socket reachable only by the faas group;
 // ADR-014 / ADR-015).
 func (v *JailerVMM) StageWorkloadManifest(instance string, driveIdx int, w WorkloadSpec) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
+	if v.nativeRecovery != nil && driveIdx >= 0 {
+		return errors.New("native loop mount: cannot write a shared read-only sidecar image")
+	}
 	if driveIdx < 0 {
 		// Main workload: stamp on drive1 (the legacy path).
 		drive1, err := v.resolveDriveImage(instance)
 		if err != nil {
 			return err
 		}
-		return v.writeWorkloadManifest(drive1, w)
+		return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive1, w)
 	}
 	drive := filepath.Join(v.chrootRoot(instance), sidecarDriveImageName(driveIdx))
-	return v.writeWorkloadManifest(drive, w)
+	return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive, w)
 }
 
-// writeWorkloadManifest is the mount/umount/write helper
-// StageWorkloadManifest delegates to. Public so the test seam can
-// drive it directly without routing through a Manager. The
-// mountpoint is cleaned up by a deferred RemoveAll; the umount
-// runs in a defer so a failed write doesn't leak the mount.
-func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
+func (v *JailerVMM) writeWorkloadManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance, drive string, w WorkloadSpec) error {
 	if _, err := os.Stat(drive); err != nil {
 		return fmt.Errorf("stat workload drive: %w", err)
 	}
@@ -4123,7 +4287,7 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive, "faas-vmm-workload-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive, "faas-vmm-workload-", func(mp string) error {
 		return writeDriveFile(mp, workloadManifestPath, blob, 0o400, "workload.json")
 	})
 }
@@ -4363,6 +4527,12 @@ type workloadRoster struct {
 // sidecars may be nil/empty — boot runs the legacy path. Caller
 // filters out the main workload before passing.
 func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, sidecars []WorkloadSpec) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
 	drive1, err := v.resolveDriveImage(instance)
 	if err != nil {
 		return err
@@ -4371,7 +4541,7 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive1, "faas-vmm-roster-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-roster-", func(mp string) error {
 		return writeDriveFile(mp, workloadRosterPath, blob, 0o400, "workloads.json")
 	})
 }
@@ -4528,6 +4698,22 @@ func copyTree(src, dst string, maxBytes int64) error {
 // --- helpers ---------------------------------------------------------------
 
 func (v *JailerVMM) mkChroot(instance string) (string, error) {
+	if v.nativeRecovery != nil {
+		ctx, cancel := v.driveStagingContext()
+		defer cancel()
+		owner, err := v.nativeDriveStagingOwner(ctx, instance)
+		if err != nil {
+			return "", err
+		}
+		return v.mkChrootForOwner(ctx, owner, instance)
+	}
+	return v.mkChrootLegacy(instance)
+}
+
+func (v *JailerVMM) mkChrootLegacy(instance string) (string, error) {
+	if v.resourceJournal != nil {
+		return v.makeOwnedJail(instance)
+	}
 	root := v.chrootRoot(instance)
 	// Wipe any leftover state from a prior failed Boot/Restore — jailer's
 	// chroot-creation step (mknod /dev/net/tun, mkdir -p /dev/net, etc.)
@@ -4566,7 +4752,10 @@ func (v *JailerVMM) mkChroot(instance string) (string, error) {
 // this call so the lookup here is always non-nil. Firecracker writes its
 // own stderr only on configuration errors; that stream remains discarded
 // to avoid mixing error noise into the customer's log tail.
-func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...string) error {
+func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...string) error {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
 	execFile, err := exec.LookPath(FirecrackerBin)
 	if err != nil {
 		return fmt.Errorf("vmm: locate firecracker binary: %w", err)
@@ -4596,6 +4785,32 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	// Jailer/firecracker must remain alive until the explicit Destroy/Kill path
 	// tears it down, otherwise a successful builder boot is killed immediately.
 	cmd := exec.Command(argv[0], argv[1:]...)
+	if r := v.nativeRecovery; r != nil {
+		jailerPath, err := exec.LookPath(argv[0])
+		if err != nil {
+			return fmt.Errorf("vmm: locate jailer: %w", err)
+		}
+		if real, err := filepath.EvalSymlinks(jailerPath); err == nil {
+			jailerPath = real
+		}
+		argv[0] = jailerPath
+		for i, arg := range argv {
+			if arg == "--chroot-base-dir" {
+				argv[i+1] = v.chrootBase
+			}
+		}
+		helper := r.helper
+		if helper == "" {
+			helper, err = v.ensureMountHelper()
+			if err != nil {
+				return err
+			}
+		}
+		cmd, err = newNativeLaunchCommand(helper, argv)
+		if err != nil {
+			return err
+		}
+	}
 	isolateLifecycleChild(cmd)
 	ring := v.ringFor(l.Instance)
 	consolePath := filepath.Join("/var/log/faas", "vm-"+l.Instance+".console")
@@ -4620,11 +4835,29 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	} else {
 		cmd.Stderr = io.Discard
 	}
-	if err := cmd.Start(); err != nil {
+	var startErr error
+	started := false
+	if r := v.nativeRecovery; r != nil {
+		started, startErr = r.journal.launch(ctx, l, cmd, r.startTime)
+	} else {
+		startErr = cmd.Start()
+		started = startErr == nil
+	}
+	if !started {
 		if consoleFile != nil {
 			_ = consoleFile.Close()
 		}
-		return fmt.Errorf("vmm: start jailer: %w", err)
+		return fmt.Errorf("vmm: start jailer: %w", startErr)
+	}
+	// Capture before starting Wait: even an immediately exiting child retains
+	// its PID until reaped, so a reused PID cannot enter this checkpoint.
+	v.mu.Lock()
+	journal := v.resourceJournal
+	v.mu.Unlock()
+	var process resourceProcessIdentity
+	var checkpointErr error
+	if journal != nil {
+		process, checkpointErr = readResourceProcessIdentity("/proc", cmd.Process.Pid)
 	}
 	v.mu.Lock()
 	v.proc[l.Instance] = cmd
@@ -4640,7 +4873,17 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	// contract). Run it here so DestroyWithExport can later read the captured
 	// exit code without racing the actual process termination.
 	go func() {
-		state, _ := cmd.Process.Wait()
+		var state *os.ProcessState
+		var waitErr error
+		if v.nativeRecovery != nil {
+			waitErr = cmd.Wait()
+			state = cmd.ProcessState
+			if state != nil {
+				waitErr = nil
+			} // Process exit is confirmed, including signal exits.
+		} else {
+			state, waitErr = cmd.Process.Wait()
+		}
 		if consoleFile != nil {
 			_ = consoleFile.Close()
 		}
@@ -4649,25 +4892,38 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 			exitCode = state.ExitCode()
 		}
 		var sink func(string, int)
+		var attemptSink func(string, uint64, int)
 		v.mu.Lock()
 		rec.exitCode = exitCode
+		rec.waitErr = waitErr
 		// Remove the process from the liveness source of truth as
 		// soon as Wait completes. Destroy/Kill remain responsible
 		// for record/chroot cleanup.
-		if current, ok := v.proc[l.Instance]; ok && current == cmd {
+		if current, ok := v.proc[l.Instance]; ok && current == cmd && waitErr == nil {
 			delete(v.proc, l.Instance)
-			if !rec.isBuilder {
+			if !rec.isBuilder && !rec.stopping {
 				sink = v.processExitSink
+				attemptSink = v.processExitAttemptSink
 			}
 		}
-		rec.exited = true
+		rec.exited = waitErr == nil
 		close(rec.done)
 		v.mu.Unlock()
-		if sink != nil {
+		if attemptSink != nil {
+			attemptSink(l.Instance, l.processGeneration, exitCode)
+		} else if sink != nil {
 			sink(l.Instance, exitCode)
 		}
 	}()
-	return nil
+	if checkpointErr != nil {
+		return fmt.Errorf("vmm: process checkpoint identity: %w", checkpointErr)
+	}
+	if journal != nil {
+		if err := journal.recordProcess(l, process); err != nil {
+			return fmt.Errorf("vmm: commit process checkpoint: %w", err)
+		}
+	}
+	return startErr
 }
 
 // isolateLifecycleChild prevents jailer/firecracker from inheriting vmmd's
@@ -4695,12 +4951,22 @@ func isolateLifecycleChild(cmd *exec.Cmd) {
 // for read; the writable drive (drive1, the overlay upper) is copied to a private
 // per-instance file owned by the uid — see stageReadOnly / stageWritable.
 func (v *JailerVMM) provision(root string, cfg VMConfig, uid, gid int, instance ...string) (VMConfig, error) {
-	out := cfg
 	instanceID := ""
 	if len(instance) > 0 {
 		instanceID = instance[0]
 	}
-	kname, err := v.stageReadOnlyAs(root, cfg.BootSource.KernelImagePath,
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instanceID)
+	if err != nil {
+		return cfg, err
+	}
+	return v.provisionForOwner(ctx, owner, root, cfg, uid, gid, instanceID)
+}
+
+func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRecord, root string, cfg VMConfig, uid, gid int, instanceID string) (VMConfig, error) {
+	out := cfg
+	kname, err := v.stageReadOnlyAsForOwner(ctx, owner, root, cfg.BootSource.KernelImagePath,
 		stableReadOnlyName(cfg.BootSource.KernelImagePath, kernelImageName), instanceID)
 	if err != nil {
 		return out, err
@@ -4718,11 +4984,11 @@ func (v *JailerVMM) provision(root string, cfg VMConfig, uid, gid int, instance 
 			if i > 0 && strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
 				name = sidecarDriveImageName(i - 1)
 			}
-			name, err = v.stageReadOnlyAs(root, d.PathOnHost, name, instanceID)
+			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, name, instanceID)
 		} else if cfg.EphemeralWritable {
-			name, err = v.stageEphemeralWritableAs(root, d.PathOnHost, layerImageName, uid, gid, instanceID)
+			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
 		} else {
-			name, err = v.stageWritableAs(root, d.PathOnHost, layerImageName, uid, gid, instanceID)
+			name, err = v.stageWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
 		}
 		if err != nil {
 			return out, err
@@ -4733,13 +4999,19 @@ func (v *JailerVMM) provision(root string, cfg VMConfig, uid, gid int, instance 
 	return out, nil
 }
 
-// stageEphemeralWritableAs prefers a hardlink for a builder scratch image.
+// stageEphemeralWritableAsForOwner prefers a hardlink for a builder scratch image.
 // Production keeps the jail chroot on tmpfs and the builder drive on the
 // builder filesystem, so EXDEV is expected there. Copying a 28 GiB sparse
 // image into tmpfs would charge the bytes to vmmd's supervisor cgroup and
 // either exhaust RAM or hit MemoryMax; bind-mounting preserves the disk-backed
 // sparse image and the per-build isolation contract.
-func (v *JailerVMM) stageEphemeralWritableAs(root, src, name string, uid, gid int, instance string) (string, error) {
+func (v *JailerVMM) stageEphemeralWritableAsForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name string, uid, gid int, instance string) (string, error) {
+	if v.nativeRecovery != nil {
+		if uid != owner.Lease.UID || gid != owner.Lease.GID {
+			return "", errors.New("native image source: writable access differs from original jail UID")
+		}
+		return v.stageNativeImageForOwner(ctx, owner, root, src, name, false, true)
+	}
 	dst := filepath.Join(root, name)
 	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stage ephemeral writable %s: %w", src, err)
@@ -4757,19 +5029,28 @@ func (v *JailerVMM) stageEphemeralWritableAs(root, src, name string, uid, gid in
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link ephemeral writable %s: %w", src, err)
 	}
-	return v.bindImage(root, src, name, instance, 0o006, false)
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o006, false)
 }
 
-// stageReadOnlyFor hardlinks a shared read-only image when possible and
+// stageReadOnlyAs hardlinks a shared read-only image when possible and
 // bind-mounts it when the source lives on a different filesystem. The latter
 // is the normal OCI/cache path on compute nodes: the jail is tmpfs, while
 // runner/base/kernel images live on disk. Copying those images into tmpfs
 // would consume vmmd's small supervisor cgroup.
-func (v *JailerVMM) stageReadOnlyFor(root, src, instance string) (string, error) {
-	return v.stageReadOnlyAs(root, src, filepath.Base(src), instance)
+func (v *JailerVMM) stageReadOnlyAs(root, src, name, instance string) (string, error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	return v.stageReadOnlyAsForOwner(ctx, owner, root, src, name, instance)
 }
 
-func (v *JailerVMM) stageReadOnlyAs(root, src, name, instance string) (string, error) {
+func (v *JailerVMM) stageReadOnlyAsForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name, instance string) (string, error) {
+	if v.nativeRecovery != nil {
+		return v.stageNativeImageForOwner(ctx, owner, root, src, name, true, true)
+	}
 	dst := filepath.Join(root, name)
 	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stage read-only %s: %w", src, err)
@@ -4782,77 +5063,234 @@ func (v *JailerVMM) stageReadOnlyAs(root, src, name, instance string) (string, e
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link read-only %s: %w", src, err)
 	}
-	return v.bindImage(root, src, name, instance, 0o044, true)
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o044, true)
 }
 
-// bindImage exposes a source image inside the jail without copying it into
-// the tmpfs chroot. addPerms is temporarily applied to the source so the
-// jailer uid can open it; the original mode is restored once all VMs using
-// that source have been torn down.
-func (v *JailerVMM) bindImage(root, src, name, instance string, addPerms os.FileMode, readOnly bool) (string, error) {
+// bindImageForOwner exposes a source image without copying it into tmpfs.
+// Any temporary source permission is restored after its last owner retires.
+func (v *JailerVMM) bindImageForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name, instance string, addPerms os.FileMode, readOnly bool) (string, error) {
+	if v.nativeRecovery != nil {
+		return v.stageNativeImageForOwner(ctx, owner, root, src, name, readOnly, false)
+	}
 	if instance == "" {
-		return "", fmt.Errorf("bind image %s: empty instance", src)
+		return "", errors.New("bind image: empty instance")
 	}
-	fi, err := os.Stat(src)
+	var err error
+	src, err = filepath.EvalSymlinks(src)
 	if err != nil {
-		return "", fmt.Errorf("stat bind image %s: %w", src, err)
+		return "", err
 	}
-	mode := fi.Mode().Perm()
-	v.mu.Lock()
-	if state, ok := v.bindSourceModes[src]; ok {
-		state.refs++
-		v.bindSourceModes[src] = state
-	} else {
-		if err := os.Chmod(src, mode|addPerms); err != nil {
-			v.mu.Unlock()
-			return "", fmt.Errorf("chmod bind image %s: %w", src, err)
+	src, err = filepath.Abs(src)
+	if err != nil {
+		return "", err
+	}
+	// mountinfo reports the resolved target path, including parent symlinks.
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	dst, err := filepath.Abs(filepath.Join(root, name))
+	if err != nil {
+		return "", err
+	}
+	namespace, err := resourceMountNamespace()
+	if err != nil {
+		return "", err
+	}
+	sourceFile, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", err
+	}
+	fi, err := sourceFile.Stat()
+	if err != nil {
+		_ = sourceFile.Close()
+		return "", err
+	}
+	identity, err := resourceFileID(fi)
+	if err != nil {
+		_ = sourceFile.Close()
+		return "", err
+	}
+	keepSourceFile := false
+	defer func() {
+		if !keepSourceFile {
+			_ = sourceFile.Close()
 		}
-		v.bindSourceModes[src] = bindSourceMode{mode: mode, refs: 1}
+	}()
+	v.mu.Lock()
+	mode := fi.Mode().Perm()
+	for _, state := range v.bindSourceModes {
+		if state.file == identity {
+			mode = state.mode
+			break
+		}
 	}
+	journal := v.resourceJournal
+	if journal != nil {
+		err = journal.addAsset(instance, resourceAsset{Kind: "bind", Path: dst, Source: src, SourceFile: &identity, OriginalMode: uint32(mode), ReadOnly: readOnly, Namespace: &namespace})
+		if err != nil {
+			v.mu.Unlock()
+			return "", err
+		}
+	}
+	handle, err := v.retainBindSourceLocked(bindSourceKey{path: src, file: identity}, mode, sourceFile)
+	if err != nil {
+		v.mu.Unlock()
+		return "", err
+	}
+	if handle != sourceFile {
+		_ = sourceFile.Close()
+		sourceFile = handle
+	}
+	keepSourceFile = true
+	v.bindMounts[instance] = append(v.bindMounts[instance], ephemeralBind{source: src, mountpoint: dst, mode: mode, file: identity, tracked: true})
+	err = chmodResourceFile(sourceFile, identity, fi.Mode().Perm()|addPerms)
 	v.mu.Unlock()
-
-	dst := filepath.Join(root, name)
-	f, createErr := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY, 0o666)
-	if createErr != nil {
-		v.releaseBindSource(src)
-		return "", fmt.Errorf("create bind target %s: %w", dst, createErr)
+	if err != nil {
+		return "", err
 	}
-	_ = f.Close()
-	if output, mountErr := bindFileMount(src, dst); mountErr != nil {
-		v.releaseBindSource(src)
-		_ = os.Remove(dst)
-		return "", fmt.Errorf("bind image %s: %w (%s)", src, mountErr, strings.TrimSpace(string(output)))
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+	if err != nil {
+		return "", fmt.Errorf("create bind target: %w", err)
+	}
+	// Keep even an unknown placeholder identity if fstat/checkpoint fails.
+	v.mu.Lock()
+	binds := v.bindMounts[instance]
+	binds[len(binds)-1].target = &resourceFileIdentity{}
+	v.mu.Unlock()
+	info, statErr := f.Stat()
+	var target resourceFileIdentity
+	if statErr == nil {
+		target, statErr = resourceFileID(info)
+	}
+	if statErr == nil {
+		v.mu.Lock()
+		binds[len(binds)-1].target = &target
+		v.mu.Unlock()
+	}
+	if err := errors.Join(statErr, f.Close()); err != nil {
+		return "", err
+	}
+	if journal != nil {
+		if err := journal.checkpointBindTarget(instance, dst, target); err != nil {
+			return "", err
+		}
+	}
+	if output, err := bindFileMount(src, dst); err != nil {
+		return "", fmt.Errorf("bind image: %w (%s)", err, output)
+	}
+	mount, err := resourceMountAt(dst)
+	if err != nil || mount == nil {
+		return "", fmt.Errorf("checkpoint bind mount: %w", errors.Join(err, errors.New("mount identity required")))
+	}
+	v.mu.Lock()
+	binds = v.bindMounts[instance]
+	binds[len(binds)-1].mount = mount
+	v.mu.Unlock()
+	bound, err := os.Stat(dst)
+	if err != nil {
+		return "", err
+	}
+	boundIdentity, err := resourceFileID(bound)
+	if err != nil || boundIdentity != identity {
+		return "", errors.New("bind target does not match source identity")
 	}
 	if readOnly {
-		if output, remountErr := makeFileMountReadOnly(dst); remountErr != nil {
-			_ = exec.Command("umount", dst).Run()
-			v.releaseBindSource(src)
-			_ = os.Remove(dst)
-			return "", fmt.Errorf("remount read-only image %s: %w (%s)", src, remountErr, strings.TrimSpace(string(output)))
+		if output, err := makeFileMountReadOnly(dst); err != nil {
+			return "", fmt.Errorf("remount image read-only: %w (%s)", err, output)
 		}
 	}
-	v.mu.Lock()
-	v.bindMounts[instance] = append(v.bindMounts[instance], ephemeralBind{source: src, mountpoint: dst, mode: mode})
-	v.mu.Unlock()
+	if journal != nil {
+		if err := journal.checkpointAsset(instance, dst, identity, mount); err != nil {
+			return "", err
+		}
+	}
 	return name, nil
 }
 
-func (v *JailerVMM) releaseBindSource(src string) {
+// retainBindSourceLocked takes a reference on the bound source file and
+// returns the handle that pins its inode: the existing one when this path and
+// inode are already bound, otherwise opened (which the entry now owns).
+// Register before chmod: a failed metadata fsync still needs cleanup. A file
+// the cache renamed over a path another VM still binds is a different key,
+// so the next boot binds the refreshed file instead of failing with "bind
+// source replaced while referenced" (production rc.236: a cold boot of a
+// second instance failed after its layer was refreshed). v.mu must be held.
+func (v *JailerVMM) retainBindSourceLocked(key bindSourceKey, mode os.FileMode, opened *os.File) (*os.File, error) {
+	if state, ok := v.bindSourceModes[key]; ok {
+		if state.handle == nil {
+			return nil, errors.New("bind source handle unavailable")
+		}
+		state.refs++
+		v.bindSourceModes[key] = state
+		return state.handle, nil
+	}
+	v.bindSourceModes[key] = bindSourceMode{mode: mode, refs: 1, file: key.file, handle: opened}
+	return opened, nil
+}
+
+// Keep the final reference until mode restoration and its fsync succeed.
+// Serialize restoration with a new bind, including aliases of the same inode.
+func (v *JailerVMM) releaseBindSource(src string, file resourceFileIdentity) error {
 	v.mu.Lock()
-	state, ok := v.bindSourceModes[src]
+	defer v.mu.Unlock()
+	key := bindSourceKey{path: src, file: file}
+	state, ok := v.bindSourceModes[key]
 	if !ok {
-		v.mu.Unlock()
-		return
+		return nil
 	}
-	state.refs--
-	if state.refs > 0 {
-		v.bindSourceModes[src] = state
-		v.mu.Unlock()
-		return
+	if state.refs > 1 {
+		state.refs--
+		v.bindSourceModes[key] = state
+		return nil
 	}
-	delete(v.bindSourceModes, src)
-	v.mu.Unlock()
-	_ = os.Chmod(src, state.mode)
+	shared := false
+	for other, otherState := range v.bindSourceModes {
+		if other != key && otherState.file == state.file && otherState.refs > 0 {
+			shared = true
+			break
+		}
+	}
+	if !shared {
+		if v.resourceJournal != nil {
+			owned := make(map[string]bool)
+			for _, binds := range v.bindMounts {
+				for _, b := range binds {
+					if b.tracked {
+						owned[b.mountpoint] = true
+					}
+				}
+			}
+			foreign, err := v.resourceJournal.foreignBindReference(state.file, owned)
+			if err != nil {
+				return err
+			}
+			if foreign {
+				if state.handle == nil {
+					return errors.New("bind source handle unavailable")
+				}
+				info, err := state.handle.Stat()
+				if err != nil {
+					return err
+				}
+				identity, err := resourceFileID(info)
+				if err != nil || identity != state.file || info.Mode().Perm() != state.mode {
+					return errors.New("bind source mode restoration waits for unknown owner")
+				}
+				// No permission change is needed; leave the foreign owner's mode intact.
+				delete(v.bindSourceModes, key)
+				return state.handle.Close()
+			}
+		}
+		if err := chmodResourceFile(state.handle, state.file, state.mode); err != nil {
+			return fmt.Errorf("restore bind source mode: %w", err)
+		}
+	}
+	delete(v.bindSourceModes, key)
+	if state.handle != nil {
+		return state.handle.Close()
+	}
+	return nil
 }
 
 // prepareConfigFIFO creates the one-shot config handoff used during a cold
@@ -4924,11 +5362,19 @@ func (v *JailerVMM) ensureMountHelper() (string, error) {
 	return shared, nil
 }
 
-// bindTunSource carries the real host TUN device into the jail before
+// bindTunSourceForOwner carries the real host TUN device into the jail before
 // jailer pivots its root. The non-special path avoids jailer's unconditional
 // mknod(/dev/net/tun), while the later helper can bind this source over that
 // synthetic node from inside the private mount namespace.
-func (v *JailerVMM) bindTunSource(root, instance string) error {
+func (v *JailerVMM) bindTunSourceForOwner(ctx context.Context, owner nativeLaunchRecord, root, instance string) error {
+	if v.nativeRecovery != nil {
+		r := v.nativeRecovery
+		if owner.Lease.Instance != instance || owner.Generation != r.generation(instance) || root != v.chrootRoot(instance) {
+			return errors.New("native TUN bind: staging lacks original local jail authority")
+		}
+		journal := nativeTunBindJournal{owner: r.journal, backend: r.tunBinds, helperGroups: r.helperGroups}
+		return journal.stage(ctx, owner, root)
+	}
 	const source = "/dev/net/tun"
 	target := filepath.Join(root, "faas-host-tun")
 	f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -5043,7 +5489,14 @@ func parseSetupJailWorkUs(out []byte) int64 {
 	return 0
 }
 
-func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (bindTunTimings, error) {
+func (v *JailerVMM) bindTunDeviceInJailerForOwner(ctx context.Context, owner nativeLaunchRecord, root, instance string, uid, gid int) (bindTunTimings, error) {
+	if v.nativeRecovery != nil {
+		return v.bindNativeJailDevices(ctx, owner, root, instance, uid, gid)
+	}
+	return v.bindTunDeviceInJailerLegacy(ctx, root, instance, uid, gid)
+}
+
+func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, instance string, uid, gid int) (bindTunTimings, error) {
 	var timings bindTunTimings
 	if instance == "" {
 		return timings, fmt.Errorf("vmm: bind TUN device: empty instance")
@@ -5076,6 +5529,8 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 			break
 		}
 		select {
+		case <-ctx.Done():
+			return timings, ctx.Err()
 		case <-deadline.C:
 			return timings, fmt.Errorf("vmm: jailer did not create a private mount namespace")
 		case <-time.After(1 * time.Millisecond):
@@ -5097,6 +5552,8 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 			break
 		}
 		select {
+		case <-ctx.Done():
+			return timings, ctx.Err()
 		case <-deadline.C:
 			return timings, fmt.Errorf("vmm: jailer chroot device tree did not become ready")
 		case <-time.After(1 * time.Millisecond):
@@ -5105,15 +5562,19 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 	timings.WaitChrootMs = time.Since(tWaitChrootStart).Milliseconds()
 	tSetupJailStart := time.Now()
 	// Single-pass setup: prepare /dev tmpfs, bind TUN, and mknod KVM in one nsenter invocation.
-	if setupOut, err := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput(); err != nil {
+	if setupOut, err := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)}); err != nil {
+		if v.nativeRecovery != nil {
+			// A failed or uncertain helper cannot authorize another attempt.
+			return timings, fmt.Errorf("vmm: prepare native jail device tree: %w (%s)", err, strings.TrimSpace(string(setupOut)))
+		}
 		// Fallback to legacy 3-step sequence if the mounted helper doesn't support --setup-jail yet
-		if outDev, errDev := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-dev", "/dev").CombinedOutput(); errDev != nil {
+		if outDev, errDev := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-dev", "/dev"}); errDev != nil {
 			return timings, fmt.Errorf("vmm: prepare jail device tree: %w (%s)", errDev, strings.TrimSpace(string(outDev)))
 		}
-		if outTun, errTun := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-bind", "/faas-host-tun", source).CombinedOutput(); errTun != nil {
+		if outTun, errTun := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-bind", "/faas-host-tun", source}); errTun != nil {
 			return timings, fmt.Errorf("vmm: bind TUN device: %w (%s)", errTun, strings.TrimSpace(string(outTun)))
 		}
-		if outKvm, errKvm := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mknod-kvm", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput(); errKvm != nil {
+		if outKvm, errKvm := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mknod-kvm", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)}); errKvm != nil {
 			return timings, fmt.Errorf("vmm: provision KVM device: %w (%s)", errKvm, strings.TrimSpace(string(outKvm)))
 		}
 	} else {
@@ -5129,17 +5590,81 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 
 // unmountBindMounts releases image bind mounts before the jail chroot is
 // removed and restores source modes for the owning storage/build daemon.
-func (v *JailerVMM) unmountBindMounts(instance string) {
+func (v *JailerVMM) unmountBindMounts(instance string) error {
 	v.mu.Lock()
 	binds := v.bindMounts[instance]
-	delete(v.bindMounts, instance)
 	v.mu.Unlock()
 	for i := len(binds) - 1; i >= 0; i-- {
 		b := binds[i]
-		_ = exec.Command("umount", b.mountpoint).Run()
-		v.releaseBindSource(b.source)
-		_ = os.Remove(b.mountpoint)
+		if b.tracked {
+			current, err := resourceMountAt(b.mountpoint)
+			if err != nil {
+				return err
+			}
+			if current != nil {
+				if b.mount == nil || *current != *b.mount {
+					return errors.New("bind mount identity changed; retaining ownership")
+				}
+				if err := exec.Command("umount", b.mountpoint).Run(); err != nil {
+					return fmt.Errorf("unmount owned image: %w", err)
+				}
+				remaining, err := resourceMountAt(b.mountpoint)
+				if err != nil || remaining != nil {
+					return errors.New("bind mount removal unconfirmed")
+				}
+			}
+		} else if err := exec.Command("umount", b.mountpoint).Run(); err != nil {
+			mounted, checkErr := hostMountPresent(b.mountpoint)
+			if checkErr != nil || mounted {
+				return fmt.Errorf("vmm: unmount %s: %w", b.mountpoint, errors.Join(err, checkErr))
+			}
+		}
+		// Remove the empty target before dropping the source permission reference.
+		var removeErr error
+		if !b.tracked {
+			removeErr = removeResourcePath(b.mountpoint)
+		} else if b.target != nil {
+			removeErr = removeResourceFile(b.mountpoint, *b.target)
+		}
+		if removeErr != nil {
+			return fmt.Errorf("remove bind target: %w", removeErr)
+		}
+		if !b.released {
+			if err := v.releaseBindSource(b.source, b.file); err != nil {
+				return err
+			}
+			v.mu.Lock()
+			binds[i].released = true
+			v.mu.Unlock()
+		}
+		if b.tracked {
+			if err := v.retireResourceAsset(instance, b.mountpoint); err != nil {
+				return err
+			}
+		}
+		v.mu.Lock()
+		v.bindMounts[instance] = binds[:i]
+		v.mu.Unlock()
 	}
+	v.mu.Lock()
+	delete(v.bindMounts, instance)
+	v.mu.Unlock()
+	return nil
+}
+
+func hostMountPresent(path string) (bool, error) {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return false, fmt.Errorf("read host mountinfo: %w", err)
+	}
+	unescape := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	for line := range strings.SplitSeq(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 5 && unescape.Replace(fields[4]) == path {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ownChrootRoot hands the chroot root directory to the jailer uid so the jailed
@@ -5167,7 +5692,7 @@ func (v *JailerVMM) ownChrootRoot(root string, l Lease) error {
 // :8080 inside the guest, so the path is the customer's choice and the
 // port is the host's choice. Wake must always work (ADR-005): a
 // transient customer-app 500 must not wedge a wake, so we retry instead
-// of fast-failing. 200ms backoff matches the legacy TCP cadence.
+// of fast-failing. The retry delay is 10ms, like the TCP and gRPC paths.
 //
 // The HTTP client is a per-VMM cached instance with a 2s per-probe
 // timeout (bounded by the readyTimeout deadline). On a successful 2xx
@@ -5259,9 +5784,12 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 		}
 	}
 
-	// Legacy TCP-accept — pre-PR-D contract. Byte-identical to the
-	// pre-PR-D loop.
+	// Legacy TCP-accept readiness contract.
 	if healthcheckPath == "" {
+		dial := v.tcpReadinessDial
+		if dial == nil {
+			dial = net.DialTimeout
+		}
 		// Track ECONNREFUSED specifically across the loop — a
 		// sustained ECONNREFUSED is the kernel's "no listener"
 		// shibboleth for app_not_listening. Other transient
@@ -5277,10 +5805,10 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 				return ctxErr
 			}
 			probeCount++
-			conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+			conn, err := dial("tcp", addr, 200*time.Millisecond)
 			if err == nil {
 				_ = conn.Close()
-				v.emitReadiness200(ctx, l, healthcheckPath, 1, readinessStartedAt)
+				v.emitReadiness200(ctx, l, healthcheckPath, probeCount, readinessStartedAt)
 				return nil
 			}
 			// ECONNREFUSED on TCP dial = nothing is listening on
@@ -5299,7 +5827,7 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 	}
 
 	// PR-D HTTP GET probe. Reuse the cached client across probes —
-	// the 200ms cadence would otherwise allocate a Transport on
+	// the 10ms retry cadence would otherwise allocate a Transport on
 	// every iteration. The host loop is bounded by ctx.Done() and
 	// the deadline.
 	client := v.healthcheckClient()
@@ -6224,20 +6752,31 @@ func stageWritableAs(root, src, name string, uid, gid int) (string, error) {
 	return name, nil
 }
 
-func (v *JailerVMM) stageWritable(root, src string, uid, gid int, instance string) (string, error) {
-	return v.stageWritableAs(root, src, layerImageName, uid, gid, instance)
-}
-
 // stageWritableAs takes a private CoW clone beside a disk-backed source and
 // bind-mounts that clone into the tmpfs jail. On XFS reflink=1 this avoids
 // copying the complete application layer into RAM on every restore while
 // preserving the non-aliasing invariant for writable drives. Unsupported
 // filesystems retain the established copy path.
 func (v *JailerVMM) stageWritableAs(root, src, name string, uid, gid int, instance string) (string, error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	return v.stageWritableAsForOwner(ctx, owner, root, src, name, uid, gid, instance)
+}
+
+func (v *JailerVMM) stageWritableAsForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name string, uid, gid int, instance string) (string, error) {
+	if v.nativeRecovery != nil {
+		return v.stageNativeWritableImageForOwner(ctx, owner, root, src, name, uid, gid, instance)
+	}
 	if instance == "" {
 		return stageWritableAs(root, src, name, uid, gid)
 	}
-	clone, cloned, err := reflinkCloneTemp(src, instance)
+	clone, cloned, err := reflinkCloneTempWithCreator(src, instance, func(dir, pattern string) (*os.File, error) {
+		return v.newMaterialisedFile(instance, dir, pattern, "clone")
+	}, v.removeMaterialisedFile)
 	if err != nil {
 		return "", fmt.Errorf("reflink writable %s: %w", src, err)
 	}
@@ -6245,19 +6784,19 @@ func (v *JailerVMM) stageWritableAs(root, src, name string, uid, gid int, instan
 		return stageWritableAs(root, src, name, uid, gid)
 	}
 	if err := os.Chmod(clone, 0o600); err != nil {
-		_ = os.Remove(clone)
+		err = errors.Join(err, v.removeMaterialisedFile(clone))
 		return "", fmt.Errorf("chmod writable clone %s: %w", clone, err)
 	}
 	if err := chownJail(clone, uid, gid); err != nil {
-		_ = os.Remove(clone)
+		err = errors.Join(err, v.removeMaterialisedFile(clone))
 		return "", err
 	}
-	staged, err := v.bindImage(root, clone, name, instance, 0, false)
+	staged, err := v.bindImageForOwner(ctx, owner, root, clone, name, instance, 0, false)
 	if err != nil {
-		_ = os.Remove(clone)
+		// A partial bind retains its source permission reference. Kill must
+		// unmount and restore that source before sweeping the owned clone.
 		return "", err
 	}
-	v.trackMaterialised(instance, clone)
 	return staged, nil
 }
 
@@ -6357,7 +6896,8 @@ func moveOut(src, dst string) (int64, error) {
 }
 
 // materializeFromStorage pulls the bytes for key via the configured
-// StorageBackend and writes them into a fresh tmp file. Returns the
+// StorageBackend and retains its immutable file or copies the stream into a
+// fresh tmp file. Returns the
 // absolute path the caller should substitute into MemPath. The tmp
 // path is registered against instanceID so Kill / DestroyWithExport
 // Remove it during teardown; without the registration the file
@@ -6388,21 +6928,27 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}
 	defer func() { _ = rc.Close() }()
-	tmp, err := os.CreateTemp("", "faas-snap-*.bin")
+	if linker, ok := rc.(storage.LocalFileLinker); ok {
+		if path, linked, err := v.retainStorageFile(instanceID, linker); err != nil {
+			return "", fmt.Errorf("vmm: retain %q: %w", key, err)
+		} else if linked {
+			return path, nil
+		}
+	}
+	tmp, err := v.newMaterialisedFile(instanceID, "", "faas-snap-*.bin", "materialised")
 	if err != nil {
 		return "", fmt.Errorf("vmm: create tmp for %q: %w", key, err)
 	}
 	tmpPath := tmp.Name()
 	if _, err := io.Copy(tmp, rc); err != nil {
 		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
+		err = errors.Join(err, v.removeMaterialisedFile(tmpPath))
 		return "", fmt.Errorf("vmm: copy %q: %w", key, err)
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
+		err = errors.Join(err, v.removeMaterialisedFile(tmpPath))
 		return "", fmt.Errorf("vmm: close tmp for %q: %w", key, err)
 	}
-	v.trackMaterialised(instanceID, tmpPath)
 	return tmpPath, nil
 }
 
@@ -6622,21 +7168,27 @@ func (v *JailerVMM) trackMaterialised(instanceID, tmpPath string) {
 	v.mu.Unlock()
 }
 
-// sweepMaterialised Removes every tmp path tracked against instanceID
-// and clears the slot. Best-effort: a missing tmp file is not an error;
-// anything else is logged so a leak is observable but never blocks the
-// chroot teardown.
-func (v *JailerVMM) sweepMaterialised(instanceID string) {
+// sweepMaterialised retains paths that could not be removed for teardown retry.
+func (v *JailerVMM) sweepMaterialised(instanceID string) error {
 	v.mu.Lock()
 	paths := v.materialisedTmp[instanceID]
+	v.mu.Unlock()
+	for i, p := range paths {
+		if err := v.removeMaterialisedFile(p); err != nil {
+			return fmt.Errorf("remove owned materialised file: %w", err)
+		}
+		if err := v.retireResourceAsset(instanceID, p); err != nil {
+			return err
+		}
+		v.mu.Lock()
+		delete(v.materialisedIdentity, p)
+		v.materialisedTmp[instanceID] = paths[i+1:]
+		v.mu.Unlock()
+	}
+	v.mu.Lock()
 	delete(v.materialisedTmp, instanceID)
 	v.mu.Unlock()
-	for _, p := range paths {
-		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Default().Warn("vmm: remove materialised tmp",
-				"path", p, "instance", instanceID, "err", err)
-		}
-	}
+	return nil
 }
 
 const ficloneIoctl = 0x40049409
@@ -6646,6 +7198,10 @@ const ficloneIoctl = 0x40049409
 // portable copy path. Keeping the clone beside src is what guarantees both
 // files are on the same reflink-capable filesystem.
 func reflinkCloneTemp(src, instance string) (path string, cloned bool, err error) {
+	return reflinkCloneTempWithCreator(src, instance, os.CreateTemp, os.Remove)
+}
+
+func reflinkCloneTempWithCreator(src, instance string, create func(string, string) (*os.File, error), remove func(string) error) (path string, cloned bool, err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return "", false, err
@@ -6655,7 +7211,7 @@ func reflinkCloneTemp(src, instance string) (path string, cloned bool, err error
 			err = closeErr
 		}
 	}()
-	out, err := os.CreateTemp(filepath.Dir(src), layerCloneTempPattern(instance))
+	out, err := create(filepath.Dir(src), layerCloneTempPattern(instance))
 	if err != nil {
 		return "", false, err
 	}
@@ -6666,7 +7222,9 @@ func reflinkCloneTemp(src, instance string) (path string, cloned bool, err error
 			err = closeErr
 		}
 		if !cloned || err != nil {
-			_ = os.Remove(tmpPath)
+			if removeErr := remove(tmpPath); removeErr != nil {
+				err = errors.Join(err, removeErr)
+			}
 		}
 	}()
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, out.Fd(), ficloneIoctl, in.Fd()); errno != 0 {

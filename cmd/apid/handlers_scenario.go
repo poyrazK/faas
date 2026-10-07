@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -70,4 +71,35 @@ func (s *server) deleteScenarioTest(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) injectScenarioTestChaos(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	runID := r.PathValue("run_id")
+	if !validDevWorkspaceID(runID) || runID == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid run ID", "run_id must be 32 lowercase hexadecimal characters"))
+		return
+	}
+	var req api.InjectScenarioTestChaosRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	rules := make([]chaos.Rule, len(req.Rules))
+	for i, rule := range req.Rules {
+		rules[i] = chaos.Rule(rule)
+	}
+	lease, err := s.store.SetScenarioTestChaosPlan(r.Context(), acct.ID, runID, chaos.Plan{DurationMS: req.DurationMS, Rules: rules})
+	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid chaos plan", err.Error()))
+			return
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no live scenario test run")
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("install scenario chaos plan"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.InjectScenarioTestChaosResponse{ExpiresAt: lease.ExpiresAt, RulesInstalled: len(lease.Rules)})
 }

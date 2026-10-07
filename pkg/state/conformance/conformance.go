@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -52,7 +53,11 @@ func Run(t *testing.T, open Open) {
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},
 		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
+		{"app_secret_runtime_process_generation_is_fenced", testAppSecretRuntimeProcessGenerationFence},
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
+		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
+		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
+		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
@@ -68,6 +73,7 @@ func Run(t *testing.T, open Open) {
 		{"webhook_delivery_attempts_health_retention_and_storage", testWebhookDeliveryAttemptsHealthRetentionAndStorage},
 		{"account_release_webhook_quota_and_cross_app_pagination", testAccountReleaseWebhookQuotaAndPagination},
 		{"fire_now_request_claim_is_exactly_once", testFireNowRequestClaimIsExactlyOnce},
+		{"fire_now_claim_respects_node_ownership_and_handoff", testFireNowNodeOwnershipAndHandoff},
 		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
@@ -78,6 +84,10 @@ func Run(t *testing.T, open Open) {
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
+		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
+		{"service_recovery_candidates_are_active_owned_and_bounded", testServiceRecoveryCandidates},
+		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
+		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
@@ -85,6 +95,8 @@ func Run(t *testing.T, open Open) {
 		{"account_credits_issue_list_and_consume", testAccountCredits},
 		{"billing_identity_is_provider_qualified", testBillingIdentity},
 		{"invoice_refunds_are_cumulative_and_idempotent", testInvoiceRefunds},
+		{"invoice_history_import_is_insert_only_and_atomic", testInvoiceHistoryImport},
+		{"invoice_detail_refresh_is_revision_fenced", testInvoiceDetailRefresh},
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
@@ -93,6 +105,9 @@ func Run(t *testing.T, open Open) {
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
 		{"app_restore_honours_quota", testAppRestoreHonoursQuota},
 		{"app_restore_keeps_crons", testAppRestoreKeepsCrons},
+		{"service_address_index_is_account_scoped_stable_and_never_reused_early", testServiceAddressIndexAllocation},
+		{"compute_node_service_address_readiness_is_sticky_and_clearable", testComputeNodeServiceAddressReady},
+		{"service_address_caller_is_gated_on_node_readiness", testServiceAddressCallerByHostIP},
 		{"removed_member_can_rejoin", testRemovedMemberCanRejoin},
 		{"api_key_requires_scopes", testAPIKeyRequiresScopes},
 		{"login_token_single_use_and_expiry", testLoginTokenSingleUseAndExpiry},
@@ -124,8 +139,21 @@ func Run(t *testing.T, open Open) {
 		{"async_invocation_history_is_scoped_filtered_and_paginated", testAsyncInvocationHistory},
 		{"delayed_task_listing_is_scoped_filtered_and_paginated", testDelayedTaskListing},
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
+		{"queue_demand_uses_captured_environment", testQueueDemandScope},
+		{"worker_pool_history_is_generation_scoped", testWorkerPoolHistory},
+		{"worker_account_capacity_is_shared_and_released", testWorkerAccountCapacity},
+		{"worker_admission_identity_cannot_be_reinterpreted", testWorkerAdmissionIdentity},
+		{"queue_binding_consumer_publication_is_atomic", testQueueBindingConsumerPublication},
+		{"queue_binding_environment_identity_is_scoped_and_retained", testQueueBindingEnvironmentIdentity},
+		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
+		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
+		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
+		{"invocation_environment_survives_membership_retry_and_replay", testInvocationDeploymentScope},
+		{"keyed_invocation_environment_identity_is_idempotent", testKeyedInvocationDeploymentScope},
+		{"queue_batch_admission_fences_claim_and_recovers_environment", testQueueBatchClaimAdmission},
 		{"legacy_claim_does_not_release_another_rows_slot", testLegacyClaimDoesNotReleaseReservedSlot},
 		{"lease_requeue_releases_each_slot", testLeaseRequeueReleasesEachSlot},
 		{"deadline_force_only_releases_transitions", testDeadlineForceOnlyReleasesTransitions},
@@ -135,10 +163,17 @@ func Run(t *testing.T, open Open) {
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"app_task_lifecycle_pins_deployment_and_fences_replay", testAppTaskLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
+		{"workflow_run_creation_is_idempotent_and_quota_safe", testWorkflowRunCreateIdempotency},
+		{"workflow_concurrency_limit_queues_and_releases_runs", testWorkflowConcurrencyLimitQueues},
 		{"workflow_waits_and_attempts_are_durable", testWorkflowWaitsAndAttempts},
+		{"workflow_control_steps_are_consistent", testWorkflowControlSteps},
 		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
 		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
 		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
+		{"owned_runtime_publication_is_fenced", testOwnedRuntimePublication},
+		{"deployment_scaling_clocks_are_owned", testDeploymentScalingClocks},
+		{"layer_deletion_claims_are_durable", testLayerDeletionClaims},
+		{"production_queue_reader_rejects_other_sources", testProductionQueueReader},
 		{"startup_cpu_boost_reservation_is_durable_and_expires", testStartupCPUBoostReservation},
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
@@ -150,15 +185,32 @@ func Run(t *testing.T, open Open) {
 		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
+		{"exclusive_operation_work_history_is_account_scoped", testExclusiveOperationWorkHistory},
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
 		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
 		{"queued_job_capacity_deferral_preserves_retry", testJobTaskDeferQueued},
+		{"service_capacity/intent", testServiceCapacityIntent},
+		{"service_capacity/enable", testServiceCapacityEnable},
+		{"service_capacity/concurrent", testServiceCapacityConcurrent},
+		{"service_capacity/recovery", testServiceCapacityRecovery},
+		{"service_capacity/heterogeneous", testServiceCapacityHeterogeneous},
+		{"service_capacity/sidecar_cpu", testServiceCapacitySidecarCPU},
+		{"service_capacity/admitted_shape", testServiceCapacityAdmittedShape},
+		{"service_capacity/warm_promotion_shape", testServiceCapacityWarmPromotionShape},
+		{"service_capacity/warm_promotion_slots", testServiceCapacityWarmPromotionSlots},
+		{"service_capacity/warm_recovery", testServiceCapacityWarmRecovery},
+		{"service_capacity/warm_demotion", testServiceCapacityWarmDemotion},
 		{"job_attempt_replay_and_flexible_expiry_are_durable", testJobAttemptReplayAndFlexibleExpiry},
 		{"scheduled_command_cron_cursor_and_run_history_are_consistent", testScheduledCommandCronLifecycle},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
 		{"snapshot_publication_fences_runtime_config_changes", testSnapshotPublicationFencesRuntimeConfigChanges},
+		{"scoped_runtime_changes_preserve_neighbor_snapshots", testScopedRuntimeChangesPreserveNeighborSnapshots},
+		{"runtime_input_receipts_are_immutable_and_preserved_in_snapshots", testRuntimeInputReceipts},
+		{"runtime_input_receipts_check_secret_versions", testRuntimeInputReceiptSecretVersions},
+		{"runtime_input_receipts_preserve_sidecar_secret_access", testRuntimeInputReceiptSidecarSecretAccess},
+		{"runtime_input_receipt_publication_is_atomic", testRuntimeInputReceiptPublication},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1880,6 +1932,87 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 	}
 }
 
+func testInvoiceHistoryImport(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC().Truncate(time.Second)
+	inv := state.Invoice{
+		AccountID: fx.Account.ID, Provider: "stripe",
+		ProviderInvoiceID: "history-" + uuid.NewString(),
+		ProviderChargeID:  "charge-history-" + uuid.NewString(),
+		Number:            "HISTORY-001", Status: "paid",
+		PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
+		SubtotalCents: 900, TaxCents: 100, TotalCents: 1000, AmountPaidCents: 1000,
+		Plan: state.InvoicePlanUnknown, Currency: "eur", PDFAvailable: true,
+		Details: &state.InvoiceDetails{PaymentTerms: "Net 30"},
+	}
+
+	inserted, err := fx.Store.ImportInvoiceHistory(fx.Ctx, fx.Account.ID, "stripe", []state.Invoice{inv, inv})
+	if err != nil || inserted != 1 {
+		t.Fatalf("ImportInvoiceHistory(page) = (%d, %v), want one insert", inserted, err)
+	}
+	stored, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "stripe", inv.ProviderInvoiceID)
+	if err != nil || stored.Plan != state.InvoicePlanUnknown || stored.TotalCents != 1000 ||
+		stored.Details == nil || stored.Details.PaymentTerms != "Net 30" || stored.Lifecycle == nil {
+		t.Fatalf("imported invoice = (%+v, %v), want unknown-plan invoice with details and lifecycle", stored, err)
+	}
+
+	// Replaying history must never replace newer webhook/provider state.
+	replay := inv
+	replay.Number, replay.TotalCents, replay.AmountPaidCents = "HISTORY-CHANGED", 1200, 1200
+	inserted, err = fx.Store.ImportInvoiceHistory(fx.Ctx, fx.Account.ID, "stripe", []state.Invoice{replay})
+	if err != nil || inserted != 0 {
+		t.Fatalf("ImportInvoiceHistory(replay) = (%d, %v), want no insert", inserted, err)
+	}
+	stored, err = fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "stripe", inv.ProviderInvoiceID)
+	if err != nil || stored.Number != "HISTORY-001" || stored.TotalCents != 1000 {
+		t.Fatalf("history replay changed existing invoice: (%+v, %v)", stored, err)
+	}
+
+	// Validate the whole page before inserting any of it.
+	newInvoice := inv
+	newInvoice.ProviderInvoiceID = "history-atomic-" + uuid.NewString()
+	invalidInvoice := newInvoice
+	invalidInvoice.Provider = "paddle"
+	if _, err := fx.Store.ImportInvoiceHistory(fx.Ctx, fx.Account.ID, "stripe", []state.Invoice{newInvoice, invalidInvoice}); err == nil {
+		t.Fatal("ImportInvoiceHistory accepted a mixed-provider page")
+	}
+	if _, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "stripe", newInvoice.ProviderInvoiceID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("invalid page partially inserted an invoice: %v", err)
+	}
+}
+
+func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC().Truncate(time.Second)
+	inv := state.Invoice{
+		AccountID: fx.Account.ID, Provider: "polar",
+		ProviderInvoiceID: "refresh-" + uuid.NewString(),
+		Status:            "paid", PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
+		SubtotalCents: 1000, TotalCents: 1000, AmountPaidCents: 1000,
+		Plan: api.PlanPro, Currency: "eur",
+	}
+	if err := fx.Store.UpsertInvoice(fx.Ctx, inv); err != nil {
+		t.Fatalf("UpsertInvoice: %v", err)
+	}
+	stored, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, inv.Provider, inv.ProviderInvoiceID)
+	if err != nil {
+		t.Fatalf("GetInvoiceByProviderID: %v", err)
+	}
+	details := &state.InvoiceDetails{
+		IssuerName: "Gregale", PaymentTerms: "Net 30",
+		Lines: &state.InvoiceLines{Complete: true, Items: []state.InvoiceLineItem{{
+			ID: "plan-line", Description: "Managed service", ChargeCategory: "Purchase", NetCents: 1000,
+		}}},
+	}
+	refreshed, err := fx.Store.RefreshInvoiceDetails(fx.Ctx, fx.Account.ID, stored.ID, stored.UpdatedAt, details)
+	if err != nil || refreshed.Details == nil || refreshed.Details.PaymentTerms != "Net 30" ||
+		refreshed.Details.Lines == nil || refreshed.TotalCents != stored.TotalCents ||
+		refreshed.AmountPaidCents != stored.AmountPaidCents || refreshed.ProviderInvoiceID != stored.ProviderInvoiceID {
+		t.Fatalf("RefreshInvoiceDetails = (%+v, %v), want richer details without financial changes", refreshed, err)
+	}
+	if _, err := fx.Store.RefreshInvoiceDetails(fx.Ctx, fx.Account.ID, stored.ID, stored.UpdatedAt, details); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale RefreshInvoiceDetails error = %v, want ErrConflict", err)
+	}
+}
+
 func testBillingUsageDelivery(t *testing.T, fx *Fixture) {
 	hour := time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Hour)
 	const mbSeconds = int64(321)
@@ -2011,6 +2144,143 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 	unchanged, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, "replacement reason")
 	if err != nil || unchanged.LastError == nil || *unchanged.LastError != reason {
 		t.Fatalf("CancelWorkflowRun(terminal) = (%#v, %v), want original terminal result", unchanged, err)
+	}
+}
+
+func testWorkflowConcurrencyLimitQueues(t *testing.T, fx *Fixture) {
+	definition := json.RawMessage(`{"name":"limited","max_concurrent_runs":1,"steps":[{"name":"work","run":"handler"}]}`)
+	base := time.Now().UTC().Add(-time.Minute)
+	first := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "limited", Status: state.WorkflowRunStatusPending,
+		DefinitionSnapshot: definition, ScheduledFor: base}
+	second := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "limited", Status: state.WorkflowRunStatusPending,
+		DefinitionSnapshot: definition, ScheduledFor: base.Add(time.Second)}
+	for _, run := range []*state.WorkflowRun{first, second} {
+		if err := fx.Store.CreateWorkflowRun(fx.Ctx, run); err != nil {
+			t.Fatalf("CreateWorkflowRun(%s): %v", run.WorkflowName, err)
+		}
+	}
+
+	type claimResult struct {
+		run *state.WorkflowRun
+		err error
+	}
+	start := make(chan struct{})
+	results := make(chan claimResult, 2)
+	for range 2 {
+		go func() {
+			<-start
+			run, err := fx.Store.ClaimNextDueWorkflowRun(fx.Ctx)
+			results <- claimResult{run: run, err: err}
+		}()
+	}
+	close(start)
+	var claimed *state.WorkflowRun
+	for range 2 {
+		result := <-results
+		if result.err == nil {
+			if claimed != nil {
+				t.Fatalf("concurrent claims started both runs at max_concurrent_runs=1: %s and %s", claimed.ID, result.run.ID)
+			}
+			claimed = result.run
+		} else if !errors.Is(result.err, state.ErrNotFound) {
+			t.Fatalf("concurrent claim error = %v, want ErrNotFound for the queued run", result.err)
+		}
+	}
+	if claimed == nil || claimed.Status != state.WorkflowRunStatusRunning {
+		t.Fatalf("concurrent claims produced no running slot: %+v", claimed)
+	}
+	queuedID := first.ID
+	if claimed.ID == first.ID {
+		queuedID = second.ID
+	}
+	if err := fx.Store.MarkWorkflowRunStatus(fx.Ctx, claimed.ID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
+		t.Fatalf("finish running slot: %v", err)
+	}
+	queued, err := fx.Store.ClaimNextDueWorkflowRun(fx.Ctx)
+	if err != nil || queued.ID != queuedID || queued.Status != state.WorkflowRunStatusRunning {
+		t.Fatalf("queued run after slot release = (%+v, %v), want run %s running", queued, err, queuedID)
+	}
+}
+
+func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
+	key := "conformance-" + uuid.NewString()
+	fingerprint := []byte("01234567890123456789012345678901")
+	type result struct {
+		run      *state.WorkflowRun
+		active   int
+		replayed bool
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			<-start
+			run := &state.WorkflowRun{
+				AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
+				Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
+			}
+			active, replayed, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, run, 1, key, fingerprint)
+			results <- result{run: run, active: active, replayed: replayed, err: err}
+		}()
+	}
+	close(start)
+	var runID string
+	created, replayed := 0, 0
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("CreateWorkflowRunAdmittedWithIdempotencyKey: %v", got.err)
+		}
+		if runID == "" {
+			runID = got.run.ID
+		} else if got.run.ID != runID {
+			t.Fatalf("concurrent idempotency keys created different runs %s and %s", runID, got.run.ID)
+		}
+		if got.replayed {
+			replayed++
+		} else {
+			created++
+			if got.active != 1 {
+				t.Fatalf("first admission active count = %d, want 1", got.active)
+			}
+		}
+	}
+	if created != 1 || replayed != 1 {
+		t.Fatalf("concurrent create outcomes = created:%d replayed:%d, want one of each", created, replayed)
+	}
+
+	changedDefinition := &state.WorkflowRun{
+		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
+		Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"new-published-definition","steps":[]}`),
+	}
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, key, fingerprint); err != nil || !isReplay {
+		t.Fatalf("replay after definition update = (replayed:%t, err:%v), want original run", isReplay, err)
+	}
+	var replayedSnapshot, expectedSnapshot any
+	if err := json.Unmarshal(changedDefinition.DefinitionSnapshot, &replayedSnapshot); err != nil {
+		t.Fatalf("decode replayed definition snapshot: %v", err)
+	}
+	if err := json.Unmarshal([]byte(`{"name":"idempotent-create","steps":[]}`), &expectedSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if changedDefinition.ID != runID || !reflect.DeepEqual(replayedSnapshot, expectedSnapshot) {
+		t.Fatalf("definition update changed replayed run = %+v", changedDefinition)
+	}
+
+	changedInputFingerprint := append([]byte(nil), fingerprint...)
+	changedInputFingerprint[0] = 'x'
+	conflict := &state.WorkflowRun{
+		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
+		Input: json.RawMessage(`{"order_id":"different"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
+	}
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, conflict, 1, key, changedInputFingerprint); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) || isReplay {
+		t.Fatalf("changed-input retry = (replayed:%t, err:%v), want idempotency conflict", isReplay, err)
+	}
+
+	other := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "idempotent-create", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{}`)}
+	if _, _, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, other, 1, "other-"+uuid.NewString(), fingerprint); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+		t.Fatalf("new key after quota consumed = %v, want ErrWorkflowRunQuotaExceeded", err)
 	}
 }
 
@@ -2874,9 +3144,22 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 		t.Fatalf("initial secret metadata = revision %d delivery %d status %q, want 1/1/pending", first.SecretVersion, first.DeliveryVersion, first.DeliveryStatus)
 	}
 
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateRunning), 256, fx.Node.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fx.Store.RuntimeAppValuesForDeployment(fx.Ctx, fx.Account.ID, fx.App.ID, fx.Deployment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppSecretFence(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := state.AppSecretDeliveryResult{
-		AccountID: fx.Account.ID, AppID: fx.App.ID, WakeID: "wake-conformance",
-		InstanceID: "instance-conformance", Status: state.SecretDeliveryDelivered,
+		Fence:     fence,
+		AccountID: fx.Account.ID, AppID: fx.App.ID, WakeID: instance.WakeID,
+		InstanceID: instance.ID, Status: state.SecretDeliveryDelivered,
 		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: first.DeliveryVersion}},
 	}
 	updated, err := fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
@@ -2896,8 +3179,8 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	}
 
 	updated, err = fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
-	if err != nil || updated != 0 {
-		t.Fatalf("stale RecordAppSecretDelivery(v1): updated=%d err=%v, want 0/nil", updated, err)
+	if !errors.Is(err, state.ErrConflict) || updated != 0 {
+		t.Fatalf("stale RecordAppSecretDelivery(v1): updated=%d err=%v, want conflict", updated, err)
 	}
 	current, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
 	if err != nil {
@@ -3033,6 +3316,107 @@ func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	observations, err = fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
 	if err != nil || len(observations) != 1 || observations[0].ApplicationAckVersion != 2 || observations[0].ApplicationAck != state.SecretApplicationReloadAckApplied {
 		t.Fatalf("ListAppSecretRuntimeReloadObservations(app ack) = %+v, %v", observations, err)
+	}
+}
+
+func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
+	const (
+		key      = "DATABASE_URL"
+		revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+	scope := api.DefaultEnvScope
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope: %v", err)
+	}
+	secret, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope: %v", err)
+	}
+	candidates := []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: secret.DeliveryVersion}}
+	if updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, state.AppSecretRuntimeReloadResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: revision, Projection: state.SecretReloadProjectionUpdated,
+		Signal: state.SecretReloadSignalNotAttempted, Candidates: candidates,
+	}); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload: updated=%d err=%v", updated, err)
+	}
+	process := func(generation, previous string) state.AppSecretRuntimeProcess {
+		return state.AppSecretRuntimeProcess{AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+			Generation: generation, PreviousGeneration: previous}
+	}
+	ack := func(generation string) error {
+		t.Helper()
+		updated, err := fx.Store.RecordAppSecretRuntimeReloadAck(fx.Ctx, state.AppSecretRuntimeReloadAckResult{
+			AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID, Generation: generation,
+			Revision: revision, Status: state.SecretApplicationReloadAckApplied, Candidates: candidates,
+		})
+		if err == nil && updated != 1 {
+			return fmt.Errorf("updated %d ACK rows, want 1", updated)
+		}
+		return err
+	}
+	observedAckGeneration := func() string {
+		t.Helper()
+		observations, err := fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+		if err != nil || len(observations) != 1 {
+			t.Fatalf("ListAppSecretRuntimeReloadObservations = %+v, %v; want one observation", observations, err)
+		}
+		return observations[0].ApplicationAckGeneration
+	}
+
+	first, second, third := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(first, "")); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(first): %v", err)
+	}
+	if err := ack(first); err != nil {
+		t.Fatalf("ACK first process: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(first, "")); err != nil {
+		t.Fatalf("idempotent BeginAppSecretRuntimeProcess(first): %v", err)
+	}
+	if got := observedAckGeneration(); got != first {
+		t.Fatalf("idempotent begin cleared the current ACK generation: %q", got)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(second, first)); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(replacement): %v", err)
+	}
+	if got := observedAckGeneration(); got != "" {
+		t.Fatalf("process replacement retained stale ACK generation %q", got)
+	}
+	if err := ack(first); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted stale process ACK: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, "")); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted replacement without previous generation: %v", err)
+	}
+	if err := fx.Store.RetireAppSecretRuntimeProcess(fx.Ctx, process(first, "")); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("retired a stale process generation: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, second)); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(second replacement): %v", err)
+	}
+	if err := ack(third); err != nil {
+		t.Fatalf("ACK third process: %v", err)
+	}
+	if err := fx.Store.RetireAppSecretRuntimeProcess(fx.Ctx, process(third, "")); err != nil {
+		t.Fatalf("RetireAppSecretRuntimeProcess: %v", err)
+	}
+	if got := observedAckGeneration(); got != "" {
+		t.Fatalf("retiring a process retained stale ACK generation %q", got)
+	}
+	if err := fx.Store.RetireAppSecretRuntimeProcess(fx.Ctx, process(third, "")); err != nil {
+		t.Fatalf("idempotent RetireAppSecretRuntimeProcess: %v", err)
+	}
+	if err := ack(third); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted ACK from a retired process: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, third)); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("reactivated a retired generation: %v", err)
 	}
 }
 

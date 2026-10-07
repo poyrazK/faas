@@ -143,6 +143,7 @@ type WorkerScaling struct {
 	Min    int     `json:"min" yaml:"min"`
 	Max    int     `json:"max" yaml:"max"`
 	Metric string  `json:"metric,omitempty" yaml:"metric,omitempty"`
+	Name   string  `json:"name,omitempty" yaml:"name,omitempty"`
 	Target float64 `json:"target,omitempty" yaml:"target,omitempty"`
 }
 
@@ -181,7 +182,7 @@ type AppManifest struct {
 	// Healthz, if set, is a GET path guest-init probes for readiness instead of a
 	// bare TCP accept (spec §4.8).
 	Healthz string `json:"healthz,omitempty"`
-	// User is the unix user to exec as; empty means DefaultAppUser.
+	// User is the OCI user or user:group to exec as; empty means DefaultAppUser.
 	User string `json:"user,omitempty"`
 	// Healthcheck mirrors the OCI HEALTHCHECK shape when populated
 	// from the source image config (issue #1186 workstream A.4).
@@ -196,6 +197,8 @@ type AppManifest struct {
 	// replacement followed by this signal. The application must handle the
 	// signal, reread FAAS_SECRETS_FILE, and apply the new values itself.
 	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
+	// SecretReloadReadiness waits for a per-process ready marker before signaling.
+	SecretReloadReadiness bool `json:"secret_reload_readiness,omitempty"`
 	// StopGracePeriod mirrors OCI StopGracePeriod (the OCI image
 	// spec doesn't carry it; M-2 will populate from operator
 	// override or per-plan cap). Currently always zero.
@@ -230,7 +233,7 @@ type AppManifest struct {
 	// lays the schema + admission; M-4 workstream E lands the
 	// rolling deploy / rollback / digest-pinning semantics.
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
-	// WorkerReplicas is the queue-driven autoscaling policy for worker mode.
+	// WorkerReplicas is the queue- or custom-metric autoscaling policy for worker mode.
 	WorkerReplicas *WorkerScaling `json:"worker_replicas,omitempty"`
 	// Favicon is an optional base64-encoded favicon payload for the edge
 	// /favicon.ico answer. The gateway enforces a 32 KiB maximum.
@@ -438,10 +441,6 @@ type WorkloadPortProtocol string
 const (
 	WorkloadPortTCP WorkloadPortProtocol = "tcp"
 	WorkloadPortUDP WorkloadPortProtocol = "udp"
-	// WorkloadPortCapMax bounds image metadata and the guest endpoint
-	// environment. It is deliberately small because listeners are a local
-	// contract, not an unbounded service registry.
-	WorkloadPortCapMax = 16
 )
 
 // WorkloadPort is one protocol-aware listener declared by an image or
@@ -451,6 +450,11 @@ type WorkloadPort struct {
 	Name     string               `json:"name,omitempty"`
 	Port     int                  `json:"port"`
 	Protocol WorkloadPortProtocol `json:"protocol"`
+	// Internal keeps a listener off every public surface (the --port-<name>
+	// selector and raw TCP listeners) while same-account services still
+	// reach it at the app's private service address (ADR-576). Compose
+	// `expose:` declares internal listeners.
+	Internal bool `json:"internal,omitempty"`
 }
 
 var workloadPortNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
@@ -500,8 +504,35 @@ func ValidateWorkloadPorts(ports []WorkloadPort) error {
 
 // AppManifestHealthcheck is the AppManifest-level projection of the OCI
 // HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are encoded as
-// integer seconds at the JSON boundary to match OCI/Docker conventions.
+// integer seconds in legacy manifests. ImageTiming preserves Docker image
+// nanosecond durations without changing customer probe overrides.
+// OCIHealthcheckTiming is image-baked timing metadata, not a deployment
+// probe override. Zero values inherit defaults; positive values retain exact
+// Docker nanosecond precision.
+type OCIHealthcheckTiming struct {
+	IntervalNS      int64 `json:"interval_ns,omitempty" yaml:"interval_ns,omitempty" toml:"interval_ns,omitempty"`
+	TimeoutNS       int64 `json:"timeout_ns,omitempty" yaml:"timeout_ns,omitempty" toml:"timeout_ns,omitempty"`
+	StartPeriodNS   int64 `json:"start_period_ns,omitempty" yaml:"start_period_ns,omitempty" toml:"start_period_ns,omitempty"`
+	StartIntervalNS int64 `json:"start_interval_ns,omitempty" yaml:"start_interval_ns,omitempty" toml:"start_interval_ns,omitempty"`
+}
+
+func (t OCIHealthcheckTiming) Validate() error {
+	for _, field := range []struct {
+		name  string
+		value int64
+	}{
+		{"interval", t.IntervalNS}, {"timeout", t.TimeoutNS},
+		{"start_period", t.StartPeriodNS}, {"start_interval", t.StartIntervalNS},
+	} {
+		if field.value < 0 || (field.value > 0 && field.value < int64(OCIHealthcheckMinimumDuration)) {
+			return fmt.Errorf("OCI healthcheck %s must be zero or at least %s", field.name, OCIHealthcheckMinimumDuration)
+		}
+	}
+	return nil
+}
+
 type AppManifestHealthcheck struct {
+	ImageTiming *OCIHealthcheckTiming `json:"image_timing,omitempty" yaml:"image_timing,omitempty" toml:"image_timing,omitempty"`
 	// Test is the argv of the check command, prefixed by "CMD",
 	// "CMD-SHELL", or "NONE" per Docker semantics.
 	Test []string `json:"test,omitempty" yaml:"test,omitempty" toml:"test,omitempty"`
@@ -675,8 +706,16 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)
 	}
+	if m.Healthcheck != nil && m.Healthcheck.ImageTiming != nil {
+		if err := m.Healthcheck.ImageTiming.Validate(); err != nil {
+			return fmt.Errorf("app manifest: %w", err)
+		}
+	}
 	if m.Healthcheck != nil && m.Healthcheck.GRPC != nil {
 		return fmt.Errorf("app manifest: grpc health checks are supported only for companion probes")
+	}
+	if m.SecretReloadReadiness && m.SecretReloadSignal == "" {
+		return fmt.Errorf("app manifest: secret_reload_readiness requires secret_reload_signal")
 	}
 	if m.SecretReloadSignal != "" {
 		switch m.SecretReloadSignal {
@@ -822,6 +861,13 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		r := m.WorkerReplicas
 		if r.Min < 0 || r.Max <= 0 || r.Max < r.Min {
 			return fmt.Errorf("app manifest: worker_replicas values invalid (got min=%d max=%d)", r.Min, r.Max)
+		}
+		if r.Metric == "" {
+			if r.Name != "" || r.Target != 0 {
+				return fmt.Errorf("app manifest: worker_replicas name and target require a metric")
+			}
+		} else if problem := ValidateScalingTargets("worker_replicas", []ScalingTarget{{Metric: r.Metric, Name: r.Name, Value: r.Target}}); problem != nil {
+			return fmt.Errorf("app manifest: %s", problem.Detail)
 		}
 		if r.Max > limits.WorkerReplicasMax {
 			return fmt.Errorf("app manifest: worker_replicas.max %d exceeds plan %q cap %d", r.Max, plan, limits.WorkerReplicasMax)

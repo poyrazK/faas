@@ -44,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -58,8 +59,9 @@ import (
 // namespaced (not the same footer the app-secrets path uses — a
 // rotated alert-rule secret and a rotated app secret must not be
 // interchangeable if a future migration ever refactors the on-disk
-// format). The label is never logged.
-const alertRuleSecretSealLabel = "alert_rule_secret"
+// format). The label is never logged. It is the evaluator's constant so the
+// seal and the open cannot drift apart again.
+const alertRuleSecretSealLabel = alerts.AlertSecretNamespace
 
 // alertRuleMetricFailedInvocations is the wire-level name of the
 // `failed_invocations` metric family (the only metric in the alert
@@ -190,19 +192,20 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{
-		AccountID:           acct.ID,
-		AppID:               app.ID,
-		Name:                req.Name,
-		Enabled:             alertRuleEnabledFrom(req.Enabled),
-		Metric:              state.AlertMetric(req.Metric),
-		Comparison:          state.AlertComparison(req.Comparison),
-		Threshold:           req.Threshold,
-		WindowSpec:          state.AlertWindowSpec(req.WindowSpec),
-		FailureSource:       state.AlertFailureSource(req.FailureSource),
-		Action:              alertRuleActionFrom(req.Action),
-		WebhookURL:          req.WebhookURL,
-		WebhookSecretSealed: sealed,
-		CooldownMinutes:     alertRuleCooldownFrom(req.CooldownMinutes),
+		AccountID:                       acct.ID,
+		AppID:                           app.ID,
+		Name:                            req.Name,
+		Enabled:                         alertRuleEnabledFrom(req.Enabled),
+		Metric:                          state.AlertMetric(req.Metric),
+		Comparison:                      state.AlertComparison(req.Comparison),
+		Threshold:                       req.Threshold,
+		WindowSpec:                      state.AlertWindowSpec(req.WindowSpec),
+		FailureSource:                   state.AlertFailureSource(req.FailureSource),
+		Action:                          alertRuleActionFrom(req.Action),
+		WebhookURL:                      req.WebhookURL,
+		WebhookSecretSealed:             sealed,
+		CooldownMinutes:                 alertRuleCooldownFrom(req.CooldownMinutes),
+		PostDeployRollbackWindowSeconds: alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds),
 	}, limits)
 	if err != nil {
 		var qe *state.AlertRuleQuotaError
@@ -238,17 +241,18 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// material (the sealed value is decryptable by anyone with the
 	// host key) and only the masked constant is safe.
 	s.audit.Emit(r.Context(), "alert_rule.created", &acct.ID, map[string]any{
-		"rule_id":          row.ID,
-		"app_id":           row.AppID,
-		"name":             row.Name,
-		"metric":           row.Metric,
-		"comparison":       row.Comparison,
-		"threshold":        row.Threshold,
-		"window_spec":      row.WindowSpec,
-		"failure_source":   row.FailureSource,
-		"webhook_url":      row.WebhookURL,
-		"enabled":          row.Enabled,
-		"cooldown_minutes": row.CooldownMinutes,
+		"rule_id":                             row.ID,
+		"app_id":                              row.AppID,
+		"name":                                row.Name,
+		"metric":                              row.Metric,
+		"comparison":                          row.Comparison,
+		"threshold":                           row.Threshold,
+		"window_spec":                         row.WindowSpec,
+		"failure_source":                      row.FailureSource,
+		"webhook_url":                         row.WebhookURL,
+		"enabled":                             row.Enabled,
+		"cooldown_minutes":                    row.CooldownMinutes,
+		"post_deploy_rollback_window_seconds": row.PostDeployRollbackWindowSeconds,
 	})
 	writeJSON(w, http.StatusCreated, alertRuleResponse(row))
 }
@@ -434,16 +438,17 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		sealedPtr = &sealed
 	}
 	updated, err := s.store.UpdateAlertRule(r.Context(), id, state.UpdateAlertRuleParams{
-		Name:                req.Name,
-		Enabled:             req.Enabled,
-		Metric:              ptrAlertMetric(req.Metric),
-		Comparison:          ptrAlertComparison(req.Comparison),
-		Threshold:           req.Threshold,
-		WindowSpec:          ptrAlertWindowSpec(req.WindowSpec),
-		Action:              req.Action,
-		WebhookURL:          req.WebhookURL,
-		WebhookSecretSealed: sealedPtr,
-		CooldownMinutes:     req.CooldownMinutes,
+		Name:                            req.Name,
+		Enabled:                         req.Enabled,
+		Metric:                          ptrAlertMetric(req.Metric),
+		Comparison:                      ptrAlertComparison(req.Comparison),
+		Threshold:                       req.Threshold,
+		WindowSpec:                      ptrAlertWindowSpec(req.WindowSpec),
+		Action:                          req.Action,
+		WebhookURL:                      req.WebhookURL,
+		WebhookSecretSealed:             sealedPtr,
+		CooldownMinutes:                 req.CooldownMinutes,
+		PostDeployRollbackWindowSeconds: req.PostDeployRollbackWindowSeconds,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -464,6 +469,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// `threshold` on either side.
 	oldMap := map[string]any{}
 	newMap := map[string]any{}
+	if req.PostDeployRollbackWindowSeconds != nil {
+		oldMap["post_deploy_rollback_window_seconds"] = row.PostDeployRollbackWindowSeconds
+		newMap["post_deploy_rollback_window_seconds"] = updated.PostDeployRollbackWindowSeconds
+	}
 	if req.Name != nil {
 		oldMap["name"] = row.Name
 		newMap["name"] = updated.Name
@@ -671,23 +680,24 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 // stays free of the import cycle.
 func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 	return api.AlertRuleResponseFromRow(api.AlertRuleRow{
-		ID:              r.ID,
-		AppID:           r.AppID,
-		Name:            r.Name,
-		Enabled:         r.Enabled,
-		Metric:          string(r.Metric),
-		Comparison:      string(r.Comparison),
-		Threshold:       r.Threshold,
-		WindowSpec:      string(r.WindowSpec),
-		FailureSource:   string(r.FailureSource),
-		Action:          string(r.Action),
-		WebhookURL:      r.WebhookURL,
-		CooldownMinutes: r.CooldownMinutes,
-		State:           string(r.State),
-		LastFiredAt:     r.LastFiredAt,
-		LastEvaluatedAt: r.LastEvaluatedAt,
-		CreatedAt:       r.CreatedAt,
-		UpdatedAt:       r.UpdatedAt,
+		ID:                              r.ID,
+		AppID:                           r.AppID,
+		Name:                            r.Name,
+		Enabled:                         r.Enabled,
+		Metric:                          string(r.Metric),
+		Comparison:                      string(r.Comparison),
+		Threshold:                       r.Threshold,
+		WindowSpec:                      string(r.WindowSpec),
+		FailureSource:                   string(r.FailureSource),
+		Action:                          string(r.Action),
+		WebhookURL:                      r.WebhookURL,
+		CooldownMinutes:                 r.CooldownMinutes,
+		PostDeployRollbackWindowSeconds: r.PostDeployRollbackWindowSeconds,
+		State:                           string(r.State),
+		LastFiredAt:                     r.LastFiredAt,
+		LastEvaluatedAt:                 r.LastEvaluatedAt,
+		CreatedAt:                       r.CreatedAt,
+		UpdatedAt:                       r.UpdatedAt,
 	})
 }
 
@@ -762,6 +772,9 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // update path via state.AlertRule.Name (the DB schema enforces
 // non-empty via CHECK).
 func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
+	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action))); p != nil {
+		return p
+	}
 	if !api.AllowedAlertRuleMetric(req.Metric) {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("metric must be one of error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, %s", alertRuleMetricFailedInvocations))
 	}
@@ -819,6 +832,12 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 // create path. Cooldown is optional on update so a nil merge is
 // fine. Secret is also optional: nil means "don't reseal".
 func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
+	if merged.PostDeployRollbackWindowSeconds > 0 && merged.AppID == "" {
+		return api.ErrAlertRuleInvalid("post-deploy rollback requires an app-scoped rule")
+	}
+	if p := validateAlertRollbackWindow(merged.PostDeployRollbackWindowSeconds, string(merged.Action)); p != nil {
+		return p
+	}
 	if _, ok := api.TrimNonEmpty(merged.Name); !ok {
 		return api.ErrAlertRuleInvalid("name must be non-empty")
 	}
@@ -865,6 +884,9 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 // sees the post-patch shape, not just the partial request.
 func alertRuleRowForValidation(existing state.AlertRule, req api.UpdateAlertRuleRequest) state.AlertRule {
 	merged := existing
+	if req.PostDeployRollbackWindowSeconds != nil {
+		merged.PostDeployRollbackWindowSeconds = *req.PostDeployRollbackWindowSeconds
+	}
 	if req.Name != nil {
 		merged.Name = *req.Name
 	}

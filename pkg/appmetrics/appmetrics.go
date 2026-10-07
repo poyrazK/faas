@@ -17,6 +17,7 @@ package appmetrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -38,6 +39,18 @@ const SourcePrometheus = "prometheus"
 // The dashboard and the public /status/slo.json both render the
 // "degraded:" branch off this prefix.
 const SourceDegradedPrefix = "degraded: "
+
+// TelemetryDegradedReason is the response-safe reason for a failed telemetry
+// query. The underlying error carries the internal Prometheus URL and the
+// full PromQL expression, app UUIDs included; that detail belongs in the
+// sanitised server log, never in a Source field. production-us hunt #4:
+// `gregale metrics` printed "degraded: no data for query \"(((sum(rate(...".
+func TelemetryDegradedReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "telemetry timeout"
+	}
+	return "telemetry unavailable"
+}
 
 // SourceDegraded is the bare "degraded:" prefix WITHOUT the trailing
 // space, exported so alert evaluators and other callers that gate on
@@ -96,6 +109,18 @@ func PercentRatioQuery(numerator, denominator string) string {
 	return fmt.Sprintf(`(((%s) or vector(0)) / (%s) * 100) and ((%s) > 0)`, numerator, denominator, denominator)
 }
 
+// ErrorRatePctQuery is the app error rate: 5xx over the eligible 2xx and 5xx
+// responses, as a percentage. Client-caused 3xx/4xx are excluded from the
+// population, so a window whose traffic is all 4xx (404s, edge-rule 429s) has
+// requests but no eligible denominator. That is a 0% error rate, not missing
+// telemetry: production-us hunt #4 found `gregale canary simulate` and
+// `gregale metrics` reporting such an app as "degraded".
+func ErrorRatePctQuery(appID, rng string) string {
+	return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng)))
+}
+
 // HistogramQuantileMSQuery builds an idle-safe latency percentile query.
 // Prometheus returns NaN when histogram_quantile has no observations, while
 // QueryScalar rejects non-finite samples. The matching count expression proves
@@ -134,9 +159,7 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		query = fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{app=%q}[%s])) or vector(0)`, appID, rng)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "error_rate_pct":
-		query = fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng)))
+		query = ErrorRatePctQuery(appID, rng)
 		normalize = SafePercent
 	case "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
 		quantile := map[string]float64{"latency_p50_ms": .50, "latency_p95_ms": .95, "latency_p99_ms": .99}[metric]
@@ -172,7 +195,7 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		msg := strings.ReplaceAll(err.Error(), "\r", "")
 		msg = strings.ReplaceAll(msg, "\n", "")
 		log.Warn("appmetrics: alert metric query failed", "metric", metric, "app_id", appID, "err", msg)
-		return 0, SourceDegradedPrefix + msg
+		return 0, SourceDegradedPrefix + TelemetryDegradedReason(err)
 	}
 	if metric == "pre_auth_target_signal_gap_pct" && value < 0 {
 		return 0, SourceInsufficientPrefix + "fewer than 20 selected failures on every observed route"
@@ -268,14 +291,15 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		*p.dest = SafeFloat(v)
 	}
 
-	// 5. Error rate %.
-	errQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng))
-	if v, err := fetcher.QueryScalar(ctx, errQ); err == nil {
-		resp.ErrorRatePct = SafePercent(v)
-	} else {
-		return degradedFromErr(resp, err, log, "error_rate")
+	// 5. Error rate %. A ratio over an idle window has no denominator, and
+	// PercentRatioQuery then returns no sample; an app with no requests has
+	// a zero error rate, not unavailable telemetry.
+	if resp.RequestCount > 0 {
+		if v, err := fetcher.QueryScalar(ctx, ErrorRatePctQuery(appID, rng)); err == nil {
+			resp.ErrorRatePct = SafePercent(v)
+		} else {
+			return degradedFromErr(resp, err, log, "error_rate")
+		}
 	}
 	// 5b. Remaining API-availability error budget. This is derived from the
 	// same bounded request population as ErrorRatePct, so it adds no query or
@@ -303,14 +327,16 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		}
 	}
 
-	// 6. Cold start %.
-	coldQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng))
-	if v, err := fetcher.QueryScalar(ctx, coldQ); err == nil {
-		resp.ColdStartPct = SafePercent(v)
-	} else {
-		return degradedFromErr(resp, err, log, "cold_start")
+	// 6. Cold start % (idle-safe like the error rate).
+	if resp.RequestCount > 0 {
+		coldQ := PercentRatioQuery(
+			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng))
+		if v, err := fetcher.QueryScalar(ctx, coldQ); err == nil {
+			resp.ColdStartPct = SafePercent(v)
+		} else {
+			return degradedFromErr(resp, err, log, "cold_start")
+		}
 	}
 
 	// 7. Fleet wake p95 (the unlabeled gateway_wake_latency_seconds).
@@ -431,7 +457,7 @@ func degradedFromErr(resp api.AppMetricsResponse, err error, log *slog.Logger, l
 	// Fall back to zeroed fields rather than partially-populated
 	// numbers — the dashboard's empty-state message depends on
 	// RequestCount being 0 when degraded.
-	return api.AppMetricsResponse{}, SourceDegradedPrefix + msg
+	return api.AppMetricsResponse{}, SourceDegradedPrefix + TelemetryDegradedReason(err)
 }
 
 // Ranges returns a copy of the closed-set vocabulary for the range

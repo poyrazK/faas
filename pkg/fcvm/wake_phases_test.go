@@ -150,10 +150,16 @@ func TestCleanup_ReportsSurvivingNetnsAsLeak(t *testing.T) {
 	// every clean teardown, and warning on it would be pure noise.
 	var buf bytes.Buffer
 	m := newPhaseLogManager(t, &fakeRunner{}, &fakeVMM{}, &buf)
-	lease := Lease{Instance: "leak-probe", Netns: "fc-does-not-exist-probe"}
+	lease, err := m.alloc.Acquire("leak-probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Netns = "fc-does-not-exist-probe"
 	nc := netnsConfigForTest(lease)
 
-	m.cleanup(context.Background(), lease, nc, nil)
+	if err := m.cleanup(context.Background(), lease, nc, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	if strings.Contains(buf.String(), "survived teardown") {
 		t.Errorf("clean teardown reported a leak; the benign path must stay quiet\ngot: %s", buf.String())

@@ -24,7 +24,7 @@
 # The workflow is intentionally always scheduled for pull requests and
 # main pushes. `runtime-change` is the cheap path filter inside the
 # workflow, which means the final `runtime-contract-gate` check exists on
-# every PR even when the eight-image matrix is not needed. Keeping the
+# every PR even when the runtime image matrix is not needed. Keeping the
 # decision in a job (rather than in `on.pull_request.paths`) prevents a
 # runtime-code change from silently bypassing the contract gate.
 # workflow_dispatch remains the manual reroll path (e.g. after a BuildKit /
@@ -159,14 +159,14 @@ jobs:
           # the binary even when guest/init itself is untouched. The native
           # builder acceptance fixture also needs a publisher run at its
           # source commit.
-          if grep -Eq '^(images/(builder-base\.Dockerfile|buildkit-frontend-startup\.patch|buildkit-session-health\.patch|builder-resolv\.conf|Dockerfile\.lock)$|guest/init/|pkg/(api|reqbudget|sourcecontext|statefuldenylist)/|go\.(mod|sum)$|pkg/fcvm/builder_acceptance_metal_test\.go$|scripts/ci/(install-grype|update-grype-db|scan-oci-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+          if grep -Eq '^(images/(builder-base\.Dockerfile|buildkit-frontend-startup\.patch|buildkit-session-health\.patch|builder-resolv\.conf|Dockerfile\.lock)$|guest/(init|executor)/|pkg/(api|executionprofiles|executionproto|reqbudget|sourcecontext|statefuldenylist)/|go\.(mod|sum)$|pkg/fcvm/builder_acceptance_metal_test\.go$|scripts/ci/(install-grype|update-grype-db|scan-oci-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
             builder=true
           fi
 
           # Runtime bases contain only these Dockerfiles and the shared
           # skeleton. Daemon code and guest runner shims ship in the signed
           # release bundle and cannot change these image bytes.
-          if grep -Eq '^(images/(base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+          if grep -Eq '^(images/(base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
             bases=true
           fi
 
@@ -446,6 +446,8 @@ jobs:
             dockerfile: images/runner-python312.Dockerfile
           - image: runner-python313
             dockerfile: images/runner-python313.Dockerfile
+          - image: execution-python-data-v1
+            dockerfile: images/execution-python-data-v1.Dockerfile
           - image: runner-go124
             dockerfile: images/runner-go124.Dockerfile
           - image: runner-go124-alpine
@@ -454,6 +456,9 @@ jobs:
       IMAGE_NAME: ghcr.io/poyrazk/${{ matrix.image }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Check curated wheel installer
+        run: python3 images/install_execution_profile_test.py
 
       - uses: docker/setup-buildx-action@v3
 
@@ -524,7 +529,11 @@ jobs:
           # publication gate matches vmmd admission exactly. Keep legacy
           # Debian lanes on their existing fixed-finding gate until their
           # shared parent migration lands separately.
-          GRYPE_ONLY_FIXED: ${{ matrix.image == 'runner-python313' && 'false' || 'true' }}
+          GRYPE_ONLY_FIXED: ${{ (matrix.image == 'runner-python313' || matrix.image == 'execution-python-data-v1') && 'false' || 'true' }}
+          # The staging-only Debian parent cannot patch its own layer
+          # (ADR-053); its version-pinned exceptions are documented in the
+          # file. Every other lane scans without it.
+          GRYPE_CONFIG: ${{ matrix.image == 'base-debian-parent' && 'images/base-debian-parent.grype.yaml' || '' }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             ref="${IMAGE_NAME}:ci-${GITHUB_SHA}"

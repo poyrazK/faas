@@ -24,6 +24,10 @@ class SendAppMessageResponse:
     target_app: str
     status: SendAppMessageResponseStatus
     status_url: str
+    environment: str | Unset = UNSET
+    """Deployment scope captured when the message was accepted."""
+    queue_binding_id: str | Unset = UNSET
+    """Immutable captured queue binding identity; omitted for legacy unbound work."""
     trace_id: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,6 +40,10 @@ class SendAppMessageResponse:
         status: str = self.status
 
         status_url = self.status_url
+
+        environment = self.environment
+
+        queue_binding_id = self.queue_binding_id
 
         trace_id = self.trace_id
 
@@ -50,6 +58,10 @@ class SendAppMessageResponse:
                 "status_url": status_url,
             }
         )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if queue_binding_id is not UNSET:
+            field_dict["queue_binding_id"] = queue_binding_id
         if trace_id is not UNSET:
             field_dict["trace_id"] = trace_id
 
@@ -68,6 +80,10 @@ class SendAppMessageResponse:
 
         status_url = d.pop("status_url")
 
+        environment = d.pop("environment", UNSET)
+
+        queue_binding_id = d.pop("queue_binding_id", UNSET)
+
         trace_id = d.pop("trace_id", UNSET)
 
         send_app_message_response = cls(
@@ -76,6 +92,8 @@ class SendAppMessageResponse:
             target_app=target_app,
             status=status,
             status_url=status_url,
+            environment=environment,
+            queue_binding_id=queue_binding_id,
             trace_id=trace_id,
         )
 

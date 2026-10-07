@@ -24,12 +24,13 @@ type ObjectMultipartMetadata struct {
 const ObjectMultipartLeaseDuration = 2 * time.Minute
 
 const (
-	ObjectMultipartInitiating = "initiating"
-	ObjectMultipartActive     = "active"
-	ObjectMultipartCompleting = "completing"
-	ObjectMultipartAborting   = "aborting"
-	ObjectMultipartCompleted  = "completed"
-	ObjectMultipartAborted    = "aborted"
+	ObjectMultipartInitiating            = "initiating"
+	ObjectMultipartActive                = "active"
+	ObjectMultipartCompleting            = "completing"
+	ObjectMultipartCompletingConditional = "completing_conditional"
+	ObjectMultipartAborting              = "aborting"
+	ObjectMultipartCompleted             = "completed"
+	ObjectMultipartAborted               = "aborted"
 )
 
 type ObjectMultipartUpload struct {
@@ -37,10 +38,24 @@ type ObjectMultipartUpload struct {
 	Key                             string
 	SizeBytes, PartSizeBytes        int64
 	PartCount                       int32
+	PartRevision                    int64
 	ContentType                     string
 	Metadata                        ObjectMultipartMetadata
+	Protection                      ObjectWriteProtectionSnapshot `json:"-"`
+	Encryption                      ObjectEncryptionSnapshot      `json:"-"`
+	FixedAdmission                  bool                          `json:"-"`
+	EncryptionDefaultRevision       int64                         `json:"-"`
 	ProviderUploadID                string
 	Parts                           []api.ObjectMultipartCompletedPart
+	CompletionConditions            api.ObjectWriteConditions
+	CompletionErrorCode             string
+	CompletionETag                  string
+	CompletionVersionID             string
+	CompletionRecoveryCursor        string                          `json:"-"`
+	CompletionVersionsObserved      bool                            `json:"-"`
+	CompletionDispatched            bool                            `json:"-"`
+	PartURLUnsafeUntil              time.Time                       `json:"-"`
+	LifecycleAbort                  ObjectLifecycleMultipartBinding `json:"-"`
 	State                           string
 	ExpiresAt, CreatedAt, UpdatedAt time.Time
 	LeaseToken                      string
@@ -61,8 +76,33 @@ type ObjectMultipartUploadStore interface {
 	DueObjectMultipartUploads(context.Context, int32) ([]ObjectMultipartUpload, error)
 }
 
+// ObjectMultipartPartURLStore commits a legacy part URL's drain deadline before
+// it can be returned to its caller. An abort/completion race rejects publication.
+type ObjectMultipartPartURLStore interface {
+	RecordObjectMultipartPartURL(context.Context, ObjectMultipartUpload, time.Time) error
+}
+
+// ObjectMultipartCompletionStore atomically commits the actual result and its
+// public version mapping before releasing reservations. Recovery cursors and
+// observed native history survive owner restart; dispatch is a sticky latch.
+type ObjectMultipartCompletionStore interface {
+	DispatchObjectMultipartCompletion(context.Context, ObjectMultipartUpload) error
+	FinishObjectMultipartCompletion(context.Context, ObjectMultipartUpload, ObjectMultipartCompletionResult) (ObjectMultipartUpload, error)
+	RetryObjectMultipartCompletion(context.Context, ObjectMultipartUpload, ObjectMultipartCompletionResult, string, time.Duration) error
+	RejectObjectMultipartCompletionResult(context.Context, ObjectMultipartUpload, ObjectMultipartCompletionResult, string) error
+}
+
+type ObjectMultipartCompletionResult struct {
+	ETag               string
+	ProviderVersionID  string               `json:"-"`
+	RecoveryCursor     string               `json:"-"`
+	VersionsObserved   bool                 `json:"-"`
+	VerifiedProtection string               `json:"-"`
+	VerifiedEncryption api.ObjectEncryption `json:"-"`
+}
+
 func validObjectMultipartOperation(operation string) bool {
-	return operation == ObjectMultipartInitiating || operation == ObjectMultipartCompleting || operation == ObjectMultipartAborting
+	return operation == ObjectMultipartInitiating || ObjectMultipartIsCompleting(operation) || operation == ObjectMultipartAborting
 }
 
 func validObjectMultipartRetry(code string, delay time.Duration) bool {
@@ -85,4 +125,106 @@ func equalObjectMultipartMetadata(a, b ObjectMultipartMetadata) bool {
 		a.ContentEncoding == b.ContentEncoding &&
 		a.ContentLanguage == b.ContentLanguage &&
 		maps.Equal(a.UserMetadata, b.UserMetadata) && maps.Equal(a.Tags, b.Tags)
+}
+
+// ObjectMultipartCapacityStore reserves incomplete parts before provider writes.
+// Reservations survive failures and are released only after confirmed completion. Abort reclamation requires provider reconciliation.
+type ObjectMultipartCapacityStore interface {
+	AdmitObjectMultipartPart(context.Context, string, string, string, int32, int64, int64, api.ObjectStoragePolicy) error
+	AdmitObjectMultipartCompletion(context.Context, string, string, string, string, int64, api.ObjectStoragePolicy) error
+}
+
+// ObjectFixedMultipartAdmissionStore binds declared object capacity to its
+// owned session before any native initialization. Replays do not spend quota.
+type ObjectFixedMultipartAdmissionStore interface {
+	ReserveAdmittedObjectMultipartUpload(context.Context, ObjectMultipartUpload, int, api.ObjectStoragePolicy) (ObjectMultipartUpload, error)
+}
+
+func validFixedMultipartLayout(u ObjectMultipartUpload) bool {
+	return u.SizeBytes > 0 && u.SizeBytes <= api.MaxObjectUploadBytes &&
+		u.PartSizeBytes > 0 && u.PartSizeBytes <= api.MaxObjectSinglePutBytes &&
+		u.PartCount > 0 && u.PartCount <= api.MaxMultipartParts &&
+		int64(u.PartCount) == (u.SizeBytes+u.PartSizeBytes-1)/u.PartSizeBytes
+}
+
+// ObjectS3MultipartLister excludes terminal history and uses S3 key/upload markers.
+type ObjectS3MultipartLister interface {
+	ListObjectS3MultipartUploads(context.Context, string, string, string, string, string, string, int32) ([]ObjectMultipartUpload, error)
+}
+
+func validMultipartCapacityUpload(u ObjectMultipartUpload, account, bucket string, completion bool, now time.Time) bool {
+	if u.AccountID != account || u.BucketID != bucket || u.PartCount != 0 && (!completion || !u.FixedAdmission) {
+		return false
+	}
+	if completion {
+		return u.State == ObjectMultipartActive || ObjectMultipartIsCompleting(u.State)
+	}
+	return u.State == ObjectMultipartActive && u.ExpiresAt.After(now)
+}
+
+func withoutMultipartReservation(s ObjectUsageSnapshot, bucket string, reserved int64) ObjectUsageSnapshot {
+	for i := range s.Buckets {
+		if s.Buckets[i].Bucket.ID == bucket {
+			s.Buckets[i].MultipartBytes -= reserved
+		}
+	}
+	return s
+}
+
+// ObjectMultipartTransferStore fences provider writes and atomically releases
+// tracked reservations only after the caller verifies provider cleanup.
+// Failed/uncertain writes retain a deadline; expiry alone never releases quota.
+type ObjectMultipartTransferStore interface {
+	BeginObjectMultipartPart(context.Context, string, string, string, string, int32, int64, int64, api.ObjectStoragePolicy) error
+	SettleObjectMultipartPart(context.Context, string, string, int32, string) error
+	PrepareObjectMultipartCompletion(context.Context, ObjectMultipartUpload, string, int64, []api.ObjectMultipartCompletedPart, api.ObjectStoragePolicy) (ObjectMultipartUpload, error)
+	ObjectMultipartAbortReady(context.Context, string, string) (bool, error)
+	FinishVerifiedObjectMultipartAbort(context.Context, string, string) error
+	RejectObjectMultipartCompletion(context.Context, string, string, string) error
+}
+
+type multipartPartTransfer struct {
+	copySource  ObjectMultipartCopySource
+	token       string
+	unsafeUntil time.Time
+	tracked     bool
+}
+
+func multipartTransferWindow() time.Duration {
+	return api.ObjectTransferTimeout + time.Duration(api.ObjectMultipartPartURLTTLSeconds)*time.Second + api.ObjectMultipartCleanupGrace
+}
+
+func ObjectMultipartIsCompleting(s string) bool {
+	return s == ObjectMultipartCompleting || s == ObjectMultipartCompletingConditional
+}
+
+func multipartCompletionOperation(c api.ObjectWriteConditions) string {
+	if !c.Empty() {
+		return ObjectMultipartCompletingConditional
+	}
+	return ObjectMultipartCompleting
+}
+
+func validMultipartCompletionFailure(code string) bool {
+	return code == "precondition_failed" || code == "conditional_conflict" || code == "conditional_not_found"
+}
+
+func cloneObjectMultipartUpload(u ObjectMultipartUpload) ObjectMultipartUpload {
+	u.Parts = cloneMultipartParts(u.Parts)
+	u.Metadata = cloneObjectMultipartMetadata(u.Metadata)
+	u.Protection = u.Protection.Clone()
+	u.Encryption = u.Encryption.Clone()
+	return u
+}
+
+// ObjectMultipartCopySource captures private authority before the single native
+// part attempt. Begin is the durable dispatch point, atomic with byte admission.
+type ObjectMultipartCopySource struct{ SubjectID, BucketID, GrantID, Key string }
+type ObjectCrossBucketMultipartStore interface {
+	ObjectMultipartTransferStore
+	BeginObjectCrossBucketMultipartPart(context.Context, string, string, string, string, int32, int64, int64, api.ObjectStoragePolicy, ObjectMultipartCopySource) error
+}
+
+func validMultipartCopyAuthority(s ObjectMultipartCopySource, destination string) bool {
+	return s.Key != "" && validObjectCopySourcePrefix(s.Key) && validCopySourceProvenance(ObjectUploadCompletion{BucketID: destination, SourceBucketID: s.BucketID, SourceCopyGrantID: s.GrantID, SubjectID: s.SubjectID}) && s.BucketID != ""
 }

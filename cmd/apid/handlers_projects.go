@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -313,6 +315,10 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.Full {
+		api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
+		return
+	}
 	environment, clone, err := s.persistProjectEnvironment(r, acct, project, req)
 	if err != nil {
 		writeCreateProjectEnvironmentError(w, project.Slug, req, acct, err)
@@ -323,17 +329,23 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		"environment_id": environment.ID, "environment_slug": environment.Slug,
 		"protected": environment.Protected, "cloned_from": req.FromEnvironment,
 		"variables_copied": clone.VariablesCopied, "secrets_copied": clone.SecretsCopied,
-		"bindings_copied": clone.BindingsCopied, "routes_copied": clone.RoutesCopied, "policies_copied": clone.PoliciesCopied,
+		"secret_references_copied": clone.SecretReferencesCopied,
+		"bindings_copied":          clone.BindingsCopied, "routes_copied": clone.RoutesCopied, "policies_copied": clone.PoliciesCopied,
 	})
 	response := projectEnvironmentResponse(environment)
 	if req.FromEnvironment != "" {
 		response.ClonedFrom = req.FromEnvironment
 		sharedResources := []string{"domains", "policies"}
-		sharedResources = append(sharedResources, clone.SharedResources...)
+		for _, resource := range clone.SharedResources {
+			if !slices.Contains(sharedResources, resource) {
+				sharedResources = append(sharedResources, resource)
+			}
+		}
 		response.Clone = &api.ProjectEnvironmentCloneResponse{
 			ConfigurationCopied: clone.ConfigurationCopied, VariablesCopied: clone.VariablesCopied,
 			SecretsCopied: clone.SecretsCopied, WorkloadsCopied: clone.WorkloadsCopied,
-			BindingsCopied: clone.BindingsCopied, RoutesCopied: clone.RoutesCopied, PoliciesCopied: clone.PoliciesCopied, SharedResources: sharedResources,
+			SecretReferencesCopied: clone.SecretReferencesCopied,
+			BindingsCopied:         clone.BindingsCopied, RoutesCopied: clone.RoutesCopied, PoliciesCopied: clone.PoliciesCopied, SharedResources: sharedResources,
 		}
 	}
 	writeJSON(w, http.StatusCreated, response)
@@ -357,6 +369,10 @@ func decodeCreateProjectEnvironmentRequest(r *http.Request) (api.CreateProjectEn
 		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid resource sharing option", "share_resources is only valid when cloning with from_environment")
 	}
+	if req.Full && (req.FromEnvironment == "" || req.ShareResources) {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid full clone", "full requires from_environment and isolated resources")
+	}
 	return req, nil
 }
 
@@ -378,7 +394,11 @@ func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, 
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
 	}
-	bindingPlans, err := s.planProjectEnvironmentBindingClones(ctx, acct, project, req.FromEnvironment, req.ShareResources)
+	apps, snapshot, err := s.captureProjectEnvironmentValues(ctx, acct, project, req.FromEnvironment)
+	if err != nil {
+		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
+	}
+	bindingPlans, err := s.planProjectEnvironmentBindingClones(ctx, acct, apps, snapshot.ValueScopes, req.ShareResources)
 	if err != nil {
 		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
 	}
@@ -396,6 +416,7 @@ func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, 
 		TargetSlug: req.Slug, TargetProtected: protected, ShareResources: req.ShareResources,
 		ManagedBindingsPrepared:   len(preparedBindingIDs) > 0,
 		PreparedManagedBindingIDs: preparedBindingIDs, PreparedManagedSecretCount: preparedSecretCount,
+		ExpectedSourceValueScopes: snapshot.ValueScopes, ExpectedSourceValuesHash: snapshot.Hash,
 	}
 	environment, result, err := cloner.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(acct.Plan))
 	if err != nil {
@@ -426,7 +447,7 @@ func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, 
 		var compensation *projectEnvironmentBindingCloneError
 		if errors.As(bindErr, &compensation) && compensation.cleanup != nil {
 			if s.log != nil {
-				s.log.Error("project environment clone resource compensation incomplete", "project_id", project.ID, "environment", req.Slug, "err", bindErr)
+				s.log.Error("project environment clone resource compensation incomplete", "project_id", project.ID, "environment", logsanitize.Field(req.Slug), "err", logsanitize.FieldAny(bindErr))
 			}
 			return state.ProjectEnvironment{}, result, bindErr
 		}
@@ -558,6 +579,12 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environmentSlug))
+		case errors.Is(err, state.ErrEnvironmentInvocationWorkBusy):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "environment_work_busy",
+				"Environment work is running", "wait for running work to finish or for expired claims to be released before deleting the environment"))
+		case errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "environment_work_ownership_conflict",
+				"Environment work ownership conflict", "work ownership is inconsistent; the environment was not deleted"))
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 				"Project environment cannot be deleted",

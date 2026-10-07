@@ -34,6 +34,7 @@ file "${busybox_path}" | grep -q 'statically linked' ||
   die "${busybox_path} must be statically linked for the guest fixture"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${repo_root}"
 marker_sha="$(tr -d '\n' < "${repo_root}/.faas-metal-source-sha")"
 [[ "${marker_sha}" == "${FAAS_METAL_SOURCE_SHA}" ]] ||
   die "source archive marker ${marker_sha} does not match ${FAAS_METAL_SOURCE_SHA}"
@@ -45,6 +46,9 @@ run_id="${FAAS_METAL_RUN_ID:-manual}"
 transfer_root="${FAAS_METAL_TRANSFER_ROOT:-}"
 if [[ -n "${transfer_root}" && ! "${transfer_root}" =~ ^/var/tmp/faas-metal-smoke-[A-Za-z0-9._-]+$ ]]; then
   die "transfer root is outside the metal smoke staging namespace"
+fi
+if [[ -n "${transfer_root}" ]]; then
+  mkdir -p -- "${transfer_root}"
 fi
 
 stage_root="/srv/fc/acceptance/metal-${FAAS_METAL_SOURCE_SHA}-${run_id}"
@@ -138,17 +142,20 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "${FAAS_METAL_GO}" build \
   -trimpath -buildvcs=false -tags linux -o "${guest_init}" ./guest/init
 
 install -m 0755 "${busybox_path}" "${base_skeleton}/bin/busybox"
-for name in bin/sh bin/ash bin/cat; do
+for name in bin/sh bin/ash bin/cat bin/true; do
   ln -s /bin/busybox "${base_skeleton}/${name}"
 done
 # Production app artifacts live beneath drive1's /upper directory. The M0 app
-# runs as UID 1000 and only needs to listen; platform-owned /etc/faas stays
+# runs as UID 1000 and serves a successful readiness response; platform-owned /etc/faas stays
 # read-only to it after guest-init assembles the overlay.
 printf '%s\n' \
   '{"entrypoint":["/bin/busybox","httpd","-f","-p","8080","-h","/"],"port":8080}' \
   > "${layer_skeleton}/upper/etc/faas/app.json"
+printf '%s\n' 'metal smoke ready' > "${layer_skeleton}/upper/index.html"
 
-truncate -s 64M "${base_path}"
+# Keep room for the unstripped guest-init and ext4 metadata as its protocol
+# handlers grow. This disposable test base preserves the two-drive layout.
+truncate -s 128M "${base_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${base_skeleton}" -L faas-metal-smoke -F "${base_path}"
 truncate -s 16M "${layer_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${layer_skeleton}" -L faas-metal-layer -F "${layer_path}"
@@ -162,9 +169,9 @@ fi
 for service in "${services[@]}"; do
   if systemctl is-active --quiet "${service}"; then
     printf '%s\n' "${service}" >> "${active_services}"
+    systemctl stop "${service}"
   fi
 done
-systemctl stop "${services[@]}"
 
 PATH="$(dirname "${FAAS_METAL_GO}"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export PATH
@@ -215,7 +222,18 @@ if [[ "${passed}" -eq 0 ]]; then
   echo "native metal smoke: no metal test executed; the fixtures or the build tag are wrong" >&2
   metal_rc=1
 fi
-# Second pass: the six tests that need private mount + network namespaces.
+# Companion qualification cannot silently pass with missing fixtures or skips.
+source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
+companion_names="$(native_container_companion_tests "${repo_root}")"
+companion_tests=()
+while IFS= read -r test_name; do companion_tests+=("${test_name}"); done <<<"${companion_names}"
+native_e2e_lane_verdict "${metal_log}" companion-memory-isolation "${companion_tests[@]}" || metal_rc=1
+recovery_names="$(native_recovery_tests "${repo_root}")"
+recovery_tests=()
+while IFS= read -r test_name; do recovery_tests+=("${test_name}"); done <<<"${recovery_names}"
+native_e2e_lane_verdict "${metal_log}" native-owner-recovery "${recovery_tests[@]}" || metal_rc=1
+
+# Second pass: the tests that need private mount + network namespaces.
 #
 # They gate on FAAS_TEST_NETWORK_BATCH and skipped in the pass above because
 # this host runs it in the host namespace — they manipulate /run/netns,
@@ -227,7 +245,16 @@ fi
 # module cache) and executed inside it. `unshare --net` yields an empty
 # namespace, so loopback is brought up first — several of these tests dial
 # 127.0.0.1.
-batch_tests='^(TestMetalImageBindMount|TestMetalIPSetupBatch|TestMetalFreshNetworkPolicy|TestMetalReusedLeaseNeighbor|TestMetalPreparedBridgeMAC|TestMetalPreparedNetworkOwnership)$'
+batch_tests=(
+  TestMetalImageBindMount
+  TestMetalIPSetupBatch
+  TestMetalFreshNetworkPolicy
+  TestMetalReusedLeaseNeighbor
+  TestMetalPreparedBridgeMAC
+  TestMetalPreparedNetworkOwnership
+  TestMetalPreparedNetworkMixedPolicies
+)
+batch_regex="^($(IFS='|'; echo "${batch_tests[*]}"))$"
 batch_bin="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal.test"
 batch_log="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal-batch.log"
 
@@ -239,7 +266,7 @@ set +e
 FAAS_TEST_NETWORK_BATCH=1 \
   unshare --mount --net --propagation private -- \
   sh -c 'ip link set lo up 2>/dev/null; mount -t tmpfs tmpfs /run/netns && exec "$0" -test.run "$1" -test.timeout=10m -test.v' \
-  "${batch_bin}" "${batch_tests}" 2>&1 | tee "${batch_log}"
+  "${batch_bin}" "${batch_regex}" 2>&1 | tee "${batch_log}"
 batch_rc="${PIPESTATUS[0]}"
 set -e
 
@@ -252,11 +279,14 @@ if [[ "${batch_skipped}" -gt 0 ]]; then
   grep -E '^--- SKIP: ' "${batch_log}" | sed 's/^/  /'
 fi
 # The whole point of this pass. If it executes nothing, the unshare or the
-# tmpfs failed and the six tests are silently back to not running.
+# tmpfs failed and the selected tests are silently back to not running.
 if [[ "${batch_passed}" -eq 0 ]]; then
   echo "native metal smoke: namespace batch executed no test; unshare or /run/netns setup failed" >&2
   batch_rc=1
 fi
+# Every selected network test is required. A skip or omitted mixed-policy
+# test must fail even when other tests passed and the binary exited zero.
+native_e2e_lane_verdict "${batch_log}" namespace-batch "${batch_tests[@]}" || batch_rc=1
 
 echo "native metal smoke: total — $((passed + batch_passed)) passed, $((skipped + batch_skipped)) skipped, $((failed + batch_failed)) failed"
 [[ "${metal_rc}" -eq 0 ]] || exit "${metal_rc}"

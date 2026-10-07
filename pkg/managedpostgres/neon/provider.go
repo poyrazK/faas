@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -35,6 +33,8 @@ type projectSettings struct {
 
 type project struct {
 	ID                      string           `json:"id"`
+	CreatedAt               string           `json:"created_at"`
+	OrganizationID          string           `json:"org_id"`
 	Name                    string           `json:"name"`
 	RegionID                string           `json:"region_id"`
 	PostgresMajor           int              `json:"pg_version"`
@@ -44,24 +44,45 @@ type project struct {
 }
 
 type operation struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID         string `json:"id"`
+	Status     string `json:"status"`
+	ProjectID  string `json:"project_id"`
+	BranchID   string `json:"branch_id"`
+	EndpointID string `json:"endpoint_id"`
+	Action     string `json:"action"`
+	CreatedAt  string `json:"created_at"`
 }
 
 type branch struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	ParentID     string `json:"parent_id"`
-	CurrentState string `json:"current_state"`
-	Default      bool   `json:"default"`
+	ID              string `json:"id"`
+	ProjectID       string `json:"project_id"`
+	Name            string `json:"name"`
+	ParentID        string `json:"parent_id"`
+	ParentTimestamp string `json:"parent_timestamp"`
+	ParentLSN       string `json:"parent_lsn"`
+	InitSource      string `json:"init_source"`
+	CurrentState    string `json:"current_state"`
+	PendingState    string `json:"pending_state"`
+	RestoreStatus   string `json:"restore_status"`
+	RestoredFrom    string `json:"restored_from"`
+	RestoredAs      string `json:"restored_as"`
+	CreatedAt       string `json:"created_at"`
+	Default         bool   `json:"default"`
 }
 
 type endpoint struct {
 	ID                   string  `json:"id"`
+	Name                 string  `json:"name"`
+	CreatedAt            string  `json:"created_at"`
+	ProjectID            string  `json:"project_id"`
+	RegionID             string  `json:"region_id"`
 	BranchID             string  `json:"branch_id"`
 	Host                 string  `json:"host"`
 	Type                 string  `json:"type"`
 	CurrentState         string  `json:"current_state"`
+	PendingState         string  `json:"pending_state"`
+	Disabled             *bool   `json:"disabled"`
+	PasswordlessAccess   *bool   `json:"passwordless_access"`
 	MinimumCU            float64 `json:"autoscaling_limit_min_cu"`
 	MaximumCU            float64 `json:"autoscaling_limit_max_cu"`
 	SuspendTimeoutSecond int64   `json:"suspend_timeout_seconds"`
@@ -72,8 +93,9 @@ type projectResponse struct {
 }
 
 type projectsResponse struct {
-	Projects   []project `json:"projects"`
-	Pagination struct {
+	Projects              []project `json:"projects"`
+	UnavailableProjectIDs []string  `json:"unavailable_project_ids,omitempty"`
+	Pagination            struct {
 		Cursor string `json:"cursor"`
 	} `json:"pagination"`
 }
@@ -83,14 +105,18 @@ type branchesResponse struct {
 }
 
 type createBranchRequest struct {
-	Endpoints []struct {
-		Type string `json:"type"`
-	} `json:"endpoints,omitempty"`
-	Branch struct {
+	Endpoints []createBranchEndpoint `json:"endpoints,omitempty"`
+	Branch    struct {
 		Name            string `json:"name"`
 		ParentID        string `json:"parent_id"`
 		ParentTimestamp string `json:"parent_timestamp"`
+		InitSource      string `json:"init_source"`
 	} `json:"branch"`
+}
+
+type createBranchEndpoint struct {
+	Type string `json:"type"`
+	endpointSettings
 }
 
 type createdBranchResponse struct {
@@ -138,7 +164,9 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		PostgresMajors:               []int{14, 15, 16, 17, 18},
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
 		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite},
+		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
+		ClassResize:                  true,
+		ScaleToZeroUpdate:            true,
 		ScaleToZero:                  true,
 		PooledConnections:            true,
 		PointInTimeRestore:           p.maxRestoreWindow > 0,
@@ -205,6 +233,13 @@ func (p *Provider) Provision(ctx context.Context, request managedpostgres.Provis
 }
 
 func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	return p.RestoreWithCreationReceipt(ctx, request, nil, nil)
+}
+
+func (p *Provider) RestoreWithCreationReceipt(ctx context.Context, request managedpostgres.RestoreRequest, accepted *managedpostgres.CreationAcknowledgement, record managedpostgres.CreationRecorder) (managedpostgres.ObservedDatabase, error) {
+	if p == nil {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+	}
 	if request.ResourceID == "" || len(request.ResourceID) > 255 || request.SourceResourceID == "" || len(request.SourceResourceID) > 255 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 || request.PointInTime.IsZero() {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
 	}
@@ -217,26 +252,40 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 	}
 	parentID := source.branchID
 	if parentID == "" {
+		record = nil
+	} // legacy project selectors cannot establish exact-source custody
+	if parentID == "" {
 		parentID, err = p.defaultBranch(ctx, source.projectID)
 		if err != nil {
 			return managedpostgres.ObservedDatabase{}, err
 		}
 	}
 	branchName := p.restoreBranchName(request.ResourceID)
+	if accepted != nil {
+		target, err := p.readRestoreCreation(ctx, request, *accepted)
+		if errors.Is(err, managedpostgres.ErrNotFound) {
+			err = managedpostgres.ErrUnavailable
+		}
+		if err != nil {
+			return managedpostgres.ObservedDatabase{}, err
+		}
+		return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, target, request)
+	}
 	existing, err := p.findBranch(ctx, source.projectID, branchName)
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
 	if existing.ID != "" {
-		return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: source.projectID, branchID: existing.ID}).String(), Status: managedpostgres.ProviderStatusPending, Spec: request.Spec}, nil
+		return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, existing, request)
 	}
 	payload := createBranchRequest{}
 	payload.Branch.Name = branchName
 	payload.Branch.ParentID = parentID
 	payload.Branch.ParentTimestamp = request.PointInTime.UTC().Format(time.RFC3339Nano)
-	payload.Endpoints = []struct {
-		Type string `json:"type"`
-	}{{Type: "read_write"}}
+	payload.Branch.InitSource = "parent-data"
+	// Branch endpoints otherwise inherit today's project defaults. Those can
+	// differ from the immutable configuration selected for an environment clone.
+	payload.Endpoints = []createBranchEndpoint{{Type: "read_write", endpointSettings: endpointSettingsForSpec(request.Spec)}}
 	var created createdBranchResponse
 	path := "/projects/" + url.PathEscape(source.projectID) + "/branches"
 	if err := p.doJSON(ctx, http.MethodPost, path, nil, payload, &created, http.StatusCreated); err != nil {
@@ -246,59 +295,78 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 				return managedpostgres.ObservedDatabase{}, recoveryErr
 			}
 			if recovered.ID != "" {
-				return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: source.projectID, branchID: recovered.ID}).String(), Status: managedpostgres.ProviderStatusPending, Spec: request.Spec}, nil
+				return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, recovered, request)
 			}
 		}
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if !validProviderID.MatchString(created.Branch.ID) || created.Branch.Name != branchName {
-		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
-	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: source.projectID, branchID: created.Branch.ID}).String(), Status: managedpostgres.ProviderStatusPending, Spec: request.Spec}, nil
+	return p.awaitRestoredBranchWithCreation(ctx, source.projectID, parentID, branchName, created.Branch, request, record)
 }
 
 func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
+	return p.inspect(ctx, providerResourceID, nil)
+}
+
+func (p *Provider) InspectRestore(ctx context.Context, providerResourceID string, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	target, err := parseResourceRef(providerResourceID)
+	source, sourceErr := parseResourceRef(request.SourceResourceID)
+	if err != nil || sourceErr != nil || target.branchID == "" || source.branchID == "" ||
+		target.projectID != source.projectID || target.branchID == source.branchID || request.ResourceID == "" ||
+		len(request.ResourceID) > 255 || request.PointInTime.IsZero() || request.PointInTime.After(p.now()) {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
+	}
+	return p.inspect(ctx, providerResourceID, &request)
+}
+
+func (p *Provider) inspect(ctx context.Context, providerResourceID string, restore *managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
 	ref, err := parseResourceRef(providerResourceID)
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	projectPath := "/projects/" + url.PathEscape(ref.projectID)
-	var projectResult projectResponse
-	var branchesResult branchesResponse
-	var endpointsResult endpointsResponse
-	var operationsResult operationsResponse
-	group, groupContext := errgroup.WithContext(ctx)
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath, nil, nil, &projectResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/branches", nil, nil, &branchesResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/endpoints", nil, nil, &endpointsResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		query := url.Values{"limit": {"1000"}}
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/operations", query, nil, &operationsResult, http.StatusOK)
-	})
-	if err := group.Wait(); err != nil {
+	metadata, err := p.readDatabaseMetadata(ctx, ref, true)
+	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if projectResult.Project.ID != ref.projectID || operationsResult.Pagination.Cursor != "" {
-		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
-	}
-	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(branchesResult.Branches, endpointsResult.Endpoints, ref.branchID)
-	status := operationStatus(operationsResult.Operations, resourcesReady)
-	observedSpec := p.observedSpec(projectResult.Project, primaryEndpoint)
+	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
+	status := operationStatus(metadata.operations.Operations, resourcesReady)
+	observedComputeState := computeState(primaryEndpoint.CurrentState)
+	observedSpec := p.observedSpec(metadata.project.Project, primaryEndpoint)
 	if selectedBranch.ID == "" {
 		status = managedpostgres.ProviderStatusPending
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, ComputeState: computeState(primaryEndpoint.CurrentState), Spec: observedSpec}, nil
+	lineage, err := observedBranchLineage(ref.projectID, selectedBranch)
+	if restore != nil {
+		source, _ := parseResourceRef(restore.SourceResourceID)
+		verified, verifyErr := p.observeRestoredBranch(ctx, ref.projectID, source.branchID, p.restoreBranchName(restore.ResourceID), selectedBranch, *restore)
+		lineage, err = verified.RestoreLineage, verifyErr
+	}
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	dataID := ""
+	if selectedBranch.ID != "" {
+		if !validProviderID.MatchString(selectedBranch.ID) || selectedBranch.ProjectID != "" && selectedBranch.ProjectID != ref.projectID {
+			return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+		}
+		dataID = (resourceRef{projectID: ref.projectID, branchID: selectedBranch.ID}).String()
+	}
+	if ref.branchID != "" && status == managedpostgres.ProviderStatusReady {
+		owner, err := p.ownerCredentials(ctx, ref.projectID, ref.branchID)
+		if err != nil {
+			return managedpostgres.ObservedDatabase{}, err
+		}
+		role := p.credentialRole(managedpostgres.CredentialRequest{ProviderResourceID: providerResourceID, Access: managedpostgres.CredentialReadWrite})
+		if err := p.roles.RestrictInherited(ctx, owner, role.scope); err != nil {
+			return managedpostgres.ObservedDatabase{}, credentialSQLError(err)
+		}
+		observedComputeState = managedpostgres.ComputeStateActive
+	}
+	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, DataResourceID: dataID, Status: status, ComputeState: observedComputeState, Spec: observedSpec, RestoreLineage: lineage}, nil
 }
 
 // ProbeScaleToZero is used only by the isolated operator qualification run.
 // It proves the configured endpoint actually suspends and wakes; lifecycle
-// reconciliation never opens customer connections.
+// routine source lifecycle reconciliation never opens customer connections.
 func (p *Provider) ProbeScaleToZero(ctx context.Context, providerResourceID string, material managedpostgres.CredentialMaterial) (managedpostgres.ScaleToZeroProbeResult, error) {
 	dsn, err := probeDSN(material)
 	if err != nil {
@@ -383,11 +451,29 @@ func computeState(current string) managedpostgres.ComputeState {
 	}
 }
 
-func (*Provider) Update(context.Context, managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
-	// Neon applies class changes to endpoint resources rather than the
-	// project defaults. Keep updates closed until the neutral service has a
-	// durable multi-step update state machine and rollback semantics.
-	return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
+func (p *Provider) Discover(ctx context.Context, request managedpostgres.ResourceDiscoveryRequest) (string, error) {
+	if request.ResourceID == "" || len(request.ResourceID) > 255 {
+		return "", managedpostgres.ErrInvalid
+	}
+	if request.RestoreSourceResourceID != "" {
+		source, err := parseResourceRef(request.RestoreSourceResourceID)
+		if err != nil {
+			return "", err
+		}
+		candidate, err := p.findBranch(ctx, source.projectID, p.restoreBranchName(request.ResourceID))
+		if err != nil {
+			return "", err
+		}
+		if candidate.ID == "" {
+			return "", managedpostgres.ErrNotFound
+		}
+		return (resourceRef{projectID: source.projectID, branchID: candidate.ID}).String(), nil
+	}
+	identity, err := p.findProject(ctx, p.projectName(request.ResourceID))
+	if err == nil && identity == "" {
+		err = managedpostgres.ErrNotFound
+	}
+	return identity, err
 }
 
 func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteRequest) (managedpostgres.DeleteResult, error) {
@@ -397,6 +483,9 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	providerResourceID := request.ProviderResourceID
 	if providerResourceID == "" {
 		if request.RestoreSourceResourceID != "" {
+			if request.RestorePointInTime.IsZero() {
+				return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
+			}
 			source, sourceErr := parseResourceRef(request.RestoreSourceResourceID)
 			if sourceErr != nil {
 				return managedpostgres.DeleteResult{}, sourceErr
@@ -408,7 +497,19 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 			if candidate.ID == "" {
 				return managedpostgres.DeleteResult{Done: true}, nil
 			}
-			providerResourceID = (resourceRef{projectID: source.projectID, branchID: candidate.ID}).String()
+			parentID := source.branchID
+			if parentID == "" {
+				parentID, sourceErr = p.defaultBranch(ctx, source.projectID)
+				if sourceErr != nil {
+					return managedpostgres.DeleteResult{}, sourceErr
+				}
+			}
+			observed, lineageErr := p.awaitRestoredBranch(ctx, source.projectID, parentID, p.restoreBranchName(request.ResourceID), candidate,
+				managedpostgres.RestoreRequest{PointInTime: request.RestorePointInTime})
+			if lineageErr != nil {
+				return managedpostgres.DeleteResult{}, lineageErr
+			}
+			providerResourceID = observed.ProviderResourceID
 		}
 	}
 	if providerResourceID == "" {
@@ -416,12 +517,14 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 			return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
 		}
 		var err error
-		providerResourceID, err = p.findProject(ctx, p.projectName(request.ResourceID))
+		providerResourceID, err = p.Discover(ctx, managedpostgres.ResourceDiscoveryRequest{
+			ResourceID: request.ResourceID, RestoreSourceResourceID: request.RestoreSourceResourceID,
+		})
+		if errors.Is(err, managedpostgres.ErrNotFound) {
+			return managedpostgres.DeleteResult{Done: true}, nil
+		}
 		if err != nil {
 			return managedpostgres.DeleteResult{}, err
-		}
-		if providerResourceID == "" {
-			return managedpostgres.DeleteResult{Done: true}, nil
 		}
 	}
 	ref, err := parseResourceRef(providerResourceID)
@@ -432,7 +535,7 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	if ref.branchID != "" {
 		path += "/branches/" + url.PathEscape(ref.branchID)
 	}
-	var response projectResponse
+	var response createdBranchResponse
 	accepted := []int{http.StatusOK, http.StatusNoContent}
 	err = p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, accepted...)
 	if errors.Is(err, managedpostgres.ErrNotFound) {
@@ -441,15 +544,32 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	if err != nil {
 		return managedpostgres.DeleteResult{}, err
 	}
+	if ref.branchID != "" {
+		for _, op := range response.Operations {
+			if op.Status == "error" || op.Status == "cancelled" {
+				return managedpostgres.DeleteResult{}, managedpostgres.ErrUnavailable
+			}
+		}
+		for _, op := range response.Operations {
+			if op.ID == "" || !operationFinished(op.Status) {
+				return managedpostgres.DeleteResult{Done: false}, nil
+			}
+		}
+		if len(response.Operations) == 0 {
+			// An accepted request alone is not evidence that the branch has
+			// disappeared. Confirm synchronous/empty-operation responses.
+			var remaining createdBranchResponse
+			err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &remaining, http.StatusOK)
+			if errors.Is(err, managedpostgres.ErrNotFound) {
+				return managedpostgres.DeleteResult{Done: true}, nil
+			}
+			return managedpostgres.DeleteResult{Done: false}, err
+		}
+	}
 	return managedpostgres.DeleteResult{Done: true}, nil
 }
 
 func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) createProjectRequest {
-	profile := profiles[spec.Class]
-	suspendTimeout := int64(-1)
-	if spec.ScaleToZero {
-		suspendTimeout = 300
-	}
 	var request createProjectRequest
 	request.Project.Name = name
 	request.Project.OrganizationID = p.organizationID
@@ -457,12 +577,21 @@ func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) create
 	request.Project.PostgresMajor = spec.PostgresMajor
 	request.Project.StorePasswords = true
 	request.Project.HistoryRetentionSeconds = spec.RestoreWindowSeconds
-	request.Project.DefaultEndpointSettings = endpointSettings{MinimumCU: profile.minimumCU, MaximumCU: profile.maximumCU, SuspendTimeoutSecond: suspendTimeout}
+	request.Project.DefaultEndpointSettings = endpointSettingsForSpec(spec)
 	request.Project.Settings.Quota.LogicalSizeBytes = &spec.StorageLimitBytes
 	request.Project.Branch.Name = "production"
-	request.Project.Branch.RoleName = "gregale_owner"
+	request.Project.Branch.RoleName = ownerLogin
 	request.Project.Branch.DatabaseName = p.databaseName
 	return request
+}
+
+func endpointSettingsForSpec(spec managedpostgres.Spec) endpointSettings {
+	profile := profiles[spec.Class]
+	suspendTimeout := int64(-1)
+	if spec.ScaleToZero {
+		suspendTimeout = 300
+	}
+	return endpointSettings{MinimumCU: profile.minimumCU, MaximumCU: profile.maximumCU, SuspendTimeoutSecond: suspendTimeout}
 }
 
 func (p *Provider) projectName(resourceID string) string {
@@ -476,27 +605,18 @@ func (p *Provider) restoreBranchName(resourceID string) string {
 }
 
 func (p *Provider) findBranch(ctx context.Context, projectID, name string) (branch, error) {
-	path := "/projects/" + url.PathEscape(projectID) + "/branches"
-	var response branchesResponse
-	if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
-		return branch{}, err
+	actual, err := p.findOwnedBranch(ctx, projectID, "", name)
+	if errors.Is(err, managedpostgres.ErrNotFound) {
+		// Preserve the ordinary restore/discovery seam's absence convention.
+		return branch{}, nil
 	}
-	var match branch
-	for _, candidate := range response.Branches {
-		if candidate.Name != name {
-			continue
-		}
-		if match.ID != "" || !validProviderID.MatchString(candidate.ID) {
-			return branch{}, managedpostgres.ErrConflict
-		}
-		match = candidate
-	}
-	return match, nil
+	return actual, err
 }
 
 func (p *Provider) findProject(ctx context.Context, name string) (string, error) {
 	cursor := ""
 	match := ""
+	seenCursors := map[string]bool{}
 	for page := 0; page < maximumProjectSearchPages; page++ {
 		query := url.Values{"limit": {"400"}, "search": {name}, "org_id": {p.organizationID}}
 		if cursor != "" {
@@ -505,6 +625,9 @@ func (p *Provider) findProject(ctx context.Context, name string) (string, error)
 		var response projectsResponse
 		if err := p.doJSON(ctx, http.MethodGet, "/projects", query, nil, &response, http.StatusOK); err != nil {
 			return "", err
+		}
+		if response.Projects == nil || len(response.UnavailableProjectIDs) > 0 {
+			return "", managedpostgres.ErrUnavailable
 		}
 		for _, candidate := range response.Projects {
 			if candidate.Name != name {
@@ -515,13 +638,14 @@ func (p *Provider) findProject(ctx context.Context, name string) (string, error)
 			}
 			match = candidate.ID
 		}
-		if response.Pagination.Cursor == "" {
+		if len(response.Projects) == 0 || response.Pagination.Cursor == "" {
 			return match, nil
 		}
-		if response.Pagination.Cursor == cursor {
+		if seenCursors[response.Pagination.Cursor] {
 			return "", managedpostgres.ErrUnavailable
 		}
 		cursor = response.Pagination.Cursor
+		seenCursors[cursor] = true
 	}
 	return "", managedpostgres.ErrUnavailable
 }

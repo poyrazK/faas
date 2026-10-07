@@ -133,7 +133,8 @@ class CreateAppRequest:
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
     worker_replicas: WorkerScaling | Unset = UNSET
-    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0."""
     ports: list[WorkloadPort] | Unset = UNSET
     """App-owned listener declarations. Named TCP listeners are publicly routable at
     `<slug>--port-<name>.<domain>`; UDP listeners remain guest-only."""

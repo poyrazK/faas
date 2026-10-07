@@ -14,7 +14,7 @@
 //     fcvm_resident_ram_pct (Σ ram_mb over live instances /
 //     RAMAdmissionCeilingMB).
 //
-//   - schedd shells out to `lvs` for fcvm_lv_fc_used_pct (the
+//   - schedd statfs-es /srv/fc for fcvm_lv_fc_used_pct (the
 //     filesystem the apps live on). vmmd could also do this, but
 //     schedd already runs periodic work and avoids a second ticker.
 //
@@ -33,13 +33,10 @@ package fcvm
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"math"
 	"net/http"
-	"os/exec"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,6 +45,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostsize"
 )
 
 // metricLabelUnknown is the canonical "label collapsed because the source
@@ -69,7 +67,7 @@ type SnapshotStat struct {
 // DashboardMetrics is the input surface schedd passes in. Each field is
 // the owner-only query that produces the gauge value. All callbacks
 // MUST be safe to call concurrently and SHOULD be cheap (a single SQL
-// query or one lvs call). They run on every Prometheus scrape (default
+// query or one statfs call). They run on every Prometheus scrape (default
 // 15 s); the wrapper below caches the result for 5 s.
 type DashboardMetrics struct {
 	// ListSnapshotStats returns every live (non-stale) snapshot row's
@@ -79,12 +77,11 @@ type DashboardMetrics struct {
 	// across instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING}.
 	// schedd's ledger already maintains this number; pass it through.
 	ResidentBytes func(ctx context.Context) (int64, error)
-	// LvFcUsedPct returns the percentage of the lv-fc logical volume
-	// currently in use (0..100). Implemented by `lvs --noheadings -o
-	// data_percent LV_NAME`; the default in DefaultLvFcUsedPct
-	// handles the parsing. Returns 0 (not an error) when lvs is
-	// unavailable so the dashboard degrades gracefully on a macOS
-	// dev box.
+	// LvFcUsedPct returns the percentage of the spec §8 lv-fc volume
+	// (the filesystem mounted at /srv/fc) currently in use (0..100).
+	// DefaultFcVolumeUsedPct reads it with statfs. An error leaves the
+	// gauge at its previous value, or NaN ("no data") before the first
+	// successful read.
 	LvFcUsedPct func(ctx context.Context) (float64, error)
 }
 
@@ -507,10 +504,10 @@ type DashboardGauges struct {
 	cachedRAM float64
 	cachedLV  float64
 	// refreshing is set while a scrape-triggered refresh is in flight
-	// (PG / lvs callbacks running outside the lock). A second scrape
+	// (PG / statfs callbacks running outside the lock). A second scrape
 	// arriving during the same window sees refreshing==1 and skips,
 	// returning the cached value. Without this, a scrape storm would
-	// multiply the load on PG and lvs (the exact thing the TTL is
+	// multiply the load on PG and statfs (the exact thing the TTL is
 	// meant to prevent). Atomic so the check is lock-free.
 	refreshing atomic.Bool
 }
@@ -523,6 +520,10 @@ func NewDashboardGauges(src DashboardMetrics) *DashboardGauges {
 		reg: prometheus.NewRegistry(),
 		ttl: 5 * time.Second,
 		src: src,
+		// No data until the first successful volume read. A zero here
+		// exported "0% used" forever on hosts where the probe could not
+		// run, which kept the lv-fc alerts from ever firing.
+		cachedLV: math.NaN(),
 	}
 	g.reg.MustRegister(
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
@@ -539,7 +540,7 @@ func NewDashboardGauges(src DashboardMetrics) *DashboardGauges {
 		}, g.residentPct),
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Name: "fcvm_lv_fc_used_pct",
-			Help: "Percentage of the lv-fc logical volume currently in use (spec §8; > 80 warn, > 90 page).",
+			Help: "Percentage of the lv-fc volume (the filesystem mounted at /srv/fc) currently in use (spec §8; > 80 warn, > 90 page).",
 		}, g.lvPct),
 	)
 	return g
@@ -672,44 +673,24 @@ func (g *DashboardGauges) lvPct() float64 {
 
 // --- Default lv-fc implementation ------------------------------------------
 
-// DefaultLvFcUsedPct returns a closure that runs `lvs --noheadings -o
-// data_percent <lvName>` and parses the trailing percent.
+// DefaultFcVolumeUsedPct returns a closure that reports how full the
+// filesystem holding root (the spec §8 lv-fc volume, mounted at /srv/fc)
+// is, using statfs.
 //
-// On failure (lvs not on PATH, lv missing, parse error) the closure
-// returns math.NaN() and a non-nil error. NaN is the load-bearing
-// choice: Prometheus renders NaN as no-data, so Grafana shows "No
-// data" instead of "0% used" — which would be dangerously misleading
-// on a box where the lv-fc volume doesn't exist (alert at 90% never
-// fires if the gauge is silently pinned at 0). Returning 0 here would
-// also break the alert threshold; returning -1 would render as -100%
-// in some Grafana panels. NaN is the only value that degrades the
-// panel honestly.
+// It used to read `lvs -o data_percent lv-fc`. data_percent is only
+// populated for thin pools and snapshots, and fleets on cloud disks have
+// no LVM at all, so the probe always failed, the gauge stayed at 0, and
+// FaasLvFcUsageHigh* could never fire. Measuring the mounted filesystem
+// works for a logical volume, a partition or a bare disk alike.
 //
-// The dashboard cache (refresh) checks the error and keeps its prior
-// value on failure; NaN only reaches the gauge when the cache has no
-// prior value (very first scrape after boot, lv missing from the start).
-//
-// The 1 s ctx budget matches the loop-tick cadence; lv-fc stats are cheap.
-func DefaultLvFcUsedPct(lvName string) func(ctx context.Context) (float64, error) {
-	return func(ctx context.Context) (float64, error) {
-		if lvName == "" {
-			return math.NaN(), errors.New("fcvm: empty lv name")
-		}
-		cctx, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(cctx, "lvs", "--noheadings", "-o", "data_percent", lvName).Output()
+// On failure the closure returns math.NaN() and the error. The dashboard
+// cache keeps its prior value on error, and exports NaN ("no data")
+// before the first successful read rather than a misleading 0.
+func DefaultFcVolumeUsedPct(root string) func(ctx context.Context) (float64, error) {
+	return func(context.Context) (float64, error) {
+		pct, err := hostsize.FilesystemUsedPct(root)
 		if err != nil {
-			return math.NaN(), err
-		}
-		// Output looks like "  37.42\n" — trim, drop trailing %, parse.
-		s := strings.TrimSpace(string(out))
-		s = strings.TrimSuffix(s, "%")
-		if s == "" {
-			return math.NaN(), nil
-		}
-		pct, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return math.NaN(), err
+			return math.NaN(), fmt.Errorf("fcvm: fc volume usage: %w", err)
 		}
 		return pct, nil
 	}

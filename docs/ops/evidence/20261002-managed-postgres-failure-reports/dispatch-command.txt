@@ -1,0 +1,5 @@
+printf %s 'fcb6804f9168578468cf7ea5c5aabca7f28fd53a45e4ef970cfde59033be1d9c  /var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/source-selected.tar.gz
+09876fa7df2950b0defdd2c7dc4543577d5b6d7d3b1f9bf473ecc2d4cab55f6c  /var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/source-supplement.tar.gz
+ef12629e6d4edf7fc53c8960415bd4224e7f7044ee8952b1a028443a051c552f  /var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/source-node-supplement.tar.gz
+b4622b4e14d5bc76670d5b2828d1a6571319f6e814cfa2a87e8b987c68215a2d  /var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/remote-run.sh
+' | sha256sum -c - && sudo systemd-run --unit=gregale-managed-pg-failure-reports-d598bb27-source-bound '--property=TemporaryFileSystem=/run/mpgr-d598bb27:rw,size=4G,mode=1777 /srv/fc/jail:rw,size=1G,mode=0755' --property=MemoryMax=10G /usr/bin/bash -c 'exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/remote-run.sh > /var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/run.log 2>&1'

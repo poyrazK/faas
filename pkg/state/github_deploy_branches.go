@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode"
-)
 
-var deployScopePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // ProjectDeployBranchesStore is an optional extension implemented by stores
 // that persist GitHub branch-to-deployment-scope routing. Keeping this out of
@@ -32,7 +31,7 @@ func validateDeployBranchMapping(branches map[string]string) error {
 				return fmt.Errorf("state: invalid deploy branch %q", branch)
 			}
 		}
-		if strings.TrimSpace(scope) != scope || !deployScopePattern.MatchString(scope) {
+		if strings.TrimSpace(scope) != scope || api.ValidateScope(scope) != nil {
 			return fmt.Errorf("state: invalid deployment scope for branch %q", branch)
 		}
 	}

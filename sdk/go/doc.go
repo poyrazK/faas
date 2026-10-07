@@ -95,6 +95,25 @@
 // The guest filesystem is ephemeral and no customer storage disk is attached
 // to the run. The final receipt is returned only after the VM is destroyed.
 //
+// # Gregale Issues
+//
+// Use a deployment-bound issue ingest token to report application exceptions
+// without an account API key. IssueReporter keeps a bounded in-memory queue;
+// call CaptureException at handled failure boundaries, RecoverAndRepanic from
+// a deferred worker boundary, and Flush or Close during graceful shutdown.
+// The reporter captures the current goroutine stack and never captures locals,
+// request bodies, or arbitrary context values.
+//
+// # Runtime feature flags
+//
+// NewGregaleFlags evaluates immutable customer-scoped flag configuration in a
+// managed workload. Apply its Middleware to Gregale ingress handlers, then call
+// Boolean or Variant with the request context and mark the selected behavior
+// with Used. The middleware adds bounded response evidence. Use
+// GregaleFlagsTransport or PropagationHeader to carry used decisions into
+// managed services and queued work. Only trust Gregale's customer and flag
+// context headers on listeners where the Gregale gateway replaces them.
+//
 // # Concurrency
 //
 // A Client is safe for concurrent use. The HTTP transport is shared;

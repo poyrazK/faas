@@ -256,6 +256,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		// for OCI job-image materialization.
 		notif, err = db.SubscribeWithReconnect(ctx, l.pool, []string{
 			db.NotifyDeploymentChanged,
+			db.NotifyEnvironmentWorkloadImage,
 			db.NotifyJobChanged,
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
@@ -356,6 +357,11 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 		return
 	}
 	for _, deployment := range rows {
+		if deployment.EnvironmentWorkloadHeld() && deployment.Status == state.DeploySnapshotting && (deployment.RootfsPath != "" || deployment.RootfsKey != "") {
+			// A staged artifact is deliberately waiting for its graph, rather
+			// than a lost snapshot handoff. Its coordinator owns cancellation.
+			continue
+		}
 		build, buildErr := l.store.BuildByDeployment(ctx, deployment.ID)
 		if buildErr == nil && (build.Status == state.BuildQueued || build.Status == state.BuildRunning) {
 			continue
@@ -437,17 +443,21 @@ func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) error 
 	return nil
 }
 
-// dispatchNotification is the LISTEN fast path. A durable row is acknowledged
-// only after the handler succeeds; otherwise the outbox worker can reclaim it
-// after the normal lease/retry delay.
+// dispatchNotification gives durable LISTEN deliveries the same renewable
+// ownership as replay. Legacy and advisory notifications still run directly.
 func (l *Loop) dispatchNotification(ctx context.Context, n db.Notification) error {
-	if err := l.HandleNotification(ctx, n); err != nil {
-		return err
-	}
-	if n.OutboxID != 0 {
-		if err := db.AcknowledgeNotification(ctx, l.pool, n); err != nil {
-			return fmt.Errorf("acknowledge durable notification %d: %w", n.OutboxID, err)
+	if l.pool != nil && n.OutboxID > 0 && db.IsDurableNotificationChannel(n.Channel) {
+		node := ""
+		if l.handler != nil {
+			node = l.handler.nodeName
 		}
+		return db.DeliverNotificationForNode(ctx, l.pool, "imaged", node, n, l.HandleNotification)
+	}
+	if err := l.HandleNotification(ctx, n); err != nil {
+		if errors.Is(err, db.ErrNotificationNotOwned) {
+			return nil
+		}
+		return err
 	}
 	return nil
 }
@@ -456,6 +466,11 @@ func (l *Loop) dispatchNotification(ctx context.Context, n db.Notification) erro
 // cleanup. When lv-fc usage is at or above the alarm threshold, also walks
 // biggest accounts first until pressure is relieved.
 func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
+	if l.handler != nil {
+		if err := l.handler.retryLayerArtifactDeletions(ctx); err != nil {
+			l.log.Warn("imaged: retry layer artifact deletion", "err", err)
+		}
+	}
 	l.gcMu.Lock()
 	defer l.gcMu.Unlock()
 
@@ -895,8 +910,10 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 				"deployment", deploymentID, "layer", sched.AppLayerKey(t.AppSlug, deploymentID))
 			continue
 		}
-		if err := be.Delete(ctx, sched.AppLayerKey(t.AppSlug, deploymentID)); err != nil {
-			l.log.Warn("imaged: gc remove ext4", "deployment", deploymentID, "err", err)
+		deployment := state.Deployment{ID: deploymentID, RootfsKey: t.DeploymentRootfsKey}
+		if err := l.handler.deleteDeploymentLayers(ctx, be, deployment, t.AppSlug); err != nil {
+			l.log.Warn("imaged: gc remove layers", "deployment", deploymentID, "err", err)
+			deleteErrors = append(deleteErrors, err)
 		}
 	}
 	// Best-effort: if the backend supports LocalArtifactLister (it does
@@ -941,18 +958,29 @@ func removeEmptySnapshotParents(root, key string) {
 	}
 }
 
-// recoverBuildHandoffs consumes successful builds whose image stage has not
-// started. Provenance and rootfs are committed with success, so an imaged
-// restart or a lost snapshot_boot notification cannot strand this handoff.
+// recoverBuildHandoffs resumes checkpointed preparations, then consumes
+// successful builds that have not started image preparation.
 func (l *Loop) recoverBuildHandoffs(ctx context.Context) {
 	if l.handler == nil || l.store == nil {
 		return
+	}
+	if images, ok := l.store.(state.DeploymentImagePreparationStore); ok {
+		work, err := images.ListResumableImagePreparations(ctx, l.handler.nodeName, 16)
+		if err != nil {
+			l.log.Warn("imaged: list resumable image preparations", "err", err)
+		} else {
+			l.recoverImageWork(ctx, work)
+		}
 	}
 	work, err := l.store.ListBuildsAwaitingImage(ctx, l.handler.nodeName, 16)
 	if err != nil {
 		l.log.Warn("imaged: recover build handoffs", "err", err)
 		return
 	}
+	l.recoverImageWork(ctx, work)
+}
+
+func (l *Loop) recoverImageWork(ctx context.Context, work []state.BuildImageWork) {
 	for _, item := range work {
 		if err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID}); err != nil {
 			l.log.Warn("imaged: recovered build handoff failed", "deployment", item.DeploymentID, "err", err)

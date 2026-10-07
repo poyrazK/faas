@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FailureRules } from './FailureRules.js';
 import type { JobRunInput } from './JobRunInput.js';
 /**
  * Atomic fan-out into indexed task records; supply `tasks`, an ordered
@@ -15,6 +16,7 @@ import type { JobRunInput } from './JobRunInput.js';
  */
 export type CreateJobRunRequest = {
   tasks?: number;
+  failure_rules?: FailureRules;
   /**
    * Ordered input set. Creates one task per entry; tasks may be omitted or must match the input count. References are opaque and fetched by the customer image.
    */

@@ -93,7 +93,7 @@ func cmdEdgeRules(args []string) int {
 	case subRm:
 		return cmdEdgeRulesRm(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown edge-rules subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown edge-rules subcommand %q\n", args[0])
 	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
 		maybeSuggestSub(sug)
 	}
@@ -521,7 +521,7 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")

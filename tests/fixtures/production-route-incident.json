@@ -1,0 +1,331 @@
+{
+  "version": 1,
+  "id": "002ae960-e008-4d64-9c42-c0c74c7cc2e5",
+  "app_id": "709f88fe-5c5f-42d5-98d6-bf2f9e57f2d8",
+  "deployment_id": "20428301-068f-4b77-a76b-737f7fe16048",
+  "revision": 1,
+  "status": "open",
+  "opened_at": "2026-10-03T13:03:04.746212+00:00",
+  "opening_report": {
+    "version": 1,
+    "app_id": "709f88fe-5c5f-42d5-98d6-bf2f9e57f2d8",
+    "enabled": true,
+    "revision": 1,
+    "deployment_id": "20428301-068f-4b77-a76b-737f7fe16048",
+    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "checked_at": "2026-10-03T13:03:04.746212+00:00",
+    "observation_anchor": "2026-10-03T12:03:04.737769+00:00",
+    "coverage": "observed_only",
+    "status": "violated",
+    "reason": "sustained_budget_violation",
+    "minimum_requests": 20,
+    "minimum_latency_requests": 100,
+    "routes": [
+      {
+        "route": {
+          "method": "POST",
+          "path": "/checkout",
+          "max_5xx_rate_bps": 500,
+          "max_p95_ms": 300
+        },
+        "status": "violated",
+        "reason": "sustained_budget_violation",
+        "error_status": "violated",
+        "latency_status": "violated",
+        "windows": [
+          {
+            "start": "2026-10-03T13:00:00+00:00",
+            "end": "2026-10-03T13:01:00+00:00",
+            "observed": {
+              "requests": 100,
+              "server_errors": 10,
+              "error_rate": 0.1,
+              "p95_latency_ms": 600
+            },
+            "error_status": "violated",
+            "error_reason": "server_error_budget_exceeded",
+            "latency_status": "violated",
+            "latency_reason": "latency_budget_exceeded"
+          },
+          {
+            "start": "2026-10-03T13:01:00+00:00",
+            "end": "2026-10-03T13:02:00+00:00",
+            "observed": {
+              "requests": 100,
+              "server_errors": 10,
+              "error_rate": 0.1,
+              "p95_latency_ms": 600
+            },
+            "error_status": "violated",
+            "error_reason": "server_error_budget_exceeded",
+            "latency_status": "violated",
+            "latency_reason": "latency_budget_exceeded"
+          }
+        ]
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "method": "POST",
+      "path": "/checkout",
+      "signal": "errors",
+      "windows": [
+        {
+          "start": "2026-10-03T16:00:00+03:00",
+          "end": "2026-10-03T16:01:00+03:00",
+          "requests": {
+            "matching_requests": 10,
+            "observed_rows": 1,
+            "examples_truncated": false,
+            "examples": [
+              {
+                "telemetry_id": "1d470b1b-c3f2-4a2f-b41c-86d3274916e6",
+                "received_at": "2026-10-03T16:00:01+03:00",
+                "status": 500,
+                "latency_ms": 600,
+                "represented_requests": 10,
+                "trace_id": "2bb8dcab62b6474fa762516719392ddd",
+                "evidence_path": "/v1/apps/demo/debug/requests/1d470b1b-c3f2-4a2f-b41c-86d3274916e6/evidence"
+              }
+            ]
+          }
+        },
+        {
+          "start": "2026-10-03T16:01:00+03:00",
+          "end": "2026-10-03T16:02:00+03:00",
+          "requests": {
+            "matching_requests": 10,
+            "observed_rows": 1,
+            "examples_truncated": false,
+            "examples": [
+              {
+                "telemetry_id": "6d03b559-a387-471b-aa48-ea8bc6815b95",
+                "received_at": "2026-10-03T16:01:01+03:00",
+                "status": 500,
+                "latency_ms": 600,
+                "represented_requests": 10,
+                "trace_id": "742db8b82956475fb65e5bbe9a3112f3",
+                "evidence_path": "/v1/apps/demo/debug/requests/6d03b559-a387-471b-aa48-ea8bc6815b95/evidence"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/checkout",
+      "signal": "latency",
+      "windows": [
+        {
+          "start": "2026-10-03T16:00:00+03:00",
+          "end": "2026-10-03T16:01:00+03:00",
+          "requests": {
+            "matching_requests": 100,
+            "observed_rows": 2,
+            "examples_truncated": false,
+            "examples": [
+              {
+                "telemetry_id": "1d470b1b-c3f2-4a2f-b41c-86d3274916e6",
+                "received_at": "2026-10-03T16:00:01+03:00",
+                "status": 500,
+                "latency_ms": 600,
+                "represented_requests": 10,
+                "trace_id": "2bb8dcab62b6474fa762516719392ddd",
+                "evidence_path": "/v1/apps/demo/debug/requests/1d470b1b-c3f2-4a2f-b41c-86d3274916e6/evidence"
+              },
+              {
+                "telemetry_id": "84044372-ffb0-4a2f-b7aa-a8e78ff7f187",
+                "received_at": "2026-10-03T16:00:01+03:00",
+                "status": 200,
+                "latency_ms": 100,
+                "represented_requests": 90,
+                "trace_id": "3162f2bff9e248f19fcba8b29c3c604f",
+                "evidence_path": "/v1/apps/demo/debug/requests/84044372-ffb0-4a2f-b7aa-a8e78ff7f187/evidence"
+              }
+            ]
+          },
+          "diagnostics": {
+            "coverage": "retained_samples",
+            "rows_limit": 32,
+            "dependencies_truncated": false,
+            "candidate": {
+              "sampled_rows": 2,
+              "sampled_requests": 100,
+              "samples_truncated": false,
+              "span_rows": 2,
+              "missing_span_rows": 0,
+              "span_samples": 2,
+              "spans_truncated": false,
+              "timing_incomplete": false,
+              "guest_rows": 2,
+              "guest_requests": 100,
+              "guest_p95_ms": 300,
+              "cold_boot_requests": 0,
+              "wake_samples": 0
+            },
+            "stable": {
+              "sampled_rows": 0,
+              "sampled_requests": 0,
+              "samples_truncated": false,
+              "span_rows": 0,
+              "missing_span_rows": 0,
+              "span_samples": 0,
+              "spans_truncated": false,
+              "timing_incomplete": false,
+              "guest_rows": 0,
+              "guest_requests": 0,
+              "cold_boot_requests": 0,
+              "wake_samples": 0
+            },
+            "dependencies": [
+              {
+                "type": "managed_binding",
+                "kind": "postgres",
+                "status": "one_sided",
+                "candidate": {
+                  "span_samples": 2,
+                  "represented_calls": 100,
+                  "error_calls": 0,
+                  "p95_ms": 200,
+                  "exclusive_p95_ms": 200,
+                  "examples": [
+                    {
+                      "telemetry_id": "84044372-ffb0-4a2f-b7aa-a8e78ff7f187",
+                      "received_at": "2026-10-03T16:00:01+03:00",
+                      "status": 200,
+                      "latency_ms": 100,
+                      "represented_requests": 90,
+                      "trace_id": "3162f2bff9e248f19fcba8b29c3c604f",
+                      "evidence_path": "/v1/apps/demo/debug/requests/84044372-ffb0-4a2f-b7aa-a8e78ff7f187/evidence"
+                    },
+                    {
+                      "telemetry_id": "1d470b1b-c3f2-4a2f-b41c-86d3274916e6",
+                      "received_at": "2026-10-03T16:00:01+03:00",
+                      "status": 500,
+                      "latency_ms": 600,
+                      "represented_requests": 10,
+                      "trace_id": "2bb8dcab62b6474fa762516719392ddd",
+                      "evidence_path": "/v1/apps/demo/debug/requests/1d470b1b-c3f2-4a2f-b41c-86d3274916e6/evidence"
+                    }
+                  ]
+                },
+                "stable": {
+                  "span_samples": 0,
+                  "represented_calls": 0,
+                  "error_calls": 0,
+                  "examples": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "start": "2026-10-03T16:01:00+03:00",
+          "end": "2026-10-03T16:02:00+03:00",
+          "requests": {
+            "matching_requests": 100,
+            "observed_rows": 2,
+            "examples_truncated": false,
+            "examples": [
+              {
+                "telemetry_id": "6d03b559-a387-471b-aa48-ea8bc6815b95",
+                "received_at": "2026-10-03T16:01:01+03:00",
+                "status": 500,
+                "latency_ms": 600,
+                "represented_requests": 10,
+                "trace_id": "742db8b82956475fb65e5bbe9a3112f3",
+                "evidence_path": "/v1/apps/demo/debug/requests/6d03b559-a387-471b-aa48-ea8bc6815b95/evidence"
+              },
+              {
+                "telemetry_id": "05bc593b-76b2-42b2-80a3-0efc61516f3e",
+                "received_at": "2026-10-03T16:01:01+03:00",
+                "status": 200,
+                "latency_ms": 100,
+                "represented_requests": 90,
+                "trace_id": "ab3547d82e6149f6b7c905e7cb1a2afe",
+                "evidence_path": "/v1/apps/demo/debug/requests/05bc593b-76b2-42b2-80a3-0efc61516f3e/evidence"
+              }
+            ]
+          },
+          "diagnostics": {
+            "coverage": "retained_samples",
+            "rows_limit": 32,
+            "dependencies_truncated": false,
+            "candidate": {
+              "sampled_rows": 2,
+              "sampled_requests": 100,
+              "samples_truncated": false,
+              "span_rows": 2,
+              "missing_span_rows": 0,
+              "span_samples": 2,
+              "spans_truncated": false,
+              "timing_incomplete": false,
+              "guest_rows": 2,
+              "guest_requests": 100,
+              "guest_p95_ms": 300,
+              "cold_boot_requests": 0,
+              "wake_samples": 0
+            },
+            "stable": {
+              "sampled_rows": 0,
+              "sampled_requests": 0,
+              "samples_truncated": false,
+              "span_rows": 0,
+              "missing_span_rows": 0,
+              "span_samples": 0,
+              "spans_truncated": false,
+              "timing_incomplete": false,
+              "guest_rows": 0,
+              "guest_requests": 0,
+              "cold_boot_requests": 0,
+              "wake_samples": 0
+            },
+            "dependencies": [
+              {
+                "type": "managed_binding",
+                "kind": "postgres",
+                "status": "one_sided",
+                "candidate": {
+                  "span_samples": 2,
+                  "represented_calls": 100,
+                  "error_calls": 0,
+                  "p95_ms": 200,
+                  "exclusive_p95_ms": 200,
+                  "examples": [
+                    {
+                      "telemetry_id": "6d03b559-a387-471b-aa48-ea8bc6815b95",
+                      "received_at": "2026-10-03T16:01:01+03:00",
+                      "status": 500,
+                      "latency_ms": 600,
+                      "represented_requests": 10,
+                      "trace_id": "742db8b82956475fb65e5bbe9a3112f3",
+                      "evidence_path": "/v1/apps/demo/debug/requests/6d03b559-a387-471b-aa48-ea8bc6815b95/evidence"
+                    },
+                    {
+                      "telemetry_id": "05bc593b-76b2-42b2-80a3-0efc61516f3e",
+                      "received_at": "2026-10-03T16:01:01+03:00",
+                      "status": 200,
+                      "latency_ms": 100,
+                      "represented_requests": 90,
+                      "trace_id": "ab3547d82e6149f6b7c905e7cb1a2afe",
+                      "evidence_path": "/v1/apps/demo/debug/requests/05bc593b-76b2-42b2-80a3-0efc61516f3e/evidence"
+                    }
+                  ]
+                },
+                "stable": {
+                  "span_samples": 0,
+                  "represented_calls": 0,
+                  "error_calls": 0,
+                  "examples": []
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "evidence_truncated": false
+}

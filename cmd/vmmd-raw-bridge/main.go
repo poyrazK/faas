@@ -123,7 +123,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "read head: %v\n", err)
 		os.Exit(4)
 	}
-	if _, err := os.Stdout.Write(head); err != nil {
+	// readResponseHead removes the delimiter while splitting head/body.
+	// Restore it for vmmd's readUntilBlankLine before emitting raw frames.
+	if _, err := os.Stdout.Write(append(head, '\n', '\n')); err != nil {
 		fmt.Fprintf(os.Stderr, "write head: %v\n", err)
 		os.Exit(4)
 	}

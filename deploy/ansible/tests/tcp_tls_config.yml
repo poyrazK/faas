@@ -1,0 +1,77 @@
+---
+- name: Verify TCP TLS deployment configuration without service or certificate writes
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tcp_tls_tasks: "{{ playbook_dir }}/../roles/gatewayd_public_service/tasks/tcp_tls.yml"
+    tcp_tls_template: "{{ playbook_dir }}/../roles/gatewayd_public_service/templates/tcpd.env.j2"
+  tasks:
+    - name: Default empty configuration does not prepare a directory
+      ansible.builtin.include_tasks: "{{ tcp_tls_tasks }}"
+      vars:
+        faas_tcpd_tls_cert_dir: ''
+
+    - name: Validate an existing root-owned directory without modifying it
+      ansible.builtin.include_tasks: "{{ tcp_tls_tasks }}"
+      vars:
+        faas_tcpd_tls_cert_dir: /usr
+
+    - name: Confirm existing directory ownership and permissions were preserved
+      ansible.builtin.stat:
+        path: /usr
+        get_checksum: false
+        get_mime: false
+      register: tcp_tls_directory_after
+
+    - name: Compare ownership and permissions
+      ansible.builtin.assert:
+        that:
+          - tcp_tls_directory_after.stat.uid == gatewayd_tcp_tls_directory.stat.uid
+          - tcp_tls_directory_after.stat.gid == gatewayd_tcp_tls_directory.stat.gid
+          - tcp_tls_directory_after.stat.mode == gatewayd_tcp_tls_directory.stat.mode
+
+    - name: Reject unsafe paths before directory preparation
+      ansible.builtin.include_tasks: tcp_tls_invalid_case.yml
+      loop:
+        - ''
+        - /
+        - relative/certificates
+        - /tmp/../certificates
+        - /tmp/./certificates
+        - "/tmp/certificates\nINJECTED=1"
+        - "/tmp/certificates\rINJECTED=1"
+        - "/tmp/certificates\u007f"
+        - "/tmp/certificates\u0085"
+        - "/tmp/certificates\u0000"
+        - 42
+      when: item != ''
+
+    - name: Reject unsafe existing directory without changing it
+      ansible.builtin.include_tasks: tcp_tls_invalid_case.yml
+      vars:
+        item: /tmp
+        tcp_tls_expected_failure: 'gatewayd_public_service — validate existing TCP TLS directory'
+
+    - name: Render quoted certificate path containing whitespace and shell characters
+      ansible.builtin.set_fact:
+        tcp_tls_rendered: "{{ lookup('ansible.builtin.template', tcp_tls_template) }}"
+      vars:
+        faas_tcpd_tls_cert_dir: '/etc/faas/tcp tls/"quoted"\$material'
+
+    - name: Verify environment file preserves the path as one quoted value
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('FAAS_TCPD_TLS_CERT_DIR=' ~ ('/etc/faas/tcp tls/"quoted"\$material' | to_json(ensure_ascii=False))) in tcp_tls_rendered
+          - tcp_tls_rendered.splitlines() | select('match', '^FAAS_TCPD_TLS_CERT_DIR=') | list | length == 1
+
+    - name: Render default unconfigured termination
+      ansible.builtin.set_fact:
+        tcp_tls_rendered: "{{ lookup('ansible.builtin.template', tcp_tls_template) }}"
+      vars:
+        faas_tcpd_tls_cert_dir: ''
+
+    - name: Verify default does not emit a certificate override
+      ansible.builtin.assert:
+        that:
+          - "'FAAS_TCPD_TLS_CERT_DIR=' not in tcp_tls_rendered"

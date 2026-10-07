@@ -16,3 +16,12 @@
 # Environment= line on FAAS_GATEWAYD_ROLE, so the drop-in is the
 # only source of the env var. Idempotent.
 Environment=FAAS_GATEWAYD_ROLE={{ faas_box_role }}
+
+# ADR-201 traffic resilience (production-us hunt #4, H4-68). Both gates
+# shipped default-off and production never set them, so customers'
+# kind=retry and kind=circuit_breaker edge rules were stored and listed as
+# enabled but did nothing. Retry still replays only transport failures and
+# only when a rule or the operator default allows it; the breaker is the
+# instance-health breaker shared by the public path and the service proxy.
+Environment=FAAS_GATEWAY_RETRY={{ 'true' if (faas_gateway_retry | default(true) | bool) else 'false' }}
+Environment=FAAS_GATEWAY_CIRCUIT_BREAKER={{ 'true' if (faas_gateway_circuit_breaker | default(true) | bool) else 'false' }}

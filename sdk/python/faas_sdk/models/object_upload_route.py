@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.object_encryption import ObjectEncryption
+
 
 T = TypeVar("T", bound="ObjectUploadRoute")
 
@@ -26,6 +30,10 @@ class ObjectUploadRoute:
     updated_at: datetime.datetime
     key_prefix: str | Unset = UNSET
     allowed_content_types: list[str] | Unset = UNSET
+    encryption: ObjectEncryption | Unset = UNSET
+    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
+    reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
+    string entries."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,6 +57,10 @@ class ObjectUploadRoute:
         if not isinstance(self.allowed_content_types, Unset):
             allowed_content_types = self.allowed_content_types
 
+        encryption: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.encryption, Unset):
+            encryption = self.encryption.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -66,11 +78,15 @@ class ObjectUploadRoute:
             field_dict["key_prefix"] = key_prefix
         if allowed_content_types is not UNSET:
             field_dict["allowed_content_types"] = allowed_content_types
+        if encryption is not UNSET:
+            field_dict["encryption"] = encryption
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.object_encryption import ObjectEncryption
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -90,6 +106,13 @@ class ObjectUploadRoute:
 
         allowed_content_types = cast(list[str], d.pop("allowed_content_types", UNSET))
 
+        _encryption = d.pop("encryption", UNSET)
+        encryption: ObjectEncryption | Unset
+        if isinstance(_encryption, Unset):
+            encryption = UNSET
+        else:
+            encryption = ObjectEncryption.from_dict(_encryption)
+
         object_upload_route = cls(
             id=id,
             name=name,
@@ -100,6 +123,7 @@ class ObjectUploadRoute:
             updated_at=updated_at,
             key_prefix=key_prefix,
             allowed_content_types=allowed_content_types,
+            encryption=encryption,
         )
 
         object_upload_route.additional_properties = d

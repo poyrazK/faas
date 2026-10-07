@@ -734,6 +734,7 @@ companions:
 `))}
 	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
 		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+		Healthcheck: &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "audit.Echo"}},
 	})
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
@@ -741,6 +742,10 @@ companions:
 	deployment, err := e.store.LatestDeployment(context.Background(), e.appID)
 	if err != nil {
 		t.Fatalf("LatestDeployment: %v", err)
+	}
+	var probe api.DeploymentHealthcheck
+	if err := json.Unmarshal(deployment.OverrideHealthcheck, &probe); err != nil || probe.GRPC == nil || probe.GRPC.Service != "audit.Echo" {
+		t.Fatalf("manifest dependencies dropped explicit probe: %s (%v)", deployment.OverrideHealthcheck, err)
 	}
 	var dependencies []api.WorkloadDependency
 	if err := json.Unmarshal(deployment.OverrideMainDependsOn, &dependencies); err != nil {

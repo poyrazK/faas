@@ -305,6 +305,7 @@ type Stats struct {
 	CallbackDeadLetterCapacityBytes    uint64  `json:"callback_dead_letter_capacity_bytes"`
 	CallbackDeadLetterEvictions        uint64  `json:"callback_dead_letter_evictions"`
 	CallbackDeadLetterLastEvictionUnix int64   `json:"callback_dead_letter_last_eviction_unix"`
+	CallbackDeadLetterDiscards         uint64  `json:"callback_dead_letter_discards"`
 }
 
 type connection struct {
@@ -1359,6 +1360,7 @@ func (m *Manager) Stats() Stats {
 		stats.CallbackDeadLetterCapacityBytes = uint64(maxInt64(outbox.DeadLetterCapacityBytes, 0))
 		stats.CallbackDeadLetterEvictions = outbox.DeadLetterEvictions
 		stats.CallbackDeadLetterLastEvictionUnix = outbox.DeadLetterLastEvictionUnix
+		stats.CallbackDeadLetterDiscards = outbox.DeadLetterDiscards
 	}
 	return stats
 }

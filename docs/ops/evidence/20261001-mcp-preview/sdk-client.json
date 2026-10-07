@@ -1,0 +1,42 @@
+{
+  "endpoint": "https://gregale-mcp-demo.gregale.dev/mcp",
+  "checkedAt": "2026-10-01T17:58:10.170Z",
+  "firstRequest": {
+    "status": 200,
+    "wake": "restored",
+    "elapsedMs": 2742
+  },
+  "sdk": {
+    "tools": [
+      "greet",
+      "add",
+      "stream_demo"
+    ],
+    "add": {
+      "sum": 12
+    },
+    "greet": "Hello, Poyraz!"
+  },
+  "streaming": {
+    "status": 200,
+    "contentType": "text/event-stream",
+    "streamingStatus": "accept-json-downgrade",
+    "wake": "hot",
+    "progressAtMs": [
+      331,
+      706,
+      1119
+    ],
+    "completedAtMs": 1527
+  },
+  "legacy": {
+    "protocolVersion": "2025-11-25",
+    "server": {
+      "name": "gregale-mcp-server",
+      "version": "1.0.0"
+    },
+    "add": {
+      "sum": 30
+    }
+  }
+}

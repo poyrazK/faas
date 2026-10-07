@@ -1,0 +1,202 @@
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.33s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.10s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.08s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.38s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.11s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.11s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.08s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.35s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.11s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.10s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.06s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.35s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.09s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.35s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.12s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.07s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.34s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.13s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.07s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.07s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.06s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.40s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.19s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.36s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.13s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.36s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.12s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.08s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.36s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.11s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.08s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.30s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.07s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.07s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.27s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.07s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.07s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.27s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.07s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.07s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.35s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.11s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.07s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.07s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.10s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.29s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.07s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.08s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.33s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.10s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.05s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.37s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.12s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.07s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.10s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.08s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.32s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.10s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.07s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.31s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.07s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.42s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.12s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.12s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/fcvm	6.909s

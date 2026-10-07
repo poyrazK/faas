@@ -135,7 +135,7 @@ func TestSchemaDataDoesNotBecomeResourceReference(t *testing.T) {
 	}
 }
 
-// ADR-385: canonical inputs remain usable by an ordinary typed HTTP handler.
+// ADR-521: canonical inputs remain usable by an ordinary typed HTTP handler.
 func TestCanonicalOperationIntegersRemainTypedHandlerCompatible(t *testing.T) {
 	for _, raw := range []string{`{"completed":100,"total":1000}`, `{"total":1e3,"completed":100.00}`, `{"completed":1e2,"total":1000.0}`} {
 		canonical, err := CanonicalJSON([]byte(raw))

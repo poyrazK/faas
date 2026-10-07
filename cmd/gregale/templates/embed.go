@@ -1,4 +1,4 @@
-// Package templates ships the nineteen `gregale deploy --template <name>`
+// Package templates ships the twenty `gregale deploy --template <name>`
 // starter projects as an embed.FS so the CLI is a single static
 // binary. Precedent: migrations/embed.go:13 — `//go:embed` pulls in
 // the sibling subdirectories at compile time.
@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -70,6 +70,22 @@ var Names = []string{
 	"ai-chat",
 	"secret-reload-node",
 	"customer-platform",
+	"mcp-node",
+}
+
+// generatedDotfiles are files a template needs whose names start with '.'.
+// //go:embed omits such names from a directory pattern, so Materialize
+// writes them instead.
+var generatedDotfiles = map[string]map[string]string{
+	// production-us hunt #4: tools/ holds owner-machine scripts that need an
+	// account-owner FAAS_TOKEN. Without this file `gregale doctor` scanned
+	// them and told users to store FAAS_TOKEN as an app secret.
+	"customer-platform": {
+		".gregaleignore": "# Owner-machine tools mint and rotate customer keys with an account-owner\n" +
+			"# credential. They never run in the app (the Dockerfile copies app/\n" +
+			"# only), so keep them out of the upload and out of doctor's env checks.\n" +
+			"/tools/\n",
+	},
 }
 
 // Exists reports whether name is a known template.
@@ -107,6 +123,14 @@ func Materialize(name, dest string) error {
 	}
 	if err := os.CopyFS(dest, subFS); err != nil {
 		return err
+	}
+	for file, content := range generatedDotfiles[name] {
+		target := filepath.Join(dest, file)
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+				return err
+			}
+		}
 	}
 	// hello-go is an HTTP app and needs its module marker. function-go stays
 	// marker-free so a later zero-config deploy detects handler.go as a
@@ -260,10 +284,12 @@ func CategoryFor(name string) string {
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"
+	case "mcp-node":
+		return "mcp"
 	}
 	return ""
 }
 
 // CategoryOrder is the canonical order in which `gregale init --list`
 // prints categories. Pins against accidental reorders in CategoryFor.
-var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai"}
+var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp"}

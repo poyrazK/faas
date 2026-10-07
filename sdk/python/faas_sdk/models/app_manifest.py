@@ -100,9 +100,12 @@ class AppManifest:
         | Unset
     ) = UNSET
     """Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after
-    replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. For the main image this
-    remains limited to single-workload deployments; long-running sidecar images are opted in independently. Must
-    differ from stop_signal (ADR-222)."""
+    replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Main and long-running sidecar
+    images opt in independently, including deployments with companions; each workload reloads only its own granted
+    secrets. Must differ from stop_signal (ADR-222)."""
+    secret_reload_readiness: bool | Unset = False
+    """Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal.
+    Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506)."""
     stop_grace_period: None | str | Unset = UNSET
     """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
     enforced by Validate() — ADR-138 §Decision 4."""
@@ -142,7 +145,8 @@ class AppManifest:
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
     worker_replicas: WorkerScaling | Unset = UNSET
-    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0."""
     favicon: None | str | Unset = UNSET
     """Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
     robots_txt: None | str | Unset = UNSET
@@ -233,6 +237,8 @@ class AppManifest:
             secret_reload_signal = self.secret_reload_signal
         else:
             secret_reload_signal = self.secret_reload_signal
+
+        secret_reload_readiness = self.secret_reload_readiness
 
         stop_grace_period: None | str | Unset
         if isinstance(self.stop_grace_period, Unset):
@@ -359,6 +365,8 @@ class AppManifest:
             field_dict["stop_signal"] = stop_signal
         if secret_reload_signal is not UNSET:
             field_dict["secret_reload_signal"] = secret_reload_signal
+        if secret_reload_readiness is not UNSET:
+            field_dict["secret_reload_readiness"] = secret_reload_readiness
         if stop_grace_period is not UNSET:
             field_dict["stop_grace_period"] = stop_grace_period
         if execution_mode is not UNSET:
@@ -541,6 +549,8 @@ class AppManifest:
             )
 
         secret_reload_signal = _parse_secret_reload_signal(d.pop("secret_reload_signal", UNSET))
+
+        secret_reload_readiness = d.pop("secret_reload_readiness", UNSET)
 
         def _parse_stop_grace_period(data: object) -> None | str | Unset:
             if data is None:
@@ -760,6 +770,7 @@ class AppManifest:
             healthcheck=healthcheck,
             stop_signal=stop_signal,
             secret_reload_signal=secret_reload_signal,
+            secret_reload_readiness=secret_reload_readiness,
             stop_grace_period=stop_grace_period,
             execution_mode=execution_mode,
             restart_policy=restart_policy,

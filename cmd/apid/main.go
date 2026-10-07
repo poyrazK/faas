@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authcode"
 	"github.com/onebox-faas/faas/pkg/billing"
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
@@ -560,7 +561,13 @@ func apidConfigPath(lookup func(string) *flag.Flag) string {
 }
 
 func main() {
-	wire.Daemon("apid", run)
+	cloneWorker := flag.Bool("clone-worker", false, "run the bounded project-environment clone worker without API listeners")
+	wire.Daemon("apid", func(ctx context.Context, log *slog.Logger) error {
+		if *cloneWorker {
+			return runProjectEnvironmentCloneWorker(ctx, log)
+		}
+		return run(ctx, log)
+	})
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
@@ -614,6 +621,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	if err := rejectProductionDevEnvironment(cfg.Role, deps.getenv); err != nil {
 		return err
+	}
+	// ADR-520: a malformed edge address would otherwise silently drop out
+	// of the customer DNS instructions and the routing probe.
+	if _, err := api.CustomDomainAddresses(); err != nil {
+		return fmt.Errorf("apid: %w", err)
 	}
 
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
@@ -705,17 +717,25 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
 		go srv.runSafeReleaseEmergencyAbort(ctx)
+		go srv.runServiceRolloutBindingWorker(ctx)
+		go srv.runCheckedRollbackWorker(ctx)
+		go srv.runAlertRollbackWorker(ctx)
+		go srv.runRollbackOn5xxWorker(ctx)
+		go srv.runOperationArtifactCleanup(ctx)
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
+		go srv.runProjectEnvironmentCloneCoordinator(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
+		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runManagedRealtimeEndpointReconciler(ctx)
 		go srv.runManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.runManagedRealtimeOwnerReaper(ctx)
 		go srv.runManagedRealtimeHistoryReaper(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
+		go srv.runManagedExecutionWorkflowWorker(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -771,6 +791,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// surface can be dark-launched with the ginstal kill-switch
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
+		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write
@@ -780,12 +801,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ListAllAccounts walk so it stays bounded by the customer
 		// count on the one box.
 		graceLoop := grace.New(grace.Params{
-			Store:     srv.store,
-			Mailer:    graceSenderAdapter{m: srv.mailer},
-			Log:       log,
-			Interval:  graceIntervalFromEnv(log),
-			Artifacts: srv.sbomStorage,
-			Registry:  srv.ops.Registry(),
+			Store:               srv.store,
+			BeforeAccountDelete: srv.cleanupExpiredAccountObjectBuckets,
+			Mailer:              graceSenderAdapter{m: srv.mailer},
+			Log:                 log,
+			Interval:            graceIntervalFromEnv(log),
+			Artifacts:           srv.sbomStorage,
+			Registry:            srv.ops.Registry(),
 			Notif: func(ctx context.Context, ch, payload string) error {
 				return srv.notif.Notify(ctx, ch, payload)
 			},
@@ -1399,6 +1421,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
+	if cfg.OutboundProbeGatewayURL != "" && !api.ValidOutboundProbeGateway(cfg.OutboundProbeGatewayURL) {
+		return fmt.Errorf("apid: outbound_probe_gateway_url must be an HTTPS origin")
+	}
+	srv.outboundProbeGatewayURL = cfg.OutboundProbeGatewayURL
+	if err := srv.configureOperations(*cfg, deps.getenv); err != nil {
+		return err
+	}
+	srv.startOperationNotifications(ctx)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
@@ -1417,11 +1447,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, ops.Registry())
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
-	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector)
+	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
 	// handler so Resend bounce / complaint events feed the
@@ -1503,6 +1533,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if billingProv != nil {
 			srv.WithBillingProvider(billingProv)
+		} else if loadedName == "stripe" {
+			srv.legacyStripeInvoiceReader = stripe.NewClient(nil, nil, billingCfg.Stripe.APIKey, "", log)
 		}
 		log.Info("billing provider loaded", "provider", provName)
 	} else {
@@ -1520,6 +1552,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: load SBOM storage backend: %w", err)
 	}
 	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage)
+	srv.WithOperationArtifactStorage(sbomStorage)
 	if signPubPath := strings.TrimSpace(deps.getenv("FAAS_SIGN_PUB")); signPubPath != "" {
 		rollbackVerifier, verifyErr := cosign.NewLocalVerifier(signPubPath, sbomStorage)
 		if verifyErr != nil {
@@ -1949,6 +1982,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
+	go srv.runAutomaticRouteCheckWorker(ctx)
+	go srv.runRouteMonitorWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -2331,6 +2366,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The customer-facing /readyz remains the richer dependency probe;
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
+	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
@@ -2391,8 +2428,14 @@ type pgNotifier struct {
 	log  *slog.Logger
 }
 
+var _ runtimeConfigRestartStatusReader = pgNotifier{}
+
 func (p pgNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, p.pool, channel, payload)
+}
+
+func (p pgNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (db.RuntimeConfigRestartStatus, error) {
+	return db.GetRuntimeConfigRestartStatus(ctx, p.pool, appID, wakeID)
 }
 
 // Subscribe hands long-lived SSE handlers a reconnecting LISTEN stream. A

@@ -169,16 +169,16 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 		current.AuthJWKSURL = *p.AuthJWKSURL
 	}
 	if p.AuthAudience != nil {
-		current.AuthAudience = append([]string(nil), (*p.AuthAudience)...)
+		current.AuthAudience = append([]string{}, (*p.AuthAudience)...)
 	}
 	if p.AuthAlgorithms != nil {
-		current.AuthAlgorithms = append([]string(nil), (*p.AuthAlgorithms)...)
+		current.AuthAlgorithms = append([]string{}, (*p.AuthAlgorithms)...)
 	}
 	if p.AuthRequiredClaims != nil {
 		current.AuthRequiredClaims = cloneManagedRealtimeClaims(*p.AuthRequiredClaims)
 	}
 	if p.AllowedOrigins != nil {
-		current.AllowedOrigins = append([]string(nil), (*p.AllowedOrigins)...)
+		current.AllowedOrigins = append([]string{}, (*p.AllowedOrigins)...)
 	}
 	if p.MaxConnections != nil {
 		current.MaxConnections = *p.MaxConnections

@@ -55,6 +55,8 @@ done
 case "$url" in
 *releases/latest) path="$FAKE_ROOT/api/latest.json" ;;
 *releases\?per_page=*) path="$FAKE_ROOT/api/list.json" ;;
+*releases/tags/v2.0.0-rc.7) path="$FAKE_ROOT/api/prerelease.json" ;;
+*releases/tags/v2.0.0-rc.8) path="$FAKE_ROOT/api/incomplete.json" ;;
 *) path="$FAKE_ROOT/dl/$(basename "$url")" ;;
 esac
 [ -f "$path" ] || exit 22
@@ -121,8 +123,11 @@ write_sums() {
 }
 write_sums
 
-printf '{"tag_name": "%s", "prerelease": false}\n' "$TAG" >"$FAKE_ROOT/api/latest.json"
+printf '{"tag_name":"%s","prerelease":false,"assets":[{"name":"gregale_%s_linux_amd64.tar.gz"},{"name":"CLI-SHA256SUMS"}]}\n' \
+	"$TAG" "$SEMVER" >"$FAKE_ROOT/api/latest.json"
 printf '[{"tag_name": "v2.0.0-rc.7", "prerelease": true}]\n' >"$FAKE_ROOT/api/list.json"
+printf '{"tag_name":"v2.0.0-rc.7","prerelease":true,"assets":[{"name":"gregale_2.0.0-rc.7_linux_amd64.tar.gz"},{"name":"CLI-SHA256SUMS"}]}\n' \
+	>"$FAKE_ROOT/api/prerelease.json"
 
 # ------------------------------------------------------------------ harness
 
@@ -136,7 +141,6 @@ run() {
 	set +e
 	RUN_OUT="$(
 		PATH="$STUB:$PATH" \
-			HOME="$TMP_DIR/home" \
 			FAKE_ROOT="$FAKE_ROOT" \
 			FAKE_UNAME_S="${FAKE_UNAME_S:-Linux}" \
 			FAKE_UNAME_M="${FAKE_UNAME_M:-x86_64}" \
@@ -193,6 +197,32 @@ grep -Fq "no stable release yet" <<<"$RUN_OUT" ||
 grep -Fq "v2.0.0-rc.7" <<<"$RUN_OUT" ||
 	fail "prerelease fallback should name the tag it chose: $RUN_OUT"
 mv "$FAKE_ROOT/api/latest.json.off" "$FAKE_ROOT/api/latest.json"
+
+# The real stable v0.1.17 release predates CLI archives. Default installation
+# must skip its raw-binary-only format and select a compatible release.
+cp "$FAKE_ROOT/api/latest.json" "$TMP_DIR/latest.good"
+printf '{"tag_name":"v0.1.17","assets":[{"name":"gregale"},{"name":"gregale-darwin-arm64"},{"name":"SHA256SUMS"}]}\n' \
+	>"$FAKE_ROOT/api/latest.json"
+DEST="$TMP_DIR/bin-legacy-stable"
+run expect-ok "stable release without CLI archives" --dir "$DEST"
+[ -x "$DEST/gregale" ] || fail "legacy stable must fall back to an installable release"
+grep -Fq "v2.0.0-rc.7" <<<"$RUN_OUT" || fail "must name the compatible release"
+grep -Fq "warning:" <<<"$RUN_OUT" || fail "fallback from stable must warn"
+
+# A release being uploaded can appear before the matching archive/checksum.
+# Skip it rather than selecting a tag which cannot be installed. Compact JSON
+# also exercises multiple tags on one line.
+printf '[{"tag_name":"v2.0.0-rc.8"},{"tag_name":"v2.0.0-rc.7"}]\n' >"$FAKE_ROOT/api/list.json"
+printf '{"tag_name":"v2.0.0-rc.8","assets":[{"name":"gregale_2.0.0-rc.8_linux_amd64.tar.gz"}]}\n' \
+	>"$FAKE_ROOT/api/incomplete.json"
+run expect-ok "newer release missing checksum asset" --dir "$TMP_DIR/bin-incomplete"
+grep -Fq "installing gregale v2.0.0-rc.7" <<<"$RUN_OUT" || fail "must skip checksum-less release"
+printf '{"tag_name":"v2.0.0-rc.8","assets":[{"name":"gregale_2.0.0-rc.8_darwin_arm64.tar.gz"},{"name":"CLI-SHA256SUMS"}]}\n' \
+	>"$FAKE_ROOT/api/incomplete.json"
+run expect-ok "newer release missing host platform" --dir "$TMP_DIR/bin-other-platform"
+grep -Fq "installing gregale v2.0.0-rc.7" <<<"$RUN_OUT" || fail "must skip unsupported platform"
+cp "$TMP_DIR/latest.good" "$FAKE_ROOT/api/latest.json"
+printf '[{"tag_name": "v2.0.0-rc.7", "prerelease": true}]\n' >"$FAKE_ROOT/api/list.json"
 
 # No releases at all must be a clean error, not a download of "".
 mv "$FAKE_ROOT/api/list.json" "$FAKE_ROOT/api/list.json.off"

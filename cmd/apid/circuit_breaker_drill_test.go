@@ -230,10 +230,10 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 			ops := wire.NewOpsMetrics("apid_circuit_breaker_drill")
 			progression := canary.NewProgression(drillStore, client, ops, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			progression.Now = func() time.Time { return now }
-			if tc.wantAction == canary.CircuitBreakerAdvance {
-				if err := e.store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
-					t.Fatal(err)
-				}
+			// The production worker renews its lease before every check, including
+			// the early route recovery check ahead of aggregate evaluation.
+			if err := e.store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+				t.Fatal(err)
 			}
 
 			stats, err := progression.Once(ctx)

@@ -16,6 +16,10 @@ export type CreateProjectEnvironmentRequest = {
    */
   from_environment?: string;
   /**
+   * Require a complete isolated copy; use the dedicated environment-clones route. Admission remains closed while complete coverage is unavailable.
+   */
+  full?: boolean;
+  /**
    * Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-storage resources; data remains shared.
    */
   share_resources?: boolean;

@@ -1,0 +1,6 @@
+/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/renderer-source.tar.gz: OK
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+supplemental checks: PASS
+make: Entering directory '/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/source'
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+make: Leaving directory '/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/source'

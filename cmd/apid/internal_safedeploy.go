@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -33,10 +34,14 @@ func (s *server) mountInternalSafeDeploy(mux *http.ServeMux, listenerAddr, canar
 		internalSafeDeployAuth(actionToken, s.internalSafeDeployReady))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/canary/advance",
 		internalSafeDeployAuth(canaryToken, s.internalAdvanceCanary))
+	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/route-health/recover",
+		internalSafeDeployAuth(actionToken, s.internalRecoverCanaryRouteHealth))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/rollouts/recover",
 		internalSafeDeployAuth(actionToken, s.internalRecoverDeploymentRollout))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/apps/{slug}/rollouts/recover",
 		internalSafeDeployAuth(actionToken, s.internalForApp(s.recoverRollout)))
+	mux.HandleFunc("POST /v1/internal/safe-deploy/alert-rollbacks/{fire}",
+		internalSafeDeployAuth(actionToken, s.internalProcessAlertRollback))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/apps/{slug}/rollback",
 		internalSafeDeployAuth(actionToken, s.internalForApp(s.rollbackApp)))
 	return nil
@@ -121,6 +126,7 @@ func (s *server) internalRecoverDeploymentRollout(w http.ResponseWriter, r *http
 		s.internalSafeDeployLookupError(w, r, err, "deployment")
 		return
 	}
+	r = r.WithContext(context.WithValue(r.Context(), bindingReleaseWorkerReadsKey{}, true))
 	s.idempotent(s.recoverDeploymentRollout)(w, r, acct)
 }
 

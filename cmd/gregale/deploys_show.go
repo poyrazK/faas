@@ -59,7 +59,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -113,9 +112,9 @@ const deploysStatusUsage = "usage: gregale deploys status <id> [--json]"
 // flag.NewFlagSet stops parsing at the first positional, so the
 // natural `gregale deploys show <id> --status` would otherwise
 // leave `--status` unparsed and trip the NArg()==2 usage error.
-// The splitFlagArgs helper reorders the argv so flags come
-// before the positional regardless of input order — the operator
-// sees the same behaviour whether they write
+// parseInterspersed accepts flags on either side of the positional
+// (and keeps a value flag's value with it) — the operator sees the
+// same behaviour whether they write
 // `gregale deploys show --status <id>` or
 // `gregale deploys show <id> --status`.
 func cmdDeploysShow(args []string) int {
@@ -123,8 +122,7 @@ func cmdDeploysShow(args []string) int {
 	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	withStatus := fs.Bool("status", false, "include terminal-status footer (live since / failed at)")
 	urlOnly := fs.Bool("url", false, "print only the per-deployment preview URL (shell-friendly)")
-	reordered := splitFlagArgs(args)
-	if err := fs.Parse(reordered); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
@@ -246,7 +244,7 @@ func cmdDeploysShow(args []string) int {
 func cmdDeploysStatus(args []string) int {
 	fs := newFlagSet("deploys status", flag.ContinueOnError)
 	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
@@ -345,39 +343,6 @@ func hasDeploymentFailureDetails(dep api.DeploymentResponse) bool {
 // read symmetrically — the helper is a small enough piece that
 // a single boolean is the cleanest contract.
 const wantDeploySummaryFooter = true
-
-// splitFlagArgs reorders argv so every flag (anything starting
-// with "-" or "--") comes before every positional, then any
-// "=value" suffix is preserved. This is the stdlib flag.NewFlagSet
-// idiom for "accept flags anywhere" — without it, fs.Parse stops
-// at the first positional and trailing flags end up in fs.Args()
-// silently, surfacing as a confusing usage error.
-//
-// Examples:
-//
-//	splitFlagArgs([]string{"--status", "<id>"})  → ["--status", "<id>"]
-//	splitFlagArgs([]string{"<id>", "--status"})  → ["--status", "<id>"]
-//	splitFlagArgs([]string{"<id>", "--json"})    → ["--json", "<id>"]
-//	splitFlagArgs([]string{"--status", "<id>", "--json"}) → ["--status", "--json", "<id>"]
-//
-// Used only by cmdDeploysShow — other subcommands either accept
-// no flags (`deploys status`) or use a different parsing shape.
-// Negative numbers (e.g. `-1`) are preserved as positionals by
-// the leading-minus check; `--` itself is treated as a flag (the
-// stdlib also handles it as a "stop parsing" sentinel — the
-// caller can extend if needed).
-func splitFlagArgs(args []string) []string {
-	flags := make([]string, 0, len(args))
-	positionals := make([]string, 0, len(args))
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			flags = append(flags, a)
-		} else {
-			positionals = append(positionals, a)
-		}
-	}
-	return append(flags, positionals...)
-}
 
 // fetchDeploySummaryInputs fans out the two GETs that the
 // post-stream summary needs:

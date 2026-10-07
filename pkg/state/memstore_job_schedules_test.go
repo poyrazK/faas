@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestMemStoreJobRunCreateScheduledClaimsOnce(t *testing.T) {
@@ -144,5 +145,53 @@ func TestMemStoreScheduledJobRunRejectsStaleDefinition(t *testing.T) {
 	}
 	if unscheduled.CronSchedule != "" || unscheduled.Kind != "batch" {
 		t.Fatalf("unscheduled job = kind %q schedule %q", unscheduled.Kind, unscheduled.CronSchedule)
+	}
+}
+
+func TestMemStoreScheduledOccurrenceExpiresBeforeFirstTaskStart(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	job, err := store.JobCreateScheduledIfUnderQuota(ctx, Job{
+		AccountID: "account-deadline", Name: "deadline-worker", Kind: "recurring",
+		ImageRef: "ghcr.io/example/worker:v1", Command: []string{"/app/run"},
+		RAMMB: 256, TaskTimeoutS: 60, MaxParallelism: 1, RetryMax: 1,
+		CronSchedule: "* * * * *", CronTimezone: "UTC",
+		SchedulePolicy: &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "allow", StartDeadlineSeconds: 60, MissedRuns: "skip"},
+	}, api.JobMaxPerAccount[api.PlanHobby.PlanIndex()])
+	if err != nil {
+		t.Fatalf("create scheduled job: %v", err)
+	}
+	firedAt := job.CreatedAt.Add(time.Minute).UTC()
+	run, created, err := store.JobRunCreateScheduledOccurrence(ctx, job.ID, job.CronSchedule, job.CronTimezone,
+		nil, firedAt, JobScheduledOccurrenceOptions{ScheduledFor: firedAt, ScheduleRevision: job.ScheduleRevision})
+	if err != nil || !created {
+		t.Fatalf("create scheduled run=%+v created=%t err=%v", run, created, err)
+	}
+	// Move the persisted deadline to the past to exercise the dispatcher expiry
+	// path without a wall-clock sleep.
+	deadline := time.Now().UTC().Add(-time.Second)
+	store.mu.Lock()
+	storedRun := store.jobRuns[run.ID]
+	storedRun.StartDeadlineAt = &deadline
+	store.jobRuns[run.ID] = storedRun
+	occurrence := store.scheduleOccurrences[run.OccurrenceID]
+	occurrence.StartDeadlineAt = &deadline
+	store.scheduleOccurrences[run.OccurrenceID] = occurrence
+	store.mu.Unlock()
+
+	expired, err := store.JobTaskExpireUnstarted(ctx, time.Now().UTC())
+	if err != nil || len(expired) != 1 || expired[0] != run.ID {
+		t.Fatalf("expire unstarted = %v, err=%v; want run %s", expired, err, run.ID)
+	}
+	if _, err := store.JobRunRecompute(ctx, run.ID); err != nil {
+		t.Fatalf("recompute expired run: %v", err)
+	}
+	rows, err := store.ScheduleOccurrenceListByJob(ctx, job.ID, 10, "")
+	if err != nil || len(rows) != 1 || rows[0].Status != "missed_deadline" {
+		t.Fatalf("occurrence history = %+v, err=%v; want missed_deadline", rows, err)
+	}
+	claimed, err := store.JobTaskClaimBatch(ctx, 10)
+	if err != nil || len(claimed) != 0 {
+		t.Fatalf("expired task claim batch = %+v, err=%v; want no work", claimed, err)
 	}
 }

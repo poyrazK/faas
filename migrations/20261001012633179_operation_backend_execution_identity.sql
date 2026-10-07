@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-385. A logical generation binds a real backend execution, never a
+-- ADR-521. A logical generation binds a real backend execution, never a
 -- synthetic HTTP invocation standing in for a workflow or a Job.
 ALTER TABLE customer_operation_executions ALTER COLUMN invocation_id DROP NOT NULL;
 ALTER TABLE customer_operation_executions ADD COLUMN IF NOT EXISTS workflow_run_id uuid REFERENCES workflow_runs(id) ON DELETE RESTRICT;
@@ -16,8 +16,29 @@ ALTER TABLE customer_operation_executions ALTER COLUMN execution_kind SET NOT NU
 CREATE UNIQUE INDEX IF NOT EXISTS customer_operation_executions_identity_idx ON customer_operation_executions(execution_id);
 CREATE UNIQUE INDEX IF NOT EXISTS customer_operation_executions_owner_idx ON customer_operation_executions(operation_id,execution_id);
 ALTER TABLE customer_operations DROP CONSTRAINT IF EXISTS customer_operations_current_execution_fkey;
+-- Later workflow-custody migrations reference this unique index. Detach and
+-- restore that FK around replay so the execution-identity migration stays
+-- idempotent after dependent ledgers have been installed.
+ALTER TABLE IF EXISTS customer_operation_workflow_claims
+ DROP CONSTRAINT IF EXISTS customer_operation_workflow_claims_execution_identity_fkey;
+ALTER TABLE IF EXISTS customer_operation_workflow_guest_claims
+ DROP CONSTRAINT IF EXISTS customer_operation_workflow_guest_claims_execution_identity_fkey;
 DROP INDEX IF EXISTS customer_operation_executions_current_idx;
 CREATE UNIQUE INDEX customer_operation_executions_current_idx ON customer_operation_executions(operation_id,generation,execution_id,execution_kind);
+DO $$ BEGIN
+ IF to_regclass('customer_operation_workflow_claims') IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('customer_operation_workflow_claims') AND conname='customer_operation_workflow_claims_execution_identity_fkey') THEN
+  ALTER TABLE customer_operation_workflow_claims ADD CONSTRAINT customer_operation_workflow_claims_execution_identity_fkey
+   FOREIGN KEY(operation_id,generation,workflow_run_id,execution_kind)
+   REFERENCES customer_operation_executions(operation_id,generation,execution_id,execution_kind) ON DELETE CASCADE;
+ END IF;
+ IF to_regclass('customer_operation_workflow_guest_claims') IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('customer_operation_workflow_guest_claims') AND conname='customer_operation_workflow_guest_claims_execution_identity_fkey') THEN
+  ALTER TABLE customer_operation_workflow_guest_claims ADD CONSTRAINT customer_operation_workflow_guest_claims_execution_identity_fkey
+   FOREIGN KEY(operation_id,generation,workflow_run_id,execution_kind)
+   REFERENCES customer_operation_executions(operation_id,generation,execution_id,execution_kind) ON DELETE CASCADE;
+ END IF;
+END $$;
 
 -- Generated columns preserve earlier HTTP writers: their existing invocation
 -- field remains the fallback when the new JSON fields are absent.

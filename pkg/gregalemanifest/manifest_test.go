@@ -532,7 +532,7 @@ func TestLoad_YAMLEventSubscriptionsAreStrict(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	_, _, err := Load(dir)
-	if err == nil || !strings.Contains(err.Error(), "field typee not found") {
+	if err == nil || !strings.Contains(err.Error(), `unknown key "typee" under event_triggers:`) {
 		t.Fatalf("err = %v, want unknown event trigger field", err)
 	}
 }
@@ -624,7 +624,7 @@ func TestLoad_StrictUnknownField(t *testing.T) {
 	if err == nil {
 		t.Fatal("err = nil, want strict-decode error on unknown field")
 	}
-	if !strings.Contains(err.Error(), "field trigger not found") {
+	if !strings.Contains(err.Error(), `unknown key "trigger"; did you mean "triggers"?`) {
 		t.Errorf("err = %q, want strict-decode message", err)
 	}
 }
@@ -856,6 +856,16 @@ func TestValidate_Queue_BadMode(t *testing.T) {
 	}}}
 	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "mode") {
 		t.Errorf("err = %v, want mode message", err)
+	}
+}
+
+func TestValidate_Queue_RejectsReservedBindingIdentity(t *testing.T) {
+	for _, value := range []any{nil, "00000000-0000-0000-0000-000000000001"} {
+		m := &Manifest{Triggers: []Trigger{{Kind: TriggerKindQueue, App: "my-api", Slug: "forged",
+			Config: map[string]any{"mode": "queue", "queue_binding_id": value}}}}
+		if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "queue_binding_id is reserved") {
+			t.Fatalf("reserved ownership marker admitted: %v", err)
+		}
 	}
 }
 
@@ -1265,6 +1275,13 @@ func TestValidate_DatabaseDependencyDefaults(t *testing.T) {
 	}
 }
 
+func TestValidate_DatabaseDependencyMigrationAccess(t *testing.T) {
+	m := &Manifest{Databases: []DatabaseDependency{{Database: "orders", Access: "migration", EnvironmentKey: "MIGRATION_DATABASE_URL"}}}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidate_DatabaseDependencyRejectsInvalidShape(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1413,6 +1430,37 @@ worker:
 	}
 }
 
+func TestWorkerManifest_CustomMetricScaleParsesName(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+worker:
+  command: ./consumer
+  scale:
+    min: 1
+    max: 10
+    metric: custom
+    name: mcp_tasks_outstanding
+    target: 4
+`
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write gregale.yaml: %v", err)
+	}
+	manifest, ok, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !ok || manifest.Worker == nil {
+		t.Fatalf("Worker not parsed: %+v", manifest)
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	got := manifest.Worker.Scale.ToAPI()
+	if got.Metric != api.ScalingMetricCustom || got.Name != "mcp_tasks_outstanding" || got.Target != 4 {
+		t.Fatalf("worker scale API = %+v, want custom gauge target", got)
+	}
+}
+
 func TestWorkerManifest_ValidationErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1432,12 +1480,21 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 		{
 			name: "invalid metric",
 			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 0, Max: 10, Metric: "cpu_percent", Target: 80}},
-			want: "unsupported worker metric",
+			want: "is not in the closed set",
 		},
 		{
 			name: "queue_lag non-positive target",
 			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 0}},
-			want: "target for metric \"queue_lag\" must be greater than 0",
+			want: "value must be > 0 for queue_lag",
+		},
+		{
+			name: "custom metric requires name",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 1, Max: 5, Metric: api.ScalingMetricCustom, Target: 4}},
+			want: "is required for metric",
+		},
+		{
+			name: "custom metric valid",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 1, Max: 5, Metric: api.ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4}},
 		},
 		{
 			name: "unsupported source kind",
@@ -1477,6 +1534,12 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := &Manifest{Worker: &tt.spec}
 			err := m.Validate()
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("Validate error = %v, want nil", err)
+				}
+				return
+			}
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Validate error = %v, want substring %q", err, tt.want)
 			}
@@ -1570,5 +1633,31 @@ func TestAsyncRoutesManifestExplicitEmptyAndValidation(t *testing.T) {
 				t.Fatalf("Validate() = %v, want error containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestParseManifestErrorsNameKeysNotGoTypes reproduces production-us hunt
+// #4: a typo'd key surfaced as "decode: yaml: unmarshal errors: line 4:
+// field unknown_top_key not found in type gregalemanifest.Manifest".
+func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
+	for _, tc := range []struct {
+		yaml string
+		want []string
+	}{
+		{yaml: "trigers: []\n", want: []string{`line 1: unknown key "trigers"`, `did you mean "triggers"?`}},
+		{yaml: "function:\n  runtime: node22\n  memory_mb: 1\n", want: []string{`line 3: unknown key "memory_mb" under function:`}},
+	} {
+		_, err := ParseBytes([]byte(tc.yaml))
+		if err == nil {
+			t.Fatalf("ParseBytes(%q) succeeded, want an error", tc.yaml)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("ParseBytes(%q) error = %q, want it to contain %q", tc.yaml, err, want)
+			}
+		}
+		if strings.Contains(err.Error(), "gregalemanifest.") || strings.Contains(err.Error(), "unmarshal errors") {
+			t.Errorf("error still names Go internals: %q", err)
+		}
 	}
 }

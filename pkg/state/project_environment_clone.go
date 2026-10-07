@@ -26,18 +26,31 @@ type ProjectEnvironmentClone struct {
 	ManagedBindingsPrepared    bool
 	PreparedManagedBindingIDs  []string
 	PreparedManagedSecretCount int
+	// Optional preparation fence. Each source workload's effective runtime
+	// value scope is checked again before any target configuration is written.
+	ExpectedSourceValueScopes map[string]string
+	ExpectedSourceValuesHash  string
+	// A durable clone alone may materialize its reserved target. The revision
+	// fences workers which lost ownership while preparing provider resources.
+	CloneOperationID       string
+	CloneOperationRevision int64
+	sourceValueScopesJSON  []byte
+	capturedValues         map[string]projectCloneWorkloadValues
+	capturedValueScopes    map[string]string
+	capturedPolicies       map[string]projectCloneScopedPolicies
 }
 
 // ProjectEnvironmentCloneResult contains non-secret copy counts.
 type ProjectEnvironmentCloneResult struct {
-	ConfigurationCopied bool
-	VariablesCopied     int
-	SecretsCopied       int
-	WorkloadsCopied     int
-	BindingsCopied      int
-	RoutesCopied        int
-	PoliciesCopied      int
-	SharedResources     []string
+	ConfigurationCopied    bool
+	VariablesCopied        int
+	SecretsCopied          int
+	SecretReferencesCopied int
+	WorkloadsCopied        int
+	BindingsCopied         int
+	RoutesCopied           int
+	PoliciesCopied         int
+	SharedResources        []string
 }
 
 // ProjectEnvironmentCloneManagedBindingsError prevents provider credentials
@@ -78,13 +91,55 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	if !ok || project.AccountID != clone.AccountID {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrNotFound
 	}
-	if _, err := m.projectEnvironmentBySlugLocked(clone.ProjectID, clone.SourceSlug); err != nil {
+	if err := m.checkProjectEnvironmentCloneReservationLocked(clone); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	source, err := m.projectEnvironmentBySlugLocked(clone.ProjectID, clone.SourceSlug)
+	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	if _, err := m.projectEnvironmentBySlugLocked(clone.ProjectID, clone.TargetSlug); err == nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
 	}
 	apps := m.projectCloneAppsLocked(clone.ProjectID)
+	if clone.CloneOperationID != "" {
+		var records []projectCloneWorkloadRecord
+		clone.capturedValueScopes = map[string]string{}
+		for _, record := range m.projectEnvironmentCloneWorkloads[clone.CloneOperationID] {
+			record, err := copyCloneWorkloadRecord(record)
+			if err != nil {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			}
+			records = append(records, record)
+			clone.capturedValueScopes[record.AppID] = record.SourceScope
+		}
+		clone.capturedValues, err = capturedCloneValues(records)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		clone.capturedPolicies, err = capturedCloneScopedPolicies(records)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
+	valueScopes, err := m.projectCloneValueScopesLocked(apps, clone)
+	if err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	if clone.ExpectedSourceValuesHash != "" {
+		var hash string
+		if clone.capturedValues != nil {
+			hash, err = clone.capturedValuesHash(valueScopes)
+		} else {
+			hash, err = m.projectCloneValuesHashLocked(valueScopes)
+		}
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if hash != clone.ExpectedSourceValuesHash {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+	}
 	for _, env := range m.envs {
 		if _, ok := apps[env.AppID]; ok && env.Scope == clone.TargetSlug {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
@@ -100,7 +155,7 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	if clone.ManagedBindingsPrepared {
 		sourceBindings := map[string]struct{}{}
 		for _, secret := range m.secrets {
-			if _, ok := apps[secret.AppID]; !ok || secret.Scope != clone.SourceSlug {
+			if _, ok := apps[secret.AppID]; !ok || secret.Scope != valueScopes[secret.AppID] {
 				continue
 			}
 			if secret.ManagedPostgresBindingID != "" {
@@ -110,8 +165,26 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 				sourceBindings[secret.ManagedObjectStorageCredentialID] = struct{}{}
 			}
 		}
+		if clone.capturedValues != nil {
+			sourceBindings = map[string]struct{}{}
+			for _, values := range clone.capturedValues {
+				for _, secret := range values.Secrets {
+					if id := cloneSecretManagedID(secret); id != "" {
+						sourceBindings[id] = struct{}{}
+					}
+				}
+			}
+		}
 		if len(sourceBindings) != len(preparedBindings) {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+		if clone.CloneOperationID != "" {
+			if err := m.checkCapturedClonePostgresPreparationsLocked(clone); err != nil {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			}
+			if err := m.checkCapturedCloneObjectPreparationsLocked(clone); err != nil {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			}
 		}
 	}
 	preparedSecrets := 0
@@ -139,11 +212,77 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	if clone.ManagedBindingsPrepared && len(preparedBindings) == 0 {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
 	}
-	if managed := m.projectCloneManagedSecretCountLocked(apps, clone.SourceSlug); managed > 0 && !clone.ShareResources && !clone.ManagedBindingsPrepared {
+	managed := m.projectCloneManagedSecretCountLocked(apps, valueScopes)
+	if clone.capturedValues != nil {
+		managed = 0
+		for _, values := range clone.capturedValues {
+			for _, secret := range values.Secrets {
+				if cloneSecretManagedID(secret) != "" {
+					managed++
+				}
+			}
+		}
+	}
+	if managed > 0 && !clone.ShareResources && !clone.ManagedBindingsPrepared {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, &ProjectEnvironmentCloneManagedBindingsError{ManagedSecretCount: managed}
 	}
-	if err := m.checkProjectCloneQuotaLocked(apps, clone.SourceSlug, clone.ManagedBindingsPrepared, limits); err != nil {
+	if err := m.checkProjectCloneQuotaLocked(apps, valueScopes, clone.ManagedBindingsPrepared, limits, clone.capturedValues); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	settings := make(map[string]ProjectEnvironmentWorkloadSettings, len(apps))
+	var capturedRecords []projectCloneWorkloadRecord
+	var frozenConfig *projectCloneProjectConfig
+	if clone.CloneOperationID != "" && len(m.projectEnvironmentCloneWorkloads[clone.CloneOperationID]) != len(apps) {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+	}
+	for appID := range apps {
+		var captured ProjectEnvironmentWorkloadSettings
+		if clone.CloneOperationID != "" {
+			record, ok := m.projectEnvironmentCloneWorkloads[clone.CloneOperationID][appID]
+			if !ok {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+			}
+			record, err = copyCloneWorkloadRecord(record)
+			if err == nil {
+				captured, err = cloneWorkloadSettings(record.snapshot.Settings)
+				capturedRecords = append(capturedRecords, record)
+			}
+		} else if specID := m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(source.ID, appID)]; specID != "" {
+			spec := m.projectEnvironmentWorkloadSpecs[specID]
+			hash, hashErr := WorkloadSettingsHash(spec.Settings)
+			if hashErr != nil || hash != spec.Hash {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+			}
+			captured, err = cloneWorkloadSettings(spec.Settings)
+		} else {
+			captured, err = WorkloadSettingsFromApp(m.apps[appID])
+			if policy, found := m.projectEnvironmentRoutePolicies[projectEnvironmentRoutePolicyKey(appID, clone.SourceSlug)]; found {
+				captured.OnlyAllowDeclaredRoutes, captured.DeclaredRoutes = policy.OnlyAllowDeclaredRoutes, cloneDeclaredRoutes(policy.DeclaredRoutes)
+			}
+		}
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		settings[appID] = captured
+	}
+	if len(capturedRecords) > 0 {
+		config, err := capturedCloneProjectConfig(capturedRecords)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		frozenConfig = &config
+	}
+	var flagSnapshot projectCloneFeatureFlags
+	if clone.CloneOperationID != "" {
+		if frozenConfig == nil || frozenConfig.FeatureFlags == nil || frozenConfig.FeatureFlags.SourceEnvironmentID != source.ID {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+		flagSnapshot = *frozenConfig.FeatureFlags
+	} else {
+		flagSnapshot, err = captureCloneFeatureFlags(m.latestFeatureFlagsLocked(FeatureFlagScope{AccountID: clone.AccountID, ProjectID: clone.ProjectID, EnvironmentID: source.ID}))
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
 	}
 	now := time.Now().UTC()
 	created := ProjectEnvironment{
@@ -152,10 +291,37 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		CreatedAt: now, UpdatedAt: now,
 	}
 	m.projectEnvironments[created.ID] = created
-	result := m.copyProjectEnvironmentConfigLocked(clone, created.CreatedAt)
+	m.copyCloneFeatureFlagsLocked(created, flagSnapshot)
+	for appID, captured := range settings {
+		hash, _ := WorkloadSettingsHash(captured) // validated before any target writes
+		spec := ProjectEnvironmentWorkloadSpec{
+			ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
+			EnvironmentID: created.ID, EnvironmentSlug: created.Slug, AppID: appID,
+			Revision: 1, Hash: hash, Settings: captured, CreatedAt: now,
+		}
+		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
+		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(created.ID, appID)] = spec.ID
+	}
+	result := m.copyProjectEnvironmentConfigLocked(clone, created.CreatedAt, frozenConfig)
 	result.WorkloadsCopied = len(apps)
-	result.VariablesCopied = m.copyProjectEnvironmentVariablesLocked(apps, clone.SourceSlug, clone.TargetSlug, created.CreatedAt)
-	result.SecretsCopied = m.copyProjectEnvironmentSecretsLocked(apps, clone.SourceSlug, clone.TargetSlug, created.CreatedAt)
+	if clone.capturedValues != nil {
+		result.VariablesCopied, result.SecretsCopied = m.copyCapturedCloneValuesLocked(clone, created.CreatedAt)
+	} else {
+		result.VariablesCopied = m.copyProjectEnvironmentVariablesLocked(apps, valueScopes, clone.TargetSlug, created.CreatedAt)
+		result.SecretsCopied = m.copyProjectEnvironmentSecretsLocked(apps, valueScopes, clone.TargetSlug, created.CreatedAt)
+	}
+	if clone.capturedValues == nil {
+		result.SecretReferencesCopied = m.copyProjectEnvironmentSecretReferencesLocked(apps, source.ID, created, now)
+		m.copyProjectEnvironmentSecretSuppressionsLocked(apps, source.ID, created, now)
+	}
+	if clone.capturedPolicies != nil {
+		m.copyCapturedScopedPoliciesLocked(clone, created.CreatedAt, &result)
+		if result.RoutesCopied < result.WorkloadsCopied {
+			result.SharedResources = append(result.SharedResources, "routes")
+		}
+		result.SharedResources = append(result.SharedResources, "policies")
+		return created, result, nil
+	}
 	for appID := range apps {
 		app := m.apps[appID]
 		policy, ok := m.projectEnvironmentRoutePolicies[projectEnvironmentRoutePolicyKey(appID, clone.SourceSlug)]
@@ -196,17 +362,17 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 func (m *MemStore) projectCloneAppsLocked(projectID string) map[string]string {
 	apps := map[string]string{}
 	for _, app := range m.apps {
-		if app.ProjectID == projectID && app.Status != AppDeleted {
+		if app.ProjectID == projectID && app.Status != AppDeleted && app.PreviewOfSlug == "" {
 			apps[app.ID] = app.Slug
 		}
 	}
 	return apps
 }
 
-func (m *MemStore) projectCloneManagedSecretCountLocked(apps map[string]string, source string) int {
+func (m *MemStore) projectCloneManagedSecretCountLocked(apps map[string]string, scopes map[string]string) int {
 	count := 0
 	for _, secret := range m.secrets {
-		if _, ok := apps[secret.AppID]; ok && secret.Scope == source &&
+		if _, ok := apps[secret.AppID]; ok && secret.Scope == scopes[secret.AppID] &&
 			(secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "") {
 			count++
 		}
@@ -214,8 +380,9 @@ func (m *MemStore) projectCloneManagedSecretCountLocked(apps map[string]string, 
 	return count
 }
 
-func (m *MemStore) checkProjectCloneQuotaLocked(apps map[string]string, source string, managedBindingsPrepared bool, limits api.Limits) error {
+func (m *MemStore) checkProjectCloneQuotaLocked(apps map[string]string, scopes map[string]string, managedBindingsPrepared bool, limits api.Limits, captured map[string]projectCloneWorkloadValues) error {
 	for appID, slug := range apps {
+		source := scopes[appID]
 		secretCount, sourceSecrets, envCount, sourceEnv := 0, 0, 0, 0
 		for _, secret := range m.secrets {
 			if secret.AppID == appID {
@@ -233,6 +400,20 @@ func (m *MemStore) checkProjectCloneQuotaLocked(apps map[string]string, source s
 				}
 			}
 		}
+		for key := range m.appEnvironmentSecretRefs {
+			if key.AppID == appID {
+				envCount++
+				if environment := m.projectEnvironments[key.EnvironmentID]; environment.Slug == source {
+					sourceEnv++
+				}
+			}
+		}
+		if captured != nil {
+			if err := checkCapturedCloneQuota(slug, captured[appID], secretCount, envCount, managedBindingsPrepared, limits); err != nil {
+				return err
+			}
+			continue
+		}
 		observedSecrets := secretCount + sourceSecrets
 		if managedBindingsPrepared {
 			for _, secret := range m.secrets {
@@ -247,11 +428,51 @@ func (m *MemStore) checkProjectCloneQuotaLocked(apps map[string]string, source s
 		if limits.EnvVarsMax > 0 && envCount+sourceEnv > limits.EnvVarsMax {
 			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "variables", Limit: limits.EnvVarsMax, Observed: envCount + sourceEnv}
 		}
+		observedSuppressions := m.environmentSecretSuppressionCountLocked(appID) + len(m.environmentSecretSuppressionsLocked(appID, source))
+		if observedSuppressions > api.EnvironmentSecretReferenceSuppressionsMaxPerApp {
+			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "secret_reference_suppressions", Limit: api.EnvironmentSecretReferenceSuppressionsMaxPerApp, Observed: observedSuppressions}
+		}
 	}
 	return nil
 }
 
-func (m *MemStore) copyProjectEnvironmentConfigLocked(clone ProjectEnvironmentClone, now time.Time) ProjectEnvironmentCloneResult {
+// A clone gets its own catalog identity and reference intent. Git source,
+// ownership, overrides and runtime receipts belong to the original environment.
+func (m *MemStore) copyProjectEnvironmentSecretReferencesLocked(apps map[string]string, sourceID string, target ProjectEnvironment, now time.Time) int {
+	rows := map[environmentSecretRefKey]environmentSecretRef{}
+	for key, row := range m.appEnvironmentSecretRefs {
+		if _, ok := apps[key.AppID]; ok && key.EnvironmentID == sourceID {
+			rows[environmentSecretRefKey{key.AppID, target.ID, key.Key}] = environmentSecretRef{Ref: row.Ref, UpdatedAt: now}
+		}
+	}
+	for key, row := range rows {
+		m.appEnvironmentSecretRefs[key] = row
+		m.markEnvironmentRuntimeChangedAndSnapshotsLocked(key.AppID, target.Slug, now)
+	}
+	return len(rows)
+}
+
+func (m *MemStore) copyProjectEnvironmentSecretSuppressionsLocked(apps map[string]string, sourceID string, target ProjectEnvironment, now time.Time) {
+	rows := map[environmentSecretRefKey]time.Time{}
+	for key := range m.appEnvironmentSecretSuppressions {
+		if _, ok := apps[key.AppID]; ok && key.EnvironmentID == sourceID {
+			rows[environmentSecretRefKey{key.AppID, target.ID, key.Key}] = now
+		}
+	}
+	for key := range rows {
+		m.appEnvironmentSecretSuppressions[key] = now
+		m.markEnvironmentRuntimeChangedAndSnapshotsLocked(key.AppID, target.Slug, now)
+	}
+}
+
+func (m *MemStore) copyProjectEnvironmentConfigLocked(clone ProjectEnvironmentClone, now time.Time, frozen *projectCloneProjectConfig) ProjectEnvironmentCloneResult {
+	if frozen != nil {
+		config := ProjectEnvironmentConfig{ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
+			EnvironmentSlug: clone.TargetSlug, Version: 1, ConfigHash: frozen.Hash,
+			Values: append([]byte(nil), frozen.Values...), CreatedAt: now}
+		m.projectEnvironmentConfigs[projectEnvironmentConfigKey(clone.ProjectID, clone.TargetSlug)] = []ProjectEnvironmentConfig{config}
+		return ProjectEnvironmentCloneResult{ConfigurationCopied: true}
+	}
 	source := m.projectEnvironmentConfigs[projectEnvironmentConfigKey(clone.ProjectID, clone.SourceSlug)]
 	if len(source) == 0 {
 		return ProjectEnvironmentCloneResult{}
@@ -262,10 +483,10 @@ func (m *MemStore) copyProjectEnvironmentConfigLocked(clone ProjectEnvironmentCl
 	return ProjectEnvironmentCloneResult{ConfigurationCopied: true}
 }
 
-func (m *MemStore) copyProjectEnvironmentVariablesLocked(apps map[string]string, source, target string, now time.Time) int {
+func (m *MemStore) copyProjectEnvironmentVariablesLocked(apps map[string]string, scopes map[string]string, target string, now time.Time) int {
 	rows := make([]AppEnv, 0)
 	for _, env := range m.envs {
-		if _, ok := apps[env.AppID]; ok && env.Scope == source {
+		if _, ok := apps[env.AppID]; ok && env.Scope == scopes[env.AppID] {
 			rows = append(rows, env)
 		}
 	}
@@ -276,10 +497,10 @@ func (m *MemStore) copyProjectEnvironmentVariablesLocked(apps map[string]string,
 	return len(rows)
 }
 
-func (m *MemStore) copyProjectEnvironmentSecretsLocked(apps map[string]string, source, target string, now time.Time) int {
+func (m *MemStore) copyProjectEnvironmentSecretsLocked(apps map[string]string, scopes map[string]string, target string, now time.Time) int {
 	rows := make([]AppSecret, 0)
 	for _, secret := range m.secrets {
-		if _, ok := apps[secret.AppID]; ok && secret.Scope == source &&
+		if _, ok := apps[secret.AppID]; ok && secret.Scope == scopes[secret.AppID] &&
 			secret.ManagedPostgresBindingID == "" && secret.ManagedObjectStorageCredentialID == "" {
 			rows = append(rows, secret)
 		}

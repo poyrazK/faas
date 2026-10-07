@@ -39,7 +39,7 @@ func statusUptimeBuckets(buckets map[string]StatusBucket, since time.Time) []Sta
 			current = interval{components: make(map[publicstatus.Component]struct{}), available: true}
 		}
 		current.components[bucket.Component] = struct{}{}
-		if bucket.State != publicstatus.StateOperational && bucket.State != publicstatus.StateMaintenance {
+		if !publicstatus.CountsAsAvailable(bucket.State) {
 			current.available = false
 		}
 		byInterval[at] = current

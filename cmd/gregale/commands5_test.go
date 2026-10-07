@@ -2198,6 +2198,18 @@ type sseHoldSink struct {
 }
 
 func (s *sseHoldSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// cmdTail resolves --app and builds its id→slug labels from the app
+	// API before it attaches; answer those reads like apid does.
+	if r.URL.Path == "/v1/apps" {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[]"))
+		return
+	}
+	if slug, ok := strings.CutPrefix(r.URL.Path, "/v1/apps/"); ok && !strings.Contains(slug, "/") {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"id":%q,"slug":%q}`, slug, slug)
+		return
+	}
 	if r.URL.Path != "/v1/events" {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -2640,8 +2652,14 @@ func TestGregaleQueueTail_PrintsDequeuedRow(t *testing.T) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		// First call: 200 with a JSON payload.
-		if atomic.AddInt32(&calls, 1) == 1 {
+		// First call: an empty receive, which production answers on an idle
+		// poll (hunt #4: it printed a blank line). Second: a JSON payload.
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if n == 2 {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(api.QueueReceiveResponse{
 				ID:      "qrow-1",
@@ -2678,6 +2696,11 @@ func TestGregaleQueueTail_PrintsDequeuedRow(t *testing.T) {
 	}
 	if !strings.Contains(out, `"hello": "world"`) {
 		t.Fatalf("stdout missing pretty-printed payload; got %q", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" && line != "" {
+			t.Fatalf("an idle poll printed a blank line; stdout %q", out)
+		}
 	}
 
 	const maxSIGINTAttempts = 3

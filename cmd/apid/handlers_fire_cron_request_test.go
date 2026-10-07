@@ -90,7 +90,7 @@ func TestGetFireCronRequest_TerminalSucceeded(t *testing.T) {
 		t.Fatalf("ClaimPendingFireNowRequest: %v", err)
 	}
 	invID := uuid.NewString()
-	if err := e.store.MarkFireNowRequestSucceeded(context.Background(), requestID, invID); err != nil {
+	if err := e.store.MarkFireNowRequestSucceeded(context.Background(), requestID, invID, ""); err != nil {
 		t.Fatalf("MarkFireNowRequestSucceeded: %v", err)
 	}
 

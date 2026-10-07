@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -196,11 +197,10 @@ func (h *Handler) stampRequestBudget(w http.ResponseWriter, r *http.Request, app
 		h.log.Debug("budget_stamped",
 			"app_id", app.ID,
 			"account_id", app.AccountID,
-			"route", route,
-			"endpoint", logsanitize.Field(endpoint),
-			"budget_ms", total.Milliseconds(),
-			"ceiling_ms", ceiling.Milliseconds(),
-			"source", source,
+			"route", logsanitize.Field(route), "endpoint", logsanitize.Field(endpoint),
+			slog.Int64("budget_ms", total.Milliseconds()),
+			slog.Int64("ceiling_ms", ceiling.Milliseconds()),
+			"source", logsanitize.Field(source),
 		)
 	}
 }

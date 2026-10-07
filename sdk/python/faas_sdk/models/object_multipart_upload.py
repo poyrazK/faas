@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.object_multipart_upload_state import ObjectMultipartUploadState, check_object_multipart_upload_state
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.object_encryption import ObjectEncryption
+
 
 T = TypeVar("T", bound="ObjectMultipartUpload")
 
@@ -26,6 +31,16 @@ class ObjectMultipartUpload:
     state: ObjectMultipartUploadState
     expires_at: datetime.datetime
     created_at: datetime.datetime
+    completion_error_code: str | Unset = UNSET
+    """Persisted conditional completion rejection; retries retain the outcome."""
+    etag: str | Unset = UNSET
+    """Actual committed ETag when completion is confirmed."""
+    version_id: str | Unset = UNSET
+    """Owned public version ID when completion is confirmed; null denotes a mutable provider version."""
+    encryption: ObjectEncryption | Unset = UNSET
+    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
+    reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
+    string entries."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,6 +62,16 @@ class ObjectMultipartUpload:
 
         created_at = self.created_at.isoformat()
 
+        completion_error_code = self.completion_error_code
+
+        etag = self.etag
+
+        version_id = self.version_id
+
+        encryption: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.encryption, Unset):
+            encryption = self.encryption.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -62,11 +87,21 @@ class ObjectMultipartUpload:
                 "created_at": created_at,
             }
         )
+        if completion_error_code is not UNSET:
+            field_dict["completion_error_code"] = completion_error_code
+        if etag is not UNSET:
+            field_dict["etag"] = etag
+        if version_id is not UNSET:
+            field_dict["version_id"] = version_id
+        if encryption is not UNSET:
+            field_dict["encryption"] = encryption
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.object_encryption import ObjectEncryption
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -86,6 +121,19 @@ class ObjectMultipartUpload:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        completion_error_code = d.pop("completion_error_code", UNSET)
+
+        etag = d.pop("etag", UNSET)
+
+        version_id = d.pop("version_id", UNSET)
+
+        _encryption = d.pop("encryption", UNSET)
+        encryption: ObjectEncryption | Unset
+        if isinstance(_encryption, Unset):
+            encryption = UNSET
+        else:
+            encryption = ObjectEncryption.from_dict(_encryption)
+
         object_multipart_upload = cls(
             id=id,
             key=key,
@@ -96,6 +144,10 @@ class ObjectMultipartUpload:
             state=state,
             expires_at=expires_at,
             created_at=created_at,
+            completion_error_code=completion_error_code,
+            etag=etag,
+            version_id=version_id,
+            encryption=encryption,
         )
 
         object_multipart_upload.additional_properties = d
