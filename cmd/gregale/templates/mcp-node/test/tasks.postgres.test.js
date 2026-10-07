@@ -550,3 +550,55 @@ test('PostgreSQL fails a task after its retry limit is exhausted', postgresOnly,
   assert.equal(failed.lease_token, null);
   assert.equal(failed.attempt_count, 2);
 });
+
+test('PostgreSQL resumes input on the final attempt without granting another retry', postgresOnly, async t => {
+  const { namespace, pool, store } = await harness(t);
+  const record = await create(store, 'alice');
+  let lease;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    lease = await store.claim(3, 30_000);
+    assert.equal(lease.attempt_count, attempt);
+    if (attempt < 3) await pool.query(
+      "UPDATE gregale_mcp_tasks SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE namespace = $1 AND task_id = $2::uuid",
+      [namespace, record.task_id],
+    );
+  }
+  await store.requestInputs({ taskID: record.task_id, leaseToken: lease.lease_token,
+    requests: { approval: { method: 'elicitation/create', params: { mode: 'form', message: 'Approve?' } } },
+  });
+  await store.updateInputs({ taskID: record.task_id, authInfo: principal('alice'), authMode: 'external-oauth',
+    inputResponses: { approval: { action: 'accept', content: {} } },
+  });
+  const resumed = await store.claim(3, 30_000);
+  assert.equal(resumed.task_id, record.task_id);
+  assert.equal(resumed.attempt_count, 3);
+  await pool.query(
+    "UPDATE gregale_mcp_tasks SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE namespace = $1 AND task_id = $2::uuid",
+    [namespace, record.task_id],
+  );
+  assert.equal(await store.claim(3, 30_000), null);
+  assert.equal((await get(store, record.task_id, 'alice')).status, 'failed');
+});
+
+test('PostgreSQL atomically budgets queue admission across replicas and owners', postgresOnly, async t => {
+  const { pool, namespace, ownerKey } = await harness(t);
+  const stores = Array.from({ length: 2 }, () => createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000, maxOutstanding: 3, maxOutstandingPerOwner: 2 }));
+  const attempts = await Promise.allSettled(Array.from({ length: 8 }, (_, i) => create(stores[i % 2], 'alice')));
+  assert.equal(attempts.filter(result => result.status === 'fulfilled').length, 2);
+  assert.ok(attempts.filter(result => result.status === 'rejected').every(result => result.reason.code === 'MCP_TASK_CAPACITY'));
+  const bob = await create(stores[0], 'bob');
+  await assert.rejects(create(stores[1], 'carol'), { code: 'MCP_TASK_CAPACITY' });
+  await stores[0].requestCancel({ taskID: bob.task_id, authInfo: principal('bob'), authMode: 'external-oauth' });
+  assert.ok(await create(stores[1], 'carol'));
+});
+
+test('PostgreSQL leaves unsupported handler versions queued for compatible workers', postgresOnly, async t => {
+  const { store } = await harness(t);
+  const old = await create(store, 'alice');
+  const current = await store.create({ toolName: 'build_report', handlerVersion: '2', args: {}, authInfo: principal('alice'), authMode: 'external-oauth' });
+  const newWorker = await store.claim(3, 30_000, [{ name: 'build_report', version: '2' }]);
+  assert.equal(newWorker.task_id, current.task_id);
+  assert.equal((await get(store, old.task_id, 'alice')).attempt_count, 0);
+  assert.equal(await store.claim(3, 30_000, [{ name: 'build_report', version: '2' }]), null);
+  assert.equal((await store.claim(3, 30_000, [{ name: 'build_report', version: '1' }])).task_id, old.task_id);
+});

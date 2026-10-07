@@ -1033,6 +1033,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
 		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
 		filepath.Join(root, "pkg", "api", "commit.go"),

@@ -1,4 +1,4 @@
-# ADR-647: Durable subscription event backfill
+# ADR-639: Durable subscription event backfill
 
 - **Status:** accepted
 - **Date:** 2026-10-06

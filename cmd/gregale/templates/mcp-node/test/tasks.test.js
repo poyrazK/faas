@@ -303,6 +303,7 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
   const rows = new Map();
   const pool = { async query(sql, params) {
     calls.push({ sql, params });
+    if (sql.includes('COUNT(*)::int AS total')) return { rows: [{ total: rows.size, owned: [...rows.values()].filter(row => row.owner_hash.equals(params[1])).length }] };
     if (sql.includes('INSERT INTO gregale_mcp_tasks')) {
       const row = {
         task_id: params[1], tool_name: params[3], handler_version: params[4], status: 'queued',
