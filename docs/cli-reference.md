@@ -89,7 +89,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage sealed secrets and environment secret references |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to linked context) |
-| [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
+| [`status`](#status) | Platform status: API availability, wake p95 and deployment success (not account-specific) |
 | [`tail`](#tail) | Live tail of the unified event stream (app defaults to linked context) |
 | [`trusted-publishers`](#trusted-publishers) | Per-app cosign trusted-publisher list (admin; trusted-publishers add\|remove\|list) |
 | [`usage`](#usage) | Show this month&#39;s usage (gregale usage [--month YYYY-MM]\|daily [--day YYYY-MM-DD]\|storage [--day YYYY-MM-DD]\|summary) |
@@ -7230,7 +7230,7 @@ Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to lin
 
 ## status
 
-Personal SLO numbers (availability, wake p95, build success)
+Platform status: API availability, wake p95 and deployment success (not account-specific)
 
 `gregale status`
 

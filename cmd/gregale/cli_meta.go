@@ -2993,7 +2993,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    statusLiteral,
 		DocSlug: "status",
-		Short:   "Personal SLO numbers (availability, wake p95, build success)",
+		Short:   "Platform status: API availability, wake p95 and deployment success (not account-specific)",
 	},
 	{
 		Name:    "tail",
