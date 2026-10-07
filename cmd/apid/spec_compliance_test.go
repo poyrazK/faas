@@ -29,6 +29,7 @@ import (
 const (
 	serverSrcPath                 = "server.go"
 	dtoFile                       = "dto.go"
+	eventReplayBackfillFile       = "event_replay_backfill.go"
 	workflowFile                  = "workflow_dag.go" // ADR-081 — workflow deployment DTOs and validation
 	secretsFile                   = "secrets.go"
 	envFile                       = "env.go"             // issue #395 / ADR-045
@@ -1015,6 +1016,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
 		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
+		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
@@ -1167,6 +1169,16 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		}
 		dtos[schemaName] = fields
 	}
+
+	// The Go API calls the nested outcome EventReplayBackfillItem, while the
+	// standalone OpenAPI schema uses the response-oriented name so SDKs can
+	// reference it directly.
+	backfillItemFields, ok := dtos["EventReplayBackfillItem"]
+	if !ok {
+		t.Fatalf("event replay backfill item DTO is missing")
+	}
+	delete(dtos, "EventReplayBackfillItem")
+	dtos["EventReplayBackfillItemResponse"] = backfillItemFields
 
 	var missingInSpec []string
 	for name := range dtos {
