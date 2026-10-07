@@ -6,6 +6,97 @@ inferred from flags + the cwd's git state; this page captures the
 non-obvious pieces (which files actually get shipped and what the
 `--json` envelope looks like).
 
+## Your first deployment with `gregale start`
+
+Run one command in a terminal:
+
+```bash
+gregale start
+```
+
+`start` takes no flags or arguments. It asks what to launch, chooses sensible
+defaults, and gets your first app live. For an existing project with a saved
+login, the healthy path needs just two answers:
+
+1. Deploy this directory, create a starter, or choose another directory.
+2. Review the source, app name, account, access, and billing, then confirm deployment.
+
+Browser login appears only when needed. Starters ask for a language (Node.js,
+Python, or Go) and a local directory. Recognized workspaces offer a service picker.
+The app name comes from the selected directory. Existing apps retain their access
+settings; new apps use the current plan's defaults. Use `gregale deploy` and
+`gregale app` when you want to customize deployment or access settings.
+
+**Start uploads working files, including uncommitted changes**, with the normal
+source exclusions and secret scan. Starter destinations must be empty. Declining
+deployment keeps the local files and submits no deployment.
+
+Launch progress stays compact: real deployment events show building, startup,
+and readiness, with elapsed time. Full build logs remain available through
+`gregale logs` or the failed-deployment recovery prompt. A completed build alone
+does not mark the app ready. Older servers without stage events show a waiting
+message until the deployment's final state is confirmed.
+
+After the build and readiness checks, the session automatically sends the first
+GET request. Starters use `/`; existing projects use a verified or detected health
+path when available. Public requests carry no account credentials and report the
+actual HTTP status and a bounded response body. Private apps use the authenticated
+control-plane invocation API and report its result without assuming an HTTP status.
+The success screen shows the exact public URL that answered, including the tested
+health path or deployment preview, response time, and total session time. Private
+app URLs are labeled separately because the invocation does not verify public HTTP
+access. Response previews show up to eight lines and 4096 characters.
+Serving deployment headers are checked against the accepted deployment when present.
+If the request fails, the session explains the failure and stays open. Retry the
+GET check on the accepted deployment, view recent app logs, or finish. A missing
+route also offers another app-relative GET path. Request retries do not submit a
+deployment or change access settings. Logs use a short, bounded preview with
+credential redaction; unavailable logs do not prevent a retry. Finishing or closing
+an unresolved check keeps its failure exit code. Ctrl-C returns 130.
+
+The session ends with commands for deploying changes, reading logs, and opening
+the app. Built-in starters offer one optional next step with two answers: enter a
+greeting, then approve a combined file-edit and deployment preview. Press Enter at
+the greeting prompt to finish. Declining or closing before confirmation keeps the
+original files and submits no deployment. After approval, the local edit remains
+available if deployment fails. The session requests GET `/` to verify the new JSON
+`message`; retries keep the same expected greeting and path. An old greeting cannot
+complete the walkthrough, and serving deployment headers are checked when present.
+
+### Continue an interrupted launch
+
+An accepted deployment ID is saved before waiting. Ctrl-C stops the local session
+and leaves the remote deployment running. Run `gregale start` again from the same
+original directory and choose **Continue** to reconnect without submitting another
+deployment. The saved session also remembers source selected from another directory.
+Recovery checks the API, account, app, and deployment identity and does not require
+local source files to still exist. A new deployment still needs those files.
+
+Local records use mode `0600` in `$XDG_STATE_HOME/gregale/start` or the Gregale
+user-config directory. They contain recovery metadata: paths, app and account IDs,
+deployment IDs, revisions, status, timestamps, and health paths without query strings.
+Tokens, secret values, secrets-file paths, greetings, response bodies, and request
+query values are omitted. Concurrent sessions in the same directory are refused.
+
+The deployment wait uses the normal 1200-second default. Timeout returns exit code
+3; interruption returns 130. For a custom timeout or automation, use `gregale deploy`.
+`start` requires a terminal and rejects JSON output.
+
+### Help only when something needs attention
+
+Source blockers keep you in the session. Fix files in your editor and recheck,
+choose another directory, or finish. Simple Node loopback listeners can receive a
+reviewed fix to `0.0.0.0`; the session asks before writing. Guided edits preserve
+permissions and refuse changed files, symlinks, and paths outside the source tree.
+Complex source issues need a manual fix. Healthy source checks stay brief.
+
+Missing environment keys offer a local `KEY=VALUE` secrets-file prompt. Only keys
+present in a validated file resolve their findings. The file is excluded from the
+source upload and values are sealed through the normal deployment path. Its values
+and path stay out of saved session metadata. Selecting another source directory
+clears the secrets-file selection. A failed deployment offers logs and a reviewed
+retry, including secrets-file configuration when needed.
+
 ## Source-root semantics
 
 When cwd is inside a git repository with an `origin` remote, `gregale

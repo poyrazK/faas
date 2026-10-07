@@ -41,7 +41,7 @@ func (p *Provider) snapshotRestoreDeletion(ctx context.Context, d managedpostgre
 	if err := p.snapshotRestorePlacement(ctx, source.projectID, d.Spec); err != nil {
 		return managedpostgres.SnapshotRestoreDeletionObservation{}, err
 	}
-	actual, readErr := p.findSnapshotRestoreBranch(ctx, source.projectID, targetID, p.restoreBranchName(r.Restore.ResourceID))
+	actual, readErr := p.findOwnedBranch(ctx, source.projectID, targetID, p.restoreBranchName(r.Restore.ResourceID))
 	absent := errors.Is(readErr, managedpostgres.ErrNotFound)
 	if readErr != nil && !absent {
 		return managedpostgres.SnapshotRestoreDeletionObservation{}, readErr
@@ -102,7 +102,7 @@ func (p *Provider) snapshotRestoreDeletion(ctx context.Context, d managedpostgre
 	// Re-read the exact identity after operation observation. This cannot
 	// adopt a replacement with the same mutable display name.
 	if absent && hasDeletion && finished {
-		if _, err := p.findSnapshotRestoreBranch(ctx, source.projectID, targetID, p.restoreBranchName(r.Restore.ResourceID)); !errors.Is(err, managedpostgres.ErrNotFound) {
+		if _, err := p.findOwnedBranch(ctx, source.projectID, targetID, p.restoreBranchName(r.Restore.ResourceID)); !errors.Is(err, managedpostgres.ErrNotFound) {
 			if err == nil {
 				err = managedpostgres.ErrUnavailable
 			}
