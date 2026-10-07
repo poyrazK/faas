@@ -2,6 +2,7 @@ package neon
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 
@@ -27,14 +28,23 @@ func (p *Provider) readDatabaseMetadata(ctx context.Context, ref resourceRef, in
 		return p.doJSON(groupCtx, http.MethodGet, path, nil, nil, &metadata.project, http.StatusOK)
 	})
 	group.Go(func() error {
-		return p.doJSON(groupCtx, http.MethodGet, path+"/branches", nil, nil, &metadata.branches, http.StatusOK)
+		var err error
+		metadata.branches.Branches, err = p.listProjectBranches(groupCtx, ref.projectID, "")
+		if errors.Is(err, managedpostgres.ErrConflict) {
+			// Contradictory provider inventory is an availability incident,
+			// not a customer intent conflict or evidence of missing data.
+			return managedpostgres.ErrUnavailable
+		}
+		return err
 	})
 	group.Go(func() error {
 		return p.doJSON(groupCtx, http.MethodGet, path+"/endpoints", nil, nil, &metadata.endpoints, http.StatusOK)
 	})
 	if includeOperations {
 		group.Go(func() error {
-			return p.doJSON(groupCtx, http.MethodGet, path+"/operations", url.Values{"limit": {"1000"}}, nil, &metadata.operations, http.StatusOK)
+			var err error
+			metadata.operations.Operations, err = p.listProjectOperations(groupCtx, ref.projectID)
+			return err
 		})
 	}
 	if err := group.Wait(); err != nil {

@@ -78,6 +78,10 @@ type InstanceInfo struct {
 	// Both normal and aggressive scale-in treat a positive value as activity;
 	// RAM-pressure eviction remains intentionally unchanged.
 	InflightRequests int64
+	// RequestCount is the durable instances.request_count, bumped by
+	// whichever gateway served the request; its rate between reaper ticks
+	// is the app's fleet-wide demand (H4-70).
+	RequestCount int64
 	// FlowSummaries is the bounded endpoint detail captured alongside
 	// OpenConns for the running-state debugger. It is observational only and
 	// never changes reaping decisions.

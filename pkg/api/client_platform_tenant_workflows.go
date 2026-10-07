@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"strconv"
+	"time"
 )
 
 // CreateTenantWorkflowRun starts a workflow for an account-owned tenant that
@@ -27,6 +29,29 @@ func (c *Client) CreatePlatformTenantSelfWorkflowRun(ctx context.Context, slug, 
 func (c *Client) GetPlatformTenantSelfWorkflowRun(ctx context.Context, id string) (WorkflowRunResponse, error) {
 	var out WorkflowRunResponse
 	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(id)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListPlatformTenantSelfWorkflowRuns lists only runs for the authenticated
+// tenant and the named app, with the same filters as the account run-history API.
+func (c *Client) ListPlatformTenantSelfWorkflowRuns(ctx context.Context, slug string, opts WorkflowRunListOptions) (ListWorkflowRunsResponse, error) {
+	var out ListWorkflowRunsResponse
+	query := url.Values{}
+	query.Set("limit", strconv.Itoa(opts.Limit))
+	query.Set("offset", strconv.Itoa(opts.Offset))
+	if opts.Status != "" {
+		query.Set("status", opts.Status)
+	}
+	if opts.WorkflowName != "" {
+		query.Set("workflow_name", opts.WorkflowName)
+	}
+	if opts.CreatedAfter != nil {
+		query.Set("created_after", opts.CreatedAfter.UTC().Format(time.RFC3339Nano))
+	}
+	if opts.CreatedBefore != nil {
+		query.Set("created_before", opts.CreatedBefore.UTC().Format(time.RFC3339Nano))
+	}
+	path := "/v1/platform-tenant-self/apps/" + url.PathEscape(slug) + "/workflows/runs?" + query.Encode()
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 

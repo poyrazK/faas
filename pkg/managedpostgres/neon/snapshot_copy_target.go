@@ -112,17 +112,17 @@ func (p *Provider) observeSnapshotCopyTargetTopology(ctx context.Context, spec m
 	}
 	var branches branchesResponse
 	var endpoints endpointsResponse
-	var ops operationsResponse
 	if err := p.doJSON(ctx, http.MethodGet, path+"/branches", nil, nil, &branches, http.StatusOK); err != nil {
 		return snapshotCopyTargetTopology{}, err
 	}
 	if err := p.doJSON(ctx, http.MethodGet, path+"/endpoints", nil, nil, &endpoints, http.StatusOK); err != nil {
 		return snapshotCopyTargetTopology{}, err
 	}
-	if err := p.doJSON(ctx, http.MethodGet, path+"/operations", url.Values{"limit": {"1000"}}, nil, &ops, http.StatusOK); err != nil {
+	ops, err := p.listProjectOperations(ctx, id)
+	if err != nil {
 		return snapshotCopyTargetTopology{}, err
 	}
-	if branches.Branches == nil || endpoints.Endpoints == nil || ops.Operations == nil || ops.Pagination.Cursor != "" ||
+	if branches.Branches == nil || endpoints.Endpoints == nil ||
 		len(branches.Branches) != 1 || len(endpoints.Endpoints) != 1 {
 		return snapshotCopyTargetTopology{}, managedpostgres.ErrUnavailable
 	}
@@ -132,7 +132,7 @@ func (p *Provider) observeSnapshotCopyTargetTopology(ctx context.Context, spec m
 		endpoint.RegionID != p.regionID || endpoint.Disabled == nil || *endpoint.Disabled {
 		return snapshotCopyTargetTopology{}, managedpostgres.ErrConflict
 	}
-	for _, op := range ops.Operations {
+	for _, op := range ops {
 		if !validProviderID.MatchString(op.ID) || op.ProjectID != id || op.BranchID != "" && op.BranchID != b.ID || op.Status == "error" || op.Status == "cancelled" {
 			return snapshotCopyTargetTopology{}, managedpostgres.ErrConflict
 		}
@@ -142,5 +142,5 @@ func (p *Provider) observeSnapshotCopyTargetTopology(ctx context.Context, spec m
 		return snapshotCopyTargetTopology{}, managedpostgres.ErrConflict
 	}
 	return snapshotCopyTargetTopology{observation: managedpostgres.SnapshotCopyTargetObservation{ProviderResourceID: id, CreatedAt: created.UTC(), Spec: spec,
-		Prepared: ready && b.PendingState == "" && operationStatus(ops.Operations, ready) == managedpostgres.ProviderStatusReady}, branch: b, endpoint: endpoint}, nil
+		Prepared: ready && b.PendingState == "" && operationStatus(ops, ready) == managedpostgres.ProviderStatusReady}, branch: b, endpoint: endpoint}, nil
 }

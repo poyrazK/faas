@@ -25,7 +25,7 @@ func envCloneStatus(args []string) int {
 	fs := newFlagSet("env-clone-status", flag.ContinueOnError)
 	project := fs.String("project", "", "project slug (defaults to linked project)")
 	wait := fs.Bool("wait", false, "wait for the clone to finish")
-	timeout := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait")
+	timeout := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m)")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || *timeout <= 0 || *timeout > 24*60*60 {
 		PrintUsage(os.Stderr, "usage: gregale env clone-status <operation-id> [--project <slug>] [--wait] [--timeout SECONDS]", "env")
 		return 1

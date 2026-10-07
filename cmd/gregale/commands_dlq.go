@@ -57,10 +57,12 @@ func cmdDLQList(args []string) int {
 	fs := dlqFlagSet("dlq list", usage)
 	limit := fs.Int("limit", 50, "max events (1..200)")
 	before := fs.String("before", "", "pagination cursor (next_before from a prior page)")
+	app := fs.String("app", "", appSlugFlagUsage)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
+	pos, mergeErr := mergeAppFlag(pos, *app, 1)
+	if mergeErr != nil || len(pos) != 1 {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1
 	}

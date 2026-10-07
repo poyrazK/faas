@@ -124,8 +124,14 @@ func cmdRoutesHealthCorrelate(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || !validCLISlug(positional[0]) || !canonicalRouteHealthID(*deployment) || *limit < 1 || *limit > routeHealthCorrelationMaxLimit || rejectUnexpectedFlagArgs(fs) {
-		return printErr("Invalid route health correlation", errors.New("supply an app, canonical --deployment UUID, and a --limit from 1 to 20"))
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
+	if err := routeHealthTargetError(positional, *deployment); err != nil {
+		return printErr("Invalid route health correlation", err)
+	}
+	if *limit < 1 || *limit > routeHealthCorrelationMaxLimit {
+		return printErr("Invalid route health correlation", fmt.Errorf("--limit must be between 1 and %d; got %d", routeHealthCorrelationMaxLimit, *limit))
 	}
 	if *output != "" {
 		if _, err := os.Lstat(*output); err == nil || !errors.Is(err, os.ErrNotExist) {

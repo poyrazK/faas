@@ -105,3 +105,18 @@ func TestClientCancellationRetainsCause(t *testing.T) {
 		t.Fatal("client did not cancel")
 	}
 }
+
+// production-us hunt #4: a revision 2026-07-28 server answers an unsupported
+// method with HTTP 404 and a JSON-RPC -32601 body. The client reports the
+// JSON-RPC code (never the server's text), not a bare "HTTP 404".
+func TestClientReportsJSONRPCErrorInNon2xx(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"untrusted-secret-marker"}}`)
+	})
+	x, err := c.request(context.Background(), "resources/list", nil, nil, false)
+	if !IsMethodNotFound(err) || x.HTTPStatus != http.StatusNotFound || strings.Contains(err.Error(), "untrusted-secret-marker") {
+		t.Fatalf("wire=%d err=%v; want a method-not-found RPCError without server text", x.HTTPStatus, err)
+	}
+}

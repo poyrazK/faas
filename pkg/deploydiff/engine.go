@@ -295,7 +295,10 @@ func diffWorkflows(out *Diff, baseline *api.DeploymentResponse, workflows []api.
 	if baseline != nil {
 		before = baseline.Workflows
 	}
-	if reflect.DeepEqual(before, workflows) {
+	// A nil baseline and an empty pending list are the same "no workflows";
+	// DeepEqual tells them apart, which printed "deployment.workflows [] → []"
+	// on every first function deploy (production-us hunt #4).
+	if (len(before) == 0 && len(workflows) == 0) || reflect.DeepEqual(before, workflows) {
 		return
 	}
 	change := Change{Field: "deployment.workflows", Before: AsAny(before), After: AsAny(workflows)}

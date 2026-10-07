@@ -36,6 +36,11 @@ type Envelope struct {
 	Traceparent string `json:"traceparent,omitempty"`
 	Tracestate  string `json:"tracestate,omitempty"`
 	Baggage     string `json:"baggage,omitempty"`
+	// These server-stamped extensions scope customer-published events to the
+	// authenticated platform tenant and its linked app.
+	AppID            string `json:"appid,omitempty"`
+	PlatformTenantID string `json:"platformtenantid,omitempty"`
+	TenantEventID    string `json:"tenanteventid,omitempty"`
 }
 
 func (e *Envelope) UnmarshalJSON(data []byte) error {
@@ -141,6 +146,22 @@ func (e Envelope) Validate() error {
 	}
 	if _, err := parseAccountUUID(e.AccountID); err != nil {
 		return errors.New("account_id must be a UUID")
+	}
+	if (e.AppID == "") != (e.PlatformTenantID == "") {
+		return errors.New("appid and platformtenantid must be provided together")
+	}
+	if e.AppID != "" {
+		if _, err := uuid.Parse(e.AppID); err != nil {
+			return errors.New("appid must be a UUID")
+		}
+		if _, err := uuid.Parse(e.PlatformTenantID); err != nil {
+			return errors.New("platformtenantid must be a UUID")
+		}
+		if e.TenantEventID == "" || len(e.TenantEventID) > EnvelopeStringMax {
+			return errors.New("tenanteventid must be provided and at most 256 characters")
+		}
+	} else if e.TenantEventID != "" {
+		return errors.New("tenanteventid requires appid and platformtenantid")
 	}
 	if len(e.Data) == 0 || !json.Valid(e.Data) {
 		return errors.New("data must be valid JSON")

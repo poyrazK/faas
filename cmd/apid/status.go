@@ -104,7 +104,7 @@ func (s *server) statusJSONHandler(w http.ResponseWriter, r *http.Request) {
 		// tell the snapshot is degraded.
 		fallback := StatusPage{
 			AsOf:   time.Now().UTC(),
-			Source: appmetrics.SourceDegradedPrefix + err.Error(),
+			Source: appmetrics.SourceDegradedPrefix + appmetrics.TelemetryDegradedReason(err),
 		}
 		writeJSON(w, http.StatusOK, fallback)
 		return
@@ -240,7 +240,7 @@ func (c *statusCache) getEvaluation(ctx context.Context) (statusEvaluation, erro
 		c.mu.Lock()
 		if c.hasCached {
 			stale := c.cached
-			stale.legacy.Source = appmetrics.SourceDegradedPrefix + err.Error()
+			stale.legacy.Source = appmetrics.SourceDegradedPrefix + appmetrics.TelemetryDegradedReason(err)
 			stale.dataStatus = "stale"
 			c.mu.Unlock()
 			return stale, nil
