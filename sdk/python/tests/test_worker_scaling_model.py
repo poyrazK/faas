@@ -21,9 +21,7 @@ def test_worker_custom_metric_name_round_trips() -> None:
 
 
 def test_worker_scaling_name_remains_optional_for_queue_metrics() -> None:
-    model = WorkerScaling.from_dict(
-        {"min": 0, "max": 5, "metric": "queue_depth", "target": 100}
-    )
+    model = WorkerScaling.from_dict({"min": 0, "max": 5, "metric": "queue_depth", "target": 100})
 
     assert isinstance(model.name, Unset)
     assert "name" not in model.to_dict()
