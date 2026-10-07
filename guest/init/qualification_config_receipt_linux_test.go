@@ -29,7 +29,7 @@ func TestTakeQualificationConfigReceiptControlRemovesValues(t *testing.T) {
 func TestQualificationConfigReceiptFrameContainsOnlyConfigProof(t *testing.T) {
 	token := "123e4567-e89b-12d3-a456-426614174000"
 	macKey := []byte("01234567890123456789012345678901")
-	frame, err := qualificationConfigReceiptFrame(token, macKey, map[string]string{"MODE": "reviewed"}, map[string]string{"DATABASE_URL": "secret-value"})
+	frame, err := qualificationConfigReceiptFrame("main", token, macKey, map[string]string{"MODE": "reviewed"}, map[string]string{"DATABASE_URL": "secret-value"}, nil)
 	if err != nil || len(frame) < 2 || frame[0] != vsockQualificationConfigReceiptType {
 		t.Fatalf("receipt frame = %v, %v", frame, err)
 	}
@@ -44,7 +44,7 @@ func TestQualificationConfigReceiptFrameContainsOnlyConfigProof(t *testing.T) {
 		t.Fatal("receipt leaked configuration values or secret names")
 	}
 	otherToken := "123e4567-e89b-12d3-a456-426614174001"
-	otherFrame, err := qualificationConfigReceiptFrame(otherToken, macKey, map[string]string{"MODE": "reviewed"}, map[string]string{"DATABASE_URL": "secret-value"})
+	otherFrame, err := qualificationConfigReceiptFrame("main", otherToken, macKey, map[string]string{"MODE": "reviewed"}, map[string]string{"DATABASE_URL": "secret-value"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestQualificationConfigReceiptFrameContainsOnlyConfigProof(t *testing.T) {
 func TestQualificationConfigReceiptMACCannotBeRecomputedFromReceipt(t *testing.T) {
 	token := "123e4567-e89b-12d3-a456-426614174000"
 	macKey := []byte("01234567890123456789012345678901")
-	frame, err := qualificationConfigReceiptFrame(token, macKey, nil, map[string]string{"DATABASE_URL": "secret-value"})
+	frame, err := qualificationConfigReceiptFrame("main", token, macKey, nil, map[string]string{"DATABASE_URL": "secret-value"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,8 @@ func TestQualificationConfigReceiptMACCannotBeRecomputedFromReceipt(t *testing.T
 	if err := json.Unmarshal(frame[1:], &receipt); err != nil {
 		t.Fatal(err)
 	}
-	guessFrame, err := qualificationConfigReceiptFrame(token, []byte(token), nil, map[string]string{"DATABASE_URL": "secret-value"})
+	guessKey := make([]byte, sha256.Size)
+	guessFrame, err := qualificationConfigReceiptFrame("main", token, guessKey, nil, map[string]string{"DATABASE_URL": "secret-value"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +79,49 @@ func TestQualificationConfigReceiptMACCannotBeRecomputedFromReceipt(t *testing.T
 	}
 	if receipt.SecretKeysMAC == guess.SecretKeysMAC {
 		t.Fatal("receipt MAC was derivable from its public attempt token")
+	}
+}
+
+func TestSidecarConfigReceiptMACCoversEntireProjectionWithoutLeakingIt(t *testing.T) {
+	token := "123e4567-e89b-12d3-a456-426614174000"
+	macKey := []byte("01234567890123456789012345678901")
+	env := map[string]string{"PUBLIC": "shown only in guest", "DATABASE_URL": "secret-value"}
+	apiEnv := map[string]string{"LOG_LEVEL": "info"}
+	frame, err := qualificationConfigReceiptFrame("worker", token, macKey, apiEnv, nil, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt qualificationConfigReceiptWire
+	if err := json.Unmarshal(frame[1:], &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Workload != "worker" || receipt.ConfigMAC == "" || receipt.APIEnvSHA256 != "" || receipt.SecretKeysMAC != "" {
+		t.Fatalf("unexpected sidecar config receipt: %+v", receipt)
+	}
+	if strings.Contains(string(frame), "shown only in guest") || strings.Contains(string(frame), "secret-value") || strings.Contains(string(frame), "DATABASE_URL") {
+		t.Fatal("sidecar receipt leaked projection keys or values")
+	}
+	changed, err := qualificationConfigReceiptFrame("worker", token, macKey, apiEnv, nil, map[string]string{"PUBLIC": "shown only in guest", "DATABASE_URL": "other-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changedReceipt qualificationConfigReceiptWire
+	if err := json.Unmarshal(changed[1:], &changedReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if changedReceipt.ConfigMAC == receipt.ConfigMAC {
+		t.Fatal("sidecar receipt did not bind environment values")
+	}
+	changedAPI, err := qualificationConfigReceiptFrame("worker", token, macKey, map[string]string{"LOG_LEVEL": "debug"}, nil, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changedAPIReceipt qualificationConfigReceiptWire
+	if err := json.Unmarshal(changedAPI[1:], &changedAPIReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if changedAPIReceipt.ConfigMAC == receipt.ConfigMAC {
+		t.Fatal("sidecar receipt did not bind shared legacy API env")
 	}
 }
 

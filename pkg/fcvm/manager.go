@@ -3168,6 +3168,12 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
 		secretEntries := req.Sidecars[i].SealedSecrets
+		if len(entries) == 0 && len(secretEntries) == 0 && len(req.Sidecars[i].preparedEnvJSON) > 0 {
+			// Qualification prepares these projections before registering its
+			// guest receipt. Keep the exact prepared bytes and grants when Wake
+			// reaches its ordinary preparation point.
+			continue
+		}
 		req.Sidecars[i].GrantedEnvNames = req.Sidecars[i].GrantedEnvNames[:0]
 		for _, entry := range secretEntries {
 			req.Sidecars[i].GrantedEnvNames = append(req.Sidecars[i].GrantedEnvNames, entry.Key)

@@ -140,15 +140,15 @@ scheduler-to-VMMD restore dispatch, guest configuration delivery, application
 acknowledgement and readiness are still required before a restored workload can
 qualify.
 
-Fresh qualification boots now wait for a one-time guest-init receipt before
-publishing runtime inputs. The receipt is bound to the private instance and
-attempt token, checks the canonical digest of the main non-secret API env and a
-MAC of the selected secret-key set, and contains no environment values, secret
-values, or secret names. The per-attempt MAC key stays out of the receipt. The
-guest removes both internal controls before constructing the application
-process environment. This closes the host-only delivery gap for the main
-workload; it does not prove application behavior, sidecar-specific projections,
-smoke, restore, or activation.
+Fresh qualification boots now wait for guest-init receipts for the main
+workload and every prepared sidecar before publishing runtime inputs. The main
+receipt checks the canonical digest of the non-secret API env and a MAC of the
+selected secret-key set. Each sidecar receipt MACs the exact staged sidecar env
+and shared API env. Receipts contain no configuration values, secret values,
+or secret names; the per-attempt MAC key stays out of them. Guest-init removes
+both internal controls before constructing application process environments.
+These receipts prove guest configuration loading, not application behavior,
+binding delivery, smoke, restore, or activation.
 
 The internal graph assessment reports prepared artifacts and current capture
 counts separately. A partial cohort, changed artifact or stale runtime input

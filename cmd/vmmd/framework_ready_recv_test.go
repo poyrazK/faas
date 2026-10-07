@@ -144,15 +144,20 @@ func TestParseFrameworkReadyDatagram(t *testing.T) {
 func TestParseQualificationConfigReceipt(t *testing.T) {
 	token := "123e4567-e89b-12d3-a456-426614174000"
 	digest := strings.Repeat("a", 64)
-	body := append([]byte{VsockFrameworkReadyHostTypeQualificationConfig}, []byte(`{"token":"`+token+`","api_env_sha256":"`+digest+`","secrets_file_read":false,"secret_keys_mac":"`+digest+`"}`)...)
+	body := append([]byte{VsockFrameworkReadyHostTypeQualificationConfig}, []byte(`{"token":"`+token+`","workload":"main","api_env_sha256":"`+digest+`","secrets_file_read":false,"secret_keys_mac":"`+digest+`"}`)...)
 	msg, err := parseFrameworkReadyDatagram(body)
 	if err != nil || msg.Kind != parseFWReadyKindQualificationConfig || msg.QualificationConfig.Token != token ||
 		msg.QualificationConfig.APIEnvSHA256 != digest || msg.QualificationConfig.SecretsFileRead || msg.QualificationConfig.SecretKeysMAC != digest {
 		t.Fatalf("qualification config receipt parse = %+v, %v", msg, err)
 	}
-	invalid := append([]byte{VsockFrameworkReadyHostTypeQualificationConfig}, []byte(`{"token":"`+token+`","api_env_sha256":"short","secrets_file_read":false,"secret_keys_mac":"`+digest+`"}`)...)
+	invalid := append([]byte{VsockFrameworkReadyHostTypeQualificationConfig}, []byte(`{"token":"`+token+`","workload":"main","api_env_sha256":"short","secrets_file_read":false,"secret_keys_mac":"`+digest+`"}`)...)
 	if _, err := parseFrameworkReadyDatagram(invalid); err == nil {
 		t.Fatal("accepted malformed config digest")
+	}
+	sidecar := append([]byte{VsockFrameworkReadyHostTypeQualificationConfig}, []byte(`{"token":"`+token+`","workload":"worker","config_mac":"`+digest+`"}`)...)
+	msg, err = parseFrameworkReadyDatagram(sidecar)
+	if err != nil || msg.QualificationConfig.Workload != "worker" || msg.QualificationConfig.ConfigMAC != digest {
+		t.Fatalf("sidecar qualification config receipt parse = %+v, %v", msg, err)
 	}
 }
 

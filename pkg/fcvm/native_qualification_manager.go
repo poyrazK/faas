@@ -58,6 +58,12 @@ func (m *Manager) WakeEnvironmentQualification(ctx context.Context, frame state.
 	if err := m.RecoverNativeProcesses(ctx); err != nil {
 		return nil, err
 	}
+	// Prepare all sidecar projections before the private VM starts so the
+	// receipt waiter can bind every workload's actual boot environment. Wake's
+	// own preparation step is idempotent for these already-prepared entries.
+	if err := m.prepareSidecarEnvFiles(&req); err != nil {
+		return nil, fmt.Errorf("native qualification: prepare sidecar configuration: %w", err)
+	}
 	req, receiptWaiter, err := m.prepareQualificationConfigReceipt(req)
 	if err != nil {
 		return nil, fmt.Errorf("native qualification: prepare guest configuration receipt: %w", err)

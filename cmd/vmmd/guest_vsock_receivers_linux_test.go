@@ -37,7 +37,7 @@ func TestGuestEventStreamDispatchesClosedEventSet(t *testing.T) {
 		append([]byte{VsockFrameworkReadyHostTypeWorkloadOOM}, mustJSON(t, workloadOOMWire{PeakMB: 512, PlanMB: 256})...),
 		append([]byte{VsockFrameworkReadyHostTypeDisk}, mustJSON(t, diskUsageWire{UsedBytes: 20, CapacityBytes: 100})...),
 		append([]byte{VsockFrameworkReadyHostTypeQualificationConfig}, mustJSON(t, fcvm.EnvironmentQualificationConfigReceipt{
-			Token: "123e4567-e89b-12d3-a456-426614174000", APIEnvSHA256: strings.Repeat("a", 64),
+			Token: "123e4567-e89b-12d3-a456-426614174000", Workload: fcvm.WorkloadNameMain, APIEnvSHA256: strings.Repeat("a", 64),
 			SecretKeysMAC: strings.Repeat("b", 64),
 		})...),
 	}

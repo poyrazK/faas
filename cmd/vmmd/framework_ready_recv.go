@@ -15,7 +15,7 @@
 //	[1B type=0x04][1B outcome][6B reserved][8B elapsed_ms BE uint64]
 //	[1B type=0x05][json envelope: workload_oom]                          ← NEW (Cluster C / ADR-121)
 //	[1B type=0x06][json envelope: disk telemetry]
-//	[1B type=0x09][json envelope: qualification config receipt]
+//	[1B type=0x09][json envelope: per-workload qualification config receipt]
 //
 // The host strips the NUL-terminated runtime and uses the
 // preceding 4 bytes (if present) as the warmup_ms duration for
@@ -740,15 +740,38 @@ func parseFrameworkReadyDatagram(b []byte) (parseFWReadyMsg, error) {
 		if err := json.Unmarshal(rest, &msg.QualificationConfig); err != nil {
 			return msg, fmt.Errorf("qualification_config: %w", err)
 		}
-		if len(msg.QualificationConfig.Token) != 36 || !validSHA256Hex(msg.QualificationConfig.APIEnvSHA256) ||
-			!validSHA256Hex(msg.QualificationConfig.SecretKeysMAC) {
+		receipt := msg.QualificationConfig
+		if len(receipt.Token) != 36 || !validQualificationReceiptWorkloadName(receipt.Workload) {
 			return msg, fmt.Errorf("qualification_config: invalid receipt fields")
+		}
+		if receipt.Workload == fcvm.WorkloadNameMain {
+			if !validSHA256Hex(receipt.APIEnvSHA256) || !validSHA256Hex(receipt.SecretKeysMAC) || receipt.ConfigMAC != "" {
+				return msg, fmt.Errorf("qualification_config: invalid main receipt fields")
+			}
+		} else if receipt.APIEnvSHA256 != "" || receipt.SecretsFileRead || receipt.SecretKeysMAC != "" || !validSHA256Hex(receipt.ConfigMAC) {
+			return msg, fmt.Errorf("qualification_config: invalid sidecar receipt fields")
 		}
 		msg.Kind = parseFWReadyKindQualificationConfig
 	default:
 		return msg, fmt.Errorf("unknown msg sub-type 0x%02x", b[0])
 	}
 	return msg, nil
+}
+
+func validQualificationReceiptWorkloadName(name string) bool {
+	if name == fcvm.WorkloadNameMain {
+		return true
+	}
+	if name == "" || len(name) > 63 {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' || i == 0 && c == '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func validSHA256Hex(value string) bool {
