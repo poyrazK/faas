@@ -1,4 +1,4 @@
-# ADR-627: Tenant-configurable workflow schedules
+# ADR-637: Tenant-configurable workflow schedules
 
 - **Status:** accepted
 - **Date:** 2026-10-06
@@ -22,7 +22,7 @@
   quota, while overlap checks remain independent per tenant and workflow.
   Workflows without `tenant_configurable: true` retain app-owned cadence and
   cannot be changed through the tenant API. This refines the app-owned default
-  in [ADR-626](626-tenant-scheduled-workflow-starts.md).
+  in [ADR-636](636-tenant-scheduled-workflow-starts.md).
 - **Rejected alternatives:** Expose every published schedule for tenant edits,
   which removes app-owner control; reuse invocation scopes, which would grant
   schedule mutation to tokens issued only to start or inspect runs; accept

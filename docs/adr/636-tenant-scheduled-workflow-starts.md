@@ -1,4 +1,4 @@
-# ADR-626: Tenant-scoped scheduled workflow starts
+# ADR-636: Tenant-scoped scheduled workflow starts
 
 - **Status:** accepted
 - **Date:** 2026-10-06
@@ -17,7 +17,7 @@
   scheduler ticks. Admission rechecks the current deployment, account plan,
   tenant status, and active consumer or surface link in the transaction that
   writes both the run and cursor. Per-tenant cadence overrides are added for
-  explicitly opted-in triggers by [ADR-627](627-tenant-configurable-workflow-schedules.md).
+  explicitly opted-in triggers by [ADR-637](637-tenant-configurable-workflow-schedules.md).
 - **Rejected alternatives:** Share the app schedule cursor, which makes tenant
   overlap and duplicate suppression incorrect; derive tenant identity from the
   schedule's input or customer payload, which is untrusted; admit using only

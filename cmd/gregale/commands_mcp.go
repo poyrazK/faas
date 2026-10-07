@@ -402,13 +402,22 @@ func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphostin
 	}
 	switch command {
 	case "resources":
+		// A server that does not implement a list method offers none of that
+		// kind: report an empty catalog rather than an error (production-us
+		// hunt #4: a tools-only server answered "MCP endpoint returned HTTP 404").
 		resources, err := c.Resources(ctx)
-		if err != nil {
+		if err != nil && !mcphosting.IsMethodNotFound(err) {
 			return printErr("MCP resource discovery", err)
 		}
 		templates, err := c.ResourceTemplates(ctx)
-		if err != nil {
+		if err != nil && !mcphosting.IsMethodNotFound(err) {
 			return printErr("MCP resource template discovery", err)
+		}
+		if resources == nil {
+			resources = []mcphosting.Resource{}
+		}
+		if templates == nil {
+			templates = []mcphosting.ResourceTemplate{}
 		}
 		return jsonOut(writeJSON(map[string]any{"resources": resources, "resource_templates": templates}))
 	case "resource-read":
@@ -419,8 +428,11 @@ func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphostin
 		return jsonOut(writeJSON(x))
 	case "prompts":
 		prompts, _, err := c.Prompts(ctx)
-		if err != nil {
+		if err != nil && !mcphosting.IsMethodNotFound(err) {
 			return printErr("MCP prompt discovery", err)
+		}
+		if prompts == nil {
+			prompts = []mcphosting.Prompt{}
 		}
 		return jsonOut(writeJSON(map[string]any{"prompts": prompts}))
 	case "prompt-get":

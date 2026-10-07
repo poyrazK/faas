@@ -1,4 +1,4 @@
-# ADR-625: Authenticated tenant workflow continuations
+# ADR-635: Authenticated tenant workflow continuations
 
 - **Status:** accepted
 - **Date:** 2026-10-06
@@ -16,7 +16,7 @@
   events. Foreign, inactive-link, and missing runs share the same 404. Callback
   IDs remain identifiers, never credentials. Callback duplicate and conflict
   behavior matches account-scoped workflows. Tenant schedule starts are
-  specified separately in ADR-626.
+  specified separately in ADR-636.
 - **Rejected alternatives:** Reuse account-authorized continuation routes,
   which would require an account credential in customer code; trust the run ID
   or callback ID as a secret, which would make leaked identifiers authority;
@@ -42,4 +42,4 @@ describe the new surface.
 Qualification covers both MemStore and PostgreSQL continuation writes, active
 and revoked links, cross-tenant isolation, event replay, callback replay and
 payload conflicts, and tenant-token API behavior. Scheduled workflow admission
-is a separate capability covered by ADR-626.
+is a separate capability covered by ADR-636.

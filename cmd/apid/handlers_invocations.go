@@ -206,9 +206,9 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, destinationProblem)
 		return
 	}
-	timeout := 30 * time.Second
+	timeout := time.Duration(api.SyncInvokeWaitSeconds) * time.Second
 	if acct.Plan == api.PlanFree {
-		timeout = 5 * time.Second
+		timeout = time.Duration(api.SyncInvokeWaitSecondsFree) * time.Second
 	}
 	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), req.Headers)
 	if err != nil {
@@ -260,7 +260,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		_ = payload // payload is the pg_notify JSON; we re-read by id below
 	}
 	if errors.Is(waitErr, db.ErrWaitTimeout) {
-		api.WriteProblem(w, api.ErrLongPollTimeout())
+		api.WriteProblem(w, s.syncInvokeTimeoutProblem(r.Context(), inv, timeout))
 		return
 	}
 	if waitErr != nil {
@@ -280,6 +280,26 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		Result: final.Result,
 		Error:  final.LastError,
 	})
+}
+
+// syncInvokeTimeoutProblem names the invocation that outlived the sync wait,
+// its current state and its last recorded error. production-us hunt #4: a
+// wake failing on a scan_critical base surfaced only as a generic 504 (and,
+// because the wait equalled the SDK timeout, usually as a client network
+// error). The invocation keeps running, so the detail says how to follow it.
+func (s *server) syncInvokeTimeoutProblem(ctx context.Context, inv state.Invocation, waited time.Duration) *api.Problem {
+	current := inv
+	if row, err := s.store.InvocationByID(ctx, inv.ID); err == nil {
+		current = row
+	}
+	p := api.ErrLongPollTimeout()
+	p.Detail = fmt.Sprintf("invocation %s is still %s after %s and keeps running; follow it with `gregale invocations get %s`",
+		current.ID, current.State, waited, current.ID)
+	if current.LastError != "" {
+		p.Detail = fmt.Sprintf("invocation %s is still %s after %s; last error: %s. Follow it with `gregale invocations get %s`",
+			current.ID, current.State, waited, current.LastError, current.ID)
+	}
+	return p
 }
 
 // invokeRequest is the shared body for sync + async invoke (uses

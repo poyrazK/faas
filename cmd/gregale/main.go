@@ -101,10 +101,11 @@ func init() {
 }
 
 func run(args []string) (status int) {
-	previousJSON, previousUsageHelp := jsonOutput, jsonUsageHelp
+	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
 	defer func() {
 		jsonOutput = previousJSON
 		jsonUsageHelp = previousUsageHelp
+		invokedCommandPath = previousPath
 	}()
 	if invalid := invalidJSONFlagValue(args); invalid != "" {
 		PrintUsage(os.Stderr, "invalid --json value "+invalid+"; use true or false", "cli")
@@ -115,6 +116,7 @@ func run(args []string) (status int) {
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
 	args = applyJSONFlag(args)
 	jsonUsageHelp = hasHelpFlag(args)
+	invokedCommandPath = publicCommandPath(args)
 	if len(args) == 0 {
 		fmt.Print(topLevelUsage(false))
 		return 0
@@ -136,6 +138,12 @@ func run(args []string) (status int) {
 		if len(args) > 1 && (args[1] == "--help" || args[1] == "-h") {
 			PrintUsage(os.Stderr, "usage: gregale version", "version")
 			return 0
+		}
+		if jsonOutput {
+			// production-us hunt #4: --json version printed "gregale dev".
+			return jsonOut(writeJSON(map[string]string{
+				"version": wire.Version, "git_sha": wire.GitSHA, "build_time": wire.BuildTime,
+			}))
 		}
 		fmt.Printf("gregale %s\n", wire.Version)
 		return 0
@@ -457,7 +465,7 @@ func run(args []string) (status int) {
 		// PR-D / ADR-012 §7 amendment. Distinct top-level
 		// command; dispatches to a single verb (set) for the
 		// per-tenant webhook secret rotation.
-		return githubWebhookSecretSet(args[1:])
+		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
 	case "alerts":

@@ -27,6 +27,7 @@ func TestProductionReleaseAcceptanceFillsSkewedNodeCoverage(t *testing.T) {
 set -euo pipefail
 case "$1" in
   apps) exit 0 ;;
+  logs) echo "build: builder VM exited with status 1" ; exit 0 ;;
   deployment)
     # Keep the simulated rollout open until its continuity probe is observed.
     # An immediate fake completion can otherwise skip the script's probe loop.
@@ -53,6 +54,11 @@ case "$1" in
       esac
     done
     printf '%s\n' "$slug" >>"$TEST_DEPLOY_LOG"
+    if [[ -n "${TEST_INFRA_FAIL_ONCE_SUFFIX:-}" && "$slug" == *"$TEST_INFRA_FAIL_ONCE_SUFFIX" && ! -e "$TEST_DEPLOY_LOG.infra" ]]; then
+      : >"$TEST_DEPLOY_LOG.infra"
+      printf '{"id":"deployment-%s","status":"failed","rollout_state":"aborted","error":"builderd: vm exit 1","failure_class":"infra"}\n' "$slug"
+      exit 1
+    fi
     if [[ -n "${TEST_FAIL_SLUG_SUFFIX:-}" && "$slug" == *"$TEST_FAIL_SLUG_SUFFIX" ]]; then
       echo "build: step 4/7 failed: npm ci exited 1" >&2
       printf '{"id":"deployment-%s","status":"failed","rollout_state":"aborted","error":"build failed","error_code":"build_failed"}\n' "$slug"
@@ -263,6 +269,7 @@ fi
 				`"status":"failed"`,
 				`"error_code":"build_failed"`,
 				"npm ci exited 1",
+				"--- deployment deployment-ra-aaaaaaaa-12345678" + tt.suffix + " log",
 				tt.wantSummary,
 			} {
 				if !strings.Contains(string(out), want) {
@@ -271,4 +278,33 @@ fi
 			}
 		})
 	}
+
+	// production-us rc.243 (hunt #4 H4-12): an infrastructure-class build
+	// failure right after node activation is retried once, with its evidence
+	// printed; a release defect (build_failed above) is never retried.
+	t.Run("infrastructure failure retried once", func(t *testing.T) {
+		log := filepath.Join(t.TempDir(), "deploys")
+		cmd := exec.Command("bash", script)
+		cmd.Env = append(os.Environ(),
+			"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
+			"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
+			"TEST_DEPLOY_LOG="+log, "TEST_CURL_LOG="+filepath.Join(t.TempDir(), "curls"),
+			"TEST_REVOKE_LOG="+filepath.Join(t.TempDir(), "revokes"),
+			"TEST_INFRA_FAIL_ONCE_SUFFIX=-f1", "INFRA_RETRY_DELAY_SECONDS=0",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("a once-transient infrastructure failure failed the gate: %v\n%s", err, out)
+		}
+		for _, want := range []string{"infrastructure-class failure; retrying once", "builderd: vm exit 1", "builder VM exited with status 1"} {
+			if !strings.Contains(string(out), want) {
+				t.Errorf("retry output is missing %q:\n%s", want, out)
+			}
+		}
+		deployed, _ := os.ReadFile(log)
+		if got := strings.Count(string(deployed), "ra-aaaaaaaa-12345678-f1\n"); got != 2 {
+			t.Fatalf("infra-failed deploy attempts = %d, want 2: %s", got, deployed)
+		}
+	})
 }

@@ -55,8 +55,14 @@ func cmdMetrics(args []string) int {
 	fs := newFlagSet("metrics", flag.ContinueOnError)
 	rng := fs.String("range", "5m", "time window (5m, 15m, 1h, 6h, 24h)")
 	account := fs.Bool("account", false, "account-wide rollup (GET /v1/apps/metrics) — mutually exclusive with <slug>")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args, "account")
 	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	pos, err := mergeAppFlag(pos, *app, 1)
+	if err != nil {
+		PrintUsage(os.Stderr, metricsCmdUsage+"\nerror: "+err.Error(), metricsCmdDocsTopic)
 		return 1
 	}
 	if *account && len(pos) != 0 {
@@ -211,11 +217,13 @@ func cmdThrottleSuggestions(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "preview pass: ask the server to count sub-windows where observed rps exceeds --candidate-rps")
 	candidateRPS := fs.Float64("candidate-rps", 0, "candidate rps (required when --dry-run; positive float)")
 	candidateBurst := fs.Int("candidate-burst", 0, "candidate burst (optional when --dry-run; non-negative int)")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args, "dry-run")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
+	pos, mergeErr := mergeAppFlag(pos, *app, 1)
+	if mergeErr != nil || len(pos) != 1 {
 		PrintUsage(os.Stderr, throttleSuggestionsCmdUsage, throttleSuggestionsCmdDocsTopic)
 		return 1
 	}

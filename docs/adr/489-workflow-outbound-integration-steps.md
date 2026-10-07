@@ -39,7 +39,7 @@ integration credential and route policy remain app-owned and shared across
 tenants. This does not add per-tenant credentials or provider identity mapping.
 At the time of this decision, tenant event waits and callbacks remained
 unsupported because their external continuations did not yet carry
-tenant-scoped admission. [ADR-625](625-tenant-workflow-continuations.md) later
+tenant-scoped admission. [ADR-635](635-tenant-workflow-continuations.md) later
 adds authenticated, tenant-scoped event and callback continuation routes.
 
 `workflow_steps.outbound_attempt_token` rotates whenever a step starts. Outboundd

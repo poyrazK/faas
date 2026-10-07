@@ -98,7 +98,7 @@ func ToStatus(p *api.Problem) error {
 		return nil
 	}
 
-	st := status.New(codeToGRPC(p.Code), fmt.Sprintf("%s: %s", p.Title, p.Detail))
+	st := status.New(codeToGRPC(p.Code), statusMessage(p))
 	ei := &errdetails.ErrorInfo{
 		Reason: p.Code,
 		// Metadata survives the round-trip; values are string-coerced because
@@ -106,6 +106,16 @@ func ToStatus(p *api.Problem) error {
 		// generic error envelope; the Limit/Observed int64s lose two bits of
 		// precision in the worst case but never more than Int63).
 		Metadata: map[string]string{},
+	}
+	// Title and Detail travel separately so a Problem crossing several gRPC
+	// hops (vmmd -> schedd -> gatewayd) arrives unchanged. production-us
+	// hunt #4: lifting "Title: Detail" into both fields doubled the text at
+	// every hop, and customers saw "Fixable CRITICAL ...: Fixable CRITICAL ...".
+	if p.Title != "" {
+		ei.Metadata["title"] = p.Title
+	}
+	if p.Detail != "" {
+		ei.Metadata["detail"] = p.Detail
 	}
 	if p.DocsURL != "" {
 		ei.Metadata["docs_url"] = p.DocsURL
@@ -191,9 +201,39 @@ func FromStatus(err error) (*api.Problem, bool) {
 	p.Status = api.StatusForCode(p.Code)
 	// ToStatus carries the human-readable cause in status.message. Preserve it
 	// as Detail as well as Title so error wrapping and structured logs do not
-	// collapse a remote failure to the stable code alone.
+	// collapse a remote failure to the stable code alone. A peer that sent the
+	// fields separately gets them back exactly.
 	p.Detail = st.Message()
+	if title, ok := liftedField(st, "title"); ok {
+		p.Title = title
+		p.Detail = ""
+	}
+	if detail, ok := liftedField(st, "detail"); ok {
+		p.Detail = detail
+	}
 	return p, true
+}
+
+// statusMessage is the human-readable status.message for p. A Problem whose
+// Detail repeats its Title (one lifted by an older peer) is not doubled.
+func statusMessage(p *api.Problem) string {
+	switch {
+	case p.Detail == "" || p.Detail == p.Title:
+		return p.Title
+	case p.Title == "":
+		return p.Detail
+	}
+	return fmt.Sprintf("%s: %s", p.Title, p.Detail)
+}
+
+func liftedField(st *status.Status, key string) (string, bool) {
+	for _, det := range st.Details() {
+		if ei, ok := det.(*errdetails.ErrorInfo); ok {
+			value, present := ei.Metadata[key]
+			return value, present
+		}
+	}
+	return "", false
 }
 
 // New builds an error compatible with this package from a few primitives.

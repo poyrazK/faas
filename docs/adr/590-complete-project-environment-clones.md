@@ -2510,6 +2510,31 @@ mapping before it can establish this timestamp contract. The adapter also
 requires observed full-data initialization rather than accepting a schema-only
 fork. See the [Neon branch API schema](https://neon.com/api_spec/release/v2.json).
 
+Asynchronous snapshot capture and private snapshot restore apply bounded reads
+to the original acknowledged or discovered identity before returning complete
+evidence. Replay and lost-response discovery follow the same observation path.
+An incomplete observation can supply additional metadata later, but a reported
+owner, source, snapshot or capture-point contradiction stops recovery immediately;
+an omitted retention field cannot hide that contradiction. A snapshot restore
+acknowledgement cannot supply readiness evidence: the adapter reads the exact
+target independently, tolerates its temporary absence within the bounded read,
+and returns an authenticated pending fork without treating it as restored. These
+reads never repeat creation, finalize a preview or relax the exact timestamp
+contract. Missing final metadata remains unavailable.
+
+Ordinary PITR and private snapshot restores share complete, bounded branch
+discovery. Searches pin creation-time ordering and the deterministic owner name,
+read all pages before returning a unique match or absence, and reject overlapping
+IDs, duplicate matches, foreign project identities, missing lists, changed sort
+metadata and cursor cycles. Exhausting the page budget is unavailable rather
+than partial evidence. Recovery therefore cannot create a second restore or
+report cleanup complete merely because the original target was on a later page.
+Lifecycle inspection, read-only health and default-source selection consume that
+same complete branch inventory. Missing/null lists remain unknown rather than
+authorizing a missing-resource observation; explicit empty lists prove absence
+only after pagination completes. Read-only health still performs no SQL repair,
+credential retrieval or compute activation.
+
 Clone-owned lifecycle reconciliation requires observed lineage before recording
 a provider identity and again before asynchronous readiness. A private
 `managed_postgres_restore_proofs` receipt then commits atomically with the ready

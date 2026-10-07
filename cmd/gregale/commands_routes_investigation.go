@@ -32,8 +32,14 @@ func cmdRoutesHealthInvestigate(args []string) int {
 	opts.Method, opts.Path, _ = strings.Cut(*label, " ")
 	zero := int64(0)
 	selectorErr := routehealth.Validate(api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: &zero, Routes: []api.RouteHealthRoute{{Method: opts.Method, Path: opts.Path}}})
-	if len(positional) != 1 || !validCLISlug(positional[0]) || !canonicalRouteHealthID(*deployment) || opts.Validate() != nil || selectorErr != nil {
-		return printErr("Invalid route investigation", errors.New("supply an app, canonical --deployment, exact --route METHOD /path and valid signal/customer filters"))
+	if err := routeHealthTargetError(positional, *deployment); err != nil {
+		return printErr("Invalid route investigation", err)
+	}
+	if selectorErr != nil {
+		return printErr("Invalid route investigation", fmt.Errorf("--route must be an exact METHOD /path label such as \"POST /checkout\": %w", selectorErr))
+	}
+	if err := opts.Validate(); err != nil {
+		return printErr("Invalid route investigation", err)
 	}
 	if *output != "" {
 		if _, err := os.Lstat(*output); err == nil || !errors.Is(err, os.ErrNotExist) {
