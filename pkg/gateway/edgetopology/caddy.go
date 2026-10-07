@@ -1,7 +1,7 @@
 // Package edgetopology performs private read-only Caddy configuration inventory
 // and backend identity observations (ADR-616/617), plus private Cloudflare DNS
-// configuration inventory (ADR-618). It grants no native topology completeness,
-// drain or retirement authority.
+// configuration inventory and selected served-DNS observations (ADR-618/619).
+// It grants no native topology completeness, drain or retirement authority.
 package edgetopology
 
 import (

@@ -8790,6 +8790,16 @@ const (
 	RuntimeUpgradeDNSRecordTTLMax       = 86400
 )
 
+// Private selected served-DNS/delegation observation bounds (ADR-619).
+const (
+	RuntimeUpgradeServedDNSQuestionLimit = 32
+	RuntimeUpgradeServedDNSEndpointLimit = 32
+	RuntimeUpgradeServedDNSExchangeLimit = 256
+	RuntimeUpgradeServedDNSWireMaxBytes  = 16 << 10
+	RuntimeUpgradeServedDNSRRLimit       = 128
+	RuntimeUpgradeServedDNSTotalTimeout  = 30 * time.Second
+)
+
 // Private runtime qualification collector budgets (ADR-601).
 const (
 	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)

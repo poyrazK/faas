@@ -42,6 +42,15 @@ configuration is not proof of served DNS, effective CDN/Worker routing, external
 aliases, other zones or native sockets. There is no automatic collection, provider
 write or retirement authority. Keep execution and private deployment flags off.
 
+[ADR-619](../adr/619-selected-served-dns-and-parent-delegation.md) observes selected
+exact DNS-only A/AAAA/CNAME RRsets and an explicitly reviewed parent delegation.
+It queries every declared parent/child literal TCP endpoint without recursion,
+repeats NS/SOA/selected answers and brackets them with fresh provider inventory.
+Mismatched, unreachable, negative or unsupported scopes return no observation.
+Proxied origins, wildcard expansion, DNSSEC/root-chain trust, external aliases,
+recursive caches and native origin/listener/service identities still need separate
+reconciliation. These selected observations grant no retirement or future lease.
+
 Caddy must reduce the validated proxy chain to one address because the internal
 gateway deliberately rejects ambiguous `X-Forwarded-For` values. For a
 Cloudflare-fronted origin, configure Caddy with Cloudflare's current published
