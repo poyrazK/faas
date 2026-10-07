@@ -73,7 +73,7 @@ func TestWaitForProjectApply_DeadlineMarksEveryPendingBuild(t *testing.T) {
 	}
 }
 
-// adr: 638
+// adr: 678
 func TestWaitForProjectApply_ImageDeployment(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

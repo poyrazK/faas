@@ -41563,7 +41563,7 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
--- ADR-646: immutable release dependencies and durable readiness deadlines.
+-- ADR-685: immutable release dependencies and durable readiness deadlines.
 CREATE TABLE public.deployment_dependency_gates (
     deployment_id uuid PRIMARY KEY REFERENCES public.deployments(id) ON DELETE CASCADE,
     pins jsonb NOT NULL CHECK (jsonb_typeof(pins) = 'array' AND jsonb_array_length(pins) BETWEEN 1 AND 100),

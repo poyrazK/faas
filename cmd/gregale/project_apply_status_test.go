@@ -64,7 +64,7 @@ func TestSummarizeProjectApply_AllSuccess(t *testing.T) {
 	}
 }
 
-// adr: 638
+// adr: 678
 func TestRenderProjectApplyResult_ImageDeployment(t *testing.T) {
 	plan := projectApplyPlan("create", "create")
 	apply := api.ApplyResponse{ProjectID: "image-project",
