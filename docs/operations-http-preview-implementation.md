@@ -42,10 +42,12 @@ execution contract:
 - Completion notification and named business effects can share webhook
   transport while retaining their independent authorization and delivery
   policies. Retrying delivery does not regenerate a business result.
-- A future adapter must explicitly associate the customer operation with a
-  managed backend receipt, negotiate its result contract, and retain its
-  uncertainty semantics. Customer-database transaction helpers do not infer
-  this association from a frontend operation header.
+- The explicit `transaction_receipt: postgres_v1` HTTP adapter (ADR-599) binds
+  customer-owned transaction receipts to the captured operation contract and
+  negotiates separate customer receipt headers. Its SDK helpers return ordinary
+  typed result bytes and support evidenced recovery without repeating committed
+  database writes. They retain COMMIT uncertainty and platform completion fences;
+  managed transaction helpers do not infer support from a frontend header.
 
 Acceptance tests cover the header boundary and preserve the underlying
 completed invocation when a managed envelope violates an ordinary output
@@ -579,3 +581,216 @@ check the complete embedded specification, and tolerate a missing migration
 ledger entry after the same DDL has already applied. No merged migration was
 edited. Focused race tests and migrated PostgreSQL validation qualify these
 changes separately; final current-head repository CI remains the release gate.
+
+## Job Operations feature starter — 2026-10-06
+
+`gregale init --template customer-operation-job-export` now materializes an
+independently installable feature using the packed public Node SDK. The same
+source lives in `examples/customer-operation-job-export`, with an enforced
+example/embed parity check. It includes a customer-owned Linux/amd64 Job image
+recipe and command, Job-targeted manifest, input/output schemas, progress and
+cooperative control, verified private CSV preparation and typed results. Its
+browser uses the existing authenticated session and durable receipt store for
+submission, restoration, history, progress, cancellation and private downloads.
+Business success and completion delivery remain separate.
+
+Job overrides carry public configuration only. A bounded application upload
+endpoint verifies the current native task proof with the existing tokenless
+control route, checks app/environment/tenant/generation authority, validates
+size/checksum and rechecks authority before one managed PUT. Storage credentials
+remain in sealed app secrets. Source keys include tenant, operation, generation
+and run. Upload uncertainty never automatically repeats a source write. The
+SDK can replay private-copy/result acknowledgements and reuse a retained copy
+without its source. The browser exposes neither native proofs nor storage
+credentials. Prepared private files require confirmed native exit or explicit
+account-authorized success recovery before publication.
+
+CLI discovery, metadata and generated reference include the starter. Unprepared
+`init --deploy` and direct template deployment reject before writing/deploying;
+the README covers app reservation, ready Job image and private bucket setup,
+definition selection, tenant login, delivery and evidenced recovery.
+
+Both HTTP and Job starters passed isolated packed-SDK installation and browser
+module-graph checks. The Job starter's ten portable checks and 62 focused SDK
+control/session/receipt/artifact tests passed. Focused CLI/source-pack/manifest
+and template race checks passed, with generated-reference and example parity.
+These transport fixtures do not qualify native execution or real-provider I/O.
+Dedicated KVM, public ingress/provider behavior and fleet rollout evidence remain
+required before opening production admission. No deployment or policy activation
+was performed by this slice.
+
+
+## Direct private Job file uploads — 2026-10-06
+
+Job handlers can now use `scope.uploadArtifact({report_id, name, data, maxBytes})`
+with bounded text/bytes. The API receives bytes using the current native task
+proof and active customer ownership, verifies their exact size and SHA-256, and
+retains a private receipt. An opaque `operation://.../artifacts/...` reference
+contains no physical storage key. Scoped downloads verify retained bytes through
+the operation's private storage binding.
+
+Each transfer reserves a fresh durable staging object. Matching concurrent copies
+converge on one report receipt; losing, interrupted and rejected copies remain
+collectable without overwriting its retained object. The SDK snapshots bytes,
+coalesces matching calls and looks up the durable receipt before retrying private
+platform transport. Business code executes once. Changed declarations conflict,
+cancellation and stale native authority fence new writes, and prepared files
+publish only after confirmed task exit with valid typed output or explicit
+account success recovery. Recovery generations use fresh file identities.
+Completion delivery stays independent.
+
+The canonical Job export template and example now use this helper. Their app
+upload broker, bucket writer, storage credential and bucket configuration have
+been removed. The browser server serves public selectors/assets; the Job requires
+its public API URL and scheduler context. Managed-source file preparation remains
+available for existing integrations, HTTP handlers and workflows.
+
+Focused memory/PostgreSQL API and recovery checks passed under the race detector,
+including publication/downloads, concurrent copies and cleanup, interrupted writes,
+lost replies, cancellation while receiving bytes and ownership revocation during
+copying. Node SDK and packed starter checks passed; Go SDK/native guest portable
+checks passed. OpenAPI lint, specification parity, SDK route coverage, generated
+contract reproduction and focused production lint passed. These are focused local
+checks, not full repository CI or native qualification.
+
+The dedicated native lane now requires a fifth direct-upload scenario. The metal
+package compiles and portable lane/guest checks pass; actual KVM/provider/fleet
+qualification remains pending. Admission stays closed. See ADR-606 and the native
+qualification guide for activation requirements.
+
+
+## Direct HTTP result uploads — 2026-10-06
+
+[ADR-607](adr/607-http-operation-direct-artifact-uploads.md) adds direct private
+HTTP uploads and durable receipt lookup under the existing workload JWT and
+invocation proof. Uploads share retained blobs, quotas, transfer budgets and
+cleanup with other execution adapters. Cancellation fences new attachments;
+committed matching receipts remain replayable under a live claim. Retention does
+not settle HTTP work or change reconciliation and completion delivery.
+
+The Node HTTP helper shares the bounded upload state machine with native Job
+uploads, fetches fresh workload metadata, coalesces matching calls and checks a
+receipt before retrying byte transport. The CLI HTTP starter and example now
+return `artifact_id` and `rows` and download that exact private file, without an
+application bucket writer. This updates the starter's output schema for a new
+immutable definition revision. Existing deployed definitions remain pinned.
+
+Local qualification covers both stores under the race detector, installed SDK
+starter execution, generated SDK contracts and API/spec parity. Native KVM and
+fleet activation remain pending; production admission was not activated.
+
+## Direct workflow result uploads — 2026-10-06
+
+[ADR-608](adr/608-workflow-operation-direct-artifact-uploads.md) adds direct private
+uploads and receipt lookup for the final workflow action. Both routes require
+current workload/native proof. The file keeps its operation/run/step/report identity
+across approved resumes, while fresh generation/attempt authority rebinds the
+existing receipt without another transfer or report. Retention does not confirm
+the action: pending files remain private until final-step success or explicit
+confirmed-success recovery. Completion delivery remains independent.
+
+The Node workflow helper shares bounded byte snapshots, hashing, coalescing,
+receipt validation and transport retries with the HTTP/Job helpers. Each retry
+checks for a durable receipt first. The workflow export example now returns
+`artifact_id` and `rows` without a managed bucket, provider writer or storage token.
+Go streaming clients and generated Node/Python contracts expose both routes.
+
+Focused memory/PostgreSQL race checks cover lost replies, approved resume without
+another transfer, final-step proof restrictions, conflicting declarations, byte
+integrity, concurrent copies, cleanup, private downloads, cancellation, tenant
+revocation and fixed deadline expiry during I/O. PostgreSQL lock-wait checks cover
+both new receipt commit and existing receipt reuse after the native deadline.
+SDK/helper and packed starter checks are portable evidence. Full repository CI,
+native KVM and fleet activation remain separate gates; admission stays closed.
+
+## Native Customer Workflow Operations lane — 2026-10-06
+
+[ADR-609](adr/609-native-customer-workflow-operation-qualification.md) adds five
+real-guest scenarios and a blocking `customer-workflow-operations-only` CI lane.
+The app fixture uses migrated PostgreSQL, real daemon owners, vmmd workload
+identity and native linear workflow dispatch. It covers customer-scoped typed
+exports/private downloads, a lost upload acknowledgement, independent signed
+notification retry, process-death reconciliation, daemon restart after the
+uncertain outcome, prefix/code/file retention through approved resume, queued
+and running cancellation, fixed deadline expiry and owner revocation.
+
+The test-only per-instance vsock relay forwards native authority unchanged and
+injects faults after private retention. It does not mint proof or settle work.
+The source-derived dedicated lane requires every selected scenario to PASS;
+full-suite selection includes them in the blocking wake phase. Cleanup drains
+the app, reaps producers, removes only owned retained keys and runs leakcheck.
+Portable guest/image checks, metal compilation and CI selection/verdict tests
+are development evidence. Native KVM execution, production network/provider
+qualification and fleet activation remain pending; admission stays closed.
+See [the qualification guide](ops/customer-workflow-operations-native.md).
+
+## Complete customer workflow export starter — 2026-10-07
+
+[ADR-610](adr/610-customer-workflow-operation-starter.md) adds
+`customer-operation-workflow-export` to the CLI's embedded template catalog.
+The generated source and synchronized example combine three cancellable native
+actions with customer login integration, history, durable submission lookup after
+reload, live step progress, generation-fenced cancellation and exact private file
+downloads. Business and completion delivery status remain separate. The output
+schema bounds rows and explicitly validates the artifact UUID pattern.
+
+The starter requires the internal packed SDK in its source archive and an
+explicit app/environment/definition binding. Its public bootstrap projects only
+selectors; browser assets exclude workload/runtime modules. A development token
+form keeps credentials in memory. `public/customer-auth.mjs` now defines an
+application login adapter with an async fresh-token callback and an identity
+change subscription; switching accounts closes the prior operation session and
+clears its visible data. Confirmed prefixes and interrupted final
+actions have distinct progress states; reconciliation calls for operator review.
+The included guide uses inspection, read-only preview and a fenced CLI recovery
+receipt. It never retries uncertain business work from the customer UI.
+
+Portable acceptance installs the packed SDK outside the checkout. Chromium loads
+the actual generated UI and browser modules to check lost-response reload recovery,
+customer switching, SSE progress, cancellation, result/delivery independence,
+artifact identity and explicit retry preserving input/key/definition. A dedicated
+blocking browser CI job uses pinned Playwright/Chromium. Existing SDK upload tests
+cover lost acknowledgements and approved final-action receipt reuse without a
+second transfer. CLI checks cover schemas, discovery, prepared-source guards,
+source packing and example parity. These checks do not settle native executions;
+KVM, public ingress/provider behavior and fleet activation remain separate gates.
+Production admission remains closed.
+
+## Shared customer Operations login adapter — 2026-10-07
+
+[ADR-611](adr/611-shared-customer-operations-auth.md) adds
+`CustomerOperationAuth` to the browser-safe SDK entry point. The HTTP, Job and
+workflow starters share the same async credential and identity-change adapter.
+The SDK resolves credentials on demand and makes provider unsubscribe
+idempotent; each feature closes and clears its operation session after signout
+or a customer switch. Demo forms remain as a local fallback. No platform API,
+storage or admission behavior changes.
+
+## Shared customer Operations feature controller — 2026-10-07
+
+[ADR-612](adr/612-customer-operation-feature-controller.md) adds
+`CustomerOperationFeature` to the browser-safe SDK. The HTTP, Job and Workflow
+starters now delegate credential preflight, client/session construction,
+history loading, receipt resumption, stale-connect fencing, identity-change
+teardown and disposal to one controller. Starter code keeps its operation UI,
+rendering and explicit actions against the returned session. A superseded
+connection returns no session, so it cannot publish another customer's history.
+The feature and session APIs carry separate TypeScript input and result types;
+server-side JSON Schema remains the runtime validation contract.
+No platform API, storage, execution or admission behavior changes. Production
+Operations admission remains closed.
+
+## Generated customer Operation types — 2026-10-07
+
+`gregale customer-operations types` now validates the selected source manifest
+and emits input/output declarations from each operation's JSON Schemas. The
+HTTP, Job and Workflow starters reference those generated declarations in
+JSDoc, carrying the schema types through `CustomerOperationFeature` to
+`session.start()` and typed result snapshots. Runtime JSON Schema validation
+remains authoritative, and generated files are only replaced when they carry
+the generator marker. Its `--check` mode compares the expected declarations
+without writing, reports missing or stale output and exits nonzero so CI can
+keep committed types synchronized with schemas. Each starter now provides
+`npm run typecheck`, which checks its browser feature and workflow progress code
+against the generated declarations and packed SDK types with no emitted files.
+See [ADR-613](adr/613-customer-operation-typescript-generation.md).

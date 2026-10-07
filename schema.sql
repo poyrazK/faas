@@ -6327,6 +6327,44 @@ $$;
 
 
 --
+-- Name: project_release_member_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_release_member_policy_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- The parent is inserted before its immutable members. Inactive retained
+    -- graphs and stage graph publication cannot change ordinary ingress.
+    IF EXISTS (SELECT 1 FROM project_release_sets
+               WHERE id = NEW.release_id AND active AND environment_slug = 'production') THEN
+        PERFORM record_project_release_policy_change(NEW.release_id, NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: project_release_set_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_release_set_policy_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member_app uuid;
+BEGIN
+    IF OLD.environment_slug = 'production' THEN
+        FOR member_app IN SELECT app_id FROM project_release_members WHERE release_id = OLD.id LOOP
+            PERFORM record_project_release_policy_change(OLD.id, member_app);
+        END LOOP;
+    END IF;
+    RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: protect_financial_budget_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7315,6 +7353,22 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: record_project_release_policy_change(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_project_release_policy_change(release_uuid uuid, app_uuid uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(711901248671::bigint);
+    INSERT INTO control_plane_change_log (resource_type, resource_id, app_id, operation)
+    VALUES ('project_release', release_uuid, app_uuid, 'updated');
+    PERFORM pg_notify('app_changed', app_uuid::text);
+END;
+$$;
 
 
 --
@@ -11024,6 +11078,25 @@ CREATE TABLE public.customer_operation_definitions (
 
 
 --
+-- Name: customer_operation_delivery_retries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_delivery_retries (
+    operation_id uuid NOT NULL,
+    retry_id text NOT NULL,
+    delivery_id uuid NOT NULL,
+    expected_replay_generation integer NOT NULL,
+    replay_generation integer NOT NULL,
+    queued_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_delivery_re_expected_replay_generation_check CHECK (((expected_replay_generation >= 0) AND (expected_replay_generation < 2147483647))),
+    CONSTRAINT customer_operation_delivery_retries_check CHECK ((replay_generation = (expected_replay_generation + 1))),
+    CONSTRAINT customer_operation_delivery_retries_check1 CHECK ((expires_at > queued_at)),
+    CONSTRAINT customer_operation_delivery_retries_retry_id_check CHECK (((octet_length(retry_id) >= 1) AND (octet_length(retry_id) <= 128)))
+);
+
+
+--
 -- Name: customer_operation_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11037,7 +11110,7 @@ CREATE TABLE public.customer_operation_events (
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
-    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'artifact_attached'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'result_prepared'::text, 'artifact_prepared'::text, 'artifact_attached'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
     CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
 );
 
@@ -11072,6 +11145,23 @@ CREATE TABLE public.customer_operation_idempotency (
 
 
 --
+-- Name: customer_operation_job_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_job_executions (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    run_id uuid NOT NULL,
+    record jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operation_job_executions_check CHECK ((NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (run_id)::text))),
+    CONSTRAINT customer_operation_job_executions_check1 CHECK ((NOT ((record ->> 'generation'::text) IS DISTINCT FROM (generation)::text))),
+    CONSTRAINT customer_operation_job_executions_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_job_executions_record_check CHECK ((jsonb_typeof(record) = 'object'::text))
+);
+
+
+--
 -- Name: customer_operation_recoveries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11081,6 +11171,8 @@ CREATE TABLE public.customer_operation_recoveries (
     fingerprint text NOT NULL,
     request jsonb NOT NULL,
     created_at timestamp with time zone NOT NULL,
+    decision jsonb,
+    CONSTRAINT customer_operation_recoveries_decision_check CHECK (((decision IS NULL) OR (jsonb_typeof(decision) = 'object'::text))),
     CONSTRAINT customer_operation_recoveries_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_recoveries_recovery_id_check CHECK (((octet_length(recovery_id) >= 1) AND (octet_length(recovery_id) <= 128))),
     CONSTRAINT customer_operation_recoveries_request_check CHECK ((jsonb_typeof(request) = 'object'::text))
@@ -11112,7 +11204,7 @@ CREATE TABLE public.customer_operation_result_blobs (
     operation_id uuid NOT NULL,
     account_id uuid NOT NULL,
     generation integer NOT NULL,
-    execution_id uuid NOT NULL,
+    execution_id uuid,
     attempt integer NOT NULL,
     report_id text NOT NULL,
     fingerprint text NOT NULL,
@@ -11123,13 +11215,17 @@ CREATE TABLE public.customer_operation_result_blobs (
     next_attempt_at timestamp with time zone NOT NULL,
     lease_token text DEFAULT ''::text NOT NULL,
     lease_until timestamp with time zone,
+    workflow_run_id uuid,
+    workflow_step text,
+    job_run_id uuid,
     CONSTRAINT customer_operation_result_blobs_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT customer_operation_result_blobs_check CHECK ((storage_key = ((((('operation-results/'::text || (account_id)::text) || '/'::text) || (operation_id)::text) || '/'::text) || (id)::text))),
     CONSTRAINT customer_operation_result_blobs_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_result_blobs_generation_check CHECK ((generation > 0)),
     CONSTRAINT customer_operation_result_blobs_report_id_check CHECK (((octet_length(report_id) >= 1) AND (octet_length(report_id) <= 128))),
     CONSTRAINT customer_operation_result_blobs_size_bytes_check CHECK ((size_bytes >= 0)),
-    CONSTRAINT customer_operation_result_blobs_state_check CHECK ((state = ANY (ARRAY['staging'::text, 'retained'::text, 'deleting'::text])))
+    CONSTRAINT customer_operation_result_blobs_state_check CHECK ((state = ANY (ARRAY['staging'::text, 'retained'::text, 'deleting'::text]))),
+    CONSTRAINT operation_blob_execution_family CHECK ((((execution_id IS NOT NULL) AND (workflow_run_id IS NULL) AND (workflow_step IS NULL) AND (job_run_id IS NULL)) OR ((execution_id IS NULL) AND (workflow_run_id IS NOT NULL) AND (workflow_step IS NOT NULL) AND (job_run_id IS NULL) AND ((octet_length(workflow_step) >= 1) AND (octet_length(workflow_step) <= 128))) OR ((execution_id IS NULL) AND (workflow_run_id IS NULL) AND (workflow_step IS NULL) AND (job_run_id IS NOT NULL))))
 );
 
 
@@ -11143,11 +11239,13 @@ CREATE TABLE public.customer_operations (
     app_id uuid NOT NULL,
     platform_tenant_id uuid NOT NULL,
     definition_id uuid NOT NULL,
-    current_invocation_id uuid NOT NULL,
+    current_invocation_id uuid,
     state text NOT NULL,
     record jsonb NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    workflow_run_id uuid,
+    job_run_id uuid,
     CONSTRAINT customer_operations_check CHECK (((record ->> 'id'::text) = (id)::text)),
     CONSTRAINT customer_operations_check1 CHECK (((record ->> 'state'::text) = state)),
     CONSTRAINT customer_operations_check2 CHECK (((record ->> 'account_id'::text) = (account_id)::text)),
@@ -11155,8 +11253,11 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_check4 CHECK (((record ->> 'platform_tenant_id'::text) = (platform_tenant_id)::text)),
     CONSTRAINT customer_operations_check5 CHECK (((record ->> 'definition_id'::text) = (definition_id)::text)),
     CONSTRAINT customer_operations_check6 CHECK (((record ->> 'current_invocation_id'::text) = (current_invocation_id)::text)),
+    CONSTRAINT customer_operations_execution_family_check CHECK ((num_nonnulls(current_invocation_id, workflow_run_id, job_run_id) = 1)),
+    CONSTRAINT customer_operations_job_record_check CHECK (((job_run_id IS NULL) OR (NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (job_run_id)::text)))),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
-    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text])))
+    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
+    CONSTRAINT customer_operations_workflow_record_check CHECK (((workflow_run_id IS NULL) OR (NOT ((record ->> 'workflow_run_id'::text) IS DISTINCT FROM (workflow_run_id)::text))))
 );
 
 
@@ -11233,6 +11334,25 @@ CREATE TABLE public.customer_operation_stream_leases (
     account_id uuid NOT NULL,
     operation_id uuid NOT NULL,
     expires_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: customer_operation_workflow_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_workflow_executions (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    run_id uuid NOT NULL,
+    resume_count integer NOT NULL,
+    record jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operation_workflow_executions_check CHECK (((resume_count >= 0) AND (generation = (resume_count + 1)))),
+    CONSTRAINT customer_operation_workflow_executions_check1 CHECK ((NOT ((record ->> 'workflow_run_id'::text) IS DISTINCT FROM (run_id)::text))),
+    CONSTRAINT customer_operation_workflow_executions_check2 CHECK ((NOT ((record ->> 'generation'::text) IS DISTINCT FROM (generation)::text))),
+    CONSTRAINT customer_operation_workflow_executions_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_workflow_executions_record_check CHECK ((jsonb_typeof(record) = 'object'::text))
 );
 
 
@@ -19730,7 +19850,7 @@ CREATE TABLE public.workflow_runs (
     lease_until timestamp with time zone,
     resume_count integer DEFAULT 0 NOT NULL,
     cancelled_at timestamp with time zone,
-    platform_tenant_id uuid REFERENCES public.platform_tenants(id) ON DELETE RESTRICT,
+    platform_tenant_id uuid,
     CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
     CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
@@ -20934,6 +21054,14 @@ ALTER TABLE ONLY public.customer_operation_definitions
 
 
 --
+-- Name: customer_operation_delivery_retries customer_operation_delivery_retries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_delivery_retries
+    ADD CONSTRAINT customer_operation_delivery_retries_pkey PRIMARY KEY (operation_id, retry_id);
+
+
+--
 -- Name: customer_operation_events customer_operation_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20963,6 +21091,22 @@ ALTER TABLE ONLY public.customer_operation_executions
 
 ALTER TABLE ONLY public.customer_operation_idempotency
     ADD CONSTRAINT customer_operation_idempotency_pkey PRIMARY KEY (scope_digest);
+
+
+--
+-- Name: customer_operation_job_executions customer_operation_job_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_pkey PRIMARY KEY (operation_id, generation);
+
+
+--
+-- Name: customer_operation_job_executions customer_operation_job_executions_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_run_id_key UNIQUE (run_id);
 
 
 --
@@ -21006,11 +21150,43 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 
 --
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_pkey PRIMARY KEY (operation_id, generation);
+
+
+--
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_run_id_resume_count_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_run_id_resume_count_key UNIQUE (run_id, resume_count);
+
+
+--
+-- Name: customer_operations customer_operations_job_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_job_run_id_key UNIQUE (job_run_id);
+
+
+--
 -- Name: customer_operations customer_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operations customer_operations_workflow_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_workflow_run_id_key UNIQUE (workflow_run_id);
 
 
 --
@@ -26257,6 +26433,13 @@ CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_o
 
 
 --
+-- Name: customer_operations_account_app_creation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_account_app_creation_idx ON public.customer_operations USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
 -- Name: customer_operations_definition_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -30196,18 +30379,19 @@ CREATE INDEX workflow_operation_effects_attempt_idx ON public.workflow_operation
 
 CREATE INDEX workflow_runs_app_id_idx ON public.workflow_runs USING btree (app_id, created_at DESC);
 
---
--- Name: workflow_runs_platform_tenant_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
-
 
 --
 -- Name: workflow_runs_dispatch_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX workflow_runs_dispatch_idx ON public.workflow_runs USING btree (scheduled_for) WHERE (status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text]));
+
+
+--
+-- Name: workflow_runs_platform_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
 
 
 --
@@ -32486,6 +32670,27 @@ CREATE TRIGGER project_environment_workload_head_changed AFTER INSERT OR UPDATE 
 
 
 --
+-- Name: project_release_members project_release_member_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_member_policy_changed_trg AFTER INSERT ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.project_release_member_policy_changed();
+
+
+--
+-- Name: project_release_sets project_release_set_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_set_policy_changed_trg AFTER UPDATE OF active ON public.project_release_sets FOR EACH ROW WHEN ((old.active IS DISTINCT FROM new.active)) EXECUTE FUNCTION public.project_release_set_policy_changed();
+
+
+--
+-- Name: project_release_sets project_release_set_policy_deleted_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_set_policy_deleted_trg BEFORE DELETE ON public.project_release_sets FOR EACH ROW WHEN (old.active) EXECUTE FUNCTION public.project_release_set_policy_changed();
+
+
+--
 -- Name: apps prune_pr_preview_set_on_root_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -34373,6 +34578,14 @@ ALTER TABLE ONLY public.customer_operation_definitions
 
 
 --
+-- Name: customer_operation_delivery_retries customer_operation_delivery_retries_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_delivery_retries
+    ADD CONSTRAINT customer_operation_delivery_retries_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: customer_operation_events customer_operation_events_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34421,6 +34634,22 @@ ALTER TABLE ONLY public.customer_operation_idempotency
 
 
 --
+-- Name: customer_operation_job_executions customer_operation_job_executions_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_job_executions customer_operation_job_executions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.job_runs(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: customer_operation_recoveries customer_operation_recoveries_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34461,6 +34690,22 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 
 --
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: customer_operations customer_operations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34493,11 +34738,27 @@ ALTER TABLE ONLY public.customer_operations
 
 
 --
+-- Name: customer_operations customer_operations_job_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_job_run_id_fkey FOREIGN KEY (job_run_id) REFERENCES public.job_runs(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: customer_operations customer_operations_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operations customer_operations_workflow_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE RESTRICT;
 
 
 --
@@ -39189,6 +39450,14 @@ ALTER TABLE ONLY public.workflow_runs
 
 
 --
+-- Name: workflow_runs workflow_runs_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_runs
+    ADD CONSTRAINT workflow_runs_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: workflow_schedule_cursors workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39254,21 +39523,3 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
-
-
-
--- ADR-521: account-owned operation history.
-CREATE INDEX IF NOT EXISTS customer_operations_account_app_creation_idx
-    ON customer_operations(account_id, app_id, created_at DESC, id DESC);
-
--- ADR-521: immutable completion retry decisions; parent retention bounds them.
-CREATE TABLE customer_operation_delivery_retries (
- operation_id uuid NOT NULL REFERENCES customer_operations(id) ON DELETE CASCADE,
- retry_id text NOT NULL CHECK (octet_length(retry_id) BETWEEN 1 AND 128),
- delivery_id uuid NOT NULL,
- expected_replay_generation integer NOT NULL CHECK (expected_replay_generation >= 0 AND expected_replay_generation < 2147483647),
- replay_generation integer NOT NULL CHECK (replay_generation = expected_replay_generation + 1),
- queued_at timestamptz NOT NULL,
- expires_at timestamptz NOT NULL CHECK (expires_at > queued_at),
- PRIMARY KEY (operation_id, retry_id)
-);

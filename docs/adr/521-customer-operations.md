@@ -178,3 +178,29 @@ identity/payload conflicts, unsafe files, invalid acknowledgements and expired
 unconfirmed receipts fail closed. `queued` describes the decision at its recorded
 time. Callers must inspect the delivery for live transport status. No decision
 repeats business work or relaxes receiver cooldown/delivery policy.
+
+## Cooperative HTTP control — 2026-10-05
+
+Running ordinary HTTP handlers may observe cancellation intent, the admitted
+deadline and live lease through a workload-authenticated control read. Account,
+app, instance, invocation, attempt and capability must match the current claim;
+an expired deadline is rejected even if an earlier lease extends beyond it.
+Both stores observe invocation and operation together, using the existing
+lifecycle lock ordering. This read creates no report, event or durable state,
+grants no renewal and stays available after admission rollback. The projection
+omits business data and execution secrets. Poll recommendations are bounded at
+100–1000 ms in pkg/api/limits.go and adapt to short scheduler claims.
+
+The opt-in Node request scope checks control before business code and before
+returning its result, polls with fresh assertions, supplies cooperative I/O
+cancellation and bounds CPU checkpoints. Server observation durations consume
+request latency; monotonic elapsed time and forward wall-clock steps can shorten
+but never extend the local budget. Request cleanup aborts polling and pending
+control I/O. Reporting and prepared file writes obey the scope's stop state.
+
+Control reads are advisory and cannot atomically fence external effects. Code
+that ignores cancellation may continue. An observed stop neither undoes an
+effect nor certifies a safe retry or cancelled business outcome. schedd still
+settles dispatched work under its pinned recovery policy; uncertainty remains
+reconciliation unless the existing contract declares safe repeat execution.
+Native lifecycle and park/restore qualification remain separate requirements.

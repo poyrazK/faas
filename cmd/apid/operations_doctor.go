@@ -114,7 +114,7 @@ func (s *server) observeOperationDoctor(ctx context.Context, acct state.Account,
 	r.Checks = append(r.Checks, operationDoctorFact("plan", limits.Allowed, "plan_allowed_observed", "plan_not_allowed", "Current plan permits Operations.", "Select a plan with an Operations allowance."))
 	r.Checks = append(r.Checks, operationDoctorFact("deployment_pin", dep.Status == state.DeployLive, "deployment_live_observed", "deployment_not_live", "Selected deployment metadata is live; code bytes were not probed.", "Select a live deployment and its immutable definitions."))
 	r.Checks = append(r.Checks, s.observeOperationPending(ctx, acct.ID, int64(limits.PendingPerAccount)))
-	p := s.operationsPreview.Observe(acct.ID, dep.AppID, dep.Scope, tenant.ID)
+	p := s.operationsPreview.ObserveCohort(acct.ID, dep.AppID, dep.Scope, tenant.ID)
 	preview := operationDoctorFact("preview", p.Allowed, p.Code, p.Code, "Selected tenant is in the currently observed preview window.", "Have the platform operator inspect the bounded cohort and UTC window; this report grants no admission.")
 	r.Checks = append(r.Checks, preview)
 	r.Checks = append(r.Checks, operationDoctorConfiguration("workload_trust", s.operationsWorkloadVerifier != nil, "Configure valid Operations workload trust on the API node."), operationDoctorConfiguration("result_storage", s.operationArtifactStorage != nil, "Configure private retained-result storage on the API node."))
@@ -126,6 +126,7 @@ func (s *server) observeOperationDoctor(ctx context.Context, acct state.Account,
 			break
 		}
 		r.Checks = append(r.Checks, s.observeOperationDefinition(ctx, acct, dep, d)...)
+		r.Checks = append(r.Checks, operationDoctorExecutionPreview(p, d))
 	}
 	for _, name := range []string{"gateway_admission", "runtime_reporting", "result_storage_io", "native_lifecycle", "fleet_rollback"} {
 		r.Checks = append(r.Checks, api.OperationDoctorCheck{Check: name, Status: "unknown", Impact: "qualification", Code: name + "_unverified", Message: "Not probed by this read-only API observation.", Remediation: "Use exact-source native and fleet qualification receipts; node configuration is not runtime proof."})
@@ -190,6 +191,10 @@ func operationDoctorBlockerMessage(code string) string {
 		return "The preview admission window has expired."
 	case "preview_cohort_excluded":
 		return "The selected account, app, environment and tenant are outside the observed cohort."
+	case "preview_execution_kind_excluded":
+		return "This definition's execution type is outside the selected cohort's allowlist."
+	case "preview_execution_kind_invalid":
+		return "The pinned definition has an ambiguous execution type."
 	case "workload_trust_missing":
 		return "Operations workload trust is not configured on this API node."
 	case "result_storage_missing":

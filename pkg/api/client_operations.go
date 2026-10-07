@@ -190,6 +190,12 @@ func (c *Client) ReportOperationProgress(ctx context.Context, id string, proof O
 	err := c.doWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/progress", req, &out, proof.headers())
 	return out, err
 }
+
+func (c *Client) GetOperationExecutionControl(ctx context.Context, id string, proof OperationRuntimeProof) (OperationExecutionControlResponse, error) {
+	var out OperationExecutionControlResponse
+	err := c.doWithHeaders(ctx, http.MethodGet, "/v1/runtime/operations/"+url.PathEscape(id)+"/control", nil, &out, proof.headers())
+	return out, err
+}
 func (c *Client) AttachOperationArtifact(ctx context.Context, id string, proof OperationRuntimeProof, req OperationArtifactRequest) (OperationResponse, error) {
 	var out OperationResponse
 	err := c.doWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/artifacts", req, &out, proof.headers())

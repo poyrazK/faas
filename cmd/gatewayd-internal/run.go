@@ -838,8 +838,10 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
 			return inv, 0, nil, err
 		}
-		for _, name := range []string{api.OperationIDHeader, api.OperationAttemptHeader, api.OperationCapabilityHeader} {
-			req.Header.Set(name, proof[name])
+		for _, name := range []string{api.OperationIDHeader, api.OperationAttemptHeader, api.OperationCapabilityHeader, api.OperationReceiptVersionHeader, api.OperationReceiptBindingHeader} {
+			if value := proof[name]; value != "" {
+				req.Header.Set(name, value)
+			}
 		}
 	}
 	if inv.ExclusiveClaim != nil {

@@ -96,7 +96,7 @@ func TestOperationDoctorScopedReadOnlyContract(t *testing.T) {
 			t.Errorf("doctor wire %s %s", r.Method, r.URL)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"app_id":"app","scope":"production","deployment_id":"dep","platform_tenant_id":"tenant","plan":"pro","observed_at":"2026-10-05T13:00:00Z","observation_scope":"responding_api_node","submission_state":"eligible","checks":[{"check":"preview","status":"observed","impact":"submission","code":"preview_cohort_observed","message":"Observed."},{"check":"completion_destination","status":"warning","impact":"delivery","code":"completion_destination_disabled","message":"Disabled."},{"check":"native_lifecycle","status":"unknown","impact":"qualification","code":"native_lifecycle_unverified","message":"Unverified."}]}`)
+		_, _ = io.WriteString(w, `{"app_id":"app","scope":"production","deployment_id":"dep","platform_tenant_id":"tenant","plan":"pro","observed_at":"2026-10-05T13:00:00Z","observation_scope":"responding_api_node","submission_state":"eligible","checks":[{"check":"preview","status":"observed","impact":"submission","code":"preview_cohort_observed","message":"Observed."},{"check":"completion_destination","status":"warning","impact":"delivery","code":"completion_destination_disabled","message":"Disabled."},{"check":"native_lifecycle","status":"unknown","impact":"qualification","code":"native_lifecycle_unverified","message":"Unverified."},{"check":"execution_preview","status":"observed","impact":"submission","code":"preview_cohort_observed","message":"Job allowed.","name":"export name","execution_kind":"job"}]}`)
 	}))
 	defer srv.Close()
 	client, err := faas.NewClient(srv.URL, "operator-token")
@@ -104,7 +104,7 @@ func TestOperationDoctorScopedReadOnlyContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, err := client.GetOperationDoctor(context.Background(), "exports", definitionID, "tenant+selector", "export name")
-	if err != nil || r.SubmissionState != "eligible" || r.ObservedSubmissionState() != "eligible" || len(r.Checks) != 3 || r.Checks[1].Status != "warning" || r.Checks[2].Status != "unknown" {
+	if err != nil || r.SubmissionState != "eligible" || r.ObservedSubmissionState() != "eligible" || len(r.Checks) != 4 || r.Checks[1].Status != "warning" || r.Checks[2].Status != "unknown" || r.Checks[3].ExecutionKind != "job" {
 		t.Fatal("doctor contract", r, err)
 	}
 }

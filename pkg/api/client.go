@@ -222,7 +222,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 func (c *Client) doWithHeaders(ctx context.Context, method, path string, body, out any, headers http.Header) error {
-	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, method, path, body, out, "", headers)
+	cli := c.http
+	if strings.HasPrefix(path, "/v1/runtime/job-operations/") || headers.Get(OperationJobCapabilityHeader) != "" {
+		clone := *cli
+		clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		cli = &clone
+	}
+	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, cli, method, path, body, out, "", headers)
 }
 
 // doWithIdempotencyKey is the same request path as do, with an optional

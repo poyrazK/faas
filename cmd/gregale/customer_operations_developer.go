@@ -15,9 +15,10 @@ import (
 )
 
 type customerOperationDeveloperCommand struct {
-	verb, action, app, deployment, name, dir, plan, input, definition, key, receipt string
-	self                                                                            bool
-	timeout                                                                         time.Duration
+	verb, action, app, deployment, name, dir, plan, input, definition, key, receipt, output string
+	checkTypes bool
+	self       bool
+	timeout    time.Duration
 }
 
 func parseCustomerOperationDeveloper(args []string) (customerOperationDeveloperCommand, error) {
@@ -34,7 +35,7 @@ func parseCustomerOperationDeveloper(args []string) (customerOperationDeveloperC
 		c.action, args = args[0], args[1:]
 	}
 	fs := newFlagSet("customer-operations "+c.verb, flag.ContinueOnError)
-	if c.verb != "validate" {
+	if c.verb != "validate" && c.verb != "types" {
 		fs.DurationVar(&c.timeout, "timeout", 0, "local request deadline")
 	}
 	switch c.verb {
@@ -47,6 +48,13 @@ func parseCustomerOperationDeveloper(args []string) (customerOperationDeveloperC
 		fs.StringVar(&c.plan, "plan", "", "explicit target plan")
 		fs.StringVar(&c.name, "name", "", "operation to validate with sample input")
 		fs.StringVar(&c.input, "input-file", "", "optional sample JSON input")
+	case "types":
+		fs.StringVar(&c.app, "app", "", "selected manifest app")
+		fs.StringVar(&c.dir, "dir", ".", "source directory")
+		fs.StringVar(&c.plan, "plan", "", "explicit target plan")
+		fs.StringVar(&c.name, "name", "", "optional operation name; defaults to all selected operations")
+		fs.StringVar(&c.output, "output", "customer-operations.generated.d.ts", "generated TypeScript declaration file")
+		fs.BoolVar(&c.checkTypes, "check", false, "verify generated declarations are current without writing")
 	case "start":
 		fs.BoolVar(&c.self, "self", false, "derive ownership from a tenant credential")
 		fs.StringVar(&c.definition, "definition", "", "immutable definition ID")
@@ -78,6 +86,9 @@ func parseCustomerOperationDeveloper(args []string) (customerOperationDeveloperC
 	if c.verb == "validate" && (c.app == "" || c.plan == "" || (c.input != "" && c.name == "")) {
 		return c, fmt.Errorf("validate requires --app, --plan and --name when sample input is supplied")
 	}
+	if c.verb == "types" && (c.app == "" || c.plan == "" || c.output == "") {
+		return c, fmt.Errorf("types requires --app, --plan and a nonempty --output path")
+	}
 	if c.verb == "start" {
 		if !c.self || c.receipt == "" {
 			return c, fmt.Errorf("start requires --self and --receipt-file")
@@ -101,6 +112,49 @@ func cmdCustomerOperationDeveloper(args []string) int {
 		}
 		if err := renderCustomerOperationValidation(osStdout, report, jsonOutput); err != nil {
 			return printErr("Could not write validation", err)
+		}
+		return 0
+	}
+	if c.verb == "types" {
+		report, err := validateCustomerOperationSource(c)
+		if err != nil {
+			return printErr("Operation type generation failed", err)
+		}
+		generated, names, err := generateCustomerOperationTypes(report)
+		if err != nil {
+			return printErr("Operation type generation failed", err)
+		}
+		result := customerOperationTypesResult{Output: c.output, Operations: len(report.Definitions), Types: names}
+		if c.checkTypes {
+			result.Status, err = checkCustomerOperationTypes(c.dir, c.output, generated)
+			if err != nil {
+				return printErr("Could not check operation types", err)
+			}
+		} else if err := writeCustomerOperationTypes(c.dir, c.output, generated); err != nil {
+			return printErr("Could not write operation types", err)
+		}
+		if jsonOutput {
+			if err := json.NewEncoder(osStdout).Encode(result); err != nil {
+				return printErr("Could not write operation type receipt", err)
+			}
+		} else {
+			message := fmt.Sprintf("Generated input and output types for %d operation(s) in %s", result.Operations, result.Output)
+			if c.checkTypes {
+				switch result.Status {
+				case "current":
+					message = fmt.Sprintf("Generated declarations are up to date in %s", result.Output)
+				case "missing":
+					message = fmt.Sprintf("Generated declarations are missing at %s; run customer-operations types to create them", result.Output)
+				case "stale":
+					message = fmt.Sprintf("Generated declarations are stale at %s; run customer-operations types to refresh them", result.Output)
+				}
+			}
+			if _, err := fmt.Fprintln(osStdout, message); err != nil {
+				return printErr("Could not write operation type receipt", err)
+			}
+		}
+		if c.checkTypes && result.Status != "current" {
+			return 1
 		}
 		return 0
 	}

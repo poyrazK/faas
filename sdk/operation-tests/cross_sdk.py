@@ -13,6 +13,8 @@ from faas_sdk import (
     operation_receipt_schema,
     operation_request_from_headers,
     with_operation_transaction,
+    customer_operation_request_from_headers,
+    with_customer_operation_transaction,
 )
 from psycopg import sql
 
@@ -39,15 +41,18 @@ def main():
 
                 def invoke(language, mode):
                     if language == "python":
-                        request = operation_request_from_headers(fixture["headers"], fixture["method"], fixture["path"], base64.b64decode(fixture["body_base64"]))
+                        customer = "x-gregale-customer-operation-receipt-version" in fixture["headers"]
+                        request = (customer_operation_request_from_headers if customer else operation_request_from_headers)(fixture["headers"], fixture["method"], fixture["path"], base64.b64decode(fixture["body_base64"]))
 
                         def callback(cursor):
                             if mode != "write":
                                 raise AssertionError("cross SDK receipt callback reran")
                             cursor.execute("UPDATE business.counter SET total=total+1 WHERE id=1")
+                            if customer:
+                                return {"file": "ready.csv", "value": 9007199254740993, "label": "π <>&"}
                             return {"result": {"value": 9007199254740993, "label": "π <>&"}, "effects": [{"name": "notify", "webhook_id": "cccbbbaa-3333-4333-8333-cccccccccccc", "type": "order.fulfilled", "payload": {"order_id": 123, "nested": [{"text": 'π \\" },] : [ {\nend'}, None, False]}}]}
 
-                        result = with_operation_transaction(conn, request, callback)
+                        result = (with_customer_operation_transaction if customer else with_operation_transaction)(conn, request, callback)
                         return {"body": result.body.decode(), "replayed": result.replayed}
                     request_file.write_text(json.dumps(fixture))
                     command = [binary] if language == "go" else ["node", str(ROOT / "sdk/node/test/fixtures/operation-interop.mjs")]
@@ -71,7 +76,25 @@ def main():
                     counts = conn.execute("SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_operation_inbox)").fetchone()
                     if counts != (index, index):
                         raise AssertionError(f"duplicate mutation: {counts}")
-                print("All 18 cross-SDK receipt replays passed for customer/account scope, including precise numbers and Unicode.")
+                fixture = json.loads((ROOT / "sdk/operation-tests/customer-request-fixture.json").read_text())
+                for index, writer in enumerate(["python", "node", "go"], 7):
+                    fixture["headers"]["x-gregale-customer-operation-id"] = str(uuid4())
+                    fixture["headers"]["x-gregale-operation-attempt"] = "1"
+                    saved = invoke(writer, "write")
+                    assert saved["replayed"] is False
+                    fixture["headers"]["x-gregale-operation-attempt"] = "2"
+                    fixture["headers"]["x-faas-invocation-id"] = str(uuid4())
+                    fixture["headers"]["x-gregale-operation-capability"] = "c" * 64
+                    for reader in ["python", "node", "go"]:
+                        recovered = invoke(reader, "replay")
+                        if recovered != {"body": saved["body"], "replayed": True}:
+                            raise AssertionError(f"Customer Operations {writer} -> {reader} changed result")
+                        if "gregale_operation_result" in json.loads(recovered["body"]):
+                            raise AssertionError("Customer Operations leaked managed envelope")
+                    counts = conn.execute("SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_operation_inbox)").fetchone()
+                    if counts != (index, index):
+                        raise AssertionError(f"duplicate customer mutation: {counts}")
+                print("All 27 cross-SDK receipt replays passed for managed customer/account scope and Customer Operations, including precise numbers and Unicode.")
         finally:
             admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
 

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,7 +83,7 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 			t.Fatalf("HTTP %d, want %d: %s", rec.Code, status, rec.Body.String())
 		}
 	}
-	spec := api.OperationDefinitionSpec{Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant,
+	spec := api.OperationDefinitionSpec{Name: "export", TransactionReceipt: api.OperationTransactionPostgres, Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant,
 		InputSchema:  json.RawMessage(`{"type":"object","required":["count"],"properties":{"count":{"type":"integer","minimum":1}},"additionalProperties":false}`),
 		OutputSchema: json.RawMessage(`{"type":"object","required":["file"],"properties":{"file":{"type":"string"}},"additionalProperties":false}`), ProgressStages: []string{"generating"}}
 	definitionPath := "/v1/apps/" + app.Slug + "/deployments/" + dep.ID + "/operation-definitions/export"
@@ -97,6 +98,15 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	var def api.OperationDefinitionResponse
 	if err := json.Unmarshal(define.Body.Bytes(), &def); err != nil {
 		t.Fatal(err)
+	}
+	if def.Spec.TransactionReceipt != api.OperationTransactionPostgres {
+		t.Fatal("definition lost explicit transaction receipt contract")
+	}
+	receiptDefinitions := do("GET", "/v1/apps/"+app.Slug+"/deployments/"+dep.ID+"/operation-definitions", key, nil, nil)
+	check(receiptDefinitions, http.StatusOK)
+	var receiptPage api.OperationDefinitionsResponse
+	if err := json.Unmarshal(receiptDefinitions.Body.Bytes(), &receiptPage); err != nil || len(receiptPage.Definitions) != 1 || receiptPage.Definitions[0].TransactionReceipt != api.OperationTransactionPostgres {
+		t.Fatalf("definition summary lost receipt opt-in: %s %v", receiptDefinitions.Body.String(), err)
 	}
 	token := func(name string, scopes []string) (string, state.PlatformTenant) {
 		t.Helper()
@@ -127,6 +137,56 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	}
 	check(do("GET", "/v1/platform-tenant-self/operations/"+receipt.ID, aliceKey, nil, nil), http.StatusForbidden)
 	check(do("POST", "/v1/platform-tenant-self/operations/"+receipt.ID+"/cancel", aliceKey, api.OperationCancellationRequest{ExpectedGeneration: 1}, nil), http.StatusForbidden)
+	t.Run("submission lookup stays scoped and read-only with admission closed", func(t *testing.T) {
+		check := func(rec *httptest.ResponseRecorder, status int) {
+			t.Helper()
+			if rec.Code != status {
+				t.Fatalf("HTTP %d, want %d: %s", rec.Code, status, rec.Body.String())
+			}
+		}
+		lookupPath := "/v1/platform-tenant-self/customer-operations/submissions/lookup"
+		lookup := api.OperationSubmissionLookupRequest{AppID: app.ID, Scope: def.Scope, Name: "export", IdempotencyKey: "export-1"}
+		srv.operationsAdmissionEnabled = false
+		defer func() { srv.operationsAdmissionEnabled = true }()
+		found := do("POST", lookupPath, aliceKey, lookup, nil)
+		check(found, http.StatusOK)
+		var result api.OperationSubmissionLookupResponse
+		if err := json.Unmarshal(found.Body.Bytes(), &result); err != nil || result.State != "accepted" || result.Receipt == nil || result.Receipt.ID != receipt.ID || result.AcceptedAt == nil || found.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("lookup acceptance: %s %v", found.Body, err)
+		}
+		// A read-only customer credential cannot discover another customer's key.
+		foreign := do("POST", lookupPath, bobKey, lookup, nil)
+		check(foreign, http.StatusOK)
+		if err := json.Unmarshal(foreign.Body.Bytes(), &result); err != nil || result.State != "unresolved" {
+			t.Fatal("foreign acceptance leaked", foreign.Body, err)
+		}
+		check(do("POST", lookupPath, key, lookup, nil), http.StatusForbidden)
+		check(do("POST", lookupPath+"?platform_tenant_id="+alice.ID, aliceKey, lookup, nil), http.StatusBadRequest)
+		check(do("POST", lookupPath, aliceKey, map[string]any{"app_id": app.ID, "scope": def.Scope, "name": "export", "idempotency_key": "export-1", "platform_tenant_id": alice.ID}, nil), http.StatusBadRequest)
+		check(do("POST", lookupPath, aliceKey, map[string]string{"app_id": app.ID, "scope": def.Scope, "name": "export", "idempotency_key": strings.Repeat("x", api.OperationSubmissionLookupMaxBytes)}, nil), http.StatusRequestEntityTooLarge)
+		lookup.ExpectedIdentity = &api.OperationTenantIdentity{AccountID: acct.ID, PlatformTenantID: alice.ID}
+		check(do("POST", lookupPath, bobKey, lookup, nil), http.StatusConflict)
+	})
+	t.Run("durable submission fences credentials and feature scope", func(t *testing.T) {
+		check := func(rec *httptest.ResponseRecorder, status int) {
+			t.Helper()
+			if rec.Code != status {
+				t.Fatalf("HTTP %d, want %d: %s", rec.Code, status, rec.Body.String())
+			}
+		}
+		fenced := start
+		fenced.ExpectedIdentity = &api.OperationTenantIdentity{AccountID: acct.ID, PlatformTenantID: alice.ID}
+		fenced.ExpectedScope = &api.OperationSubmissionScope{AppID: app.ID, Scope: "staging", Name: "export"}
+		check(do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, fenced, headers), http.StatusConflict)
+		fenced.ExpectedScope.Scope = def.Scope
+		check(do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, fenced, headers), http.StatusAccepted)
+		fenced.ExpectedIdentity.PlatformTenantID = app.ID
+		conflict := do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, fenced, headers)
+		check(conflict, http.StatusConflict)
+		if !strings.Contains(conflict.Body.String(), "operation_identity_conflict") {
+			t.Fatal(conflict.Body.String())
+		}
+	})
 	duplicate := do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, start, headers)
 	check(duplicate, http.StatusAccepted)
 	if duplicate.Body.String() != rec.Body.String() {
@@ -142,6 +202,39 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	check(do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, json.RawMessage(`{"definition_id":"`+def.ID+`","input":{"count":1},"input":{"count":2}}`), headers), http.StatusBadRequest)
 	check(do("POST", receipt.StatusURL+"/cancel", aliceKey, api.OperationCancellationRequest{ExpectedGeneration: 9}, nil), http.StatusConflict)
 	srv.operationsAdmissionEnabled = false // reports and downloads survive admission rollback
+	readKey, readHash, _ := api.GenerateAPIKey()
+	if _, err := store.CreateAPIKey(ctx, acct.ID, readHash, "recovery-read", []string{api.ScopeAppsRead}); err != nil {
+		t.Fatal(err)
+	}
+	inspectionPath := "/v1/apps/" + app.Slug + "/operations/" + receipt.ID + "/recovery-inspection"
+	previewPath := "/v1/apps/" + app.Slug + "/operations/" + receipt.ID + "/recovery-preview"
+	inspectionResponse := do("GET", inspectionPath, readKey, nil, nil)
+	check(inspectionResponse, http.StatusOK)
+	if inspectionResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("inspection may be cached")
+	}
+	var inspection api.OperationRecoveryInspection
+	if err := json.Unmarshal(inspectionResponse.Body.Bytes(), &inspection); err != nil || inspection.OperationID != receipt.ID || inspection.ExecutionKind != "http" {
+		t.Fatal("inspection response", err)
+	}
+	previewResponse := do("POST", previewPath, readKey, api.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "safe_to_retry"}, nil)
+	check(previewResponse, http.StatusOK)
+	var preview api.OperationRecoveryPreview
+	if err := json.Unmarshal(previewResponse.Body.Bytes(), &preview); err != nil || preview.Eligible || !preview.EvidenceRequired || len(preview.Blockers) != 1 || preview.Blockers[0] != "reconciliation_not_required" {
+		t.Fatal("accepted work offered recovery", err)
+	}
+	check(do("POST", previewPath, readKey, api.OperationRecoveryPreviewRequest{ExpectedGeneration: 2, Resolution: "failed"}, nil), http.StatusConflict)
+	check(do("POST", previewPath, readKey, json.RawMessage(`{"expected_generation":1,"resolution":"failed","evidence":"forged"}`), nil), http.StatusBadRequest)
+	check(do("POST", previewPath, readKey, json.RawMessage(`{"expected_generation":1,"expected_generation":2,"resolution":"failed"}`), nil), http.StatusBadRequest)
+	check(do("GET", inspectionPath, aliceKey, nil, nil), http.StatusForbidden)
+	check(do("POST", previewPath, aliceKey, api.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "failed"}, nil), http.StatusForbidden)
+	check(do("POST", "/v1/apps/"+app.Slug+"/operations/"+receipt.ID+"/recover", readKey, api.OperationRecoveryRequest{}, nil), http.StatusForbidden)
+	otherApp, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "foreign-operation", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(do("GET", "/v1/apps/"+otherApp.Slug+"/operations/"+receipt.ID+"/recovery-inspection", readKey, nil, nil), http.StatusNotFound)
+	check(do("POST", "/v1/apps/"+otherApp.Slug+"/operations/"+receipt.ID+"/recovery-preview", readKey, api.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "failed"}, nil), http.StatusNotFound)
 	op, err := store.OperationByID(ctx, acct.ID, alice.ID, receipt.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +268,34 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	proof := map[string]string{api.InvocationIDHeader: inv.ID, api.OperationAttemptHeader: strconv.Itoa(inv.Attempts), api.OperationCapabilityHeader: metadata[api.OperationCapabilityHeader]}
+	controlURL := "/v1/runtime/operations/" + op.ID + "/control"
+	check(do("GET", controlURL, aliceKey, nil, proof), http.StatusUnauthorized)
+	check(do("GET", controlURL, key, nil, proof), http.StatusUnauthorized)
+	check(do("GET", controlURL, assertion.AccessToken, nil, nil), http.StatusUnauthorized)
+	staleProof := map[string]string{api.InvocationIDHeader: inv.ID, api.OperationAttemptHeader: strconv.Itoa(inv.Attempts + 1), api.OperationCapabilityHeader: metadata[api.OperationCapabilityHeader]}
+	check(do("GET", controlURL, assertion.AccessToken, nil, staleProof), http.StatusConflict)
+	readControl := func(cancelled bool) {
+		t.Helper()
+		before, err := store.OperationByID(ctx, acct.ID, alice.ID, op.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		read := do("GET", controlURL, assertion.AccessToken, nil, proof)
+		check(read, http.StatusOK)
+		var control api.OperationExecutionControlResponse
+		if err := json.Unmarshal(read.Body.Bytes(), &control); err != nil || control.OperationID != op.ID || control.InvocationID != inv.ID || control.Attempt != inv.Attempts || control.CancellationRequested != cancelled || !control.DeadlineAt.Equal(*inv.DeadlineAt) || !control.LeaseExpiresAt.Equal(*inv.LeaseExpiresAt) || !control.LeaseExpiresAt.After(control.ObservedAt) || control.PollAfterMS != api.OperationControlPollIntervalMS {
+			t.Fatalf("control: %s %v", read.Body.String(), err)
+		}
+		if read.Header().Get("Cache-Control") != "no-store" || bytes.Contains(read.Body.Bytes(), []byte(metadata[api.OperationCapabilityHeader])) || bytes.Contains(read.Body.Bytes(), []byte("result")) {
+			t.Fatal("control leaked or cached private work")
+		}
+		after, err := store.OperationByID(ctx, acct.ID, alice.ID, op.ID)
+		current, invErr := store.InvocationByID(ctx, inv.ID)
+		if err != nil || invErr != nil || after.LatestSequence != before.LatestSequence || after.ReportCount != before.ReportCount || !current.LeaseExpiresAt.Equal(*inv.LeaseExpiresAt) {
+			t.Fatal("control read changed reports, events or lease")
+		}
+	}
+	readControl(false) // Already admitted work can read control with admission closed.
 	report := api.OperationReportRequest{ReportID: "chunk-1", Stage: "generating", Completed: 1, Total: 3}
 	progressURL := "/v1/runtime/operations/" + op.ID + "/progress"
 	check(do("POST", progressURL, aliceKey, report, proof), http.StatusUnauthorized)
@@ -217,6 +338,7 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	check(do("GET", fileURL, aliceKey, nil, nil), http.StatusConflict)
 	check(do("POST", receipt.StatusURL+"/cancel", aliceKey, api.OperationCancellationRequest{ExpectedGeneration: 2}, nil), http.StatusConflict)
 	check(do("POST", receipt.StatusURL+"/cancel", aliceKey, api.OperationCancellationRequest{ExpectedGeneration: 1}, nil), http.StatusOK)
+	readControl(true)
 	if err := store.CompleteKeyedInvocation(ctx, inv.ID, inv.Attempts, json.RawMessage(`{"file":"exports/alice.csv"}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -229,6 +351,7 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	if out.State != api.OperationSucceeded || !out.CancellationRequested || out.Progress == nil {
 		t.Fatalf("operation outcome: %+v", out)
 	}
+	check(do("GET", controlURL, assertion.AccessToken, nil, proof), http.StatusConflict)
 	if result.Header().Get("Cache-Control") != "no-store" || bytes.Contains(result.Body.Bytes(), []byte(metadata[api.OperationCapabilityHeader])) {
 		t.Fatal("customer response leaked or cached execution authority")
 	}
@@ -355,6 +478,90 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	srv.operationsAdmissionEnabled = false
 	check(do("GET", receipt.StatusURL, aliceKey, nil, nil), http.StatusOK)
 	check(do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, start, headers), http.StatusServiceUnavailable)
+
+	// A native workflow uses the same customer submission/read contract and
+	// exposes its own execution identity without issuing an HTTP runtime claim.
+	srv.operationsAdmissionEnabled, srv.workflowRuntimeEnabled = true, true
+	workflowSpec := api.WorkflowSpec{Name: "export-chain", Steps: []api.WorkflowStepSpec{{Name: "generating", Path: "/generate"}}}
+	workflowJSON, _ := json.Marshal([]api.WorkflowSpec{workflowSpec})
+	workflowDep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Workflows: workflowJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, workflowDep.ID); err != nil {
+		t.Fatal(err)
+	}
+	spec.Name, spec.Workflow = "workflow-export", workflowSpec.Name
+	spec.TransactionReceipt = ""
+	workflowPath := "/v1/apps/" + app.Slug + "/deployments/" + workflowDep.ID + "/operation-definitions/" + spec.Name
+	defined := do("PUT", workflowPath, key, spec, nil)
+	check(defined, http.StatusOK)
+	var workflowDef api.OperationDefinitionResponse
+	if err := json.Unmarshal(defined.Body.Bytes(), &workflowDef); err != nil || workflowDef.Spec.Workflow != workflowSpec.Name {
+		t.Fatalf("workflow definition: %s %v", defined.Body.String(), err)
+	}
+	listed := do("GET", "/v1/apps/"+app.Slug+"/deployments/"+workflowDep.ID+"/operation-definitions", key, nil, nil)
+	check(listed, http.StatusOK)
+	var definitionsPage api.OperationDefinitionsResponse
+	if err := json.Unmarshal(listed.Body.Bytes(), &definitionsPage); err != nil || len(definitionsPage.Definitions) != 1 || definitionsPage.Definitions[0].Workflow != workflowSpec.Name {
+		t.Fatalf("workflow discovery: %s %v", listed.Body.String(), err)
+	}
+	workflowStart := api.OperationStartRequest{DefinitionID: workflowDef.ID, Input: start.Input}
+	accepted := do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, workflowStart, map[string]string{"Idempotency-Key": "workflow-export-1"})
+	check(accepted, http.StatusAccepted)
+	var workflowReceipt api.OperationAcceptedResponse
+	if err := json.Unmarshal(accepted.Body.Bytes(), &workflowReceipt); err != nil {
+		t.Fatal(err)
+	}
+	check(do("GET", workflowReceipt.StatusURL, aliceKey, nil, nil), http.StatusOK)
+	check(do("GET", workflowReceipt.StatusURL, bobKey, nil, nil), http.StatusNotFound)
+	executions := do("GET", "/v1/apps/"+app.Slug+"/operations/"+workflowReceipt.ID+"/executions", key, nil, nil)
+	check(executions, http.StatusOK)
+	var workflowExecutions api.OperationExecutionsResponse
+	if err := json.Unmarshal(executions.Body.Bytes(), &workflowExecutions); err != nil || len(workflowExecutions.Executions) != 1 || workflowExecutions.Executions[0].WorkflowRunID == "" || workflowExecutions.Executions[0].InvocationID != "" || bytes.Contains(executions.Body.Bytes(), []byte(`"invocation_id"`)) {
+		t.Fatalf("workflow execution family: %s %v", executions.Body.String(), err)
+	}
+	runID := workflowExecutions.Executions[0].WorkflowRunID
+	check(do("POST", "/v1/workflows/runs/"+runID+"/steps/generating/retry", key, nil, nil), http.StatusConflict)
+	resumeCount := 0
+	check(do("POST", "/v1/workflows/runs/"+runID+"/resume", key, api.ResumeWorkflowRunRequest{ExpectedResumeCount: &resumeCount}, nil), http.StatusConflict)
+
+	// ADR-602: a batch Job also uses the existing customer receipt and read
+	// contract, with one native run and no HTTP/workflow execution identity.
+	job, err := store.JobCreate(ctx, acct.ID, "export-job", "batch", "registry.example/export:v1", []string{"export"}, 128, 60, 1, 3, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.JobSetImageMaterialization(ctx, job.ID, job.ImageRef, "ready", "sha256:"+strings.Repeat("a", 64), "jobs/"+job.ID+".ext4", ""); err != nil {
+		t.Fatal(err)
+	}
+	spec.Name, spec.Path, spec.Workflow, spec.Job = "job-export", "/job-exports", "", job.Name
+	jobPath := "/v1/apps/" + app.Slug + "/deployments/" + workflowDep.ID + "/operation-definitions/" + spec.Name
+	defined = do("PUT", jobPath, key, spec, nil)
+	check(defined, http.StatusOK)
+	var jobDef api.OperationDefinitionResponse
+	if err := json.Unmarshal(defined.Body.Bytes(), &jobDef); err != nil || jobDef.Spec.Job != job.Name {
+		t.Fatalf("Job definition: %s %v", defined.Body.String(), err)
+	}
+	jobStart := api.OperationStartRequest{DefinitionID: jobDef.ID, Input: start.Input}
+	var jobReceipt api.OperationAcceptedResponse
+	for i := 0; i < 2; i++ {
+		accepted = do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, jobStart, map[string]string{"Idempotency-Key": "job-export-1"})
+		check(accepted, http.StatusAccepted)
+		var repeated api.OperationAcceptedResponse
+		if err := json.Unmarshal(accepted.Body.Bytes(), &repeated); err != nil || i > 0 && repeated.ID != jobReceipt.ID {
+			t.Fatalf("Job receipt replay: %s %v", accepted.Body.String(), err)
+		}
+		jobReceipt = repeated
+	}
+	check(do("GET", jobReceipt.StatusURL, aliceKey, nil, nil), http.StatusOK)
+	check(do("GET", jobReceipt.StatusURL, bobKey, nil, nil), http.StatusNotFound)
+	executions = do("GET", "/v1/apps/"+app.Slug+"/operations/"+jobReceipt.ID+"/executions", key, nil, nil)
+	check(executions, http.StatusOK)
+	var jobExecutions api.OperationExecutionsResponse
+	if err := json.Unmarshal(executions.Body.Bytes(), &jobExecutions); err != nil || len(jobExecutions.Executions) != 1 || jobExecutions.Executions[0].JobRunID == "" || jobExecutions.Executions[0].InvocationID != "" || jobExecutions.Executions[0].WorkflowRunID != "" {
+		t.Fatalf("Job execution family: %s %v", executions.Body.String(), err)
+	}
 }
 
 // ADR-521: JSON normalization must not make ordinary integer control fields
@@ -379,6 +586,32 @@ func TestOperationsBodyLimitProblem(t *testing.T) {
 	var problem api.Problem
 	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != http.StatusRequestEntityTooLarge || problem.Limit == nil || *problem.Limit != int64(api.OperationReportBodyMaxBytes) || problem.Observed == nil || *problem.Observed != int64(api.OperationReportBodyMaxBytes)+1 {
 		t.Fatalf("body limit did not include its numeric bound: %d %s, %v", rec.Code, rec.Body.String(), err)
+	}
+}
+
+func TestOperationsWorkflowRecoveryProblems(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"changed run", state.ErrWorkflowResumeConflict, http.StatusConflict, "operation_state_conflict"},
+		{"unsafe resume", state.ErrWorkflowResumeUnsafe, http.StatusConflict, "operation_state_conflict"},
+		{"unavailable target", state.ErrWorkflowResumeUnavailable, http.StatusConflict, "operation_state_conflict"},
+		{"native quota", state.NewOperationLimitError("workflow_active_runs", 5, 6), http.StatusTooManyRequests, "operation_limit_exceeded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			writeOperationError(rec, tc.err)
+			var problem api.Problem
+			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != tc.status || problem.Code != tc.code {
+				t.Fatalf("recovery problem: %d %s %v", rec.Code, rec.Body.String(), err)
+			}
+			if tc.status == http.StatusTooManyRequests && (problem.Limit == nil || *problem.Limit != 5 || problem.Observed == nil || *problem.Observed != 6) {
+				t.Fatal("workflow quota omitted numeric bounds")
+			}
+		})
 	}
 }
 

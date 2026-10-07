@@ -32,6 +32,7 @@ var (
 // Generation is validated but deliberately excluded from deduplication identity.
 type OperationRequest struct {
 	managed          bool
+	receiptBinding   string
 	OperationID      string
 	AccountID        string
 	AppID            string
@@ -104,6 +105,9 @@ func normalizeOperationRequest(request OperationRequest) (OperationRequest, erro
 	if !request.managed {
 		return request, ErrInvalidOperationRequest
 	}
+	if request.receiptBinding != "" && (!regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(request.receiptBinding) || request.PlatformTenantID == "") {
+		return request, ErrInvalidOperationRequest
+	}
 	request.OperationID, request.AccountID, request.AppID, request.PlatformTenantID = strings.ToLower(request.OperationID), strings.ToLower(request.AccountID), strings.ToLower(request.AppID), strings.ToLower(request.PlatformTenantID)
 	for _, id := range []string{request.OperationID, request.AccountID, request.AppID} {
 		if !operationUUID(id) {
@@ -139,7 +143,11 @@ func OperationRequestDigest(input OperationRequest) ([]byte, error) {
 		return nil, err
 	}
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("gregale-operation-request-v1\n" + request.Method + "\n" + request.Path + "\n"))
+	prefix := "gregale-operation-request-v1\n"
+	if request.receiptBinding != "" {
+		prefix = "gregale-customer-operation-request-v1\n" + request.receiptBinding + "\n"
+	}
+	_, _ = hash.Write([]byte(prefix + request.Method + "\n" + request.Path + "\n"))
 	_, _ = hash.Write(request.Body)
 	return hash.Sum(nil), nil
 }
@@ -183,6 +191,13 @@ func validateOperationResponse(body []byte) error {
 // lifecycle, and must not perform external side effects. A later generation
 // replays the exact saved response without repeating committed business writes.
 func WithOperationTransaction(ctx context.Context, db *sql.DB, input OperationRequest, handler func(OperationSQLTransaction) (OperationOutcome, error)) (OperationTransactionResult, error) {
+	if input.receiptBinding != "" {
+		return OperationTransactionResult{}, ErrInvalidOperationRequest
+	}
+	return withOperationTransaction(ctx, db, input, handler)
+}
+
+func withOperationTransaction(ctx context.Context, db *sql.DB, input OperationRequest, handler func(OperationSQLTransaction) (OperationOutcome, error)) (OperationTransactionResult, error) {
 	request, err := normalizeOperationRequest(input)
 	if err != nil {
 		return OperationTransactionResult{}, err
@@ -212,6 +227,11 @@ func WithOperationTransaction(ctx context.Context, db *sql.DB, input OperationRe
 		}
 		if err := validateOperationResponse([]byte(body)); err != nil {
 			return OperationTransactionResult{}, err
+		}
+		if request.receiptBinding != "" {
+			if _, err := customerOperationResult([]byte(body)); err != nil {
+				return OperationTransactionResult{}, err
+			}
 		}
 	} else if errors.Is(err, sql.ErrNoRows) {
 		outcome, err := handler(tx)

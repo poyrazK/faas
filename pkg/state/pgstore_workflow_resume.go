@@ -18,7 +18,23 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 		return nil, nil, 0, fmt.Errorf("begin workflow resume: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	run, record, active, err := resumeWorkflowRunTx(ctx, tx, opts, false)
+	if err != nil {
+		return nil, nil, active, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, 0, fmt.Errorf("commit workflow resume: %w", err)
+	}
+	return run, record, active, nil
+}
+
+func resumeWorkflowRunTx(ctx context.Context, tx pgx.Tx, opts WorkflowResumeOptions, operation bool) (*WorkflowRun, *WorkflowResume, int, error) {
 	q := sqlc.New()
+	if _, err := q.GetCustomerOperationForWorkflow(ctx, tx, mustPgUUID(opts.RunID)); err == nil && !operation {
+		return nil, nil, 0, ErrWorkflowResumeUnsafe
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, 0, err
+	}
 	if err := q.LockWorkflowRunAdmission(ctx, tx, opts.AppID); err != nil {
 		return nil, nil, 0, err
 	}
@@ -33,11 +49,13 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 	if !plan.WorkflowsAllowed() || (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid || target.AppStatus == string(AppDeleted) || target.MaintenanceMode {
 		return nil, nil, 0, ErrWorkflowResumeUnavailable
 	}
-	if _, err := q.LockWorkflowResumeTarget(ctx, tx, mustPgUUID(opts.AppID)); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil, 0, ErrWorkflowResumeUnavailable
+	if !operation {
+		if _, err := q.LockWorkflowResumeTarget(ctx, tx, mustPgUUID(opts.AppID)); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, nil, 0, ErrWorkflowResumeUnavailable
+			}
+			return nil, nil, 0, err
 		}
-		return nil, nil, 0, err
 	}
 	row, err := q.LockWorkflowResumeRun(ctx, tx, sqlc.LockWorkflowResumeRunParams{RunID: mustPgUUID(opts.RunID), AppID: mustPgUUID(opts.AppID)})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -110,8 +128,5 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 	}
 	run.Status, run.ResumeCount, run.ScheduledFor, run.UpdatedAt = WorkflowRunStatusPending, record.ResumeNumber, queued.ScheduledFor.Time, queued.UpdatedAt.Time
 	run.FinishedAt, run.LastError, run.Output, run.CurrentStep = nil, nil, nil, nil
-	if err := tx.Commit(ctx); err != nil {
-		return nil, nil, 0, fmt.Errorf("commit workflow resume: %w", err)
-	}
 	return &run, &record, int(active), nil
 }

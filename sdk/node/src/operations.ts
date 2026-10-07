@@ -7,9 +7,11 @@ import {
 } from "./operation-contract.js";
 
 const supportedOperation: unique symbol = Symbol("Gregale managed operation support");
+const customerBinding: unique symbol = Symbol("Gregale customer operation receipt binding");
 
 export interface OperationRequest {
   readonly [supportedOperation]: true;
+  readonly [customerBinding]?: string;
   operationId: string;
   accountId: string;
   appId: string;
@@ -60,6 +62,7 @@ function uuid(value: string): string {
 
 function normalize(request: OperationRequest): OperationRequest {
   if (request[supportedOperation] !== true) throw new TypeError("use operationRequestFromHeaders with negotiated support");
+  if (request[customerBinding] !== undefined && (!/^[0-9a-f]{64}$/.test(request[customerBinding]!) || !request.platformTenantId)) throw new TypeError("invalid customer receipt binding");
   if (typeof request.generation !== "string" || !/^[1-9][0-9]{0,18}$/.test(request.generation)
       || BigInt(request.generation) > 9223372036854775807n) throw new TypeError("operation generation must be a positive int64");
   if (typeof request.method !== "string" || !/^[A-Z]+$/.test(request.method) || request.method.length > OPERATION_IDENTITY_BYTES
@@ -92,7 +95,8 @@ export function operationRequestFromHeaders(
 
 export function operationRequestDigest(input: OperationRequest): Uint8Array {
   const request = normalize(input);
-  return createHash("sha256").update("gregale-operation-request-v1\n")
+  const prefix = request[customerBinding] === undefined ? "gregale-operation-request-v1\n" : `gregale-customer-operation-request-v1\n${request[customerBinding]}\n`;
+  return createHash("sha256").update(prefix)
     .update(request.method).update("\n").update(request.path).update("\n").update(request.body).digest();
 }
 
@@ -185,6 +189,14 @@ export async function withOperationTransaction(
   pool: OperationPool, input: OperationRequest,
   handler: (transaction: OperationTransaction) => Promise<OperationOutcome>,
 ): Promise<OperationTransactionResult> {
+  if (input[customerBinding] !== undefined) throw new TypeError("use withCustomerOperationTransaction for customer receipts");
+  return operationTransaction(pool, input, handler);
+}
+
+async function operationTransaction(
+  pool: OperationPool, input: OperationRequest,
+  handler: (transaction: OperationTransaction) => Promise<OperationOutcome>,
+): Promise<OperationTransactionResult> {
   const request = normalize(input);
   const digest = Buffer.from(operationRequestDigest(request));
   const connection = await pool.connect();
@@ -204,6 +216,7 @@ export async function withOperationTransaction(
       if (typeof stored.response_body !== "string") throw new TypeError("invalid saved operation response");
       body = stored.response_body;
       validateBody(body);
+      if (request[customerBinding] !== undefined) customerResult(body);
     } else {
       body = encode(await handler(connection));
       await connection.query(
@@ -220,4 +233,56 @@ export async function withOperationTransaction(
   } finally {
     connection.release(discard);
   }
+}
+
+/** Explicit HTTP/PostgreSQL receipt context. Claim proofs are never retained. */
+export interface CustomerOperationRequest extends OperationRequest {
+  readonly [customerBinding]: string;
+}
+
+/** Use only on the trusted Gregale guest listener. Supply the original target
+ * and body bytes. This factory does not authenticate arbitrary HTTP servers. */
+export function customerOperationRequestFromHeaders(
+  headers: Record<string, string | readonly string[] | undefined>, method: string, path: string, body: Uint8Array,
+): CustomerOperationRequest {
+  const allowed = new Set(["x-gregale-customer-operation-id", "x-gregale-customer-operation-receipt-version", "x-gregale-customer-operation-receipt-binding", "x-gregale-operation-attempt", "x-gregale-operation-capability"]);
+  for (const name of Object.keys(headers).map(name => name.toLowerCase())) {
+    if ((name.startsWith("x-gregale-operation-") || name.startsWith("x-gregale-customer-operation-")) && !allowed.has(name)) throw new TypeError("unsupported customer receipt execution context");
+  }
+  const read = (name: string): string => {
+    const values = Object.entries(headers).filter(([key]) => key.toLowerCase() === name)
+      .flatMap(([, value]) => value === undefined ? [] : typeof value === "string" ? [value] : [...value]);
+    if (values.length !== 1 || !values[0]) throw new TypeError(`customer operation requires one ${name} header`);
+    return values[0];
+  };
+  const attempt = read("x-gregale-operation-attempt");
+  if (read("x-gregale-customer-operation-receipt-version") !== "1" || !/^[1-9][0-9]{0,9}$/.test(attempt) || Number(attempt) > 2147483647
+      || !/^[0-9a-f]{64}$/.test(read("x-gregale-operation-capability"))) throw new TypeError("invalid customer receipt execution context");
+  uuid(read("x-faas-invocation-id"));
+  return normalize({ [supportedOperation]: true, [customerBinding]: read("x-gregale-customer-operation-receipt-binding"),
+    operationId: read("x-gregale-customer-operation-id"), accountId: read("x-faas-tenant-id"), appId: read("x-faas-app-id"),
+    platformTenantId: read("x-faas-platform-tenant-id"), generation: attempt, method, path, body }) as CustomerOperationRequest;
+}
+
+export function customerOperationRequestDigest(input: CustomerOperationRequest): Uint8Array {
+  if (input[customerBinding] === undefined) throw new TypeError("customer receipt context required");
+  return operationRequestDigest(input);
+}
+
+/** Commit only supplied-transaction database writes and a plain JSON result.
+ * On approved recovery, a committed receipt skips handler. External effects are
+ * unsupported. Install operationReceiptSchema explicitly and retain receipts.
+ * Send the returned body unchanged as application/json after success. */
+export async function withCustomerOperationTransaction(
+  pool: OperationPool, input: CustomerOperationRequest,
+  handler: (transaction: OperationTransaction) => Promise<unknown>,
+): Promise<OperationTransactionResult> {
+  if (input[customerBinding] === undefined) throw new TypeError("customer receipt context required");
+  const result = await operationTransaction(pool, input, async tx => ({ result: await handler(tx) }));
+  return { ...result, body: customerResult(result.body) };
+}
+
+function customerResult(body: string): string {
+  if ((JSON.parse(body) as OperationOutcome).effects?.length !== 0) throw new TypeError("customer receipts cannot contain managed effects");
+  return new Map(rawValues(body)).get("result")!;
 }

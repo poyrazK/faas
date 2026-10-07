@@ -153,7 +153,9 @@ type EnqueueParams struct {
 	// DeliveryID is the authenticated GitHub webhook delivery ID. When set,
 	// Enqueue derives stable deployment/build UUIDs from (delivery, app) and
 	// recovers existing rows after retries or ambiguous commit responses.
-	OperationDefinitions      []api.OperationDefinitionSpec
+	OperationDefinitions []api.OperationDefinitionSpec
+	// Caller must check every immutable definition's execution kind against
+	// one current preview policy snapshot before granting this batch.
 	OperationAdmissionEnabled bool
 	DeliveryID                string
 	// RetryOf preserves the original deployment and copies its input settings.

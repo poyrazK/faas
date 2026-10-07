@@ -7,12 +7,55 @@ import { once } from 'node:events';
 import pg from 'pg';
 import {
   operationReceiptSchema, operationRequestFromHeaders, operationRequestDigest,
-  withOperationTransaction, OperationConflictError, OperationCommitUnknownError,
+  withOperationTransaction, customerOperationRequestFromHeaders, customerOperationRequestDigest, withCustomerOperationTransaction, OperationConflictError, OperationCommitUnknownError,
 } from '../dist/index.js';
 
 const dsn = process.env.DATABASE_URL;
 const fixture = JSON.parse(await readFile(new URL('../../operation-tests/request-fixture.json', import.meta.url), 'utf8'));
+const customerFixture = JSON.parse(await readFile(new URL('../../operation-tests/customer-request-fixture.json', import.meta.url), 'utf8'));
+const customerRequest = customerOperationRequestFromHeaders(customerFixture.headers, customerFixture.method, customerFixture.path, Buffer.from(customerFixture.body_base64, 'base64'));
 const request = operationRequestFromHeaders(fixture.headers, fixture.method, fixture.path, Buffer.from(fixture.body_base64, 'base64'));
+
+test('Customer receipt negotiation requires HTTP proof and separates managed receipt identity', async () => {
+  assert.equal(Buffer.from(customerOperationRequestDigest(customerRequest)).toString('hex'), customerFixture.digest);
+  assert.deepEqual(customerOperationRequestDigest({ ...customerRequest, generation: '2' }), customerOperationRequestDigest(customerRequest));
+  for (const change of [
+    { 'x-gregale-customer-operation-receipt-version': '2' }, { 'x-gregale-customer-operation-receipt-binding': 'bad' },
+    { 'x-gregale-customer-operation-receipt-binding': [customerFixture.headers['x-gregale-customer-operation-receipt-binding'], 'b'.repeat(64)] },
+    { 'x-faas-platform-tenant-id': undefined }, { 'x-faas-invocation-id': undefined },
+    { 'x-gregale-operation-capability': 'bad' }, { 'x-gregale-operation-attempt': '01' },
+    { 'x-gregale-operation-attempt': '2147483648' }, { 'x-gregale-operation-result-version': '1' },
+    { 'x-gregale-operation-execution-kind': 'workflow' },
+  ]) assert.throws(() => customerOperationRequestFromHeaders({ ...customerFixture.headers, ...change }, customerFixture.method, customerFixture.path, customerRequest.body), TypeError);
+  await assert.rejects(withOperationTransaction({ connect: async () => { throw Error('unexpected DB'); } }, customerRequest, async () => ({ result: {} })), TypeError);
+});
+
+test('Customer transactions rollback, deduplicate, replay plain results and reject changed binding', { skip: !dsn, timeout: 30000 }, async t => {
+  const { pool, counts, close } = await databaseFixture(); t.after(close);
+  const callback = async tx => { await tx.query('UPDATE business.counter SET total=total+1 WHERE id=1'); return { file: 'ready.csv' }; };
+  await assert.rejects(withCustomerOperationTransaction(pool, customerRequest, async tx => { await callback(tx); throw Error('abort'); }), /abort/);
+  assert.deepEqual(await counts(), { total: 0, receipts: 0 });
+  const results = await Promise.all(Array.from({ length: 8 }, () => withCustomerOperationTransaction(pool, customerRequest, callback)));
+  assert.equal(results.filter(result => !result.replayed).length, 1);
+  assert.ok(results.every(result => result.body === '{"file":"ready.csv"}'));
+  for (const change of [
+    { 'x-gregale-customer-operation-receipt-binding': 'd'.repeat(64) }, { 'x-faas-platform-tenant-id': randomUUID() },
+    { 'x-faas-app-id': randomUUID() }, { 'x-faas-tenant-id': randomUUID() },
+  ]) {
+    const changed = customerOperationRequestFromHeaders({ ...customerFixture.headers, ...change }, customerFixture.method, customerFixture.path, customerRequest.body);
+    await assert.rejects(withCustomerOperationTransaction(pool, changed, callback), OperationConflictError);
+  }
+  await assert.rejects(withCustomerOperationTransaction(pool, { ...customerRequest, body: Buffer.from('{}') }, callback), OperationConflictError);
+  const managed = operationRequestFromHeaders({ ...fixture.headers, 'x-gregale-operation-id': customerRequest.operationId }, customerFixture.method, customerFixture.path, customerRequest.body);
+  await assert.rejects(withOperationTransaction(pool, managed, async () => { throw Error('managed callback ran'); }), OperationConflictError);
+  const connection = await pool.connect();
+  const lost = { connect: async () => ({ query: async (sql, values) => { const result = await connection.query(sql, values); if (sql === 'COMMIT') throw Error('lost acknowledgment'); return result; }, release: discard => connection.release(discard) }) };
+  const another = { ...customerRequest, operationId: randomUUID() };
+  await assert.rejects(withCustomerOperationTransaction(lost, another, callback), OperationCommitUnknownError);
+  const recovered = await withCustomerOperationTransaction(pool, another, async () => { throw Error('committed customer callback reran'); });
+  assert.equal(recovered.replayed, true); assert.equal(recovered.body, '{"file":"ready.csv"}');
+  assert.deepEqual(await counts(), { total: 2, receipts: 2 });
+});
 
 test('Operation request contract rejects forged/ambiguous context and preserves generation identity', () => {
   assert.equal(Buffer.from(operationRequestDigest(request)).toString('hex'), fixture.digest);
@@ -158,5 +201,46 @@ test('HTTP handler process death before and after commit recovers without duplic
   assert.equal(retry.headers.get('x-replayed'), 'true');
   assert.equal(await retry.text(), committed.body);
   assert.deepEqual(JSON.parse(committed.body).effects[0], { name: 'notify', webhook_id: 'cccbbbaa-3333-4333-8333-cccccccccccc', type: 'order.fulfilled', payload: { order_id: 123 } });
+  assert.deepEqual(await counts(), { total: 1, receipts: 1 });
+});
+
+test('Customer Operations HTTP process death before and after commit recovers without duplicate business writes', { skip: !dsn, timeout: 40000 }, async t => {
+  const children = [];
+  const stop = async child => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+  };
+  const { counts, url, close } = await databaseFixture();
+  t.after(async () => {
+    try { for (const child of children) await stop(child); }
+    finally { await close(); }
+  });
+  const start = async mode => {
+    const child = spawn(process.execPath, [new URL('fixtures/operation-server.mjs', import.meta.url).pathname], {
+      stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      env: { ...process.env, OPERATION_DATABASE_URL: url, OPERATION_FAULT: mode, OPERATION_ADAPTER: 'customer', OPERATION_WEBHOOK_ID: 'cccbbbaa-3333-4333-8333-cccccccccccc' },
+    });
+    children.push(child);
+    const ready = await signal(child, 'ready');
+    return { child, base: `http://127.0.0.1:${ready.port}` };
+  };
+  const headers = { ...customerFixture.headers, 'content-type': 'application/json' };
+  let worker = await start('before-commit');
+  const beforeSignal = signal(worker.child, 'business-write');
+  const first = fetch(worker.base + customerFixture.path, { method: customerFixture.method, headers, body: customerRequest.body }).catch(() => null);
+  await beforeSignal; await stop(worker.child); await first;
+  assert.deepEqual(await counts(), { total: 0, receipts: 0 });
+  worker = await start('after-commit');
+  const committedSignal = signal(worker.child, 'committed');
+  const second = fetch(worker.base + customerFixture.path, { method: customerFixture.method, headers, body: customerRequest.body }).catch(() => null);
+  const committed = await committedSignal;
+  assert.deepEqual(await counts(), { total: 1, receipts: 1 });
+  await stop(worker.child); await second;
+  worker = await start('normal');
+  const retry = await fetch(worker.base + customerFixture.path, { method: customerFixture.method, headers: { ...headers, 'x-gregale-operation-attempt': '2', 'x-faas-invocation-id': randomUUID(), 'x-gregale-operation-capability': 'c'.repeat(64) }, body: customerRequest.body });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.headers.get('x-replayed'), 'true');
+  assert.equal(await retry.text(), committed.body);
+  assert.deepEqual(JSON.parse(committed.body), { file: 'ready.csv', order_id: 123, label: 'fulfilled π' });
   assert.deepEqual(await counts(), { total: 1, receipts: 1 });
 });

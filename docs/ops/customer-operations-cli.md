@@ -27,6 +27,9 @@ gregale customer-operations definitions get customer-export --app exports --depl
 gregale customer-operations validate --dir examples/customer-operation-export --app exports --plan pro --json
 gregale customer-operations validate --dir examples/customer-operation-export --app exports --plan pro \
   --name customer-export --input-file input.json --json
+gregale customer-operations types --dir examples/customer-operation-export --app exports --plan pro
+gregale customer-operations types --dir examples/customer-operation-export --app exports --plan pro --check
+(cd examples/customer-operation-export && npm run typecheck)
 ```
 
 `validate` runs offline without credentials. It uses the backend's strict
@@ -35,6 +38,18 @@ contracts and their revisions. Select an explicit target plan. Sample input
 requires `--name` and is checked against that operation's input schema. Manifest
 and schema files are bounded, regular files confined to the selected source
 root; symlink components and external schema resources are rejected.
+
+`types` runs the same source validation, then projects each selected input and
+output JSON Schema into a generated TypeScript declaration file. It defaults to
+`customer-operations.generated.d.ts`, refuses to replace an unmarked file and
+can select one operation with `--name`. The starter apps reference the generated
+types through JSDoc. This is compile-time guidance; Gregale continues to enforce
+the schemas when accepting and completing work. Commit the generated declaration
+and use `types --check` plus `npm run typecheck` in CI. The first reads but never
+writes, reports `current`, `missing` or `stale` in JSON mode, and exits nonzero
+when the file is missing or stale. The second checks the starter browser code
+against the generated declarations and installed SDK types without emitting
+files. Existing generated paths without the marker are rejected in both modes.
 
 ## Diagnose submission prerequisites
 
@@ -51,6 +66,13 @@ release availability, and the presence of workload trust and private result
 storage. It reports stable reason codes and remediation without exposing policy
 contents, infrastructure errors, webhook targets or secrets. Reads remain
 available when new admission is closed.
+
+Each definition's `execution_preview` check includes `execution_kind` (`http`,
+`workflow` or `job`). Human output shows the type beside the operation name.
+`preview_execution_kind_excluded` means that cohort allows other types but
+excludes this definition; legacy policies permit HTTP only. Use `--name` to
+observe one definition when a mixed deployment contains blocked types.
+Allowlist changes do not hide retained work or retry completed business work.
 
 The report separates submission prerequisites, completion delivery configuration
 and runtime qualification. A disabled completion webhook produces a delivery
@@ -234,3 +256,74 @@ policies remain authoritative.
 `GET /v1/platform-tenant-self/customer-operations/identity` supplies only the
 server-derived account and tenant IDs for submission receipts. It requires the
 manage scope, rejects owner selectors and uses `Cache-Control: no-store`.
+
+## Resume a recovery decision after losing its response
+
+Add `--receipt-file` when applying an explicit reconciliation decision:
+
+```sh
+gregale customer-operations recover OPERATION_UUID --app exports \
+  --expected-generation 2 --recovery-id provider-check-42 \
+  --resolution safe_to_retry --evidence-file ./provider-check.txt \
+  --inspection-revision sha256:INSPECTION_HASH \
+  --receipt-file ./export-recovery.json --json
+
+# Resume with the exact saved request; original evidence/result files are unnecessary.
+gregale customer-operations recover OPERATION_UUID --app exports \
+  --receipt-file ./export-recovery.json --json
+
+gregale customer-operations get OPERATION_UUID --app exports --json
+```
+
+Before sending a mutation, the CLI verifies the API/account and publishes a
+private immutable request containing the exact evidence, result and selectors.
+Keep this sensitive file private; it contains no credentials. Supplied resume
+selectors must match. The CLI refuses public, symbolic-link, corrupted or
+oversized receipts and expired unconfirmed requests.
+
+The server retains the decision atomically with execution creation or native
+workflow resume. A lost response can be retried with the same request without
+recording another decision. `export-recovery.json.decided.json` stores its private
+immutable acknowledgement, bound to the request file SHA-256. JSON output and
+`state_at_decision` describe historical acceptance; use `get` for current business
+and notification status. A saved acknowledgement can be read after its replay
+window, with the same authenticated account and API, without another mutation.
+
+The API is account-only `POST .../{id}/recover-receipt`, using
+`OperationRecoveryRequest` and returning `OperationRecoveryDecision`. Go's
+`RecoverOperationWithReceipt`, Node's generated `OperationsService.recoverOperationWithReceipt`
+and Python's generated `recover_operation_with_receipt` expose the same contract.
+The legacy `/recover` response remains current operation status. Pre-upgrade
+accepted decisions without an immutable acknowledgement return
+`409 operation_recovery_receipt_unavailable` on the receipt endpoint and remain
+deduplicated; inspect work and preserve their original decision ID.
+
+Receipt replay expires at the operation retention deadline observed before the
+decision. Later recovery does not extend that receipt. An expired unconfirmed
+request is never automatically replaced with another decision. Preview remains
+read-only and rejects `--receipt-file`. See [ADR-600](../adr/600-operation-recovery-decision-receipts.md).
+
+## Browser submission lookup
+
+The opt-in Node feature session stores scoped metadata before submitting and
+calls `POST /v1/platform-tenant-self/customer-operations/submissions/lookup` on
+`resume()`. This read-only route requires `platform_tenant:operations:read` and
+remains available while preview admission is closed. The bounded JSON body
+contains `app_id`, explicit `scope`, `name` and `idempotency_key`, with optional
+`expected_identity`. Authenticated account/customer determine ownership. It
+rejects query parameters and uses `Cache-Control: no-store`.
+
+`accepted` includes the original `accepted_at`, receipt and ledger horizon;
+read status to see current business and notification state. `expired` identifies
+known unusable retained acceptance. `unresolved` can mean admission is in flight
+or the ledger was pruned, and must never be interpreted as proof of rejection.
+No lookup creates an operation or execution. Browser retries reuse their frozen
+key/definition and matching input, with a conservative one-day deadline.
+
+Go exposes `LookupPlatformTenantSelfOperationSubmission`, Node exposes
+`GregaleOperationClient.lookupSubmission` and generated
+`OperationsService.lookupPlatformTenantSelfOperationSubmission`, and Python has
+`faas_sdk.api.operations.lookup_platform_tenant_self_operation_submission`.
+Optional principal and feature fences on the start request reject credential
+or feature changes; they never authorize another owner. See
+[ADR-601](../adr/601-browser-operation-submission-receipts.md).

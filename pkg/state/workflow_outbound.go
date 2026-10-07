@@ -148,6 +148,11 @@ func workflowOutboundSpec(snapshot json.RawMessage, name string) *api.WorkflowOu
 func recoverWorkflowStepsTx(ctx context.Context, tx sqlc.DBTX, runID string) error {
 	q := sqlc.New()
 	id := mustPgUUID(runID)
+	if _, err := q.GetCustomerOperationForWorkflow(ctx, tx, id); err == nil {
+		return interruptOperationWorkflowTx(ctx, tx, runID)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	if err := q.MarkWorkflowOutboundUnknown(ctx, tx, id); err != nil {
 		return err
 	}

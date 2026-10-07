@@ -1692,12 +1692,68 @@ jobs:
       - name: Gregale Issues staging smoke contract
         run: node --test tests/issues-smoke/run.test.mjs
 
+  workflow-operation-starter-browser:
+    name: customer Operations starters (Chromium + packed SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: install SDK development dependencies
+        working-directory: sdk/node
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: install pinned Chromium for browser acceptance
+        working-directory: sdk/node
+        run: npx playwright-core install --with-deps chromium
+      - name: HTTP, Job, and Workflow starter flows in real browsers
+        working-directory: sdk/node
+        run: npm run test:operations-starter-browser
+
+  customer-operation-starters:
+    name: customer Operations starters (generated types + packed SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: install SDK development dependencies
+        working-directory: sdk/node
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: build and pack the SDK
+        working-directory: sdk/node
+        run: |
+          npm run build
+          mkdir -p "$RUNNER_TEMP/operations-sdk"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/operations-sdk"
+      - name: build Gregale CLI
+        run: go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
+      - name: generate and type-check every starter against the packed SDK
+        env:
+          GREGALE_BIN: ${{ runner.temp }}/gregale
+          SDK_PACK_DIR: ${{ runner.temp }}/operations-sdk
+        run: scripts/ci/check-customer-operation-starters.sh
+
   # ADR-484: real customer PostgreSQL transactions and HTTP process recovery.
   # Required database tests must run; unit-only SDK jobs skip these fixtures.
   operation-sdk-acceptance:
     name: operations (transaction + HTTP recovery + cross-SDK)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     services:
@@ -1737,8 +1793,12 @@ jobs:
         run: |
           npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
           python -m pip install -e sdk/python -r sdk/commit-tests/requirements.txt
-      - name: producer and handler transaction acceptance
-        run: make test-commit-sdk test-operation-sdk
+      - name: producer, handler and Customer Operations recovery acceptance
+        run: make test-commit-sdk test-customer-operation-sdk
+      - name: Customer Job and Workflow Operations guest fixture contracts (portable)
+        # testdata is intentionally excluded by go test ./.... Run its
+        # reporting, workload identity, cancellation and lost-ack contracts explicitly.
+        run: go test -race -count=1 -timeout=2m ./pkg/e2etest/testdata/jobfixture
 
   # ADR-377: exercise the actual runtime SDK, control plane, gateway and
   # telemetry persistence together; the small fakeapid fixture cannot prove

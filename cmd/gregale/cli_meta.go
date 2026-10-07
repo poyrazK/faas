@@ -268,6 +268,9 @@ var templateNames13 = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"customer-operation-export",
+	"customer-operation-job-export",
+	"customer-operation-workflow-export",
 }
 
 // cliCommands is the manifest. One entry per top-level command in

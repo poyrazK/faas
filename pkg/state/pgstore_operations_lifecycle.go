@@ -15,23 +15,28 @@ import (
 
 // Invocation rows are locked before the operation row everywhere: claims,
 // completion, reports, cancellation and recovery share that ordering.
-func operationForInvocationTx(ctx context.Context, tx pgx.Tx, invocationID string) (Operation, OperationDefinition, api.Limits, bool, error) {
+func operationRecordForInvocationTx(ctx context.Context, tx pgx.Tx, invocationID string) (Operation, bool, error) {
 	id, err := operationUUID(invocationID)
 	if err != nil {
+		return Operation{}, false, err
+	}
+	raw, err := sqlc.New().LockCustomerOperationExecution(ctx, tx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Operation{}, false, nil
+	}
+	if err != nil {
+		return Operation{}, false, err
+	}
+	op, err := operationPGRecord(raw)
+	return op, err == nil, err
+}
+
+func operationForInvocationTx(ctx context.Context, tx pgx.Tx, invocationID string) (Operation, OperationDefinition, api.Limits, bool, error) {
+	op, exists, err := operationRecordForInvocationTx(ctx, tx, invocationID)
+	if err != nil || !exists {
 		return Operation{}, OperationDefinition{}, api.Limits{}, false, err
 	}
 	q := sqlc.New()
-	raw, err := q.LockCustomerOperationExecution(ctx, tx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Operation{}, OperationDefinition{}, api.Limits{}, false, nil
-	}
-	if err != nil {
-		return Operation{}, OperationDefinition{}, api.Limits{}, false, err
-	}
-	op, err := operationPGRecord(raw)
-	if err != nil {
-		return Operation{}, OperationDefinition{}, api.Limits{}, false, err
-	}
 	account, _ := operationUUID(op.AccountID)
 	definition, _ := operationUUID(op.DefinitionID)
 	row, err := q.GetCustomerOperationDefinition(ctx, tx, sqlc.GetCustomerOperationDefinitionParams{ID: definition, AccountID: account})
@@ -50,8 +55,13 @@ func operationForInvocationTx(ctx context.Context, tx pgx.Tx, invocationID strin
 }
 
 func operationSaveTx(ctx context.Context, tx pgx.Tx, op Operation, event api.OperationEvent) error {
-	if err := operationPinsTx(ctx, tx, op); err != nil {
-		return err
+	// Native Jobs retain their own image snapshot. Host outcome settlement
+	// must remain possible after the app is tombstoned, while parent purge
+	// waits for the claimed task to close. Admission still pins app code.
+	if op.JobRunID == "" {
+		if err := operationPinsTx(ctx, tx, op); err != nil {
+			return err
+		}
 	}
 	q := sqlc.New()
 	id, _ := operationUUID(op.ID)
@@ -66,7 +76,7 @@ func operationSaveTx(ctx context.Context, tx pgx.Tx, op Operation, event api.Ope
 	if err != nil {
 		return err
 	}
-	if err := q.UpdateCustomerOperation(ctx, tx, sqlc.UpdateCustomerOperationParams{ID: id, InvocationID: invocation, State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}}); err != nil {
+	if err := q.UpdateCustomerOperation(ctx, tx, sqlc.UpdateCustomerOperationParams{ID: id, InvocationID: invocation, JobRunID: mustPgUUID(op.JobRunID), State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}}); err != nil {
 		return fmt.Errorf("state: update operation: %w", err)
 	}
 	execution, _ := operationUUID(event.ExecutionID)

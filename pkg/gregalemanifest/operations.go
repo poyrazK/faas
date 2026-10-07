@@ -12,8 +12,11 @@ import (
 // Operation schemas are JSON files relative to the selected source manifest.
 // Deploy bundles their contents; serving never reads source files or URLs.
 type Operation struct {
+	Job                 string   `yaml:"job,omitempty" json:"job,omitempty"`
 	App                 string   `yaml:"app,omitempty" toml:"app"`
 	Name                string   `yaml:"name" toml:"name"`
+	Workflow            string   `yaml:"workflow,omitempty" toml:"workflow"`
+	TransactionReceipt  string   `yaml:"transaction_receipt,omitempty" toml:"transaction_receipt"`
 	Method              string   `yaml:"method" toml:"method"`
 	Path                string   `yaml:"path" toml:"path"`
 	Owner               string   `yaml:"owner" toml:"owner"`
@@ -25,7 +28,7 @@ type Operation struct {
 }
 
 func (o Operation) specification() api.OperationDefinitionSpec {
-	return api.OperationDefinitionSpec{Name: o.Name, Method: o.Method, Path: o.Path, Owner: o.Owner,
+	return api.OperationDefinitionSpec{Name: o.Name, Job: o.Job, Workflow: o.Workflow, TransactionReceipt: o.TransactionReceipt, Method: o.Method, Path: o.Path, Owner: o.Owner,
 		ProgressStages: append([]string(nil), o.ProgressStages...), CompletionWebhookID: o.CompletionWebhookID, Recovery: o.Recovery}
 }
 
@@ -53,6 +56,20 @@ func (m *Manifest) validateOperations(plan api.Plan) error {
 		contract, err := operations.Compile(spec, limits)
 		if err != nil {
 			return fmt.Errorf("operations[%d]: %w", i, err)
+		}
+		if o.Workflow != "" {
+			found := false
+			for _, workflow := range m.Workflows {
+				if workflow.Name == o.Workflow {
+					if err := operations.ValidateWorkflow(contract.Spec, workflow, plan); err != nil {
+						return fmt.Errorf("operations[%d]: %w", i, err)
+					}
+					found = true
+				}
+			}
+			if !found {
+				return fmt.Errorf("operations[%d]: named workflow is missing from the manifest", i)
+			}
 		}
 		name, route := o.App+"/"+o.Name, o.App+"/"+contract.Spec.Method+"/"+contract.Spec.Path
 		if names[name] || routes[route] {

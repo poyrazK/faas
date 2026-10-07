@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -189,5 +190,99 @@ func TestOperationSQLTransactionBoundary(t *testing.T) {
 	var decoy int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM business.gregale_operation_inbox").Scan(&decoy); err != nil || decoy != 0 {
 		t.Fatalf("search path redirected receipt: %d %v", decoy, err)
+	}
+}
+
+func TestCustomerOperationSQLTransactionBoundary(t *testing.T) {
+	db, ctx := operationDatabase(t)
+	managed := operationInput(t)
+	request := httptest.NewRequest(managed.Method, managed.Path, bytes.NewReader(managed.Body))
+	for name, value := range map[string]string{
+		"X-Gregale-Customer-Operation-Id": managed.OperationID, "X-Gregale-Customer-Operation-Receipt-Version": "1",
+		"X-Gregale-Customer-Operation-Receipt-Binding": strings.Repeat("b", 64), "X-Gregale-Operation-Attempt": "1",
+		"X-Gregale-Operation-Capability": strings.Repeat("a", 64), "X-Faas-Invocation-Id": "eeeeeeef-5555-4555-8555-eeeeeeeeeeee",
+		"X-Faas-Tenant-Id": managed.AccountID, "X-Faas-App-Id": managed.AppID, "X-Faas-Platform-Tenant-Id": managed.PlatformTenantID,
+	} {
+		request.Header.Set(name, value)
+	}
+	input, err := faas.CustomerOperationRequestFromHTTP(request, managed.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := json.RawMessage(`{"file":"ready.csv","value":9007199254740993,"label":"π <>&"}`)
+	callback := func(tx faas.OperationSQLTransaction) (json.RawMessage, error) {
+		_, err := tx.ExecContext(ctx, "UPDATE business.counter SET total=total+1 WHERE id=1")
+		return body, err
+	}
+	aborted := errors.New("abort")
+	if _, err := faas.WithCustomerOperationTransaction(ctx, db, input, func(tx faas.OperationSQLTransaction) (json.RawMessage, error) {
+		_, _ = callback(tx)
+		return body, aborted
+	}); !errors.Is(err, aborted) {
+		t.Fatal(err)
+	}
+	var total int
+	if err := db.QueryRowContext(ctx, "SELECT total FROM business.counter WHERE id=1").Scan(&total); err != nil || total != 0 {
+		t.Fatalf("rollback total=%d: %v", total, err)
+	}
+	var wg sync.WaitGroup
+	results := make(chan faas.OperationTransactionResult, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := faas.WithCustomerOperationTransaction(ctx, db, input, callback)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			results <- result
+		}()
+	}
+	wg.Wait()
+	close(results)
+	var fresh, count int
+	for result := range results {
+		count++
+		if !result.Replayed {
+			fresh++
+		}
+		if !bytes.Equal(result.Body, body) {
+			t.Fatalf("result changed: %s", result.Body)
+		}
+	}
+	if fresh != 1 || count != 8 {
+		t.Fatalf("fresh=%d count=%d", fresh, count)
+	}
+	request.Header.Set("X-Gregale-Operation-Attempt", "2")
+	request.Header.Set("X-Faas-Invocation-Id", "ffffffff-6666-4666-8666-ffffffffffff")
+	later, err := faas.CustomerOperationRequestFromHTTP(request, managed.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := faas.WithCustomerOperationTransaction(ctx, db, later, func(faas.OperationSQLTransaction) (json.RawMessage, error) {
+		t.Fatal("committed callback reran")
+		return nil, nil
+	})
+	if err != nil || !replayed.Replayed || !bytes.Equal(replayed.Body, body) {
+		t.Fatalf("replay: %+v %v", replayed, err)
+	}
+	request.Header.Set("X-Gregale-Customer-Operation-Receipt-Binding", strings.Repeat("d", 64))
+	changed, err := faas.CustomerOperationRequestFromHTTP(request, managed.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := faas.WithCustomerOperationTransaction(ctx, db, changed, callback); !errors.Is(err, faas.ErrOperationReceiptConflict) {
+		t.Fatalf("changed binding accepted: %v", err)
+	}
+	if _, err := faas.WithOperationTransaction(ctx, db, managed, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+		t.Fatal("customer receipt became managed receipt")
+		return faas.OperationOutcome{}, nil
+	}); !errors.Is(err, faas.ErrOperationReceiptConflict) {
+		t.Fatalf("receipt domain collision: %v", err)
+	}
+	var receipts int
+	if err := db.QueryRowContext(ctx, "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_operation_inbox)").Scan(&total, &receipts); err != nil || total != 1 || receipts != 1 {
+		t.Fatalf("total=%d receipts=%d: %v", total, receipts, err)
 	}
 }

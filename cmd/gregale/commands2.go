@@ -2926,6 +2926,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// need to know the convention; for app templates we leave them
 	// unset so imaged auto-detects.
 	if *templateName != "" {
+		if templates.CategoryFor(*templateName) == "operations" && !*createOnly {
+			return printErr("Prepare the Operations starter first", fmt.Errorf("use gregale init --template %s --path %s, install the local SDK bundle and follow README.md, then deploy that source directory", *templateName, *templateName))
+		}
 		f, err := os.CreateTemp("", "gregale-template-*.tar.gz")
 		if err != nil {
 			return printErr("Could not create temp file", err)

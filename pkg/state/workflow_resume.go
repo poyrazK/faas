@@ -225,6 +225,13 @@ func (m *MemStore) ListWorkflowResumes(_ context.Context, id string) ([]Workflow
 func (m *MemStore) ResumeWorkflowRun(_ context.Context, opts WorkflowResumeOptions) (*WorkflowRun, *WorkflowResume, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.resumeWorkflowRunLocked(opts, false)
+}
+
+func (m *MemStore) resumeWorkflowRunLocked(opts WorkflowResumeOptions, operation bool) (*WorkflowRun, *WorkflowResume, int, error) {
+	if _, linked := m.operationForWorkflowLocked(opts.RunID); linked && !operation {
+		return nil, nil, 0, ErrWorkflowResumeUnsafe
+	}
 	run, ok := m.workflowRuns[opts.RunID]
 	app, appOK := m.apps[opts.AppID]
 	account := m.accounts[opts.AccountID]
@@ -243,7 +250,7 @@ func (m *MemStore) ResumeWorkflowRun(_ context.Context, opts WorkflowResumeOptio
 			live = true
 		}
 	}
-	if !live {
+	if !live && !operation {
 		return nil, nil, 0, ErrWorkflowResumeUnavailable
 	}
 	spec, names, err := workflowResumePlan(run, m.workflowSteps[run.ID], opts.ExpectedResumeCount, account.Plan)

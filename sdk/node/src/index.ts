@@ -162,7 +162,11 @@ export {
 export { decodeExecutionArtifact } from './execution-artifacts.js';
 
 export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './customer-operations.js';
-export { GregaleOperations, type GregaleOperationsOptions, type OperationExecutionContext } from './operations-runtime.js';
+export { GregaleOperations, OperationStoppedError, type OperationStopCode, type OperationHandlerScope, type GregaleOperationsOptions, type OperationExecutionContext,
+  type OperationArtifactInput, type OperationArtifactUpload, type PreparedOperationArtifact } from './operations-runtime.js';
+export { GregaleOperationSession, type OperationSessionOptions, type OperationSessionClient, type OperationSessionUpdate } from './operation-session.js';
+export { CustomerOperationAuth, type CustomerOperationAuthOptions, type CustomerOperationAuthProvider } from './operation-auth.js';
+export { CustomerOperationFeature, type CustomerOperationFeatureConnection, type CustomerOperationFeatureOptions } from './operation-feature.js';
 
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
 
@@ -171,6 +175,10 @@ export {
   operationRequestFromHeaders,
   operationRequestDigest,
   withOperationTransaction,
+  customerOperationRequestFromHeaders,
+  customerOperationRequestDigest,
+  withCustomerOperationTransaction,
+  type CustomerOperationRequest,
   OperationConflictError,
   OperationCommitUnknownError,
   type OperationRequest,
@@ -180,3 +188,10 @@ export {
   type OperationPool,
   type OperationTransactionResult,
 } from "./operations.js";
+export { GregaleWorkflowOperations, type WorkflowOperationContext, type WorkflowArtifactReceipt } from './workflow-operations-runtime.js';
+
+export { createBrowserOperationReceiptStore, type OperationReceiptStore, type OperationReceiptAccess, type SavedOperationSubmission, type OperationReceiptScope, type BrowserOperationReceiptStoreOptions, type OperationSubmissionResume } from './operation-submission.js';
+export type { OperationTenantIdentity, OperationSubmissionScope, OperationSubmissionFence, OperationSubmissionLookup, OperationSubmissionLookupOptions } from './customer-operations.js';
+export { runJobOperation, type JobOperationContext, type JobOperationScope, type JobOperationOptions, type JobOperationArtifactUploadInput } from './job-operations-runtime.js';
+
+export type { OperationDirectUploadInput } from './operation-upload.js';

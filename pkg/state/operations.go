@@ -14,10 +14,12 @@ import (
 )
 
 var (
-	ErrOperationInputConflict = errors.New("state: operation key conflicts with input")
-	ErrOperationExpired       = errors.New("state: operation result expired within deduplication window")
-	ErrOperationStaleAttempt  = errors.New("state: operation report belongs to a stale execution attempt")
-	ErrOperationQuota         = errors.New("state: operation plan limit exceeded")
+	ErrOperationRecoveryReceiptUnavailable = errors.New("state: accepted recovery predates immutable decision receipts")
+	ErrOperationIdentityConflict           = errors.New("state: operation authenticated identity changed")
+	ErrOperationInputConflict              = errors.New("state: operation key conflicts with input")
+	ErrOperationExpired                    = errors.New("state: operation result expired within deduplication window")
+	ErrOperationStaleAttempt               = errors.New("state: operation report belongs to a stale execution attempt")
+	ErrOperationQuota                      = errors.New("state: operation plan limit exceeded")
 )
 
 type OperationDefinition struct {
@@ -29,23 +31,31 @@ type OperationDefinition struct {
 // execution authority and source input; callers use the scoped read boundary.
 type Operation struct {
 	api.OperationResponse
-	AccountID                 string                  `json:"account_id"`
-	AppID                     string                  `json:"app_id"`
-	Scope                     string                  `json:"scope"`
-	PlatformTenantID          string                  `json:"platform_tenant_id"`
-	DefinitionID              string                  `json:"definition_id"`
-	DefinitionRevision        string                  `json:"definition_revision"`
-	DeploymentID              string                  `json:"deployment_id"`
-	ReleaseID                 string                  `json:"release_id,omitempty"`
-	CurrentInvocationID       string                  `json:"current_invocation_id"`
-	ExecutionAttempt          int                     `json:"execution_attempt"`
-	ExecutionCapabilityDigest string                  `json:"execution_capability_digest,omitempty"`
-	ReportCount               int                     `json:"report_count"`
-	RecoveryCount             int                     `json:"recovery_count"`
-	PlanLimits                api.OperationPlanLimits `json:"plan_limits"`
-	ValueMaxBytes             int                     `json:"value_max_bytes"`
-	EventExpiresAt            time.Time               `json:"event_expires_at"`
-	ArtifactStorageKeys       map[string]string       `json:"artifact_storage_keys,omitempty"`
+	AccountID                 string                                      `json:"account_id"`
+	AppID                     string                                      `json:"app_id"`
+	Scope                     string                                      `json:"scope"`
+	PlatformTenantID          string                                      `json:"platform_tenant_id"`
+	DefinitionID              string                                      `json:"definition_id"`
+	DefinitionRevision        string                                      `json:"definition_revision"`
+	DeploymentID              string                                      `json:"deployment_id"`
+	ReleaseID                 string                                      `json:"release_id,omitempty"`
+	CurrentInvocationID       string                                      `json:"current_invocation_id"`
+	JobRunID                  string                                      `json:"job_run_id,omitempty"`
+	JobSnapshot               *JobRun                                     `json:"job_snapshot,omitempty"`
+	JobInput                  json.RawMessage                             `json:"job_input,omitempty"`
+	JobResultReceipt          json.RawMessage                             `json:"job_result_receipt,omitempty"`
+	JobReports                map[string]string                           `json:"job_reports,omitempty"`
+	WorkflowRunID             string                                      `json:"workflow_run_id,omitempty"`
+	ExecutionAttempt          int                                         `json:"execution_attempt"`
+	ExecutionCapabilityDigest string                                      `json:"execution_capability_digest,omitempty"`
+	ReportCount               int                                         `json:"report_count"`
+	RecoveryCount             int                                         `json:"recovery_count"`
+	PlanLimits                api.OperationPlanLimits                     `json:"plan_limits"`
+	ValueMaxBytes             int                                         `json:"value_max_bytes"`
+	EventExpiresAt            time.Time                                   `json:"event_expires_at"`
+	ArtifactStorageKeys       map[string]string                           `json:"artifact_storage_keys,omitempty"`
+	WorkflowArtifactReceipts  map[string]OperationWorkflowArtifactReceipt `json:"workflow_artifact_receipts,omitempty"`
+	JobArtifactReceipts       map[string]OperationJobArtifactReceipt      `json:"job_artifact_receipts,omitempty"`
 }
 
 type OperationAdmission struct {
@@ -55,6 +65,8 @@ type OperationAdmission struct {
 	IdempotencyKey   string
 	ReleaseID        string
 	Input            json.RawMessage
+	ExpectedScope    *api.OperationSubmissionScope
+	ExpectedIdentity *api.OperationTenantIdentity
 }
 
 type operationIdentityReceipt struct {
@@ -85,6 +97,12 @@ type OperationStore interface {
 }
 
 func prepareOperationAdmission(def OperationDefinition, admission OperationAdmission, limits api.Limits, now time.Time) (Operation, Invocation, string, string, error) {
+	if err := validateOperationExpectedIdentity(admission.ExpectedIdentity, admission.AccountID, admission.PlatformTenantID); err != nil {
+		return Operation{}, Invocation{}, "", "", err
+	}
+	if scope := admission.ExpectedScope; scope != nil && (!sameOperationHistoryIdentity(scope.AppID, def.AppID) || scope.Scope != def.Scope || scope.Name != def.Spec.Name) {
+		return Operation{}, Invocation{}, "", "", ErrConflict
+	}
 	if admission.AccountID != def.AccountID || admission.PlatformTenantID == "" {
 		return Operation{}, Invocation{}, "", "", ErrNotFound
 	}
@@ -105,6 +123,9 @@ func prepareOperationAdmission(def OperationDefinition, admission OperationAdmis
 	key := operations.IdentityScope(def.AccountID, def.AppID, def.Scope, admission.PlatformTenantID, def.Spec.Name, admission.IdempotencyKey)
 	operationID, invocationID := newOperationID(), newOperationID()
 	headers := map[string]string{"Content-Type": "application/json"}
+	if def.Spec.TransactionReceipt == api.OperationTransactionPostgres {
+		headers[api.OperationReceiptVersionHeader] = "1"
+	}
 	release := def.ReleaseID
 	if admission.ReleaseID != "" {
 		release = admission.ReleaseID

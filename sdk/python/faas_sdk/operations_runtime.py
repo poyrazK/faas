@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import httpx
 
 from .models.operation_artifact_request import OperationArtifactRequest
+from .models.operation_execution_control_response import OperationExecutionControlResponse
 from .models.operation_report_request import OperationReportRequest
 from .models.operation_response import OperationResponse
 
@@ -120,7 +121,37 @@ class GregaleOperations:
     async def artifact(self, report: OperationArtifactRequest) -> OperationResponse:
         return await self._report("artifacts", report.to_dict())
 
+    async def control(self) -> OperationExecutionControlResponse:
+        """Observe cancellation and time bounds without renewing or settling work.
+
+        The application cooperates with intent and bounds its own I/O. This read
+        does not certify that external effects can be repeated safely.
+        """
+        result = await self._request("control")
+        execution = self._execution.get()
+        if execution is None:
+            raise ValueError("Control requires an operation execution")
+        control = OperationExecutionControlResponse.from_dict(result)
+        context = execution.context
+        if (
+            str(control.operation_id) != context.id
+            or str(control.invocation_id) != context.invocation_id
+            or type(control.attempt) is not int
+            or control.attempt != context.attempt
+            or type(control.cancellation_requested) is not bool
+            or type(control.poll_after_ms) is not int
+            or not 100 <= control.poll_after_ms <= 1000
+            or any(value.utcoffset() is None for value in (control.observed_at, control.deadline_at, control.lease_expires_at))
+            or control.lease_expires_at > control.deadline_at
+        ):
+            raise ValueError("Invalid operation control observation")
+        control.additional_properties.clear()
+        return control
+
     async def _report(self, suffix: str, body: dict) -> OperationResponse:
+        return OperationResponse.from_dict(await self._request(suffix, body))
+
+    async def _request(self, suffix: str, body: dict | None = None) -> dict:
         execution = self._execution.get()
         if execution is None:
             raise ValueError("Reporting requires an operation execution")
@@ -130,10 +161,9 @@ class GregaleOperations:
         if not isinstance(bearer, str) or not bearer or len(bearer) > 8192 or re.search(r"\s", bearer):
             raise ValueError("Invalid operation workload identity")
         context = execution.context
-        result = await self._json(
-            "POST",
+        return await self._json(
+            "GET" if body is None else "POST",
             f"{self._api}/v1/runtime/operations/{context.id}/{suffix}",
-            json=body,
             headers={
                 "Authorization": f"Bearer {bearer}",
                 "Cache-Control": "no-store",
@@ -141,8 +171,8 @@ class GregaleOperations:
                 "X-Gregale-Operation-Attempt": str(context.attempt),
                 "X-Gregale-Operation-Capability": execution.capability,
             },
+            **({"json": body} if body is not None else {}),
         )
-        return OperationResponse.from_dict(result)
 
     async def _json(self, method: str, url: str, **kwargs) -> dict:
         async with self._client.stream(

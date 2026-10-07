@@ -270,11 +270,28 @@ func (s *PgStore) MarkWorkflowRunStatus(ctx context.Context, id, status string, 
 	if lastErr != nil {
 		errorText = pgtype.Text{String: *lastErr, Valid: true}
 	}
-	rows, err := sqlc.New().MarkWorkflowRunStatusFenced(ctx, s.pool, sqlc.MarkWorkflowRunStatusFencedParams{RunID: mustPgUUID(id), Status: status, Output: output, LastError: errorText, Generation: workflowGenerationArg(ctx, id)})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := sqlc.New().LockWorkflowRecovery(ctx, tx, mustPgUUID(id)); err != nil {
+		return mapErr(err)
+	}
+	rows, err := sqlc.New().MarkWorkflowRunStatusFenced(ctx, tx, sqlc.MarkWorkflowRunStatusFencedParams{RunID: mustPgUUID(id), Status: status, Output: output, LastError: errorText, Generation: workflowGenerationArg(ctx, id)})
 	if err != nil {
 		return fmt.Errorf("mark workflow run: %w", err)
 	}
-	return s.workflowRunWriteResult(ctx, id, rows, false)
+	if rows == 0 {
+		if err := checkWorkflowGenerationTx(ctx, tx, id); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: workflow run is terminal", ErrConflict)
+	}
+	if err := syncOperationWorkflowTx(ctx, tx, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PgStore) ClaimNextPendingRun(ctx context.Context) (*WorkflowRun, error) {
@@ -346,6 +363,9 @@ func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, er
 		if err := recoverWorkflowStepsTx(ctx, tx, id); err != nil {
 			return nil, fmt.Errorf("pgstore: recover stale workflow steps: %w", err)
 		}
+	}
+	if err := syncOperationWorkflowTx(ctx, tx, id); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -425,6 +445,9 @@ func (s *PgStore) RecoverWorkflowRun(ctx context.Context, id string) error {
 	`, id); err != nil {
 		return fmt.Errorf("pgstore: recover workflow run: %w", err)
 	}
+	if err := syncOperationWorkflowTx(ctx, tx, id); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pgstore: commit workflow recovery: %w", err)
 	}
@@ -435,6 +458,14 @@ func (s *PgStore) RecoverWorkflowRun(ctx context.Context, id string) error {
 // step. Locking the run prevents a concurrent scheduler completion from
 // leaving a partially cancelled DAG.
 func (s *PgStore) CancelWorkflowRun(ctx context.Context, id, reason string) (*WorkflowRun, error) {
+	if op, linked, err := s.OperationForWorkflowRun(ctx, id); err != nil {
+		return nil, err
+	} else if linked {
+		if _, err := s.cancelOperationWorkflow(ctx, op, op.Generation); err != nil {
+			return nil, err
+		}
+		return s.GetWorkflowRun(ctx, id)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: begin cancel workflow: %w", err)
@@ -505,6 +536,11 @@ func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string,
 	if err != nil {
 		return nil, 0, fmt.Errorf("pgstore: lock workflow run for retry: %w", err)
 	}
+	if _, err := queries.GetCustomerOperationForWorkflow(ctx, tx, mustPgUUID(runID)); err == nil {
+		return nil, 0, ErrWorkflowRetryNotAllowed
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, 0, err
+	}
 	lockedSteps, err := queries.LockWorkflowStepsForManualRetry(ctx, tx, runID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("pgstore: lock workflow steps for retry: %w", err)
@@ -559,6 +595,7 @@ func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string,
 
 func workflowRunFromSQLC(row sqlc.WorkflowRun) *WorkflowRun {
 	return &WorkflowRun{
+		ResumeCount: int(row.ResumeCount), CancelledAt: timestamptzToTimePtr(row.CancelledAt),
 		ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), PlatformTenantID: pgUUIDString(row.PlatformTenantID), WorkflowName: row.WorkflowName,
 		Status: row.Status, CurrentStep: workflowPGTextPtr(row.CurrentStep),
 		Input: cloneWorkflowJSON(row.Input), Output: cloneWorkflowJSON(row.Output),
@@ -881,6 +918,11 @@ func (s *PgStore) markWorkflowStepStatus(ctx context.Context, runID, stepName, s
 	}
 
 	if status == WorkflowStepStatusSucceeded && attemptStatus != nil {
+		if err := checkWorkflowOperationSuccessDeadlineTx(ctx, tx, runID, stepName, attempt); err != nil {
+			return err
+		}
+	}
+	if status == WorkflowStepStatusSucceeded && attemptStatus != nil {
 		steps, readErr := workflowControlSteps(ctx, tx, runID)
 		if readErr != nil {
 			return readErr
@@ -948,6 +990,9 @@ func (s *PgStore) markWorkflowStepStatus(ctx context.Context, runID, stepName, s
 		return fmt.Errorf("pgstore: update run current step: %w", err)
 	}
 
+	if err := syncOperationWorkflowTx(ctx, tx, runID); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -1428,18 +1473,11 @@ func (s *PgStore) SweepExpiredWorkflowRuns(ctx context.Context, olderThan time.D
 		return 0, ErrWorkflowInvalidRecord
 	}
 	secs := int64(olderThan.Seconds())
-	intervalStr := fmt.Sprintf("%d seconds", secs)
-
-	query := `
-		DELETE FROM workflow_runs
-		WHERE finished_at IS NOT NULL
-		  AND finished_at < now() - $1::interval
-	`
-	tag, err := s.pool.Exec(ctx, query, intervalStr)
+	deleted, err := sqlc.New().PruneUnownedWorkflowRuns(ctx, s.pool, secs)
 	if err != nil {
 		return 0, fmt.Errorf("pgstore: sweep expired workflow runs: %w", err)
 	}
-	return int(tag.RowsAffected()), nil
+	return int(deleted), nil
 }
 
 func (s *PgStore) SweepExpiredWorkflowEvents(ctx context.Context, olderThan time.Duration) (int, error) {

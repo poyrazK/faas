@@ -43,6 +43,7 @@ class OperationRequest:
     body: bytes
     platform_tenant_id: str = ""
     _support: object = field(default=None, repr=False, compare=False)
+    _receipt_binding: str = field(default="", repr=False)
 
 
 class OperationEffect(TypedDict):
@@ -78,6 +79,8 @@ def _uuid(value: str) -> str:
 def _normalize(request: OperationRequest) -> OperationRequest:
     if request._support is not _SUPPORTED:
         raise ValueError("use operation_request_from_headers with negotiated support")
+    if request._receipt_binding and (not re.fullmatch(r"[0-9a-f]{64}", request._receipt_binding) or not request.platform_tenant_id):
+        raise ValueError("invalid customer receipt binding")
     if type(request.generation) is not int or not 1 <= request.generation <= 9223372036854775807:
         raise ValueError("operation generation must be a positive int64")
     if (
@@ -138,7 +141,8 @@ def operation_request_from_headers(
 
 def operation_request_digest(input: OperationRequest) -> bytes:
     request = _normalize(input)
-    prefix = f"gregale-operation-request-v1\n{request.method}\n{request.path}\n".encode()
+    domain = f"gregale-customer-operation-request-v1\n{request._receipt_binding}\n" if request._receipt_binding else "gregale-operation-request-v1\n"
+    prefix = f"{domain}{request.method}\n{request.path}\n".encode()
     return hashlib.sha256(prefix + request.body).digest()
 
 
@@ -249,6 +253,8 @@ def _replay(row: Any, request: OperationRequest, digest: bytes) -> bytes:
         raise OperationConflictError("operation receipt scope or input differs")
     body = row[4].encode("utf-8")
     _validate_body(body)
+    if request._receipt_binding:
+        _customer_result(body)
     return body
 
 
@@ -268,6 +274,14 @@ def with_operation_transaction(
     Do not commit/rollback, change transaction settings, or perform external
     effects inside the callback. Errors do not automatically rerun the callback.
     """
+    if input._receipt_binding:
+        raise ValueError("use with_customer_operation_transaction for customer receipts")
+    return _with_operation_transaction(connection, input, handler)
+
+
+def _with_operation_transaction(
+    connection: Any, input: OperationRequest, handler: Callable[[Any], OperationOutcome]
+) -> OperationTransactionResult:
     request = _normalize(input)
     digest = operation_request_digest(request)
     _ready(connection)
@@ -298,6 +312,14 @@ async def awith_operation_transaction(
     connection: Any, input: OperationRequest, handler: Callable[[Any], Awaitable[OperationOutcome]]
 ) -> OperationTransactionResult:
     """Async psycopg equivalent; connection must be idle and autocommit."""
+    if input._receipt_binding:
+        raise ValueError("use awith_customer_operation_transaction for customer receipts")
+    return await _awith_operation_transaction(connection, input, handler)
+
+
+async def _awith_operation_transaction(
+    connection: Any, input: OperationRequest, handler: Callable[[Any], Awaitable[OperationOutcome]]
+) -> OperationTransactionResult:
     request = _normalize(input)
     digest = operation_request_digest(request)
     _ready(connection)
@@ -322,3 +344,90 @@ async def awith_operation_transaction(
             raise OperationCommitUnknownError("operation commit outcome unknown; retry the same operation") from error
         raise
     return OperationTransactionResult(body, row is not None)
+
+
+@dataclass(frozen=True)
+class CustomerOperationRequest:
+    """Explicitly negotiated HTTP receipt context; contains no claim capability."""
+
+    _request: OperationRequest = field(repr=False)
+
+
+def customer_operation_request_from_headers(
+    headers: Mapping[str, str | Sequence[str]], method: str, path: str, body: bytes
+) -> CustomerOperationRequest:
+    """Use only on the trusted Gregale guest listener, with exact target/body.
+
+    This factory does not authenticate arbitrary external HTTP servers.
+    """
+    allowed = {
+        "x-gregale-customer-operation-id", "x-gregale-customer-operation-receipt-version",
+        "x-gregale-customer-operation-receipt-binding", "x-gregale-operation-attempt", "x-gregale-operation-capability",
+    }
+    for name in headers:
+        lower = name.lower()
+        if lower.startswith(("x-gregale-operation-", "x-gregale-customer-operation-")) and lower not in allowed:
+            raise ValueError("unsupported customer receipt execution context")
+
+    def read(name: str) -> str:
+        values: list[str] = []
+        for key, value in headers.items():
+            if key.lower() == name:
+                values.extend([value] if isinstance(value, str) else value)
+        if len(values) != 1 or not isinstance(values[0], str) or not values[0]:
+            raise ValueError(f"customer operation requires one {name} header")
+        return values[0]
+
+    attempt = read("x-gregale-operation-attempt")
+    if (read("x-gregale-customer-operation-receipt-version") != "1"
+        or not re.fullmatch(r"[1-9][0-9]{0,9}", attempt) or int(attempt) > 2_147_483_647
+        or not re.fullmatch(r"[0-9a-f]{64}", read("x-gregale-operation-capability"))):
+        raise ValueError("invalid customer receipt execution context")
+    _uuid(read("x-faas-invocation-id"))
+    binding = read("x-gregale-customer-operation-receipt-binding")
+    if not re.fullmatch(r"[0-9a-f]{64}", binding):
+        raise ValueError("invalid customer receipt binding")
+    return CustomerOperationRequest(_normalize(OperationRequest(
+        operation_id=read("x-gregale-customer-operation-id"), account_id=read("x-faas-tenant-id"),
+        app_id=read("x-faas-app-id"), platform_tenant_id=read("x-faas-platform-tenant-id"), generation=int(attempt),
+        method=method, path=path, body=body, _support=_SUPPORTED, _receipt_binding=binding,
+    )))
+
+
+def customer_operation_request_digest(input: CustomerOperationRequest) -> bytes:
+    if not input._request._receipt_binding:
+        raise ValueError("customer receipt context required")
+    return operation_request_digest(input._request)
+
+
+def _customer_result(body: bytes) -> bytes:
+    if _receipt_decoder().decode(body.decode("utf-8"))["effects"] != []:
+        raise ValueError("customer receipts cannot contain managed effects")
+    return dict(_raw_values(body.decode("utf-8")))["result"].encode("utf-8")
+
+
+def with_customer_operation_transaction(
+    connection: Any, input: CustomerOperationRequest, handler: Callable[[Any], Any]
+) -> OperationTransactionResult:
+    """Commit supplied-transaction writes and plain JSON result together.
+
+    Approved recovery skips handler if a committed receipt exists. Install and
+    retain operation_receipt_schema explicitly. No external effects or lifecycle
+    control in handler. Send returned body unchanged as application/json.
+    """
+    customer_operation_request_digest(input)
+    result = _with_operation_transaction(connection, input._request, lambda cursor: {"result": handler(cursor)})
+    return OperationTransactionResult(_customer_result(result.body), result.replayed)
+
+
+async def awith_customer_operation_transaction(
+    connection: Any, input: CustomerOperationRequest, handler: Callable[[Any], Awaitable[Any]]
+) -> OperationTransactionResult:
+    """Async psycopg equivalent; requires an idle autocommit connection."""
+    customer_operation_request_digest(input)
+
+    async def callback(cursor: Any) -> OperationOutcome:
+        return {"result": await handler(cursor)}
+
+    result = await _awith_operation_transaction(connection, input._request, callback)
+    return OperationTransactionResult(_customer_result(result.body), result.replayed)

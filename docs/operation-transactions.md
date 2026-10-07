@@ -108,6 +108,80 @@ async_business)` with an async callback. The wrapper preserves your connection's
 row factory for business queries. It rejects active transactions and non-autocommit
 connections; do not share the leased connection with another request.
 
+## Customer Operations HTTP adapter
+
+Customer Operations opt in through their immutable definition or source manifest:
+
+```yaml
+operations:
+  - name: export
+    method: POST
+    path: /exports
+    owner: platform_tenant
+    input_schema: schemas/input.json
+    output_schema: schemas/output.json
+    progress_stages: [generating]
+    recovery: reconcile_on_unknown
+    transaction_receipt: postgres_v1
+```
+
+Install the same receipt schema explicitly. On the trusted Gregale guest listener,
+use the Customer Operations factory and helper. In Node:
+
+```ts
+import {
+  customerOperationRequestFromHeaders,
+  withCustomerOperationTransaction,
+} from '@gregale/sdk-node';
+
+const request = customerOperationRequestFromHeaders(
+  req.headers, req.method, req.originalUrl, req.rawBody,
+);
+const response = await withCustomerOperationTransaction(pool, request, async tx => {
+  await tx.query('INSERT INTO exports(id, customer_id) VALUES ($1, $2)',
+    [exportId, authorizedCustomerId]);
+  return { export_id: exportId }; // ordinary JSON matching the output schema
+});
+res.type('application/json').send(response.body);
+```
+
+Go exposes `CustomerOperationRequestFromHTTP` and
+`WithCustomerOperationTransaction`; its callback returns `json.RawMessage` and
+an error. Python exposes `customer_operation_request_from_headers`,
+`with_customer_operation_transaction`, and `awith_customer_operation_transaction`;
+their callbacks return the ordinary JSON result. All return the existing
+transaction result with `body`/`Body` and `replayed`/`Replayed`. Send the retained
+body unchanged. The SDK preserves exact result bytes even when another language
+created the receipt.
+
+The factory requires explicitly negotiated support, a verified customer scope
+and the ordinary HTTP claim context. It rejects managed-result and native context.
+The platform authors a binding to the captured account, app, customer, scope,
+definition revision, deployment and release. Receipt lookup checks that binding
+and exact method, target and body; changing scope or input fails before callback.
+The current claim proof is discarded by the factory and never saved. This factory
+is not authentication on arbitrary external HTTP servers; the application still
+owns business authorization.
+
+Business writes and the saved result commit together in the customer database.
+If the handler dies after COMMIT, Gregale retains `requires_reconciliation` until
+an evidenced account recovery approves a new execution. That execution checks the
+receipt first and returns a saved result without calling the business callback.
+If no receipt exists, the approved callback can run. The SDK never automatically
+retries work or an uncertain COMMIT. Keep receipts for as long as the captured
+operation can be recovered; deleting one permits new callback execution.
+
+This adapter supports only ordinary HTTP handlers and `reconcile_on_unknown`.
+Keep external API calls, file uploads and progress reports outside the database
+transaction; their effects need their own reconciliation evidence. Named managed
+effects are unsupported. The internal receipt envelope is never sent as the
+Customer Operations response. Gregale validates the plain result against the
+captured output schema and fences stale or late completion. A saved database
+result alone does not prove platform completion. The existing completion delivery
+is queued once by platform completion and retried independently of business work.
+Starting a new logical operation remains new work; enforce business uniqueness
+with application constraints.
+
 ## Recovery contract
 
 Every SDK verifies operation/account/app/customer identity and the fingerprint
@@ -137,6 +211,12 @@ ID creates new work; application-level business uniqueness still belongs in your
 business logic.
 
 ## Acceptance
+
+For Customer Operations, `make test-customer-operation-sdk` includes the SDK gate
+below and requires memory/PostgreSQL control-plane acceptance with a separate
+customer database. It kills the handler after COMMIT, approves recovery, replays
+without callback, rejects old completion, and verifies one business write and one
+logical completion delivery while the webhook retries. CI runs this gate.
 
 Against a disposable PostgreSQL cluster with CREATEDB permission, run:
 

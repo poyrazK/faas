@@ -27,6 +27,73 @@ func operationClient(t *testing.T, server *httptest.Server) *faas.Client {
 	return c
 }
 
+func TestOperationRecoveryInspectionAndPreviewFence(t *testing.T) {
+	revision := "sha256:" + strings.Repeat("a", 64)
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get("Authorization") != "Bearer tenant-first" {
+			t.Error("operator credentials missing")
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/apps/exports/operations/op/recovery-inspection":
+			writeOperationJSON(w, 200, `{"operation_id":"op","inspection_revision":"`+revision+`"}`)
+		case "POST /v1/apps/exports/operations/op/recovery-preview":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body) != 2 || body["expected_generation"] != float64(1) || body["resolution"] != "safe_to_retry" {
+				t.Error("preview wire contract", body, err)
+			}
+			writeOperationJSON(w, 200, `{"inspection":{"operation_id":"op","inspection_revision":"`+revision+`"},"eligible":false,"evidence_required":true,"blockers":["workflow_concurrency_limit"],"reopened_steps":["finish"]}`)
+		case "POST /v1/apps/exports/operations/op/recover":
+			var body faas.OperationRecoveryRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ExpectedInspectionRevision != revision {
+				t.Error("apply lost revision fence", err)
+			}
+			writeOperationJSON(w, 200, `{"id":"op","generation":2}`)
+		case "POST /v1/apps/exports/operations/op/recover-receipt":
+			var body faas.OperationRecoveryRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ExpectedInspectionRevision != revision || body.RecoveryID != "decision" {
+				t.Error("decision receipt lost intent", err)
+			}
+			writeOperationJSON(w, 200, `{"operation_id":"op","recovery_id":"decision","expected_generation":1,"generation":2,"resolution":"safe_to_retry","state":"accepted"}`)
+		default:
+			t.Errorf("unexpected recovery request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	c := operationClient(t, server)
+	i, err := c.InspectOperationRecovery(t.Context(), "exports", "op")
+	if err != nil || i.InspectionRevision != revision {
+		t.Fatal("inspection DTO", err)
+	}
+	p, err := c.PreviewOperationRecovery(t.Context(), "exports", "op", faas.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "safe_to_retry"})
+	if err != nil || p.Eligible || !p.EvidenceRequired || len(p.ReopenedSteps) != 1 {
+		t.Fatal("preview DTO", err)
+	}
+	if _, err := c.RecoverOperation(t.Context(), "exports", "op", faas.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision}); err != nil || calls != 3 {
+		t.Fatal("revision fence wire", err)
+	}
+	decision, err := c.RecoverOperationWithReceipt(t.Context(), "exports", "op", faas.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision})
+	if err != nil || decision.OperationID != "op" || decision.Generation != 2 || decision.State != faas.OperationAccepted || calls != 4 {
+		t.Fatal("immutable decision wire", decision, err)
+	}
+}
+
+func TestOperationExecutionControlUsesReadOnlyProof(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Method != http.MethodGet || r.URL.RequestURI() != "/v1/runtime/operations/operation%2Fid/control" || len(body) != 0 || r.Header.Get("Authorization") != "Bearer tenant-first" || r.Header.Get("X-Faas-Invocation-Id") != "invocation" || r.Header.Get(faas.OperationAttemptHeader) != "2" || r.Header.Get(faas.OperationCapabilityHeader) != "private-capability" {
+			t.Error("control proof, path or method changed")
+		}
+		writeOperationJSON(w, http.StatusOK, `{"operation_id":"operation/id","invocation_id":"invocation","attempt":2,"cancellation_requested":true,"deadline_at":"2026-10-05T12:00:00Z","lease_expires_at":"2026-10-05T11:59:00Z","observed_at":"2026-10-05T11:58:00Z","poll_after_ms":1000}`)
+	}))
+	defer server.Close()
+	control, err := operationClient(t, server).GetOperationExecutionControl(t.Context(), "operation/id", faas.OperationRuntimeProof{InvocationID: "invocation", Attempt: 2, Capability: "private-capability"})
+	if err != nil || control.OperationID != "operation/id" || !control.CancellationRequested || !control.LeaseExpiresAt.Before(control.DeadlineAt) {
+		t.Fatalf("control DTO: %+v %v", control, err)
+	}
+}
+
 func writeOperationJSON(w http.ResponseWriter, status int, data string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -161,6 +228,9 @@ func TestOperationCredentialsNeverFollowRedirects(t *testing.T) {
 		_ = body.Close()
 		t.Fatal("stream redirect succeeded")
 	}
+	if _, err := c.RecoverOperationWithReceipt(t.Context(), "exports", "op", faas.OperationRecoveryRequest{}); err == nil {
+		t.Fatal("recovery receipt followed redirect")
+	}
 	if targetCalls.Load() != 0 {
 		t.Fatal("operation credential followed a redirect")
 	}
@@ -242,5 +312,104 @@ func TestOperationHistoryScopedWireContract(t *testing.T) {
 	page, err := client.ListPlatformTenantSelfOperations(context.Background(), faas.OperationListOptions{AppID: "app", Scope: "staging", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque+/="})
 	if err != nil || len(page.Operations) != 1 || page.Operations[0].State != faas.OperationSucceeded || page.Operations[0].CompletionDelivery.State != "failed" || page.NextCursor != "next" {
 		t.Fatalf("history wire contract: %+v %v", page, err)
+	}
+}
+
+func TestOperationWorkflowArtifactProofAndPrivateReceipt(t *testing.T) {
+	proof := faas.OperationWorkflowRuntimeProof{RunID: "run", StepName: "finish", Generation: 2, Attempt: 3, Capability: "private-native-nonce"}
+	for _, formatted := range []string{fmt.Sprintf("%v", proof), fmt.Sprintf("%+v", proof), fmt.Sprintf("%#v", proof)} {
+		if strings.Contains(formatted, proof.Capability) {
+			t.Fatal("workflow proof leaked")
+		}
+	}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get(faas.OperationWorkflowRunHeader) != proof.RunID || r.Header.Get(faas.OperationWorkflowStepHeader) != proof.StepName || r.Header.Get(faas.OperationGenerationHeader) != "2" || r.Header.Get(faas.OperationAttemptHeader) != "3" || r.Header.Get(faas.OperationWorkflowCapabilityHeader) != proof.Capability || r.Header.Get(faas.OperationExecutionKindHeader) != "workflow" || r.Header.Get(faas.OperationCapabilityHeader) != "" || r.Header.Get("X-Faas-Invocation-Id") != "" {
+			t.Fatal("native proof headers changed")
+		}
+		if calls == 1 {
+			if r.URL.RequestURI() != "/v1/runtime/workflow-operations/operation%2Fid/artifact-receipts" {
+				t.Fatal("native preflight path changed", r.URL.RequestURI())
+			}
+			writeOperationJSON(w, http.StatusOK, `{"available":false}`)
+			return
+		}
+		if r.URL.RequestURI() != "/v1/runtime/workflow-operations/operation%2Fid/artifacts" {
+			t.Fatal("native prepare path changed", r.URL.RequestURI())
+		}
+		writeOperationJSON(w, http.StatusOK, `{"available":true,"artifact":{"id":"file","name":"export.csv","uri":"obj://app/bucket/key","size_bytes":3,"sha256":"digest"}}`)
+	}))
+	defer server.Close()
+	client := operationClient(t, server)
+	req := faas.OperationArtifactRequest{ReportID: "csv", Name: "export.csv", URI: "obj://app/bucket/key", SizeBytes: 3, SHA256: "digest"}
+	receipt, err := client.ReuseWorkflowOperationArtifact(t.Context(), "operation/id", proof, req)
+	if err != nil || receipt.Available || receipt.Artifact != nil {
+		t.Fatalf("missing receipt=%+v %v", receipt, err)
+	}
+	receipt, err = client.PrepareWorkflowOperationArtifact(t.Context(), "operation/id", proof, req)
+	if err != nil || !receipt.Available || receipt.Artifact == nil || receipt.Artifact.ID != "file" {
+		t.Fatalf("prepared receipt=%+v %v", receipt, err)
+	}
+}
+
+func TestOperationWorkflowControlWireContract(t *testing.T) {
+	proof := faas.OperationWorkflowRuntimeProof{RunID: "native-run", StepName: "collect", Generation: 2, Attempt: 3, Capability: "private-native-nonce"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.RequestURI() != "/v1/runtime/workflow-operations/operation%2Fid/control" || r.ContentLength != 0 {
+			t.Fatal("native control request changed", r.Method, r.URL.RequestURI())
+		}
+		if r.Header.Get(faas.OperationWorkflowRunHeader) != proof.RunID || r.Header.Get(faas.OperationWorkflowStepHeader) != "collect" || r.Header.Get(faas.OperationGenerationHeader) != "2" || r.Header.Get(faas.OperationAttemptHeader) != "3" || r.Header.Get(faas.OperationWorkflowCapabilityHeader) != proof.Capability || r.Header.Get(faas.OperationExecutionKindHeader) != "workflow" || r.Header.Get(faas.OperationCapabilityHeader) != "" || r.Header.Get("X-Faas-Invocation-Id") != "" {
+			t.Fatal("control changed native proof family")
+		}
+		writeOperationJSON(w, http.StatusOK, `{"operation_id":"operation/id","workflow_run_id":"native-run","workflow_step":"collect","generation":2,"attempt":3,"cancellation_requested":false,"deadline_at":"2026-10-06T10:01:00Z","lease_expires_at":"2026-10-06T10:00:30Z","observed_at":"2026-10-06T10:00:00Z","poll_after_ms":1000}`)
+	}))
+	defer server.Close()
+	control, err := operationClient(t, server).GetWorkflowOperationExecutionControl(t.Context(), "operation/id", proof)
+	if err != nil || control.WorkflowRunID != proof.RunID || control.WorkflowStep != proof.StepName || control.Generation != 2 || control.Attempt != 3 || control.CancellationRequested || control.DeadlineAt.IsZero() || control.LeaseExpiresAt.After(control.DeadlineAt) || control.PollAfterMS != 1000 {
+		t.Fatalf("native control response=%+v %v", control, err)
+	}
+}
+
+func TestOperationSubmissionLookupClient(t *testing.T) {
+	identity := &faas.OperationTenantIdentity{AccountID: "11111111-1111-4111-8111-111111111111", PlatformTenantID: "22222222-2222-4222-8222-222222222222"}
+	scope := faas.OperationSubmissionScope{AppID: "33333333-3333-4333-8333-333333333333", Scope: "default", Name: "export"}
+	lookup := faas.OperationSubmissionLookupRequest{AppID: scope.AppID, Scope: scope.Scope, Name: scope.Name, IdempotencyKey: "private-stable-key", ExpectedIdentity: identity}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer tenant-key" {
+			t.Error("lookup lost bearer or bounded-body selectors")
+		}
+		if calls == 1 {
+			if r.URL.Path != "/v1/platform-tenant-self/customer-operations/submissions/lookup" {
+				t.Error(r.URL.Path)
+			}
+			var got faas.OperationSubmissionLookupRequest
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got.IdempotencyKey != lookup.IdempotencyKey || got.ExpectedIdentity == nil || *got.ExpectedIdentity != *identity {
+				t.Error("lookup intent", got, err)
+			}
+			_, _ = w.Write([]byte(`{"state":"accepted","accepted_at":"2026-10-06T12:00:00Z","idempotency_expires_at":"2026-11-06T12:00:00Z","receipt":{"id":"accepted","status_url":"/status","events_url":"/events"}}`))
+		} else {
+			var got faas.OperationStartRequest
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got.ExpectedIdentity == nil || *got.ExpectedIdentity != *identity || got.ExpectedScope == nil || *got.ExpectedScope != scope || r.Header.Get("Idempotency-Key") != lookup.IdempotencyKey {
+				t.Error("submission fences", got, err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"accepted","status_url":"/status","events_url":"/events"}`))
+		}
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "tenant-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.LookupPlatformTenantSelfOperationSubmission(t.Context(), lookup)
+	if err != nil || got.State != "accepted" || got.Receipt == nil || got.Receipt.ID != "accepted" || got.AcceptedAt == nil || got.IdempotencyExpiresAt == nil || !got.AcceptedAt.Before(*got.IdempotencyExpiresAt) {
+		t.Fatal("observation", got, err)
+	}
+	_, err = client.StartPlatformTenantSelfOperation(t.Context(), faas.OperationStartRequest{DefinitionID: scope.AppID, Input: []byte(`{"count":1}`), ExpectedIdentity: identity, ExpectedScope: &scope}, lookup.IdempotencyKey)
+	if err != nil || calls != 2 {
+		t.Fatal("fenced start", calls, err)
 	}
 }
