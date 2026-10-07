@@ -82,6 +82,8 @@ type BackendConfig struct {
 	Namespace string            `json:"namespace"`
 	Settings  map[string]string `json:"settings,omitempty"`
 	SecretEnv map[string]string `json:"secret_env,omitempty"`
+	// DataAPIEnabled changes the qualified credential contract, not placement.
+	DataAPIEnabled bool `json:"data_api_enabled,omitempty"`
 }
 
 type Backend struct {
@@ -246,7 +248,9 @@ func (r *Registry) Regions() []string {
 
 func fingerprint(config BackendConfig) string {
 	// SecretEnv is intentionally excluded: credential rotation or renaming an
-	// environment variable must not change placement. Namespace and all
+	// environment variable must not change placement. DataAPIEnabled is a
+	// rollout capability, fenced by qualification's credential-access equality.
+	// Namespace and all
 	// non-secret settings fail closed if a backend is accidentally repurposed.
 	payload := struct {
 		Driver    string            `json:"driver"`

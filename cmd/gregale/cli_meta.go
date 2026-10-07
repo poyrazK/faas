@@ -271,6 +271,7 @@ var templateNames13 = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"data-api",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -316,7 +317,7 @@ var cliCommands = []cliCommand{
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
 				{Name: "scale-to-zero", Short: "suspend compute when idle"},
 				{Name: "environment-key", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Flags: []cliFlag{
@@ -2588,6 +2589,27 @@ var cliCommands = []cliCommand{
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
 	},
 	{
+		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Deploy a managed PostgREST Data API", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
+				{Name: "schema", Value: "SCHEMA", Short: "exposed schema (api)"},
+				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				{Name: "issuer", Value: "HTTPS_URL", Req: true, Short: "application JWT issuer"},
+				{Name: "jwks-url", Value: "HTTPS_URL", Req: true, Short: "application JWKS URL"},
+				{Name: "audience", Value: "AUDIENCE", Req: true, Short: "application JWT audience"},
+				{Name: "origins", Value: "ORIGINS", Short: "comma-separated browser origins"},
+				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
+			}},
+			{Name: "types", Short: "Generate types in an owner-authenticated app task", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "output", Value: "FILE", Short: "generated TypeScript output"},
+				{Name: "check", Short: "fail if the output file is stale"},
+				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
+			}},
+			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}},
+		},
+	},
+	{
 		Name:     "postgres",
 		DocSlug:  "postgres",
 		Short:    "Operator preview: manage PostgreSQL databases and bindings",
@@ -2648,7 +2670,7 @@ var cliCommands = []cliCommand{
 			{Name: "attach", Short: "Attach a database to an app", Flags: []cliFlag{
 				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise production)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 			}},
 		},
 	},

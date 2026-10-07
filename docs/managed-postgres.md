@@ -237,6 +237,12 @@ sufficient evidence for a scale-to-zero promise.
 
 ## Safety boundary
 
+Schema-generated application APIs use the separately qualified `data_api`
+credential mode and the dedicated `api` schema. See the
+[Data API guide](data-api.md) for JWT authentication, RLS policies, type export
+and schema refresh. Neon advertises this mode only when the backend explicitly
+sets `data_api_enabled: true` and passes fresh qualification for that configuration.
+
 Neon's create-project operation is non-idempotent. The adapter never retries
 that POST at the HTTP layer. It assigns a deterministic, hashed project name,
 discovers that exact name before creation, and returns the Neon project ID as

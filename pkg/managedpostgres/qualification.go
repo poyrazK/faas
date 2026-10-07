@@ -68,6 +68,21 @@ type ReadOnlyCredentialEvidence struct {
 	Revoked               bool `json:"revoked"`
 }
 
+type DataAPICredentialEvidence struct {
+	SchemaIsolated        bool `json:"schema_isolated"`
+	RLSEnforced           bool `json:"rls_enforced"`
+	PasswordRecovered     bool `json:"password_recovered"`
+	RotationPreservesData bool `json:"rotation_preserves_data"`
+	Revoked               bool `json:"revoked"`
+}
+
+func (e DataAPICredentialEvidence) Validate() error {
+	if !e.SchemaIsolated || !e.RLSEnforced || !e.PasswordRecovered || !e.RotationPreservesData || !e.Revoked {
+		return ErrUnavailable
+	}
+	return nil
+}
+
 func (e ReadOnlyCredentialEvidence) Validate() error {
 	if !e.Restricted || !e.PasswordRecovered || !e.RotationPreservesData || !e.Revoked {
 		return ErrUnavailable
@@ -89,6 +104,7 @@ type QualificationReport struct {
 	CredentialPrivileges *CredentialPrivilegeEvidence `json:"credential_privileges,omitempty"`
 	CredentialAccess     []CredentialAccess           `json:"credential_access"`
 	ReadOnlyCredentials  *ReadOnlyCredentialEvidence  `json:"read_only_credentials,omitempty"`
+	DataAPICredentials   *DataAPICredentialEvidence   `json:"data_api_credentials,omitempty"`
 	ClassResize          bool                         `json:"class_resize"`
 	ScaleToZeroUpdate    bool                         `json:"scale_to_zero_update"`
 	ComputePolicy        *ComputePolicyEvidence       `json:"compute_policy,omitempty"`
@@ -262,12 +278,12 @@ func ValidateQualificationReport(report QualificationReport) error {
 		return ErrInvalid
 	}
 	requiredChecks := requiredProviderQualificationChecks[:]
-	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > 3 {
+	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > 4 {
 		return ErrInvalid
 	}
 	seenAccess := make(map[CredentialAccess]bool, len(report.CredentialAccess))
 	for _, access := range report.CredentialAccess {
-		if seenAccess[access] || (access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration) {
+		if seenAccess[access] || (access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI) {
 			return ErrInvalid
 		}
 		seenAccess[access] = true
@@ -278,6 +294,14 @@ func ValidateQualificationReport(report QualificationReport) error {
 			return ErrUnavailable
 		}
 	} else if report.ReadOnlyCredentials != nil {
+		return ErrInvalid
+	}
+	if seenAccess[CredentialDataAPI] {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "data_api_credentials_probe")
+		if report.DataAPICredentials == nil || report.DataAPICredentials.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.DataAPICredentials != nil {
 		return ErrInvalid
 	}
 	if report.ClassResize {
@@ -384,7 +408,9 @@ func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBacke
 		case errors.Is(err, ErrQualificationFailed):
 			add("provider_checks_failed")
 		case errors.Is(err, ErrUnavailable):
-			if artifact.Report.CredentialPrivileges == nil || artifact.Report.CredentialPrivileges.Validate() != nil {
+			if contains(artifact.Report.CredentialAccess, CredentialDataAPI) && (artifact.Report.DataAPICredentials == nil || artifact.Report.DataAPICredentials.Validate() != nil) {
+				add("data_api_evidence_missing")
+			} else if artifact.Report.CredentialPrivileges == nil || artifact.Report.CredentialPrivileges.Validate() != nil {
 				add("credential_privileges_evidence_missing")
 			} else if artifact.Report.Restore != nil && (!artifact.Report.Restore.Restored || !artifact.Report.Restore.DataVerified || !artifact.Report.Restore.CredentialsIsolated || !artifact.Report.Restore.Deleted) {
 				add("restore_evidence_missing")
@@ -817,6 +843,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			return report, resultErr
 		}
 	}
+	if contains(capabilities.CredentialAccess, CredentialDataAPI) {
+		prober, ok := provider.(DataAPICredentialProber)
+		if !ok {
+			record("data_api_credentials_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeDataAPICredentials(ctx, providerResourceID)
+		report.DataAPICredentials = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("data_api_credentials_probe", probeErr) {
+			return report, resultErr
+		}
+	}
 	if capabilities.ClassResize {
 		prober, ok := provider.(ComputeResizeProber)
 		if !ok {
@@ -993,7 +1034,7 @@ func QualifyLifecycle(parent context.Context, service *Service, bindings *Bindin
 		recordQualificationFailure(&report, "lifecycle_identity", ErrInvalid, &resultErr)
 		return report, resultErr
 	}
-	if options.Access != CredentialReadWrite && options.Access != CredentialReadOnly && options.Access != CredentialMigration {
+	if options.Access != CredentialReadWrite && options.Access != CredentialReadOnly && options.Access != CredentialMigration && options.Access != CredentialDataAPI {
 		recordQualificationFailure(&report, "lifecycle_access", ErrInvalid, &resultErr)
 		return report, resultErr
 	}

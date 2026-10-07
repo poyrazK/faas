@@ -59,6 +59,7 @@ type Provider struct {
 	databaseName           string
 	maxStorageBytes        int64
 	maxRestoreWindow       int64
+	dataAPIEnabled         bool
 	credentialPollInterval time.Duration
 	roles                  credentialRoleManager
 	now                    func() time.Time
@@ -93,7 +94,9 @@ func New(config managedpostgres.BackendConfig, getenv func(string) string) (mana
 			return http.ErrUseLastResponse
 		},
 	}
-	return newProvider(config.Region, config.Namespace, apiKey, baseURL, client, parsed), nil
+	p := newProvider(config.Region, config.Namespace, apiKey, baseURL, client, parsed)
+	p.dataAPIEnabled = config.DataAPIEnabled
+	return p, nil
 }
 
 type settings struct {

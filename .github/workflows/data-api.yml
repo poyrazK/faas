@@ -1,0 +1,64 @@
+name: Data API acceptance
+on:
+  pull_request:
+    paths:
+      - "cmd/gregale/**"
+      - "cmd/apid/managed_postgres_credentials*"
+      - "pkg/managedpostgres/**"
+      - "pkg/api/limits.go"
+      - "pkg/state/app_secret_delivery_policy*"
+      - "pkg/state/memstore*"
+      - "pkg/gregalemanifest/**"
+      - "migrations/**"
+      - "sdk/data/**"
+      - "tests/data-api/**"
+      - "scripts/test-data-api.sh"
+      - ".github/workflows/data-api.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
+      DATA_API_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
+      DATA_API_POSTGREST_BIN: /tmp/gregale-postgrest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Extract the digest-pinned PostgREST runtime
+        run: |
+          docker pull postgrest/postgrest@sha256:7c5840727ad683b0fdbfb9810930665b34f8b44884a4dc740aa8844748a2b85e
+          container_id=$(docker create postgrest/postgrest@sha256:7c5840727ad683b0fdbfb9810930665b34f8b44884a4dc740aa8844748a2b85e)
+          trap 'docker rm "$container_id"' EXIT
+          docker cp "$container_id:/bin/postgrest" "$DATA_API_POSTGREST_BIN"
+          chmod +x "$DATA_API_POSTGREST_BIN"
+      - name: Verify generated API, JWT RLS and client contract
+        run: make data-api-acceptance
+      - name: Verify credential qualification, lifecycle and CLI integration
+        env:
+          GOGC: 30
+          GOMEMLIMIT: 2GiB
+          GOMAXPROCS: 2
+        run: go test -p 1 ./pkg/managedpostgres/... ./cmd/gregale ./pkg/gregalemanifest -count=1

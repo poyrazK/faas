@@ -1285,6 +1285,13 @@ terraform-provider-check: ## Build and test the Terraform/OpenTofu provider modu
 sdk-unit-node: ## Run Node SDK unit tests (no fixture required)
 	@cd sdk/node && npm ci && npm run test:unit
 
+.PHONY: data-api-check data-api-acceptance
+data-api-check: ## Runtime and typed application client unit checks
+	@bash scripts/test-data-api.sh
+
+data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
+	@bash scripts/test-data-api.sh --integration
+
 .PHONY: sdk-gen-python
 sdk-gen-python: ## Regenerate sdk/python/faas_sdk from api/openapi.yaml
 	@cd sdk/python && .venv/bin/python scripts/gen.py
