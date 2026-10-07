@@ -63,6 +63,9 @@ func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCo
 	if c.Bytes > route.MaxBytes || !c.Encryption.Equal(routeEncryption) {
 		return c, false, ErrConflict
 	}
+	if err := checkObjectUploadCaptureAdmissionTx(ctx, tx, c.AccountID, c.AppID, c.BucketID); err != nil {
+		return c, false, err
+	}
 	c.Encryption, c.EncryptionDefaultRevision, err = captureObjectBucketDefaultSQL(ctx, tx, c.BucketID, c.Encryption)
 	if err != nil {
 		return c, false, err
@@ -305,6 +308,9 @@ func (s *PgStore) beginTrackedGatewayWrite(ctx context.Context, c ObjectUploadCo
 	if b.State != "ready" {
 		return c, ErrConflict
 	}
+	if err := checkObjectUploadCaptureAdmissionTx(ctx, tx, c.AccountID, c.AppID, c.BucketID); err != nil {
+		return c, err
+	}
 	c.Encryption, c.EncryptionDefaultRevision, err = captureObjectBucketDefaultSQL(ctx, tx, c.BucketID, c.Encryption)
 	if err != nil {
 		return c, err
@@ -330,4 +336,21 @@ func (s *PgStore) beginTrackedGatewayWrite(ctx context.Context, c ObjectUploadCo
 		return c, mapErr(err)
 	}
 	return commitTrackedUploadSQL(ctx, tx, r)
+}
+
+// Serialize creation of an original upload journal with source capture. Parts
+// of an admitted multipart session do not call this new-journal admission seam.
+func checkObjectUploadCaptureAdmissionTx(ctx context.Context, tx pgx.Tx, account, app, bucket string) error {
+	q := sqlc.New()
+	if _, err := q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)}); err != nil {
+		return mapErr(err)
+	}
+	_, err := q.ObjectBucketWriteFenceRead(ctx, tx, mustPgUUID(bucket))
+	if err == nil {
+		return ErrObjectBucketWriteFenced
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return mapErr(err)
 }

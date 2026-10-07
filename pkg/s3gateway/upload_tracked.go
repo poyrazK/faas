@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -50,7 +51,9 @@ func (h *Handler) performTrackedGatewayPut(w http.ResponseWriter, r *http.Reques
 	// Disable redirects even when an injected client permits them. No replayable body.
 	client := *h.client
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response, err := h.doMutationRequestWithClient(&client, upstream, req)
+	response, err := objectstorageactivity.ExecuteUpload(ctx, h.store, req.bucket, c, func(context.Context) (*http.Response, error) {
+		return client.Do(upstream)
+	})
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return

@@ -6924,3 +6924,729 @@ compiled without source overlays. Pinned golangci-lint v2.4.0 built with Go
 1.25.13 reports zero affected-package issues; SQLC v1.31.1 parity, formatting
 and whitespace checks pass. These contracts do not qualify a live native
 provider or native x86_64 KVM full clone.
+
+### Compose original object-grant retirement into source barriers (2026-10-06)
+
+The private composed barrier driver now resumes native object-grant retirement
+for every frozen source bucket that has outstanding grants or retained retirement
+intent. It acquires and independently checks the complete PostgreSQL/object hold
+rosters, then preflights every required native capability before any provider IO.
+An unsupported backend retains the committed source holds without dispatching
+PostgreSQL closure or creating a native retirement intent. Each retirement uses
+the original durable request, source placement and sorted grant roster; partial
+multi-bucket retirement and replacement workers recover that same selection.
+
+A locally drained retirement still requires a fresh independent provider
+observation. Zero local grants cannot hide a missing journal, changed retirement
+identity, changed plan hash, renewed write activity or incomplete revocation.
+Only original native grants are consumed on valid drainage; synchronous request
+receipts require their own acknowledged completion. The driver's observations
+remain transient and return no usable evidence on uncertainty.
+
+Active compensation now resumes already-dispatched original retirements before
+abandoning object admission holds. It derives their scope from retained intent
+under the owned holds, so source configuration edits do not replace the original
+selection. Unknown or busy retirement prevents release of every remaining object
+hold. Reserved or absent intent initiates no provider calls and consumes no
+writers. Once all dispatched retirements have independent drain evidence, the
+existing lease-authorized transaction releases the operation's object holds
+together, retaining unresolved synchronous receipts. Recovery after a lost
+release acknowledgement does not initiate further native calls for sources
+whose holds were already released. This abandonment resumes admission after
+aborted capture; it is not successful capture-barrier release or complete
+resource compensation.
+
+R2 is the first requested provider target, with OVH also acceptable. Cloudflare's
+[temporary credential documentation](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/)
+states that revoking a parent token invalidates every credential derived from
+it. That statement does not establish drainage of already-admitted writes, an
+immutable authenticated retirement journal or a mapping from historical local
+grant receipts to the originally issued native capabilities. Shared-parent
+revocation also cannot satisfy the contract by invalidating unrelated sources.
+No live provider identity or credentials were available for qualification.
+Built-in S3 adapters used for R2/OVH remain unsupported for native retirement;
+the shared orchestration does not claim a qualified R2 or OVH adapter. Provider
+responses in local contracts are synthetic.
+
+The composed capture driver remains outside active capture dispatch and public
+full-clone admission. This increment selects no common capture timestamp,
+retains no completed PostgreSQL/object recovery point, creates no isolated stage
+and releases no successful-capture source hold. Complete provider, external and
+background writer coverage; stable configuration through a common capture point;
+immutable recovery retention; successful source release; independent restore
+and credential remapping; readiness and publication; and qualified promotion
+preserving production data remain required.
+
+Qualification uses task-owned migrated PostgreSQL 16.15 with UTF-8 encoding,
+`max_prepared_transactions=32` and the official template-database harness.
+Nineteen focused normal APID contracts passed (73 including subtests), and eight
+state-store contracts passed under the race detector (29 including subtests).
+Neither run had failures or skips. Coverage includes all-source preflight,
+partial multi-bucket retirement, original-intent handoff, independent observation
+after local drainage, unsupported native capabilities, busy compensation after
+configuration edits, reserved-intent abandonment and lost release replies.
+Pinned golangci-lint v2.4.0 built with Go 1.25.13 reports zero affected-package
+issues. SQLC v1.31.1 parity, ADR-number uniqueness, formatting and whitespace
+checks pass.
+Normal production and test packages compile without source overlays. These
+contracts do not qualify a live native provider or native KVM full clone.
+
+### Retain source configuration across capture barriers (2026-10-06)
+
+A durable, operation-owned configuration guard now freezes the current typed
+source catalogue while the private composed driver closes instrumented data
+writers. The hold records the original project/account, source environment,
+frozen revision, generation and acquisition time. Worker lease expiry, lost
+acquisition replies and replacement workers retain that same hold. A fresh,
+matching capturing lease and a live catalogue equal to the original frozen
+configuration root are required to acquire or recover it. Uncertainty returns
+no usable capture observation.
+
+Database triggers cover the current typed root's App membership and settings,
+environment values and secret references, flags, releases and deployment
+artifacts, policies, workload specifications, selected sidecar state, and
+PostgreSQL/object binding definitions. They reject edits, deletion, insertion
+into previously empty collections and moves into or out of the source project.
+The hold is conservative and project-wide because other environments can share
+App rows and project configuration. It does not supply missing capture strategies
+for the wider configuration schema.
+
+Acquisition briefly serializes with configuration writers through an updated
+synchronization clock. Writers retain a shared clock/guard lock through commit;
+acquisition takes the clock before the operation and project guard, and validates
+the live catalogue without acquiring configuration row locks. This ordering
+drains previously admitted edits and project deletion cascades without locking
+an operation or configuration row needed by those writers. The clock update
+also rejects repeatable-read or serializable writers whose old snapshots could
+hide changed ownership or newly inserted bindings. Other projects resume their
+configuration writes after the acquisition transaction commits. Every lock
+wait is followed by fresh SQL lease authorization, with bounded worker context.
+The fence path locks the operation row without the general workload helper's
+project row lock. Guard observations are plain reads under the owner operation
+lock; only acquisition and owned release update a guard. Open-scope observations
+and unowned abandonment therefore cannot block an admitted project deletion
+that may already own the guard row while waiting for the operation cascade.
+
+The new private stable-barrier entry acquires configuration first, composes the
+existing all-source holds and original grant retirement, then independently
+rechecks the exact configuration hold. Its observation remains transient: it
+selects no common point and releases no successfully captured source.
+
+Active compensation releases an aborted operation's configuration hold before
+attempting data-writer or retained-resource cleanup. A lost release reply is
+recoverable without reclaiming the abandoned configuration. Dispatched native
+retirement still uses its retained original intent after configuration edits;
+unknown data outcomes keep their separate holds and compensation unfinished.
+Copy/publication/terminal transitions reject a retained configuration owner,
+and migration downgrade refuses to remove an owned guard.
+
+OVH is the next live object-storage qualification target within the user's
+requested R2/OVH scope. Its documented
+[versioning](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-versioning)
+and [Object Lock](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-managing-object-lock)
+are relevant to the existing version-addressed snapshot/retention adapter;
+live endpoint, credentials and pre-existing protection still require
+qualification. The clone worker creates no irreversible retention policy on
+customer source objects. R2's
+[S3 API compatibility](https://developers.cloudflare.com/r2/api/s3/api/)
+does not support bucket versioning or Object Lock, so the existing versioned
+capture strategy cannot qualify it. OVH's documented
+[user/policy controls](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-identity-and-access-management)
+also do not establish the required original-capability retirement journal and
+drainage of already admitted native writes. Built-in native retirement remains
+unsupported. No live provider credentials were available for this increment.
+
+The active data capture coordinator and public full-clone gate remain deferred.
+Complete provider, application, external and background writer coverage; the
+common configuration/database/object point; retained recovery identities and
+versions; authenticated successful source release; isolated restoration,
+credential remapping, complete configuration/resource coverage, publication and
+readiness; and qualified promotion preserving production data remain required.
+
+The next writer-coverage slice must include lifecycle deletion, not just the
+gateway/request mutation roster. Repository inspection found that
+`LifecycleExpirationService` calls `DeletionService` through its separate
+`object_deletions` journal. `BeginObjectDeletion` uses `ObjectCapacityFenced`,
+whose conditions do not include the clone's object write fence; the clone's
+request/native counters count `object_bucket_mutations`, not this journal.
+Prepared/dispatched deletion intent and uncertain recovery can therefore outlive
+zero request/native counts. Admission closure, original dispatched-outcome
+recovery and independent drainage must cover those entries before they can
+contribute common-point evidence. Upload/multipart, cleanup, retention and other
+background/provider paths still require a complete writer inventory. This
+inspection is a gap finding, not qualification of object writer coverage.
+
+Qualification uses task-owned migrated PostgreSQL 16.15 with UTF-8 encoding,
+`max_prepared_transactions=32` and the official template-database harness.
+Forty-seven state contracts passed under the race detector (122 including
+subtests), and thirty-three normal APID contracts passed (102 including
+subtests). Seven compute-resize unit/qualification contracts (24 including
+subtests) and five PostgreSQL resize contracts also passed under the race
+detector against the freshly integrated main. No selected test failed or
+skipped. Coverage includes phantom/moved configuration, old transaction
+snapshots, admitted writer and project-deletion drainage, project/App row lock
+inversion, unowned reads during deletion, lease expiry after synchronization,
+lost hold/release replies, worker handoff, retained data holds, downgrade
+refusal, account/App deletion and existing barrier/coordinator regressions.
+Normal production and test packages compile without source overlays. These
+contracts do not qualify a live OVH/R2 provider or native KVM full clone.
+Pinned golangci-lint v2.4.0 built with Go 1.25.13 reports zero issues across
+state, APID and managed PostgreSQL. SQLC v1.31.1 parity, repository policy,
+ADR-number uniqueness, formatting and whitespace checks pass. The policy
+scripts retain their existing optional skips for unavailable Packer and nft;
+no VM lifecycle or native KVM acceptance is claimed by those checks.
+
+### 2026-10-06: Include lifecycle deletion journals in source capture drainage
+
+The lifecycle/customer deletion path now participates in the existing object
+source admission barrier. `BeginObjectDeletion` checks the bucket's retained
+write fence after acquiring its source row lock and reading an existing retry
+identity. Exact retries observe the original deletion journal; new IDs fail
+before preparation or provider mutation. MemStore preserves the same contract.
+An admitted prepared intent can still dispatch, and original dispatch/recovery
+can still settle while capture holds admission closed.
+
+The append-only migration
+`20261006161300941_object_deletion_capture_admission.sql` also enforces this
+boundary before insertion into `object_deletions`. It locks the source bucket,
+requires ready placement, and checks the committed capture hold with a fresh
+READ COMMITTED snapshot after any lock wait. Older replicas cannot bypass the
+boundary by omitting the new Go-side check. Admission from REPEATABLE READ or
+SERIALIZABLE is rejected because an old snapshot could hide a committed hold;
+the production deletion store uses READ COMMITTED. Updates to original intent
+and recovery journals retain their existing authorization and immutability
+rules. Downgrade refuses to remove admission enforcement while any object
+capture hold remains. No existing migration, journal identity or column changes.
+The schema snapshot contains the two objects read from migrated PostgreSQL;
+SQLC output is regenerated.
+
+Owned object-fence observations expose a separate `Deletions` count of every
+prepared/dispatched intent for that bucket. This uses the original journal and
+its existing active-bucket index, without a second synthetic mutation receipt.
+The private stable capture driver requires request, native-grant and deletion
+counts all to be zero, and rejects negative counts in owned roster validation.
+S3 and control-plane deletion ingress now use that journal directly instead of
+wrapping it in a generic request receipt. Otherwise original deletion recovery
+could settle the journal while leaving an unrelated request receipt permanently
+outstanding, and a newly denied deletion could strand a receipt without any
+provider mutation. Existing unmapped request receipts remain retained; this
+increment supplies no authority to erase legacy uncertain activity.
+Terminal preparation cancellation, original provider rejection, or authenticated
+completion drains the deletion count. Lease expiry, caller cancellation, retry
+delay and a rejection of a recovery request do not settle an earlier uncertain
+dispatch. Immutable selected-version recovery and versioned marker proof retain
+their existing semantics; mutable absence supplies no completion proof.
+
+Worker handoff keeps the same source hold and original deletion evidence.
+Abandoning capture resumes admission and preserves unresolved deletion intents;
+another capture observes them again. The capture coordinator does not claim
+responsibility for completing the deletion worker's original provider request,
+erase its evidence, or infer completion from zero synchronous request receipts.
+The active public full-clone gate remains deferred, and even zero instrumented
+writers selects no common point or stage publication.
+
+The remaining writer inventory includes version-retention/legal-hold operations,
+multipart/upload recovery, recursive bucket cleanup and external/native writers.
+In particular, `VersionProtectionService` dispatches native protection PUTs
+through `object_version_protection`, whose active intents are absent from the
+capture counters. The current configuration guard also fences changes to that
+table; admitting and settling an original protection intent must be considered
+together when closing that path. Source version/retention qualification on OVH,
+a qualified common configuration/PostgreSQL/object point, retained recovery
+material, authenticated successful source release, isolated restoration and
+readiness, and exact-revision promotion remain outstanding. R2 still requires
+a different snapshot strategy. No live provider secrets or native KVM
+qualification were available for this increment.
+
+Qualification on task-owned migrated PostgreSQL 16.15 passed 48 state contracts
+(137 including subtests), 20 object-storage contracts (167 including subtests),
+and 12 S3 gateway contracts (32 including subtests), all under the race detector.
+The normal APID suite passed 47 selected contracts (123 including subtests).
+All 459 selected cases passed without failure or skip. Coverage includes
+admission/acquisition lock waits in both directions, older-replica insertion,
+old transaction snapshots, migration replay/round trip/downgrade refusal,
+lifecycle discovery interrupted by capture, source pause/resume, retained
+uncertain originals, immutable recovery, mutable marker/absence distinctions,
+worker handoff, abandonment/reacquisition, independent capture counts and
+retained legacy request evidence. Normal production and test packages compile
+without source overlays. Pinned golangci-lint v2.4.0 reports zero issues across
+state, object storage, S3 gateway and APID. SQLC v1.31.1 parity, migration-ID
+checks, repository policy, formatting and whitespace checks pass. Existing
+optional policy skips for unavailable Packer and nft remain. These local
+contracts do not qualify live OVH/R2 storage or native KVM full cloning.
+
+### 2026-10-06: Drain original retention and legal-hold mutation journals
+
+The private capture barrier now observes `object_version_protection` alongside
+request receipts, native grants and deletion journals. Every original
+`waiting` or `applying` protection intent keeps its bucket busy, including
+undispatched work, expired leases and uncertain provider acknowledgements.
+Terminal settlement removes only that journal from the drainage count; it does
+not release the source hold. Negative protection counts invalidate the owned
+source roster before provider work. This closes the counter omission identified
+in the preceding increment without asserting complete writer coverage.
+
+New retention/legal-hold admission checks the retained bucket write fence
+under the same source-row lock used by acquisition. Exact-ID retries continue
+to return their original journal. The append-only admission migration also
+protects older replicas and direct SQL inserts, using a fresh READ COMMITTED
+snapshot after a source-lock wait. Higher-isolation admission is rejected.
+Removing enforcement refuses both bucket and configuration holds.
+
+The project configuration guard permits only operational UPDATE progress on
+an original protection journal. Its immutable intent, account/App/bucket scope,
+key, public/native version identity and creation time remain unchanged. Existing
+journal triggers still enforce worker leases, monotonic dispatch, terminal
+state and retained event-hold baseline evidence. The additional guard rejects
+rewriting an established baseline or settled record. INSERT and DELETE remain
+configuration mutations. Original workers can therefore claim, dispatch once,
+retain uncertainty, and settle while customer configuration is held; this
+exception does not allow editing the requested policy or other configuration.
+The registry still classifies protection configuration as requiring an isolated
+strategy. Recovery of a mutation does not establish a clone policy mapping or
+prove that the resulting provider retention qualifies an immutable capture.
+
+The memory/PostgreSQL protection contract exercises preparation, exact retry,
+new admission rejection, retained dispatch after expiry, process restart,
+stale-worker rejection, uncertain-dispatch preservation, terminal drainage,
+continued admission closure and explicit release. PostgreSQL recovery runs
+with a retained project configuration hold, and unrelated configuration stays
+fenced afterward. Migration tests compare the actual ordered predecessor and
+successor downgrade/upgrade chain and refuse downgrade under a bucket hold.
+An older-replica source-lock wait must see the newly committed hold, and old
+transaction snapshots cannot bypass admission. HTTP event-hold cases cover
+immutable and null versions, enable/change/release intents, lost PUT ACKs,
+incomplete readback, recovery without repeated PUTs and independent counters.
+The S3 SDK admission check requires a paused-write response, zero native PUTs,
+zero new journals/request receipts and no header advertising an uncreated
+protection journal. Only a durably created original can expose a recovery ID.
+Terminal journal state is an instrumented observation. Independently qualified
+provider drain and retention evidence remain necessary before selecting a
+common point or successful source release.
+
+Full public stage capture remains deferred. Multipart/upload journals,
+recursive cleanup, application/PostgreSQL and external/native writer coverage,
+a qualified common point, retained recovery material, successful source
+release, isolated restoration/readiness and exact-revision promotion remain
+outstanding. OVH live retention qualification remains unavailable; R2 needs a
+different snapshot strategy. This increment installs no customer retention and
+makes no live-provider or native-KVM qualification claim.
+
+Qualification on task-owned migrated PostgreSQL 16.15 passed the selected
+state, object-storage HTTP and S3 SDK contracts under the race detector. The
+normal APID capture, configuration/grant barrier, coordinator, deletion,
+lifecycle and protection integration suite passed. Production and test packages
+compile without source overlays. Pinned golangci-lint v2.4.0 reports zero issues
+across state, object storage, S3 gateway and APID. SQLC v1.31.1 parity,
+migration-ID checks, repository policy, formatting and whitespace checks pass.
+The existing optional Packer and live nft skips remain; these local checks do
+not qualify a live provider, a complete common point or native KVM restoration.
+
+### 2026-10-06: Observe upload and multipart journals during capture
+
+The private bucket barrier now counts pending upload receipts and every live
+multipart session, including expired sessions and uncertain acknowledgements.
+Legacy untracked failed uploads also remain busy: a failure status does not
+prove that a provider write never happened. New tracked, legacy and multipart
+journal admission checks the held source bucket. An append-only PostgreSQL
+trigger protects older replicas, locks account before bucket, requires READ
+COMMITTED and refuses removal while bucket holds exist. Exact original retries
+and operational journal progress remain available under the hold.
+
+Memory and PostgreSQL contracts exercise original upload dispatch, uncertain
+recovery, restart and authenticated settlement; multipart activation, expiry,
+verified abort and drainage; continued admission closure; and independent
+request receipts. Migration coverage checks upgrade replay, round-trip guard
+shape and downgrade refusal. Negative counts reject the source roster before
+provider capture.
+
+This is journal observation and admission enforcement, not complete provider
+recovery composition. Generic provider receipts still pin their original
+placement independently, and settlement cannot erase them. Binding upload and
+multipart recovery to those retained receipts is the next bounded increment.
+Recursive cleanup, other writer coverage, live provider qualification and a
+qualified common point remain outstanding. Full public capture stays gated.
+
+Qualification passed on task-owned PostgreSQL 16.15: the selected upload and
+multipart state contracts, migration round-trip/older-replica/isolation and
+source-lock-wait checks, object-storage HTTP and S3 gateway regressions ran
+under the race detector. The normal APID capture and coordinator suite passed.
+Pinned golangci-lint v2.4.0 reports zero issues across the four affected package
+groups. SQLC v1.31.1 parity, migration-ID and repository policy checks pass;
+optional Packer and live nft checks remain skipped. These local checks do not
+qualify a live provider or a complete common point.
+
+### 2026-10-06: Bind new tracked uploads to their original provider receipt
+
+Each new tracked route upload, gateway PUT and tracked copy now creates one
+request receipt atomically with its prepared journal. The receipt binds the
+upload identity to the original backend, fingerprint and physical bucket.
+The provider paths reuse that receipt instead of admitting a second unrelated
+writer. A provider ACK leaves the receipt in place until the original journal
+settles. Terminal settlement removes it in the same transaction; rollback
+retains both the journal and its receipt. Prepared expiry uses the existing
+non-dispatch settlement path. Generic completion cannot retire a bound receipt.
+
+An append-only migration composes the two records for older replicas too.
+Database guards prohibit changing a binding or its placement, deleting an
+unsettled receipt, creating a binding under a capture hold, and downgrading
+while bindings or bucket holds exist. The memory store preserves the same
+creation/settlement ownership. Recovery reads require the original journal
+scope and current recovery token/lease, reject changed placement, and never
+create a receipt. Positive exact-receipt recovery can therefore settle an
+original upload under a retained source hold without reopening admission or
+erasing an unrelated provider request.
+
+This increment does not adopt existing unbound receipts. Older unbound journals
+may still be probed through their existing path, but successful recovery cannot
+remove an unrelated unknown writer. Binding and provider recovery composition
+for multipart initiation, parts, completion and verified abort remain the next
+bounded increment. Full public capture remains gated pending that work, other
+writer coverage, live provider qualification and a qualified common point.
+
+Qualification passed on task-owned PostgreSQL 16.15: memory/PostgreSQL upload
+capture, recovery, schema-registry, URL-capability and bucket-fence contracts;
+binding guards, settlement rollback, migration round trip and downgrade refusal;
+and route/gateway/provider regressions ran under the race detector. The normal
+APID upload, gateway PUT/copy/historical recovery and capture/coordinator suite
+passed, including positive recovery under a retained hold with an unrelated
+request still outstanding. The affected gateway and SDK lost-ACK checks passed
+after the final context-wiring correction. Pinned golangci-lint v2.4.0 reports
+zero issues across state, object storage, activity wrappers, S3 gateway and
+APID. SQLC v1.31.1 parity, migration-ID and repository policy checks pass.
+Optional Packer and live nft checks remain skipped; these checks do not qualify
+a live provider, a complete common point or native KVM restoration.
+
+### Bind multipart completion and abort to the original session receipt (2026-10-07)
+
+New multipart reservations now create a pinned provider receipt in the same
+transaction as the session. Completion and abort resume that receipt through
+an optional store interface rather than asking capture for a fresh admission.
+The read requires the current unexpired lease, original native upload ID,
+object key, scope, encryption/protection snapshots, and captured placement;
+completion also checks the original size, conditions, part revision and vector.
+A provider ACK alone does not retire it. Completed settlement or verified abort
+removes only the bound receipt atomically with the terminal journal transition.
+Rollback restores both. Database triggers enforce creation and ownership for
+older replicas too, reject intent reassignment and refuse a busy downgrade.
+
+Initiation and independent part writers still use their separate provider
+receipts. An unknown initiation result cannot be adopted or recreated through
+this completion/abort interface. Legacy sessions use ordinary admission, which
+capture rejects while held; their unknown receipts are never inferred away.
+Native part grants and late-transfer checks retain their existing evidence and
+drain requirements. This increment therefore does not claim closure of every
+multipart writer. Public fully copyable capture remains gated on those remaining
+writers, provider qualification for R2/OVH, and a qualified common checkpoint
+across PostgreSQL and object storage, followed by restoration and promotion.
+
+Validation: memory/PostgreSQL multipart and upload capture contracts pass under
+`-race`, including stale/expired authority, rejected intent rewrites, atomic
+retirement, rollback and migration round trips. Multipart SDK tests pass under
+`-race`, including held completion recovery after lost replies and verified
+abort with an unrelated receipt still outstanding. Control API multipart and
+broker URL regression checks pass. SQLC v1.31.1 parity, migration and repository
+policy checks pass; golangci-lint v2.4.0 reports zero issues across state, object
+storage, activity wrappers, S3 gateway and APID. Optional Packer/live nft checks
+were skipped. These checks do not qualify a live provider or a common point.
+
+### Separate multipart initiation recovery from creation (2026-10-07)
+
+The S3 adapter now exposes an optional read-only initiation recovery capability
+for the R2/OVH path. Recovery lists existing native uploads and never calls
+creation. A complete empty listing returns `ErrNotFound`; incomplete or invalid
+listings fail closed, and multiple exact-key uploads remain a conflict. The
+portable helper refuses unsupported adapters rather than falling back to
+`EnsureMultipartUpload`, and rejects an invalid identity returned by an adapter.
+The existing request callback runs before every discovery page, allowing the
+eventual journal integration to recheck authority throughout a paginated read.
+
+An empty listing after a lost reply is only a negative observation. It cannot
+authorize another initiation or retire a writer receipt. A discovered native
+identity is also only a candidate: S3 pending-upload listings do not expose
+session metadata. Adoption still requires original journal authority and
+qualified exclusive key ownership. This capability does not establish that
+ownership for native credentials used outside Gregale.
+
+This bounded increment supplies the provider boundary needed for durable
+initiation dispatch binding; control API and gateway initiation still use their
+existing admission paths. Next work must persist dispatch ownership before
+creation, conservatively classify existing uncertain sessions, and compose
+positive recovery with the original receipt. Independent part writers and live
+R2/OVH qualification remain outstanding. Full public capture remains gated.
+
+Validation: the full object-storage package passes under `-race` against the
+task-owned PostgreSQL 16.15 instance. Recovery regressions cover a lost create
+reply followed by delayed listing visibility, adapter restart, negative and
+ambiguous discovery, incomplete listings, expired authority between pages,
+invalid requests/identities, and refusal to fall back to a legacy adapter's
+creation method. Pinned golangci-lint v2.4.0 reports zero issues for object
+storage; text encoding, shell quoting and ADR-number checks pass. These are
+local adapter and regression checks, not live R2/OVH qualification.
+
+### Bind once-only S3 initiation dispatch and positive replies (2026-10-07)
+
+New bound multipart sessions now have a separate durable initiation record.
+The control API and S3 gateway reuse their original pinned session receipt for
+S3 initiation, including while a source capture hold is retained. The S3
+adapter creates a fresh native upload without adopting listing candidates,
+claims dispatch immediately before the non-idempotent request, and disables
+SDK retries. Validation, encryption-key checks and configured usage callbacks
+run before the claim. A denied claim sends no creation request.
+
+A positive native reply is recorded with a bounded context that survives caller
+cancellation before activation. If activation is interrupted, a replacement
+lease can resume that exact recorded native ID without another provider call.
+The receipt remains outstanding through activation and drains only at the
+existing completed or verified-abort settlement. An unknown reply, including
+a crash after claiming dispatch but before sending the request, stays fenced:
+neither a new lease, an empty listing, session expiry nor a candidate upload ID
+authorizes another create or proves terminal settlement. Provider-specific
+proof or a future reconciliation mechanism is required to resolve that state.
+
+The append-only migration conservatively marks pre-existing bound journals as
+already dispatched; it never backfills a claim that they were safe to create.
+Database guards make dispatch sticky, prohibit deleting live evidence, require
+the live original dispatch owner to record a reply, preserve initiation layout,
+and require the recorded result for managed activation. Busy downgrades are
+rejected. Memory and PostgreSQL stores preserve the same authority and
+placement checks. The new table is operational and excluded from stage copies.
+
+Adapters without the optional dispatch capability and genuinely unbound legacy
+journals retain ordinary admission. They cannot resume through a capture hold,
+and no existing unknown request receipt is adopted or erased. This increment
+qualifies the local S3 path rather than native credentials used outside Gregale
+or every provider. Independent part writers, live R2/OVH qualification and a
+qualified cross-store common checkpoint remain outstanding. Public fully
+copyable capture remains gated.
+
+Validation: memory/PostgreSQL initiation, multipart, upload-capture and schema
+registry contracts pass under `-race`, including stale/expired authority,
+dispatch rollback, rejected evidence/layout rewrites, conservative migration
+backfill, busy downgrade refusal and migration round trips. Adapter, activity
+and gateway multipart/encryption/capture regressions pass under `-race`. The
+AWS SDK gateway test proves held recovery after interrupted activation with
+one native create, and retained writer evidence after a lost native reply, while
+preserving an unrelated receipt. Control API multipart, encryption, capture,
+broker-grant and recovery checks pass, including replacement-lease initiation
+recovery on memory and PostgreSQL. SQLC v1.31.1 parity, migration-ID and repository
+policy checks pass; pinned golangci-lint v2.4.0 reports zero issues across state,
+object storage, activity wrappers, S3 gateway and APID. Optional Packer/live nft
+checks remain skipped. No live provider or common-point qualification is claimed.
+
+### Retain independent part receipts until validated proof (2026-10-07)
+
+An acknowledgment audit exposed a prerequisite gap in the remaining part-writer
+work: gateway part PUTs retired their request receipt on an HTTP success code,
+before checking the body, ETag and supplied encryption headers. Part copies had
+transfer fencing but no independent bucket mutation receipt. Both paths now
+reserve a pinned request receipt before provider IO and retire only that receipt
+when the caller has validated synchronous evidence. Multipart PUTs require HTTP
+200 and one valid, bounded ETag. The S3 copy adapter also requires HTTP 200;
+HTTP 202 with an otherwise plausible copy result remains uncertain. Copies may
+retire their receipt on the adapter's explicit proof of rejection without
+mutation. Errors, malformed acknowledgments and lost replies retain custody.
+
+The shared HTTP helper now returns its receipt for caller-owned validation.
+Legacy single PUTs and fixed-admission multipart proxies also validate their
+acknowledgment before recording receipt completion. Receipt settlement retains
+the bounded context that survives caller cancellation. A receipt admission
+failure before part PUT dispatch can release its transfer reservation; provider
+uncertainty cannot. A database acknowledgment failure reports unavailability
+and leaves the receipt outstanding.
+
+These are independent request receipts, not yet bindings to durable part
+transfer identities. A transfer timeout, parent completion or verified abort
+cannot erase an unknown independent receipt. Recovery through the original
+transfer, immutable attempt ownership and qualified reconciliation remain next
+work, followed by live R2/OVH and common-checkpoint qualification. Fully copyable
+public capture remains gated.
+
+Validation: race-enabled memory/PostgreSQL AWS SDK tests acquire a capture hold
+inside the native part writer and prove its receipt exists before IO. Validated
+PUT/copy results and proven copy rejection drain only their own receipt;
+missing, oversized or duplicate ETags, asynchronous acceptance and lost replies
+retain it alongside the parent and an unrelated writer. Held retries dispatch
+no new part write. Multipart, copy and encryption adapter/activity regressions
+pass under the race detector, as does the complete S3 gateway suite. Pinned
+golangci-lint v2.4.0 reports zero issues for object storage, activity and gateway
+packages; repository policy checks pass. Optional Packer/live nft checks were
+skipped. These are local tests, not live qualification.
+
+### Bind independent part attempts to once-only dispatch (2026-10-07)
+
+A new operational part-writer journal now reserves immutable attempt identity
+with every newly admitted transfer token. The gateway claims that original
+attempt before a part PUT or copy, including broker URL and cross-bucket copy
+transfers. Claiming dispatch creates its pinned request receipt in the same
+transaction. A source hold rejects fresh transfer admission but permits a
+previously reserved attempt to claim its first dispatch against the unchanged
+placement. An expired transfer or parent cannot claim a new dispatch; replay
+of a claimed or settled attempt sends no provider request.
+
+Validated synchronous success or qualified copy rejection settles the transfer
+and its own receipt atomically, using the bounded cancellation-independent
+acknowledgment context. Ordinary transfer settlement and generic receipt finish
+cannot erase a dispatched writer. Unknown replies survive transfer deadlines,
+worker restart and parent abort/completion attempts; neither replacement tokens
+nor provider cleanup inferred from time may remove their evidence. A late
+positive reply can still settle the original attempt while the parent is
+aborting. Settled attempts retain their identity to reject replay, and successful
+part settlement preserves both the parent receipt and unrelated writers.
+
+The append-only migration classifies existing nonempty transfer tokens as
+already dispatched and uncertain. It never assigns them a fresh claim or adopts
+an existing anonymous receipt. These legacy records count directly against the
+capture hold when they have no bound request receipt, including when an older
+worker already marked their parent complete. Managed receipts are counted once.
+Database guards preserve dispatch, transfer identity, original placement and
+parent intent, reject deleting unresolved dispatched evidence, and refuse a
+busy downgrade. Memory and PostgreSQL stores enforce the same managed writer
+contract; all new journal columns and the table are operational and excluded
+from stage copies.
+
+Fixed legacy proxies without transfer authority and stores lacking the optional
+binding interface retain ordinary admission. No unknown legacy request is
+adopted through that fallback. Resolving uncertain managed or legacy attempts
+still requires qualified provider proof; durable content/copy intent and provider
+reconciliation remain further work. Live R2/OVH writer coverage and the common
+PostgreSQL/object checkpoint remain unqualified. Public fully copyable capture
+stays gated.
+
+Validation: memory/PostgreSQL part, multipart, capture and registry contracts
+pass under the race detector, covering held original dispatch, blocked fresh
+admission, replay, wrong placement, cancellation, atomic settlement, unrelated
+custody, rollback, restart, migration round trips and busy downgrade refusal.
+The PostgreSQL migration test retains a legacy transfer whose parent was already
+complete. Memory clock and PostgreSQL fixture checks prove an expired transfer
+cannot be replaced while its parent remains live. The full gateway, object
+storage and activity suites pass under the race detector, including broker URL,
+cross-bucket copy, encryption and lost-reply regressions. These are local tests,
+not live provider or common-checkpoint qualification. Control API multipart,
+encryption, capture, broker-grant and recovery checks pass. SQLC v1.31.1 parity,
+migration-ID and repository policy checks pass; pinned golangci-lint v2.4.0
+reports zero issues across state, object storage, activity, gateway and APID.
+Optional Packer/live nft checks remain skipped.
+
+### Preserve exact independent part-copy intent (2026-10-07)
+
+Managed multipart copies now record a versioned private intent in the same
+transaction that claims the original part dispatch and creates its request
+receipt. The record preserves source bucket identity and physical placement,
+requested and observed native version selectors (including empty and `null`),
+source ETag and measured size, destination key and native upload ID, inclusive
+byte range, exact expected part size and customer source conditions. Capacity
+reservations may exceed the copied size; the intent retains the actual request.
+The gateway passes the same inspected source and range to the provider after
+this transaction commits. Memory and PostgreSQL journal readers authenticate
+the original destination scope and placement.
+
+Intent is immutable through dispatch and settlement. Database guards bind it to
+the admitted source authority, measured range, capacity grant and original
+parent, reject late insertion or rewriting, and refuse downgrade while an
+unsettled copy intent or capture hold exists. Settlement retains the intent in
+writer history. The additive migration leaves existing dispatched attempts
+without intent; neither migration nor a later read invents their source.
+A bound journal lacking the copy-intent capability fails closed rather than
+claiming a copy through its ordinary part-dispatch method. Legacy journals
+retain ordinary admission, which capture holds block.
+
+This is durable intended IO, not provider ownership or drain proof. An existing
+part with matching ETag and size may predate the uncertain attempt, and a late
+request may still overwrite it. No listing, timeout, intent read or restart
+retires an uncertain receipt. Streamed part PUT content intent, qualified
+provider reconciliation, live R2/OVH writer coverage and a common
+PostgreSQL/object checkpoint remain further work. Public fully copyable capture
+stays gated.
+
+Validation: the selected memory/PostgreSQL multipart, capture, binding and schema
+registry contracts pass under the race detector, including exact intent,
+wrong placement and scope, replay, rollback, restart, immutable raw writes,
+retained history and busy downgrade. The full gateway race suite verifies the
+saved range and expected size before native copy IO and retains unknown receipts
+on lost or malformed acknowledgments. Object storage and activity race suites
+and control-API multipart, encryption and recovery checks pass.
+SQLC v1.31.1 parity, migration-ID and repository policy checks pass. These are
+local tests; no live provider or common-checkpoint qualification is claimed.
+Pinned golangci-lint v2.4.0 reports zero issues across state, object storage,
+activity, gateway and APID. Optional Packer/live nft checks remain skipped.
+
+### Preserve streamed part PUT intent and validated body identity (2026-10-07)
+
+Managed part PUTs now persist a versioned private intent with the once-only
+part dispatch: original destination key and native upload ID, exact requested
+size and the authenticated SigV4 payload SHA-256 when one exists. The capacity
+grant may exceed the requested size; this record retains the current request.
+Broker part URLs use a zero incremental byte grant because their parent layout
+already reserves capacity; intent validation instead requires the exact part
+size from that admitted layout, including the shorter final part.
+Unsigned payloads and streaming signature markers do not become invented
+pre-dispatch hashes. Existing attempts remain without PUT intent on migration.
+
+The gateway hashes forwarded plaintext incrementally. Once the incoming body
+has reached its exact decoded length and passed payload, checksum and chunked
+trailer validation, it durably observes its SHA-256 against the original writer
+before releasing the final bytes to the provider transport. This observation
+uses a bounded context that survives caller cancellation. Ordinary parts keep
+streaming and do not acquire spool capacity; protected parts retain their
+existing spool and checksum behavior. A separate transport-body completion
+signal prevents an early provider response from settling a protected part just
+because its incoming spool was already validated.
+
+Intent and observed body identity are immutable. Observation is idempotent only
+for the same original digest and unsettled writer, checks any declared SHA-256,
+and neither settles the transfer nor retires its receipt. Wrong destination
+scope or placement, partial or invalid bodies, hash rewriting, replay and late
+intent insertion fail closed. Positive synchronous provider proof still settles
+the original transfer and receipt atomically, retaining its intent and body hash
+in writer history. Busy downgrade refuses unresolved PUT intent or capture holds.
+All new columns are operational and excluded from stage copies.
+
+A complete body observation proves which validated bytes the gateway intended
+to forward, not provider acceptance, ownership or drainage. An unknown request
+can remain in flight after observation, and partial uncertain streams can lack
+an observed hash entirely. No hash, timeout, listing or restart releases their
+capture custody. Journals lacking PUT-intent support cannot downgrade a bound
+writer to ordinary dispatch; legacy journals retain held ordinary admission.
+Qualified provider reconciliation, live R2/OVH writer coverage and the common
+PostgreSQL/object checkpoint remain further work. Public fully copyable capture
+stays gated.
+
+Validation: selected memory/PostgreSQL multipart, binding, capture-hold and
+schema-registry contracts pass under the race detector, including unsigned and
+signed intent, scoped and idempotent body observations, declared-hash mismatch,
+raw SQL rewrites, rollback, restart, retained history and busy downgrade.
+The full gateway and activity race suites pass, including complete streamed
+body identity before final native bytes, retained hashes after lost or invalid
+ACKs, unobserved custody after an early ACK, protected-spool forwarding,
+chunked integrity, encryption and cross-bucket-copy regressions. Ordinary PUT
+fixtures deliberately have no available spool space. SQLC v1.31.1 parity,
+migration-ID and repository policy checks pass. These are local checks, not
+live provider or common-checkpoint qualification.
+Control-API multipart, signed part URL, default-encryption, version-quota and
+recovery checks pass after validating zero incremental URL grants against the
+parent layout, including its shorter final part. Optional Packer/live nft
+checks remain skipped.
+Pinned golangci-lint v2.4.0 reports zero issues across state, object storage,
+activity, gateway and APID.
+
+### Independent multipart part observations
+
+The provider boundary now offers `ObserveMultipartPart`, a read-only lookup of
+one part under the original native upload identity. The caller must supply an
+original-journal authority check, executed before provider IO. The lookup uses
+the preceding part marker and a one-item limit; invalid identities, malformed
+pages and inconsistent cursors fail closed. The S3 adapter validates native
+bucket/key/upload response scope before returning the observation.
+
+A candidate, even with matching size or ETag, may be an older part. A missing
+part or upload is only a negative observation. This helper provides no write,
+retry, adoption or receipt-settlement authority. R2/OVH delayed-write drainage
+and native credential closure still require provider qualification before any
+automatic recovery or public fully copyable capture can be enabled.
+
+Validation: the full object-storage race suite passes, including native scoped
+GET fixtures, missing observations, malformed pages and denied journal
+authority. Pinned golangci-lint v2.4.0 reports zero issues for object storage;
+text encoding, shell quoting and ADR numbering checks pass. No live-provider
+drainage qualification was performed.

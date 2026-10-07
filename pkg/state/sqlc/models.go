@@ -3977,13 +3977,16 @@ type ObjectBucketLifecycle struct {
 }
 
 type ObjectBucketMutation struct {
-	ID                 pgtype.UUID
-	BucketID           pgtype.UUID
-	Kind               string
-	BackendID          string
-	BackendFingerprint string
-	PhysicalName       string
-	CreatedAt          pgtype.Timestamptz
+	ID                    pgtype.UUID
+	BucketID              pgtype.UUID
+	Kind                  string
+	BackendID             string
+	BackendFingerprint    string
+	PhysicalName          string
+	CreatedAt             pgtype.Timestamptz
+	UploadID              pgtype.UUID
+	MultipartUploadID     pgtype.UUID
+	MultipartPartWriterID pgtype.UUID
 }
 
 type ObjectBucketNotification struct {
@@ -4082,6 +4085,30 @@ type ObjectLifecycleScan struct {
 	Phase          string
 	LastUploadID   pgtype.UUID
 	ScannedUploads int64
+}
+
+type ObjectMultipartInitiationDispatch struct {
+	MultipartUploadID pgtype.UUID
+	Dispatched        bool
+	DispatchToken     string
+	ProviderUploadID  string
+}
+
+type ObjectMultipartPartWriter struct {
+	ID                 pgtype.UUID
+	UploadID           pgtype.UUID
+	PartNumber         int32
+	TransferToken      string
+	Managed            bool
+	Dispatched         bool
+	Settled            bool
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CopyIntent         []byte
+	PutIntent          []byte
+	BodySha256         string
 }
 
 type ObjectS3CopySourceEpoch struct {
@@ -5049,6 +5076,22 @@ type ProjectEnvironmentCloneConfigurationCapture struct {
 	Version           int32
 	ConfigurationHash string
 	Configuration     []byte
+}
+
+type ProjectEnvironmentCloneConfigurationClock struct {
+	Singleton  bool
+	Generation int64
+}
+
+type ProjectEnvironmentCloneConfigurationGuard struct {
+	ProjectID          pgtype.UUID
+	AccountID          pgtype.UUID
+	Generation         int64
+	OperationID        pgtype.UUID
+	State              string
+	SourceEnvironment  string
+	SourceRevisionHash string
+	HeldAt             pgtype.Timestamptz
 }
 
 type ProjectEnvironmentCloneLayerPin struct {

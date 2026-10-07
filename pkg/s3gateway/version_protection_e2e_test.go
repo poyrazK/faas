@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -196,6 +197,25 @@ func TestVersionProtectionSDKE2E(t *testing.T) {
 				o.UsePathStyle = true
 				o.RetryMaxAttempts = 1
 			})
+			// New SDK writes must fail before dispatch and leave no journal.
+			fences := st.(state.ObjectBucketWriteFenceStore)
+			capture, err := fences.AcquireObjectBucketWriteFence(t.Context(), f.bucket, uuid.NewString())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.PutObjectLegalHold(t.Context(), &awss3.PutObjectLegalHoldInput{Bucket: aws.String("assets"), Key: aws.String(key), VersionId: aws.String(version), LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatusOn}})
+			assertSDKErrorCode(t, err, "ServiceUnavailable")
+			var fencedResponse *smithyhttp.ResponseError
+			if !errors.As(err, &fencedResponse) || fencedResponse.Response == nil || fencedResponse.Response.Header.Get("X-Gregale-Protection-Id") != "" {
+				t.Fatal("fenced admission advertised an uncreated journal", err)
+			}
+			observed, err := fences.ReadObjectBucketWriteFence(t.Context(), f.bucket, capture.Token)
+			if err != nil || observed.Protections != 0 || observed.Requests != 0 || puts.Load() != 0 {
+				t.Fatal("fenced SDK request admitted provider work", observed, err, puts.Load())
+			}
+			if err := fences.ReleaseObjectBucketWriteFence(t.Context(), f.bucket, capture.Token); err != nil {
+				t.Fatal(err)
+			}
 			_, err = client.PutObjectLegalHold(t.Context(), &awss3.PutObjectLegalHoldInput{Bucket: aws.String("assets"), Key: aws.String(key), VersionId: aws.String(version), LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatusOn}})
 			assertSDKErrorCode(t, err, "ServiceUnavailable")
 			if puts.Load() != 1 {

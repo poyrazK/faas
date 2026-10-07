@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -78,10 +79,22 @@ func multipartResultsControlClient(t *testing.T, h http.Handler, s *server, st s
 	if err != nil {
 		t.Fatal(err)
 	}
+	fences := st.(state.ObjectBucketWriteFenceStore)
+	if _, err := fences.BeginObjectBucketMutation(ctx, owned, state.ObjectBucketMutationRequest); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := fences.AcquireObjectBucketWriteFence(ctx, owned, uuid.NewString())
+	if err != nil || hold.Requests != 2 || hold.Multipart != 1 {
+		t.Fatal("session lost original receipt", hold, err)
+	}
 	request := api.CompleteObjectMultipartUploadRequest{Parts: []api.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: `"part"`}}}
 	completed, err := c.CompleteObjectMultipartUpload(ctx, "multipart-result", b.ID, u.ID, request)
 	if err != nil || completed.State != state.ObjectMultipartCompleted || completed.ETag != `"actual"` || !state.ValidObjectVersionID(completed.VersionID) || p.calls != 1 {
 		t.Fatal(completed, err, p.calls)
+	}
+	drained, err := fences.ReadObjectBucketWriteFence(ctx, owned, hold.Token)
+	if err != nil || drained.Requests != 1 || drained.Multipart != 0 {
+		t.Fatal("completion erased unrelated writer or retained original", drained, err)
 	}
 	public := completed.VersionID
 	p.result.ETag, p.result.ProviderVersionID = `"overwritten"`, "private-later"

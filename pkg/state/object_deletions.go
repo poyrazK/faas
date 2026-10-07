@@ -40,8 +40,9 @@ type ObjectDeletionStore interface {
 	RetryObjectDeletion(context.Context, string, string, string) error
 }
 
-// ObjectDeletionActivityStore supplies an owned planning check. Admission and
-// dispatch still acquire the authoritative mutation fence atomically.
+// ObjectDeletionActivityStore supplies an owned planning check. New admission
+// atomically checks the source capture hold. Already admitted intents remain
+// counted through dispatch and recovery until their journal reaches terminal.
 type ObjectDeletionActivityStore interface {
 	HasActiveObjectDeletion(context.Context, string, string, string) (bool, error)
 }
