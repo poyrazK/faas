@@ -246,11 +246,14 @@ func startManagedLocalApp(ctx context.Context, cancel context.CancelCauseFunc, s
 		_ = command.Wait()
 		app.mu.Lock()
 		defer app.mu.Unlock()
-		if !app.stopping {
-			code := -1
-			if command.ProcessState != nil {
-				code = command.ProcessState.ExitCode()
-			}
+		code := -1
+		if command.ProcessState != nil {
+			code = command.ProcessState.ExitCode()
+		}
+		// A natural nonzero exit is still an app failure when shutdown wins
+		// the lock before Wait records it. Expected signal exits remain part
+		// of the supervisor's graceful/forced termination contract.
+		if !app.stopping || code > 0 {
 			app.unexpected = fmt.Errorf("local app exited before shutdown (exit code %d)", code)
 			// Clean descendants immediately after an unexpected exit. Do not
 			// signal this reaped PID again after a potentially long fixture cleanup.
@@ -368,6 +371,9 @@ func (app *managedLocalApp) stop(timeout time.Duration, evidence *testLocalAppEv
 		}
 	}
 	app.recordExitCode(evidence)
+	if app.failure() != nil && evidence.Shutdown == "graceful" {
+		evidence.Shutdown = "exited"
+	}
 	if signalErr != nil {
 		return fmt.Errorf("terminate local app gracefully: %w", signalErr)
 	}
