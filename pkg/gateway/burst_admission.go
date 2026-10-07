@@ -262,7 +262,7 @@ func (h *Handler) maybeBurstCapacityWithAdmitter(ctx context.Context, app App, m
 
 		waited = true
 		select {
-		case <-h.routableTargetSignal(ctx, app.ID, generation.done):
+		case <-h.routableTargetSignal(ctx, app.ID, generation.done, admitter):
 			// The first routable target serves this request; the worker
 			// keeps reconciling extra replicas in the background.
 			// production-us hunt #4: callers that arrived with nothing
@@ -280,7 +280,7 @@ func (h *Handler) maybeBurstCapacityWithAdmitter(ctx context.Context, app App, m
 			if generation.err != nil && h.burstHealthyCount(app.ID, admitter) > 0 {
 				return waited, nil
 			}
-			if errors.Is(generation.err, errBurstCapacityStalled) && h.awaitRoutableTarget(ctx, app.ID) {
+			if errors.Is(generation.err, errBurstCapacityStalled) && h.awaitRoutableTarget(ctx, app.ID, admitter) {
 				// The scheduler admitted nothing because its slots are held by
 				// an instance that is already coming up, typically one woken
 				// through another node's gateway whose route has not reached
@@ -300,16 +300,16 @@ func (h *Handler) maybeBurstCapacityWithAdmitter(ctx context.Context, app App, m
 	}
 }
 
-// routableTargetSignal closes once the app has a routable target. It stops
+// routableTargetSignal closes once the admitted routing cohort has a routable target. It stops
 // polling when ctx or done ends, so a waiter released by either never leaks
 // the goroutine.
-func (h *Handler) routableTargetSignal(ctx context.Context, appID string, done <-chan struct{}) <-chan struct{} {
+func (h *Handler) routableTargetSignal(ctx context.Context, appID string, done <-chan struct{}, admitter burstCapacityAdmitter) <-chan struct{} {
 	ready := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(routableTargetPollInterval)
 		defer ticker.Stop()
 		for {
-			if h.backend.HealthyCount(appID) > 0 {
+			if h.burstHealthyCount(appID, admitter) > 0 {
 				close(ready)
 				return
 			}
@@ -326,12 +326,12 @@ func (h *Handler) routableTargetSignal(ctx context.Context, appID string, done <
 }
 
 // awaitRoutableTarget waits, within the caller's admission budget, for the
-// app to gain a routable target. It reports whether one appeared.
-func (h *Handler) awaitRoutableTarget(ctx context.Context, appID string) bool {
+// admitted routing cohort to gain a routable target. It reports whether one appeared.
+func (h *Handler) awaitRoutableTarget(ctx context.Context, appID string, admitter burstCapacityAdmitter) bool {
 	ticker := time.NewTicker(routableTargetPollInterval)
 	defer ticker.Stop()
 	for {
-		if h.backend.HealthyCount(appID) > 0 {
+		if h.burstHealthyCount(appID, admitter) > 0 {
 			return true
 		}
 		select {
