@@ -21,6 +21,16 @@ func TestCancellationFenceSurvivesNestedBudgetDetachment(t *testing.T) {
 	defer stopStream()
 	detach()
 	<-initial.Done()
+	// A parent's Done can close before cancellation reaches its children.
+	// Observe the fence itself before asserting its deadline state.
+	select {
+	case <-fenced.Done():
+	case <-time.After(time.Second):
+		t.Fatal("ordinary request fence did not receive its budget deadline")
+	}
+	if !errors.Is(fenced.Err(), context.DeadlineExceeded) {
+		t.Fatalf("ordinary request fence lost its budget deadline: %v", fenced.Err())
+	}
 	if stream.Err() != nil || fenced.Err() == nil {
 		t.Fatalf("budget/fence detachment changed: stream=%v ordinary=%v", stream.Err(), fenced.Err())
 	}
