@@ -5621,6 +5621,28 @@ func (q *Queries) CompleteWorkflowJoin(ctx context.Context, db DBTX, arg Complet
 	return err
 }
 
+const consumeCustomerOperationWorkflowGuest = `-- name: ConsumeCustomerOperationWorkflowGuest :execrows
+UPDATE customer_operation_workflow_guest_claims SET dispatch_started_at=now()
+WHERE workflow_run_id=$1::uuid AND step_name=$2::text
+ AND step_attempt=$3::integer AND dispatch_started_at IS NULL
+`
+
+type ConsumeCustomerOperationWorkflowGuestParams struct {
+	RunID       pgtype.UUID
+	StepName    string
+	StepAttempt int32
+}
+
+// The parent run lock serializes this consumption with guest reporting and
+// coordinator transitions. A missing HTTP response never releases delivery.
+func (q *Queries) ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg ConsumeCustomerOperationWorkflowGuestParams) (int64, error) {
+	result, err := db.Exec(ctx, consumeCustomerOperationWorkflowGuest, arg.RunID, arg.StepName, arg.StepAttempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const copyProjectEnvironmentSecretReferences = `-- name: CopyProjectEnvironmentSecretReferences :one
 WITH copied AS (
  INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
@@ -8235,8 +8257,39 @@ func (q *Queries) CustomerOperationWorkflowAttemptWindow(ctx context.Context, db
 	return i, err
 }
 
+const customerOperationWorkflowDeliveryDeployment = `-- name: CustomerOperationWorkflowDeliveryDeployment :one
+SELECT d.id,d.app_id,coalesce(d.override_port,0)::integer AS port,
+ coalesce(d.commit_sha,'')::text AS commit_sha,coalesce(d.tag,'')::text AS tag,d.created_at,d.image_digest
+FROM deployments d WHERE d.id=$1::uuid
+`
+
+type CustomerOperationWorkflowDeliveryDeploymentRow struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	Port        int32
+	CommitSha   string
+	Tag         string
+	CreatedAt   pgtype.Timestamptz
+	ImageDigest string
+}
+
+func (q *Queries) CustomerOperationWorkflowDeliveryDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (CustomerOperationWorkflowDeliveryDeploymentRow, error) {
+	row := db.QueryRow(ctx, customerOperationWorkflowDeliveryDeployment, deploymentID)
+	var i CustomerOperationWorkflowDeliveryDeploymentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Port,
+		&i.CommitSha,
+		&i.Tag,
+		&i.CreatedAt,
+		&i.ImageDigest,
+	)
+	return i, err
+}
+
 const customerOperationWorkflowGuestInstance = `-- name: CustomerOperationWorkflowGuestInstance :one
-SELECT i.id,i.app_id,i.deployment_id,i.state FROM instances i
+SELECT i.id,i.app_id,i.deployment_id,i.state,i.node_id,i.wake_id FROM instances i
 JOIN apps a ON a.id=i.app_id AND a.status<>'deleted'
 JOIN accounts c ON c.id=a.account_id AND c.status IN ('active','past_due') AND c.abuse_hold_at IS NULL
 WHERE i.id=$1::uuid AND a.account_id=$2::uuid
@@ -8252,6 +8305,8 @@ type CustomerOperationWorkflowGuestInstanceRow struct {
 	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
 	State        string
+	NodeID       pgtype.UUID
+	WakeID       pgtype.UUID
 }
 
 func (q *Queries) CustomerOperationWorkflowGuestInstance(ctx context.Context, db DBTX, arg CustomerOperationWorkflowGuestInstanceParams) (CustomerOperationWorkflowGuestInstanceRow, error) {
@@ -8262,6 +8317,8 @@ func (q *Queries) CustomerOperationWorkflowGuestInstance(ctx context.Context, db
 		&i.AppID,
 		&i.DeploymentID,
 		&i.State,
+		&i.NodeID,
+		&i.WakeID,
 	)
 	return i, err
 }
@@ -14707,7 +14764,7 @@ func (q *Queries) GetCustomerOperationWorkflowCustody(ctx context.Context, db DB
 }
 
 const getCustomerOperationWorkflowGuest = `-- name: GetCustomerOperationWorkflowGuest :one
-SELECT workflow_run_id, step_name, step_attempt, operation_id, generation, execution_kind, coordinator_attempt, instance_id, capability_digest, deadline_at, bound_at FROM customer_operation_workflow_guest_claims
+SELECT workflow_run_id, step_name, step_attempt, operation_id, generation, execution_kind, coordinator_attempt, instance_id, capability_digest, deadline_at, bound_at, dispatch_started_at FROM customer_operation_workflow_guest_claims
 WHERE workflow_run_id=$1::uuid AND step_name=$2::text AND step_attempt=$3::integer
 `
 
@@ -14734,6 +14791,7 @@ func (q *Queries) GetCustomerOperationWorkflowGuest(ctx context.Context, db DBTX
 		&i.CapabilityDigest,
 		&i.DeadlineAt,
 		&i.BoundAt,
+		&i.DispatchStartedAt,
 	)
 	return i, err
 }
