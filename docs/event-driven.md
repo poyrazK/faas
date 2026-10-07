@@ -995,7 +995,7 @@ receipts can survive longer. `earliest_retained_at` is account-wide and does not
 prove gap-free history. `history_complete` is always false. Retention can remove
 rows between pages, and delayed commits of older acceptances can change visible
 membership. This preview does not pin events or provide a frozen export. See
-[ADR-638](adr/638-subscription-retained-event-replay-preview.md) for the contract.
+[ADR-645](adr/645-subscription-retained-event-replay-preview.md) for the contract.
 
 To create actual independent deliveries for eligible historical events, start
 a durable backfill for the same ordinary subscription:

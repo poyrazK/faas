@@ -11,7 +11,7 @@ export type UpdateDeploymentTrafficRequest = {
    */
   traffic_percent: number;
   /**
-   * Optional 32-hex or dashed deployment id. If this deployment is no longer the sole live 100% serving sibling at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic.
+   * Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic.
    */
   expected_serving_deployment_id?: string;
 };

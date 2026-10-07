@@ -3611,6 +3611,9 @@ func TestPg_UpdateDeploymentTraffic_ExpectedServing(t *testing.T) {
 	if _, err := s.UpdateDeploymentTraffic(ctx, candidate.ID, 100, uuid.NewString()); !errors.Is(err, state.ErrTrafficServingChanged) {
 		t.Fatalf("stale promotion err = %v, want ErrTrafficServingChanged", err)
 	}
+	if _, err := s.UpdateDeploymentTraffic(ctx, candidate.ID, 100, ""); !errors.Is(err, state.ErrTrafficServingChanged) {
+		t.Fatalf("first-deployment guard accepted serving sibling: %v", err)
+	}
 	stable, _ := s.DeploymentByID(ctx, stableID)
 	candidateAfter, _ := s.DeploymentByID(ctx, candidate.ID)
 	if stable.TrafficPercent != 100 || candidateAfter.TrafficPercent != 0 {
@@ -3623,6 +3626,44 @@ func TestPg_UpdateDeploymentTraffic_ExpectedServing(t *testing.T) {
 	candidateAfter, _ = s.DeploymentByID(ctx, candidate.ID)
 	if stable.TrafficPercent != 0 || candidateAfter.TrafficPercent != 100 {
 		t.Fatalf("promotion traffic: stable=%d candidate=%d, want 0/100", stable.TrafficPercent, candidateAfter.TrafficPercent)
+	}
+}
+
+func TestPg_UpdateDeploymentTraffic_ExpectedNoServing(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, err := s.CreateAccount(ctx, "first-mcp-promotion@x.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "first-mcp-app", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appID := app.ID
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: strings.Repeat("d", 64), Status: state.DeployPending, TrafficPercentExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: strings.Repeat("e", 64), Status: state.DeployPending, TrafficPercentExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLive(ctx, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := s.DeploymentByID(ctx, candidate.ID)
+	second, _ := s.DeploymentByID(ctx, other.ID)
+	if first.TrafficPercent != 0 || second.TrafficPercent != 0 {
+		t.Fatalf("staging exposed unverified traffic: %d/%d", first.TrafficPercent, second.TrafficPercent)
+	}
+	if _, err := s.UpdateDeploymentTraffic(ctx, candidate.ID, 100, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateDeploymentTraffic(ctx, other.ID, 100, ""); !errors.Is(err, state.ErrTrafficServingChanged) {
+		t.Fatalf("concurrent first promotion was accepted: %v", err)
 	}
 }
 
