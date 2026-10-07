@@ -178,12 +178,18 @@ jobs:
       # repository accumulates baseline coverage; the table identifies tests
       # that are absent or already passing on the base.
       - name: advisory regression pin report
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
           # Bound analysis memory after repeated hosted-runner shutdowns.
           GOMEMLIMIT: 3GiB
           GOGC: 75
@@ -204,6 +210,11 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
       - name: vet
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: go vet ./...
       - name: build
         run: make build
@@ -534,7 +545,8 @@ jobs:
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Include cold APID race compilation and the full PostgreSQL API suite.
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -611,10 +623,17 @@ jobs:
           npm ci --ignore-scripts
           npm run build
       - name: unit tests (pg shard 1)
+        # APID test DWARF generation exceeds hosted-runner memory on cold builds.
+        # Omit test debug metadata and serialize its backend; keep optimization.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
-          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -race -count=1 -p 4 -timeout=30m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
 
       - name: sdk-check
         run: make sdk-check
@@ -1256,11 +1275,18 @@ jobs:
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
+    # retain time for the remaining SQLC, vulnerability and Ansible gates.
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
       GOVULNCHECK_VERSION: "1.7.0"
+      # Several contract gates compile the APID test package.
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOMEMLIMIT: 2GiB
+      GOGC: 10
+      GOMAXPROCS: 2
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1803,7 +1829,7 @@ jobs:
   operation-sdk-acceptance:
     name: operations (transaction + HTTP recovery + cross-SDK)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     services:
@@ -1844,6 +1870,13 @@ jobs:
           npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
           python -m pip install -e sdk/python -r sdk/commit-tests/requirements.txt
       - name: producer and handler transaction acceptance
+        # APID test DWARF generation exceeds hosted-runner memory on cold builds.
+        # Omit test debug metadata and serialize its backend; keep optimization.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make test-commit-sdk test-operation-sdk
 
   # ADR-377: exercise the actual runtime SDK, control plane, gateway and
@@ -1852,7 +1885,7 @@ jobs:
   flags-acceptance:
     name: flags (customer release + request evidence)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
     services:
@@ -1882,6 +1915,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: sdk/node/package-lock.json
       - name: customer-aware feature flag acceptance
+        # APID test DWARF generation exceeds hosted-runner memory on cold builds.
+        # Omit test debug metadata and serialize its backend; keep optimization.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make test-flags
 
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests

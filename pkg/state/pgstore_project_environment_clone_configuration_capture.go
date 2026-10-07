@@ -151,13 +151,17 @@ func captureCloneConfigurationWorkloadsTx(ctx context.Context, tx pgx.Tx, op Pro
 	if err != nil {
 		return nil, err
 	}
+	return captureCloneConfigurationWorkloadsForScopesTx(ctx, tx, op, scopesRaw, true)
+}
+
+func captureCloneConfigurationWorkloadsForScopesTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, scopesRaw []byte, lockFlags bool) ([]projectCloneWorkloadRecord, error) {
 	var scopes map[string]string
 	if json.Unmarshal(scopesRaw, &scopes) != nil || len(scopes) == 0 {
 		return nil, ErrProjectEnvironmentCloneBindingCaptureUnavailable
 	}
 	records := make([]projectCloneWorkloadRecord, 0, len(scopes))
 	for appID, scope := range scopes {
-		snapshot, err := captureCloneWorkloadTx(ctx, tx, op, appID, scope)
+		snapshot, err := captureCloneWorkloadDB(ctx, tx, op, appID, scope, lockFlags)
 		if err != nil {
 			return nil, fmt.Errorf("capture clone workload %q: %w", appID, err)
 		}

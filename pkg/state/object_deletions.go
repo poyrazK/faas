@@ -13,6 +13,7 @@ import (
 
 type ObjectDeletion struct {
 	api.ObjectDeletion
+	NativeGCS                                                  bool                            `json:"-"`
 	RecoveryClaimed                                            bool                            `json:"-"`
 	AccountID, AppID, Token, ProviderStatus, ProviderVersionID string                          `json:"-"`
 	TargetProviderVersionID                                    string                          `json:"-"`
@@ -39,14 +40,15 @@ type ObjectDeletionStore interface {
 	RetryObjectDeletion(context.Context, string, string, string) error
 }
 
-// ObjectDeletionActivityStore supplies an owned planning check. Admission and
-// dispatch still acquire the authoritative mutation fence atomically.
+// ObjectDeletionActivityStore supplies an owned planning check. New admission
+// atomically checks the source capture hold. Already admitted intents remain
+// counted through dispatch and recovery until their journal reaches terminal.
 type ObjectDeletionActivityStore interface {
 	HasActiveObjectDeletion(context.Context, string, string, string) (bool, error)
 }
 
 func newDeletionIntent(j ObjectDeletion) ObjectDeletion {
-	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token, Lifecycle: cloneLifecycleDeletionBinding(j.Lifecycle)}
+	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token, NativeGCS: j.NativeGCS, Lifecycle: cloneLifecycleDeletionBinding(j.Lifecycle)}
 }
 
 func deletionActive(j ObjectDeletion) bool    { return j.State == "prepared" || j.State == "dispatched" }
@@ -89,7 +91,10 @@ func dispatchVerifiedDeletion(j ObjectDeletion, token, status string, baseline [
 	if j.ProtectionRequired && (!verified || j.Lifecycle == nil || j.Lifecycle.ExpectedDeleteMarker == nil) {
 		return j, ErrConflict
 	}
-	if !validDeletionLease(j, token, now) || j.State != "prepared" || status != "" && !ValidObjectBucketVersioningStatus(status) || !validDeletionBaseline(baseline) || status != "Enabled" && len(baseline) != 0 {
+	if !validDeletionLease(j, token, now) || j.State != "prepared" || !validObjectDeletionProviderStatus(status) || !validDeletionBaseline(baseline) || status != "Enabled" && !nativeGCSDeletionStatus(status) && len(baseline) != 0 {
+		return j, ErrConflict
+	}
+	if status != j.ProviderStatus || nativeGCSDeletionStatus(status) && (j.Selector != "" || j.ReservedBytes != 0 || !validGCSDeletionBaseline(baseline)) {
 		return j, ErrConflict
 	}
 	j.State = "dispatched"
@@ -123,6 +128,12 @@ func finishDeletion(j, result ObjectDeletion, now time.Time) (ObjectDeletion, er
 			}
 			break
 		}
+		if nativeGCSDeletionStatus(j.ProviderStatus) {
+			if j.Selector != "" || result.DeleteMarker || result.VersionID != "" || result.ProviderVersionID != "" {
+				return j, ErrConflict
+			}
+			break
+		}
 		if j.Selector == "null" && (result.VersionID != "null" || result.ProviderVersionID != "null") || j.ProviderStatus == "Enabled" && j.Selector == "" && (!result.DeleteMarker || result.VersionID == "" || result.VersionID == "null" || result.ProviderVersionID == "") {
 			return j, ErrConflict
 		}
@@ -142,4 +153,16 @@ func finishDeletion(j, result ObjectDeletion, now time.Time) (ObjectDeletion, er
 	j.LeaseUntil = time.Time{}
 	j.UpdatedAt = now
 	return j, nil
+}
+
+// Native GCS deletion has a captured generation fence, not an S3 marker.
+func nativeGCSDeletionStatus(status string) bool {
+	return status == "GCS_Enabled" || status == "GCS_Suspended"
+}
+
+func validGCSDeletionBaseline(b []string) bool {
+	return len(b) == 1 && len(b[0]) == 64 && strings.Trim(b[0][:48], "0") == "" && b[0][48] <= '7' && validDeletionBaseline(b)
+}
+func validObjectDeletionProviderStatus(status string) bool {
+	return status == "" || ValidObjectBucketVersioningStatus(status) || nativeGCSDeletionStatus(status)
 }

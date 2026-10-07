@@ -1080,7 +1080,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return
 	}
-	encryption, err := req.encryptionConfig.PublicReadEncryption(req.bucket.AccountID, response.Header)
+	encryption, err := objectstorage.ProviderReadEncryption(req.provider, req.encryptionConfig, req.bucket.AccountID, response.Header)
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return

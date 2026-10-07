@@ -30,7 +30,7 @@ func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMu
 	defer m.mu.Unlock()
 	old, ok := m.objectMultipartUploads[u.ID]
 	b, owned := m.objectBuckets[u.BucketID]
-	if !ok || !owned || b.AccountID != u.AccountID || b.State != "ready" || !validMultipartResultOwner(old, u) || !old.CompletionDispatched {
+	if !ok || !owned || m.multipartPartWriterPendingLocked(u.ID, 0) || b.AccountID != u.AccountID || b.State != "ready" || !validMultipartResultOwner(old, u) || !old.CompletionDispatched {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	var version ObjectVersionIdentity
@@ -50,6 +50,7 @@ func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMu
 		m.commitObjectVersionLocked(old.BucketID, version)
 	}
 	m.objectMultipartUploads[u.ID] = old
+	m.retireMultipartMutationLocked(u.ID)
 	old.Parts, old.Metadata = cloneMultipartParts(old.Parts), cloneObjectMultipartMetadata(old.Metadata)
 	return cloneObjectMultipartUpload(old), nil
 }

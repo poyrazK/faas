@@ -25116,6 +25116,12 @@ func mapErr(err error) error {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "55000":
+			if pgErr.ConstraintName == "object_deletion_capture_fenced" || pgErr.ConstraintName == "object_protection_capture_fenced" || pgErr.ConstraintName == "object_upload_capture_fenced" || pgErr.ConstraintName == "object_multipart_part_capture_fenced" {
+				return ErrObjectBucketWriteFenced
+			}
+			if pgErr.ConstraintName == "clone_configuration_write_fenced" || pgErr.ConstraintName == "clone_configuration_guard_missing" {
+				return ErrProjectEnvironmentCloneConfigurationFenced
+			}
 			if pgErr.ConstraintName == "layer_artifact_retention_reference_fence" {
 				return ErrLayerArtifactRetired
 			}
@@ -25141,6 +25147,8 @@ func mapErr(err error) error {
 			case "binding_release_policy_revision":
 				return ErrBindingReleasePolicyRevision
 			case "object_version_protection_fenced":
+				return ErrConflict
+			case "object_multipart_part_writer_conflict", "object_multipart_initiation_original", "object_multipart_initiation_immutable", "object_multipart_initiation_positive_result", "object_multipart_initiation_intent", "object_multipart_initiation_uncertain":
 				return ErrConflict
 			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
@@ -25972,6 +25980,12 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// trips the FK constraint on `apps.account_id → accounts.id` and
 	// aborts the whole transaction. Walking children first lets the
 	// `delete from accounts` at the bottom be the natural sentinel.
+	// Custody outlives provider cleanup until final account erasure. Refuse to
+	// purge any acknowledgement whose lifecycle has not confirmed deletion.
+	if err := sqlc.New().PurgeAccountManagedPostgresCreationReceipts(ctx, tx, mustPgUUID(id)); err != nil {
+		return fmt.Errorf("state: purge deleted managed PostgreSQL custody: %w", err)
+	}
+
 	steps := []struct {
 		name string
 		sql  string

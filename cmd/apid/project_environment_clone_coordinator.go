@@ -134,6 +134,10 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 			return lease, err
 		}
 	case state.CloneOperationCompensating:
+		lease, err = s.abandonProjectEnvironmentCloneConfigurationFence(ctx, lease)
+		if err != nil {
+			return lease, err
+		}
 		lease, err = s.abandonProjectEnvironmentClonePostgresWriteFences(ctx, lease)
 		if err != nil {
 			return lease, err

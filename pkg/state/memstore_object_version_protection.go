@@ -38,6 +38,9 @@ func (m *MemStore) BeginObjectVersionProtection(_ context.Context, j ObjectVersi
 		}
 		return cloneObjectVersionProtection(old), nil
 	}
+	if _, held := m.objectWriteFences[b.ID]; held {
+		return ObjectVersionProtection{}, ErrObjectBucketWriteFenced
+	}
 	lock := m.objectBucketObjectLock[b.ID]
 	for _, old := range m.objectVersionProtection {
 		if old.BucketID == b.ID && protectionActive(old) {

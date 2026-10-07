@@ -409,9 +409,21 @@ func multipartCopyEndToEnd(t *testing.T, st multipartCopyIntegrationStore) {
 	}
 	_, err = f.copyPart(t, "aborted", abortID, 2, "")
 	assertSDKErrorCode(t, err, "OperationAborted")
+	fences := st.(state.ObjectBucketWriteFenceStore)
+	if _, err := fences.BeginObjectBucketMutation(t.Context(), f.bucket, state.ObjectBucketMutationRequest); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := fences.AcquireObjectBucketWriteFence(t.Context(), f.bucket, uuid.NewString())
+	if err != nil || hold.Requests != 2 || hold.Multipart != 1 {
+		t.Fatal("abort lost original custody", hold, err)
+	}
 	_, err = f.client.AbortMultipartUpload(t.Context(), &awss3.AbortMultipartUploadInput{Bucket: aws.String("assets"), Key: aws.String("aborted"), UploadId: aws.String(abortID)})
 	if err != nil {
 		t.Fatal(err)
+	}
+	drained, err := fences.ReadObjectBucketWriteFence(t.Context(), f.bucket, hold.Token)
+	if err != nil || drained.Requests != 1 || drained.Multipart != 0 {
+		t.Fatal("verified abort erased unrelated writer or retained original", drained, err)
 	}
 	usage, err = st.ObjectUsage(t.Context(), f.bucket.AccountID, time.Now())
 	if err != nil || usage.Buckets[0].GrantedBytes != 10 || usage.Buckets[0].MultipartBytes != 0 {
