@@ -331,5 +331,58 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 		}
 		out = append(out, input)
 	}
+	if err := validateServiceBindingCandidateGraph(desired, out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// Every private service binding must resolve to a candidate in this exact
+// prepared graph. The qualification router never falls back to a retained
+// serving deployment, and it requires an explicitly reviewed target port.
+// Catch incomplete dependency graphs before publishing any candidate/build.
+func validateServiceBindingCandidateGraph(desired environmentsync.DesiredState, inputs []Deployment) error {
+	byResource := make(map[string]EnvironmentWorkloadRuntime, len(inputs))
+	for _, input := range inputs {
+		frozen := candidateFrozenInputs(input)
+		byResource[frozen.Resource] = frozen
+	}
+	for name, workload := range desired.Definition.Workloads {
+		for bindingName, binding := range workload.ServiceBindings {
+			caller := byResource["workload/"+name]
+			targetResource := "workload/" + binding.Workload
+			target, ok := byResource[targetResource]
+			if caller.Resource == "" || !ok || target.AppID != caller.ServiceBindings[bindingName].TargetAppID {
+				return fmt.Errorf("%w: service binding %s/%s requires its original target in the same prepared graph", ErrEnvironmentWorkloadPreparationUnavailable, name, bindingName)
+			}
+			if target.WorkloadClass != WorkloadClassHTTP {
+				return fmt.Errorf("%w: service binding %s/%s target must use the HTTP workload class", ErrEnvironmentWorkloadPreparationUnavailable, name, bindingName)
+			}
+			values, err := json.Marshal(target.Baseline)
+			if err != nil {
+				return err
+			}
+			manifestFields := map[string]json.RawMessage{}
+			if err := json.Unmarshal(values, &manifestFields); err != nil {
+				return err
+			}
+			for key, value := range target.Runtime {
+				manifestFields[key] = value
+			}
+			values, err = json.Marshal(manifestFields)
+			if err != nil {
+				return err
+			}
+			var manifest api.AppManifest
+			if json.Unmarshal(values, &manifest) != nil || manifest.EffectiveExecutionMode() == api.ExecutionModeWorker || manifest.EffectiveExecutionMode() == api.ExecutionModeJob {
+				return fmt.Errorf("%w: service binding %s/%s target must be an HTTP service", ErrEnvironmentWorkloadPreparationUnavailable, name, bindingName)
+			}
+			portRaw, explicit := target.Runtime["port"]
+			var port int
+			if !explicit || json.Unmarshal(portRaw, &port) != nil || port < 0 || port > 65535 {
+				return fmt.Errorf("%w: service binding %s/%s target requires an explicit reviewed port", ErrEnvironmentWorkloadPreparationUnavailable, name, bindingName)
+			}
+		}
+	}
+	return nil
 }

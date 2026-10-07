@@ -3494,3 +3494,21 @@ runtime configuration or bindings. Manager/RPC dispatch, the private guest
 delivery adapter, application acknowledgement, graph smoke and serving
 convergence remain gated. The combined PR remains deferred until the agreed
 implementation pieces are ready.
+
+### Candidate dependency preflight and function creation coverage (2026-10-07)
+
+Newly reserved function workloads now have an end-to-end regression through
+reviewed source request, candidate publication and graph pinning. The test
+confirms the selected runner, approved commit, original service-binding target
+ID and execution hold survive reservation into build preparation.
+
+Candidate preparation rejects a scoped service binding before publishing any
+candidate or build unless the original target is itself in the same prepared
+graph, uses the HTTP workload class and has an explicitly reviewed port. A
+retained live deployment or inherited app port is not a substitute: the private
+qualification router only supports same-graph attempts and the explicit frozen
+port. Memory/PostgreSQL integration cases and scheduler graph tests pass. The
+full `pkg/state` test command could not finish because the host ran out of disk
+while linking its test binaries. This preflight does not enable production
+qualification dispatch; durable graph dispatch, guest binding acknowledgement,
+smoke/restore evidence and activation remain gated.

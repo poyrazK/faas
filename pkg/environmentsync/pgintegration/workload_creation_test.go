@@ -103,6 +103,44 @@ func TestEnvironmentGitOpsNewWorkloadReservation(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(before.State.ResourceIDs, after.State.ResourceIDs) {
 			t.Fatalf("retry rebound identity: %+v %v", after, err)
 		}
+
+		// Exercise the next preparation boundary too: a newly reserved
+		// function must keep its runner and original workload mapping when
+		// the reviewed source is frozen into a held build candidate.
+		candidateStore := basic.(state.EnvironmentGitOpsPreparationStore)
+		candidatePlan := planForStore(t, intent, lease, desired)
+		requests, err := candidateStore.EnvironmentGitOpsSourceRequests(t.Context(), lease, candidatePlan)
+		if err != nil || len(requests) != 1 || requests[0].Resource != "workload/function" || requests[0].Source.Kind != "function" {
+			t.Fatalf("new function source request: %+v %v", requests, err)
+		}
+		candidates, err := candidateStore.PrepareEnvironmentGitOpsCandidates(t.Context(), lease, candidatePlan,
+			map[string]state.EnvironmentWorkloadSourceArtifact{requests[0].Resource: sourceArtifact(t, requests[0])})
+		if err != nil || len(candidates) != 2 {
+			t.Fatalf("prepare new workload cohort: %+v %v", candidates, err)
+		}
+		for _, candidate := range candidates {
+			dep, err := basic.(state.Store).DeploymentByID(t.Context(), candidate.DeploymentID)
+			if err != nil || !dep.EnvironmentWorkloadHeld() || dep.Status == state.DeployLive || dep.TrafficPercent != 0 {
+				t.Fatalf("new workload candidate escaped hold: %+v %v", dep, err)
+			}
+			frozen, err := dep.ScopedWorkloadRuntime()
+			if err != nil {
+				t.Fatalf("new workload frozen input: %v", err)
+			}
+			switch frozen.Resource {
+			case "workload/api":
+				binding, ok := frozen.ServiceBindings["function"]
+				if !ok || binding.TargetAppID != ids["function"] || binding.EnvKey != "FUNCTION_URL" {
+					t.Fatalf("new API candidate lost its pinned function binding: %+v", frozen.ServiceBindings)
+				}
+			case "workload/function":
+				if frozen.AppType != state.AppTypeFunction || frozen.RuntimeBase != "node22" || frozen.Source == nil || frozen.Source.Kind != "function" || frozen.SourceArchive == nil || frozen.SourceArchive.CommitSHA != lease.Revision.CommitSHA {
+					t.Fatalf("new function candidate lost runner or reviewed source: %+v", frozen)
+				}
+			default:
+				t.Fatalf("unexpected new workload candidate: %+v", frozen)
+			}
+		}
 	})
 }
 

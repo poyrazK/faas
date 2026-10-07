@@ -151,6 +151,74 @@ func TestEnvironmentGitOpsImageCandidatesFreezeInputsAndHoldExecution(t *testing
 	})
 }
 
+func TestEnvironmentGitOpsServiceBindingRequiresPreparedTargetAndExplicitPort(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		targetRuntime json.RawMessage
+		wantErr       bool
+	}{
+		{name: "retained target is not in candidate graph", wantErr: true},
+		{name: "inherited port is not explicit", targetRuntime: json.RawMessage(`{"execution_mode":"service"}`), wantErr: true},
+		{name: "scoped target port", targetRuntime: json.RawMessage(`{"port":8082,"execution_mode":"service"}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stores(t, func(t *testing.T, basic gitOpsTestStore) {
+				store, source, desired, callerApp, _, _ := workloadIntentFixture(t, basic, "enforce")
+				backend, err := store.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID,
+					Slug: "shop-backend", WorkloadName: "backend", Type: state.AppTypeApp, Status: state.AppActive,
+					RAMMB: 512, MaxConcurrency: 1, WorkloadClass: state.WorkloadClassHTTP,
+					Manifest: state.AppManifest{Port: 8079, ExecutionMode: api.ExecutionModeService}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: backend.ID, Scope: "production", Kind: state.DeploymentKindImage,
+					Status: state.DeployLive, ImageDigest: "registry.example/backend@sha256:" + strings.Repeat("c", 64)}); err != nil {
+					t.Fatal(err)
+				}
+				caller := desired.Definition.Workloads["api"]
+				caller.ServiceBindings = map[string]api.EnvironmentServiceBinding{"backend": {Workload: "backend", EnvKey: "BACKEND_URL"}}
+				desired.Definition.Workloads["api"] = caller
+				desired.Definition.Workloads["backend"] = api.EnvironmentWorkload{App: backend.Slug, Runtime: tc.targetRuntime}
+				desired, err = environmentsync.Compile(desired.Definition)
+				if err != nil {
+					t.Fatal(err)
+				}
+				source, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), approval(source, desired, strings.Repeat("b", 40)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				adoptWorkloadIntent(t, store, source)
+				lease, err := store.ClaimEnvironmentGitOps(t.Context(), "binding-candidate-gate", time.Now(), time.Minute)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.ApplyEnvironmentGitOps(t.Context(), lease, claimedIntentPlan(t, store, lease, desired)); err != nil {
+					t.Fatal(err)
+				}
+				plan := claimedIntentPlan(t, store, lease, desired)
+				_, err = basic.(state.EnvironmentGitOpsPreparationStore).PrepareEnvironmentGitOpsImageCandidates(t.Context(), lease, plan)
+				if tc.wantErr {
+					if !errors.Is(err, state.ErrEnvironmentWorkloadPreparationUnavailable) {
+						t.Fatalf("incomplete binding graph accepted: %v", err)
+					}
+					deployments, listErr := store.ListDeploymentsForApp(t.Context(), backend.ID, 10, 0)
+					if listErr != nil || len(deployments) != 1 {
+						t.Fatalf("failed binding gate published a candidate: %+v %v", deployments, listErr)
+					}
+					callerDeployments, listErr := store.ListDeploymentsForApp(t.Context(), callerApp.ID, 10, 0)
+					if listErr != nil || len(callerDeployments) != 1 {
+						t.Fatalf("failed binding gate partially published caller: %+v %v", callerDeployments, listErr)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("complete binding graph rejected: %v", err)
+				}
+			})
+		})
+	}
+}
+
 func TestPgEnvironmentGitOpsImageCandidateDatabaseFences(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
