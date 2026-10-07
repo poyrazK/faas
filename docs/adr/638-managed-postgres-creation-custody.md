@@ -42,6 +42,8 @@ The clone schema registry treats custody as account identity, never copied
 configuration. Final account erasure removes receipts only after their database
 or snapshot lifecycle has confirmed deletion; unresolved custody retains its
 restrictive foreign keys.
+Migration replay preserves existing receipts, and rollback refuses to drop a
+populated custody journal.
 
 Legacy resources and lost POST acknowledgements without creation custody keep
 full-proof discovery. A missing name cannot establish absence of an uncertain

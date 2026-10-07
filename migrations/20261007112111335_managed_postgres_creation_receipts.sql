@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-638: custody of accepted creations is separate from data correctness.
-CREATE TABLE managed_postgres_creation_receipts (
+CREATE TABLE IF NOT EXISTS managed_postgres_creation_receipts (
     kind text NOT NULL CHECK (kind IN ('restore','snapshot')),
     resource_id text NOT NULL CHECK (resource_id<>'' AND length(resource_id)<=255),
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
@@ -21,4 +21,12 @@ CREATE TABLE managed_postgres_creation_receipts (
 );
 
 -- +goose Down
+-- +goose StatementBegin
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM managed_postgres_creation_receipts) THEN
+        RAISE EXCEPTION 'cannot remove retained managed postgres creation custody'
+            USING ERRCODE='23514', CONSTRAINT='managed_postgres_creation_custody_retained';
+    END IF;
+END $$;
 DROP TABLE managed_postgres_creation_receipts;
+-- +goose StatementEnd
