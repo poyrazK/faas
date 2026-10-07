@@ -1774,7 +1774,7 @@ func (l *Loop) runScalingPolicyObservation(ctx context.Context) {
 		return
 	}
 	for _, app := range apps {
-		if app.ScalingPolicyRevision <= 0 {
+		if app.ScalingPolicyRevision <= 0 || !l.engine.ownsAppDecision(app) {
 			continue
 		}
 		if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, ownerNodeID, app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {

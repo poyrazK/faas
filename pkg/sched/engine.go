@@ -837,6 +837,13 @@ func (e *Engine) ownsApp(app state.App) bool {
 	return owned
 }
 
+// OwnsApp is ownsApp for the background triggers (floor, scale-up,
+// targets) that enumerate apps themselves. It does not count toward the
+// notification-discard metric ownsApp feeds.
+func (e *Engine) OwnsApp(app state.App) bool {
+	return e.ownsAppDecision(app)
+}
+
 func (e *Engine) ownsAppDecision(app state.App) bool {
 	if app.NodeID == "" {
 		return true

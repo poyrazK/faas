@@ -1814,6 +1814,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 	)
 	trigger.WithOwnerNodeID(ownerNodeID)
+	trigger.WithAppOwnership(engine.OwnsApp)
 	loop.WithScaleUp(trigger)
 	// The target trigger consumes the optional instance-stats reader for
 	// concurrent_requests, and the store queue reader for queue_depth.
@@ -1838,6 +1839,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 	)
 	targetsTrigger.WithOwnerNodeID(ownerNodeID)
+	targetsTrigger.WithAppOwnership(engine.OwnsApp)
 	loop.WithTargets(targetsTrigger)
 	log.Info("reactive target trigger enabled",
 		"interval", cfg.ScaleUpInterval,
@@ -1884,6 +1886,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 	)
 	floorTrigger.WithOwnerNodeID(ownerNodeID)
+	floorTrigger.WithAppOwnership(engine.OwnsApp)
 	loop.WithFloor(floorTrigger)
 	log.Info("min-instances floor reconciler enabled",
 		"interval", floorInterval,
