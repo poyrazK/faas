@@ -132,7 +132,8 @@ func SnapshotDriveKey(s Snapshot) string {
 // memory object, so capture cleanup removes it with the rest. Empty for
 // noncanonical keys, whose captures therefore cannot be restored.
 func SnapshotBackingKey(s Snapshot) string {
-	if strings.HasPrefix(s.StorageKey, "snap/") && strings.HasSuffix(s.StorageKey, "/mem") {
+	_, relative, err := region.SplitArtifactKey(s.StorageKey)
+	if err == nil && strings.HasPrefix(relative, "snap/") && strings.HasSuffix(relative, "/mem") {
 		return strings.TrimSuffix(s.StorageKey, "/mem") + "/backing"
 	}
 	return ""

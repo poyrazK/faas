@@ -277,22 +277,27 @@ func nativeMachineField(fields map[string]json.RawMessage, key string, target an
 }
 
 func (s *nativeMachineAPI) state(ctx context.Context) (string, error) {
+	state, _, err := s.stateVersion(ctx)
+	return state, err
+}
+
+func (s *nativeMachineAPI) stateVersion(ctx context.Context) (string, string, error) {
 	raw, err := s.request(ctx, http.MethodGet, "/", nil, http.StatusOK)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	fields, err := nativeMachineObject(raw)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var id, app, version, state string
 	if err := errors.Join(nativeMachineField(fields, "id", &id), nativeMachineField(fields, "app_name", &app), nativeMachineField(fields, "vmm_version", &version), nativeMachineField(fields, "state", &state)); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if id != s.owner.Lease.Instance || app != "Firecracker" || version == "" || state != "Paused" && state != "Running" && state != "Not started" {
-		return "", errors.New("native machine: unexpected instance information")
+		return "", "", errors.New("native machine: unexpected instance information")
 	}
-	return state, nil
+	return state, version, nil
 }
 
 // Observe both sides of the shape read. A default pre-load machine config or
@@ -344,17 +349,28 @@ func (s *nativeMachineAPI) readShape(ctx context.Context, expectedState string) 
 	return machine, nil
 }
 
-func (v *JailerVMM) loadSnapshot(ctx context.Context, lease Lease, statePath, memPath string, keepPaused bool) error {
+func (v *JailerVMM) loadSnapshot(ctx context.Context, lease Lease, statePath, memPath string, keepPaused bool, inputs ...*SnapshotInputs) error {
 	body := map[string]any{"snapshot_path": statePath, "mem_backend": map[string]any{"backend_type": "File", "backend_path": memPath}, "resume_vm": !keepPaused}
 	if v.nativeRecovery == nil {
 		return v.apiPut(ctx, lease.Instance, "/snapshot/load", body)
 	}
 	body["resume_vm"] = false
 	return v.withNativeMachineAPI(ctx, lease, func(s *nativeMachineAPI) error {
+		var expected *Machine
+		if len(inputs) == 1 && inputs[0] != nil {
+			if err := checkNativeBootDimensions(s.owner, inputs[0].Machine); err != nil {
+				return err
+			}
+			expected = &inputs[0].Machine
+			_, version, err := s.stateVersion(ctx)
+			if err != nil || version != inputs[0].FCVersion {
+				return errors.Join(err, ErrSnapshotBackingChanged)
+			}
+		}
 		if _, err := s.request(ctx, http.MethodPut, "/snapshot/load", body, http.StatusNoContent); err != nil {
 			return err
 		}
-		if _, err := s.shape(ctx, "Paused", nil); err != nil {
+		if _, err := s.shape(ctx, "Paused", expected); err != nil {
 			return err
 		}
 		if keepPaused {

@@ -1708,6 +1708,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err != nil {
 		return err
 	}
+	inputs, err := v.restoreSnapshotInputs(ctx, stagingOwner, l, spec)
+	if err != nil {
+		return err
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	// Start the breakdown before any chroot or storage work. The manager's
 	// RestoreMs already covers this full method; keeping the detailed log on
@@ -1949,7 +1953,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tBindTun := time.Now()
-	if err = v.loadSnapshot(ctx, l, stateName, memName, spec.KeepPaused); err != nil {
+	if err = v.withSnapshotInputs(ctx, l, root, memName, stateName, layerSrc, inputs, func() error {
+		return v.loadSnapshot(ctx, l, stateName, memName, spec.KeepPaused, inputs)
+	}); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
 	tLoad := time.Now()
@@ -2982,6 +2988,15 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
 	}
+	var captureMachine Machine
+	var captureVersion string
+	if v.storage != nil && spec.VMStateStorageKey != "" && state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey}) != "" {
+		var shapeErr error
+		captureMachine, captureVersion, shapeErr = v.snapshotMachine(ctx, l)
+		if shapeErr != nil {
+			return SnapshotInfo{}, fmt.Errorf("vmm: snapshot original shape: %w", shapeErr)
+		}
+	}
 	restoreSnapshotLimit, snapshotErr := widenSnapshotMemoryCgroup(l)
 	if snapshotErr != nil {
 		return SnapshotInfo{}, snapshotErr
@@ -3028,6 +3043,10 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			return SnapshotInfo{}, fmt.Errorf("vmm: freeze snapshot private drive: %w", freezeErr)
 		}
 		defer func() { _ = os.Remove(frozenDrivePath) }()
+	}
+	inputs, inputErr := v.captureSnapshotInputs(ctx, l, spec, captureMachine, captureVersion, frozenDrivePath)
+	if inputErr != nil {
+		return SnapshotInfo{}, fmt.Errorf("vmm: snapshot input provenance: %w", inputErr)
 	}
 	if spec.ResumeBeforePublish {
 		if spec.BeforeResume != nil {
@@ -3198,7 +3217,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// and the legacy Snapshot() wrapper releases the chroot. The
 	// responsible caller (Manager.WarmSnapshot → vmm.WarmSnapshot
 	// → vmmdgrpc.WarmSnapshot) MUST fire ResumeVM on success.
-	return SnapshotInfo{MemBytes: memBytes, VMStateBytes: stateBytes, StoredBytes: storedBytes}, nil
+	return SnapshotInfo{MemBytes: memBytes, VMStateBytes: stateBytes, StoredBytes: storedBytes, Inputs: inputs}, nil
 }
 
 // freezeSnapshotDrive creates an immutable copy of the private drive backing

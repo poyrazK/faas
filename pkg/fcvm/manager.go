@@ -4907,7 +4907,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	}
 	if restorable {
 		rs := RestoreSpec{
-			VMStatePath: req.Snapshot.VMStatePath,
+			FCVersion:       req.Snapshot.FCVersion,
+			ExpectedMachine: &Machine{VcpuCount: req.VcpuCount, MemSizeMib: wakeGuestMemoryMiB(req)},
+			VMStatePath:     req.Snapshot.VMStatePath,
 			// #96 / ADR-025 axis 2: thread the canonical storage key the
 			// scheduler populated into WakeRequest.Snapshot. The VMM
 			// resolves it through the StorageBackend before staging.
@@ -5344,7 +5346,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	if err := errors.Join(snapshotErr, cleanupErr); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
 	}
-	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey, info.Inputs)
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
@@ -5396,7 +5398,7 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
-	m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
+	m.writeSnapshotBacking(ctx, instance, spec.StorageKey, info.Inputs)
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }

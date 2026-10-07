@@ -113,6 +113,13 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 	}
 	// A best-effort sidecar cannot make a restorable capture receipt. Bind
 	// the images remembered at boot and require successful publication.
+	if info.Inputs != nil {
+		if info.Inputs.Validate(keys.StorageKey) != nil {
+			return proof, ErrSnapshotBackingUnverified
+		}
+		copy := *info.Inputs
+		backing.Inputs = &copy
+	}
 	body, err := json.Marshal(backing)
 	if err != nil {
 		return proof, err

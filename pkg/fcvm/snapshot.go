@@ -146,8 +146,12 @@ func PlanWake(snap *Snapshot, currentFCVersion string) WakeMethod {
 // the legacy VMStatePath branch untouched. Default-local single-box
 // always sends the empty value so the host-path behaviour is preserved.
 type RestoreSpec struct {
-	VMStatePath string
-	Tap         string
+	// FCVersion is the caller's selected version; native input provenance must
+	// independently name the same producer version before loading any state.
+	FCVersion       string
+	ExpectedMachine *Machine
+	VMStatePath     string
+	Tap             string
 	// Issue #96 / ADR-025 axis 2 (PR #116): KernelKey / BaseKey /
 	// LayerKey are the StorageBackend keys that the restore path
 	// materializes via Storage.Get before re-staging as basenames
@@ -279,6 +283,9 @@ type SnapshotSpec struct {
 
 // SnapshotInfo is the result of a snapshot create.
 type SnapshotInfo struct {
+	// Inputs are measured from the paused machine and exact completed files.
+	// Manager retains them in the existing per-capture backing sidecar.
+	Inputs       *SnapshotInputs `json:"Inputs,omitempty"`
 	MemBytes     int64
 	VMStateBytes int64
 	// StoredBytes is the filesystem allocation consumed by the published

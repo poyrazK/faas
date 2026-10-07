@@ -33,16 +33,40 @@ func (r *nativeQualificationCaptureRecord) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if _, err := nativeJournalObjectFields(fields["info"], []string{"MemBytes", "VMStateBytes", "StoredBytes"}); err != nil {
+	if _, err := nativeCaptureFieldsWithInputs(fields["info"], []string{"MemBytes", "VMStateBytes", "StoredBytes"}, "Inputs"); err != nil {
 		return err
 	}
-	if _, err := nativeJournalObjectFields(fields["backing"], nativeQualificationJSONFields(reflect.TypeOf(r.Backing))); err != nil {
+	if _, err := nativeCaptureFieldsWithInputs(fields["backing"], []string{"version", "kernel", "base"}, "inputs"); err != nil {
 		return err
 	}
 	type plain nativeQualificationCaptureRecord
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode((*plain)(r))
+}
+
+// Both historical omission and the new complete shape have an exact field set.
+// Neither alternative accepts duplicate, unknown, null or partial fields.
+func nativeCaptureFieldsWithInputs(data []byte, required []string, name string) (map[string]json.RawMessage, error) {
+	fields, err := nativeJournalObjectFields(data, required)
+	if err == nil {
+		return fields, nil
+	}
+	fields, err = nativeJournalObjectFields(data, append(required, name))
+	if err != nil {
+		return nil, err
+	}
+	var inputs SnapshotInputs
+	d := json.NewDecoder(bytes.NewReader(fields[name]))
+	d.DisallowUnknownFields()
+	if d.Decode(&inputs) != nil || inputs.Validate(inputs.Memory.Key) != nil {
+		return nil, ErrSnapshotBackingUnverified
+	}
+	canonical, err := json.Marshal(inputs)
+	if err != nil || !bytes.Equal(canonical, fields[name]) {
+		return nil, ErrSnapshotBackingUnverified
+	}
+	return fields, nil
 }
 
 func (r nativeQualificationCaptureRecord) validate(incoming nativeQualificationRecord) error {
@@ -58,6 +82,13 @@ func (r nativeQualificationCaptureRecord) validate(incoming nativeQualificationR
 	} else if r.CompletedAt.Before(r.StartedAt) || !r.CompletedAt.Before(incoming.Deadline) ||
 		r.Info.MemBytes <= 0 || r.Info.VMStateBytes <= 0 || r.Info.StoredBytes <= 0 || !r.Backing.complete() {
 		return errors.New("native qualification: capture completion evidence is incomplete")
+	}
+	if r.Info.Inputs != nil || r.Backing.Inputs != nil {
+		key := qualificationSnapshotProof(incoming, SnapshotInfo{}).StorageKey
+		if r.Info.Inputs == nil || r.Backing.Inputs == nil || *r.Info.Inputs != *r.Backing.Inputs || r.Info.Inputs.Validate(key) != nil ||
+			r.Info.Inputs.Machine.MemSizeMib != incoming.NativeLease.MemoryMaxMiB || r.Info.Inputs.Memory.Bytes != r.Info.MemBytes || r.Info.Inputs.VMState.Bytes != r.Info.VMStateBytes {
+			return ErrSnapshotBackingUnverified
+		}
 	}
 	return nil
 }

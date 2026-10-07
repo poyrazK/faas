@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -50,12 +51,13 @@ var (
 )
 
 // BackingIdentity is the content identity of a VM's read-only backing
-// images. The private writable drive is bound to each capture separately
-// (state.SnapshotDriveKey) and is not part of it.
+// images. Optional Inputs also bind the measured machine and capture-specific
+// memory, VM-state and private-drive artifacts.
 type BackingIdentity struct {
-	Version int    `json:"version"`
-	Kernel  string `json:"kernel"`
-	Base    string `json:"base"`
+	Version int             `json:"version"`
+	Kernel  string          `json:"kernel"`
+	Base    string          `json:"base"`
+	Inputs  *SnapshotInputs `json:"inputs,omitempty"`
 }
 
 func (b BackingIdentity) complete() bool {
@@ -213,7 +215,7 @@ func (m *Manager) rememberInstanceBacking(instance, baseKey string) {
 
 // writeSnapshotBacking stores the running VM's identity next to a capture.
 // Best-effort: a capture without it is refused at restore and cold-boots.
-func (m *Manager) writeSnapshotBacking(ctx context.Context, instance, memKey string) {
+func (m *Manager) writeSnapshotBacking(ctx context.Context, instance, memKey string, inputs ...*SnapshotInputs) {
 	if !m.backingEnabled() {
 		return
 	}
@@ -225,6 +227,14 @@ func (m *Manager) writeSnapshotBacking(ctx context.Context, instance, memKey str
 		m.log.Warn("snapshot captured without a backing identity; it will cold-boot instead of restoring",
 			"instance", instance, "storage_key", memKey)
 		return
+	}
+	if len(inputs) == 1 && inputs[0] != nil {
+		copy := *inputs[0]
+		if copy.Validate(memKey) != nil {
+			m.log.Warn("snapshot input provenance invalid", "instance", instance)
+			return
+		}
+		identity.Inputs = &copy
 	}
 	body, err := json.Marshal(identity)
 	if err != nil {
@@ -250,10 +260,10 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 	if err != nil {
 		return fmt.Errorf("%w: read %s: %w", ErrSnapshotBackingUnverified, key, err)
 	}
-	var recorded BackingIdentity
-	decodeErr := json.NewDecoder(io.LimitReader(rc, 4096)).Decode(&recorded)
+	raw, decodeErr := io.ReadAll(io.LimitReader(rc, api.SnapshotBackingMaxBytes+1))
 	_ = rc.Close()
-	if decodeErr != nil || !recorded.complete() {
+	recorded, parseErr := decodeSnapshotBacking(raw)
+	if decodeErr != nil || parseErr != nil || !recorded.complete() {
 		return fmt.Errorf("%w: invalid identity at %s", ErrSnapshotBackingUnverified, key)
 	}
 	current, err := m.currentBacking(baseKey)
