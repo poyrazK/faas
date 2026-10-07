@@ -478,8 +478,11 @@ func TestAppMetrics_Fetch_SourceHasNoCRLF(t *testing.T) {
 	if strings.Contains(src, "\r") || strings.Contains(src, "\n") {
 		t.Errorf("Source contains CR/LF: %q", src)
 	}
-	if !strings.Contains(src, "evil prom error") {
-		t.Errorf("Source missing underlying message: %q", src)
+	// production-us hunt #4: `gregale metrics` printed the failing PromQL
+	// (app UUIDs included). The response now carries only the generic
+	// reason; the sanitised error stays in the server log.
+	if src != "degraded: telemetry unavailable" || strings.Contains(src, "evil prom error") {
+		t.Errorf("Source = %q, want only the generic degraded reason", src)
 	}
 }
 
@@ -742,6 +745,30 @@ func TestFetch_PR2_TxBytesQueryFailureDoesNotDegrade(t *testing.T) {
 	}
 	if !strings.Contains(logged, "app-pr2") {
 		t.Errorf("expected log to contain app_id; got: %s", logged)
+	}
+}
+
+// production-us hunt #4 (H4-32): an app whose window held only 4xx traffic
+// (404s plus edge-rule 429s) has requests but no 2xx/5xx population, so the
+// bare error-rate ratio returns no sample. Fetch degraded the whole response,
+// and `gregale canary simulate` refused to run on it.
+func TestAppMetrics_Fetch_OnlyClientErrorsIsNotDegraded(t *testing.T) {
+	log, _ := captureLog(t)
+	stub := &stubPromQL{fn: func(q string) (float64, error) {
+		switch {
+		case strings.HasPrefix(q, "sum(increase(gateway_request_duration_seconds_count"):
+			return 9, nil // nine requests in the window, every one a 4xx
+		case strings.Contains(q, `class=~"2xx|5xx"`) && !strings.HasSuffix(q, " or vector(0)"):
+			return 0, fmt.Errorf("no data for query %q", q)
+		}
+		return 0, nil
+	}}
+	resp, src := appmetrics.Fetch(context.Background(), stub, log, "app-1", "1h")
+	if src != appmetrics.SourcePrometheus {
+		t.Fatalf("4xx-only window source = %q, want %q", src, appmetrics.SourcePrometheus)
+	}
+	if resp.RequestCount != 9 || resp.ErrorRatePct != 0 {
+		t.Fatalf("4xx-only window = requests %d error %.2f%%, want 9 requests at 0%%", resp.RequestCount, resp.ErrorRatePct)
 	}
 }
 

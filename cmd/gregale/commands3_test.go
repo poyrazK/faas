@@ -596,6 +596,23 @@ func TestCmdSecrets_Unset(t *testing.T) {
 	}
 }
 
+// production-us hunt #4 (H4-24): `secrets rm` was an unknown subcommand
+// while every other resource deletes with rm.
+func TestCmdSecrets_RmIsUnset(t *testing.T) {
+	deleted := false
+	sink := &secretsSink{onDelete: func() (int, any) {
+		deleted = true
+		return http.StatusNoContent, nil
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if code := cmdSecrets([]string{"rm", "--app", "x", "STRIPE_KEY"}); code != 0 || !deleted {
+		t.Fatalf("secrets rm exit=%d deleted=%v, want 0 and a DELETE", code, deleted)
+	}
+}
+
 // `secrets unset` used to have no --restart, so a removed secret stayed in
 // every running instance's environment until the next cold wake.
 func TestCmdSecretsUnsetRestartUsesFreshRestartAfterDelete(t *testing.T) {

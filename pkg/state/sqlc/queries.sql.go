@@ -27720,6 +27720,66 @@ func (q *Queries) ListRetainedServiceReleases(ctx context.Context, db DBTX, arg 
 	return items, nil
 }
 
+const listRollbackOn5xxCandidates = `-- name: ListRollbackOn5xxCandidates :many
+SELECT d.id, d.app_id, d.scope, d.created_at, d.first_wake_at, d.first_5xx_window_ends_at
+  FROM deployments AS d
+ WHERE d.status = 'live'
+   AND d.rollback_on_5xx
+   AND d.last_auto_rollback_reason IS NULL
+   AND d.traffic_percent = 100
+   AND d.rollout_state = 'complete'
+   AND (d.first_5xx_window_ends_at IS NULL
+        OR d.first_5xx_window_ends_at > now() - make_interval(secs => $1::int))
+ ORDER BY d.created_at, d.id
+ LIMIT $2::int
+`
+
+type ListRollbackOn5xxCandidatesParams struct {
+	GraceSeconds int32
+	RowLimit     int32
+}
+
+type ListRollbackOn5xxCandidatesRow struct {
+	ID                   pgtype.UUID
+	AppID                pgtype.UUID
+	Scope                string
+	CreatedAt            pgtype.Timestamptz
+	FirstWakeAt          pgtype.Timestamptz
+	First5xxWindowEndsAt pgtype.Timestamptz
+}
+
+// ADR-625: completed live releases that opted into first-wake 5xx
+// auto-rollback and have not rolled back. A NULL window means apid has not
+// observed traffic for the release yet; an open window, plus a grace for
+// late telemetry, is still evaluated. Canary rollouts in flight belong to the
+// meterd circuit breaker, so only 100% complete releases qualify.
+func (q *Queries) ListRollbackOn5xxCandidates(ctx context.Context, db DBTX, arg ListRollbackOn5xxCandidatesParams) ([]ListRollbackOn5xxCandidatesRow, error) {
+	rows, err := db.Query(ctx, listRollbackOn5xxCandidates, arg.GraceSeconds, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRollbackOn5xxCandidatesRow{}
+	for rows.Next() {
+		var i ListRollbackOn5xxCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Scope,
+			&i.CreatedAt,
+			&i.FirstWakeAt,
+			&i.First5xxWindowEndsAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRouteCheckHistory = `-- name: ListRouteCheckHistory :many
 SELECT jsonb_build_object('version', 1, 'id', h.id, 'checked_at', h.checked_at,
     'status', entry->'check'->'report'->>'status',

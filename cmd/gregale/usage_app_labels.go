@@ -6,10 +6,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// appSlugsByID maps the account's app IDs to slugs for usage tables. The
-// usage endpoints return app_id only, and `usage daily` / `usage storage`
-// printed bare UUIDs. The lookup is best-effort: on error the tables fall
-// back to IDs.
+// appSlugsByID maps the account's app IDs to slugs for usage and custom
+// domain tables. Those endpoints return app_id only, and `usage`, `usage
+// daily`, `usage storage` and `domains list|show|verify` printed bare UUIDs
+// (production-us hunt #4 found the last two). The lookup is best-effort: on
+// error the tables fall back to IDs. Callers fetch it before their primary
+// request.
 func appSlugsByID(client *api.Client) map[string]string {
 	apps, err := client.ListApps(context.Background())
 	if err != nil {

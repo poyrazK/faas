@@ -2,6 +2,7 @@
 package neon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -23,6 +24,10 @@ type snapshotRestoreFixture struct {
 	rows                          []branch
 	posts, lists, exactReads      int
 	losePost, invisible, ackReady bool
+	ackIncomplete, listIncomplete bool
+	ackFault                      string
+	incompleteReads               int
+	observationFault              string
 	fault                         string
 }
 
@@ -80,6 +85,12 @@ func (f *snapshotRestoreFixture) serveHTTP(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		rows := f.rows
+		if f.listIncomplete {
+			rows = append([]branch{}, rows...)
+			for i := range rows {
+				rows[i] = incompleteSnapshotRestoreBranch(rows[i])
+			}
+		}
 		if f.invisible {
 			rows = []branch{}
 		}
@@ -99,8 +110,28 @@ func (f *snapshotRestoreFixture) serveHTTP(w http.ResponseWriter, r *http.Reques
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, root+"/branches/"):
 		f.exactReads++
 		id := strings.TrimPrefix(r.URL.Path, root+"/branches/")
+		if f.observationFault == "not_visible_yet" && f.exactReads == 1 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		for _, row := range f.rows {
 			if row.ID == id {
+				if f.exactReads <= f.incompleteReads {
+					row = incompleteSnapshotRestoreBranch(row)
+				} else {
+					switch f.observationFault {
+					case "identity":
+						row.ID = "br-substitute"
+					case "snapshot":
+						row.RestoredFrom = "snap-other"
+					case "project":
+						row.ProjectID = "project-other"
+					case "default":
+						row.Default = true
+					case "finalized":
+						row.RestoreStatus = "finalized"
+					}
+				}
 				writeResponse(f.t, w, http.StatusOK, map[string]any{"branch": row})
 				return
 			}
@@ -125,11 +156,36 @@ func (f *snapshotRestoreFixture) serveHTTP(w http.ResponseWriter, r *http.Reques
 		if f.ackReady {
 			accepted.CurrentState = "ready"
 		}
+		if f.ackIncomplete {
+			accepted = incompleteSnapshotRestoreBranch(accepted)
+		}
+		switch f.ackFault {
+		case "identity_only":
+			accepted.Name = ""
+		case "missing_identity":
+			accepted.ID = ""
+		case "project":
+			accepted.ProjectID = "project-other"
+		case "snapshot":
+			accepted.RestoredFrom = "snap-other"
+		case "source":
+			accepted.ID = "br-source"
+		case "name":
+			accepted.Name = "other-owner"
+		case "default":
+			accepted.Default = true
+		case "finalized":
+			accepted.RestoreStatus = "finalized"
+		}
 		writeResponse(f.t, w, http.StatusOK, map[string]any{"branch": accepted, "operations": []any{map[string]any{"status": "running"}}})
 	default:
 		f.t.Errorf("unexpected snapshot restore mutation/path: %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+}
+
+func incompleteSnapshotRestoreBranch(value branch) branch {
+	return branch{ID: value.ID, Name: value.Name}
 }
 
 func TestSnapshotRestoreCreatesOwnedPreviewAndIndependentlyObservesCompletion(t *testing.T) {
@@ -207,7 +263,9 @@ func TestSnapshotRestoreRejectsSourceSnapshotAndTargetSubstitution(t *testing.T)
 			case "placement_changed":
 				f.request.ExpectedTargetResourceID = "project-source/br-target"
 			}
-			if _, err := f.p.FindSnapshotRestore(t.Context(), f.definition, f.request); err == nil {
+			ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+			defer cancel()
+			if _, err := f.p.FindSnapshotRestore(ctx, f.definition, f.request); err == nil {
 				t.Fatalf("accepted %s", fault)
 			}
 			if f.posts != 0 {
