@@ -563,6 +563,26 @@ Versions and delete markers carry durable Gregale UUIDs, scoped to the logical
 bucket and object key. The special S3 `null` ID remains mutable. Native provider
 version IDs are private and are not accepted as customer IDs.
 
+The Gregale control API exposes the same public references with
+`GET /v1/apps/{slug}/buckets/{bucket}/objects/versions`. Query parameters are
+`prefix`, `delimiter`, `limit` (1–1000), `key_marker` and `version_id_marker`.
+The JSON response includes versions, delete markers, common prefixes and paired
+continuation markers. Resume using both returned markers. Listing requires a
+bucket read grant and request-budget admission.
+
+```sh
+gregale bucket versions list <app> <bucket-id> --prefix 'reports/' --limit 100 --json
+gregale bucket download <app> <bucket-id> 'reports/report.txt' ./old-report.txt --version-id <public-version-id>
+```
+
+Upload JSON includes `version_id` when a version is acknowledged. Download
+`--version-id` accepts an owned immutable public UUID; the mutable S3 `null` ID
+is excluded. GET/HEAD signed URL requests accept the same `version_id`. Stored
+URL authority, query signatures and the gateway all enforce that selector.
+Missing, foreign or deleted versions never fall back to the current object. A
+CLI download verifies the acknowledged public version before publishing the
+complete local file. See [ADR-638](adr/638-object-version-cli-and-bound-downloads.md).
+
 Use those IDs with standard SDK GetObject/HeadObject `VersionId` parameters,
 or AWS CLI `s3api get-object --bucket assets --key hello.txt --version-id ID
 output.txt`. Read permissions and credential revocation still apply on every

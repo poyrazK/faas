@@ -297,6 +297,109 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 			return
 		}
 	}
+	// adr: 638
+	if !t.Run("CLI immutable version history", func(t *testing.T) {
+		past := time.Now().UTC().Add(-20 * time.Minute)
+		st.SetClockForTest(func() time.Time { return past })
+		defer st.SetClockForTest(time.Now)
+		run(t, "bucket", "versioning", "enable", app.Slug, b.ID)
+		if err := srv.reconcileObjectBucketVersioning(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
+		propagated := time.Now().UTC().Add(-4 * time.Minute)
+		st.SetClockForTest(func() time.Time { return propagated })
+		if err := srv.reconcileObjectBucketVersioning(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.reconcileObjectCapacity(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
+		st.SetClockForTest(time.Now)
+		if err := srv.reconcileObjectBucketVersioning(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
+		// Real GCS requires propagation before replacing a versioned object.
+		select {
+		case <-time.After(31 * time.Second):
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		key := "qualification/versioned/世界 +%.txt"
+		source := filepath.Join(t.TempDir(), "source")
+		payloads := []string{"old native generation", "replacement native generation"}
+		var ids []string
+		for _, payload := range payloads {
+			if err := os.WriteFile(source, []byte(payload), 0600); err != nil {
+				t.Fatal(err)
+			}
+			out := run(t, "bucket", "upload", app.Slug, b.ID, key, source)
+			var id string
+			if json.Unmarshal(out["version_id"], &id) != nil || !state.ValidObjectVersionID(id) || id == "null" {
+				t.Fatal("immutable upload version absent")
+			}
+			ids = append(ids, id)
+		}
+		if ids[0] == ids[1] {
+			t.Fatal("overwrites collapsed")
+		}
+		rebase(t)
+		list := func(args ...string) api.ObjectVersionList {
+			t.Helper()
+			out := run(t, append([]string{"bucket", "versions", "list", app.Slug, b.ID}, args...)...)
+			raw, err := json.Marshal(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var page api.ObjectVersionList
+			if err = json.Unmarshal(raw, &page); err != nil {
+				t.Fatal(err)
+			}
+			return page
+		}
+		first := list("--prefix="+key, "--limit=1")
+		if len(first.Items) != 1 || first.NextKeyMarker != key || first.NextVersionIDMarker == "" {
+			t.Fatal("first public page incomplete", first)
+		}
+		second := list("--prefix="+key, "--limit=1", "--key-marker="+first.NextKeyMarker, "--version-id-marker="+first.NextVersionIDMarker)
+		if len(second.Items) != 1 || second.NextKeyMarker != "" {
+			t.Fatal("continuation incomplete", second)
+		}
+		seen := map[string]bool{}
+		for _, version := range []api.ObjectVersion{first.Items[0], second.Items[0]} {
+			if version.Key != key || seen[version.VersionID] || version.DeleteMarker || version.VersionID != ids[0] && version.VersionID != ids[1] || version.IsLatest != (version.VersionID == ids[1]) {
+				t.Fatal("public history identity changed", version)
+			}
+			seen[version.VersionID] = true
+		}
+		grouped := list("--prefix=qualification/", "--delimiter=/", "--limit=10")
+		if len(grouped.Items) != 0 || len(grouped.CommonPrefixes) != 1 || grouped.CommonPrefixes[0] != "qualification/versioned/" {
+			t.Fatal("public delimiter grouping changed", grouped)
+		}
+		for i, id := range ids {
+			target := filepath.Join(t.TempDir(), "historical")
+			out := run(t, "bucket", "download", app.Slug, b.ID, key, target, "--version-id="+id)
+			data, err := os.ReadFile(target)
+			if err != nil || string(data) != payloads[i] || string(out["version_id"]) != `"`+id+`"` {
+				t.Fatal("historical CLI download substituted generation", err)
+			}
+		}
+		deleted := run(t, "bucket", "version-delete", app.Slug, b.ID, key, ids[0])
+		if string(deleted["version_id"]) != `"`+ids[0]+`"` {
+			t.Fatal("wrong version deletion")
+		}
+		remaining := list("--prefix="+key, "--limit=10")
+		if len(remaining.Items) != 1 || remaining.Items[0].VersionID != ids[1] {
+			t.Fatal("exact deletion changed replacement", remaining)
+		}
+		rebase(t)
+		target := filepath.Join(t.TempDir(), "replacement")
+		run(t, "bucket", "download", app.Slug, b.ID, key, target, "--version-id="+ids[1])
+		if data, err := os.ReadFile(target); err != nil || string(data) != payloads[1] {
+			t.Fatal("replacement changed after old generation deletion", err)
+		}
+	}) {
+		return
+	}
 	t.Run("universal gateway usage CLI", func(t *testing.T) {
 		run(t, "usage", "object-storage")
 		usage, err := client.GetObjectStorageUsage(ctx)

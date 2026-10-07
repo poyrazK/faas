@@ -19,20 +19,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const bucketTransferUsage = "usage: gregale bucket upload <app> <bucket-id> <key> <file> [--content-type TYPE] [--timeout DURATION] | gregale bucket download <app> <bucket-id> <key> <file> [--force] [--timeout DURATION]"
+const bucketTransferUsage = "usage: gregale bucket upload <app> <bucket-id> <key> <file> [--content-type TYPE] [--timeout DURATION] | gregale bucket download <app> <bucket-id> <key> <file> [--force] [--version-id VERSION] [--timeout DURATION]"
 
 type bucketTransferOptions struct {
-	action, app, bucket, key, path, contentType string
-	timeout                                     time.Duration
-	force                                       bool
+	action, app, bucket, key, path, contentType, versionID string
+	timeout                                                time.Duration
+	force                                                  bool
 }
 type bucketTransferResult struct {
-	Key      string `json:"key"`
-	Path     string `json:"path"`
-	Bytes    int64  `json:"size_bytes"`
-	UploadID string `json:"upload_id,omitempty"`
-	ETag     string `json:"etag,omitempty"`
-	Status   string `json:"status"`
+	Key       string `json:"key"`
+	Path      string `json:"path"`
+	Bytes     int64  `json:"size_bytes"`
+	UploadID  string `json:"upload_id,omitempty"`
+	ETag      string `json:"etag,omitempty"`
+	VersionID string `json:"version_id,omitempty"`
+	Status    string `json:"status"`
 }
 
 type bucketTransferClient interface {
@@ -58,6 +59,7 @@ func parseBucketTransfer(args []string) (bucketTransferOptions, error) {
 	if o.action == "upload" {
 		fs.StringVar(&o.contentType, "content-type", "application/octet-stream", "object content type")
 	} else {
+		fs.StringVar(&o.versionID, "version-id", "", "owned immutable version to download")
 		fs.BoolVar(&o.force, "force", false, "replace destination after a complete download")
 	}
 	if err := fs.Parse(args[5:]); err != nil {
@@ -65,6 +67,9 @@ func parseBucketTransfer(args []string) (bucketTransferOptions, error) {
 	}
 	if fs.NArg() != 0 || o.timeout <= 0 || o.timeout > api.MaxObjectTransferTimeout || len(o.contentType) > 255 || strings.ContainsAny(o.contentType, "\r\n\x00") {
 		return o, errors.New("invalid transfer options")
+	}
+	if o.versionID != "" && !validBucketImmutableVersion(o.versionID) {
+		return o, errors.New("invalid immutable version selector")
 	}
 	return o, nil
 }
@@ -89,6 +94,9 @@ func cmdBucketTransfer(args []string) int {
 			}
 		} else {
 			_, _ = fmt.Fprintf(osStdout, "%s: %q (%d bytes)\n", result.Status, result.Key, result.Bytes)
+			if result.VersionID != "" {
+				_, _ = fmt.Fprintf(osStdout, "Version: %s\n", result.VersionID)
+			}
 			if result.UploadID != "" {
 				_, _ = fmt.Fprintf(osStdout, "Upload: %s\n", result.UploadID)
 			}
@@ -142,6 +150,11 @@ func runBucketTransfer(ctx context.Context, c bucketTransferClient, o bucketTran
 	if err != nil {
 		return result, err
 	}
+	version, err := bucketTransferVersion(response, o.versionID)
+	if err != nil {
+		return result, err
+	}
+	result.VersionID = version
 	result.ETag, result.Status = etag, "completed"
 	return result, nil
 }
@@ -181,6 +194,10 @@ func uploadBucketMultipart(ctx context.Context, c bucketTransferClient, o bucket
 	if done.State != "completed" || done.ID != u.ID || done.Key != o.key || done.SizeBytes != size {
 		return result, errors.New("multipart completion is pending; inspect the upload session")
 	}
+	if done.VersionID != "" && done.VersionID != "null" && !validBucketImmutableVersion(done.VersionID) {
+		return result, errors.New("invalid multipart version acknowledgment; inspect the upload session")
+	}
+	result.VersionID = done.VersionID
 	result.ETag, result.Status = done.ETag, "completed"
 	return result, nil
 }
@@ -245,7 +262,7 @@ func downloadBucketFile(ctx context.Context, c bucketTransferClient, o bucketTra
 		return bucketTransferResult{}, fmt.Errorf("create download file: %w", err)
 	}
 	defer func() { _ = file.Close(); _ = os.Remove(file.Name()) }()
-	signed, err := c.SignBucketObject(ctx, o.app, o.bucket, api.ObjectSignRequest{Method: http.MethodGet, Key: o.key})
+	signed, err := c.SignBucketObject(ctx, o.app, o.bucket, api.ObjectSignRequest{Method: http.MethodGet, Key: o.key, VersionID: o.versionID})
 	if err != nil {
 		return bucketTransferResult{}, err
 	}
@@ -254,6 +271,10 @@ func downloadBucketFile(ctx context.Context, c bucketTransferClient, o bucketTra
 		return bucketTransferResult{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
+	version, err := bucketTransferVersion(response, o.versionID)
+	if err != nil {
+		return bucketTransferResult{}, err
+	}
 	n, err := io.Copy(file, response.Body)
 	if err != nil || response.ContentLength >= 0 && n != response.ContentLength {
 		return bucketTransferResult{}, errors.New("download interrupted; destination preserved")
@@ -272,7 +293,7 @@ func downloadBucketFile(ctx context.Context, c bucketTransferClient, o bucketTra
 	if err != nil {
 		return bucketTransferResult{}, fmt.Errorf("publish download file: %w", err)
 	}
-	return bucketTransferResult{Key: o.key, Path: o.path, Bytes: n, ETag: response.Header.Get("ETag"), Status: "completed"}, nil
+	return bucketTransferResult{Key: o.key, Path: o.path, Bytes: n, ETag: response.Header.Get("ETag"), VersionID: version, Status: "completed"}, nil
 }
 
 func cmdUsageObjectStorage(args []string) int {
@@ -299,4 +320,20 @@ func cmdUsageObjectStorage(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "Estimated charge: %d millicents %s\n", u.Charges.TotalMillicents, u.Charges.Currency)
 	}
 	return 0
+}
+
+func validBucketImmutableVersion(id string) bool {
+	u, err := uuid.Parse(id)
+	return err == nil && u.String() == id && u.Version() == 4 && u.Variant() == uuid.RFC4122
+}
+
+func bucketTransferVersion(response *http.Response, expected string) (string, error) {
+	values := response.Header.Values("X-Amz-Version-Id")
+	if len(values) == 0 && expected == "" {
+		return "", nil
+	}
+	if len(values) != 1 || values[0] != "null" && !validBucketImmutableVersion(values[0]) || expected != "" && values[0] != expected {
+		return "", errors.New("transfer version acknowledgment differs from the selected version")
+	}
+	return values[0], nil
 }

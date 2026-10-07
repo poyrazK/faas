@@ -23,6 +23,7 @@ type transferFixture struct {
 	multipart bool
 	session   api.ObjectMultipartUpload
 	parts     []api.ObjectMultipartCompletedPart
+	request   api.ObjectSignRequest
 }
 
 func (c *transferFixture) ListObjectBuckets(context.Context, string) (api.ObjectBucketList, error) {
@@ -30,6 +31,7 @@ func (c *transferFixture) ListObjectBuckets(context.Context, string) (api.Object
 }
 func (c *transferFixture) SignBucketObject(_ context.Context, _, _ string, r api.ObjectSignRequest) (api.ObjectSignedRequest, error) {
 	c.calls++
+	c.request = r
 	return api.ObjectSignedRequest{URL: c.url, Method: r.Method, ExpiresAt: time.Now().Add(time.Minute), UploadID: "receipt"}, nil
 }
 func (c *transferFixture) CreateObjectMultipartUpload(_ context.Context, _, _ string, r api.CreateObjectMultipartUploadRequest) (api.ObjectMultipartUpload, error) {
@@ -54,6 +56,7 @@ func (c *transferFixture) CompleteObjectMultipartUpload(_ context.Context, _, _,
 func TestBucketFileTransferStreamsSingleAndMultipart(t *testing.T) {
 	for _, payload := range []string{"", "abc", "abcdefg"} {
 		t.Run(payload, func(t *testing.T) {
+			version := uuid.NewString()
 			var received bytes.Buffer
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
@@ -61,15 +64,16 @@ func TestBucketFileTransferStreamsSingleAndMultipart(t *testing.T) {
 				}
 				_, _ = io.Copy(&received, r.Body)
 				w.Header().Set("ETag", `"part"`)
+				w.Header().Set("X-Amz-Version-Id", version)
 			}))
 			defer server.Close()
 			file := filepath.Join(t.TempDir(), "input")
 			if err := os.WriteFile(file, []byte(payload), 0600); err != nil {
 				t.Fatal(err)
 			}
-			c := &transferFixture{url: server.URL, session: api.ObjectMultipartUpload{ID: uuid.NewString(), Key: "目录 /+%.txt", SizeBytes: int64(len(payload)), PartSizeBytes: 3, PartCount: 3}}
+			c := &transferFixture{url: server.URL, session: api.ObjectMultipartUpload{ID: uuid.NewString(), Key: "目录 /+%.txt", SizeBytes: int64(len(payload)), PartSizeBytes: 3, PartCount: 3, VersionID: version}}
 			result, err := runBucketTransfer(t.Context(), c, bucketTransferOptions{action: "upload", app: "demo", bucket: uuid.NewString(), key: "目录 /+%.txt", path: file, contentType: "text/plain"})
-			if err != nil || result.Status != "completed" || result.Bytes != int64(len(payload)) || received.String() != payload || c.multipart != (len(payload) > 3) {
+			if err != nil || result.Status != "completed" || result.VersionID != version || result.Bytes != int64(len(payload)) || received.String() != payload || c.multipart != (len(payload) > 3) {
 				t.Fatal(result, err, received.String())
 			}
 			if c.multipart && (len(c.parts) != 3 || c.parts[2].PartNumber != 3) {

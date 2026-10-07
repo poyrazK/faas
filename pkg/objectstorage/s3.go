@@ -374,6 +374,9 @@ func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) 
 }
 
 func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
+	if r.VersionID != "" {
+		return SignedRequest{}, ErrInvalid
+	}
 	return p.presign(ctx, bucket, r, ObjectWriteConditions{}, "")
 }
 
