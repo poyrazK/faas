@@ -16,6 +16,10 @@ const restoreLineageTimeout = 20 * time.Second
 // only the acknowledged identity; never repeat a non-idempotent create or
 // replace the provider's proof with the requested lineage.
 func (p *Provider) awaitRestoredBranch(ctx context.Context, projectID, parentID, name string, target branch, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	return p.awaitRestoredBranchWithCreation(ctx, projectID, parentID, name, target, request, nil)
+}
+
+func (p *Provider) awaitRestoredBranchWithCreation(ctx context.Context, projectID, parentID, name string, target branch, request managedpostgres.RestoreRequest, record managedpostgres.CreationRecorder) (managedpostgres.ObservedDatabase, error) {
 	ctx, cancel := context.WithTimeout(ctx, restoreLineageTimeout)
 	defer cancel()
 	id := target.ID
@@ -23,10 +27,22 @@ func (p *Provider) awaitRestoredBranch(ctx context.Context, projectID, parentID,
 		if target.ID != id {
 			return managedpostgres.ObservedDatabase{}, managedpostgres.ErrConflict
 		}
-		observed, err := restoredBranchObservation(projectID, parentID, name, target, request)
+		if record != nil {
+			accepted, custodyErr := restoreCreationAcknowledgement(projectID, parentID, name, target)
+			if custodyErr == nil {
+				if err := record(ctx, accepted); err != nil {
+					return managedpostgres.ObservedDatabase{}, err
+				}
+				record = nil
+			} else if !errors.Is(custodyErr, managedpostgres.ErrUnavailable) {
+				return managedpostgres.ObservedDatabase{}, custodyErr
+			}
+		}
+		observed, err := p.observeRestoredBranch(ctx, projectID, parentID, name, target, request)
 		if err == nil || !errors.Is(err, managedpostgres.ErrUnavailable) || !validProviderID.MatchString(id) || target.Name != name ||
 			(target.ParentID != "" && target.ParentID != parentID) ||
-			(target.ParentID != "" && target.ParentTimestamp != "" && target.ProjectID != "" && target.InitSource != "") {
+			(target.ParentID != "" && target.ProjectID != "" && target.InitSource != "" &&
+				(target.ParentTimestamp != "" && target.ParentLSN == "" || target.ParentLSN != "" && target.CurrentState == "ready" && target.PendingState == "")) {
 			return observed, err
 		}
 		var response struct {

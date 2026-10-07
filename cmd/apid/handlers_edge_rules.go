@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -534,8 +535,10 @@ func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	if len(req.Action) == 0 {
 		return api.ErrValidation("action is required")
 	}
-	prob := validateEdgeRuleAction(req.Kind, req.Action, plan)
-	return prob
+	if prob := validateEdgeRuleAction(req.Kind, req.Action, plan); prob != nil {
+		return prob
+	}
+	return validateMCPRuleSelectors(req.Kind, req.MatchHost, req.MatchPath, req.MatchMethods, req.MatchHeaders, req.Action)
 }
 
 // actionFromBody re-marshals the wire json.RawMessage back into the
@@ -591,6 +594,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				Issuer: a.Issuer, Audience: a.Audience, JWKSURL: a.JWKSURL,
 				Algorithms: a.Algorithms, RequiredClaims: a.RequiredClaims,
 				PlatformTenantExternalRefClaim: a.PlatformTenantExternalRefClaim,
+				MCP:                            a.MCP,
 			}
 		}
 	case state.EdgeRuleKindIP:
@@ -854,6 +858,29 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			return
 		}
 	}
+	if row.Kind == state.EdgeRuleKindJWT {
+		host, path, methods, headers := row.MatchHost, row.MatchPath, row.MatchMethods, row.MatchHeaders
+		if req.MatchHost != nil {
+			host = *req.MatchHost
+		}
+		if req.MatchPath != nil {
+			path = *req.MatchPath
+		}
+		if req.MatchMethods != nil {
+			methods = *req.MatchMethods
+		}
+		if req.MatchHeaders != nil {
+			headers = *req.MatchHeaders
+		}
+		raw, _ := json.Marshal(row.Action.JWT)
+		if req.Action != nil {
+			raw = *req.Action
+		}
+		if prob := validateMCPRuleSelectors(string(row.Kind), host, path, methods, headers, raw); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	// ValidateMode (ADR-128 D1): top-level wire field on
 	// update must be the closed enum when set. nil == "leave
 	// alone" (no row update). The action-level field is
@@ -1035,4 +1062,22 @@ func (s *server) deleteEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	convergence.setResponseState(w, "active")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func validateMCPRuleSelectors(kind, host, path string, methods []string, headers map[string]string, raw json.RawMessage) *api.Problem {
+	if kind != "jwt" {
+		return nil
+	}
+	var action api.EdgeRuleJWTAction
+	if err := json.Unmarshal(raw, &action); err != nil {
+		return api.ErrValidation(fmt.Sprintf("jwt action: %v", err))
+	}
+	if action.MCP == nil {
+		return nil
+	}
+	resource, err := url.Parse(action.MCP.Resource)
+	if err != nil || host != resource.Host || path != "/**" || len(methods) != 0 || len(headers) != 0 {
+		return api.ErrValidation("MCP resource policies require the canonical host, match_path=/**, and no method or header selectors")
+	}
+	return nil
 }

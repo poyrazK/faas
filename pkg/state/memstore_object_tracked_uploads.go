@@ -35,6 +35,9 @@ func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCom
 }
 
 func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.ObjectStoragePolicy, capture bool) (ObjectUploadCompletion, bool, error) {
+	if _, held := m.objectWriteFences[c.BucketID]; held {
+		return c, false, ErrObjectBucketWriteFenced
+	}
 	if capture {
 		var err error
 		c.Encryption, c.EncryptionDefaultRevision, err = m.captureObjectBucketDefaultLocked(c.BucketID, c.Encryption)
@@ -56,6 +59,9 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 		return c, false, ErrConflict
 	}
 	if _, ok := m.objectUploadCompletions[c.ID]; ok {
+		return c, false, ErrConflict
+	}
+	if _, ok := m.objectMutations[c.ID]; ok {
 		return c, false, ErrConflict
 	}
 	if _, ok := m.objectWriteAdmissions[c.ID]; ok {
@@ -82,6 +88,10 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 	if credential, ok := m.objectS3Credentials[c.SubjectID]; ok && credential.URL != nil {
 		c.RecoveryRetryAt = credential.URL.ExpiresAt
 	}
+	if m.objectMutations == nil {
+		m.objectMutations = map[string]ObjectBucketMutation{}
+	}
+	m.objectMutations[c.ID] = ObjectBucketMutation{ID: c.ID, UploadID: c.ID, Bucket: m.objectBuckets[c.BucketID], Kind: ObjectBucketMutationRequest, CreatedAt: c.CreatedAt}
 	m.objectUploadCompletions[c.ID] = cloneObjectUploadCompletion(c)
 	return cloneObjectUploadCompletion(c), true, nil
 }
@@ -144,6 +154,9 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	w.Settled = true
 	m.objectWriteAdmissions[old.ID] = w
 	m.objectUploadCompletions[old.ID] = old
+	if receipt, exists := m.objectMutations[old.ID]; exists && receipt.UploadID == old.ID {
+		delete(m.objectMutations, old.ID)
+	}
 	return cloneObjectUploadCompletion(old), nil
 }
 func (m *MemStore) FinishTrackedObjectUpload(_ context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {

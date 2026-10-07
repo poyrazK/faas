@@ -19,13 +19,13 @@ export function resolveMcpTaskMetricsSettings({ env = process.env, role = 'combi
   const token = typeof env.MCP_TASKS_SCALING_TOKEN === 'string' ? env.MCP_TASKS_SCALING_TOKEN.trim() : '';
   if (!appSlug && !token) return undefined;
   if (!appSlug || !token) throw new Error('MCP task scaling requires both MCP_TASKS_SCALING_APP_SLUG and MCP_TASKS_SCALING_TOKEN');
-  if (role !== 'worker') throw new Error('MCP task scaling metrics can only be published by the dedicated worker role');
+  if (role !== 'worker' && role !== 'observer') throw new Error('MCP task scaling metrics can only be published by the dedicated worker role or observer');
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(appSlug)) throw new Error('Invalid MCP task scaling app slug');
   const configuredURL = typeof env.GREGALE_API_URL === 'string' && env.GREGALE_API_URL.trim() ? env.GREGALE_API_URL.trim() : DEFAULT_API_URL;
   return { appSlug, token, apiURL: safeAPIURL(configuredURL) };
 }
 
-export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = DEFAULT_API_URL, fetchImpl = globalThis.fetch, intervalMs = 15_000, onError = () => {} }) {
+export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = DEFAULT_API_URL, fetchImpl = globalThis.fetch, intervalMs = 15_000, keepAlive = false, onError = () => {} }) {
   if (!store || typeof store.queueMetrics !== 'function') throw new Error('MCP task metrics require a task store queueMetrics method');
   if (typeof appSlug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(appSlug)) throw new Error('Invalid MCP task scaling app slug');
   if (typeof token !== 'string' || !token.trim()) throw new Error('MCP task scaling token is required');
@@ -70,7 +70,7 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
   // app-scoped gauge and never stores task or customer identifiers.
   void publish();
   const timer = setInterval(() => { void publish(); }, intervalMs);
-  timer.unref?.();
+  if (!keepAlive) timer.unref?.();
 
   return {
     async close() {

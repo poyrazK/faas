@@ -20,6 +20,41 @@ import (
 	"time"
 )
 
+// MCP task admission defaults are starter-owned namespace limits, not plan
+// quotas. Customer PostgreSQL stores enforce these atomically across replicas.
+const (
+	MCPTaskDefaultMaxOutstanding         = 1000
+	MCPTaskDefaultMaxOutstandingPerOwner = 100
+	MCPPolicyMaxEntries                  = 256
+	MCPPolicyMaxKeyBytes                 = 4096
+	MCPPolicyMaxRequestBytes             = 1 << 20
+	MCPReleaseMaxRoles                   = 32
+	MCPReleasePolicyMaxBytes             = 64 << 10
+)
+
+// Historical replay preview bounds retained-envelope reads (ADR-645).
+const (
+	EventReplayPreviewPageDefault    = 50
+	EventReplayPreviewPageMax        = 100
+	EventReplayPreviewCursorMaxBytes = 4096
+	EventReplayPreviewReadTimeout    = 5 * time.Second
+)
+
+// Historical backfills pin only the bounded settled-receipt retention window.
+const (
+	EventReplayBackfillMaxRange            = 30 * 24 * time.Hour
+	EventReplayBackfillPageSize            = 100
+	EventReplayBackfillInFlightMax         = 100
+	EventReplayBackfillActiveJobsMax       = 3
+	EventReplayBackfillJobRetention        = 30 * 24 * time.Hour
+	EventReplayBackfillPruneBatch          = 100
+	EventReplayBackfillRetryMax            = 100
+	EventReplayBackfillItemsPageDefault    = 50
+	EventReplayBackfillItemsPageMax        = 100
+	EventReplayBackfillItemsCursorMaxBytes = 4096
+	EventReplayBackfillRequestTimeout      = 5 * time.Second
+)
+
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
 const (
 	EventBacklogPageDefault      = 100
@@ -205,7 +240,11 @@ const (
 )
 
 // Workflow coordinator attempts use the positive PostgreSQL integer domain.
-const OperationWorkflowClaimsMaxPerRun = 1<<31 - 1
+const (
+	OperationWorkflowClaimsMaxPerRun   = 1<<31 - 1
+	OperationWorkflowStepAttemptsMax   = 1<<31 - 1
+	OperationWorkflowStepErrorMaxBytes = 4096
+)
 
 // Operations protocol limits apply before customer schemas are evaluated.
 const (
@@ -609,6 +648,8 @@ const (
 	OperationStreamReleaseTimeout  = 2 * time.Second
 	OperationExecutionLeaseMax     = 2 * time.Minute
 	OperationExecutionRenewTimeout = 5 * time.Second
+	// Preserve the native workflow handler default for controlled dispatch.
+	OperationWorkflowHandlerDefaultTimeout = 30 * time.Second
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.

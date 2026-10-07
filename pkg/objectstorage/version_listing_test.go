@@ -24,7 +24,7 @@ func (p *versionPageProvider) ListObjectVersionPage(_ context.Context, _ string,
 	return p.page, nil
 }
 
-// adr: 638
+// adr: 678
 func TestPublicVersionListingOwnsPaginationAndAdmission(t *testing.T) {
 	f := newUploadFixture(t)
 	b, err := f.store.GetObjectBucket(t.Context(), f.account.ID, f.app.ID, f.route.BucketID)
@@ -78,7 +78,7 @@ func TestPublicVersionListingOwnsPaginationAndAdmission(t *testing.T) {
 	}
 }
 
-// adr: 638
+// adr: 678
 func TestPublicVersionListingRejectsMalformedProviderPages(t *testing.T) {
 	f := newUploadFixture(t)
 	b, _ := f.store.GetObjectBucket(t.Context(), f.account.ID, f.app.ID, f.route.BucketID)

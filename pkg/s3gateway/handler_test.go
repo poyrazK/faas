@@ -45,6 +45,23 @@ type gatewayTestStore struct {
 	activityBeginErr, activityFinishErr error
 }
 
+// Deletion admission owns the same source hold as generic mutation admission
+// in the production stores. Keep both seams on this fixture's barrier.
+func (s *gatewayTestStore) BeginObjectDeletion(ctx context.Context, input state.ObjectDeletion, policy api.ObjectStoragePolicy) (state.ObjectDeletion, bool, error) {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return state.ObjectDeletion{}, false, err
+	}
+	if s.activityBeginErr != nil {
+		return state.ObjectDeletion{}, false, s.activityBeginErr
+	}
+	if s.fenced {
+		return state.ObjectDeletion{}, false, state.ErrObjectBucketWriteFenced
+	}
+	return s.ObjectDeletionStore.BeginObjectDeletion(ctx, input, policy)
+}
+
 func (s *gatewayTestStore) BeginObjectBucketMutation(ctx context.Context, b state.ObjectBucket, kind string) (state.ObjectBucketMutation, error) {
 	s.activityMu.Lock()
 	defer s.activityMu.Unlock()

@@ -226,6 +226,8 @@ type MemStore struct {
 	objectS3Credentials         map[string]ObjectS3Credential
 	objectS3CopySources         map[string]ObjectS3CopySource
 	objectMultipartUploads      map[string]ObjectMultipartUpload
+	objectMultipartInitiations  map[string]ObjectMultipartInitiation
+	objectMultipartPartWriters  map[multipartPartWriterKey]multipartPartWriter
 	objectMultipartPartGrants   map[string]map[int32]int64
 	objectMultipartTransfers    map[string]map[int32]multipartPartTransfer
 	objectUploadRoutes          map[string]ObjectUploadRoute
@@ -5136,12 +5138,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		servingID := ""
 		servingCount := 0
 		for otherID, other := range m.deployments {
-			if other.AppID == d.AppID && other.Status == DeployLive && other.TrafficPercent == 100 && otherID != id {
+			if other.AppID == d.AppID && other.Status == DeployLive && other.TrafficPercent > 0 && otherID != id {
 				servingID = otherID
 				servingCount++
 			}
 		}
-		if servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) {
+		if (expectedServingID[0] == "" && servingCount != 0) || (expectedServingID[0] != "" && (servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) || m.deployments[servingID].TrafficPercent != 100)) {
 			return Deployment{}, ErrTrafficServingChanged
 		}
 	}
@@ -8567,7 +8569,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
 		}
 		sort.SliceStable(siblings, func(i, j int) bool { return siblings[i].ID < siblings[j].ID })
-		if len(siblings) == 0 && d.TrafficPercent != 100 {
+		if len(siblings) == 0 && d.TrafficPercent != 100 && d.TrafficPercent != 0 {
 			return ErrTrafficPercentSumInvalid
 		}
 		d.Status = DeployLive
@@ -8576,6 +8578,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		now := time.Now().UTC()
 		d.RolloutCompletedAt = &now
 		newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100-d.TrafficPercent)
+		// A dark revision must never activate another unverified dark sibling.
+		if d.TrafficPercent == 0 {
+			for i, sibling := range siblings {
+				newWeights[i] = sibling.Prior
+			}
+		}
 		updatedSiblings := make(map[string]Deployment, len(siblings))
 		for i, sibling := range siblings {
 			other := m.deployments[sibling.ID]
@@ -21205,6 +21213,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for uploadID, upload := range m.objectMultipartUploads {
 		if upload.AccountID == id {
 			delete(m.objectMultipartUploads, uploadID)
+			delete(m.objectMultipartInitiations, uploadID)
+			for key := range m.objectMultipartPartWriters {
+				if key.upload == uploadID {
+					delete(m.objectMultipartPartWriters, key)
+				}
+			}
 			delete(m.objectMultipartPartGrants, uploadID)
 			delete(m.objectMultipartTransfers, uploadID)
 		}

@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 639
+// adr: 679
 func TestBucketUploadCheckpointPrivateAtomicAndLocked(t *testing.T) {
 	c, o := newBucketResumeFixture(t)
 	c.failSign = 2
@@ -62,7 +62,7 @@ func TestBucketUploadCheckpointPrivateAtomicAndLocked(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadResumeRefusesSymlinkedStage(t *testing.T) {
 	c, o := newBucketResumeFixture(t)
 	c.failSign = 2
@@ -86,7 +86,7 @@ func TestBucketUploadResumeRefusesSymlinkedStage(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadCheckpointRejectsCorruptionAndSymlinks(t *testing.T) {
 	for _, scenario := range []string{"trailing", "unknown field", "version", "fingerprint", "parts", "phase", "oversized", "symlink", "public permissions"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -156,7 +156,7 @@ func TestBucketUploadCheckpointRejectsCorruptionAndSymlinks(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadCheckpointRefusesCredentialBearingAPIURLs(t *testing.T) {
 	for _, base := range []string{"https://user:private-secret@example.test", "https://example.test?token=private-secret", "https://example.test#private-secret"} {
 		t.Run(base, func(t *testing.T) {

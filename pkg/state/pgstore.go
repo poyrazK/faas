@@ -7800,13 +7800,15 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if len(expectedServingID) > 0 {
 		servingID := ""
 		servingCount := 0
+		servingPercent := 0
 		for _, sibling := range siblings {
-			if sibling.Prior == 100 {
+			if sibling.Prior > 0 {
 				servingID = sibling.ID
+				servingPercent = sibling.Prior
 				servingCount++
 			}
 		}
-		if servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) {
+		if (expectedServingID[0] == "" && servingCount != 0) || (expectedServingID[0] != "" && (servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) || servingPercent != 100)) {
 			return Deployment{}, fmt.Errorf("state: expected serving deployment %s, found %s: %w",
 				expectedServingID[0], servingID, ErrTrafficServingChanged)
 		}
@@ -9416,7 +9418,7 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("state: mark manual split live iterate siblings: %w", err)
 		}
-		if len(siblings) == 0 && dep.TrafficPercent != 100 {
+		if len(siblings) == 0 && dep.TrafficPercent != 100 && dep.TrafficPercent != 0 {
 			return fmt.Errorf("state: manual split has no live base deployment: %w", ErrTrafficPercentSumInvalid)
 		}
 
@@ -9428,6 +9430,12 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 			return fmt.Errorf("state: mark manual split live: %w", err)
 		}
 		newWeights := RedistributeTraffic(siblings, 100-dep.TrafficPercent)
+		// Zero-traffic staging preserves every sibling, including an empty pool.
+		if dep.TrafficPercent == 0 {
+			for i, sibling := range siblings {
+				newWeights[i] = sibling.Prior
+			}
+		}
 		for i, sibling := range siblings {
 			if _, err := tx.Exec(ctx,
 				`update deployments set traffic_percent = $2 where id = $1`,
@@ -25068,6 +25076,12 @@ func mapErr(err error) error {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "55000":
+			if pgErr.ConstraintName == "object_deletion_capture_fenced" || pgErr.ConstraintName == "object_protection_capture_fenced" || pgErr.ConstraintName == "object_upload_capture_fenced" || pgErr.ConstraintName == "object_multipart_part_capture_fenced" {
+				return ErrObjectBucketWriteFenced
+			}
+			if pgErr.ConstraintName == "clone_configuration_write_fenced" || pgErr.ConstraintName == "clone_configuration_guard_missing" {
+				return ErrProjectEnvironmentCloneConfigurationFenced
+			}
 			if pgErr.ConstraintName == "layer_artifact_retention_reference_fence" {
 				return ErrLayerArtifactRetired
 			}
@@ -25093,6 +25107,8 @@ func mapErr(err error) error {
 			case "binding_release_policy_revision":
 				return ErrBindingReleasePolicyRevision
 			case "object_version_protection_fenced":
+				return ErrConflict
+			case "object_multipart_part_writer_conflict", "object_multipart_initiation_original", "object_multipart_initiation_immutable", "object_multipart_initiation_positive_result", "object_multipart_initiation_intent", "object_multipart_initiation_uncertain":
 				return ErrConflict
 			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
@@ -25905,6 +25921,11 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// `delete from accounts` at the bottom be the natural sentinel.
 	if err := purgeOperationOwnerTx(ctx, tx, id, ""); err != nil {
 		return fmt.Errorf("state: purge customer operation owner: %w", err)
+	}
+	// Custody outlives provider cleanup until final account erasure. Refuse to
+	// purge any acknowledgement whose lifecycle has not confirmed deletion.
+	if err := sqlc.New().PurgeAccountManagedPostgresCreationReceipts(ctx, tx, mustPgUUID(id)); err != nil {
+		return fmt.Errorf("state: purge deleted managed PostgreSQL custody: %w", err)
 	}
 
 	steps := []struct {

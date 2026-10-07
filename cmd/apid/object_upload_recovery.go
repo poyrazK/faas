@@ -95,6 +95,16 @@ func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadComp
 	if err != nil {
 		return page, err
 	}
+	// New journals carry one pinned provider receipt. Old unbound journals may
+	// still be probed, but their unrelated unknown receipts cannot be retired.
+	if bound, ok := s.store.(state.ObjectTrackedUploadMutationStore); ok {
+		receipt, readErr := bound.ReadTrackedObjectUploadMutation(ctx, c)
+		if readErr == nil {
+			b = receipt.Bucket
+		} else if !errors.Is(readErr, state.ErrNotFound) {
+			return page, readErr
+		}
+	}
 	backend, err := s.objectStorage.Resolve(b.BackendID, b.BackendFingerprint)
 	if err != nil {
 		return page, objectstorage.ErrConfiguration

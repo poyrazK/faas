@@ -89,6 +89,15 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	if !errors.Is(e, ErrNotFound) {
 		return old, false, e
 	}
+	// The source-row lock serializes admission with fence acquisition. Replays
+	// only observe their original journal and never admit another provider IO.
+	_, e = q.ObjectBucketWriteFenceRead(ctx, tx, mustPgUUID(j.BucketID))
+	if e == nil {
+		return ObjectDeletion{}, false, ErrObjectBucketWriteFenced
+	}
+	if !errors.Is(e, pgx.ErrNoRows) {
+		return ObjectDeletion{}, false, mapErr(e)
+	}
 	_, e = q.ObjectVersionProtectionActive(ctx, tx, mustPgUUID(j.BucketID))
 	if e == nil {
 		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectVersionProtectionPending)

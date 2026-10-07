@@ -19,7 +19,9 @@ gregale mcp config --url https://my-mcp.gregale.dev/mcp --name my-mcp
 
 `gregale-mcp.json` declares the MCP contract. `gregale.yaml` declares ordinary
 HTTP hosting. The deploy command uploads the worktree, requires a streaming-enabled
-plan, opens the platform public auth gate and verifies tool discovery. An empty
+plan, stages a zero-traffic candidate, verifies its preview and promotes with a
+serving-revision guard. Failed checks preserve the serving revision. Use
+`--release-policy` with reviewed role baselines to gate catalog changes. An empty
 `allowed_origins` rejects every browser origin; non-browser MCP clients normally
 omit Origin. Add exact trusted origins when a browser client needs access.
 
@@ -253,3 +255,36 @@ should have at least one replica for prompt execution. Do not store access
 tokens in task arguments; the store already keeps payloads encrypted and
 short-lived, but application handlers still own data-minimization and
 authorization.
+
+Task admission defaults to 1000 outstanding tasks per namespace and 100 per
+owner; override `tasks.max_outstanding` and `tasks.max_outstanding_per_owner`.
+Queued, running and input-required tasks count against admission atomically.
+Versioned workers claim only supported handlers; retain earlier implementations
+with `previousVersions: { '1': executeV1 }` or keep the old worker until it drains.
+
+`npm run start:tasks-observer` publishes aggregate queue metrics from a separate
+always-running process, allowing worker replicas to start from zero. Give it a
+read-only database credential, the shared namespace and worker scaling metrics
+credentials. It needs no owner key and never migrates schema or claims tasks.
+Worker-only metrics still require at least one worker replica. Alert on the
+payload-free `mcp_task_metrics_publish_failed` log event.
+
+Configure the dedicated worker's task-backlog scaler after deploying the worker:
+
+```sh
+gregale mcp tasks setup --app mcp-worker
+gregale mcp tasks setup --app mcp-worker --min 0 --apply
+gregale mcp tasks status --app mcp-worker
+```
+
+The first command previews the policy. Apply `--min 0` only after the separate
+observer is running; the CLI does not create the observer or provision its
+database and metrics credentials. `status` shows whether the worker's task
+metrics are present and fresh.
+
+For an additional gateway JWT/scope gate, run `gregale mcp policy --path . --name
+my-mcp` after configuring external OAuth. This separately updates the app-wide
+JWT edge rule. The provider retains login and token issuance; keep application
+catalog filtering and owner checks. Gateway resource policies accept simple
+`{variable}` templates. Native deployment, restore and real provider/client login
+qualification must be completed before claiming production support.

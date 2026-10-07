@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 638
+// adr: 678
 func TestBoundVersionURLRejectsSelectorExpansion(t *testing.T) {
 	id := uuid.NewString()
 	u := &state.ObjectURLCapability{Request: api.ObjectSignRequest{Method: "GET", Key: "key", VersionID: id}}

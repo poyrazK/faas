@@ -145,7 +145,7 @@ func newBucketResumeFixture(t *testing.T) (*bucketResumeFixture, bucketTransferO
 	return c, bucketTransferOptions{action: "upload", app: "demo", bucket: uuid.NewString(), key: c.session.Key, path: source, contentType: c.session.ContentType}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadResumeAfterInterruption(t *testing.T) {
 	for _, scenario := range []string{"before part", "lost part acknowledgment", "lost completion acknowledgment"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestBucketUploadResumeAfterInterruption(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadResumeRejectsChangedIdentityBeforeAPICalls(t *testing.T) {
 	for _, scenario := range []string{"same-size source", "key", "app", "bucket", "content type", "missing checkpoint"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -223,7 +223,7 @@ func TestBucketUploadResumeRejectsChangedIdentityBeforeAPICalls(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadResumeRejectsMalformedPartPages(t *testing.T) {
 	for _, scenario := range []string{"wrong size", "wrong ETag", "repeated marker", "out of range", "unattempted", "empty truncated page"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -260,7 +260,7 @@ func TestBucketUploadResumeRejectsMalformedPartPages(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadStagesFingerprintBoundParts(t *testing.T) {
 	c, o := newBucketResumeFixture(t)
 	c.onSign = func(part int) {
@@ -276,7 +276,7 @@ func TestBucketUploadStagesFingerprintBoundParts(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadResumeRejectsTerminalAndChangedSessions(t *testing.T) {
 	for _, scenario := range []string{"aborted", "aborting", "expired", "key", "geometry", "content type", "foreign completion"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -309,7 +309,7 @@ func TestBucketUploadResumeRejectsTerminalAndChangedSessions(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadResumeFlags(t *testing.T) {
 	id := uuid.NewString()
 	base := []string{"upload", "demo", uuid.NewString(), "key", "source"}
@@ -324,7 +324,7 @@ func TestBucketUploadResumeFlags(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadResumePendingCompletionReusesManifest(t *testing.T) {
 	c, o := newBucketResumeFixture(t)
 	c.pendingComplete = true
@@ -340,7 +340,7 @@ func TestBucketUploadResumePendingCompletionReusesManifest(t *testing.T) {
 	}
 }
 
-// adr: 639
+// adr: 679
 func TestBucketUploadResumeAllowsRelocatedIdenticalSource(t *testing.T) {
 	c, o := newBucketResumeFixture(t)
 	c.failSign = 2

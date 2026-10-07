@@ -70,6 +70,18 @@ func mcpCLICommand() cliCommand {
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Flags: taskRemote, Examples: []string{"gregale mcp task-get --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Flags: taskWaitFlags, Examples: []string{"gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Flags: taskRemote, Examples: []string{"gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
+		{Name: "tasks", Short: "Configure and inspect durable task worker scaling", Subcommands: []cliSub{
+			{Name: "setup", Short: "Preview or apply the task-backlog scaling policy", Flags: []cliFlag{
+				{Name: "app", Short: "worker app slug (defaults to the linked project app)", Value: "SLUG"},
+				{Name: "min", Short: "minimum replicas (default 1; use 0 with an always-on observer)", Value: "N"},
+				{Name: "max", Short: "maximum replicas (default 10)", Value: "N"},
+				{Name: "target", Short: "outstanding tasks per worker (default 4)", Value: "N"},
+				{Name: "apply", Short: "apply the proposed worker scaling policy", Bool: true},
+			}, Examples: []string{"gregale mcp tasks setup --app mcp-worker", "gregale mcp tasks setup --app mcp-worker --min 0 --apply"}},
+			{Name: "status", Short: "Show task scaling policy and custom metric freshness", Flags: []cliFlag{
+				{Name: "app", Short: "worker app slug (defaults to the linked project app)", Value: "SLUG"},
+			}, Examples: []string{"gregale mcp tasks status --app mcp-worker --json"}},
+		}},
 		{Name: "watch", Short: "Watch caller-visible MCP catalog definitions for drift", Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app's public endpoint", Value: "SLUG"},

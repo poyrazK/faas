@@ -587,7 +587,7 @@ func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r Multipa
 }
 
 func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r MultipartCreateRequest, encryption *ResolvedObjectEncryption) (string, error) {
-	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateObjectMetadata(r.Metadata) != nil {
+	if !validMultipartCreateRequest(r) {
 		return "", ErrInvalid
 	}
 	// A Gregale bucket does not expose native provider credentials. Combined
@@ -600,6 +600,10 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 	if found != "" {
 		return found, nil
 	}
+	return p.createMultipartEncrypted(ctx, bucket, r, encryption, nil)
+}
+
+func (p *S3) createMultipartEncrypted(ctx context.Context, bucket string, r MultipartCreateRequest, encryption *ResolvedObjectEncryption, dispatch func(context.Context) error) (string, error) {
 	// Recovery only adopts an existing private upload. An enabled-key probe is
 	// required when creating a new upload, never when recovering its identity.
 	if encryption != nil {
@@ -636,8 +640,13 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 			return "", err
 		}
 	}
+	if dispatch != nil {
+		if err := dispatch(ctx); err != nil {
+			return "", err
+		}
+	}
 	// Initiation is not idempotent. A retry can create a second native upload
-	// after a lost acknowledgment; durable recovery must list before dispatch.
+	// after a lost acknowledgment; durable callers must retain dispatch evidence.
 	out, err := p.client.CreateMultipartUpload(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return "", normalize(err)
