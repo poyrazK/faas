@@ -1358,7 +1358,9 @@ func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.F
 	// status flip above. The deployment lookup matches the one
 	// in emitBuildSucceeded (line 619) so we don't have a second
 	// store reader.
-	if _, serr := b.store.MarkDeploymentStageFailed(ctx, depID, time.Now(), msg); serr != nil {
+	// ErrNotFound means no stage was in flight (the build failed after its
+	// last stage closed, e.g. during artifact export): nothing to stamp.
+	if _, serr := b.store.MarkDeploymentStageFailed(ctx, depID, time.Now(), msg); serr != nil && !errors.Is(serr, state.ErrNotFound) {
 		b.log.Warn("builderd: stamp failed stage", "deployment", depID, "err", serr)
 	}
 	// ADR-048 §4: builder-time metering on terminal build
