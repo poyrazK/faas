@@ -94,6 +94,7 @@ type requestTelemetryReceiver struct {
 	ops     *wire.OpsMetrics
 	limiter *telemetryRateLimiter
 	enabled bool
+	gate    ingestGate
 }
 
 // newRequestTelemetryReceiver wires a production receiver.
@@ -246,7 +247,12 @@ func (r *requestTelemetryReceiver) IncrementRequestTelemetry(stream apidpb.Reque
 			//nolint:nilerr // io.EOF on stream.Recv is the canonical "client half-closed" signal — returning nil closes the stream cleanly without surfacing the EOF as an error.
 			return nil
 		}
+		release, err := r.gate.acquire(stream.Context())
+		if err != nil {
+			return err
+		}
 		out := r.handleOne(stream.Context(), req)
+		release()
 		if err := stream.Send(out); err != nil {
 			return err
 		}
@@ -542,8 +548,12 @@ func (r *requestTelemetryReceiver) observe(outcome string) {
 // registerRequestTelemetryReceiver binds the RequestTelemetryServer
 // onto a gRPC server. Called from runRequestTelemetryServer in
 // main.go alongside the other gRPC services.
-func registerRequestTelemetryReceiver(s *grpc.Server, store requestTelemetryStore, ops *wire.OpsMetrics, limiter *telemetryRateLimiter, enabled bool) {
-	apidpb.RegisterRequestTelemetryServer(s, newRequestTelemetryReceiver(store, ops, limiter, enabled))
+func registerRequestTelemetryReceiver(s *grpc.Server, store requestTelemetryStore, ops *wire.OpsMetrics, limiter *telemetryRateLimiter, enabled bool, gate ...ingestGate) {
+	receiver := newRequestTelemetryReceiver(store, ops, limiter, enabled)
+	if len(gate) > 0 {
+		receiver.gate = gate[0]
+	}
+	apidpb.RegisterRequestTelemetryServer(s, receiver)
 }
 
 // errorsAsPgError is a tiny helper that returns true when err is
