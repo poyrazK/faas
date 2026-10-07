@@ -8816,6 +8816,11 @@ const (
 	RuntimeUpgradeNativeOriginTimeout         = 90 * time.Second
 	RuntimeUpgradeNativeUnitTimeout           = 2 * time.Second
 	RuntimeUpgradeNativeCommandWaitDelay      = time.Second
+
+	// ADR-625: two retained scope snapshots around a boot-bound public probe,
+	// including enrollment lock waits. Stored evidence is selected inventory.
+	RuntimeUpgradeNativeStartupTimeout          = 90 * time.Second
+	RuntimeUpgradeNativeStartupEvidenceMaxBytes = 1 << 20
 )
 
 // Private selected systemd activation audit bounds (ADR-621).

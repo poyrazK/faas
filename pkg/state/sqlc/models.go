@@ -6073,6 +6073,26 @@ type RuntimeUpgradeGatewayRosterHead struct {
 	Revision  pgtype.UUID
 }
 
+type RuntimeUpgradeNativePublicStartup struct {
+	PublicSessionID pgtype.UUID
+	SlotID          pgtype.UUID
+	GatewayRevision pgtype.UUID
+	PublicRevision  pgtype.UUID
+	ConfigSha256    string
+	MachineID       string
+	BootID          pgtype.UUID
+	Pid             int32
+	StartTicks      string
+	PidNamespace    string
+	NetNamespace    string
+	Review          []byte
+	ReviewSha256    string
+	Envelope        []byte
+	EnvelopeSha256  string
+	ObservedAt      pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+}
+
 type RuntimeUpgradeOperation struct {
 	ID                        pgtype.UUID
 	AccountID                 pgtype.UUID

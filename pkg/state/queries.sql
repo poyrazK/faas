@@ -14362,6 +14362,31 @@ ON CONFLICT (slot_id) DO UPDATE SET public_session_id=EXCLUDED.public_session_id
 -- name: ReadRuntimeUpgradePublicEdgeGuards :many
 SELECT * FROM runtime_upgrade_public_edge_guards WHERE public_roster_revision=$1 ORDER BY slot_id LIMIT $2;
 
+-- Private immutable selected native startup provenance (ADR-625).
+-- name: ReadRuntimeUpgradeNativePublicStartup :one
+SELECT * FROM runtime_upgrade_native_public_startups WHERE public_session_id=$1;
+
+-- name: RuntimeUpgradeNativePublicStartupEligible :one
+SELECT EXISTS (
+ SELECT 1 FROM runtime_upgrade_public_edge_rosters r
+ JOIN runtime_upgrade_public_edge_roster_head p ON p.singleton AND p.revision=r.revision
+ JOIN runtime_upgrade_gateway_roster_head g ON g.singleton AND g.revision=r.gateway_roster_revision
+ JOIN runtime_upgrade_public_edge_guards f ON f.slot_id=sqlc.arg(slot_id)::uuid AND f.public_session_id=sqlc.arg(public_session_id)::uuid
+  AND f.public_roster_revision=r.revision AND f.config_sha256=sqlc.arg(config_sha256)::text
+ WHERE r.revision=sqlc.arg(public_revision)::uuid AND r.gateway_roster_revision=sqlc.arg(gateway_revision)::uuid
+  AND r.public_sessions[array_position(r.slot_ids,sqlc.arg(slot_id)::uuid)]=sqlc.arg(public_session_id)::uuid
+  AND r.config_sha256s[array_position(r.slot_ids,sqlc.arg(slot_id)::uuid)]=sqlc.arg(config_sha256)::text
+  AND f.guard_enabled AND f.observed_at<=clock_timestamp() AND f.expires_at>clock_timestamp()
+  AND NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawals WHERE public_session_id=sqlc.arg(public_session_id)::uuid)
+);
+
+-- name: InsertRuntimeUpgradeNativePublicStartup :exec
+INSERT INTO runtime_upgrade_native_public_startups (
+ public_session_id,slot_id,gateway_revision,public_revision,config_sha256,machine_id,boot_id,pid,start_ticks,pid_namespace,net_namespace,
+ review,review_sha256,envelope,envelope_sha256,observed_at,recorded_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+ON CONFLICT (public_session_id) DO NOTHING;
+
 -- name: ResetRuntimeUpgradePublicEdgeActivity :exec
 DELETE FROM runtime_upgrade_public_edge_activity;
 

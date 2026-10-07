@@ -19155,6 +19155,57 @@ func (q *Queries) InsertRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX
 	return i, err
 }
 
+const insertRuntimeUpgradeNativePublicStartup = `-- name: InsertRuntimeUpgradeNativePublicStartup :exec
+INSERT INTO runtime_upgrade_native_public_startups (
+ public_session_id,slot_id,gateway_revision,public_revision,config_sha256,machine_id,boot_id,pid,start_ticks,pid_namespace,net_namespace,
+ review,review_sha256,envelope,envelope_sha256,observed_at,recorded_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+ON CONFLICT (public_session_id) DO NOTHING
+`
+
+type InsertRuntimeUpgradeNativePublicStartupParams struct {
+	PublicSessionID pgtype.UUID
+	SlotID          pgtype.UUID
+	GatewayRevision pgtype.UUID
+	PublicRevision  pgtype.UUID
+	ConfigSha256    string
+	MachineID       string
+	BootID          pgtype.UUID
+	Pid             int32
+	StartTicks      string
+	PidNamespace    string
+	NetNamespace    string
+	Review          []byte
+	ReviewSha256    string
+	Envelope        []byte
+	EnvelopeSha256  string
+	ObservedAt      pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) InsertRuntimeUpgradeNativePublicStartup(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeNativePublicStartupParams) error {
+	_, err := db.Exec(ctx, insertRuntimeUpgradeNativePublicStartup,
+		arg.PublicSessionID,
+		arg.SlotID,
+		arg.GatewayRevision,
+		arg.PublicRevision,
+		arg.ConfigSha256,
+		arg.MachineID,
+		arg.BootID,
+		arg.Pid,
+		arg.StartTicks,
+		arg.PidNamespace,
+		arg.NetNamespace,
+		arg.Review,
+		arg.ReviewSha256,
+		arg.Envelope,
+		arg.EnvelopeSha256,
+		arg.ObservedAt,
+		arg.RecordedAt,
+	)
+	return err
+}
+
 const insertRuntimeUpgradeOperation = `-- name: InsertRuntimeUpgradeOperation :one
 INSERT INTO runtime_upgrade_operations(id,account_id,app_id,deployment_id,serving_deployment_id,target_release_id,source_sha256,qualification_report_sha256,phase,source_path,deadline_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text,$10::text,clock_timestamp()+make_interval(secs=>$11::int)) RETURNING id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path
@@ -48269,6 +48320,36 @@ func (q *Queries) ReadRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX) 
 	return i, err
 }
 
+const readRuntimeUpgradeNativePublicStartup = `-- name: ReadRuntimeUpgradeNativePublicStartup :one
+SELECT public_session_id, slot_id, gateway_revision, public_revision, config_sha256, machine_id, boot_id, pid, start_ticks, pid_namespace, net_namespace, review, review_sha256, envelope, envelope_sha256, observed_at, recorded_at FROM runtime_upgrade_native_public_startups WHERE public_session_id=$1
+`
+
+// Private immutable selected native startup provenance (ADR-625).
+func (q *Queries) ReadRuntimeUpgradeNativePublicStartup(ctx context.Context, db DBTX, publicSessionID pgtype.UUID) (RuntimeUpgradeNativePublicStartup, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeNativePublicStartup, publicSessionID)
+	var i RuntimeUpgradeNativePublicStartup
+	err := row.Scan(
+		&i.PublicSessionID,
+		&i.SlotID,
+		&i.GatewayRevision,
+		&i.PublicRevision,
+		&i.ConfigSha256,
+		&i.MachineID,
+		&i.BootID,
+		&i.Pid,
+		&i.StartTicks,
+		&i.PidNamespace,
+		&i.NetNamespace,
+		&i.Review,
+		&i.ReviewSha256,
+		&i.Envelope,
+		&i.EnvelopeSha256,
+		&i.ObservedAt,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const readRuntimeUpgradeOperationCandidate = `-- name: ReadRuntimeUpgradeOperationCandidate :one
 SELECT d.status,COALESCE(d.source_path,'')::text AS source_path,COALESCE(d.source_sha256,'')::text AS source_sha256,
  COALESCE(d.rootfs_key,'')::text AS rootfs_key,COALESCE(d.rootfs_path,'')::text AS rootfs_path,d.image_digest,d.traffic_percent,d.traffic_percent_explicit,d.canary_total_steps,d.rollout_state,d.environment_workload_runtime,
@@ -55462,6 +55543,42 @@ func (q *Queries) RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg Runtim
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const runtimeUpgradeNativePublicStartupEligible = `-- name: RuntimeUpgradeNativePublicStartupEligible :one
+SELECT EXISTS (
+ SELECT 1 FROM runtime_upgrade_public_edge_rosters r
+ JOIN runtime_upgrade_public_edge_roster_head p ON p.singleton AND p.revision=r.revision
+ JOIN runtime_upgrade_gateway_roster_head g ON g.singleton AND g.revision=r.gateway_roster_revision
+ JOIN runtime_upgrade_public_edge_guards f ON f.slot_id=$1::uuid AND f.public_session_id=$2::uuid
+  AND f.public_roster_revision=r.revision AND f.config_sha256=$3::text
+ WHERE r.revision=$4::uuid AND r.gateway_roster_revision=$5::uuid
+  AND r.public_sessions[array_position(r.slot_ids,$1::uuid)]=$2::uuid
+  AND r.config_sha256s[array_position(r.slot_ids,$1::uuid)]=$3::text
+  AND f.guard_enabled AND f.observed_at<=clock_timestamp() AND f.expires_at>clock_timestamp()
+  AND NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawals WHERE public_session_id=$2::uuid)
+)
+`
+
+type RuntimeUpgradeNativePublicStartupEligibleParams struct {
+	SlotID          pgtype.UUID
+	PublicSessionID pgtype.UUID
+	ConfigSha256    string
+	PublicRevision  pgtype.UUID
+	GatewayRevision pgtype.UUID
+}
+
+func (q *Queries) RuntimeUpgradeNativePublicStartupEligible(ctx context.Context, db DBTX, arg RuntimeUpgradeNativePublicStartupEligibleParams) (bool, error) {
+	row := db.QueryRow(ctx, runtimeUpgradeNativePublicStartupEligible,
+		arg.SlotID,
+		arg.PublicSessionID,
+		arg.ConfigSha256,
+		arg.PublicRevision,
+		arg.GatewayRevision,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const runtimeUpgradePublicEdgeSessionWithdrawn = `-- name: RuntimeUpgradePublicEdgeSessionWithdrawn :one

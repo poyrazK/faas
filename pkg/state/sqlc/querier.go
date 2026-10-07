@@ -934,6 +934,7 @@ type Querier interface {
 	InsertRuntimeUpgradeExternalFenceIntent(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeExternalFenceIntentParams) error
 	InsertRuntimeUpgradeExternalFenceReceipt(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeExternalFenceReceiptParams) error
 	InsertRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeGatewayRosterParams) (RuntimeUpgradeGatewayRoster, error)
+	InsertRuntimeUpgradeNativePublicStartup(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeNativePublicStartupParams) error
 	// Private apid runtime upgrade executor (ADR-604).
 	InsertRuntimeUpgradeOperation(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeOperationParams) (RuntimeUpgradeOperation, error)
 	InsertRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBTX, arg InsertRuntimeUpgradePublicEdgeRosterParams) (RuntimeUpgradePublicEdgeRoster, error)
@@ -2169,6 +2170,8 @@ type Querier interface {
 	ReadRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, appID pgtype.UUID) ([]RuntimeUpgradeGatewayReceipt, error)
 	// Private desired gateway roster (apid) and operational liveness (gatewayd), ADR-609.
 	ReadRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX) (RuntimeUpgradeGatewayRoster, error)
+	// Private immutable selected native startup provenance (ADR-625).
+	ReadRuntimeUpgradeNativePublicStartup(ctx context.Context, db DBTX, publicSessionID pgtype.UUID) (RuntimeUpgradeNativePublicStartup, error)
 	ReadRuntimeUpgradeOperationCandidate(ctx context.Context, db DBTX, id pgtype.UUID) (ReadRuntimeUpgradeOperationCandidateRow, error)
 	ReadRuntimeUpgradePublicEdgeActivity(ctx context.Context, db DBTX, arg ReadRuntimeUpgradePublicEdgeActivityParams) ([]RuntimeUpgradePublicEdgeActivity, error)
 	ReadRuntimeUpgradePublicEdgeGuards(ctx context.Context, db DBTX, arg ReadRuntimeUpgradePublicEdgeGuardsParams) ([]RuntimeUpgradePublicEdgeGuard, error)
@@ -2498,6 +2501,7 @@ type Querier interface {
 	// Publication is insert-only; retirement is the sole mutable transition.
 	RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error)
 	RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error)
+	RuntimeUpgradeNativePublicStartupEligible(ctx context.Context, db DBTX, arg RuntimeUpgradeNativePublicStartupEligibleParams) (bool, error)
 	RuntimeUpgradePublicEdgeSessionWithdrawn(ctx context.Context, db DBTX, publicSessionID pgtype.UUID) (bool, error)
 	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
 	SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomationParams) error

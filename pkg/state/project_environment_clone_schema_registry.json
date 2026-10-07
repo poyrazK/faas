@@ -6859,6 +6859,29 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "runtime_upgrade_native_public_startups",
+    "columns": [
+      "boot_id",
+      "config_sha256",
+      "envelope",
+      "envelope_sha256",
+      "gateway_revision",
+      "machine_id",
+      "net_namespace",
+      "observed_at",
+      "pid",
+      "pid_namespace",
+      "public_revision",
+      "public_session_id",
+      "recorded_at",
+      "review",
+      "review_sha256",
+      "slot_id",
+      "start_ticks"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "runtime_upgrade_operations",
     "columns": [
       "account_id",

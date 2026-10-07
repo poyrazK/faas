@@ -100,6 +100,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"runtime_upgrade_external_fence_authorities": CloneSchemaPlatform,
 		"runtime_upgrade_external_fence_intents":     CloneSchemaPlatform,
 		"runtime_upgrade_external_fence_receipts":    CloneSchemaOperational,
+		"runtime_upgrade_native_public_startups":     CloneSchemaOperational,
 		"invocation_work_environment_domains":        CloneSchemaOperational, "invocation_work_environment_admissions": CloneSchemaOperational,
 		"project_environment_queue_runtime_sets": CloneSchemaOperational, "project_environment_queue_consumers": CloneSchemaOperational,
 		"feature_flag_versions":           CloneSchemaConfiguration,

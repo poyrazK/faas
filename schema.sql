@@ -3653,6 +3653,18 @@ END $$;
 
 
 --
+-- Name: forbid_runtime_upgrade_native_public_startup_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.forbid_runtime_upgrade_native_public_startup_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'native startup provenance cannot be truncated' USING ERRCODE='23514';
+END $$;
+
+
+--
 -- Name: github_webhook_secrets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5512,6 +5524,52 @@ BEGIN
   OR array_position(NEW.slot_ids,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL
   OR array_position(NEW.gateway_sessions,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL THEN
   RAISE EXCEPTION 'invalid runtime upgrade gateway roster' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_native_public_startup(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_native_public_startup() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE roster runtime_upgrade_public_edge_rosters; body jsonb; selected jsonb; epoch jsonb;
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'native startup provenance is immutable' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=NEW.gateway_revision FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'native startup internal head changed' USING ERRCODE='23514'; END IF;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton AND revision=NEW.public_revision FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'native startup public head changed' USING ERRCODE='23514'; END IF;
+ SELECT * INTO roster FROM runtime_upgrade_public_edge_rosters WHERE revision=NEW.public_revision;
+ IF roster.gateway_roster_revision IS DISTINCT FROM NEW.gateway_revision
+  OR roster.public_sessions[array_position(roster.slot_ids,NEW.slot_id)] IS DISTINCT FROM NEW.public_session_id
+  OR roster.config_sha256s[array_position(roster.slot_ids,NEW.slot_id)] IS DISTINCT FROM NEW.config_sha256
+  OR NEW.observed_at<roster.created_at OR NEW.recorded_at>clock_timestamp()
+  OR EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawals WHERE public_session_id=NEW.public_session_id)
+  OR NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_guards WHERE slot_id=NEW.slot_id AND public_session_id=NEW.public_session_id
+    AND public_roster_revision=NEW.public_revision AND config_sha256=NEW.config_sha256 AND guard_enabled
+    AND observed_at<=clock_timestamp() AND expires_at>clock_timestamp()) THEN
+  RAISE EXCEPTION 'native startup requires exact current guarded member before withdrawal' USING ERRCODE='23514';
+ END IF;
+ IF encode(sha256(NEW.review),'hex')<>NEW.review_sha256 OR encode(sha256(NEW.envelope),'hex')<>NEW.envelope_sha256 THEN
+  RAISE EXCEPTION 'native startup evidence digest mismatch' USING ERRCODE='23514';
+ END IF;
+ selected:=convert_from(NEW.review,'UTF8')::jsonb;
+ body:=convert_from(NEW.envelope,'UTF8')::jsonb;
+ epoch:=body#>'{proof,startup,epoch}';
+ IF body->'review' IS DISTINCT FROM selected OR jsonb_array_length(body->'native') IS DISTINCT FROM 2
+  OR body#>>'{proof,startup,slot_id}' IS DISTINCT FROM NEW.slot_id::text
+  OR body#>>'{proof,startup,session_id}' IS DISTINCT FROM NEW.public_session_id::text
+  OR body#>>'{proof,startup,config_sha256}' IS DISTINCT FROM NEW.config_sha256
+  OR epoch->>'machine_id' IS DISTINCT FROM NEW.machine_id OR epoch->>'boot_id' IS DISTINCT FROM NEW.boot_id::text
+  OR epoch->>'pid' IS DISTINCT FROM NEW.pid::text OR epoch->>'start_ticks' IS DISTINCT FROM NEW.start_ticks
+  OR epoch->>'pid_namespace' IS DISTINCT FROM NEW.pid_namespace OR epoch->>'net_namespace' IS DISTINCT FROM NEW.net_namespace THEN
+  RAISE EXCEPTION 'native startup evidence identity mismatch' USING ERRCODE='23514';
  END IF;
  RETURN NEW;
 END $$;
@@ -19668,6 +19726,46 @@ CREATE TABLE public.runtime_upgrade_gateway_rosters (
 
 
 --
+-- Name: runtime_upgrade_native_public_startups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_native_public_startups (
+    public_session_id uuid NOT NULL,
+    slot_id uuid NOT NULL,
+    gateway_revision uuid NOT NULL,
+    public_revision uuid NOT NULL,
+    config_sha256 text NOT NULL,
+    machine_id text NOT NULL,
+    boot_id uuid NOT NULL,
+    pid integer NOT NULL,
+    start_ticks text NOT NULL,
+    pid_namespace text NOT NULL,
+    net_namespace text NOT NULL,
+    review bytea NOT NULL,
+    review_sha256 text NOT NULL,
+    envelope bytea NOT NULL,
+    envelope_sha256 text NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_native_public_startups_boot_id_check CHECK ((boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_native_public_startups_check CHECK ((isfinite(recorded_at) AND (recorded_at >= observed_at) AND ((recorded_at - observed_at) <= '00:01:30'::interval))),
+    CONSTRAINT runtime_upgrade_native_public_startups_config_sha256_check CHECK ((config_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_native_public_startups_envelope_check CHECK (((octet_length(envelope) >= 1) AND (octet_length(envelope) <= 1048576))),
+    CONSTRAINT runtime_upgrade_native_public_startups_envelope_sha256_check CHECK ((envelope_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_native_public_startups_machine_id_check CHECK (((machine_id ~ '^[0-9a-f]{32}$'::text) AND (machine_id <> repeat('0'::text, 32)))),
+    CONSTRAINT runtime_upgrade_native_public_startups_net_namespace_check CHECK (((net_namespace ~ '^net:\[[1-9][0-9]{0,19}\]$'::text) AND ((SUBSTRING(net_namespace FROM 6 FOR (length(net_namespace) - 6)))::numeric <= '18446744073709551615'::numeric))),
+    CONSTRAINT runtime_upgrade_native_public_startups_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_native_public_startups_pid_check CHECK ((pid >= 2)),
+    CONSTRAINT runtime_upgrade_native_public_startups_pid_namespace_check CHECK (((pid_namespace ~ '^pid:\[[1-9][0-9]{0,19}\]$'::text) AND ((SUBSTRING(pid_namespace FROM 6 FOR (length(pid_namespace) - 6)))::numeric <= '18446744073709551615'::numeric))),
+    CONSTRAINT runtime_upgrade_native_public_startups_public_session_id_check CHECK ((public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_native_public_startups_review_check CHECK (((octet_length(review) >= 1) AND (octet_length(review) <= 1048576))),
+    CONSTRAINT runtime_upgrade_native_public_startups_review_sha256_check CHECK ((review_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_native_public_startups_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_native_public_startups_start_ticks_check CHECK (((start_ticks ~ '^[1-9][0-9]{0,19}$'::text) AND ((start_ticks)::numeric <= '18446744073709551615'::numeric)))
+);
+
+
+--
 -- Name: runtime_upgrade_operations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25655,6 +25753,14 @@ ALTER TABLE ONLY public.runtime_upgrade_gateway_roster_head
 
 ALTER TABLE ONLY public.runtime_upgrade_gateway_rosters
     ADD CONSTRAINT runtime_upgrade_gateway_rosters_pkey PRIMARY KEY (revision);
+
+
+--
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_native_public_startups
+    ADD CONSTRAINT runtime_upgrade_native_public_startups_pkey PRIMARY KEY (public_session_id);
 
 
 --
@@ -34141,6 +34247,20 @@ CREATE TRIGGER runtime_upgrade_gateway_roster_guard BEFORE INSERT OR DELETE OR U
 
 
 --
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startup_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_native_public_startup_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_native_public_startups FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_native_public_startup();
+
+
+--
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startup_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_native_public_startup_truncate BEFORE TRUNCATE ON public.runtime_upgrade_native_public_startups FOR EACH STATEMENT EXECUTE FUNCTION public.forbid_runtime_upgrade_native_public_startup_truncate();
+
+
+--
 -- Name: runtime_upgrade_operations runtime_upgrade_operation_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -40581,6 +40701,22 @@ ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
 
 ALTER TABLE ONLY public.runtime_upgrade_gateway_roster_head
     ADD CONSTRAINT runtime_upgrade_gateway_roster_head_revision_fkey FOREIGN KEY (revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startups_gateway_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_native_public_startups
+    ADD CONSTRAINT runtime_upgrade_native_public_startups_gateway_revision_fkey FOREIGN KEY (gateway_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startups_public_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_native_public_startups
+    ADD CONSTRAINT runtime_upgrade_native_public_startups_public_revision_fkey FOREIGN KEY (public_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
 
 
 --
