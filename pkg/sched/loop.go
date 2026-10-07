@@ -224,8 +224,9 @@ type Loop struct {
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 	l := &Loop{
 		pool: pool, engine: engine, log: log,
-		now:        time.Now,
-		flowCounts: noopFlowCounter{},
+		now:                  time.Now,
+		flowCounts:           noopFlowCounter{},
+		eventRecipientClaims: true,
 	}
 	if engine != nil {
 		engine.SetBrokerLagReader(l)

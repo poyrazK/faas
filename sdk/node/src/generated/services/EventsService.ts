@@ -351,8 +351,9 @@ export class EventsService {
   /**
    * Inspect acceptance, routing, and execution for one event.
    * Requires apps:read or admin. Reads the retained account/source/id receipt
-   * and a bounded page of immutable acceptance-time recipients. Routing
-   * counts cover the entire snapshot, including recipients without invocations.
+   * and a bounded page of captured and backfilled recipients. recipient_count
+   * and routing_summary cover the immutable acceptance snapshot; separate
+   * backfill counts cover added consumers, including those without invocations.
    * Enqueued routing does not imply handler success: keyed cancellation can
    * produce a cancellation receipt instead. The original deterministic
    * invocation is shown when retained; trusted generic replay lineage adds
@@ -361,7 +362,9 @@ export class EventsService {
    * when present. Recovery actions require their existing
    * write scopes and are revalidated when called. Legacy receipts without
    * snapshots report snapshot_captured=false and cannot reconstruct recipients.
-   * Pages follow acceptance order while outcomes may change between requests.
+   * Pages follow acceptance order then append-only backfill positions, which
+   * survive job pruning. Inspection order does not imply delivery order;
+   * outcomes may change between requests.
    *
    * @returns EventReceiptResponse Current receipt evidence and recipient page.
    * @throws ApiError
@@ -412,7 +415,7 @@ export class EventsService {
     });
   }
   /**
-   * Inspect retained handler replay history for one captured recipient.
+   * Inspect retained handler replay history for one captured or backfilled recipient.
    * Requires apps:read or admin. Returns generic invocation replays linked by
    * ledger-owned parent/root identity, newest first by created_at and ID.
    * Original and intermediate execution records may expire independently;
@@ -478,7 +481,7 @@ export class EventsService {
     });
   }
   /**
-   * Inspect retained handler delivery attempts for one captured recipient.
+   * Inspect retained handler delivery attempts for one captured or backfilled recipient.
    * Requires apps:read or admin. Includes the original async invocation and
    * trusted child replays, ordered by descending attempt history ID. Each
    * claim records its attempt and replay generation atomically with dispatch.
@@ -488,7 +491,7 @@ export class EventsService {
    * Closed attempts expire after at most 30 days, earlier when result retention
    * expires or their invocation is deleted. Running attempts are not pruned.
    * Missing history does not establish that no delivery occurred. Unknown or
-   * foreign receipts, captured recipients and current app owners return 404.
+   * foreign receipts, recipients and current app owners return 404.
    * Cursors bind account, source, event ID, recipient and retained receipt;
    * stale or mismatched cursors return 400. New claims do not reorder older
    * pages; a running outcome may settle between reads.
@@ -1045,8 +1048,10 @@ export class EventsService {
   }
   /**
    * Retry one terminal event recipient routing failure.
-   * Requeues only the named failed recipient from the immutable recipient
-   * snapshot captured when the event was accepted. Other recipients and
+   * Requeues only the named failed recipient captured at acceptance or
+   * added by a retained historical backfill. Backfill failures must be
+   * retryable and have a running or completed-with-failures job; reopening
+   * a completed job observes active-job limits. Other recipients and
    * their outcomes are left untouched. With independent recipient routing,
    * a terminal recipient can be replayed while siblings are active and gets
    * a fresh routing retry budget. Legacy receipts must settle first.

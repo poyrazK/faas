@@ -914,12 +914,14 @@ from .event_receipt_execution_response import EventReceiptExecutionResponse
 from .event_receipt_execution_response_state import EventReceiptExecutionResponseState
 from .event_receipt_recipient_response import EventReceiptRecipientResponse
 from .event_receipt_recipient_response_execution_unavailable import EventReceiptRecipientResponseExecutionUnavailable
+from .event_receipt_recipient_response_origin import EventReceiptRecipientResponseOrigin
 from .event_receipt_recovery_action import EventReceiptRecoveryAction
 from .event_receipt_recovery_action_kind import EventReceiptRecoveryActionKind
 from .event_receipt_recovery_action_method import EventReceiptRecoveryActionMethod
 from .event_receipt_recovery_response import EventReceiptRecoveryResponse
 from .event_receipt_replay_history_response import EventReceiptReplayHistoryResponse
 from .event_receipt_response import EventReceiptResponse
+from .event_receipt_response_backfill_routing_summary import EventReceiptResponseBackfillRoutingSummary
 from .event_receipt_response_routing_mode import EventReceiptResponseRoutingMode
 from .event_receipt_response_routing_summary import EventReceiptResponseRoutingSummary
 from .event_receipt_routing_response import EventReceiptRoutingResponse
@@ -3617,12 +3619,14 @@ __all__ = (
     "EventReceiptExecutionResponseState",
     "EventReceiptRecipientResponse",
     "EventReceiptRecipientResponseExecutionUnavailable",
+    "EventReceiptRecipientResponseOrigin",
     "EventReceiptRecoveryAction",
     "EventReceiptRecoveryActionKind",
     "EventReceiptRecoveryActionMethod",
     "EventReceiptRecoveryResponse",
     "EventReceiptReplayHistoryResponse",
     "EventReceiptResponse",
+    "EventReceiptResponseBackfillRoutingSummary",
     "EventReceiptResponseRoutingMode",
     "EventReceiptResponseRoutingSummary",
     "EventReceiptRoutingResponse",

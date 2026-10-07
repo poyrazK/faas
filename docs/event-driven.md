@@ -735,15 +735,25 @@ Admission commits a run with a durable event receipt, preventing duplicate runs
 on recovery even after run history is pruned. Event identities and receipts use
 the existing 30-day retention window.
 
+Independent recipient routing also covers workflow-only and mixed
+workflow/application events. Workflow admission and its routing checkpoint
+commit together under the recipient's lease. A blocked workflow does not make
+a failed sibling wait for the parent receipt to settle before selective recovery.
+
 Capacity or temporary target failures retry through the existing fanout system.
 After the 12-attempt cap, inspect routing failures and replay them using
 `gregale events deliveries APP` and `gregale events replay`; `subscription_id`
-also identifies workflow recipients. Disabling the workflow runtime leaves
-workflow recipients pending without consuming their retry attempts. App handler
-side effects must remain idempotent because workflow steps may retry.
+also identifies workflow recipients. You can select the same routing recovery
+with `gregale events recover --source SOURCE --id EVENT_ID --subscription ID`
+and preview it with `--dry-run`. After admission, inspect and recover execution
+through the workflow run and step commands. Disabling the workflow runtime
+leaves workflow recipients waiting without consuming new retry attempts. App
+handler side effects must remain idempotent because workflow steps may retry.
 
 See the [two-step event workflow recipe](../examples/event-workflows/README.md)
-and [ADR-432](adr/432-event-workflow-starts.md).
+and [ADR-432](adr/432-event-workflow-starts.md). Independent workflow admission
+and its upgrade requirements are recorded in
+[ADR-648](adr/648-independent-workflow-event-routing.md).
 
 ## Internal event subscriptions
 
@@ -843,16 +853,27 @@ notification destinations keep their existing routing paths. See
 [ADR-613](adr/613-atomic-event-routing-handoff.md) for the transaction and upgrade
 boundary. Handler side effects still require application deduplication.
 
-When operators enable independent recipient routing (ADR-606), each captured
+Independent recipient routing is enabled by default (ADR-647). Each captured
 candidate has its own five-minute lease and backoff from five seconds to five
 minutes. A terminal recipient can be replayed while its siblings are routing
 or waiting to retry. Each replay gets a fresh twelve-attempt routing budget;
 the visible attempt count and history remain cumulative. Successful siblings
-are not rerun. The flag `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED=1` enables adoption
-on schedd after all API and scheduler binaries are compatible. It defaults off;
-disabling it stops adoption but continues draining already adopted receipts.
-See [ADR-606](adr/606-independent-event-recipient-routing.md) for rollout and
-rollback requirements.
+are not rerun. On schedd, an unset `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED` or the
+value `1` enables adoption. Set it to `0` on every scheduler before a
+mixed-version upgrade; enable adoption after the migrations are applied and
+all API and scheduler writers support recipient ownership and atomic admission.
+Other nonempty values also disable adoption. Disabling adoption continues
+draining already adopted receipts and does not make old binaries safe to restore.
+Captured workflows use independent recipient routing too. Upgrade all
+schedulers to support atomic workflow recipient admission before enabling
+adoption during a mixed-version upgrade. Receipts without snapshots keep
+legacy routing. Explicitly disabled adoption keeps whole-event ownership for
+new receipts, including those with workflows.
+Subscription backfill jobs keep their existing recipient routing under either
+flag setting; start new jobs after the fleet upgrade is complete.
+See [ADR-647](adr/647-independent-event-routing-default.md) for qualification,
+upgrade, and fallback requirements, and
+[ADR-606](adr/606-independent-event-recipient-routing.md) for the ownership model.
 
 Publish acceptance means the event is durably stored. A recipient marked
 `enqueued` has been handled by routing; normally it has an invocation, while
@@ -1048,10 +1069,14 @@ The command prints a continuation command when another page is available. Keep
 the job and state filter unchanged when following its cursor. Each item shows
 the event identity, acceptance time, routing state, attempts and bounded
 failure details; it never includes event data and remains readable after the
-source envelope expires. Item states are live while a job is running, so for a
+source envelope expires. While the original receipt is retained, `receipt_url`
+opens unified delivery inspection; `attempt_history_url` opens the consumer's
+handler attempts when its delivery provenance and current app ownership are
+available. Links are omitted after their source expires, including if a new
+event reuses that source and ID. Item states are live while a job is running, so for a
 complete filtered view, inspect after the job reaches a terminal state.
 
-Inspect one published event across every captured consumer:
+Inspect one published event across captured and backfilled consumers:
 
 ```bash
 gregale events inspect --source billing.stripe --id evt-123
@@ -1063,13 +1088,19 @@ Publish returns a `receipt_url` and `Location` header for
 original `accepted_at`. The receipt includes every source/type candidate captured
 at acceptance, even before an invocation exists, and separates routing from
 handler execution. Whole-snapshot counts cover pending, processing, filtered,
-enqueued, and failed recipients. Handler outcomes preserve cancellation,
+enqueued, and failed recipients. `recipient_count` and `routing_summary` retain
+their acceptance-snapshot meaning; `backfill_recipient_count` and
+`backfill_routing_summary` count added consumers separately. Recipients label
+their `origin` and link to the originating backfill job while it is retained.
+Handler outcomes preserve cancellation,
 supersession, expiry, and dead letters. A `cancel_pending` operation reports its
 cancellation receipt rather than a handler invocation.
 
 Use `--limit` (1–200, default 100) and `--after` with `next_after` for larger
-fanouts. Pagination follows captured recipient order even during retries or
-replay; outcomes can change between pages. `routing_settled_at` means routing
+fanouts. Pagination follows captured recipient order, then stable appended
+backfill positions even during retries, replay, or job pruning; outcomes can
+change between pages. Inspection order does not guarantee delivery order.
+`routing_settled_at` means routing
 has settled, including failures, and `retain_until` is thirty days later. These
 fields are absent while routing is active. Legacy receipts without snapshots
 report `snapshot_captured=false`; their membership cannot be reconstructed.
@@ -1082,6 +1113,11 @@ and routing history URL, plus the retained original invocation or cancellation.
 routing; it does not assert success. Execution records have independent
 retention. The JSON response supplies applicable selective recovery requests;
 calling them requires the existing write scopes and rechecks current eligibility.
+A retryable backfill routing failure has the same selective routing recovery
+action, even while sibling events in the job are pending. Recovery resets just
+that delivery and keeps the job item and receipt consistent. Backfill handler
+failures use the same handler replay and dead-letter recovery as captured
+consumers. See [ADR-646](adr/646-unified-backfill-delivery-inspection.md).
 Routing replay and in-place dead-letter replay remain visible on the original
 receipt. Generic handler replay creates a new invocation with ledger-owned parent
 and root identity. The receipt preserves the original failure and adds `recovery`
@@ -1089,6 +1125,45 @@ with `latest_replay`, `retained_replay_count`, and `history_url`. A completed la
 replay means that replay succeeded; text inspection labels it `recovered`.
 Recovery requests target the latest retained replay, and are absent while that
 replay is active or completed. Independent consumer outcomes remain separate.
+
+Recover one captured application or workflow consumer, or a backfilled
+application consumer, directly from its receipt:
+
+```bash
+gregale events recover --source billing.stripe --id evt-123 \
+  --subscription SUBSCRIPTION_ID --dry-run
+gregale events recover --source billing.stripe --id evt-123 \
+  --subscription SUBSCRIPTION_ID
+```
+
+The command follows recipient pages automatically and selects the receipt's
+current `routing_replay`, `handler_replay`, `keyed_handler_replay`, or
+`dead_letter_replay` action. It sends one selective request through the existing
+replay API. Successful consumers retain their original deliveries. Routing
+recovery uses the accepted subscription snapshot; handler recovery targets the
+latest eligible execution in its trusted replay lineage.
+For workflow recipients, `routing_replay` recovers admission of the captured
+workflow definition. Once admitted, inspect the linked workflow run for step
+status and execution recovery. Text inspection shows the workflow name and
+retained run ID/status alongside its routing outcome.
+
+`--dry-run` reads the receipt without changing delivery state. It reports the
+selected action or explains why recovery is unavailable, including successful
+consumers, active deliveries/replays, cancellation, unavailable execution
+records, and workflows whose admission already completed. A dry run exits zero
+when it can inspect the selected recipient, including when no action is available.
+Actual recovery exits nonzero if the receipt offers no action. Missing recipients, legacy
+receipts without captured membership, unsupported actions, and API failures
+also exit nonzero. `--json` emits event/subscription identity, `dry_run`,
+`status` (`available`, `queued`, or `unavailable`), the selected `action`, and
+the replay `result` or an unavailable `reason`.
+
+Availability can change after inspection. The replay endpoint rechecks current
+ownership, scopes, deadlines, and claim eligibility; a rejected request is
+reported without trying another recovery path. `queued` means recovery was
+accepted, not that the handler completed. Use `events inspect` and `events
+attempts` to follow it. At-least-once delivery and application side-effect
+deduplication still apply.
 
 Plain handler replay uses `POST /v1/invocations/{id}/replay` (or
 `gregale invocations get --replay INVOCATION_ID`). Each failed parent creates

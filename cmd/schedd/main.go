@@ -1635,7 +1635,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pinging when the beat is older than sched.MainLoopBudget.
 	liveness := wire.NewLiveness()
 	loop := sched.NewLoop(pool, engine, log).
-		WithEventRecipientClaims(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED") == "1").
+		WithEventRecipientClaims(eventRecipientClaimsEnabled(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED"))).
 		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
 		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).
@@ -2381,6 +2381,13 @@ func triggerWakeNotification(n db.Notification) bool {
 		return false
 	}
 	return payload.Source == string(state.InvocationQueue) || payload.Source == string(state.InvocationDelayedTask)
+}
+
+// eventRecipientClaimsEnabled defaults to independent routing. Explicit values
+// other than 1 pause adoption without abandoning already adopted receipts.
+func eventRecipientClaimsEnabled(value string) bool {
+	value = strings.TrimSpace(value)
+	return value == "" || value == "1"
 }
 
 // jobsDispatchEnabled is intentionally an exact opt-in. Treating any

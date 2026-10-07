@@ -75,6 +75,14 @@ type eventAdmissionPlan struct {
 }
 
 func routingRecipient(receipt *PublishedEventWork, claim PublishedEventRoutingClaim) (PublishedEventRecipient, error) {
+	r, err := capturedRoutingRecipient(receipt, claim)
+	if err == nil && (r.ObjectNotification != nil || len(r.Workflow) != 0) {
+		return PublishedEventRecipient{}, ErrInvalidArgument
+	}
+	return r, err
+}
+
+func capturedRoutingRecipient(receipt *PublishedEventWork, claim PublishedEventRoutingClaim) (PublishedEventRecipient, error) {
 	if receipt == nil || !receipt.SnapshotCaptured || claim.OutboxID != receipt.ID || claim.Generation < 0 ||
 		receipt.RecipientClaims != (claim.Generation > 0) {
 		return PublishedEventRecipient{}, ErrConflict
@@ -84,18 +92,12 @@ func routingRecipient(receipt *PublishedEventWork, claim PublishedEventRoutingCl
 	}
 	if claim.BackfillJobID != "" {
 		if recipient, ok := receipt.replayRecipients[claim.SubscriptionID]; ok && recipient.ID == claim.SubscriptionID {
-			if recipient.ObjectNotification != nil || len(recipient.Workflow) != 0 {
-				return PublishedEventRecipient{}, ErrInvalidArgument
-			}
 			return recipient, nil
 		}
 		return PublishedEventRecipient{}, ErrNotFound
 	}
 	for _, r := range receipt.RecipientSnapshot {
 		if r.ID == claim.SubscriptionID {
-			if r.ObjectNotification != nil || len(r.Workflow) != 0 {
-				return PublishedEventRecipient{}, ErrInvalidArgument
-			}
 			return r, nil
 		}
 	}

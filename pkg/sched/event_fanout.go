@@ -459,7 +459,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			return
 		}
 		var routeErr error
-		if recipients, ok := l.engine.store.(state.PublishedEventRecipientWorkStore); ok && l.eventRecipientClaims && work.SnapshotCaptured && eventRecipientAdoptionSupported(work) {
+		if recipients, ok := l.engine.store.(state.PublishedEventRecipientWorkStore); ok && l.eventRecipientClaims && work.SnapshotCaptured && l.eventRecipientAdoptionSupported(work) {
 			routeErr = recipients.InitializePublishedEventRecipients(ctx, work, now)
 			if routeErr == nil {
 				continue
@@ -504,8 +504,8 @@ func (l *Loop) runEventReplayBackfillSweep(ctx context.Context, now time.Time) {
 	}
 }
 
-// WithEventRecipientClaims enables adoption after every API and scheduler
-// binary understands recipient ownership. Existing adopted work always drains.
+// WithEventRecipientClaims overrides the default independent recipient adoption.
+// Disable adoption during mixed-version upgrades; adopted work always drains.
 func (l *Loop) WithEventRecipientClaims(enabled bool) *Loop {
 	l.eventRecipientClaims = enabled
 	return l
@@ -521,7 +521,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		if l.now != nil {
 			now = l.now().UTC()
 		}
-		work, err := store.ClaimDuePublishedEventRecipient(ctx, now)
+		work, err := store.ClaimDuePublishedEventRecipient(ctx, now, l.workflowsDispatched)
 		if errors.Is(err, state.ErrNotFound) {
 			return
 		}
@@ -542,7 +542,22 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		}
 		matched := false
 		if routeErr == nil {
-			if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && work.Recipient.ObjectNotification == nil {
+			if len(work.Recipient.Workflow) != 0 {
+				admission, ok := l.engine.store.(state.EventWorkflowRecipientAdmissionStore)
+				if !ok {
+					routeErr = &eventFanoutRouteError{code: state.EventFanoutFailureCodeInternal, retryable: true,
+						err: errors.New("workflow recipient admission store is unavailable")}
+				} else {
+					result, err := admission.AdmitEventWorkflowRecipient(ctx, state.PublishedEventRoutingClaim{
+						OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
+						ClaimToken: work.ClaimToken, Generation: work.Generation,
+					})
+					if err == nil {
+						continue
+					}
+					matched, routeErr = result.Matched, err
+				}
+			} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && work.Recipient.ObjectNotification == nil {
 				result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
 					OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
 					ClaimToken: work.ClaimToken, Generation: work.Generation, BackfillJobID: work.BackfillJobID,
@@ -655,10 +670,11 @@ func (l *Loop) runEventHistoryPrune(ctx context.Context, now time.Time) {
 	l.eventFanoutHistoryLastPrune = now
 }
 
-func eventRecipientAdoptionSupported(work *state.PublishedEventWork) bool {
+func (l *Loop) eventRecipientAdoptionSupported(work *state.PublishedEventWork) bool {
 	for _, recipient := range work.RecipientSnapshot {
 		if len(recipient.Workflow) != 0 {
-			return false
+			_, supported := l.engine.store.(state.EventWorkflowRecipientAdmissionStore)
+			return supported
 		}
 	}
 	return true

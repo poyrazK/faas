@@ -1656,6 +1656,19 @@ Inspect event routing, execution and replay recovery
 | `--after <CURSOR>` | opaque next_after cursor for recipients or replays |  |
 | `--limit <N>` | max recipients or replays (1..200, default 100) |  |
 
+### events recover
+
+Recover one event consumer using its current receipt action
+
+`gregale events recover --source <SOURCE> --id <ID> --subscription <SUB> [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <SOURCE>` | published event source | required |
+| `--id <ID>` | published event id | required |
+| `--subscription <SUB>` | captured recipient identifier | required |
+| `--dry-run` | show recovery availability and action without replaying |  |
+
 ### events attempts
 
 Inspect retained handler attempts, including retries and replay

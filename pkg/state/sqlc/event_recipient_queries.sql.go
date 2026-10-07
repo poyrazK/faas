@@ -542,6 +542,7 @@ WITH candidate AS (
     LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
     WHERE ((r.state = 'pending' AND r.available_at <= $1::timestamptz)
        OR (r.state = 'processing' AND r.lease_until <= $1::timestamptz))
+      AND ($2::boolean OR NOT r.recipient ? 'workflow')
       AND (r.backfill_job_id IS NULL OR EXISTS (
           SELECT 1 FROM event_replay_jobs j JOIN event_replay_job_items i ON i.job_id=j.id
           WHERE j.id=r.backfill_job_id AND j.state='running' AND i.outbox_id=r.outbox_id
@@ -556,7 +557,7 @@ WITH candidate AS (
         attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
-    RETURNING r.outbox_id, r.subscription_id, r.app_id, r.recipient, r.state, r.generation, r.attempts, r.total_attempts, r.available_at, r.claim_token, r.lease_until, r.capacity_deferrals, r.generation_capacity_deferrals, r.backfill_job_id
+    RETURNING r.outbox_id, r.subscription_id, r.app_id, r.recipient, r.state, r.generation, r.attempts, r.total_attempts, r.available_at, r.claim_token, r.lease_until, r.capacity_deferrals, r.generation_capacity_deferrals, r.backfill_job_id, r.receipt_position
 ), replay_item AS (
     UPDATE event_replay_job_items i SET state='processing', attempts=c.total_attempts, updated_at=clock_timestamp()
     FROM claimed c WHERE c.backfill_job_id=i.job_id AND c.outbox_id=i.outbox_id
@@ -577,6 +578,11 @@ SELECT c.outbox_id, c.recipient, c.claim_token, c.generation, c.attempts,
 FROM claimed c JOIN event_fanout_outbox o ON o.id = c.outbox_id
 `
 
+type EventRecipientClaimParams struct {
+	NowAt            pgtype.Timestamptz
+	IncludeWorkflows bool
+}
+
 type EventRecipientClaimRow struct {
 	OutboxID                    int64
 	Recipient                   []byte
@@ -592,8 +598,8 @@ type EventRecipientClaimRow struct {
 	BackfillJobID               pgtype.UUID
 }
 
-func (q *Queries) EventRecipientClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRecipientClaimRow, error) {
-	row := db.QueryRow(ctx, eventRecipientClaim, nowAt)
+func (q *Queries) EventRecipientClaim(ctx context.Context, db DBTX, arg EventRecipientClaimParams) (EventRecipientClaimRow, error) {
+	row := db.QueryRow(ctx, eventRecipientClaim, arg.NowAt, arg.IncludeWorkflows)
 	var i EventRecipientClaimRow
 	err := row.Scan(
 		&i.OutboxID,
@@ -1134,7 +1140,7 @@ func (q *Queries) EventRoutingLockReceipt(ctx context.Context, db DBTX, id int64
 }
 
 const eventRoutingLockRecipient = `-- name: EventRoutingLockRecipient :one
-SELECT outbox_id, subscription_id, app_id, recipient, state, generation, attempts, total_attempts, available_at, claim_token, lease_until, capacity_deferrals, generation_capacity_deferrals, backfill_job_id FROM event_fanout_recipients
+SELECT outbox_id, subscription_id, app_id, recipient, state, generation, attempts, total_attempts, available_at, claim_token, lease_until, capacity_deferrals, generation_capacity_deferrals, backfill_job_id, receipt_position FROM event_fanout_recipients
 WHERE outbox_id=$1::bigint AND subscription_id=$2::text FOR UPDATE
 `
 
@@ -1161,6 +1167,7 @@ func (q *Queries) EventRoutingLockRecipient(ctx context.Context, db DBTX, arg Ev
 		&i.CapacityDeferrals,
 		&i.GenerationCapacityDeferrals,
 		&i.BackfillJobID,
+		&i.ReceiptPosition,
 	)
 	return i, err
 }
