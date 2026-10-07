@@ -26,6 +26,14 @@ type transferFixture struct {
 	request   api.ObjectSignRequest
 }
 
+func (c *transferFixture) BaseURL() string { return "https://transfer.example.test" }
+func (c *transferFixture) GetObjectMultipartUpload(context.Context, string, string, string) (api.ObjectMultipartUpload, error) {
+	return c.session, nil
+}
+func (c *transferFixture) ListObjectMultipartParts(context.Context, string, string, string, int, int) (api.ObjectMultipartPartList, error) {
+	return api.ObjectMultipartPartList{Items: []api.ObjectMultipartPart{}}, nil
+}
+
 func (c *transferFixture) ListObjectBuckets(context.Context, string) (api.ObjectBucketList, error) {
 	return api.ObjectBucketList{Enabled: true, MaxSinglePutBytes: 3, MaxUploadBytes: 20}, nil
 }
@@ -54,6 +62,7 @@ func (c *transferFixture) CompleteObjectMultipartUpload(_ context.Context, _, _,
 
 // adr: 628
 func TestBucketFileTransferStreamsSingleAndMultipart(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for _, payload := range []string{"", "abc", "abcdefg"} {
 		t.Run(payload, func(t *testing.T) {
 			version := uuid.NewString()
@@ -71,7 +80,7 @@ func TestBucketFileTransferStreamsSingleAndMultipart(t *testing.T) {
 			if err := os.WriteFile(file, []byte(payload), 0600); err != nil {
 				t.Fatal(err)
 			}
-			c := &transferFixture{url: server.URL, session: api.ObjectMultipartUpload{ID: uuid.NewString(), Key: "目录 /+%.txt", SizeBytes: int64(len(payload)), PartSizeBytes: 3, PartCount: 3, VersionID: version}}
+			c := &transferFixture{url: server.URL, session: api.ObjectMultipartUpload{ID: uuid.NewString(), Key: "目录 /+%.txt", SizeBytes: int64(len(payload)), PartSizeBytes: 3, PartCount: 3, VersionID: version, State: "active", ContentType: "text/plain", ExpiresAt: time.Now().Add(time.Hour)}}
 			result, err := runBucketTransfer(t.Context(), c, bucketTransferOptions{action: "upload", app: "demo", bucket: uuid.NewString(), key: "目录 /+%.txt", path: file, contentType: "text/plain"})
 			if err != nil || result.Status != "completed" || result.VersionID != version || result.Bytes != int64(len(payload)) || received.String() != payload || c.multipart != (len(payload) > 3) {
 				t.Fatal(result, err, received.String())

@@ -78,7 +78,8 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 	}
 	srv := newServer(st, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", nil)
 	var gateway http.Handler
-	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.ServeHTTP(w, r) }))
+	var recoveryFaults objectCLIRecoveryFaults
+	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { recoveryFaults.gateway(w, r, gateway) }))
 	defer public.Close()
 	var cfg objectstorage.Config
 	raw, err = os.ReadFile(filepath.Join(root, "provider-config.json"))
@@ -125,6 +126,9 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured := httptest.NewRecorder()
 		srv.handler().ServeHTTP(captured, r)
+		if recoveryFaults.control(w, r, captured.Code) {
+			return
+		}
 		for name, values := range captured.Header() {
 			w.Header()[name] = values
 		}
@@ -189,16 +193,21 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 	if cli == "" {
 		t.Fatal("built CLI required")
 	}
-	run := func(t *testing.T, args ...string) map[string]json.RawMessage {
-		t.Helper()
+	cliState := t.TempDir()
+	newCommand := func(args ...string) *exec.Cmd {
 		command := exec.CommandContext(ctx, cli, append([]string{"--json"}, args...)...)
 		command.Dir = t.TempDir()
 		for _, value := range os.Environ() {
-			if !strings.HasPrefix(value, "FAAS_") && !strings.HasPrefix(value, "GREGALE_") {
+			if !strings.HasPrefix(value, "FAAS_") && !strings.HasPrefix(value, "GREGALE_") && !strings.HasPrefix(value, "XDG_STATE_HOME=") {
 				command.Env = append(command.Env, value)
 			}
 		}
-		command.Env = append(command.Env, "FAAS_API="+control.URL, "FAAS_TOKEN="+bearer)
+		command.Env = append(command.Env, "FAAS_API="+control.URL, "FAAS_TOKEN="+bearer, "XDG_STATE_HOME="+cliState)
+		return command
+	}
+	run := func(t *testing.T, args ...string) map[string]json.RawMessage {
+		t.Helper()
+		command := newCommand(args...)
 		output, err := command.Output()
 		if err != nil {
 			var failure *exec.ExitError
@@ -292,6 +301,117 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 			if string(deletion["state"]) != `"completed"` {
 				t.Fatal("native current deletion did not complete")
 			}
+			rebase(t)
+		}) {
+			return
+		}
+	}
+	// adr: 639
+	for _, scenario := range []string{"killed process", "lost completion response"} {
+		if !t.Run("CLI resumable multipart "+scenario, func(t *testing.T) {
+			payload := append(bytes.Repeat([]byte("a"), int(api.MinMultipartPartBytes)), bytes.Repeat([]byte("b"), int(api.MinMultipartPartBytes))...)
+			payload = append(payload, []byte("end")...)
+			source := filepath.Join(t.TempDir(), "source")
+			if err := os.WriteFile(source, payload, 0600); err != nil {
+				t.Fatal(err)
+			}
+			key := "qualification/resume/" + scenario + "/世界 +%.txt"
+			if scenario == "killed process" {
+				ready, release := make(chan int, 1), make(chan struct{})
+				recoveryFaults.mu.Lock()
+				recoveryFaults.holdPart, recoveryFaults.partSettled, recoveryFaults.releasePart = 2, ready, release
+				recoveryFaults.mu.Unlock()
+				command := newCommand("bucket", "upload", app.Slug, b.ID, key, source, "--content-type=text/plain")
+				var stdout, stderr bytes.Buffer
+				command.Stdout, command.Stderr = &stdout, &stderr
+				if err := command.Start(); err != nil {
+					close(release)
+					t.Fatal(err)
+				}
+				select {
+				case status := <-ready:
+					_ = command.Process.Kill()
+					_ = command.Wait()
+					close(release)
+					if status != http.StatusOK {
+						t.Fatal("part did not settle before killing CLI", status)
+					}
+				case <-time.After(45 * time.Second):
+					_ = command.Process.Kill()
+					_ = command.Wait()
+					close(release)
+					t.Fatal("CLI did not reach interrupted native part")
+				}
+			} else {
+				recoveryFaults.mu.Lock()
+				recoveryFaults.dropCompletion = true
+				recoveryFaults.mu.Unlock()
+				output, err := newCommand("bucket", "upload", app.Slug, b.ID, key, source, "--content-type=text/plain").Output()
+				var result struct {
+					Status string `json:"status"`
+				}
+				if err == nil || json.Unmarshal(output, &result) != nil || result.Status != "pending" {
+					t.Fatal("lost completion was reported as success", err)
+				}
+			}
+			sessions, _, err := st.ListObjectMultipartUploads(ctx, b.AccountID, b.AppID, b.ID, 100, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found []state.ObjectMultipartUpload
+			for _, session := range sessions {
+				if session.Key == key {
+					found = append(found, session)
+				}
+			}
+			if len(found) != 1 {
+				t.Fatal("interruption duplicated upload sessions", len(found))
+			}
+			upload := found[0]
+			if scenario == "killed process" {
+				changed := bytes.Clone(payload)
+				changed[0] = 'z'
+				if err := os.WriteFile(source, changed, 0600); err != nil {
+					t.Fatal(err)
+				}
+				before, _ := recoveryFaults.counts(upload.ID)
+				if _, err := newCommand("bucket", "upload", app.Slug, b.ID, key, source, "--resume="+upload.ID).Output(); err == nil {
+					t.Fatal("changed source accepted")
+				}
+				after, _ := recoveryFaults.counts(upload.ID)
+				if before[1] != after[1] || before[2] != after[2] || after[3] != 0 {
+					t.Fatal("changed source dispatched native parts")
+				}
+				if err := os.WriteFile(source, payload, 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else if upload.State != state.ObjectMultipartCompleted {
+				t.Fatal("native completion did not settle before lost response")
+			}
+			resumed := run(t, "bucket", "upload", app.Slug, b.ID, key, source, "--resume="+upload.ID)
+			if string(resumed["status"]) != `"completed"` || string(resumed["upload_id"]) != `"`+upload.ID+`"` {
+				t.Fatal("resume did not recover the same upload")
+			}
+			calls, completions := recoveryFaults.counts(upload.ID)
+			secondCalls := 1
+			if scenario == "killed process" {
+				secondCalls = 2
+			}
+			if calls[1] != 1 || calls[2] != secondCalls || calls[3] != 1 || completions != 1 {
+				t.Fatal("resume repeated acknowledged work", calls, completions)
+			}
+			run(t, "bucket", "upload", app.Slug, b.ID, key, source, "--resume="+upload.ID)
+			callsAgain, completedAgain := recoveryFaults.counts(upload.ID)
+			if callsAgain[1] != calls[1] || callsAgain[2] != calls[2] || callsAgain[3] != calls[3] || completedAgain != completions {
+				t.Fatal("terminal resume dispatched new work")
+			}
+			rebase(t)
+			target := filepath.Join(t.TempDir(), "download")
+			run(t, "bucket", "download", app.Slug, b.ID, key, target)
+			if got, err := os.ReadFile(target); err != nil || !bytes.Equal(got, payload) {
+				t.Fatal("resumed GCS bytes changed", err)
+			}
+			run(t, "bucket", "deletions", "start", app.Slug, b.ID, key, uuid.NewString())
 			rebase(t)
 		}) {
 			return

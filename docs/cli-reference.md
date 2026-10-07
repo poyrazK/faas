@@ -717,13 +717,14 @@ List uploaded multipart parts
 
 ### bucket upload
 
-Upload a file, using multipart above the single PUT limit
+Upload a file with resumable multipart transfers
 
-`gregale bucket upload [--content-type <TYPE>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+`gregale bucket upload [--content-type <TYPE>] [--resume <UPLOAD-ID>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--content-type <TYPE>` | object MIME type |  |
+| `--resume <UPLOAD-ID>` | resume a multipart upload from its local checkpoint |  |
 | `--timeout <DURATION>` | transfer deadline (default 30m) |  |
 
 ### bucket download

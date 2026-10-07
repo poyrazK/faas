@@ -1297,6 +1297,7 @@ and generation, including retained history after a later replacement.
 
 ```sh
 gregale bucket upload <app> <bucket-id> <key> <file> --content-type text/plain
+gregale bucket upload <app> <bucket-id> <key> <file> --resume <upload-id>
 gregale bucket download <app> <bucket-id> <key> <file>
 gregale bucket download <app> <bucket-id> <key> <file> --force
 gregale bucket uploads list <app> <bucket-id>
@@ -1312,6 +1313,36 @@ automatically abort or repeat an admitted write. Downloads publish atomically
 after success, preserve existing files on failure, and require `--force` to
 replace a destination. JSON output includes the key, file, size, status and
 upload ID. Usage output marks unavailable meters as unknown.
+
+Multipart uploads save a private local checkpoint before issuing part URLs.
+Use `--resume <upload-id>` with the same API endpoint, app, bucket, key and file
+contents. The source may move to another path, but its size and SHA-256 must
+match. An explicit `--content-type` must also match; otherwise resume preserves
+the session's original type. The CLI validates all part-list pages and skips
+only parts whose native listing matches the checkpoint's saved ETag. A part
+with a lost acknowledgment is resent from verified staged bytes. Changed or
+unexpected parts fail without completing a mixed object.
+
+Checkpoints live in `gregale/object-uploads` under `XDG_STATE_HOME` when set,
+otherwise the user's configuration directory. They contain fingerprints and
+public session identity, never credentials or signed URLs. Keep this directory
+for later recovery. Completed records remain available for status-based replay;
+they can be removed when recovery is no longer needed. Each record is bounded
+at 4 MiB, with at most 10,000 parts. Processes sharing a checkpoint cannot resume
+it concurrently. Each missing or unacknowledged part needs temporary disk space
+up to the session's configured part size, bounded by 5 GiB. The staged part is
+removed after its attempt; a killed process leaves one private staged file,
+which the next resume removes under the session lock. This extra local I/O prevents an in-place source
+change from altering bytes after verification.
+
+Before completion, the CLI persists the ordered part manifest. If the completion
+response is lost, resume checks the durable session first: an already completed
+session returns its saved result without issuing another completion. A pending
+completion reuses exactly that manifest through the server's recovery journal.
+Expired, aborted, foreign, or uncheckpointed sessions are rejected. A lost create
+response before the first checkpoint still needs session inspection; this CLI
+path does not automatically create a replacement. Single PUTs continue to use
+their existing write-receipt inspection path. See [ADR-639](adr/639-resumable-cli-object-uploads.md).
 
 GCS supports tracked PUT/copy recovery, native version controls and reads, copy
 grants and enrolled AES256. The GCS example enrolls AES256 explicitly. Adding

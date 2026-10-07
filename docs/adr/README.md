@@ -620,3 +620,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
 
 - [ADR-638: Object version listing and bound historical downloads](638-object-version-cli-and-bound-downloads.md)
+
+- [ADR-639: Resumable CLI object uploads](639-resumable-cli-object-uploads.md)

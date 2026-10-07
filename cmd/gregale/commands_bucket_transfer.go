@@ -19,12 +19,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const bucketTransferUsage = "usage: gregale bucket upload <app> <bucket-id> <key> <file> [--content-type TYPE] [--timeout DURATION] | gregale bucket download <app> <bucket-id> <key> <file> [--force] [--version-id VERSION] [--timeout DURATION]"
+const bucketTransferUsage = "usage: gregale bucket upload <app> <bucket-id> <key> <file> [--content-type TYPE] [--resume UPLOAD-ID] [--timeout DURATION] | gregale bucket download <app> <bucket-id> <key> <file> [--force] [--version-id VERSION] [--timeout DURATION]"
 
 type bucketTransferOptions struct {
-	action, app, bucket, key, path, contentType, versionID string
-	timeout                                                time.Duration
-	force                                                  bool
+	action, app, bucket, key, path, contentType, versionID, resumeID string
+	timeout                                                          time.Duration
+	force, contentTypeSet                                            bool
 }
 type bucketTransferResult struct {
 	Key       string `json:"key"`
@@ -37,6 +37,9 @@ type bucketTransferResult struct {
 }
 
 type bucketTransferClient interface {
+	BaseURL() string
+	GetObjectMultipartUpload(context.Context, string, string, string) (api.ObjectMultipartUpload, error)
+	ListObjectMultipartParts(context.Context, string, string, string, int, int) (api.ObjectMultipartPartList, error)
 	ListObjectBuckets(context.Context, string) (api.ObjectBucketList, error)
 	SignBucketObject(context.Context, string, string, api.ObjectSignRequest) (api.ObjectSignedRequest, error)
 	CreateObjectMultipartUpload(context.Context, string, string, api.CreateObjectMultipartUploadRequest) (api.ObjectMultipartUpload, error)
@@ -58,6 +61,7 @@ func parseBucketTransfer(args []string) (bucketTransferOptions, error) {
 	fs.DurationVar(&o.timeout, "timeout", api.ObjectTransferTimeout, "transfer deadline")
 	if o.action == "upload" {
 		fs.StringVar(&o.contentType, "content-type", "application/octet-stream", "object content type")
+		fs.StringVar(&o.resumeID, "resume", "", "resume an owned multipart upload using its local checkpoint")
 	} else {
 		fs.StringVar(&o.versionID, "version-id", "", "owned immutable version to download")
 		fs.BoolVar(&o.force, "force", false, "replace destination after a complete download")
@@ -67,6 +71,14 @@ func parseBucketTransfer(args []string) (bucketTransferOptions, error) {
 	}
 	if fs.NArg() != 0 || o.timeout <= 0 || o.timeout > api.MaxObjectTransferTimeout || len(o.contentType) > 255 || strings.ContainsAny(o.contentType, "\r\n\x00") {
 		return o, errors.New("invalid transfer options")
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "content-type" {
+			o.contentTypeSet = true
+		}
+	})
+	if o.resumeID != "" && !validBucketUploadID(o.resumeID) {
+		return o, errors.New("invalid owned upload ID")
 	}
 	if o.versionID != "" && !validBucketImmutableVersion(o.versionID) {
 		return o, errors.New("invalid immutable version selector")
@@ -125,6 +137,9 @@ func runBucketTransfer(ctx context.Context, c bucketTransferClient, o bucketTran
 	if err != nil || !info.Mode().IsRegular() {
 		return bucketTransferResult{}, errors.New("upload source must be a regular file")
 	}
+	if o.resumeID != "" {
+		return resumeBucketMultipart(ctx, c, o, file, info.Size())
+	}
 	catalog, err := c.ListObjectBuckets(ctx, o.app)
 	if err != nil {
 		return bucketTransferResult{}, err
@@ -156,49 +171,6 @@ func runBucketTransfer(ctx context.Context, c bucketTransferClient, o bucketTran
 	}
 	result.VersionID = version
 	result.ETag, result.Status = etag, "completed"
-	return result, nil
-}
-
-func uploadBucketMultipart(ctx context.Context, c bucketTransferClient, o bucketTransferOptions, file *os.File, size int64) (bucketTransferResult, error) {
-	u, err := c.CreateObjectMultipartUpload(ctx, o.app, o.bucket, api.CreateObjectMultipartUploadRequest{Key: o.key, SizeBytes: size, ContentType: o.contentType})
-	if err != nil {
-		return bucketTransferResult{}, err
-	}
-	result := bucketTransferResult{Key: o.key, Path: o.path, Bytes: size, UploadID: u.ID, Status: "pending"}
-	id, idErr := uuid.Parse(u.ID)
-	if idErr != nil || id == uuid.Nil || id.String() != u.ID || u.Key != o.key || u.SizeBytes != size || size <= 0 || u.PartSizeBytes <= 0 || u.PartSizeBytes > api.MaxObjectSinglePutBytes || u.PartCount < 1 || u.PartCount > api.MaxMultipartParts || int64(u.PartCount) != (size-1)/u.PartSizeBytes+1 {
-		return result, errors.New("invalid multipart session geometry")
-	}
-	parts := make([]api.ObjectMultipartCompletedPart, 0, u.PartCount)
-	for part := int32(1); part <= u.PartCount; part++ {
-		offset := int64(part-1) * u.PartSizeBytes
-		signed, err := c.SignObjectMultipartPart(ctx, o.app, o.bucket, u.ID, int(part), api.ObjectMultipartPartSignRequest{})
-		if err != nil {
-			return result, err
-		}
-		response, err := executeBucketCapability(ctx, signed, http.MethodPut, io.NewSectionReader(file, offset, min(u.PartSizeBytes, size-offset)), min(u.PartSizeBytes, size-offset))
-		if err != nil {
-			return result, err
-		}
-		etag, etagErr := bucketTransferETag(response)
-		_ = response.Body.Close()
-		if etagErr != nil {
-			return result, etagErr
-		}
-		parts = append(parts, api.ObjectMultipartCompletedPart{PartNumber: part, ETag: etag})
-	}
-	done, err := c.CompleteObjectMultipartUpload(ctx, o.app, o.bucket, u.ID, api.CompleteObjectMultipartUploadRequest{Parts: parts})
-	if err != nil {
-		return result, err
-	}
-	if done.State != "completed" || done.ID != u.ID || done.Key != o.key || done.SizeBytes != size {
-		return result, errors.New("multipart completion is pending; inspect the upload session")
-	}
-	if done.VersionID != "" && done.VersionID != "null" && !validBucketImmutableVersion(done.VersionID) {
-		return result, errors.New("invalid multipart version acknowledgment; inspect the upload session")
-	}
-	result.VersionID = done.VersionID
-	result.ETag, result.Status = done.ETag, "completed"
 	return result, nil
 }
 
