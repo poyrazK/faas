@@ -30,14 +30,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
-// backingIdentityVersion versions the sidecar document.
-const backingIdentityVersion = 1
+// backingIdentityVersion versions the sidecar document. Version 2 adds the
+// guest timer profile (ADR-637): every version-1 capture was booted with the
+// tsc/lapic-deadline timers that lose interrupts after a restore, so it is
+// refused once and re-captured from a cold boot.
+const backingIdentityVersion = 2
 
 var (
 	// ErrSnapshotBackingUnverified: the capture has no backing identity
@@ -56,10 +60,14 @@ type BackingIdentity struct {
 	Version int    `json:"version"`
 	Kernel  string `json:"kernel"`
 	Base    string `json:"base"`
+	// Timer is the guest timekeeping kernel command line the VM booted
+	// with. A restore keeps the boot's clocksource and clockevent, so it
+	// is part of what a capture can be restored onto.
+	Timer string `json:"timer"`
 }
 
 func (b BackingIdentity) complete() bool {
-	return b.Version == backingIdentityVersion && b.Kernel != "" && b.Base != ""
+	return b.Version == backingIdentityVersion && b.Kernel != "" && b.Base != "" && b.Timer != ""
 }
 
 // fileIdentityKey identifies one immutable file version. Cache refreshes
@@ -185,7 +193,7 @@ func (m *Manager) currentBacking(baseKey string) (BackingIdentity, error) {
 	if err != nil {
 		return BackingIdentity{}, err
 	}
-	return BackingIdentity{Version: backingIdentityVersion, Kernel: kernel, Base: base}, nil
+	return BackingIdentity{Version: backingIdentityVersion, Kernel: kernel, Base: base, Timer: strings.TrimSpace(guestTimerProfile)}, nil
 }
 
 // rememberInstanceBacking records the images a VM just booted or restored
@@ -263,6 +271,9 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 	if current.Kernel != recorded.Kernel || current.Base != recorded.Base {
 		return fmt.Errorf("%w: captured kernel=%s base=%s, now kernel=%s base=%s", ErrSnapshotBackingChanged,
 			recorded.Kernel, recorded.Base, current.Kernel, current.Base)
+	}
+	if current.Timer != recorded.Timer {
+		return fmt.Errorf("%w: captured guest timer %q, now %q", ErrSnapshotBackingChanged, recorded.Timer, current.Timer)
 	}
 	return nil
 }

@@ -163,6 +163,10 @@ func fetchV6Ext4(url, wantSHA, dst string) error {
 // matches the host's expectation (ADR-022). The build runs in the test
 // process's working directory, so any host that has `go` on PATH and the
 // repo checkout can build it.
+// v6ShimExtra runs in the fixture's entry script before httpd starts; a
+// diagnostic test sets it to launch a guest-side probe (ADR-637).
+var v6ShimExtra string
+
 func buildV6BaseExt4(dst, repoRoot string) error {
 	return buildV6BaseExt4Port(dst, repoRoot, 8080)
 }
@@ -175,7 +179,7 @@ func buildV6BaseExt4Port(dst, repoRoot string, port int) error {
 		return fmt.Errorf("busybox not on PATH and no fixture URL reachable: %w", err)
 	}
 	guestInitSrc := filepath.Join(repoRoot, "guest", "init")
-	if _, err := os.Stat(filepath.Join(guestInitSrc, "main_linux.go")); err != nil {
+	if _, err := os.Stat(filepath.Join(guestInitSrc, "main_linux.go")); err != nil && os.Getenv("FAAS_TEST_GUEST_INIT_BIN") == "" {
 		return fmt.Errorf("guest-init source not found at %s: %w", guestInitSrc, err)
 	}
 
@@ -201,12 +205,19 @@ func buildV6BaseExt4Port(dst, repoRoot string, port int) error {
 	// the guest can exec it without an interpreter. We use `go build` against
 	// the source dir, output to <work>/sbin/init directly.
 	bin := filepath.Join(work, "sbin", "init")
-	cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-tags", "linux", "-o", bin, ".")
-	cmd.Dir = guestInitSrc
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("build guest-init: %w", err)
+	if prebuilt := os.Getenv("FAAS_TEST_GUEST_INIT_BIN"); prebuilt != "" {
+		// A host without the source tree runs a guest-init built elsewhere.
+		if err := bbCopyFile(prebuilt, bin); err != nil {
+			return fmt.Errorf("copy prebuilt guest-init: %w", err)
+		}
+	} else {
+		cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-tags", "linux", "-o", bin, ".")
+		cmd.Dir = guestInitSrc
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("build guest-init: %w", err)
+		}
 	}
 
 	if err := bbCopyFile(bb, filepath.Join(work, "bin/busybox")); err != nil {
@@ -227,7 +238,7 @@ func buildV6BaseExt4Port(dst, repoRoot string, port int) error {
 	// the /bin/sh symlink on a busybox-only rootfs silently diverges across
 	// busybox versions. Splitting into a tiny script + a direct httpd
 	// invocation is hermetic.
-	uuidShim := fmt.Sprintf("#!/bin/sh\ncat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt\nexec /bin/busybox httpd -f -p %d -h /\n", port)
+	uuidShim := fmt.Sprintf("#!/bin/sh\ncat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt\n%sexec /bin/busybox httpd -f -p %d -h /\n", v6ShimExtra, port)
 	if err := os.WriteFile(filepath.Join(work, "usr", "local", "bin", "faas-write-uuid"), []byte(uuidShim), 0o755); err != nil {
 		return err
 	}
