@@ -8053,6 +8053,22 @@
     "kind": "operational"
   },
   {
+    "table": "platform_tenant_workflow_schedule_cursors",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "last_evaluated_at",
+      "last_run_id",
+      "platform_tenant_id",
+      "scheduled_for",
+      "status",
+      "trigger_snapshot",
+      "updated_at",
+      "workflow_name"
+    ]
+  },
+  {
     "table": "workflow_schedule_cursors",
     "columns": [
       "app_id",

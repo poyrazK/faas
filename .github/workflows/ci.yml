@@ -534,7 +534,9 @@ jobs:
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # A cold race build can consume most of 20m before the handler suite runs.
+    # Retain the per-package test deadline and leave time for upload/cleanup.
+    timeout-minutes: 40
     permissions:
       contents: read
       id-token: write

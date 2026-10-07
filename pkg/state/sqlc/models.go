@@ -5200,6 +5200,19 @@ type PlatformTenantUsageMinute struct {
 	SourceKind       string
 }
 
+type PlatformTenantWorkflowScheduleCursor struct {
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	WorkflowName     string
+	DeploymentID     pgtype.UUID
+	TriggerSnapshot  []byte
+	LastEvaluatedAt  pgtype.Timestamptz
+	ScheduledFor     pgtype.Timestamptz
+	Status           string
+	LastRunID        pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type PrPreviewSet struct {
 	InstallationID int64
 	RepoFullName   string

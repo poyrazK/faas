@@ -2,9 +2,13 @@ from typing import Literal
 
 PlatformTenantAccessTokenResponseScopesItem = Literal[
     "platform_tenant:activation:read",
+    "platform_tenant:automations:manage",
+    "platform_tenant:automations:read",
     "platform_tenant:consumers:manage",
     "platform_tenant:credentials:manage",
     "platform_tenant:credentials:read",
+    "platform_tenant:events:manage",
+    "platform_tenant:events:read",
     "platform_tenant:hostnames:manage",
     "platform_tenant:invocations:manage",
     "platform_tenant:invocations:read",
@@ -14,9 +18,13 @@ PlatformTenantAccessTokenResponseScopesItem = Literal[
 
 PLATFORM_TENANT_ACCESS_TOKEN_RESPONSE_SCOPES_ITEM_VALUES: set[PlatformTenantAccessTokenResponseScopesItem] = {
     "platform_tenant:activation:read",
+    "platform_tenant:automations:manage",
+    "platform_tenant:automations:read",
     "platform_tenant:consumers:manage",
     "platform_tenant:credentials:manage",
     "platform_tenant:credentials:read",
+    "platform_tenant:events:manage",
+    "platform_tenant:events:read",
     "platform_tenant:hostnames:manage",
     "platform_tenant:invocations:manage",
     "platform_tenant:invocations:read",
