@@ -435,9 +435,15 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	//
 	// Handing over an *os.File lets the parent hash in place and
 	// upload from the same fd. One write, not two.
-	written, spoolErr := copyArtifactContext(ctx, tmp, r, key)
-	if spoolErr != nil {
-		return fmt.Errorf("storage: cache: put %q: spool: %w", key, spoolErr)
+	// ADR-633: a snapshot drive handed over as a file is cloned rather than
+	// copied, so the cache entry keeps sharing the app layer's blocks.
+	written, cloned := cloneSpool(tmp, r, key)
+	if !cloned {
+		var spoolErr error
+		written, spoolErr = copyArtifactContext(ctx, tmp, r, key)
+		if spoolErr != nil {
+			return fmt.Errorf("storage: cache: put %q: spool: %w", key, spoolErr)
+		}
 	}
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("storage: cache: put %q: fsync spool: %w", key, err)
@@ -979,26 +985,31 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 	if err != nil {
 		return err
 	}
-	var total int64
+	var allocated int64
 	for _, e := range entries {
-		total += e.size
+		allocated += e.size
 	}
-	if total <= c.maxBytes {
+	if allocated <= c.maxBytes {
+		// Per-file allocation never undercounts shared blocks, so a cache
+		// under budget by that measure needs no extent scan.
 		return nil
 	}
 	// Sort oldest-first; evict until budget restored.
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].modTime.Before(entries[j].modTime)
 	})
-	for _, e := range entries {
-		if total <= c.maxBytes {
+	// ADR-633: count blocks shared between entries (a snapshot drive and
+	// its app layer) once.
+	footprint := newCacheFootprint(entries)
+	for i, e := range entries {
+		if footprint.total() <= c.maxBytes {
 			break
 		}
 		if e.pinned {
 			continue
 		}
 		if err := os.Remove(e.path); err == nil {
-			total -= e.size
+			footprint.drop(i)
 		}
 		metaPath := e.path + ".meta"
 		if err := os.Remove(metaPath); err == nil {

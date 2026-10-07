@@ -84,9 +84,15 @@ func cmdPS(args []string) int {
 	fs := newFlagSet("ps", flag.ContinueOnError)
 	setFlagOutput(fs, os.Stderr)
 	history := fs.Bool("all", false, "include the newest 100 retained history rows (parked rows expire after 30d by default)")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flags, positional := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil || len(positional) > 1 {
 		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]", "ps")
+		return 1
+	}
+	positional, err := mergeAppFlag(positional, *app, 1)
+	if err != nil {
+		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]\nerror: "+err.Error(), "ps")
 		return 1
 	}
 	slug := ""
@@ -1981,6 +1987,12 @@ func cmdQueueTail(args []string) int {
 			}
 			PrintWarn(os.Stderr, "queue receive failed: %v", err)
 			return 3
+		}
+		if row.ID == "" {
+			// An empty receive (204) is an idle poll like a long-poll
+			// timeout. production-us hunt #4: it printed a blank line
+			// every poll.
+			continue
 		}
 		payload := strings.TrimSpace(string(row.Payload))
 		if payload == "" || !json.Valid(row.Payload) {

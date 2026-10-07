@@ -147,6 +147,7 @@ type Loop struct {
 	floor                       *floor.Trigger                          // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
 	prewarm                     *prewarm.Trigger                        // scheduled/predicted demand-window capacity restore; nil opts out
 	recentLoad                  *recentload.RecentLoad                  // issue #171 aggressive-reaper signal mirror; nil opts out
+	fleetRates                  fleetRequestRates                       // H4-70 fleet-wide demand from instances.request_count
 	livenessWindow              *LivenessWindow                         // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
 	appDelete                   *AppDeleteSubscriber                    // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
 	privateNetwork              *PrivateNetworkAttachmentSubscriber     // durable private-route detach handler; nil = no-op dispatch
@@ -2540,6 +2541,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				PrewarmMinInstances:    appPrewarmFloor[a.ID],
 				OpenConns:              open,
 				InflightRequests:       inflightRequests,
+				RequestCount:           ins.RequestCount,
 				FlowSummaries:          flowSummaries,
 				FlowSummaryDegraded:    flowSummaryDegraded,
 				FlowCountDegraded:      flowCountDegraded,
@@ -2897,6 +2899,7 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 	consideredAppIDs := map[string]struct{}{}
 	desiredByApp := map[string]int{}
 	vmmdInflightByApp := map[string]int64{}
+	fleetRPS := l.fleetRates.observe(runningReaperInstances(snapshot), now)
 	planByApp := map[string]api.Plan{}
 	for _, s := range snapshot {
 		if s.State != state.StateRunning {
@@ -2929,6 +2932,10 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 			continue
 		}
 		if demand := l.inflightDemandReplicas(a.ID, planByApp[a.ID], vmmdInflightByApp[a.ID], now); demand > desired {
+			desired = demand
+		}
+		// H4-70: the local gateway and vmmd see only this node's share.
+		if demand := fleetDemandReplicas(fleetRPS[a.ID], a.AutoscaleTargetRPS); demand > desired {
 			desired = demand
 		}
 		consideredAppIDs[a.ID] = struct{}{}

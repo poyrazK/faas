@@ -237,11 +237,34 @@ func trafficResilienceEnabled(name string) bool {
 // circuit.LegacyQuarantineConfig for a nil breaker, which reproduces the
 // fixed-TTL quarantine exactly. Returning nil here is therefore the
 // flag-off path, and returning a DefaultConfig group is the flag-on one.
-func egressBreakerGroup() *circuit.Group {
+//
+// The same group is installed on the public handler (H4-68), and source tunes
+// each app's breakers from its kind=circuit_breaker rule. A nil source keeps
+// DefaultConfig for every app.
+func egressBreakerGroup(source gateway.CircuitRuleSource, log *slog.Logger) *circuit.Group {
 	if !trafficResilienceEnabled("FAAS_GATEWAY_CIRCUIT_BREAKER") {
 		return nil
 	}
-	return circuit.NewGroup(circuit.DefaultConfig(), nil)
+	g := circuit.NewGroup(circuit.DefaultConfig(), nil)
+	if source != nil {
+		g = g.WithConfigFor(gateway.NewCircuitConfigs(source, log).ForKey)
+	}
+	return g
+}
+
+// circuitRuleSource loads an app's kind=circuit_breaker rules for breaker
+// tuning.
+func circuitRuleSource(store interface {
+	ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRule, error)
+}) gateway.CircuitRuleSource {
+	return func(ctx context.Context, appID string) ([]gateway.EdgeRuleCircuitBreakerResolved, error) {
+		rules, err := store.ListEdgeRulesForApp(ctx, appID)
+		if err != nil {
+			return nil, err
+		}
+		compiled, _ := compileCircuitBreakerRules(rules)
+		return compiled, nil
+	}
 }
 
 // rawStreamEnabledFromEnv (issue #676 / ADR-080 follow-up) resolves the
@@ -2897,7 +2920,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if journalDialErr != nil {
 		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
 	}
-	handler.WithRequestIDJournalWriter(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
+	// ADR-634: the handler only enqueues; a bounded writer pool talks to apid,
+	// so a slow journal never delays or fails a customer request.
+	journalQueue := gateway.NewRequestIDJournalQueue(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
 		if journalClient == nil {
 			return errors.New("request ID journal apid client unavailable")
 		}
@@ -2915,7 +2940,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return errors.New("apid did not record the request ID journal entry")
 		}
 		return nil
-	})
+	}, deps.metrics, log)
+	go journalQueue.Run(ctx)
+	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {
 		defer func() {
 			if err := journalClient.Close(); err != nil {
@@ -3576,6 +3603,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
+		// ADR-201 §2: one instance-health breaker for the service proxy and
+		// the public path (H4-68), tuned per app by kind=circuit_breaker.
+		breaker := egressBreakerGroup(circuitRuleSource(pgStore), log)
+		handler.WithCircuitBreaker(breaker)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider:   serviceEndpointProvider,
 			Resolve:    newServiceProxyResolver(pgStore),
@@ -3609,7 +3640,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.
-			Breaker:     egressBreakerGroup(),
+			Breaker:     breaker,
 			Metrics:     deps.metrics,
 			RetryBudget: retryBudget,
 			// Prefer a replica on this node before crossing the network.

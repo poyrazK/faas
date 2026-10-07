@@ -18,7 +18,10 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // requireTyped prints `Type %q to confirm: ` on stderr, reads one
@@ -44,6 +47,12 @@ import (
 // Returns true → caller proceeds with the destructive action.
 // Returns false → caller MUST abort (typically `return 1`).
 func requireTyped(expected string) bool {
+	// production-us hunt #4: a script without --quiet sat on this prompt
+	// until its timeout, with nothing in its log saying why. Piped input
+	// still works; the hint names the bypass.
+	if f, ok := osStdin.(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
+		_, _ = fmt.Fprintf(osStderr, "stdin is not a terminal: pipe %q in, or pass --quiet to skip this confirmation.\n", expected)
+	}
 	_, _ = fmt.Fprintf(osStderr, "Type %q to confirm: ", expected)
 	line, err := readConfirmationLine(osStdin)
 	if err != nil && line == "" {

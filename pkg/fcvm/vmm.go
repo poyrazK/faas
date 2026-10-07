@@ -2986,13 +2986,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// reading a CA bundle) after the first scaled/restored instance.
 	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
 	var frozenDrivePath string
-	var driveBytes int64
+	var driveBytes, driveWritten int64
 	if driveKey != "" {
 		if v.storage == nil {
 			return SnapshotInfo{}, errors.New("vmm: snapshot private drive requires storage backend")
 		}
 		var freezeErr error
-		frozenDrivePath, driveBytes, freezeErr = v.freezeSnapshotDrive(root, l.Instance)
+		frozenDrivePath, driveBytes, driveWritten, freezeErr = v.freezeSnapshotDrive(root, l.Instance)
 		if freezeErr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: freeze snapshot private drive: %w", freezeErr)
 		}
@@ -3158,8 +3158,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	storedBytes := allocatedBytesOrLogical(memPublishedPath, memBytes) +
 		allocatedBytesOrLogical(statePublishedPath, stateBytes)
 	if driveKey != "" {
-		drivePublishedPath := v.publishedLocalPath(driveKey, frozenDrivePath)
-		storedBytes += allocatedBytesOrLogical(drivePublishedPath, driveBytes)
+		storedBytes += snapshotDriveStoredBytes(driveWritten, v.publishedLocalPath(driveKey, frozenDrivePath), driveBytes)
 	}
 
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
@@ -3176,9 +3175,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 // mounts them into the tmpfs jail; cloning the backing source is therefore an
 // O(1) snapshot on XFS/Btrfs. The portable copy fallback is used only when the
 // host filesystem lacks reflink support.
-func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, size int64, err error) {
+//
+// written is the bytes of the drive that do not share blocks with any other
+// file, measured before the clone: for a drive cloned from its app layer, the
+// blocks the guest wrote. It is -1 when the filesystem cannot tell (ADR-633).
+func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, size, written int64, err error) {
 	if v.nativeRecovery != nil {
-		return "", 0, errors.New("native recovery: snapshot drive export has no durable producer authority")
+		return "", 0, -1, errors.New("native recovery: snapshot drive export has no durable producer authority")
 	}
 	mountpoint := filepath.Join(root, layerImageName)
 	source := mountpoint
@@ -3197,43 +3200,47 @@ func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, siz
 	// fails while the snapshot is being published.
 	sourceFile, err := os.Open(source)
 	if err != nil {
-		return "", 0, err
+		return "", 0, -1, err
 	}
 	if err := sourceFile.Sync(); err != nil {
 		_ = sourceFile.Close()
-		return "", 0, err
+		return "", 0, -1, err
 	}
 	if err := sourceFile.Close(); err != nil {
-		return "", 0, err
+		return "", 0, -1, err
 	}
 
+	written = -1
+	if exclusive, ok := storage.ExclusiveBytes(source); ok {
+		written = exclusive
+	}
 	clone, cloned, err := reflinkCloneTemp(source, instance)
 	if err != nil {
-		return "", 0, err
+		return "", 0, -1, err
 	}
 	if cloned {
 		path = clone
 	} else {
 		out, createErr := os.CreateTemp(filepath.Dir(source), ".faas-snapshot-drive-*.ext4")
 		if createErr != nil {
-			return "", 0, createErr
+			return "", 0, -1, createErr
 		}
 		path = out.Name()
 		if closeErr := out.Close(); closeErr != nil {
 			_ = os.Remove(path)
-			return "", 0, closeErr
+			return "", 0, -1, closeErr
 		}
 		if copyErr := copyFile(source, path); copyErr != nil {
 			_ = os.Remove(path)
-			return "", 0, copyErr
+			return "", 0, -1, copyErr
 		}
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		_ = os.Remove(path)
-		return "", 0, err
+		return "", 0, -1, err
 	}
-	return path, info.Size(), nil
+	return path, info.Size(), written, nil
 }
 
 // publishedLocalPath returns the backend's local representation of key after a
@@ -3252,6 +3259,18 @@ func (v *JailerVMM) publishedLocalPath(key, fallback string) string {
 		return fallback
 	}
 	return path
+}
+
+// snapshotDriveStoredBytes is a published private drive's share of a
+// snapshot's footprint. The drive shares its unchanged blocks with the app
+// layer, which is accounted under the layer, so the snapshot adds only what
+// the guest wrote (ADR-633). Without that measurement (written < 0) it falls
+// back to the published copy's allocated blocks.
+func snapshotDriveStoredBytes(written int64, publishedPath string, logical int64) int64 {
+	if written >= 0 {
+		return written
+	}
+	return allocatedBytesOrLogical(publishedPath, logical)
 }
 
 // allocatedBytesOrLogical reads POSIX st_blocks (512-byte units). It falls

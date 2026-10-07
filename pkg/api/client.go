@@ -140,10 +140,15 @@ func NewClient(baseURL, token string) *Client {
 	return &Client{
 		baseURL: baseURL,
 		token:   token,
-		http:    &http.Client{Timeout: 30 * time.Second, Transport: newClientTransport()},
+		http:    &http.Client{Timeout: DefaultClientTimeout, Transport: newClientTransport()},
 		cache:   NewCompletionCache(),
 	}
 }
+
+// DefaultClientTimeout bounds every request a NewClient makes. Server-side
+// long-polls (SyncInvokeWaitSeconds) stay below it so the server's answer
+// arrives before the client gives up.
+const DefaultClientTimeout = 30 * time.Second
 
 // newClientTransport returns a private copy of the standard transport. The
 // default HTTP transport is process-global; httptest.Server.Close calls

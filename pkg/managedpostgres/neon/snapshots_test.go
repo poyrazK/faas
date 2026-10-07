@@ -167,7 +167,9 @@ func TestSnapshotCaptureRejectsUnverifiedIdentityAndRetention(t *testing.T) {
 					want = managedpostgres.ErrConflict
 				}
 			}
-			if _, err := f.p.CaptureSnapshot(t.Context(), f.request); !errors.Is(err, want) {
+			ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+			defer cancel()
+			if _, err := f.p.CaptureSnapshot(ctx, f.request); !errors.Is(err, want) {
 				t.Fatalf("unverified snapshot capture accepted: %v", err)
 			}
 			f.mu.Lock()

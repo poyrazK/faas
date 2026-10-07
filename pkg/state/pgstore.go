@@ -10481,7 +10481,7 @@ func (s *PgStore) StampFirstWake(ctx context.Context, deploymentID string, windo
 	row := s.pool.QueryRow(ctx, `
 		update deployments
 		   set first_wake_at = coalesce(first_wake_at, now()),
-		       first_5xx_window_ends_at = coalesce(first_5xx_window_ends_at, now() + ($2::text || ' minutes')::interval)
+		       first_5xx_window_ends_at = coalesce(first_5xx_window_ends_at, now() + make_interval(mins => $2::int))
 		 where id = $1
 		 returning `+deploymentSelectColumnsWithRootfs, deploymentID, windowMinutes)
 	d, err := scanDeploymentWithRootfs(row)

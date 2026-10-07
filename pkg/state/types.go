@@ -2549,14 +2549,11 @@ type Deployment struct {
 	DeployedBy string `json:"deployed_by,omitempty"`
 	PRNumber   int    `json:"pr_number,omitempty"`
 
-	// RollbackOn5xx (Mega-C PR-2 / issue #961 leaf 8): when
-	// true, schedd subscribes to wake.response_5xx events on
-	// this deployment and fires the apid-internal
-	// /v1/internal/auto-rollback-on-5xx endpoint when the
-	// per-plan 5xx threshold is crossed inside the first-wake
-	// window. Pro+ only; Free/Hobby customers get a 403 on the
-	// create-deployment request (ErrPlanRollbackOn5xxNotAllowed).
-	// Default false; the column is BOOLEAN NOT NULL DEFAULT
+	// RollbackOn5xx (Mega-C PR-2 / issue #961 leaf 8): when true,
+	// apid's rollback-on-5xx worker (ADR-625) reverts this release to
+	// its predecessor once request telemetry shows the 5xx threshold
+	// crossed inside the first-wake window. Every plan may opt in
+	// (ADR-200). Default false; the column is BOOLEAN NOT NULL DEFAULT
 	// false (migration 00354).
 	RollbackOn5xx bool `json:"rollback_on_5xx,omitempty"`
 	// DisableStartupCPUBoost opts this deployment out of the bounded startup
@@ -2571,13 +2568,9 @@ type Deployment struct {
 	// the auto-rollback only fires inside this window.
 	FirstWakeAt          *time.Time `json:"first_wake_at,omitempty"`
 	First5xxWindowEndsAt *time.Time `json:"first_5xx_window_ends_at,omitempty"`
-	// First5xxCount is the running tally of wake.response_5xx
-	// events on this deployment. Incremented atomically by the
-	// BumpFirst5xxCount pgstore method on every wake.response_5xx
-	// event; schedd's AutoRollbackWatcher checks it against the
-	// per-plan threshold (plan.RollbackOn5xxThreshold()) inside the
-	// First5xxWindowEndsAt window. NOT NULL DEFAULT 0 (migration
-	// 00354); pre-feature rows backfill to 0.
+	// First5xxCount was meant to tally wake.response_5xx events; that
+	// event never shipped and ADR-625 reads request telemetry instead,
+	// so the column stays 0. NOT NULL DEFAULT 0 (migration 00354).
 	First5xxCount int `json:"first_5xx_count,omitempty"`
 	// LastAutoRollbackAt + LastAutoRollbackReason record the
 	// most-recent auto-rollback (Mega-C PR-2). Stamped by
@@ -6116,7 +6109,9 @@ type Snapshot struct {
 	MemBytes         int64
 	DiskBytes        int64
 	// StoredBytes is the physical filesystem allocation of the published
-	// mem + vmstate + private-drive artifacts. Zero identifies legacy writers.
+	// mem + vmstate + private-drive artifacts. Private-drive blocks shared
+	// with the deployment's app layer count under the layer (ADR-633).
+	// Zero identifies legacy writers.
 	StoredBytes int64
 	// Tier (issue #470 / ADR-055) is which snapshot tier this row
 	// belongs to: "init" (taken right after guest-init signals

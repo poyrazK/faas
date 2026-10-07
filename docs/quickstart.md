@@ -1,24 +1,32 @@
 # Quickstart
 
 Gregale deploys stateless APIs into isolated Firecracker microVMs. The fastest
-path from an existing project to a URL is:
+guided path from an existing project to a URL is:
 
 ```bash
 curl -fsSL https://get.gregale.dev | sh
-gregale login
 cd my-api
-gregale deploy
+gregale start
 ```
 
-The CLI detects a supported framework, creates the app when needed, streams the
-build, waits for readiness, and prints the verified URL. Use
-`gregale deploy --dry-run` to inspect the inferred build before uploading.
+`start` takes no flags. Choose your project or a starter, review the launch,
+and confirm. It handles browser login when needed, picks the app name and access
+defaults, checks the source, shows compact launch progress, and automatically tests
+the first response. It finishes with the exact tested URL, response, elapsed time,
+and useful follow-up commands. Build logs are available through `gregale logs`.
 
-No project handy? Start with a maintained template:
+No project handy? Choose **Create a starter** inside the session. Node.js, Python,
+and Go HTTP apps are available. A starter also offers an optional greeting change:
+type your greeting and confirm one edit-and-deploy preview to see it live. Press
+Enter to finish instead. `start` deploys your working files, including
+uncommitted changes; use `gregale deploy --dry-run` to preview the inferred build.
 
-```bash
-gregale deploy --template hello-node
-```
+Interrupted after deployment was accepted? Run `gregale start` again from the same
+directory and choose **Continue**. Source blockers offer a fix or recheck only when
+needed. A failed first request offers a retry using the accepted deployment and a
+short log preview. For deployment options, private access changes, and automation,
+use the regular `gregale deploy` and `gregale app` commands. See
+[guided deployment sessions](cli/deploy.md#your-first-deployment-with-gregale-start).
 
 Useful follow-ups:
 

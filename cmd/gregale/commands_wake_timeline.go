@@ -70,10 +70,12 @@ func cmdWakeTimeline(args []string) int {
 	limit := fs.Int("limit", wakeTimelineDefaultLimit, "page size (1..1000)")
 	all := fs.Bool("all", false, "walk every page via next_cursor / since (ignores --limit for the call count)")
 	verbose := fs.Bool("verbose", false, "show detailed vmmd restore phases in human output (JSON is always complete)")
+	app := fs.String("app", "", appSlugFlagUsage)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) < 1 || len(pos) > 2 {
+	pos, mergeErr := mergeAppFlag(pos, *app, 2)
+	if mergeErr != nil || len(pos) < 1 || len(pos) > 2 {
 		PrintUsage(os.Stderr, "usage: gregale wake-timeline [<slug>] <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose]", "wake-timeline")
 		return 1
 	}

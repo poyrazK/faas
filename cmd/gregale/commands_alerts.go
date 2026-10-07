@@ -365,7 +365,9 @@ func cmdAlertUpdate(args []string) int {
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the replacement webhook secret from stdin")
 	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
-	if err := fs.Parse(args); err != nil {
+	// `alerts info|deliveries|rm <id> --app X` take the id first; update
+	// stopped parsing at it and never saw --app (production-us hunt #4).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {

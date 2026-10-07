@@ -204,6 +204,15 @@ func TestDeployManifestIncludesEveryParserFlag(t *testing.T) {
 			if !ok || len(call.Args) == 0 {
 				return true
 			}
+			// secondsOrDurationFlag(fs, "timeout", ...) defines a flag too.
+			if ident, isIdent := call.Fun.(*ast.Ident); isIdent && ident.Name == "secondsOrDurationFlag" && len(call.Args) > 1 {
+				if literal, isLit := call.Args[1].(*ast.BasicLit); isLit {
+					if name, err := strconv.Unquote(literal.Value); err == nil {
+						parsed[name] = true
+					}
+				}
+				return true
+			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
 			if !ok {
 				return true
