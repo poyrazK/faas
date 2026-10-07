@@ -13395,7 +13395,7 @@ CREATE TABLE public.event_fanout_attempt_history (
     capacity_deferrals bigint DEFAULT 0 NOT NULL,
     details_truncated boolean DEFAULT false NOT NULL,
     history_bytes bigint GENERATED ALWAYS AS ((((((((128)::bigint + octet_length(subscription_id)) + octet_length(action)) + octet_length(state)) + octet_length(failure_code)) + octet_length(last_error)) + octet_length(capacity_scope))) STORED NOT NULL,
-    CONSTRAINT event_fanout_attempt_history_action_check CHECK ((action = ANY (ARRAY['fanout_attempt'::text, 'operator_replay'::text]))),
+    CONSTRAINT event_fanout_attempt_history_action_check CHECK ((action = ANY (ARRAY['fanout_attempt'::text, 'operator_replay'::text, 'backfill_attempt'::text]))),
     CONSTRAINT event_fanout_attempt_history_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT event_fanout_attempt_history_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
     CONSTRAINT event_fanout_attempt_history_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
@@ -13522,6 +13522,7 @@ CREATE TABLE public.event_fanout_recipients (
     lease_until timestamp with time zone,
     capacity_deferrals integer DEFAULT 0 NOT NULL,
     generation_capacity_deferrals integer DEFAULT 0 NOT NULL,
+    backfill_job_id uuid,
     CONSTRAINT event_fanout_recipients_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT event_fanout_recipients_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
     CONSTRAINT event_fanout_recipients_check CHECK ((total_attempts >= attempts)),
@@ -13530,6 +13531,68 @@ CREATE TABLE public.event_fanout_recipients (
     CONSTRAINT event_fanout_recipients_generation_check CHECK ((generation > 0)),
     CONSTRAINT event_fanout_recipients_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
     CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
+);
+
+CREATE TABLE public.event_replay_jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    subscription_revision text NOT NULL,
+    recipient jsonb NOT NULL,
+    from_at timestamp with time zone NOT NULL,
+    until_at timestamp with time zone NOT NULL,
+    cutoff_at timestamp with time zone NOT NULL,
+    earliest_retained_at timestamp with time zone,
+    cursor_at timestamp with time zone NOT NULL,
+    cursor_outbox_id bigint DEFAULT 0 NOT NULL,
+    duplicate_policy text DEFAULT 'skip_existing'::text NOT NULL,
+    state text DEFAULT 'running'::text NOT NULL,
+    scan_complete boolean DEFAULT false NOT NULL,
+    scanned_count bigint DEFAULT 0 NOT NULL,
+    matched_count bigint DEFAULT 0 NOT NULL,
+    filtered_count bigint DEFAULT 0 NOT NULL,
+    skipped_captured_count bigint DEFAULT 0 NOT NULL,
+    skipped_unknown_count bigint DEFAULT 0 NOT NULL,
+    skipped_existing_count bigint DEFAULT 0 NOT NULL,
+    skipped_unsettled_count bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT event_replay_jobs_pkey PRIMARY KEY (id),
+    CONSTRAINT event_replay_jobs_subscription_revision_check CHECK ((length(subscription_revision) = 64)),
+    CONSTRAINT event_replay_jobs_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
+    CONSTRAINT event_replay_jobs_duplicate_policy_check CHECK ((duplicate_policy = 'skip_existing'::text)),
+    CONSTRAINT event_replay_jobs_state_check CHECK ((state = ANY (ARRAY['running'::text, 'completed'::text, 'completed_with_failures'::text]))),
+    CONSTRAINT event_replay_jobs_scanned_count_check CHECK ((scanned_count >= 0)),
+    CONSTRAINT event_replay_jobs_matched_count_check CHECK ((matched_count >= 0)),
+    CONSTRAINT event_replay_jobs_filtered_count_check CHECK ((filtered_count >= 0)),
+    CONSTRAINT event_replay_jobs_skipped_captured_count_check CHECK ((skipped_captured_count >= 0)),
+    CONSTRAINT event_replay_jobs_skipped_unknown_count_check CHECK ((skipped_unknown_count >= 0)),
+    CONSTRAINT event_replay_jobs_skipped_existing_count_check CHECK ((skipped_existing_count >= 0)),
+    CONSTRAINT event_replay_jobs_skipped_unsettled_count_check CHECK ((skipped_unsettled_count >= 0)),
+    CONSTRAINT event_replay_jobs_range_check CHECK (((from_at < cutoff_at) AND (cutoff_at <= until_at))),
+    CONSTRAINT event_replay_jobs_completion_check CHECK ((((state = 'running'::text) AND (completed_at IS NULL)) OR ((state <> 'running'::text) AND (completed_at IS NOT NULL))))
+);
+
+CREATE TABLE public.event_replay_job_items (
+    job_id uuid NOT NULL,
+    outbox_id bigint NOT NULL,
+    accepted_at timestamp with time zone NOT NULL,
+    event_source text NOT NULL,
+    event_id text NOT NULL,
+    event_type text NOT NULL,
+    schema_version text DEFAULT ''::text NOT NULL,
+    state text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    failure_code text DEFAULT ''::text NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    retryable boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT event_replay_job_items_pkey PRIMARY KEY (job_id, outbox_id),
+    CONSTRAINT event_replay_job_items_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'enqueued'::text, 'filtered'::text, 'failed'::text, 'skipped_captured'::text, 'skipped_unknown'::text, 'skipped_existing'::text, 'skipped_unsettled'::text]))),
+    CONSTRAINT event_replay_job_items_attempts_check CHECK ((attempts >= 0))
 );
 
 
@@ -28524,6 +28587,13 @@ CREATE INDEX event_fanout_history_summaries_prune_idx ON public.event_fanout_his
 
 
 --
+-- Name: event_fanout_outbox_account_accepted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_outbox_account_accepted_idx ON public.event_fanout_outbox USING btree (account_id, created_at, id);
+
+
+--
 -- Name: event_fanout_outbox_lease_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28556,6 +28626,27 @@ CREATE INDEX event_fanout_recipients_due_idx ON public.event_fanout_recipients U
 --
 
 CREATE INDEX event_fanout_recipients_lease_idx ON public.event_fanout_recipients USING btree (lease_until, outbox_id, subscription_id) WHERE (state = 'processing'::text);
+
+-- Name: event_replay_jobs_running_idx; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX event_replay_jobs_running_idx ON public.event_replay_jobs USING btree (created_at, id) WHERE (state = 'running'::text);
+
+-- Name: event_replay_jobs_account_idx; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX event_replay_jobs_account_idx ON public.event_replay_jobs USING btree (account_id, created_at DESC, id DESC);
+
+-- Name: event_replay_jobs_active_target_idx; Type: INDEX; Schema: public; Owner: -
+CREATE UNIQUE INDEX event_replay_jobs_active_target_idx ON public.event_replay_jobs USING btree (account_id, subscription_id) WHERE (state = 'running'::text);
+
+-- Name: event_replay_job_items_due_idx; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX event_replay_job_items_due_idx ON public.event_replay_job_items USING btree (job_id, accepted_at, outbox_id) WHERE (state = 'pending'::text);
+
+-- Name: event_replay_job_items_state_idx; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX event_replay_job_items_state_idx ON public.event_replay_job_items USING btree (job_id, state, accepted_at, outbox_id);
+
+-- Name: event_replay_job_items_page_idx; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX event_replay_job_items_page_idx ON public.event_replay_job_items USING btree (job_id, accepted_at, outbox_id);
+
+-- Name: event_fanout_recipients_backfill_idx; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX event_fanout_recipients_backfill_idx ON public.event_fanout_recipients USING btree (backfill_job_id, outbox_id) WHERE (backfill_job_id IS NOT NULL);
 
 
 --
@@ -37248,6 +37339,15 @@ ALTER TABLE ONLY public.event_fanout_outbox
 
 ALTER TABLE ONLY public.event_fanout_recipients
     ADD CONSTRAINT event_fanout_recipients_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.event_fanout_recipients
+    ADD CONSTRAINT event_fanout_recipients_backfill_job_id_fkey FOREIGN KEY (backfill_job_id) REFERENCES public.event_replay_jobs(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.event_replay_job_items
+    ADD CONSTRAINT event_replay_job_items_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.event_replay_jobs(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.event_replay_jobs
+    ADD CONSTRAINT event_replay_jobs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

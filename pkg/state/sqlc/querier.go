@@ -550,6 +550,37 @@ type Querier interface {
 	EventRecipientReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientReplayReceiptParams) (EventRecipientReplayReceiptRow, error)
 	EventRecipientSettleReceipt(ctx context.Context, db DBTX, id int64) error
 	EventRecipientUpdateProgress(ctx context.Context, db DBTX, arg EventRecipientUpdateProgressParams) error
+	EventReplayBackfillActiveJobCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	EventReplayBackfillAdoptReceipt(ctx context.Context, db DBTX, id int64) (int64, error)
+	EventReplayBackfillAdvance(ctx context.Context, db DBTX, arg EventReplayBackfillAdvanceParams) error
+	EventReplayBackfillCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillCandidatesParams) ([]EventReplayBackfillCandidatesRow, error)
+	EventReplayBackfillClaimTarget(ctx context.Context, db DBTX, arg EventReplayBackfillClaimTargetParams) ([]byte, error)
+	EventReplayBackfillClaimValid(ctx context.Context, db DBTX, arg EventReplayBackfillClaimValidParams) (bool, error)
+	EventReplayBackfillCountRetryableFailed(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
+	EventReplayBackfillCreate(ctx context.Context, db DBTX, arg EventReplayBackfillCreateParams) (pgtype.UUID, error)
+	EventReplayBackfillExists(ctx context.Context, db DBTX, arg EventReplayBackfillExistsParams) (bool, error)
+	EventReplayBackfillFinalize(ctx context.Context, db DBTX, id pgtype.UUID) error
+	EventReplayBackfillFinishItem(ctx context.Context, db DBTX, arg EventReplayBackfillFinishItemParams) (int64, error)
+	EventReplayBackfillGet(ctx context.Context, db DBTX, arg EventReplayBackfillGetParams) (EventReplayBackfillGetRow, error)
+	EventReplayBackfillInFlightCount(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
+	EventReplayBackfillInsertItem(ctx context.Context, db DBTX, arg EventReplayBackfillInsertItemParams) (int64, error)
+	EventReplayBackfillInsertRecipient(ctx context.Context, db DBTX, arg EventReplayBackfillInsertRecipientParams) (int64, error)
+	EventReplayBackfillItems(ctx context.Context, db DBTX, arg EventReplayBackfillItemsParams) ([]EventReplayBackfillItemsRow, error)
+	EventReplayBackfillLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	EventReplayBackfillLockAnyJob(ctx context.Context, db DBTX, arg EventReplayBackfillLockAnyJobParams) (pgtype.UUID, error)
+	EventReplayBackfillLockJob(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	EventReplayBackfillLockParent(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error)
+	EventReplayBackfillMarkScanned(ctx context.Context, db DBTX, id pgtype.UUID) error
+	EventReplayBackfillMaterializeSnapshot(ctx context.Context, db DBTX, id int64) error
+	EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error)
+	EventReplayBackfillPruneEnvelopes(ctx context.Context, db DBTX, arg EventReplayBackfillPruneEnvelopesParams) (int64, error)
+	EventReplayBackfillPruneJobs(ctx context.Context, db DBTX, arg EventReplayBackfillPruneJobsParams) (int64, error)
+	EventReplayBackfillResetItem(ctx context.Context, db DBTX, arg EventReplayBackfillResetItemParams) (int64, error)
+	EventReplayBackfillRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillRetryCandidatesParams) ([]EventReplayBackfillRetryCandidatesRow, error)
+	EventReplayBackfillSetRunning(ctx context.Context, db DBTX, id pgtype.UUID) error
+	EventReplayPreviewCandidates(ctx context.Context, db DBTX, arg EventReplayPreviewCandidatesParams) ([]EventReplayPreviewCandidatesRow, error)
+	EventReplayPreviewEarliestRetained(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Timestamptz, error)
+	EventReplayPreviewTarget(ctx context.Context, db DBTX, arg EventReplayPreviewTargetParams) (EventReplayPreviewTargetRow, error)
 	EventRoutingClaimReceipt(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRoutingClaimReceiptRow, error)
 	// Evaluate the wall clock only after all admission locks have been acquired.
 	EventRoutingClaimValid(ctx context.Context, db DBTX, arg EventRoutingClaimValidParams) (bool, error)

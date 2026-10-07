@@ -67,8 +67,12 @@ WITH candidate AS (
     JOIN event_fanout_outbox o ON o.id=r.outbox_id
     LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
     LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
-    WHERE (r.state = 'pending' AND r.available_at <= sqlc.arg(now_at)::timestamptz)
-       OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz)
+    WHERE ((r.state = 'pending' AND r.available_at <= sqlc.arg(now_at)::timestamptz)
+       OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz))
+      AND (r.backfill_job_id IS NULL OR EXISTS (
+          SELECT 1 FROM event_replay_jobs j JOIN event_replay_job_items i ON i.job_id=j.id
+          WHERE j.id=r.backfill_job_id AND j.state='running' AND i.outbox_id=r.outbox_id
+            AND i.state IN ('pending','processing')))
     ORDER BY coalesce(fa.last_claimed_at,'epoch'::timestamptz),
       coalesce(fc.last_claimed_at,'epoch'::timestamptz), r.available_at, r.outbox_id, r.subscription_id
     FOR UPDATE OF r SKIP LOCKED LIMIT 1
@@ -80,6 +84,11 @@ WITH candidate AS (
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
     RETURNING r.*
+), replay_item AS (
+    UPDATE event_replay_job_items i SET state='processing', attempts=c.total_attempts, updated_at=clock_timestamp()
+    FROM claimed c WHERE c.backfill_job_id=i.job_id AND c.outbox_id=i.outbox_id
+      AND i.state IN ('pending','processing')
+    RETURNING i.job_id
 ), fairness AS (
  INSERT INTO event_routing_fairness
  SELECT o.account_id,v.subscription_id,clock_timestamp() FROM claimed c
@@ -91,7 +100,7 @@ WITH candidate AS (
 )
 SELECT c.outbox_id, c.recipient, c.claim_token, c.generation, c.attempts,
        c.capacity_deferrals,c.generation_capacity_deferrals,
-       c.total_attempts, c.available_at, c.lease_until, o.payload
+       c.total_attempts, c.available_at, c.lease_until, o.payload, c.backfill_job_id
 FROM claimed c JOIN event_fanout_outbox o ON o.id = c.outbox_id;
 
 -- name: EventRecipientLockReceipt :one
