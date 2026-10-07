@@ -71,3 +71,98 @@ func (s *server) checkpointObjectTargetsForLease(ctx context.Context, lease stat
 	}
 	return lease, targets, nil
 }
+
+// A qualified driver must bind native creation and its durable ownership journal
+// to the exact request ID and plan digest. Observe independently authenticates
+// that original journal and the pinned target's current private, empty state.
+// It must never create, adopt an unowned bucket, retry, copy, or modify policy.
+// No built-in provider implements this qualified protocol yet.
+type cloneCheckpointObjectTargetDriver interface {
+	cloneCheckpointReleaseDriver
+	CreateCheckpointObjectTarget(context.Context, state.ProjectEnvironmentCloneCheckpointObjectTargetPlan) error
+	ObserveCheckpointObjectTarget(context.Context, state.ProjectEnvironmentCloneCheckpointObjectTargetPlan) (state.ProjectEnvironmentCloneCheckpointObjectTargetObservation, error)
+}
+
+func (s *server) checkpointTargetRetention(ctx context.Context, lease state.ProjectEnvironmentCloneLease, driver cloneCheckpointReleaseDriver) (state.ProjectEnvironmentCloneCheckpointReleaseObservation, error) {
+	store, ok := s.store.(state.ProjectEnvironmentCloneCheckpointReleaseStore)
+	if !ok {
+		return state.ProjectEnvironmentCloneCheckpointReleaseObservation{}, errCloneCheckpointUnavailable
+	}
+	release, err := store.ProjectEnvironmentCloneCheckpointReleaseForLease(ctx, lease)
+	if err != nil {
+		return state.ProjectEnvironmentCloneCheckpointReleaseObservation{}, err
+	}
+	if release.State != "released" {
+		return state.ProjectEnvironmentCloneCheckpointReleaseObservation{}, state.ErrConflict
+	}
+	return driver.ObserveCapturedSourceRelease(ctx, cloneCommonCheckpointPlanCopy(release.Plan), cloneCheckpointReceiptCopy(release.Receipt), lease.ExpiresAt)
+}
+
+// A committing planned -> requested claim is the sole native creation authority.
+// Requested/ready recovery observes the original target, even after worker
+// handoff. Lost claim acknowledgements cannot authorize native IO on retry.
+func (s *server) prepareCheckpointObjectTargets(ctx context.Context, lease state.ProjectEnvironmentCloneLease, driver cloneCheckpointObjectTargetDriver) (state.ProjectEnvironmentCloneLease, error) {
+	store, ok := s.store.(state.ProjectEnvironmentCloneCheckpointObjectTargetStore)
+	if !ok || driver == nil {
+		return lease, errCloneCheckpointUnavailable
+	}
+	lease, targets, err := s.checkpointObjectTargetsForLease(ctx, lease, driver)
+	if err != nil {
+		return lease, err
+	}
+	for _, target := range targets {
+		// Each target gets a fresh lease and independently verified capture horizon.
+		lease, _, err = s.checkpointObjectTargetsForLease(ctx, lease, driver)
+		if err != nil {
+			return lease, err
+		}
+		if err := s.prepareCheckpointObjectTarget(ctx, lease, driver, store, target); err != nil {
+			return lease, err
+		}
+	}
+	return lease, nil
+}
+
+func (s *server) prepareCheckpointObjectTarget(ctx context.Context, lease state.ProjectEnvironmentCloneLease, driver cloneCheckpointObjectTargetDriver, store state.ProjectEnvironmentCloneCheckpointObjectTargetStore, target state.ObjectBucket) error {
+	ctx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
+	defer cancel()
+	creation, err := store.ReserveProjectEnvironmentCloneCheckpointObjectTarget(ctx, lease, target.AppID, target.EnvironmentCloneSourceBucketID, target.ID)
+	if err != nil {
+		return err
+	}
+	retention, err := s.checkpointTargetRetention(ctx, lease, driver)
+	if err != nil {
+		return err
+	}
+	if err := s.cloneWorkerAdmission(ctx); err != nil {
+		return err
+	}
+	creation, dispatch, err := store.ClaimProjectEnvironmentCloneCheckpointObjectTarget(ctx, lease, creation.Plan.SourceBucketID, retention)
+	if err != nil {
+		return err
+	}
+	if dispatch {
+		if err := s.cloneWorkerAdmission(ctx); err != nil {
+			return err
+		}
+		if err := driver.CreateCheckpointObjectTarget(ctx, creation.Plan); err != nil {
+			return err
+		}
+	}
+	if err := s.cloneWorkerAdmission(ctx); err != nil {
+		return err
+	}
+	observed, err := driver.ObserveCheckpointObjectTarget(ctx, creation.Plan)
+	if err != nil {
+		return err
+	}
+	retention, err = s.checkpointTargetRetention(ctx, lease, driver)
+	if err != nil {
+		return err
+	}
+	if err := s.cloneWorkerAdmission(ctx); err != nil {
+		return err
+	}
+	_, err = store.FinishProjectEnvironmentCloneCheckpointObjectTarget(ctx, lease, creation.Plan.SourceBucketID, observed, retention)
+	return err
+}

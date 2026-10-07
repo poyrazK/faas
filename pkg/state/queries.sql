@@ -4533,6 +4533,11 @@ AND ($1 <> 'deleting' OR NOT EXISTS (
     AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
   ))
 ))
+AND ($1 <> 'provisioning' OR NOT EXISTS (
+ SELECT 1 FROM project_environment_clone_operations o
+ WHERE o.id=object_buckets.environment_clone_operation_id
+ AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r WHERE r->>'kind'='data_checkpoint')
+))
 AND (NOT sqlc.arg(recovery)::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING *;
 
@@ -4547,7 +4552,10 @@ WHERE id = $1 AND lease_token = $2 AND state IN ('provisioning', 'deleting');
 
 -- name: ObjectBucketsDue :many
 SELECT * FROM object_buckets
-WHERE (state = 'deleting' OR (sqlc.arg(include_provisioning)::boolean AND state = 'provisioning'))
+WHERE (state = 'deleting' OR (sqlc.arg(include_provisioning)::boolean AND state = 'provisioning'
+ AND NOT EXISTS (SELECT 1 FROM project_environment_clone_operations o
+ WHERE o.id=object_buckets.environment_clone_operation_id
+ AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r WHERE r->>'kind'='data_checkpoint'))))
 AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
 ORDER BY retry_at, id LIMIT sqlc.arg(batch_limit)::int;
 
@@ -14956,3 +14964,36 @@ WHERE o.id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::u
  AND g.state='open' AND g.operation_id IS NULL AND g.generation=sqlc.arg(released_generation)::bigint)
  AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state<>'released')
  AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=o.id);
+
+-- name: ReadCloneCheckpointObjectTarget :one
+SELECT * FROM project_environment_clone_checkpoint_object_targets
+WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE;
+
+-- name: InsertCloneCheckpointObjectTarget :one
+INSERT INTO project_environment_clone_checkpoint_object_targets(operation_id,source_bucket_id,target_bucket_id,plan)
+SELECT o.id,sqlc.arg(source_bucket_id)::uuid,sqlc.arg(target_bucket_id)::uuid,sqlc.arg(plan)::jsonb
+FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_releases r ON r.operation_id=o.id
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing' AND r.state='released'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid
+ AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: ClaimCloneCheckpointObjectTarget :one
+UPDATE project_environment_clone_checkpoint_object_targets t SET state='requested',requested_at=clock_timestamp()
+WHERE t.operation_id=sqlc.arg(operation_id)::uuid AND t.source_bucket_id=sqlc.arg(source_bucket_id)::uuid AND t.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=t.operation_id AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()) RETURNING t.*;
+
+-- name: RecordCloneCheckpointObjectTarget :execrows
+UPDATE project_environment_clone_checkpoint_object_targets t SET state='ready',observation_sha256=sqlc.arg(observation_sha256)::text,ready_at=clock_timestamp()
+WHERE t.operation_id=sqlc.arg(operation_id)::uuid AND t.source_bucket_id=sqlc.arg(source_bucket_id)::uuid AND t.state='requested'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=t.operation_id AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
+
+-- name: FinishCloneCheckpointObjectTargetBucket :execrows
+UPDATE object_buckets b SET state='ready',updated_at=clock_timestamp()
+WHERE b.id=sqlc.arg(target_bucket_id)::uuid AND b.environment_clone_operation_id=sqlc.arg(operation_id)::uuid
+ AND b.state='provisioning' AND b.lease_token IS NULL AND b.lease_until IS NULL AND NOT b.public_read AND b.serve_at IS NULL
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_object_targets t ON t.operation_id=o.id
+ WHERE o.id=b.environment_clone_operation_id AND t.target_bucket_id=b.id AND t.state='ready'
+ AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid
+ AND o.lease_until>clock_timestamp());

@@ -5751,6 +5751,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_object_targets",
+    "columns": [
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "ready_at",
+      "requested_at",
+      "source_bucket_id",
+      "state",
+      "target_bucket_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_checkpoint_releases",
     "columns": [
       "adoption_sha256",

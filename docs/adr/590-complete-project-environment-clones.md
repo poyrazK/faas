@@ -7840,3 +7840,47 @@ Validation: PostgreSQL preflight tests pass after source configuration mutation,
 confirm target reservations remain unpublished and unprovisioned, and reject
 pending release or retention shorter than the renewed lease. The existing
 checkpoint release recovery tests also pass. No live provider test was run.
+
+## Private checkpoint object target creation recovery
+
+Released checkpoints now have a separate private target creation journal. Its
+original plan binds the operation, source and reserved target IDs, account/app,
+pinned backend fingerprint, region, native name, original manifest and checkpoint.
+The stable native request is `target-<operation ID>-<target ID>`; the plan digest
+must be authenticated by a qualified provider's durable ownership journal.
+
+Only a known committing planned-to-requested claim authorizes creation. Lost
+claim acknowledgements and requested/ready recovery authorize observation only,
+including worker handoff and lost native or local commit replies. A missing
+original native journal blocks progress; it never selects or adopts an unowned
+bucket. The general provisioning/recovery worker excludes common-checkpoint
+reservations, including reservations before the release journal exists.
+
+Independent original request evidence must prove the operation owner, exact
+native resource and plan, original UTC creation time, and a currently private,
+empty target. Original source release and capture retention are independently
+checked through the renewed lease both before dispatch and after native IO.
+One worker-fenced transaction records the creation digest and marks the private
+reservation ready; failure of the final bucket update rolls back both effects.
+Resource inventory and operation revision stay unchanged. A ready replay requires
+the same original creation digest. Downgrade refuses any owned target journal.
+
+This is a private qualified-driver seam with no built-in provider implementation.
+It creates no credentials, copies no data and publishes nothing. PostgreSQL
+restore, object copy verification, final publication inventory and native provider
+qualification remain required. Target retirement also needs independent terminal
+cleanup proof before this ownership journal can be removed. Live R2/OVH
+qualification stays deferred.
+
+Validation: PostgreSQL tests pass for lost native/claim/commit replies, worker
+handoff, source mutation, foreign ownership/request/placement evidence, public
+or nonempty targets, stale workers, retention loss after native IO, and rollback
+of the journal and private bucket readiness after an injected final write failure.
+Ready replay preserves the replacement worker's operation metadata and inventory.
+General bucket claims/recovery exclude checkpoint reservations. The new migration
+passes Up/Down/reapply and refuses downgrade with owned dispatch authority.
+Original release, preflight, ordinary bucket lease/mutation, schema registration,
+configuration-fence and target-reservation regressions pass. SQLC parity and
+repository encoding, shell quoting and ADR numbering checks pass. These are
+private-driver tests with real PostgreSQL, not native provider qualification.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
