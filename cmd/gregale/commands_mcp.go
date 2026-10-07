@@ -296,11 +296,20 @@ func cmdMCPRemote(command string, args []string) int {
 	uri := fs.String("uri", "", "resource URI to read (resource-read only)")
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
+	// `mcp tools <slug>` addresses the app the way the other leaves do
+	// (production-us hunt #5, H5-3).
+	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 || *timeout <= 0 {
-		return printErr("Invalid MCP flags", errors.New("unexpected positional arguments or nonpositive timeout"))
+	if fs.NArg() != 0 {
+		return printErr("Invalid MCP flags", fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " ")))
+	}
+	if *timeout <= 0 {
+		return printErr("Invalid MCP flags", errors.New("--timeout must be positive"))
+	}
+	if err := mergeLeadingSlug(app, slug); err != nil {
+		return printErr("Invalid MCP flags", err)
 	}
 	if *interactive && *inputResponsesFile != "" {
 		return printErr("Invalid MCP input flags", errors.New("choose either --interactive or --input-responses-file"))
