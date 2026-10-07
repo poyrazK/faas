@@ -126,8 +126,9 @@ type ObservedDatabase struct {
 	Status         ProviderStatus
 	ComputeState   ComputeState
 	Spec           Spec
-	// RestoreLineage comes from the provider's actual target metadata, never
-	// from echoing a RestoreRequest. A missing observation cannot qualify an
+	// RestoreLineage comes from the provider's actual target metadata or an
+	// independently verified mapping to its historical position, never from
+	// echoing a RestoreRequest. A missing observation cannot qualify an
 	// isolated stage database. SourceResourceID must identify the exact source
 	// (for example a Neon branch), not a mutable default selector.
 	RestoreLineage *RestoreLineage
@@ -206,6 +207,14 @@ type RestoreRequest struct {
 	Spec             Spec
 	PointInTime      time.Time
 	IdempotencyKey   string
+}
+
+// RestoreInspector verifies an existing target against its pinned source and
+// point. Providers whose metadata expresses historical positions instead of
+// timestamps can resolve that mapping independently. This inspection must not
+// create a resource or substitute a mutable source selector.
+type RestoreInspector interface {
+	InspectRestore(context.Context, string, RestoreRequest) (ObservedDatabase, error)
 }
 
 type DeleteResult struct {

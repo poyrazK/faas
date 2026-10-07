@@ -438,7 +438,14 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 			})
 		}
 	} else {
-		observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
+		if inspector, ok := backend.Provider.(RestoreInspector); ok && database.RestoreSourceResourceID != "" {
+			observed, err = inspector.InspectRestore(providerContext, database.ProviderResourceID, RestoreRequest{
+				ResourceID: database.ID, SourceResourceID: database.RestoreSourceResourceID,
+				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
+			})
+		} else {
+			observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
+		}
 		if errors.Is(err, ErrNotFound) {
 			// The Gregale resource still exists; an upstream disappearance is
 			// an availability incident, not a customer-facing 404.
