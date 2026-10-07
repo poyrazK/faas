@@ -73,6 +73,27 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"slug\":\"([^\"]+)\".*/\\1/'")
 	_, _ = fmt.Fprintln(w, "}")
 	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "__gregale_cache_ids() {")
+	_, _ = fmt.Fprintln(w, "  local kind=\"$1\"")
+	_, _ = fmt.Fprintln(w, "  local path=\"$(__gregale_cache_path)\"")
+	_, _ = fmt.Fprintln(w, "  if [ -z \"$path\" ] || [ ! -r \"$path\" ]; then return 1; fi")
+	_, _ = fmt.Fprintln(w, "  sed -n \"/\\\"$kind\\\":\\[/,/]/p\" \"$path\" 2>/dev/null \\")
+	_, _ = fmt.Fprintln(w, "    | sed -E \"s/.*\\\"$kind\\\":\\[//; s/\\].*//\" \\")
+	_, _ = fmt.Fprintln(w, "    | grep -oE '\"id\":\"[^\"]+\"' \\")
+	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"id\":\"([^\"]+)\".*/\\1/'")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "__gregale_cache_project_environments() {")
+	_, _ = fmt.Fprintln(w, "  local project=\"$1\"")
+	_, _ = fmt.Fprintln(w, "  local path=\"$(__gregale_cache_path)\"")
+	_, _ = fmt.Fprintln(w, "  if [ -z \"$path\" ] || [ ! -r \"$path\" ]; then return 1; fi")
+	_, _ = fmt.Fprintln(w, "  grep -oE '\"project_slug\":\"[a-z0-9-]+\",\"slug\":\"[a-z0-9-]+\"' \"$path\" 2>/dev/null \\")
+	_, _ = fmt.Fprintln(w, "    | grep -F -- \"\\\"project_slug\\\":\\\"$project\\\",\" \\")
+	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"slug\":\"([^\"]+)\".*/\\1/'")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+	renderBashEnvironmentProjectLookup(w)
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "__gregale() {")
 	_, _ = fmt.Fprintln(w, "  local cur prev words cword")
 	_, _ = fmt.Fprintln(w, "  if type _get_comp_words_by_ref >/dev/null 2>&1; then")
@@ -83,6 +104,80 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    words=(\"${COMP_WORDS[@]}\")")
 	_, _ = fmt.Fprintln(w, "    cword=$COMP_CWORD")
 	_, _ = fmt.Fprintln(w, "  fi")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "  # Global output flags do not change the command path. Remove completed instances")
+	_, _ = fmt.Fprintln(w, "  # before dispatch so `gregale --json app <TAB>` completes the app command.")
+	_, _ = fmt.Fprintln(w, "  local -a normalized_words")
+	_, _ = fmt.Fprintln(w, "  local normalized_cword after_separator i word")
+	_, _ = fmt.Fprintln(w, "  normalized_words=(\"${words[0]}\")")
+	_, _ = fmt.Fprintln(w, "  after_separator=0")
+	_, _ = fmt.Fprintln(w, "  for ((i=1; i<cword; i++)); do")
+	_, _ = fmt.Fprintln(w, "    word=\"${words[i]}\"")
+	_, _ = fmt.Fprintln(w, "    if [ $after_separator -eq 0 ] && [[ \"$word\" = --json || \"$word\" = -j || \"$word\" == --json=* ]]; then continue; fi")
+	_, _ = fmt.Fprintln(w, "    normalized_words+=(\"$word\")")
+	_, _ = fmt.Fprintln(w, "    if [ \"$word\" = -- ]; then after_separator=1; fi")
+	_, _ = fmt.Fprintln(w, "  done")
+	_, _ = fmt.Fprintln(w, "  cur=\"${words[cword]}\"")
+	_, _ = fmt.Fprintln(w, "  normalized_cword=${#normalized_words[@]}")
+	_, _ = fmt.Fprintln(w, "  normalized_words+=(\"$cur\")")
+	_, _ = fmt.Fprintln(w, "  words=(\"${normalized_words[@]}\")")
+	_, _ = fmt.Fprintln(w, "  cword=$normalized_cword")
+	_, _ = fmt.Fprintln(w, "  if [ $cword -gt 0 ]; then prev=\"${words[cword-1]}\"; else prev=\"\"; fi")
+	_, _ = fmt.Fprintln(w)
+	fileFlags := completionUnambiguousFlagSpellings(cliFlagUsesFilePathValues)
+	if len(fileFlags) > 0 {
+		_, _ = fmt.Fprintf(w, "  case \"$prev\" in %s)\n", strings.Join(fileFlags, "|"))
+		_, _ = fmt.Fprintln(w, "    COMPREPLY=()")
+		_, _ = fmt.Fprintln(w, "    if [[ \"$cur\" == *=* ]]; then")
+		_, _ = fmt.Fprintln(w, "      local value_prefix=\"${cur%%=*}=\"")
+		_, _ = fmt.Fprintln(w, "      local value_part=\"${cur#*=}\"")
+		_, _ = fmt.Fprintln(w, "      local path_suggestion")
+		_, _ = fmt.Fprintln(w, "      while IFS= read -r path_suggestion; do COMPREPLY+=(\"${value_prefix}${path_suggestion}\"); done < <(compgen -f -- \"$value_part\")")
+		_, _ = fmt.Fprintln(w, "    else")
+		_, _ = fmt.Fprintln(w, "      local path_suggestion")
+		_, _ = fmt.Fprintln(w, "      while IFS= read -r path_suggestion; do COMPREPLY+=(\"$path_suggestion\"); done < <(compgen -f -- \"$cur\")")
+		_, _ = fmt.Fprintln(w, "    fi")
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "    ;;")
+		_, _ = fmt.Fprintln(w, "  esac")
+		fileEqualFlags := make([]string, 0, len(fileFlags))
+		for _, spelling := range fileFlags {
+			fileEqualFlags = append(fileEqualFlags, spelling+"=*")
+		}
+		_, _ = fmt.Fprintf(w, "  case \"$cur\" in %s)\n", strings.Join(fileEqualFlags, "|"))
+		_, _ = fmt.Fprintln(w, "    COMPREPLY=()")
+		_, _ = fmt.Fprintln(w, "    local value_prefix=\"${cur%%=*}=\"")
+		_, _ = fmt.Fprintln(w, "    local value_part=\"${cur#*=}\"")
+		_, _ = fmt.Fprintln(w, "    local path_suggestion")
+		_, _ = fmt.Fprintln(w, "    while IFS= read -r path_suggestion; do COMPREPLY+=(\"${value_prefix}${path_suggestion}\"); done < <(compgen -f -- \"$value_part\")")
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "    ;;")
+		_, _ = fmt.Fprintln(w, "  esac")
+	}
+	environmentFlags := completionUnambiguousFlagSpellings(cliFlagUsesEnvironmentValues)
+	if len(environmentFlags) > 0 {
+		environmentValues := strings.Join(completionClosedSetValues("scope"), " ")
+		_, _ = fmt.Fprintf(w, "  case \"$prev\" in %s)\n", strings.Join(environmentFlags, "|"))
+		_, _ = fmt.Fprintf(w, "    local environments=\"%s $(__gregale_cache_slugs environments)\"\n", environmentValues)
+		_, _ = fmt.Fprintln(w, "    COMPREPLY=( $(compgen -W \"$environments\" -- \"$cur\") )")
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "    ;;")
+		_, _ = fmt.Fprintln(w, "  esac")
+		environmentEqualFlags := make([]string, 0, len(environmentFlags))
+		for _, spelling := range environmentFlags {
+			environmentEqualFlags = append(environmentEqualFlags, spelling+"=*")
+		}
+		_, _ = fmt.Fprintf(w, "  case \"$cur\" in %s)\n", strings.Join(environmentEqualFlags, "|"))
+		_, _ = fmt.Fprintln(w, "    local value_prefix=\"${cur%%=*}=\"")
+		_, _ = fmt.Fprintln(w, "    local value_part=\"${cur#*=}\"")
+		_, _ = fmt.Fprintf(w, "    local environments=\"%s $(__gregale_cache_slugs environments)\"\n", environmentValues)
+		_, _ = fmt.Fprintln(w, "    COMPREPLY=( $(compgen -W \"$environments\" -- \"$value_part\") )")
+		_, _ = fmt.Fprintln(w, "    local completion_index")
+		_, _ = fmt.Fprintln(w, "    for completion_index in \"${!COMPREPLY[@]}\"; do COMPREPLY[$completion_index]=\"${value_prefix}${COMPREPLY[$completion_index]}\"; done")
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "    ;;")
+		_, _ = fmt.Fprintln(w, "  esac")
+	}
 	_, _ = fmt.Fprintln(w)
 	// App and organization slugs are also accepted as values for flags
 	// on nested command families. Keep this check ahead of the command
@@ -98,10 +193,108 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    COMPREPLY=( $(compgen -W \"$slugs\" -- \"$cur\") )")
 	_, _ = fmt.Fprintln(w, "    return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
+	_, _ = fmt.Fprintln(w, "  local environment_project")
+	_, _ = fmt.Fprintln(w, "  environment_project=\"$(__gregale_environment_project)\"")
+	_, _ = fmt.Fprintln(w, "  case \"$prev\" in --from|--to)")
+	_, _ = fmt.Fprintln(w, "    if [ -n \"$environment_project\" ]; then")
+	_, _ = fmt.Fprintln(w, "      COMPREPLY=( $(compgen -W \"$(__gregale_cache_project_environments \"$environment_project\")\" -- \"$cur\") )")
+	_, _ = fmt.Fprintln(w, "      return 0")
+	_, _ = fmt.Fprintln(w, "    fi")
+	_, _ = fmt.Fprintln(w, "    ;; esac")
+	_, _ = fmt.Fprintln(w, "  case \"$cur\" in --from=*|--to=*)")
+	_, _ = fmt.Fprintln(w, "    if [ -n \"$environment_project\" ]; then")
+	_, _ = fmt.Fprintln(w, "      local value_prefix=\"${cur%%=*}=\"")
+	_, _ = fmt.Fprintln(w, "      local value_part=\"${cur#*=}\"")
+	_, _ = fmt.Fprintln(w, "      COMPREPLY=( $(compgen -W \"$(__gregale_cache_project_environments \"$environment_project\")\" -- \"$value_part\") )")
+	_, _ = fmt.Fprintln(w, "      local completion_index")
+	_, _ = fmt.Fprintln(w, "      for completion_index in \"${!COMPREPLY[@]}\"; do COMPREPLY[$completion_index]=\"${value_prefix}${COMPREPLY[$completion_index]}\"; done")
+	_, _ = fmt.Fprintln(w, "      return 0")
+	_, _ = fmt.Fprintln(w, "    fi")
+	_, _ = fmt.Fprintln(w, "    ;; esac")
+	_, _ = fmt.Fprintln(w)
+	renderBashAppSlugPositionCompletions(w)
+	renderBashManifestPositionCompletions(w, projectCompletionCommand())
+	renderBashManifestPositionCompletions(w, buildCompletionCommand())
+	for _, command := range deploymentCompletionCommands() {
+		renderBashManifestPositionCompletions(w, command)
+	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "  local cmd=\"${words[1]}\"")
 	_, _ = fmt.Fprintln(w, "  local sub=\"${words[2]}\"")
 	_, _ = fmt.Fprintln(w)
+}
+
+func renderBashEnvironmentProjectLookup(w io.Writer) {
+	command := projectCompletionCommand()
+	_, _ = fmt.Fprintln(w, "__gregale_environment_project() {")
+	for _, context := range projectCompletionContexts() {
+		projectIndex := 1 + len(context.Path) + context.Position
+		_, _ = fmt.Fprintf(w, "  if %s && [ -n \"${words[%d]}\" ]; then\n", bashCompletionPathCondition(command, context.Path), projectIndex)
+		_, _ = fmt.Fprintf(w, "    printf '%%s\\n' \"${words[%d]}\"\n", projectIndex)
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "  fi")
+	}
+	_, _ = fmt.Fprintln(w, "  return 1")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+}
+
+func bashCompletionPathCondition(command cliCommand, path []string) string {
+	conditions := []string{fmt.Sprintf("[ \"${words[1]}\" = %q ]", command.Name)}
+	for i, token := range path {
+		conditions = append(conditions, fmt.Sprintf("[ \"${words[%d]}\" = %q ]", i+2, token))
+	}
+	return strings.Join(conditions, " && ")
+}
+
+func renderBashManifestPositionCompletions(w io.Writer, command cliCommand) {
+	for _, position := range command.expandedCompletionPositions() {
+		wordIndex := 1 + len(position.Path) + position.Position
+		condition := bashCompletionPathCondition(command, position.Path)
+		_, _ = fmt.Fprintf(w, "  if [ $cword -eq %d ] && %s; then\n", wordIndex, condition)
+		var values string
+		switch position.Role {
+		case cliCompletionProjectSlug:
+			values = "$( __gregale_cache_slugs projects )"
+		case cliCompletionEnvironmentSlug:
+			projectIndex := 1 + len(position.Path) + position.ProjectPosition
+			_, _ = fmt.Fprintf(w, "    local position_project=\"${words[%d]}\"\n", projectIndex)
+			values = "$( __gregale_cache_project_environments \"$position_project\" )"
+		case cliCompletionBuildID:
+			values = "$( __gregale_cache_ids builds )"
+		case cliCompletionDeploymentID:
+			values = "$( __gregale_cache_ids deployments )"
+		}
+		if len(position.Choices) > 0 {
+			values = strings.Join(position.Choices, " ") + " " + values
+		}
+		_, _ = fmt.Fprintf(w, "    local position_values=\"%s\"\n", values)
+		_, _ = fmt.Fprintln(w, "    COMPREPLY=( $(compgen -W \"$position_values\" -- \"$cur\") )")
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "  fi")
+	}
+}
+
+func bashAppSlugPathCondition(position cliAppSlugCompletionPosition) string {
+	conditions := []string{fmt.Sprintf("[ \"${words[1]}\" = %q ]", position.Command)}
+	for i, token := range position.Path {
+		conditions = append(conditions, fmt.Sprintf("[ \"${words[%d]}\" = %q ]", position.PathOffsets[i]+1, token))
+	}
+	for _, offset := range position.RequiredPositionOffsets {
+		conditions = append(conditions, fmt.Sprintf("[ -n \"${words[%d]}\" ]", offset+1))
+	}
+	return strings.Join(conditions, " && ")
+}
+
+func renderBashAppSlugPositionCompletions(w io.Writer) {
+	for _, position := range appSlugCompletionPositions() {
+		wordIndex := position.WordOffset + 1
+		_, _ = fmt.Fprintf(w, "  if [ $cword -eq %d ] && %s; then\n", wordIndex, bashAppSlugPathCondition(position))
+		_, _ = fmt.Fprintln(w, "    local position_values=\"$(__gregale_cache_slugs apps)\"")
+		_, _ = fmt.Fprintln(w, "    COMPREPLY=( $(compgen -W \"$position_values\" -- \"$cur\") )")
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "  fi")
+	}
 }
 
 // renderBashCommand emits one `if [ "$cmd" = "<name>" ]; then ... fi`
@@ -114,51 +307,93 @@ func renderBashHeader(w io.Writer) {
 func renderBashCommand(w io.Writer, c cliCommand) {
 	_, _ = fmt.Fprintf(w, "  if [ \"$cmd\" = %q ]; then\n", c.Name)
 	subcommandWord := c.completionSubcommandWord()
-	slugWord := c.completionSlugWord()
-	// `app` is the one slug-first command: offer the cached slug before
-	// its verbs so `gregale app <TAB>` does not return early with only
-	// `scale`, `rename`, and the other subcommands.
-	if c.hasSlugFirst() && c.SubcommandsAfterPositionals {
-		_, _ = fmt.Fprintf(w, "    if [ $cword -eq %d ]; then\n", slugWord)
-		_, _ = fmt.Fprintln(w, "      local slugs=\"$(__gregale_cache_slugs apps)\"")
-		_, _ = fmt.Fprintln(w, "      COMPREPLY=( $(compgen -W \"$slugs\" -- \"$cur\") )")
-		_, _ = fmt.Fprintln(w, "      return 0")
-		_, _ = fmt.Fprintln(w, "    fi")
+	for _, f := range c.Flags {
+		renderBashClosedSetValueCompletion(w, f, "    ", nil)
+		renderBashFilePathValueCompletion(w, f, "    ", nil)
+		renderBashEnvironmentValueCompletion(w, f, "    ", nil)
 	}
 	// Subcommand completion.
 	if len(c.Subcommands) > 0 {
 		verbList := make([]string, 0, len(c.Subcommands))
 		for _, s := range c.Subcommands {
-			verbList = append(verbList, s.Name)
+			verbList = append(verbList, s.completionSpellings()...)
 		}
 		_, _ = fmt.Fprintf(w, "    if [ $cword -eq %d ]; then\n", subcommandWord)
-		_, _ = fmt.Fprintf(w, "      COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", strings.Join(verbList, " "))
+		_, _ = fmt.Fprintln(w, "      if [[ \"$cur\" == -* ]]; then")
+		if len(c.Flags) > 0 {
+			flagList := make([]string, 0, len(c.Flags))
+			for _, f := range c.Flags {
+				flagList = append(flagList, cliFlagSpellings(f)...)
+			}
+			_, _ = fmt.Fprintf(w, "        COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", strings.Join(flagList, " "))
+		} else {
+			_, _ = fmt.Fprintln(w, "        COMPREPLY=()")
+		}
+		_, _ = fmt.Fprintln(w, "      else")
+		_, _ = fmt.Fprintf(w, "        COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", strings.Join(verbList, " "))
+		_, _ = fmt.Fprintln(w, "      fi")
 		_, _ = fmt.Fprintln(w, "      return 0")
 		_, _ = fmt.Fprintln(w, "    fi")
 	}
 	for _, parent := range c.Subcommands {
+		parentSelector := []string{bashCompletionSubcommandCondition(subcommandWord, parent)}
+		for _, f := range parent.Flags {
+			renderBashClosedSetValueCompletion(w, f, "    ", parentSelector)
+			renderBashFilePathValueCompletion(w, f, "    ", parentSelector)
+			renderBashEnvironmentValueCompletion(w, f, "    ", parentSelector)
+		}
+		if len(parent.Subcommands) == 0 && len(parent.Flags) > 0 {
+			flagWord := subcommandWord + 1
+			if parent.FlagsAfterPositionals {
+				flagWord += len(parent.Positionals)
+			}
+			flags := make([]string, 0, len(parent.Flags))
+			for _, f := range parent.Flags {
+				flags = append(flags, cliFlagSpellings(f)...)
+			}
+			_, _ = fmt.Fprintf(w, "    if [ $cword -ge %d ] && %s && [[ \"$cur\" == -* ]]; then\n", flagWord, bashCompletionSubcommandCondition(subcommandWord, parent))
+			_, _ = fmt.Fprintf(w, "      COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", strings.Join(flags, " "))
+			_, _ = fmt.Fprintln(w, "      return 0")
+			_, _ = fmt.Fprintln(w, "    fi")
+		}
 		if len(parent.Subcommands) == 0 {
 			continue
 		}
+		childCommandWord := subcommandWord + 1
+		if parent.SubcommandsAfterPositionals {
+			childCommandWord += len(parent.Positionals)
+		}
+		for _, child := range parent.Subcommands {
+			childSelector := append(append([]string(nil), parentSelector...), bashCompletionSubcommandCondition(childCommandWord, child))
+			for _, f := range child.Flags {
+				renderBashClosedSetValueCompletion(w, f, "    ", childSelector)
+				renderBashFilePathValueCompletion(w, f, "    ", childSelector)
+				renderBashEnvironmentValueCompletion(w, f, "    ", childSelector)
+			}
+		}
 		childWords := make([]string, 0, len(parent.Subcommands))
 		for _, child := range parent.Subcommands {
-			childWords = append(childWords, child.Name)
+			childWords = append(childWords, child.completionSpellings()...)
 		}
-		_, _ = fmt.Fprintf(w, "    if [ $cword -eq %d ] && [ \"$sub\" = %q ]; then\n", subcommandWord+1, parent.Name)
+		_, _ = fmt.Fprintf(w, "    if [ $cword -eq %d ] && %s; then\n", childCommandWord, bashCompletionSubcommandCondition(subcommandWord, parent))
 		_, _ = fmt.Fprintf(w, "      COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", strings.Join(childWords, " "))
 		_, _ = fmt.Fprintln(w, "      return 0")
 		_, _ = fmt.Fprintln(w, "    fi")
-		_, _ = fmt.Fprintf(w, "    if [ $cword -ge %d ] && [ \"$sub\" = %q ] && [[ \"$cur\" == -* ]]; then\n", subcommandWord+2, parent.Name)
-		_, _ = fmt.Fprintf(w, "      case \"${words[%d]}\" in\n", subcommandWord+1)
+		_, _ = fmt.Fprintf(w, "    if [ $cword -ge %d ] && %s && [[ \"$cur\" == -* ]]; then\n", childCommandWord+1, bashCompletionSubcommandCondition(subcommandWord, parent))
+		_, _ = fmt.Fprintf(w, "      case \"${words[%d]}\" in\n", childCommandWord)
 		for _, child := range parent.Subcommands {
+			leafFlagsWord := childCommandWord + 1
+			if child.FlagsAfterPositionals {
+				leafFlagsWord += len(child.Positionals)
+			}
 			if len(child.Flags) == 0 {
 				continue
 			}
 			flags := make([]string, 0, len(child.Flags))
 			for _, f := range child.Flags {
-				flags = append(flags, "--"+f.Name)
+				flags = append(flags, cliFlagSpellings(f)...)
 			}
-			_, _ = fmt.Fprintf(w, "        %q) COMPREPLY=( $(compgen -W %q -- \"$cur\") ) ;;\n", child.Name, strings.Join(flags, " "))
+			_, _ = fmt.Fprintf(w, "        %s) if [ $cword -ge %d ]; then COMPREPLY=( $(compgen -W %q -- \"$cur\") ); fi ;;\n", strings.Join(child.completionSpellings(), "|"), leafFlagsWord, strings.Join(flags, " "))
 		}
 		_, _ = fmt.Fprintln(w, "      esac")
 		_, _ = fmt.Fprintln(w, "      return 0")
@@ -174,21 +409,11 @@ func renderBashCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintln(w, "      return 0")
 		_, _ = fmt.Fprintln(w, "    fi")
 	}
-	// Slug cache completion for any command whose first positional
-	// is the <slug> marker (app, invoke, metrics, slo, wake-timeline).
-	// Driven by cliCommand.hasSlugFirst — no hardcoded name list.
-	if c.hasSlugFirst() && !c.SubcommandsAfterPositionals {
-		_, _ = fmt.Fprintf(w, "    if [ $cword -eq %d ]; then\n", slugWord)
-		_, _ = fmt.Fprintln(w, "      local slugs=\"$(__gregale_cache_slugs apps)\"")
-		_, _ = fmt.Fprintln(w, "      COMPREPLY=( $(compgen -W \"$slugs\" -- \"$cur\") )")
-		_, _ = fmt.Fprintln(w, "      return 0")
-		_, _ = fmt.Fprintln(w, "    fi")
-	}
 	// Flag completion (works at every cword after the verb/sub).
 	if len(c.Flags) > 0 {
 		flagList := make([]string, 0, len(c.Flags))
 		for _, f := range c.Flags {
-			flagList = append(flagList, "--"+f.Name)
+			flagList = append(flagList, cliFlagSpellings(f)...)
 		}
 		_, _ = fmt.Fprintln(w, "    case \"$cur\" in")
 		_, _ = fmt.Fprintln(w, "      -*)")
@@ -200,6 +425,92 @@ func renderBashCommand(w io.Writer, c cliCommand) {
 	_, _ = fmt.Fprintln(w, "    return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
 	_, _ = fmt.Fprintln(w)
+}
+
+func bashCompletionSubcommandCondition(wordIndex int, sub cliSub) string {
+	conditions := make([]string, 0, len(sub.completionSpellings()))
+	for _, spelling := range sub.completionSpellings() {
+		conditions = append(conditions, fmt.Sprintf("\"${words[%d]}\" = %q", wordIndex, spelling))
+	}
+	return "[[ " + strings.Join(conditions, " || ") + " ]]"
+}
+
+func renderBashClosedSetValueCompletion(w io.Writer, f cliFlag, indent string, selectors []string) {
+	if len(f.ClosedSet) == 0 {
+		return
+	}
+	values := strings.Join(f.ClosedSet, " ")
+	selector := strings.Join(selectors, " && ")
+	if selector != "" {
+		selector += " && "
+	}
+	for _, flagName := range cliFlagSpellings(f) {
+		fmt.Fprintf(w, "%sif %s[ \"$prev\" = %q ]; then\n", indent, selector, flagName)
+		fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", indent, values)
+		fmt.Fprintf(w, "%s  return 0\n", indent)
+		fmt.Fprintf(w, "%sfi\n", indent)
+		fmt.Fprintf(w, "%sif %s[[ \"$cur\" == %s=* ]]; then\n", indent, selector, flagName)
+		fmt.Fprintf(w, "%s  local value_prefix=%q\n", indent, flagName+"=")
+		fmt.Fprintf(w, "%s  local value_part=\"${cur#*=}\"\n", indent)
+		fmt.Fprintf(w, "%s  local completion_index\n", indent)
+		fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W %q -- \"$value_part\") )\n", indent, values)
+		fmt.Fprintf(w, "%s  for completion_index in \"${!COMPREPLY[@]}\"; do COMPREPLY[$completion_index]=\"${value_prefix}${COMPREPLY[$completion_index]}\"; done\n", indent)
+		fmt.Fprintf(w, "%s  return 0\n", indent)
+		fmt.Fprintf(w, "%sfi\n", indent)
+	}
+}
+
+func renderBashFilePathValueCompletion(w io.Writer, f cliFlag, indent string, selectors []string) {
+	if !cliFlagUsesFilePathValues(f) {
+		return
+	}
+	selector := strings.Join(selectors, " && ")
+	if selector != "" {
+		selector += " && "
+	}
+	for _, spelling := range cliFlagSpellings(f) {
+		fmt.Fprintf(w, "%sif %s[ \"$prev\" = %q ]; then\n", indent, selector, spelling)
+		fmt.Fprintf(w, "%s  COMPREPLY=()\n", indent)
+		fmt.Fprintf(w, "%s  local path_suggestion\n", indent)
+		fmt.Fprintf(w, "%s  while IFS= read -r path_suggestion; do COMPREPLY+=(\"$path_suggestion\"); done < <(compgen -f -- \"$cur\")\n", indent)
+		fmt.Fprintf(w, "%s  return 0\n", indent)
+		fmt.Fprintf(w, "%sfi\n", indent)
+		fmt.Fprintf(w, "%sif %s[[ \"$cur\" == %s=* ]]; then\n", indent, selector, spelling)
+		fmt.Fprintf(w, "%s  local value_prefix=\"${cur%%%%=*}=\"\n", indent)
+		fmt.Fprintf(w, "%s  local value_part=\"${cur#*=}\"\n", indent)
+		fmt.Fprintf(w, "%s  COMPREPLY=()\n", indent)
+		fmt.Fprintf(w, "%s  local path_suggestion\n", indent)
+		fmt.Fprintf(w, "%s  while IFS= read -r path_suggestion; do COMPREPLY+=(\"${value_prefix}${path_suggestion}\"); done < <(compgen -f -- \"$value_part\")\n", indent)
+		fmt.Fprintf(w, "%s  return 0\n", indent)
+		fmt.Fprintf(w, "%sfi\n", indent)
+	}
+}
+
+func renderBashEnvironmentValueCompletion(w io.Writer, f cliFlag, indent string, selectors []string) {
+	if !cliFlagUsesEnvironmentValues(f) {
+		return
+	}
+	selector := strings.Join(selectors, " && ")
+	if selector != "" {
+		selector += " && "
+	}
+	values := strings.Join(f.ClosedSet, " ")
+	for _, spelling := range cliFlagSpellings(f) {
+		fmt.Fprintf(w, "%sif %s[ \"$prev\" = %q ]; then\n", indent, selector, spelling)
+		fmt.Fprintf(w, "%s  local environments=%q\n", indent, values+" $(__gregale_cache_slugs environments)")
+		fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W \"$environments\" -- \"$cur\") )\n", indent)
+		fmt.Fprintf(w, "%s  return 0\n", indent)
+		fmt.Fprintf(w, "%sfi\n", indent)
+		fmt.Fprintf(w, "%sif %s[[ \"$cur\" == %s=* ]]; then\n", indent, selector, spelling)
+		fmt.Fprintf(w, "%s  local value_prefix=%q\n", indent, spelling+"=")
+		fmt.Fprintf(w, "%s  local value_part=\"${cur#*=}\"\n", indent)
+		fmt.Fprintf(w, "%s  local environments=%q\n", indent, values+" $(__gregale_cache_slugs environments)")
+		fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W \"$environments\" -- \"$value_part\") )\n", indent)
+		fmt.Fprintf(w, "%s  local completion_index\n", indent)
+		fmt.Fprintf(w, "%s  for completion_index in \"${!COMPREPLY[@]}\"; do COMPREPLY[$completion_index]=\"${value_prefix}${COMPREPLY[$completion_index]}\"; done\n", indent)
+		fmt.Fprintf(w, "%s  return 0\n", indent)
+		fmt.Fprintf(w, "%sfi\n", indent)
+	}
 }
 
 // renderBashFooter writes the script epilogue: the top-level

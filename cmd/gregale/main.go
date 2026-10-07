@@ -107,14 +107,15 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	if invalid := invalidJSONFlagValue(args); invalid != "" {
-		PrintUsage(os.Stderr, "invalid --json value "+invalid+"; use true or false", "cli")
-		return 1
-	}
+	invalidJSON := invalidJSONFlagValue(args)
 	// Issue #64 D1: every command accepts --json (top-level). Strip
 	// it before dispatch and set jsonOutput so per-command printers
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
 	args = applyJSONFlag(args)
+	if invalidJSON != "" {
+		PrintUsage(os.Stderr, "invalid --json value "+invalidJSON+"; use true or false", "cli")
+		return 1
+	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
 	if len(args) == 0 {
@@ -638,11 +639,22 @@ func run(args []string) (status int) {
 func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 	var selected []cliSub
 	positionalCount := 0
-	for _, arg := range args {
+	nestedPositionalCounts := map[int]int{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--help" || arg == "-h" {
 			break
 		}
+		if arg == "--" {
+			break
+		}
 		if strings.HasPrefix(arg, "-") {
+			if !strings.Contains(arg, "=") {
+				flag := manifestFlag(command, selected, strings.TrimLeft(arg, "-"))
+				if flag != nil && !flag.Bool && (flag.Value != "" || flag.Req || len(flag.ClosedSet) > 0) && i+1 < len(args) {
+					i++
+				}
+			}
 			continue
 		}
 		var choices []cliSub
@@ -651,13 +663,25 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 		} else {
 			choices = selected[len(selected)-1].Subcommands
 		}
-		if sub, ok := findCliSubcommand(choices, arg); ok {
-			selected = append(selected, sub)
-		} else if len(choices) > 0 {
-			if command.SubcommandsAfterPositionals && len(selected) == 0 && positionalCount < len(command.Positionals) {
-				positionalCount++
+		// Slug-first command families reserve their first positional before
+		// considering verbs. A slug such as "network" is valid data, even
+		// when it happens to match one of the command's verbs.
+		if command.SubcommandsAfterPositionals && len(selected) == 0 && positionalCount < len(command.Positionals) {
+			positionalCount++
+			continue
+		}
+		if len(selected) > 0 {
+			depth := len(selected) - 1
+			parent := selected[depth]
+			if parent.SubcommandsAfterPositionals && nestedPositionalCounts[depth] < len(parent.Positionals) {
+				nestedPositionalCounts[depth]++
 				continue
 			}
+		}
+		if sub, ok := findCliSubcommand(choices, arg); ok {
+			selected = append(selected, sub)
+			nestedPositionalCounts[len(selected)-1] = 0
+		} else if len(choices) > 0 {
 			return false
 		}
 	}
@@ -689,6 +713,19 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 		return false
 	}
 	return true
+}
+
+func manifestFlag(command cliCommand, selected []cliSub, name string) *cliFlag {
+	flags := command.Flags
+	if len(selected) > 0 {
+		flags = selected[len(selected)-1].Flags
+	}
+	for i := range flags {
+		if flags[i].Name == name {
+			return &flags[i]
+		}
+	}
+	return nil
 }
 
 func printLocalCommandHelp(w io.Writer, command cliCommand) {
@@ -748,15 +785,15 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 }
 
 func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
-	usage := localHelpCommandPath(command) + " " + sub.Name
+	usage := localHelpSubcommandPath(command, []string{sub.Name})
 	if len(sub.Subcommands) > 0 {
-		choices := make([]string, 0, len(sub.Subcommands))
-		for _, child := range sub.Subcommands {
-			choices = append(choices, child.Name)
-		}
-		usage += " <" + strings.Join(choices, "|") + ">"
+		usage += " <" + sub.subcommandChoice() + ">"
 	}
-	usage = localHelpArguments(usage, sub.Positionals, sub.Flags)
+	if sub.SubcommandsAfterPositionals {
+		usage = localHelpArguments(usage, nil, sub.Flags, false)
+	} else {
+		usage = localHelpArguments(usage, sub.Positionals, sub.Flags, sub.FlagsAfterPositionals)
+	}
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", sub.Short, usage)
 	if len(sub.Subcommands) > 0 {
 		_, _ = fmt.Fprintln(w, "\nCommands:")
@@ -778,8 +815,8 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 }
 
 func printLocalLeafHelp(w io.Writer, command cliCommand, parent, leaf cliSub) {
-	usage := localHelpCommandPath(command) + " " + parent.Name + " " + leaf.Name
-	usage = localHelpArguments(usage, leaf.Positionals, leaf.Flags)
+	usage := localHelpSubcommandPath(command, []string{parent.Name, leaf.Name})
+	usage = localHelpArguments(usage, leaf.Positionals, leaf.Flags, leaf.FlagsAfterPositionals)
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", leaf.Short, usage)
 	if len(leaf.Flags) > 0 {
 		_, _ = fmt.Fprintln(w, "\nFlags:")
@@ -804,17 +841,45 @@ func localHelpCommandPath(command cliCommand) string {
 	return path
 }
 
-func localHelpArguments(path string, positionals []string, flags []cliFlag) string {
-	hasOptional := false
-	for _, flag := range flags {
-		if flag.Req {
-			path += " " + mdFlagSyntax(flag)
-		} else {
-			hasOptional = true
+func localHelpSubcommandPath(command cliCommand, names []string) string {
+	path := localHelpCommandPath(command)
+	choices := command.Subcommands
+	for _, name := range names {
+		sub, ok := findCliSubcommand(choices, name)
+		path += " " + name
+		if !ok {
+			choices = nil
+			continue
 		}
+		if sub.SubcommandsAfterPositionals {
+			for _, positional := range sub.Positionals {
+				path += " " + positional
+			}
+		}
+		choices = sub.Subcommands
+	}
+	return path
+}
+
+func localHelpArguments(path string, positionals []string, flags []cliFlag, flagsAfterPositionals bool) string {
+	hasOptional := false
+	appendRequiredFlags := func() {
+		for _, flag := range flags {
+			if flag.Req {
+				path += " " + mdFlagSyntax(flag)
+			} else {
+				hasOptional = true
+			}
+		}
+	}
+	if !flagsAfterPositionals {
+		appendRequiredFlags()
 	}
 	for _, positional := range positionals {
 		path += " " + positional
+	}
+	if flagsAfterPositionals {
+		appendRequiredFlags()
 	}
 	if hasOptional {
 		path += " [flags]"

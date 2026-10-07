@@ -59,7 +59,41 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"slug\":\"([^\"]+)\".*/\\1/'")
 	_, _ = fmt.Fprintln(w, "}")
 	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "_gregale_cache_ids() {")
+	_, _ = fmt.Fprintln(w, "  local kind=\"$1\"")
+	_, _ = fmt.Fprintln(w, "  local cache_file=\"$(gregale completion completion-cache-path 2>/dev/null)\"")
+	_, _ = fmt.Fprintln(w, "  [[ -z \"$cache_file\" || ! -r \"$cache_file\" ]] && return 1")
+	_, _ = fmt.Fprintln(w, "  sed -n \"/\\\"$kind\\\":\\[/,/]/p\" \"$cache_file\" 2>/dev/null \\")
+	_, _ = fmt.Fprintln(w, "    | sed -E \"s/.*\\\"$kind\\\":\\[//; s/\\].*//\" \\")
+	_, _ = fmt.Fprintln(w, "    | grep -oE '\"id\":\"[^\"]+\"' \\")
+	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"id\":\"([^\"]+)\".*/\\1/'")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "_gregale_cache_project_environments() {")
+	_, _ = fmt.Fprintln(w, "  local project=\"$1\"")
+	_, _ = fmt.Fprintln(w, "  local cache_file=\"$(gregale completion completion-cache-path 2>/dev/null)\"")
+	_, _ = fmt.Fprintln(w, "  [[ -z \"$cache_file\" || ! -r \"$cache_file\" ]] && return 1")
+	_, _ = fmt.Fprintln(w, "  grep -oE '\"project_slug\":\"[a-z0-9-]+\",\"slug\":\"[a-z0-9-]+\"' \"$cache_file\" 2>/dev/null \\")
+	_, _ = fmt.Fprintln(w, "    | grep -F -- \"\\\"project_slug\\\":\\\"$project\\\",\" \\")
+	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"slug\":\"([^\"]+)\".*/\\1/'")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+	renderZshEnvironmentProjectLookup(w)
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "_gregale() {")
+	_, _ = fmt.Fprintln(w, "  local -a normalized_words")
+	_, _ = fmt.Fprintln(w, "  local normalized_current current_word i word")
+	_, _ = fmt.Fprintln(w, "  normalized_words=(\"${words[1]}\")")
+	_, _ = fmt.Fprintln(w, "  for ((i=2; i<CURRENT; i++)); do")
+	_, _ = fmt.Fprintln(w, "    word=\"${words[i]}\"")
+	_, _ = fmt.Fprintln(w, "    if [[ \"$word\" == --json || \"$word\" == -j || \"$word\" == --json=* ]]; then continue; fi")
+	_, _ = fmt.Fprintln(w, "    normalized_words+=(\"$word\")")
+	_, _ = fmt.Fprintln(w, "  done")
+	_, _ = fmt.Fprintln(w, "  current_word=\"${words[CURRENT]}\"")
+	_, _ = fmt.Fprintln(w, "  normalized_current=$((${#normalized_words[@]} + 1))")
+	_, _ = fmt.Fprintln(w, "  normalized_words+=(\"$current_word\")")
+	_, _ = fmt.Fprintln(w, "  words=(\"${normalized_words[@]}\")")
+	_, _ = fmt.Fprintln(w, "  CURRENT=$normalized_current")
 	_, _ = fmt.Fprintln(w, "  local -a commands")
 	_, _ = fmt.Fprintln(w, "  commands=(")
 	for _, c := range customerCliCommands() {
@@ -72,6 +106,66 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
 	_, _ = fmt.Fprintln(w)
+	fileFlags := completionUnambiguousFlagSpellings(cliFlagUsesFilePathValues)
+	if len(fileFlags) > 0 {
+		_, _ = fmt.Fprintf(w, "  case \"${words[CURRENT-1]}\" in %s)\n", strings.Join(fileFlags, "|"))
+		_, _ = fmt.Fprintln(w, "    _files")
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "    ;;")
+		_, _ = fmt.Fprintln(w, "  esac")
+		fileEqualFlags := make([]string, 0, len(fileFlags))
+		for _, spelling := range fileFlags {
+			fileEqualFlags = append(fileEqualFlags, spelling+"=*")
+		}
+		_, _ = fmt.Fprintf(w, "  if [[ \"$PREFIX\" == %s ]]; then\n", strings.Join(fileEqualFlags, " || \"$PREFIX\" == "))
+		_, _ = fmt.Fprintln(w, "    local file_prefix=\"${PREFIX%%=*}=\"")
+		_, _ = fmt.Fprintln(w, "    IPREFIX=\"${IPREFIX}${file_prefix}\"")
+		_, _ = fmt.Fprintln(w, "    PREFIX=\"${PREFIX#*=}\"")
+		_, _ = fmt.Fprintln(w, "    _files")
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "  fi")
+	}
+	environmentFlags := completionUnambiguousFlagSpellings(cliFlagUsesEnvironmentValues)
+	if len(environmentFlags) > 0 {
+		_, _ = fmt.Fprintf(w, "  case \"${words[CURRENT-1]}\" in %s)\n", strings.Join(environmentFlags, "|"))
+		_, _ = fmt.Fprintf(w, "    _values 'environment or scope' %s $(_gregale_cache_slugs environments)\n", strings.Join(completionClosedSetValues("scope"), " "))
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "    ;;")
+		_, _ = fmt.Fprintln(w, "  esac")
+		equalFlags := make([]string, 0, len(environmentFlags))
+		for _, spelling := range environmentFlags {
+			equalFlags = append(equalFlags, spelling+"=*")
+		}
+		_, _ = fmt.Fprintf(w, "  if [[ \"$PREFIX\" == %s ]]; then\n", strings.Join(equalFlags, " || \"$PREFIX\" == "))
+		_, _ = fmt.Fprintln(w, "    local value_prefix=\"${PREFIX%%=*}=\"")
+		_, _ = fmt.Fprintln(w, "    IPREFIX=\"${IPREFIX}${value_prefix}\"")
+		_, _ = fmt.Fprintln(w, "    PREFIX=\"${PREFIX#*=}\"")
+		_, _ = fmt.Fprintf(w, "    _values 'environment or scope' %s $(_gregale_cache_slugs environments)\n", strings.Join(completionClosedSetValues("scope"), " "))
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "  fi")
+	}
+	_, _ = fmt.Fprintln(w, "  local environment_project=\"$(_gregale_environment_project)\"")
+	_, _ = fmt.Fprintln(w, "  case \"${words[CURRENT-1]}\" in --from|--to)")
+	_, _ = fmt.Fprintln(w, "    if [[ -n \"$environment_project\" ]]; then")
+	_, _ = fmt.Fprintln(w, "      _values 'project environment' $(_gregale_cache_project_environments \"$environment_project\")")
+	_, _ = fmt.Fprintln(w, "      return 0")
+	_, _ = fmt.Fprintln(w, "    fi")
+	_, _ = fmt.Fprintln(w, "    ;; esac")
+	_, _ = fmt.Fprintln(w, "  if [[ \"$PREFIX\" == --from=* || \"$PREFIX\" == --to=* ]]; then")
+	_, _ = fmt.Fprintln(w, "    if [[ -n \"$environment_project\" ]]; then")
+	_, _ = fmt.Fprintln(w, "      local value_prefix=\"${PREFIX%%=*}=\"")
+	_, _ = fmt.Fprintln(w, "      IPREFIX=\"${IPREFIX}${value_prefix}\"")
+	_, _ = fmt.Fprintln(w, "      PREFIX=\"${PREFIX#*=}\"")
+	_, _ = fmt.Fprintln(w, "      _values 'project environment' $(_gregale_cache_project_environments \"$environment_project\")")
+	_, _ = fmt.Fprintln(w, "      return 0")
+	_, _ = fmt.Fprintln(w, "    fi")
+	_, _ = fmt.Fprintln(w, "  fi")
+	renderZshAppSlugPositionCompletions(w)
+	renderZshManifestPositionCompletions(w, projectCompletionCommand())
+	renderZshManifestPositionCompletions(w, buildCompletionCommand())
+	for _, command := range deploymentCompletionCommands() {
+		renderZshManifestPositionCompletions(w, command)
+	}
 	// Leaf parsers accept --app/--org on nested command families even
 	// when the parent manifest only carries the verb. Complete those
 	// values from the same cache used by positional slug completion.
@@ -86,52 +180,239 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w)
 }
 
+func renderZshEnvironmentProjectLookup(w io.Writer) {
+	command := projectCompletionCommand()
+	_, _ = fmt.Fprintln(w, "_gregale_environment_project() {")
+	for _, context := range projectCompletionContexts() {
+		projectIndex := 2 + len(context.Path) + context.Position
+		_, _ = fmt.Fprintf(w, "  if %s && [[ -n \"${words[%d]}\" ]]; then\n", zshCompletionPathCondition(command, context.Path), projectIndex)
+		_, _ = fmt.Fprintf(w, "    print -r -- \"${words[%d]}\"\n", projectIndex)
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "  fi")
+	}
+	_, _ = fmt.Fprintln(w, "  return 1")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+}
+
+func zshCompletionPathCondition(command cliCommand, path []string) string {
+	conditions := []string{fmt.Sprintf("[[ \"${words[2]}\" == %q ]]", command.Name)}
+	for i, token := range path {
+		conditions = append(conditions, fmt.Sprintf("[[ \"${words[%d]}\" == %q ]]", i+3, token))
+	}
+	return strings.Join(conditions, " && ")
+}
+
+func renderZshManifestPositionCompletions(w io.Writer, command cliCommand) {
+	for _, position := range command.expandedCompletionPositions() {
+		wordIndex := 2 + len(position.Path) + position.Position
+		condition := zshCompletionPathCondition(command, position.Path)
+		_, _ = fmt.Fprintf(w, "  if %s && (( CURRENT == %d )); then\n", condition, wordIndex)
+		values := "_gregale_cache_slugs projects"
+		if position.Role == cliCompletionEnvironmentSlug {
+			projectIndex := 2 + len(position.Path) + position.ProjectPosition
+			_, _ = fmt.Fprintf(w, "    local position_project=\"${words[%d]}\"\n", projectIndex)
+			values = "_gregale_cache_project_environments \"$position_project\""
+		} else if position.Role == cliCompletionBuildID {
+			values = "_gregale_cache_ids builds"
+		} else if position.Role == cliCompletionDeploymentID {
+			values = "_gregale_cache_ids deployments"
+		}
+		if len(position.Choices) > 0 {
+			values = strings.Join(position.Choices, " ") + " $(" + values + ")"
+		} else {
+			values = "$(" + values + ")"
+		}
+		_, _ = fmt.Fprintf(w, "    _values %q %s\n", position.completionDescription(), values)
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "  fi")
+	}
+}
+
+func zshAppSlugPathCondition(position cliAppSlugCompletionPosition) string {
+	conditions := []string{fmt.Sprintf("[[ \"${words[2]}\" == %q ]]", position.Command)}
+	for i, token := range position.Path {
+		conditions = append(conditions, fmt.Sprintf("[[ \"${words[%d]}\" == %q ]]", position.PathOffsets[i]+2, token))
+	}
+	for _, offset := range position.RequiredPositionOffsets {
+		conditions = append(conditions, fmt.Sprintf("[[ -n \"${words[%d]}\" ]]", offset+2))
+	}
+	return strings.Join(conditions, " && ")
+}
+
+func renderZshAppSlugPositionCompletions(w io.Writer) {
+	for _, position := range appSlugCompletionPositions() {
+		wordIndex := position.WordOffset + 2
+		_, _ = fmt.Fprintf(w, "  if %s && (( CURRENT == %d )); then\n", zshAppSlugPathCondition(position), wordIndex)
+		_, _ = fmt.Fprintln(w, "    _values 'app slug' $(_gregale_cache_slugs apps)")
+		_, _ = fmt.Fprintln(w, "    return 0")
+		_, _ = fmt.Fprintln(w, "  fi")
+	}
+}
+
 // renderZshCommand emits one _gregale_<cmd> function per cliCommand.
 // Each _arguments token is emitted as its own double-quoted shell
 // word, so descriptions containing apostrophes (e.g. "the app's URL")
 // or unbalanced parens ("day (YYYY-MM-DD)") parse cleanly.
 func renderZshCommand(w io.Writer, c cliCommand) {
 	_, _ = fmt.Fprintf(w, "  _gregale_%s() {\n", c.Name)
+	renderZshFilePathCompletion(w, c.Flags, "    ")
+	renderZshEnvironmentValueCompletion(w, c.Flags, "    ")
+	// zsh's words array includes the executable at index 1, so command
+	// argument positions from cliCommand need a one-based offset.
+	subcommandWord := c.completionSubcommandWord() + 1
 	_, _ = fmt.Fprintln(w, "    _arguments -C \\")
 	// Subcommand verbs (e.g. alerts.list, alerts.add).
 	for _, s := range c.Subcommands {
-		if len(s.Subcommands) > 0 {
-			_, _ = fmt.Fprintf(w, "      \"%s:%s:->%s\" \\\n", s.Name, escapeZshDQ(s.Short), s.Name)
-		} else {
-			_, _ = fmt.Fprintf(w, "      \"%s:%s\" \\\n", s.Name, escapeZshDQ(s.Short))
+		for _, spelling := range s.completionSpellings() {
+			if len(s.Subcommands) > 0 || len(s.Flags) > 0 {
+				_, _ = fmt.Fprintf(w, "      \"%s:%s:->%s\" \\\n", spelling, escapeZshDQ(s.Short), s.Name)
+			} else {
+				_, _ = fmt.Fprintf(w, "      \"%s:%s\" \\\n", spelling, escapeZshDQ(s.Short))
+			}
 		}
 	}
 	// Flags (e.g. --app <slug>).
 	for _, f := range c.Flags {
-		_, _ = fmt.Fprintf(w, "      \"--%s[%s]\" \\\n", f.Name, escapeZshDQ(f.Short))
-		if len(f.ClosedSet) > 0 {
-			_, _ = fmt.Fprintf(w, "      \"--%s:option:(%s)\" \\\n", f.Name, strings.Join(f.ClosedSet, " "))
+		for _, spelling := range cliFlagSpellings(f) {
+			_, _ = fmt.Fprintf(w, "      \"%s[%s]\" \\\n", spelling, escapeZshDQ(f.Short))
+			if len(f.ClosedSet) > 0 {
+				_, _ = fmt.Fprintf(w, "      \"%s:option:(%s)\" \\\n", spelling, strings.Join(f.ClosedSet, " "))
+			}
 		}
 	}
 	// Closed-set positional (e.g. `plan`).
 	if len(c.ClosedSet) > 0 {
 		_, _ = fmt.Fprintf(w, "      \"1:plan:(%s)\" \\\n", strings.Join(c.ClosedSet, " "))
-	} else if c.hasSlugFirst() {
-		_, _ = fmt.Fprintln(w, "      \"1:slug:($(_gregale_cache_slugs apps))\" \\")
 	}
 	_, _ = fmt.Fprintln(w, "      && return 0")
 	for _, parent := range c.Subcommands {
-		if len(parent.Subcommands) == 0 {
+		if len(parent.Subcommands) == 0 && len(parent.Flags) == 0 {
 			continue
 		}
 		_, _ = fmt.Fprintf(w, "    if [[ \"$state\" == %q ]]; then\n", parent.Name)
-		_, _ = fmt.Fprintln(w, "      _values 'alias command' \\")
-		for i, child := range parent.Subcommands {
-			ending := " \\\n"
-			if i == len(parent.Subcommands)-1 {
-				ending = "\n"
+		childWord := subcommandWord + 1
+		if parent.SubcommandsAfterPositionals {
+			childWord += len(parent.Positionals)
+		}
+		if len(parent.Subcommands) > 0 {
+			_, _ = fmt.Fprintf(w, "      if (( CURRENT == %d )); then\n", childWord)
+			_, _ = fmt.Fprintln(w, "      _values 'alias command' \\")
+			var childSpellings []string
+			for _, child := range parent.Subcommands {
+				for _, spelling := range child.completionSpellings() {
+					childSpellings = append(childSpellings, spelling+":"+escapeZshDQ(child.Short))
+				}
 			}
-			_, _ = fmt.Fprintf(w, "        \"%s:%s\"%s", child.Name, escapeZshDQ(child.Short), ending)
+			for i, candidate := range childSpellings {
+				ending := " \\\n"
+				if i == len(childSpellings)-1 {
+					ending = "\n"
+				}
+				_, _ = fmt.Fprintf(w, "        \"%s\"%s", candidate, ending)
+			}
+			_, _ = fmt.Fprintln(w, "        return 0")
+			_, _ = fmt.Fprintln(w, "      fi")
+		}
+		if len(parent.Subcommands) == 0 && len(parent.Flags) > 0 {
+			flagWord := childWord
+			if parent.FlagsAfterPositionals {
+				flagWord += len(parent.Positionals)
+			}
+			_, _ = fmt.Fprintf(w, "      if (( CURRENT >= %d )); then\n", flagWord)
+			renderZshFlagCompletions(w, parent.Flags)
+			_, _ = fmt.Fprintln(w, "        return 0")
+			_, _ = fmt.Fprintln(w, "      fi")
+		}
+		for _, child := range parent.Subcommands {
+			if len(child.Flags) == 0 {
+				continue
+			}
+			leafFlagsAfter := childWord
+			if child.FlagsAfterPositionals {
+				leafFlagsAfter += len(child.Positionals)
+			}
+			_, _ = fmt.Fprintf(w, "      if (( CURRENT > %d )) && %s; then\n", leafFlagsAfter, zshCompletionSubcommandCondition(childWord, child))
+			renderZshFlagCompletions(w, child.Flags)
+			_, _ = fmt.Fprintln(w, "        return 0")
+			_, _ = fmt.Fprintln(w, "      fi")
 		}
 		_, _ = fmt.Fprintln(w, "      return 0")
 		_, _ = fmt.Fprintln(w, "    fi")
 	}
 	_, _ = fmt.Fprintln(w, "  }")
+}
+
+func zshCompletionSubcommandCondition(wordIndex int, sub cliSub) string {
+	conditions := make([]string, 0, len(sub.completionSpellings()))
+	for _, spelling := range sub.completionSpellings() {
+		conditions = append(conditions, fmt.Sprintf("\"${words[%d]}\" == %q", wordIndex, spelling))
+	}
+	return "[[ " + strings.Join(conditions, " || ") + " ]]"
+}
+
+func renderZshFlagCompletions(w io.Writer, flags []cliFlag) {
+	for _, f := range flags {
+		renderZshFilePathCompletion(w, []cliFlag{f}, "        ")
+		renderZshEnvironmentValueCompletion(w, []cliFlag{f}, "        ")
+		spellings := cliFlagSpellings(f)
+		if len(f.ClosedSet) > 0 {
+			for _, spelling := range spellings {
+				_, _ = fmt.Fprintf(w, "        if [[ \"${words[CURRENT-1]}\" == %q ]]; then\n", spelling)
+				_, _ = fmt.Fprintf(w, "          _values %q %s\n", f.Short, strings.Join(f.ClosedSet, " "))
+				_, _ = fmt.Fprintln(w, "          return 0")
+				_, _ = fmt.Fprintln(w, "        fi")
+			}
+		}
+		_, _ = fmt.Fprintln(w, "        if [[ \"$PREFIX\" == -* ]]; then")
+		for _, spelling := range spellings {
+			_, _ = fmt.Fprintf(w, "          compadd -- %q\n", spelling)
+		}
+		_, _ = fmt.Fprintln(w, "        fi")
+	}
+}
+
+func renderZshEnvironmentValueCompletion(w io.Writer, flags []cliFlag, indent string) {
+	for _, f := range flags {
+		if !cliFlagUsesEnvironmentValues(f) {
+			continue
+		}
+		staticValues := strings.Join(f.ClosedSet, " ")
+		for _, spelling := range cliFlagSpellings(f) {
+			fmt.Fprintf(w, "%sif [[ \"${words[CURRENT-1]}\" == %q ]]; then\n", indent, spelling)
+			fmt.Fprintf(w, "%s  _values 'environment or scope' %s $(_gregale_cache_slugs environments)\n", indent, staticValues)
+			fmt.Fprintf(w, "%s  return 0\n", indent)
+			fmt.Fprintf(w, "%sfi\n", indent)
+			fmt.Fprintf(w, "%sif [[ \"$PREFIX\" == %s=* ]]; then\n", indent, spelling)
+			fmt.Fprintf(w, "%s  local value_prefix=\"${PREFIX%%%%=*}=\"\n", indent)
+			fmt.Fprintf(w, "%s  IPREFIX=\"${IPREFIX}${value_prefix}\"\n", indent)
+			fmt.Fprintf(w, "%s  PREFIX=\"${PREFIX#*=}\"\n", indent)
+			fmt.Fprintf(w, "%s  _values 'environment or scope' %s $(_gregale_cache_slugs environments)\n", indent, staticValues)
+			fmt.Fprintf(w, "%s  return 0\n", indent)
+			fmt.Fprintf(w, "%sfi\n", indent)
+		}
+	}
+}
+
+func renderZshFilePathCompletion(w io.Writer, flags []cliFlag, indent string) {
+	for _, f := range flags {
+		if !cliFlagUsesFilePathValues(f) {
+			continue
+		}
+		for _, spelling := range cliFlagSpellings(f) {
+			fmt.Fprintf(w, "%sif [[ \"${words[CURRENT-1]}\" == %q ]]; then\n", indent, spelling)
+			fmt.Fprintf(w, "%s  _files\n", indent)
+			fmt.Fprintf(w, "%s  return 0\n", indent)
+			fmt.Fprintf(w, "%sfi\n", indent)
+			fmt.Fprintf(w, "%sif [[ \"$PREFIX\" == %s=* ]]; then\n", indent, spelling)
+			fmt.Fprintf(w, "%s  local file_prefix=\"${PREFIX%%%%=*}=\"\n", indent)
+			fmt.Fprintf(w, "%s  IPREFIX=\"${IPREFIX}${file_prefix}\"\n", indent)
+			fmt.Fprintf(w, "%s  PREFIX=\"${PREFIX#*=}\"\n", indent)
+			fmt.Fprintf(w, "%s  _files\n", indent)
+			fmt.Fprintf(w, "%s  return 0\n", indent)
+			fmt.Fprintf(w, "%sfi\n", indent)
+		}
+	}
 }
 
 // renderZshFooter closes the _gregale function and dispatches to

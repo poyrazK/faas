@@ -22,7 +22,8 @@ func cmdLink(args []string) int {
 	noGitignore := fs.Bool("no-gitignore", false, "do not add .gregale/ to the repository .gitignore")
 	flags, positional := splitArgsForFlags(args, "no-gitignore")
 	if err := fs.Parse(flags); err != nil {
-		PrintUsage(os.Stderr, linkUsage, "link")
+		// FlagSet has already emitted the parse failure (as one Problem in
+		// --json mode), so adding PrintUsage here would produce a second error.
 		return 1
 	}
 	if len(positional) != 1 || !api.ValidProjectSlug(positional[0]) {
