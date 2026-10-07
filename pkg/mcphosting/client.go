@@ -213,12 +213,15 @@ func jsonRPCErrorCode(res *http.Response, id int) *RPCError {
 	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
 		return nil
 	}
-	if mediaType, _, err := mime.ParseMediaType(res.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
-		return nil
+	// A body that is not JSON, or cannot be read, is simply not a
+	// JSON-RPC answer; the caller then reports the HTTP status.
+	mediaType, _, mediaErr := mime.ParseMediaType(res.Header.Get("Content-Type"))
+	if mediaErr != nil || mediaType != "application/json" {
+		return nil //nolint:nilerr // not a JSON-RPC body; the HTTP status is the error.
 	}
-	data, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
-	if err != nil {
-		return nil
+	data, readErr := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	if readErr != nil {
+		return nil //nolint:nilerr // an unreadable body carries no JSON-RPC code.
 	}
 	var m struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -228,7 +231,7 @@ func jsonRPCErrorCode(res *http.Response, id int) *RPCError {
 		} `json:"error"`
 	}
 	if json.Unmarshal(data, &m) != nil || m.JSONRPC != "2.0" || m.Error == nil || m.ID == nil || *m.ID != id {
-		return nil
+		return nil //nolint:nilerr // not a JSON-RPC error for this request.
 	}
 	return &RPCError{Code: m.Error.Code}
 }
