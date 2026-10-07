@@ -8868,22 +8868,6 @@ const (
 	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
 )
 
-// EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
-const EnvironmentFieldOwnershipMaxPaths = 1024
-
-// Data API workload bounds (ADR-650). Embedded config.mjs mirrors these
-// constants; the CLI tripwire tests keep the runtime and platform contract aligned.
-const (
-	DataAPIMaxPoolConnections = 2
-	DataAPIMaxRows            = 1000
-	DataAPIMaxRequestBytes    = 1 << 20
-	DataAPIMaxOutputBytes     = 1 << 20
-	DataAPIQueryTimeoutMS     = 15000
-	DataAPIMaxRelations       = 1000
-	DataAPIMaxColumns         = 10000
-	DataAPIMaxTypes           = 20000
-)
-
 // Internal durable-entity prototype budgets, not plan availability.
 const (
 	MaxDurableEntitySnapshotBytes        = 1 << 20
@@ -8915,4 +8899,20 @@ const (
 	DurableEntityAlarmReadTimeout        = 2 * time.Second
 	DurableEntityAlarmScanTimeout        = 20 * time.Second
 	DurableEntityAlarmPollInterval       = 5 * time.Second
+)
+
+// EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
+const EnvironmentFieldOwnershipMaxPaths = 1024
+
+// Data API workload bounds (ADR-650). Embedded config.mjs mirrors these
+// constants; the CLI tripwire tests keep the runtime and platform contract aligned.
+const (
+	DataAPIMaxPoolConnections = 2
+	DataAPIMaxRows            = 1000
+	DataAPIMaxRequestBytes    = 1 << 20
+	DataAPIMaxOutputBytes     = 1 << 20
+	DataAPIQueryTimeoutMS     = 15000
+	DataAPIMaxRelations       = 1000
+	DataAPIMaxColumns         = 10000
+	DataAPIMaxTypes           = 20000
 )
