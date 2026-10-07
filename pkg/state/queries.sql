@@ -9238,8 +9238,9 @@ WHERE upload_id=$1 AND part_number=$2 AND transfer_token=$3
 AND EXISTS (SELECT 1 FROM object_storage_multipart_uploads u WHERE u.id=$1 AND u.account_id=$4);
 
 -- name: ObjectMultipartTransfersPending :one
-SELECT EXISTS (SELECT 1 FROM object_storage_multipart_part_grants
-WHERE upload_id=$1 AND transfer_token IS NOT NULL AND unsafe_until>clock_timestamp()) AS pending;
+SELECT EXISTS (SELECT 1 FROM object_storage_multipart_part_grants g
+WHERE g.upload_id=$1 AND g.transfer_token IS NOT NULL AND g.unsafe_until>clock_timestamp()
+UNION ALL SELECT 1 FROM object_multipart_part_writers d WHERE d.upload_id=$1 AND d.dispatched AND NOT d.settled) AS pending;
 
 -- name: ObjectMultipartAbortOwner :one
 SELECT account_id,bucket_id,(part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())::boolean AS part_urls_drained
@@ -10763,7 +10764,7 @@ RETURNING *;
 
 -- name: ObjectBucketMutationFinish :execrows
 DELETE FROM object_bucket_mutations
-WHERE id=sqlc.arg(id) AND bucket_id=sqlc.arg(bucket_id) AND kind='request' AND upload_id IS NULL AND multipart_upload_id IS NULL
+WHERE id=sqlc.arg(id) AND bucket_id=sqlc.arg(bucket_id) AND kind='request' AND upload_id IS NULL AND multipart_upload_id IS NULL AND multipart_part_writer_id IS NULL
 AND backend_id=sqlc.arg(backend_id) AND backend_fingerprint=sqlc.arg(backend_fingerprint)
 AND physical_name=sqlc.arg(physical_name);
 
@@ -10815,7 +10816,11 @@ ON CONFLICT (bucket_id) DO NOTHING;
 
 -- name: ObjectBucketWriteFenceRead :one
 SELECT f.*,
- (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='request') AS requests,
+ (SELECT count(*) FROM (
+  SELECT m.id FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='request'
+  UNION ALL SELECT d.id FROM object_multipart_part_writers d WHERE d.bucket_id=f.bucket_id AND d.dispatched AND NOT d.settled
+  AND NOT EXISTS(SELECT 1 FROM object_bucket_mutations m WHERE m.multipart_part_writer_id=d.id)
+ ) busy) AS requests,
  (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='native_grant') AS native_grants,
  (SELECT count(*) FROM object_deletions d WHERE d.bucket_id=f.bucket_id AND d.state IN ('prepared','dispatched')) AS deletions,
  (SELECT count(*) FROM object_version_protection p WHERE p.bucket_id=f.bucket_id AND p.state IN ('waiting','applying')) AS protections,
@@ -14504,3 +14509,19 @@ WHERE multipart_upload_id=sqlc.arg(multipart_upload_id) AND NOT dispatched;
 -- name: ObjectMultipartInitiationObserve :execrows
 UPDATE object_multipart_initiation_dispatches SET provider_upload_id=sqlc.arg(provider_upload_id)
 WHERE multipart_upload_id=sqlc.arg(multipart_upload_id) AND dispatched AND dispatch_token=sqlc.arg(dispatch_token) AND provider_upload_id='';
+
+-- name: ObjectMultipartPartWriterDispatch :one
+UPDATE object_multipart_part_writers d SET dispatched=true
+FROM object_storage_multipart_uploads u
+WHERE d.upload_id=u.id AND d.upload_id=sqlc.arg(upload_id) AND d.part_number=sqlc.arg(part_number) AND d.transfer_token=sqlc.arg(transfer_token)
+AND u.account_id=sqlc.arg(account_id) AND u.app_id=sqlc.arg(app_id) AND d.bucket_id=sqlc.arg(bucket_id)
+AND d.backend_id=sqlc.arg(backend_id) AND d.backend_fingerprint=sqlc.arg(backend_fingerprint) AND d.physical_name=sqlc.arg(physical_name)
+AND d.managed AND NOT d.dispatched AND NOT d.settled
+RETURNING d.*;
+
+-- name: ObjectMultipartPartWriterFinish :execrows
+UPDATE object_multipart_part_writers d SET settled=true
+FROM object_storage_multipart_uploads u
+WHERE d.id=sqlc.arg(id) AND d.upload_id=u.id AND u.account_id=sqlc.arg(account_id) AND u.app_id=sqlc.arg(app_id)
+AND d.bucket_id=sqlc.arg(bucket_id) AND d.backend_id=sqlc.arg(backend_id) AND d.backend_fingerprint=sqlc.arg(backend_fingerprint) AND d.physical_name=sqlc.arg(physical_name)
+AND d.managed AND d.dispatched AND NOT d.settled;

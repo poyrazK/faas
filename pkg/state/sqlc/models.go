@@ -3937,15 +3937,16 @@ type ObjectBucketLifecycle struct {
 }
 
 type ObjectBucketMutation struct {
-	ID                 pgtype.UUID
-	BucketID           pgtype.UUID
-	Kind               string
-	BackendID          string
-	BackendFingerprint string
-	PhysicalName       string
-	CreatedAt          pgtype.Timestamptz
-	UploadID           pgtype.UUID
-	MultipartUploadID  pgtype.UUID
+	ID                    pgtype.UUID
+	BucketID              pgtype.UUID
+	Kind                  string
+	BackendID             string
+	BackendFingerprint    string
+	PhysicalName          string
+	CreatedAt             pgtype.Timestamptz
+	UploadID              pgtype.UUID
+	MultipartUploadID     pgtype.UUID
+	MultipartPartWriterID pgtype.UUID
 }
 
 type ObjectBucketNotification struct {
@@ -4051,6 +4052,20 @@ type ObjectMultipartInitiationDispatch struct {
 	Dispatched        bool
 	DispatchToken     string
 	ProviderUploadID  string
+}
+
+type ObjectMultipartPartWriter struct {
+	ID                 pgtype.UUID
+	UploadID           pgtype.UUID
+	PartNumber         int32
+	TransferToken      string
+	Managed            bool
+	Dispatched         bool
+	Settled            bool
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
 }
 
 type ObjectS3CopySourceEpoch struct {

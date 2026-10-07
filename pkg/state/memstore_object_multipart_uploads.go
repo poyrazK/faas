@@ -233,7 +233,7 @@ func (m *MemStore) FinishObjectMultipartUpload(_ context.Context, id, token, nex
 	defer m.mu.Unlock()
 	upload, ok := m.objectMultipartUploads[id]
 	valid := ObjectMultipartIsCompleting(upload.State) && next == ObjectMultipartCompleted
-	if !ok || token == "" || upload.LeaseToken != token || !valid || next == ObjectMultipartCompleted && (upload.CompletionDispatched || !upload.Encryption.Empty() || !upload.Protection.Empty()) {
+	if !ok || token == "" || upload.LeaseToken != token || !valid || m.multipartPartWriterPendingLocked(id, 0) || next == ObjectMultipartCompleted && (upload.CompletionDispatched || !upload.Encryption.Empty() || !upload.Protection.Empty()) {
 		return ErrConflict
 	}
 	upload.State, upload.LeaseToken, upload.LeaseUntil = next, "", time.Time{}

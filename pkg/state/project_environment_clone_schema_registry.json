@@ -4493,6 +4493,7 @@
       "created_at",
       "id",
       "kind",
+      "multipart_part_writer_id",
       "multipart_upload_id",
       "physical_name",
       "upload_id"
@@ -4649,6 +4650,23 @@
       "dispatched",
       "multipart_upload_id",
       "provider_upload_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_multipart_part_writers",
+    "columns": [
+      "backend_fingerprint",
+      "backend_id",
+      "bucket_id",
+      "dispatched",
+      "id",
+      "managed",
+      "part_number",
+      "physical_name",
+      "settled",
+      "transfer_token",
+      "upload_id"
     ],
     "kind": "operational"
   },

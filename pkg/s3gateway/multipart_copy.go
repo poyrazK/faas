@@ -147,7 +147,7 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 	if req.copySource == nil && !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	receipt, err := objectstorageactivity.Begin(ctx, h.store, req.bucket, state.ObjectBucketMutationRequest)
+	receipt, err := objectstorageactivity.DispatchMultipartPart(ctx, h.store, transfers, req.bucket, upload.ID, c.PartNumber, token)
 	if err != nil {
 		h.providerError(w, r, req, err, upload.Key)
 		return
@@ -164,12 +164,13 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 	if err != nil {
 		safeToSettle = errors.Is(err, objectstorage.ErrWriteRejected)
 		if safeToSettle {
-			if finishErr := objectstorageactivity.Finish(ctx, h.store, receipt); finishErr != nil {
+			safeToSettle = receipt.MultipartPartWriterID == ""
+			if finishErr := objectstorageactivity.FinishMultipartPart(ctx, h.store, transfers, receipt); finishErr != nil {
 				h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
 				return
 			}
 		}
-		if !safeToSettle {
+		if !errors.Is(err, objectstorage.ErrWriteRejected) {
 			h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
 		} else if errors.Is(err, objectstorage.ErrPreconditionFailed) {
 			h.providerHTTPError(w, r, req, http.StatusPreconditionFailed, c.SourceKey)
@@ -182,11 +183,11 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
 		return
 	}
-	if err := objectstorageactivity.Finish(ctx, h.store, receipt); err != nil {
+	if err := objectstorageactivity.FinishMultipartPart(ctx, h.store, transfers, receipt); err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
 		return
 	}
-	safeToSettle = true
+	safeToSettle = receipt.MultipartPartWriterID == ""
 	if sourceID != "" {
 		w.Header().Set("X-Amz-Copy-Source-Version-Id", sourceID)
 	}

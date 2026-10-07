@@ -19,12 +19,13 @@ const (
 // grants are not synchronous requests: URL expiry, caller cancellation and
 // signing completion do not prove that the provider has drained their writes.
 type ObjectBucketMutation struct {
-	ID                string
-	UploadID          string
-	MultipartUploadID string
-	Bucket            ObjectBucket
-	Kind              string
-	CreatedAt         time.Time
+	ID                    string
+	UploadID              string
+	MultipartUploadID     string
+	MultipartPartWriterID string
+	Bucket                ObjectBucket
+	Kind                  string
+	CreatedAt             time.Time
 }
 
 type ObjectBucketWriteFence struct {

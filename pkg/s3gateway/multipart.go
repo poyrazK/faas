@@ -190,9 +190,14 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		upstream.Header.Set(name, value)
 	}
 	safeToSettle = false
-	response, receipt, err := h.doMutationRequest(upstream, req)
+	receipt, err := objectstorageactivity.DispatchMultipartPart(transferCtx, h.store, transfers, req.bucket, upload.ID, part, transferToken)
 	if err != nil {
-		safeToSettle = receipt.ID == "" // Admission failed before any provider IO.
+		safeToSettle = true
+		h.providerError(w, r, req, err, key)
+		return
+	}
+	response, err := h.client.Do(upstream)
+	if err != nil {
 		if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
 			return
 		}
@@ -226,11 +231,11 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 	if !h.multipartPartEncryption(w, r, req, upload, response.Header) {
 		return
 	}
-	if err := objectstorageactivity.Finish(transferCtx, h.store, receipt); err != nil {
+	if err := objectstorageactivity.FinishMultipartPart(transferCtx, h.store, transfers, receipt); err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
-	safeToSettle = true
+	safeToSettle = receipt.MultipartPartWriterID == ""
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
 }

@@ -7447,3 +7447,58 @@ pass under the race detector, as does the complete S3 gateway suite. Pinned
 golangci-lint v2.4.0 reports zero issues for object storage, activity and gateway
 packages; repository policy checks pass. Optional Packer/live nft checks were
 skipped. These are local tests, not live qualification.
+
+### Bind independent part attempts to once-only dispatch (2026-10-07)
+
+A new operational part-writer journal now reserves immutable attempt identity
+with every newly admitted transfer token. The gateway claims that original
+attempt before a part PUT or copy, including broker URL and cross-bucket copy
+transfers. Claiming dispatch creates its pinned request receipt in the same
+transaction. A source hold rejects fresh transfer admission but permits a
+previously reserved attempt to claim its first dispatch against the unchanged
+placement. An expired transfer or parent cannot claim a new dispatch; replay
+of a claimed or settled attempt sends no provider request.
+
+Validated synchronous success or qualified copy rejection settles the transfer
+and its own receipt atomically, using the bounded cancellation-independent
+acknowledgment context. Ordinary transfer settlement and generic receipt finish
+cannot erase a dispatched writer. Unknown replies survive transfer deadlines,
+worker restart and parent abort/completion attempts; neither replacement tokens
+nor provider cleanup inferred from time may remove their evidence. A late
+positive reply can still settle the original attempt while the parent is
+aborting. Settled attempts retain their identity to reject replay, and successful
+part settlement preserves both the parent receipt and unrelated writers.
+
+The append-only migration classifies existing nonempty transfer tokens as
+already dispatched and uncertain. It never assigns them a fresh claim or adopts
+an existing anonymous receipt. These legacy records count directly against the
+capture hold when they have no bound request receipt, including when an older
+worker already marked their parent complete. Managed receipts are counted once.
+Database guards preserve dispatch, transfer identity, original placement and
+parent intent, reject deleting unresolved dispatched evidence, and refuse a
+busy downgrade. Memory and PostgreSQL stores enforce the same managed writer
+contract; all new journal columns and the table are operational and excluded
+from stage copies.
+
+Fixed legacy proxies without transfer authority and stores lacking the optional
+binding interface retain ordinary admission. No unknown legacy request is
+adopted through that fallback. Resolving uncertain managed or legacy attempts
+still requires qualified provider proof; durable content/copy intent and provider
+reconciliation remain further work. Live R2/OVH writer coverage and the common
+PostgreSQL/object checkpoint remain unqualified. Public fully copyable capture
+stays gated.
+
+Validation: memory/PostgreSQL part, multipart, capture and registry contracts
+pass under the race detector, covering held original dispatch, blocked fresh
+admission, replay, wrong placement, cancellation, atomic settlement, unrelated
+custody, rollback, restart, migration round trips and busy downgrade refusal.
+The PostgreSQL migration test retains a legacy transfer whose parent was already
+complete. Memory clock and PostgreSQL fixture checks prove an expired transfer
+cannot be replaced while its parent remains live. The full gateway, object
+storage and activity suites pass under the race detector, including broker URL,
+cross-bucket copy, encryption and lost-reply regressions. These are local tests,
+not live provider or common-checkpoint qualification. Control API multipart,
+encryption, capture, broker-grant and recovery checks pass. SQLC v1.31.1 parity,
+migration-ID and repository policy checks pass; pinned golangci-lint v2.4.0
+reports zero issues across state, object storage, activity, gateway and APID.
+Optional Packer/live nft checks remain skipped.

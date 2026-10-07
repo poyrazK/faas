@@ -42,7 +42,7 @@ func (m *MemStore) FinishObjectBucketMutation(ctx context.Context, receipt Objec
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	actual, exists := m.objectMutations[receipt.ID]
-	if !exists || actual.UploadID != "" || actual.MultipartUploadID != "" || actual.Kind != receipt.Kind || !sameObjectMutationBucket(receipt.Bucket, actual.Bucket) || !sameObjectMutationBucket(receipt.Bucket, m.objectBuckets[receipt.Bucket.ID]) {
+	if !exists || actual.UploadID != "" || actual.MultipartUploadID != "" || actual.MultipartPartWriterID != "" || actual.Kind != receipt.Kind || !sameObjectMutationBucket(receipt.Bucket, actual.Bucket) || !sameObjectMutationBucket(receipt.Bucket, m.objectBuckets[receipt.Bucket.ID]) {
 		return ErrConflict
 	}
 	delete(m.objectMutations, receipt.ID)
@@ -70,6 +70,13 @@ func (m *MemStore) ownedObjectWriteFenceLocked(b ObjectBucket, token, operationI
 			fence.NativeGrants++
 		} else {
 			fence.Requests++
+		}
+	}
+	for _, d := range m.objectMultipartPartWriters {
+		if d.receipt.Bucket.ID == b.ID && d.dispatched && !d.settled {
+			if _, bound := m.objectMutations[d.receipt.ID]; !bound {
+				fence.Requests++
+			}
 		}
 	}
 	for _, deletion := range m.objectDeletions {
