@@ -84,14 +84,21 @@ definition, including every verified member of the selected release graph.
 Accepted/running work retains code and idempotency identity past timestamp
 expiry; stopped work retains code through its result/recovery window. Cutover,
 abort and rollback remove weighted traffic while preserving these references.
-Separate code-pin receipts do not extend public revision-header or release-set
-access deadlines.
+Private cleanup receipts use `customer_operation_code_pins`, separate from
+public revision deadlines. Admission, claim renewal, progress, recovery and
+settlement never extend the public revision-header window or native release-set
+deadline. The canonical private-pin migration preserves existing public
+timestamps and backfills private receipts only from owned operation references,
+including their full release graph.
 
 Pin cleanup locks apps before deployments and rechecks owned references in a
 fresh READ COMMITTED statement after acquiring the app locks. Retained references
 are excluded before paging, and a page considers at most
-`api.RevisionPinCleanupPageMax` (500) deployment IDs. Expiry, owner deletion and
-inconsistent admission metadata release the private reference without an
+`api.RevisionPinCleanupPageMax` (500) deployment IDs, each with at most one
+public and one private receipt. Both deadlines must expire, and each receipt
+present in the cleanup snapshot must actually be deleted before code is retired.
+A concurrent receipt renewal therefore preserves code. Expiry, owner deletion
+and inconsistent admission metadata release the private reference without an
 unlimited timestamp pin or a renewal heartbeat.
 
 Fresh admission and safe retry lock every owned release app in ID order before
@@ -228,3 +235,23 @@ snapshot content in the immutable revision. Customers cannot supply a private
 snapshot. This schema seam does not enable workflow execution: native admission
 and dispatch remain unavailable until their complete recovery contract is
 qualified.
+
+## Controlled native workflow admission source — 2026-10-06
+
+The trusted adapter must commit the native run, verified tenant, immutable input
+and bounded DAG, initial steps, operation projection, backend binding, acceptance
+event, scoped receipt and private code references in one transaction. It creates
+no HTTP invocation. Native and operation admission share the app active-run quota
+and advisory key; that lock precedes code app locks to avoid an app foreign-key
+lock cycle. Owner and tenant binding remain mandatory.
+
+The private SQL helpers exclude permanently marked runs from legacy claims and
+recovery, including after operation projection GC, and retain bound native
+history. Legacy recovery must preserve the canonical resumed, foreach and
+outbound semantics: lock an unmarked run, mark uncertain unsafe outbound effects,
+close their attempts, then reset eligible running steps in the same transaction.
+The helper queries are unwired; the public PgStore runtime does not acquire these
+isolation guards merely because they exist. Controlled adapter validation and
+public claim, advancement, recovery and cancellation guards remain activation
+gates. Native admission stays unavailable until those gates and native lifecycle
+qualification pass. These source seams do not establish exactly-once execution.

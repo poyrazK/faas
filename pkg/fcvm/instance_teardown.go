@@ -220,6 +220,33 @@ func (m *Manager) joinForTeardown(ctx context.Context, instance string) error {
 	return nil
 }
 
+// RetryPendingCleanups re-runs teardown for every instance whose cleanup
+// failed and is still retained. A failed teardown keeps its lease, slot and
+// writable clone until some caller runs Destroy again, and for a parked
+// instance nothing does: production-us hunt #4 found one retained since an
+// `app restart` whose replacement briefly shared its bind source (ADR-631).
+// cleanup is idempotent and serialised per instance, so a concurrent Destroy
+// is safe.
+func (m *Manager) RetryPendingCleanups(ctx context.Context) (completed, pending int) {
+	m.mu.Lock()
+	retained := make([]*instanceCleanup, 0, len(m.pendingCleanup))
+	for _, r := range m.pendingCleanup {
+		retained = append(retained, r)
+	}
+	m.mu.Unlock()
+	for _, r := range retained {
+		if ctx.Err() != nil {
+			return completed, pending
+		}
+		if err := m.cleanup(ctx, r.lease, r.net, r.workloadNames); err != nil {
+			pending++
+			continue
+		}
+		completed++
+	}
+	return completed, pending
+}
+
 func (m *Manager) teardownIdentity(instance string) *Instance {
 	m.mu.Lock()
 	defer m.mu.Unlock()

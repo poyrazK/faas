@@ -25,6 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -114,13 +115,18 @@ func cmdInvocationsWait(args []string) int {
 					return code
 				}
 			}
-			_, _ = fmt.Fprintf(osStderr, "gregale: timed out waiting for invocation %s; it may still be running (inspect with `gregale invocations get %s`)\n", id, id)
+			problem := api.Problem{
+				Status:  http.StatusRequestTimeout,
+				Code:    "invocation_wait_timeout",
+				Title:   "Invocation wait timed out",
+				Detail:  fmt.Sprintf("timed out waiting for invocation %s; it may still be running", id),
+				Hint:    fmt.Sprintf("Inspect it with 'gregale invocations get %s'.", id),
+				DocsURL: cliDocsURL,
+			}
+			// The CLI wait deadline keeps its conventional exit status; it
+			// does not cancel the durable invocation on the server.
+			_ = printErr(problem.Title, &APIError{Problem: problem})
 			return 124
-		}
-		var ae *APIError
-		if errors.As(err, &ae) {
-			renderAPIError(os.Stderr, ae)
-			return exitCodeForStatus(ae.Problem.Status)
 		}
 		return printErr("Could not wait for invocation", err)
 	}

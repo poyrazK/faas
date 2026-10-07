@@ -35,13 +35,13 @@ func topLevelUsage(showAdvanced bool) string {
 		b.WriteString("  help                   Show this help message\n")
 	} else {
 		b.WriteString("Get started:\n")
-		for _, name := range []string{"login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
+		for _, name := range []string{"start", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
 			command, _ := lookupCliCommand(name)
 			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
 		}
 		b.WriteString("  help                   Show command help\n")
 		b.WriteString("\nExamples:\n")
-		b.WriteString("  gregale login\n  gregale deploy --plan\n  gregale deploy --path ./api\n")
+		b.WriteString("  gregale start\n  gregale deploy --plan\n  gregale deploy --path ./api\n")
 		b.WriteString("\nRun 'gregale help --all' for every command, or 'gregale help deploy' for a topic.\n")
 	}
 	b.WriteString("\nRun 'gregale <command> --help' for command details.\n\n")
@@ -78,6 +78,9 @@ func writeGroupedCommands(b *strings.Builder, commands []cliCommand) {
 
 func hasHelpFlag(args []string) bool {
 	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
 		if arg == "--help" || arg == "-h" {
 			return true
 		}
@@ -196,6 +199,8 @@ func run(args []string) (status int) {
 		return cmdBindings(args[1:])
 	case "deploy":
 		return cmdDeployTarball(args[1:])
+	case "start":
+		return cmdStart(args[1:])
 	case "diff":
 		return environmentDiff(args[1:])
 	case "dev":

@@ -38,6 +38,51 @@ operator-owned path. The output includes a versioned approval envelope and the
 exact `approval_env` values for the staging gate. Verify the saved artifact
 before applying those values:
 
+A newly created provider project may have no usage in the previous completed
+hour. To continue independent credential, compute, restore and deletion tests,
+set `FAAS_MANAGED_POSTGRES_QUALIFY_CONTINUE_AFTER_USAGE_FAILURE=true` for that
+isolated run. The usage failure remains in the report, the command exits
+non-zero, and it emits no approval or provisioning gate values. This option
+does not relax any other prerequisite. A complete settled usage window is
+still required for qualification and rollout. Cleanup failures are reported
+alongside the original failure so operators can recover every leaked resource.
+
+The Neon restore fixture chooses a whole-second database clock boundary after
+the first committed marker and waits for that boundary before writing the
+second marker. It never rounds a customer restore request. Incomplete branch
+creation acknowledgements are resolved by bounded reads of the acknowledged
+branch identity, with exact source and timestamp validation before adoption
+or cleanup. Fractional timestamps that Neon cannot report exactly remain
+unqualified; timestamp tolerance is not a lineage proof.
+
+Live PostgreSQL 18 tests on 2026-10-06 also observed a whole-second restore
+request whose ready branch reported the earlier WAL commit's timestamp. This
+still blocks restore qualification: waiting for metadata or rounding the test
+point does not establish a verified timestamp-to-LSN mapping. Snapshot creation
+acknowledgements can omit both timestamp and expiry while work is pending; read
+the accepted snapshot until its complete metadata is available before adopting
+it or changing retention. Missing or conflicting final metadata remains a
+blocker. These diagnostics do not authorize enabling the production service.
+
+Snapshot capture replay and lost-response discovery use the same bounded reads
+as fresh creation. Missing metadata can settle; a reported conflicting owner,
+source or capture point stops recovery even when other fields are missing.
+Private snapshot restore also hydrates only the original target branch, including
+temporary absence after acknowledgement. It independently reads readiness and
+never finalizes the preview or substitutes a matching display name for a known
+target identity. An unavailable observation remains retryable; it is not proof
+that the provider-side resource was never created.
+
+Restore discovery, replay and cleanup read all bounded branch pages before
+creating a target or declaring it absent. Discovery pins creation-time ordering
+and rejects missing lists, overlapping identities, duplicate owner names and
+cursor cycles. An incomplete provider listing cannot authorize another create
+or report cleanup complete.
+Lifecycle inspection, read-only health observation and default-source selection
+use the same complete branch inventory, so a later-page branch is not reported
+missing. A missing or null branch list is unknown; an explicit empty list can
+establish absence after pagination completes.
+
 ```sh
 FAAS_ENVIRONMENT=staging \
 FAAS_MANAGED_POSTGRES_CONFIG=/etc/faas/managed-postgres.json \
