@@ -38,7 +38,15 @@ func NewMemoryStore() *MemoryStore {
 
 func (s *MemoryStore) CheckScope(context.Context) error { return nil }
 
-func (s *MemoryStore) PutCell(_ context.Context, c Cell) (Cell, error) {
+func (s *MemoryStore) PutCell(ctx context.Context, c Cell) (Cell, error) {
+	return s.PutCellRegistry(ctx, c, cellAppsDomainUpdate(c))
+}
+
+func (s *MemoryStore) PutCellRegistry(_ context.Context, c Cell, appsDomain *string) (Cell, error) {
+	c.AppsDomain = ""
+	if appsDomain != nil {
+		c.AppsDomain = *appsDomain
+	}
 	if err := c.Validate(); err != nil {
 		return Cell{}, err
 	}
@@ -54,8 +62,11 @@ func (s *MemoryStore) PutCell(_ context.Context, c Cell) (Cell, error) {
 	}
 	c.Generation = 1
 	if old, ok := s.cells[c.Region]; ok {
+		if appsDomain == nil {
+			c.AppsDomain = old.AppsDomain
+		}
 		c.Generation = old.Generation
-		if old.APIBase != c.APIBase || old.Enabled != c.Enabled {
+		if old.APIBase != c.APIBase || old.Enabled != c.Enabled || old.AppsDomain != c.AppsDomain {
 			c.Generation++
 			for _, g := range s.delegations {
 				if g.Binding.CellID == c.ID {

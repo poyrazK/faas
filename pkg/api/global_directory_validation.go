@@ -61,3 +61,22 @@ func ValidGlobalDirectoryAPIBase(origin string) bool {
 	}
 	return true
 }
+
+// ValidRegionalAppsDomain accepts a canonical DNS suffix for regional app
+// traffic. Management API origins, ports and literal IPs are not traffic suffixes.
+func ValidRegionalAppsDomain(domain string) bool {
+	if len(domain) > RegionalAppsDomainMaxBytes || !strings.Contains(domain, ".") ||
+		strings.ContainsAny(domain, ":/[]") || strings.Trim(domain, "0123456789.") == "" {
+		return false
+	}
+	return ValidGlobalDirectoryAPIBase("https://" + domain)
+}
+
+// RegionalAppOrigin derives the HTTPS traffic origin only from explicit
+// regional configuration. The empty result denotes an invalid configuration.
+func RegionalAppOrigin(slug, domain string) string {
+	if !ValidGlobalAppSlug(slug) || !ValidRegionalAppsDomain(domain) {
+		return ""
+	}
+	return "https://" + slug + "." + domain
+}

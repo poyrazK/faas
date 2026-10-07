@@ -1,5 +1,6 @@
 // adr: 047
 // adr: 171
+// adr: 657
 // Tests for the gatewayd-internal Handler × ForwardingReverseProxy integration
 // (issue #98 / ADR-028 / ADR-047). The unit tests in forwardproxy_test.go
 // pin the forwarder in isolation; this file pins the seam — when the
@@ -69,6 +70,14 @@ type stubVmmdClient struct {
 	rawBody   []byte
 	body      []byte
 	rawStream grpc.BidiStreamingClient[vmmdpb.ForwardRawRequest, vmmdpb.ForwardRawResponse]
+}
+
+func (s *stubVmmdClient) ObserveNativeRuntimeInventory(context.Context, *vmmdpb.ObserveNativeRuntimeInventoryRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.NativeRuntimeInventoryFrame], error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot observe native inventory")
+}
+
+func (s *stubVmmdClient) RetireRegionalRuntime(context.Context, *vmmdpb.RetireRegionalRuntimeRequest, ...grpc.CallOption) (*vmmdpb.RetireRegionalRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot retire regional runtime")
 }
 
 func (s *stubVmmdClient) CreateEnvironmentQualification(context.Context, *vmmdpb.CreateEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CreateEnvironmentQualificationResponse, error) {

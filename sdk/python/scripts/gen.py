@@ -1015,6 +1015,49 @@ def _protect_global_directory_request(package: Path) -> None:
             )
         )
 
+    # ADR-657: newly documented original consent and quota delivery transports.
+    for name in (
+        "put_global_runtime_consent",
+        "get_global_runtime_consent",
+        "revoke_global_runtime_consent",
+        "deliver_global_runtime_quota",
+        "queue_global_quota_delivery",
+        "get_global_quota_delivery",
+        "retry_global_quota_delivery",
+        "accept_cell_runtime_quota",
+        "retire_cell_runtime_quota",
+    ):
+        endpoint = package / "api" / "apps" / (name + ".py")
+        if not endpoint.exists():
+            continue
+        source = endpoint.read_text()
+        anchor = "    return _kwargs"
+        if source.count(anchor) != 1:
+            raise RuntimeError("runtime authority transport generator anchor missing")
+        endpoint.write_text(source.replace(anchor, '    _kwargs["follow_redirects"] = False\n' + anchor))
+    for name in (
+        "put_global_runtime_consent_request",
+        "revoke_global_runtime_consent_request",
+        "deliver_global_runtime_quota_request",
+    ):
+        model = package / "models" / (name + ".py")
+        if not model.exists():
+            continue
+        source = model.read_text()
+        source = source.replace(
+            "from attrs import define as _attrs_define",
+            "from attrs import define as _attrs_define\nfrom attrs import field as _attrs_field",
+        )
+        if name == "deliver_global_runtime_quota_request":
+            anchor = "regional_api_key: str | Unset = UNSET"
+            replacement = "regional_api_key: str | Unset = _attrs_field(default=UNSET, repr=False)"
+        else:
+            anchor = "regional_api_key: str"
+            replacement = "regional_api_key: str = _attrs_field(repr=False)"
+        if source.count(anchor) != 1:
+            raise RuntimeError("runtime authority credential model generator anchor missing")
+        model.write_text(source.replace(anchor, replacement, 1))
+
 
 def _protect_cell_deployment_request(package: Path) -> None:
     """A mutation addressed to a cell/app tuple must not move to another URL."""

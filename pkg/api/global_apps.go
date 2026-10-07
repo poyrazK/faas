@@ -11,6 +11,7 @@ type GlobalCellResponse struct {
 	ID         string `json:"id"`
 	Region     string `json:"region"`
 	APIBase    string `json:"api_base"`
+	AppsDomain string `json:"apps_domain,omitempty"`
 	Enabled    bool   `json:"enabled"`
 	Generation int64  `json:"generation"`
 }
@@ -19,6 +20,8 @@ type PutGlobalCellRequest struct {
 	Region  string `json:"region"`
 	APIBase string `json:"api_base"`
 	Enabled *bool  `json:"enabled"`
+	// Omission preserves the registered traffic suffix; an explicit empty value clears it.
+	AppsDomain *string `json:"apps_domain,omitempty"`
 }
 
 type CreateGlobalAppRequest struct {
@@ -78,6 +81,7 @@ type CellAppBindingResponse struct {
 	OrgID     string `json:"org_id,omitempty"`
 	AppID     string `json:"app_id"`
 	AppSlug   string `json:"app_slug"`
+	AppOrigin string `json:"app_origin,omitempty"` // Only returned for traffic_origin=1 probes.
 }
 
 func (c *Client) ListGlobalCells(ctx context.Context) ([]GlobalCellResponse, error) {

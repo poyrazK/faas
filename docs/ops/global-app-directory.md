@@ -50,14 +50,26 @@ session. Register each cell's exact UUID/region and HTTPS API origin:
 
 ```sh
 gregalectl cells set --cell-id CELL_UUID --region eu-fsn \
-  --api-base https://api.fsn.example.com --enabled=true
+  --api-base https://api.fsn.example.com --enabled=true \
+  --apps-domain apps.fsn.example.com
 gregalectl cells set --cell-id OTHER_CELL_UUID --region eu-hel \
-  --api-base https://api.hel.example.com --enabled=true
+  --api-base https://api.hel.example.com --enabled=true \
+  --apps-domain apps.hel.example.com
 gregalectl cells list
 ```
 
 The API origin has no path, trailing slash, credentials, query or fragment.
-Cell UUID and region are immutable. An endpoint or enabled-policy change
+Register the regional API's actual apps-domain configuration separately from its
+management origin. `--apps-domain` accepts a lowercase DNS suffix of at most
+212 bytes, without a scheme, port, literal IP or trailing dot. Omitting this flag
+preserves the current suffix; `--apps-domain=` explicitly clears it. An
+unconfigured suffix supports ownership attachment but supplies no traffic origin.
+Regional binaries must support ADR-657's `traffic_origin=1` binding proof before
+registering a suffix. Attachment then verifies the exact HTTPS app origin
+against the regional API's effective configuration. This proves configuration;
+health, runtime admission and billing eligibility require separate evidence.
+
+Cell UUID and region are immutable. An endpoint, apps-domain or enabled-policy change
 increments the registry generation; an unchanged retry does not. Disabling
 a registry entry blocks new attachments and resolution, without changing or
 deleting regional workloads. Re-enabling requires ownership verification again.

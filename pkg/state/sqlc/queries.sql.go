@@ -12163,7 +12163,7 @@ func (q *Queries) GlobalAppIdentity(ctx context.Context, db DBTX, arg GlobalAppI
 }
 
 const globalDirectoryCellByRegion = `-- name: GlobalDirectoryCellByRegion :one
-SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells WHERE region = $1
+SELECT id::text AS cell_id, region, api_base, enabled, generation, apps_domain FROM global_directory_cells WHERE region = $1
 `
 
 type GlobalDirectoryCellByRegionRow struct {
@@ -12172,6 +12172,7 @@ type GlobalDirectoryCellByRegionRow struct {
 	ApiBase    string
 	Enabled    bool
 	Generation int64
+	AppsDomain string
 }
 
 func (q *Queries) GlobalDirectoryCellByRegion(ctx context.Context, db DBTX, region string) (GlobalDirectoryCellByRegionRow, error) {
@@ -12183,6 +12184,7 @@ func (q *Queries) GlobalDirectoryCellByRegion(ctx context.Context, db DBTX, regi
 		&i.ApiBase,
 		&i.Enabled,
 		&i.Generation,
+		&i.AppsDomain,
 	)
 	return i, err
 }
@@ -19958,7 +19960,7 @@ func (q *Queries) ListGlobalAppTargets(ctx context.Context, db DBTX, arg ListGlo
 }
 
 const listGlobalDirectoryCells = `-- name: ListGlobalDirectoryCells :many
-SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells ORDER BY region
+SELECT id::text AS cell_id, region, api_base, enabled, generation, apps_domain FROM global_directory_cells ORDER BY region
 `
 
 type ListGlobalDirectoryCellsRow struct {
@@ -19967,6 +19969,7 @@ type ListGlobalDirectoryCellsRow struct {
 	ApiBase    string
 	Enabled    bool
 	Generation int64
+	AppsDomain string
 }
 
 func (q *Queries) ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]ListGlobalDirectoryCellsRow, error) {
@@ -19984,6 +19987,7 @@ func (q *Queries) ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]List
 			&i.ApiBase,
 			&i.Enabled,
 			&i.Generation,
+			&i.AppsDomain,
 		); err != nil {
 			return nil, err
 		}
@@ -23848,7 +23852,7 @@ func (q *Queries) LockGlobalAppIdentity(ctx context.Context, db DBTX, arg LockGl
 }
 
 const lockGlobalDirectoryCell = `-- name: LockGlobalDirectoryCell :one
-SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells
+SELECT id::text AS cell_id, region, api_base, enabled, generation, apps_domain FROM global_directory_cells
 WHERE id = $1::uuid AND enabled AND generation = $2::bigint FOR SHARE
 `
 
@@ -23863,6 +23867,7 @@ type LockGlobalDirectoryCellRow struct {
 	ApiBase    string
 	Enabled    bool
 	Generation int64
+	AppsDomain string
 }
 
 func (q *Queries) LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg LockGlobalDirectoryCellParams) (LockGlobalDirectoryCellRow, error) {
@@ -23874,6 +23879,7 @@ func (q *Queries) LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg Lock
 		&i.ApiBase,
 		&i.Enabled,
 		&i.Generation,
+		&i.AppsDomain,
 	)
 	return i, err
 }
@@ -44873,18 +44879,20 @@ func (q *Queries) UpsertGithubWebhookSecret(ctx context.Context, db DBTX, arg Up
 }
 
 const upsertGlobalDirectoryCell = `-- name: UpsertGlobalDirectoryCell :one
-INSERT INTO global_directory_cells(id, region, api_base, enabled)
-VALUES ($1::uuid, $2::text, $3::text, $4::boolean)
-ON CONFLICT (id) DO UPDATE SET api_base = EXCLUDED.api_base, enabled = EXCLUDED.enabled
+INSERT INTO global_directory_cells(id, region, api_base, enabled, apps_domain)
+VALUES ($1::uuid, $2::text, $3::text, $4::boolean, coalesce($5::text, ''))
+ON CONFLICT (id) DO UPDATE SET api_base = EXCLUDED.api_base, enabled = EXCLUDED.enabled,
+apps_domain = coalesce($5::text, global_directory_cells.apps_domain)
 WHERE global_directory_cells.region = EXCLUDED.region
-RETURNING id::text AS cell_id, region, api_base, enabled, generation
+RETURNING id::text AS cell_id, region, api_base, enabled, generation, apps_domain
 `
 
 type UpsertGlobalDirectoryCellParams struct {
-	CellID  pgtype.UUID
-	Region  string
-	ApiBase string
-	Enabled bool
+	CellID     pgtype.UUID
+	Region     string
+	ApiBase    string
+	Enabled    bool
+	AppsDomain pgtype.Text
 }
 
 type UpsertGlobalDirectoryCellRow struct {
@@ -44893,6 +44901,7 @@ type UpsertGlobalDirectoryCellRow struct {
 	ApiBase    string
 	Enabled    bool
 	Generation int64
+	AppsDomain string
 }
 
 func (q *Queries) UpsertGlobalDirectoryCell(ctx context.Context, db DBTX, arg UpsertGlobalDirectoryCellParams) (UpsertGlobalDirectoryCellRow, error) {
@@ -44901,6 +44910,7 @@ func (q *Queries) UpsertGlobalDirectoryCell(ctx context.Context, db DBTX, arg Up
 		arg.Region,
 		arg.ApiBase,
 		arg.Enabled,
+		arg.AppsDomain,
 	)
 	var i UpsertGlobalDirectoryCellRow
 	err := row.Scan(
@@ -44909,6 +44919,7 @@ func (q *Queries) UpsertGlobalDirectoryCell(ctx context.Context, db DBTX, arg Up
 		&i.ApiBase,
 		&i.Enabled,
 		&i.Generation,
+		&i.AppsDomain,
 	)
 	return i, err
 }

@@ -1,5 +1,7 @@
 package main
 
+// adr: 657
+
 // spec_compliance_test.go is the CI gate that keeps api/openapi.yaml honest.
 // It walks the Go AST of cmd/apid/server.go (routes), the pkg/api/* DTO files
 // (schemas), and pkg/api/errors.go (Code* constants + StatusForCode) and
@@ -1099,6 +1101,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "cell_image_releases.go"),
 		filepath.Join(root, "pkg", "api", "global_image_releases.go"),
 		filepath.Join(root, "pkg", "api", "global_runtime_quotas.go"),
+		filepath.Join(root, "pkg", "api", "global_runtime_consents.go"),
+		filepath.Join(root, "pkg", "api", "global_quota_deliveries.go"),
+		filepath.Join(root, "pkg", "api", "runtime_quota_transport.go"),
 		filepath.Join(root, "pkg", "api", "regional_release_grants.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),

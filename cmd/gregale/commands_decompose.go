@@ -321,7 +321,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 	return 0
 }
 
-// runProjectDeployPreviewWithMode is the read-only preview path for
+// runRegionalProjectDeployPreviewWithMode is the read-only preview path for
 // `gregale deploy --dry-run/--diff --project-slug ...` and the
 // corresponding `--only` form. Project apply is planned by ScanProject,
 // not by the single-app deploy-diff engine, so using the same endpoint here
@@ -335,17 +335,6 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 // preview cannot accidentally persist state. Strict previews return a
 // non-zero status when the plan cannot be applied; lenient previews retain the
 // rendered plan and return zero.
-func runProjectDeployPreviewWithMode(
-	ctx context.Context,
-	client *api.Client,
-	tarball, projectSlug, bindingRepo, productionBranch, only, exclude string,
-	installID int64,
-	showAffected, emitJSON, strict, noTriggers bool, environment string,
-	platformTenantRequired ...*bool,
-) int {
-	return runRegionalProjectDeployPreviewWithMode(ctx, client, tarball, projectSlug, bindingRepo, productionBranch, only, exclude, installID, showAffected, emitJSON, strict, noTriggers, environment, "", platformTenantRequired...)
-}
-
 func runRegionalProjectDeployPreviewWithMode(
 	ctx context.Context,
 	client *api.Client,

@@ -26,6 +26,9 @@ class CellAppBindingResponse:
     app_slug: str
     org_id: UUID | Unset = UNSET
     """Shared organization attested by this ownership proof; omitted for personal apps."""
+    app_origin: str | Unset = UNSET
+    """Exact HTTPS regional app origin, returned only for traffic_origin=1. This is configuration evidence, not
+    health or runtime eligibility."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +46,8 @@ class CellAppBindingResponse:
         if not isinstance(self.org_id, Unset):
             org_id = str(self.org_id)
 
+        app_origin = self.app_origin
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -56,6 +61,8 @@ class CellAppBindingResponse:
         )
         if org_id is not UNSET:
             field_dict["org_id"] = org_id
+        if app_origin is not UNSET:
+            field_dict["app_origin"] = app_origin
 
         return field_dict
 
@@ -79,6 +86,8 @@ class CellAppBindingResponse:
         else:
             org_id = UUID(_org_id)
 
+        app_origin = d.pop("app_origin", UNSET)
+
         cell_app_binding_response = cls(
             cell_id=cell_id,
             region=region,
@@ -86,6 +95,7 @@ class CellAppBindingResponse:
             app_id=app_id,
             app_slug=app_slug,
             org_id=org_id,
+            app_origin=app_origin,
         )
 
         cell_app_binding_response.additional_properties = d

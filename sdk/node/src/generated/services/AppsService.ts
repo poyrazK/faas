@@ -44,12 +44,15 @@ import type { DebugRequestEvidenceResponse } from '../models/DebugRequestEvidenc
 import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
+import type { DeliverGlobalRuntimeQuotaRequest } from '../models/DeliverGlobalRuntimeQuotaRequest.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { GlobalAppResolutionResponse } from '../models/GlobalAppResolutionResponse.js';
 import type { GlobalAppResponse } from '../models/GlobalAppResponse.js';
 import type { GlobalAppTargetResponse } from '../models/GlobalAppTargetResponse.js';
 import type { GlobalCellResponse } from '../models/GlobalCellResponse.js';
+import type { GlobalQuotaDeliveryResponse } from '../models/GlobalQuotaDeliveryResponse.js';
+import type { GlobalRuntimeConsentResponse } from '../models/GlobalRuntimeConsentResponse.js';
 import type { GlobalRuntimeQuotaResponse } from '../models/GlobalRuntimeQuotaResponse.js';
 import type { Issue } from '../models/Issue.js';
 import type { IssueActionRequest } from '../models/IssueActionRequest.js';
@@ -66,11 +69,16 @@ import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsR
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { PutGlobalCellRequest } from '../models/PutGlobalCellRequest.js';
+import type { PutGlobalRuntimeConsentRequest } from '../models/PutGlobalRuntimeConsentRequest.js';
 import type { PutGlobalRuntimeQuotaRequest } from '../models/PutGlobalRuntimeQuotaRequest.js';
+import type { QueueGlobalQuotaDeliveryRequest } from '../models/QueueGlobalQuotaDeliveryRequest.js';
+import type { RegionalRuntimeQuotaDelivery } from '../models/RegionalRuntimeQuotaDelivery.js';
+import type { RegionalRuntimeQuotaDeliveryReceipt } from '../models/RegionalRuntimeQuotaDeliveryReceipt.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
+import type { RevokeGlobalRuntimeConsentRequest } from '../models/RevokeGlobalRuntimeConsentRequest.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
 import type { RouteCheckHistoryEntry } from '../models/RouteCheckHistoryEntry.js';
@@ -330,6 +338,462 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Register original regional runtime consent.
+   * Requires verified directory personal owner write access, MFA when enabled, and a request-only regional account-admin key. Active consent lasts at most six days and is bounded to 32 records per app. UUID and input retries retain the original authority. Redirects must never be followed; regional credentials are never retained. Request bodies are bounded to 4096 bytes.
+   * @returns GlobalRuntimeConsentResponse Original consent registration and regional observation, including matching retries.
+   * @throws ApiError
+   */
+  public static putGlobalRuntimeConsent({
+    slug,
+    consentId,
+    requestBody,
+  }: {
+    /**
+     * Canonical slug identifying retained runtime consent management.
+     */
+    slug: string,
+    /**
+     * Canonical consent id identifying retained runtime consent management.
+     */
+    consentId: string,
+    requestBody: PutGlobalRuntimeConsentRequest,
+  }): CancelablePromise<GlobalRuntimeConsentResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/global-apps/{slug}/runtime-consents/{consent_id}',
+      path: {
+        'slug': slug,
+        'consent_id': consentId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional verification failed during putGlobalRuntimeConsent.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read retained regional runtime consent.
+   * Requires directory personal owner read access. Returns the original consent and observed state, including expiry and revocation. Does not contact a region or activate runtime admission.
+   * @returns GlobalRuntimeConsentResponse Retained consent authority and its current observed status.
+   * @throws ApiError
+   */
+  public static getGlobalRuntimeConsent({
+    slug,
+    consentId,
+  }: {
+    /**
+     * Canonical slug identifying retained runtime consent management.
+     */
+    slug: string,
+    /**
+     * Canonical consent id identifying retained runtime consent management.
+     */
+    consentId: string,
+  }): CancelablePromise<GlobalRuntimeConsentResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/global-apps/{slug}/runtime-consents/{consent_id}',
+      path: {
+        'slug': slug,
+        'consent_id': consentId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional verification failed during getGlobalRuntimeConsent.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke the original regional runtime consent.
+   * Requires verified directory personal owner write access and the original regional owner account-admin key. Retains the original identity and timestamps through retries. Does not release issued quota holds. Redirects must never be followed; the request-only key is not retained.
+   * @returns GlobalRuntimeConsentResponse Original consent with retained regional revocation state.
+   * @throws ApiError
+   */
+  public static revokeGlobalRuntimeConsent({
+    slug,
+    consentId,
+    requestBody,
+  }: {
+    /**
+     * Canonical slug identifying retained runtime consent management.
+     */
+    slug: string,
+    /**
+     * Canonical consent id identifying retained runtime consent management.
+     */
+    consentId: string,
+    requestBody: RevokeGlobalRuntimeConsentRequest,
+  }): CancelablePromise<GlobalRuntimeConsentResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/global-apps/{slug}/runtime-consents/{consent_id}',
+      path: {
+        'slug': slug,
+        'consent_id': consentId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional verification failed during revokeGlobalRuntimeConsent.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Deliver original signed quota authority to one region.
+   * Requires verified directory personal owner write access. Uses either the request-only regional owner key or the original active runtime consent. The exact current selected binding, issuer, owner plan and original issued allocation are checked. Redirects must never be followed. A receipt records storage only; regional admission remains frozen and retirement still requires independent native acknowledgement.
+   * @returns RegionalRuntimeQuotaDeliveryReceipt Verified regional receipt for the original issued authority.
+   * @throws ApiError
+   */
+  public static deliverGlobalRuntimeQuota({
+    slug,
+    allocationId,
+    region,
+    requestBody,
+  }: {
+    /**
+     * Canonical slug identifying original signed regional delivery.
+     */
+    slug: string,
+    /**
+     * Canonical allocation id identifying original signed regional delivery.
+     */
+    allocationId: string,
+    /**
+     * Canonical region identifying original signed regional delivery.
+     */
+    region: string,
+    requestBody: DeliverGlobalRuntimeQuotaRequest,
+  }): CancelablePromise<RegionalRuntimeQuotaDeliveryReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/global-apps/{slug}/runtime-quotas/{allocation_id}/deliver/{region}',
+      path: {
+        'slug': slug,
+        'allocation_id': allocationId,
+        'region': region,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional verification failed during deliverGlobalRuntimeQuota.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Queue durable delivery of original quota authority.
+   * Requires verified directory personal owner write access and an available directory signing authority. Grant requires the original active consent; retirement excludes consent. The delivery UUID, region, purpose and consent are immutable across retries. No customer credential is stored. Background delivery retains the original signed envelopes and never activates admission or frees held capacity.
+   * @returns GlobalQuotaDeliveryResponse Original queued delivery identity and background dispatch status.
+   * @throws ApiError
+   */
+  public static queueGlobalQuotaDelivery({
+    slug,
+    allocationId,
+    deliveryId,
+    requestBody,
+  }: {
+    /**
+     * Canonical slug identifying durable delivery registration and lookup.
+     */
+    slug: string,
+    /**
+     * Canonical allocation id identifying durable delivery registration and lookup.
+     */
+    allocationId: string,
+    /**
+     * Canonical delivery id identifying durable delivery registration and lookup.
+     */
+    deliveryId: string,
+    requestBody: QueueGlobalQuotaDeliveryRequest,
+  }): CancelablePromise<GlobalQuotaDeliveryResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/global-apps/{slug}/runtime-quotas/{allocation_id}/deliveries/{delivery_id}',
+      path: {
+        'slug': slug,
+        'allocation_id': allocationId,
+        'delivery_id': deliveryId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional verification failed during queueGlobalQuotaDelivery.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read retained durable quota delivery.
+   * Requires directory personal owner read access. Accepted means a verified original regional receipt was stored; it is not readiness, billing authority or a native drain acknowledgement.
+   * @returns GlobalQuotaDeliveryResponse Retained delivery state, original binding and attempt metadata.
+   * @throws ApiError
+   */
+  public static getGlobalQuotaDelivery({
+    slug,
+    allocationId,
+    deliveryId,
+  }: {
+    /**
+     * Canonical slug identifying durable delivery registration and lookup.
+     */
+    slug: string,
+    /**
+     * Canonical allocation id identifying durable delivery registration and lookup.
+     */
+    allocationId: string,
+    /**
+     * Canonical delivery id identifying durable delivery registration and lookup.
+     */
+    deliveryId: string,
+  }): CancelablePromise<GlobalQuotaDeliveryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/global-apps/{slug}/runtime-quotas/{allocation_id}/deliveries/{delivery_id}',
+      path: {
+        'slug': slug,
+        'allocation_id': allocationId,
+        'delivery_id': deliveryId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional verification failed during getGlobalQuotaDelivery.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Retry the original durable quota delivery.
+   * Requires verified directory personal owner write access. Moves only pending or blocked delivery back to pending; it does not replace original identities or signed envelopes. Accepted or claimed work cannot be substituted.
+   * @returns GlobalQuotaDeliveryResponse Original pending or blocked delivery returned to the dispatch queue.
+   * @throws ApiError
+   */
+  public static retryGlobalQuotaDelivery({
+    slug,
+    allocationId,
+    deliveryId,
+  }: {
+    /**
+     * Canonical slug identifying original durable delivery retry.
+     */
+    slug: string,
+    /**
+     * Canonical allocation id identifying original durable delivery retry.
+     */
+    allocationId: string,
+    /**
+     * Canonical delivery id identifying original durable delivery retry.
+     */
+    deliveryId: string,
+  }): CancelablePromise<GlobalQuotaDeliveryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/global-apps/{slug}/runtime-quotas/{allocation_id}/deliveries/{delivery_id}/retry',
+      path: {
+        'slug': slug,
+        'allocation_id': allocationId,
+        'delivery_id': deliveryId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional verification failed during retryGlobalQuotaDelivery.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Store an original signed regional quota grant.
+   * Requires a bound regional database, pinned directory trust, the exact configured management origin and an authenticated regional personal owner admin key. Canonical signed authority must match the original path and binding. Direct delivery rejects consent_id. Receipt storage leaves admission frozen and grants no native execution authority. Redirects must never be followed.
+   * @returns RegionalRuntimeQuotaDeliveryReceipt Stored original regional grant envelope and any earlier retirement tombstone.
+   * @throws ApiError
+   */
+  public static acceptCellRuntimeQuota({
+    cellId,
+    appId,
+    allocationId,
+    requestBody,
+  }: {
+    /**
+     * Canonical cell id identifying regional signed grant acceptance.
+     */
+    cellId: string,
+    /**
+     * Canonical app id identifying regional signed grant acceptance.
+     */
+    appId: string,
+    /**
+     * Canonical allocation id identifying regional signed grant acceptance.
+     */
+    allocationId: string,
+    requestBody: RegionalRuntimeQuotaDelivery,
+  }): CancelablePromise<RegionalRuntimeQuotaDeliveryReceipt> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/cells/{cell_id}/apps/{app_id}/runtime-quotas/{allocation_id}',
+      path: {
+        'cell_id': cellId,
+        'app_id': appId,
+        'allocation_id': allocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional verification failed during acceptCellRuntimeQuota.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Store original signed regional quota retirement.
+   * Authenticates only by pinned directory signature over the original grant and retirement, independently of a mutable app or customer key. Requires exact original path and configured management origin; consent_id is rejected. Retains retirement-before-grant tombstones. A receipt does not acknowledge native drain or release held directory capacity. Redirects must never be followed.
+   * @returns RegionalRuntimeQuotaDeliveryReceipt Stored original signed retirement envelope without a native drain assertion.
+   * @throws ApiError
+   */
+  public static retireCellRuntimeQuota({
+    cellId,
+    appId,
+    allocationId,
+    requestBody,
+  }: {
+    /**
+     * Canonical cell id identifying original signed regional retirement.
+     */
+    cellId: string,
+    /**
+     * Canonical app id identifying original signed regional retirement.
+     */
+    appId: string,
+    /**
+     * Canonical allocation id identifying original signed regional retirement.
+     */
+    allocationId: string,
+    requestBody: RegionalRuntimeQuotaDelivery,
+  }): CancelablePromise<RegionalRuntimeQuotaDeliveryReceipt> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/cells/{cell_id}/apps/{app_id}/runtime-quotas/{allocation_id}/retirement',
+      path: {
+        'cell_id': cellId,
+        'app_id': appId,
+        'allocation_id': allocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional verification failed during retireCellRuntimeQuota.`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
@@ -623,11 +1087,16 @@ export class AppsService {
    */
   public static getCellAppBinding({
     slug,
+    trafficOrigin,
   }: {
     /**
      * Canonical slug of an existing regional app.
      */
     slug: string,
+    /**
+     * Request an HTTPS app origin derived from the regional apps domain. Absence retains the legacy proof shape. This proves configuration, not health or runtime eligibility.
+     */
+    trafficOrigin?: 1,
   }): CancelablePromise<CellAppBindingResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -635,7 +1104,11 @@ export class AppsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'traffic_origin': trafficOrigin,
+      },
       errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,

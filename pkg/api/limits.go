@@ -56,6 +56,8 @@ const (
 	GlobalDirectoryProofTimeoutSeconds          = 10
 	GlobalDirectorySlugMinBytes                 = 3
 	GlobalDirectorySlugMaxBytes                 = 40
+	// ADR-657: leave room for the longest regional app label and its separator.
+	RegionalAppsDomainMaxBytes = GlobalDirectoryOriginHostMaxBytes - GlobalDirectorySlugMaxBytes - 1
 )
 
 // ADR-656: bounded signed route projections; these never grant runtime capacity.

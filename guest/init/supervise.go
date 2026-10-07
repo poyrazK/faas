@@ -33,8 +33,8 @@ type Supervisor struct {
 	// contract. The main workload derives these from its AppManifest;
 	// sidecars use the OCI/PID-1 defaults until their image manifest is
 	// projected into the workload roster.
-	stopSignal syscall.Signal
-	stopGrace  time.Duration
+	stopSignal syscall.Signal //nolint:unused // Read by Linux workload shutdown.
+	stopGrace  time.Duration  //nolint:unused // Read by Linux workload shutdown.
 	// onStart and onHealthy are lifecycle hooks used by the workload roster
 	// scheduler. They are fired once per supervisor lifetime, after the child
 	// has started and after its startup gate respectively.
@@ -107,13 +107,13 @@ type Supervisor struct {
 }
 
 type runtimeSecretProcessStart struct {
-	cmd       *exec.Cmd
-	process   *os.Process
-	secrets   map[string]string
-	revision  string
-	readyPath string
-	healthy   bool
-	notified  bool
+	cmd       *exec.Cmd         //nolint:unused // Linux runtime secret notification state.
+	process   *os.Process       //nolint:unused // Linux runtime secret notification state.
+	secrets   map[string]string //nolint:unused // Linux runtime secret notification state.
+	revision  string            //nolint:unused // Linux runtime secret notification state.
+	readyPath string            //nolint:unused // Linux runtime secret notification state.
+	healthy   bool              //nolint:unused // Linux runtime secret notification state.
+	notified  bool              //nolint:unused // Linux runtime secret notification state.
 }
 
 func (s *Supervisor) markStarted() { //nolint:unused // Linux lifecycle callbacks.

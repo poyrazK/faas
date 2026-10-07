@@ -2674,6 +2674,7 @@ type GlobalDirectoryCell struct {
 	ApiBase    string
 	Enabled    bool
 	Generation int64
+	AppsDomain string
 }
 
 type GlobalDirectoryOwner struct {

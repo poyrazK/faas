@@ -127,7 +127,7 @@ func (s *server) globalDirectoryError(w http.ResponseWriter, r *http.Request, ac
 }
 
 func globalCellResponse(cell globaldirectory.Cell) api.GlobalCellResponse {
-	return api.GlobalCellResponse{ID: cell.ID, Region: cell.Region, APIBase: cell.APIBase, Enabled: cell.Enabled, Generation: cell.Generation}
+	return api.GlobalCellResponse{ID: cell.ID, Region: cell.Region, APIBase: cell.APIBase, AppsDomain: cell.AppsDomain, Enabled: cell.Enabled, Generation: cell.Generation}
 }
 
 func globalTargetResponse(target globaldirectory.Target) api.GlobalAppTargetResponse {
@@ -177,18 +177,31 @@ func (s *server) putGlobalCell(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	cell := globaldirectory.Cell{ID: r.PathValue("id"), Region: req.Region, APIBase: req.APIBase}
+	if req.AppsDomain != nil {
+		cell.AppsDomain = *req.AppsDomain
+	}
 	if req.Enabled == nil || cell.Validate() != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid cell registry entry", "Use a canonical UUID and region, an HTTPS API origin and an explicit enabled boolean."))
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid cell registry entry", "Use a canonical UUID and region, an HTTPS API origin, an explicit enabled boolean and a canonical apps domain when supplied."))
 		return
 	}
 	cell.Enabled = *req.Enabled
-	cell, err := s.globalDirectory.PutCell(r.Context(), cell)
+	cell, err := putDirectoryCell(r.Context(), s.globalDirectory, cell, req.AppsDomain)
 	if err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return
 	}
 	s.audit.Emit(r.Context(), "global_cell.updated", &acct.ID, map[string]any{"cell_id": cell.ID, "region": cell.Region, "generation": cell.Generation, "enabled": cell.Enabled})
 	writeJSON(w, http.StatusOK, globalCellResponse(cell))
+}
+
+func putDirectoryCell(ctx context.Context, store globaldirectory.Store, cell globaldirectory.Cell, appsDomain *string) (globaldirectory.Cell, error) {
+	if writer, ok := store.(globaldirectory.CellRegistryWriter); ok {
+		return writer.PutCellRegistry(ctx, cell, appsDomain)
+	}
+	if appsDomain != nil {
+		return globaldirectory.Cell{}, globaldirectory.ErrConflict
+	}
+	return store.PutCell(ctx, cell)
 }
 
 func (s *server) createGlobalApp(w http.ResponseWriter, r *http.Request, acct state.Account) {

@@ -99,16 +99,26 @@ func (s *PgStore) CheckScope(ctx context.Context) error {
 }
 
 func (s *PgStore) PutCell(ctx context.Context, cell Cell) (Cell, error) {
+	return s.PutCellRegistry(ctx, cell, cellAppsDomainUpdate(cell))
+}
+
+func (s *PgStore) PutCellRegistry(ctx context.Context, cell Cell, appsDomain *string) (Cell, error) {
+	cell.AppsDomain = ""
+	domainArg := pgtype.Text{}
+	if appsDomain != nil {
+		cell.AppsDomain = *appsDomain
+		domainArg = pgtype.Text{String: *appsDomain, Valid: true}
+	}
 	if err := cell.Validate(); err != nil {
 		return Cell{}, err
 	}
 	var result Cell
 	err := s.transaction(ctx, "register cell", func(tx pgx.Tx) error {
-		row, err := (&sqlc.Queries{}).UpsertGlobalDirectoryCell(ctx, tx, sqlc.UpsertGlobalDirectoryCellParams{CellID: idArg(cell.ID), Region: cell.Region, ApiBase: cell.APIBase, Enabled: cell.Enabled})
+		row, err := (&sqlc.Queries{}).UpsertGlobalDirectoryCell(ctx, tx, sqlc.UpsertGlobalDirectoryCellParams{CellID: idArg(cell.ID), Region: cell.Region, ApiBase: cell.APIBase, Enabled: cell.Enabled, AppsDomain: domainArg})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
 		}
-		result = Cell{ID: row.CellID, Region: row.Region, APIBase: row.ApiBase, Enabled: row.Enabled, Generation: row.Generation}
+		result = Cell{ID: row.CellID, Region: row.Region, APIBase: row.ApiBase, AppsDomain: row.AppsDomain, Enabled: row.Enabled, Generation: row.Generation}
 		return err
 	})
 	return result, err
@@ -121,14 +131,14 @@ func (s *PgStore) ListCells(ctx context.Context) ([]Cell, error) {
 	}
 	out := make([]Cell, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, Cell{ID: row.CellID, Region: row.Region, APIBase: row.ApiBase, Enabled: row.Enabled, Generation: row.Generation})
+		out = append(out, Cell{ID: row.CellID, Region: row.Region, APIBase: row.ApiBase, AppsDomain: row.AppsDomain, Enabled: row.Enabled, Generation: row.Generation})
 	}
 	return out, nil
 }
 
 func (s *PgStore) CellByRegion(ctx context.Context, region string) (Cell, error) {
 	row, err := (&sqlc.Queries{}).GlobalDirectoryCellByRegion(ctx, s.pool, region)
-	return Cell{ID: row.CellID, Region: row.Region, APIBase: row.ApiBase, Enabled: row.Enabled, Generation: row.Generation}, directoryError("read cell", err)
+	return Cell{ID: row.CellID, Region: row.Region, APIBase: row.ApiBase, AppsDomain: row.AppsDomain, Enabled: row.Enabled, Generation: row.Generation}, directoryError("read cell", err)
 }
 
 func (s *PgStore) CreateApp(ctx context.Context, accountID, slug string, limit int) (App, error) {

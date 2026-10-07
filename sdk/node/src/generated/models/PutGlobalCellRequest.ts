@@ -11,6 +11,10 @@ export type PutGlobalCellRequest = {
    * Canonical HTTPS API origin.
    */
   api_base: string;
+  /**
+   * Canonical regional apps DNS suffix. Omission preserves the registered suffix; an explicit empty string clears it. A change requires attachment verification again.
+   */
+  apps_domain?: string;
   enabled: boolean;
 };
 

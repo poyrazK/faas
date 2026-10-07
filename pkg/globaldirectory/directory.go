@@ -26,6 +26,7 @@ type Cell struct {
 	ID         string
 	Region     string
 	APIBase    string
+	AppsDomain string
 	Enabled    bool
 	Generation int64
 }
@@ -77,6 +78,19 @@ type Store interface {
 	DetachTarget(context.Context, string, string, string) error
 }
 
+// CellRegistryWriter preserves the traffic suffix atomically when appsDomain is
+// nil. A pointer to an empty string explicitly clears it (ADR-657).
+type CellRegistryWriter interface {
+	PutCellRegistry(context.Context, Cell, *string) (Cell, error)
+}
+
+func cellAppsDomainUpdate(cell Cell) *string {
+	if cell.AppsDomain == "" {
+		return nil
+	}
+	return &cell.AppsDomain
+}
+
 func ValidID(id string) bool {
 	parsed, err := uuid.Parse(id)
 	return err == nil && parsed != uuid.Nil && parsed.String() == id
@@ -96,6 +110,9 @@ func ValidAPIBase(origin string) bool { return api.ValidGlobalDirectoryAPIBase(o
 func (c Cell) Validate() error {
 	if !ValidID(c.ID) || c.Region == "" || !api.ValidComputeRegion(c.Region) || !ValidAPIBase(c.APIBase) {
 		return fmt.Errorf("%w: canonical cell UUID, region and HTTPS API origin required", ErrConflict)
+	}
+	if c.AppsDomain != "" && !api.ValidRegionalAppsDomain(c.AppsDomain) {
+		return fmt.Errorf("%w: canonical regional apps domain required", ErrConflict)
 	}
 	return nil
 }

@@ -24,7 +24,11 @@ func (v Verifier) Verify(ctx context.Context, cell Cell, slug, token string) (Bi
 		return Binding{}, ErrVerification
 	}
 	client := v.probeClient()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cell.APIBase+"/v1/cell/apps/"+url.PathEscape(slug)+"/binding", nil)
+	endpoint := cell.APIBase + "/v1/cell/apps/" + url.PathEscape(slug) + "/binding"
+	if cell.AppsDomain != "" {
+		endpoint += "?traffic_origin=1"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return Binding{}, ErrVerification
 	}
@@ -49,6 +53,9 @@ func (v Verifier) Verify(ctx context.Context, cell Cell, slug, token string) (Bi
 	}
 	binding := Binding{CellID: proof.CellID, Region: proof.Region, CellGeneration: cell.Generation, RegionalAccountID: proof.AccountID, RegionalOrgID: proof.OrgID, RegionalAppID: proof.AppID, RegionalAppSlug: proof.AppSlug}
 	if binding.Validate() != nil {
+		return Binding{}, ErrVerification
+	}
+	if cell.AppsDomain != "" && proof.AppOrigin != api.RegionalAppOrigin(slug, cell.AppsDomain) {
 		return Binding{}, ErrVerification
 	}
 	return binding, nil

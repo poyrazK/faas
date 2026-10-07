@@ -9236,20 +9236,21 @@ UPDATE global_runtime_quota_deliveries SET status='pending',last_code='',next_at
 WHERE id=sqlc.arg(delivery_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text AND status IN ('pending','blocked') RETURNING *;
 
 -- name: UpsertGlobalDirectoryCell :one
-INSERT INTO global_directory_cells(id, region, api_base, enabled)
-VALUES (sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text, sqlc.arg(api_base)::text, sqlc.arg(enabled)::boolean)
-ON CONFLICT (id) DO UPDATE SET api_base = EXCLUDED.api_base, enabled = EXCLUDED.enabled
+INSERT INTO global_directory_cells(id, region, api_base, enabled, apps_domain)
+VALUES (sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text, sqlc.arg(api_base)::text, sqlc.arg(enabled)::boolean, coalesce(sqlc.narg(apps_domain)::text, ''))
+ON CONFLICT (id) DO UPDATE SET api_base = EXCLUDED.api_base, enabled = EXCLUDED.enabled,
+apps_domain = coalesce(sqlc.narg(apps_domain)::text, global_directory_cells.apps_domain)
 WHERE global_directory_cells.region = EXCLUDED.region
-RETURNING id::text AS cell_id, region, api_base, enabled, generation;
+RETURNING id::text AS cell_id, region, api_base, enabled, generation, apps_domain;
 
 -- name: ListGlobalDirectoryCells :many
-SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells ORDER BY region;
+SELECT id::text AS cell_id, region, api_base, enabled, generation, apps_domain FROM global_directory_cells ORDER BY region;
 
 -- name: GlobalDirectoryCellByRegion :one
-SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells WHERE region = $1;
+SELECT id::text AS cell_id, region, api_base, enabled, generation, apps_domain FROM global_directory_cells WHERE region = $1;
 
 -- name: LockGlobalDirectoryCell :one
-SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells
+SELECT id::text AS cell_id, region, api_base, enabled, generation, apps_domain FROM global_directory_cells
 WHERE id = sqlc.arg(cell_id)::uuid AND enabled AND generation = sqlc.arg(generation)::bigint FOR SHARE;
 
 -- name: CreateGlobalAppIdentity :one

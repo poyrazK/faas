@@ -663,6 +663,7 @@ from .delete_secret_prefer import DeleteSecretPrefer
 from .deliver_app_event_request import DeliverAppEventRequest
 from .deliver_app_event_response import DeliverAppEventResponse
 from .deliver_app_event_response_status import DeliverAppEventResponseStatus
+from .deliver_global_runtime_quota_request import DeliverGlobalRuntimeQuotaRequest
 from .deploy_cell_app_files_body import DeployCellAppFilesBody
 from .deploy_cell_app_files_body_kind import DeployCellAppFilesBodyKind
 from .deploy_cell_app_files_body_runtime import DeployCellAppFilesBodyRuntime
@@ -1025,6 +1026,7 @@ from .get_app_slo_window import GetAppSLOWindow
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
+from .get_cell_app_binding_traffic_origin import GetCellAppBindingTrafficOrigin
 from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
 from .get_deployment_stages_response_200 import GetDeploymentStagesResponse200
 from .get_deployment_stages_response_200_current import GetDeploymentStagesResponse200Current
@@ -1078,6 +1080,11 @@ from .global_image_release_response_status import GlobalImageReleaseResponseStat
 from .global_image_release_target_response import GlobalImageReleaseTargetResponse
 from .global_image_release_target_response_diagnostic import GlobalImageReleaseTargetResponseDiagnostic
 from .global_image_release_target_response_outcome import GlobalImageReleaseTargetResponseOutcome
+from .global_quota_delivery_response import GlobalQuotaDeliveryResponse
+from .global_quota_delivery_response_purpose import GlobalQuotaDeliveryResponsePurpose
+from .global_runtime_consent_binding_response import GlobalRuntimeConsentBindingResponse
+from .global_runtime_consent_response import GlobalRuntimeConsentResponse
+from .global_runtime_consent_response_status import GlobalRuntimeConsentResponseStatus
 from .global_runtime_quota_policy import GlobalRuntimeQuotaPolicy
 from .global_runtime_quota_policy_plan import GlobalRuntimeQuotaPolicyPlan
 from .global_runtime_quota_response import GlobalRuntimeQuotaResponse
@@ -1871,6 +1878,7 @@ from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_global_cell_request import PutGlobalCellRequest
 from .put_global_image_release_request import PutGlobalImageReleaseRequest
 from .put_global_image_release_request_regional_api_keys import PutGlobalImageReleaseRequestRegionalApiKeys
+from .put_global_runtime_consent_request import PutGlobalRuntimeConsentRequest
 from .put_global_runtime_quota_request import PutGlobalRuntimeQuotaRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
@@ -1891,6 +1899,8 @@ from .queue_binding_status_response_mode import QueueBindingStatusResponseMode
 from .queue_binding_status_response_workload_class import QueueBindingStatusResponseWorkloadClass
 from .queue_dead_letter_message import QueueDeadLetterMessage
 from .queue_dead_letter_response import QueueDeadLetterResponse
+from .queue_global_quota_delivery_request import QueueGlobalQuotaDeliveryRequest
+from .queue_global_quota_delivery_request_purpose import QueueGlobalQuotaDeliveryRequestPurpose
 from .queue_peek_message import QueuePeekMessage
 from .queue_peek_response import QueuePeekResponse
 from .queue_receive_response import QueueReceiveResponse
@@ -1918,6 +1928,10 @@ from .refresh_automatic_route_check_response_202_status import RefreshAutomaticR
 from .refund_account_invoice_body import RefundAccountInvoiceBody
 from .regional_release_grant_response import RegionalReleaseGrantResponse
 from .regional_release_grant_response_status import RegionalReleaseGrantResponseStatus
+from .regional_runtime_quota_binding import RegionalRuntimeQuotaBinding
+from .regional_runtime_quota_delivery import RegionalRuntimeQuotaDelivery
+from .regional_runtime_quota_delivery_receipt import RegionalRuntimeQuotaDeliveryReceipt
+from .regional_runtime_quota_envelope import RegionalRuntimeQuotaEnvelope
 from .register_event_schema_request import RegisterEventSchemaRequest
 from .register_event_schema_response import RegisterEventSchemaResponse
 from .register_scenario_test_request import RegisterScenarioTestRequest
@@ -1967,6 +1981,7 @@ from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
+from .revoke_global_runtime_consent_request import RevokeGlobalRuntimeConsentRequest
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
@@ -3194,6 +3209,7 @@ __all__ = (
     "DeliverAppEventRequest",
     "DeliverAppEventResponse",
     "DeliverAppEventResponseStatus",
+    "DeliverGlobalRuntimeQuotaRequest",
     "DeployCellAppFilesBody",
     "DeployCellAppFilesBodyKind",
     "DeployCellAppFilesBodyRuntime",
@@ -3552,6 +3568,7 @@ __all__ = (
     "GetAppsMetricsRange",
     "GetBuildSbomResponse200",
     "GetBuildsStatus",
+    "GetCellAppBindingTrafficOrigin",
     "GetDeploymentOpenAPIDocResponse200",
     "GetDeploymentStagesResponse200",
     "GetDeploymentStagesResponse200Current",
@@ -3605,6 +3622,11 @@ __all__ = (
     "GlobalImageReleaseTargetResponse",
     "GlobalImageReleaseTargetResponseDiagnostic",
     "GlobalImageReleaseTargetResponseOutcome",
+    "GlobalQuotaDeliveryResponse",
+    "GlobalQuotaDeliveryResponsePurpose",
+    "GlobalRuntimeConsentBindingResponse",
+    "GlobalRuntimeConsentResponse",
+    "GlobalRuntimeConsentResponseStatus",
     "GlobalRuntimeQuotaPolicy",
     "GlobalRuntimeQuotaPolicyPlan",
     "GlobalRuntimeQuotaResponse",
@@ -4354,6 +4376,7 @@ __all__ = (
     "PutGlobalCellRequest",
     "PutGlobalImageReleaseRequest",
     "PutGlobalImageReleaseRequestRegionalApiKeys",
+    "PutGlobalRuntimeConsentRequest",
     "PutGlobalRuntimeQuotaRequest",
     "PutJobRegistryCredentialRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",
@@ -4374,6 +4397,8 @@ __all__ = (
     "QueueBindingStatusResponseWorkloadClass",
     "QueueDeadLetterMessage",
     "QueueDeadLetterResponse",
+    "QueueGlobalQuotaDeliveryRequest",
+    "QueueGlobalQuotaDeliveryRequestPurpose",
     "QueuePeekMessage",
     "QueuePeekResponse",
     "QueueReceiveResponse",
@@ -4401,6 +4426,10 @@ __all__ = (
     "RefundAccountInvoiceBody",
     "RegionalReleaseGrantResponse",
     "RegionalReleaseGrantResponseStatus",
+    "RegionalRuntimeQuotaBinding",
+    "RegionalRuntimeQuotaDelivery",
+    "RegionalRuntimeQuotaDeliveryReceipt",
+    "RegionalRuntimeQuotaEnvelope",
     "RegisterEventSchemaRequest",
     "RegisterEventSchemaResponse",
     "RegisterScenarioTestRequest",
@@ -4450,6 +4479,7 @@ __all__ = (
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
     "RevokeExecutionArtifactGrantResponse",
+    "RevokeGlobalRuntimeConsentRequest",
     "RevokePlatformTenantSelfConsumersRequest",
     "RollbackFeatureFlagsRequest",
     "RollbackOperatorRuntimeConfigRequest",

@@ -7,19 +7,35 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.cell_app_binding_response import CellAppBindingResponse
+from ...models.get_cell_app_binding_traffic_origin import (
+    GetCellAppBindingTrafficOrigin,
+)
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    traffic_origin: GetCellAppBindingTrafficOrigin | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    json_traffic_origin: int | Unset = UNSET
+    if not isinstance(traffic_origin, Unset):
+        json_traffic_origin = traffic_origin
+
+    params["traffic_origin"] = json_traffic_origin
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/cell/apps/{slug}/binding".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -32,6 +48,11 @@ def _parse_response(
         response_200 = CellAppBindingResponse.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -79,6 +100,7 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    traffic_origin: GetCellAppBindingTrafficOrigin | Unset = UNSET,
 ) -> Response[CellAppBindingResponse | Problem]:
     """Verify regional tenant and app identity.
 
@@ -90,6 +112,7 @@ def sync_detailed(
 
     Args:
         slug (str):
+        traffic_origin (GetCellAppBindingTrafficOrigin | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -101,6 +124,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        traffic_origin=traffic_origin,
     )
 
     response = client.get_httpx_client().request(
@@ -114,6 +138,7 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    traffic_origin: GetCellAppBindingTrafficOrigin | Unset = UNSET,
 ) -> CellAppBindingResponse | Problem | None:
     """Verify regional tenant and app identity.
 
@@ -125,6 +150,7 @@ def sync(
 
     Args:
         slug (str):
+        traffic_origin (GetCellAppBindingTrafficOrigin | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,6 +163,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        traffic_origin=traffic_origin,
     ).parsed
 
 
@@ -144,6 +171,7 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    traffic_origin: GetCellAppBindingTrafficOrigin | Unset = UNSET,
 ) -> Response[CellAppBindingResponse | Problem]:
     """Verify regional tenant and app identity.
 
@@ -155,6 +183,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
+        traffic_origin (GetCellAppBindingTrafficOrigin | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -166,6 +195,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        traffic_origin=traffic_origin,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -177,6 +207,7 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    traffic_origin: GetCellAppBindingTrafficOrigin | Unset = UNSET,
 ) -> CellAppBindingResponse | Problem | None:
     """Verify regional tenant and app identity.
 
@@ -188,6 +219,7 @@ async def asyncio(
 
     Args:
         slug (str):
+        traffic_origin (GetCellAppBindingTrafficOrigin | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -201,5 +233,6 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            traffic_origin=traffic_origin,
         )
     ).parsed

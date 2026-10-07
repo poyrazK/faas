@@ -7971,7 +7971,7 @@ BEGIN
             RAISE EXCEPTION 'directory cell identity is immutable'
                 USING ERRCODE = '23514', CONSTRAINT = 'global_directory_identity';
         END IF;
-        NEW.generation := OLD.generation + CASE WHEN NEW.api_base IS DISTINCT FROM OLD.api_base OR NEW.enabled IS DISTINCT FROM OLD.enabled THEN 1 ELSE 0 END;
+        NEW.generation := OLD.generation + CASE WHEN NEW.api_base IS DISTINCT FROM OLD.api_base OR NEW.enabled IS DISTINCT FROM OLD.enabled OR NEW.apps_domain IS DISTINCT FROM OLD.apps_domain THEN 1 ELSE 0 END;
     ELSIF TG_TABLE_NAME = 'global_apps' AND TG_OP = 'UPDATE' THEN
         IF NEW.id IS DISTINCT FROM OLD.id OR NEW.owner_id IS DISTINCT FROM OLD.owner_id OR NEW.slug IS DISTINCT FROM OLD.slug OR NEW.routing_policy IS DISTINCT FROM OLD.routing_policy THEN
             RAISE EXCEPTION 'global app identity is immutable'
@@ -10784,6 +10784,29 @@ BEGIN
  n:=(p->>k)::numeric;
  RETURN n>0 AND n<=CASE WHEN k='days' THEN 36500 ELSE 100 END;
 END $_$;
+
+
+--
+-- Name: valid_regional_apps_domain(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_regional_apps_domain(domain text) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $_$
+DECLARE label text;
+BEGIN
+    -- ADR-657, pkg/api/limits.go: 253 - 40 - 1 bytes for the DNS suffix.
+    IF octet_length(domain) > 212 OR position('.' in domain) = 0 OR
+       domain !~ '^[a-z0-9.-]+$' COLLATE "C" OR domain ~ '^[0-9.]+$' COLLATE "C" THEN
+        RETURN false;
+    END IF;
+    FOREACH label IN ARRAY string_to_array(domain, '.') LOOP
+        IF octet_length(label) < 1 OR octet_length(label) > 63 OR
+           left(label,1) = '-' OR right(label,1) = '-' THEN RETURN false; END IF;
+    END LOOP;
+    RETURN true;
+END;
+$_$;
 
 
 --
@@ -15721,7 +15744,9 @@ CREATE TABLE public.global_directory_cells (
     api_base text NOT NULL,
     enabled boolean NOT NULL,
     generation bigint DEFAULT 1 NOT NULL,
+    apps_domain text DEFAULT ''::text NOT NULL,
     CONSTRAINT global_directory_cells_api_base_check CHECK (((length(api_base) <= 2048) AND (api_base ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text))),
+    CONSTRAINT global_directory_cells_apps_domain_check CHECK (((apps_domain = ''::text) OR public.valid_regional_apps_domain(apps_domain))),
     CONSTRAINT global_directory_cells_generation_check CHECK ((generation > 0)),
     CONSTRAINT global_directory_cells_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_directory_cells_region_check CHECK ((((length(region) >= 1) AND (length(region) <= 63)) AND (region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))

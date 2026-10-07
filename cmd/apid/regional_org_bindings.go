@@ -79,5 +79,25 @@ func (s *server) regionalBindingResponse(w http.ResponseWriter, r *http.Request,
 		}
 		out.OrgID = org.String()
 	}
+	if !s.regionalBindingTrafficOrigin(w, r, &out) {
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) regionalBindingTrafficOrigin(w http.ResponseWriter, r *http.Request, out *api.CellAppBindingResponse) bool {
+	values, requested := r.URL.Query()["traffic_origin"]
+	if !requested {
+		return true
+	}
+	if len(values) != 1 || values[0] != "1" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid traffic origin proof request", "Use traffic_origin=1."))
+		return false
+	}
+	out.AppOrigin = api.RegionalAppOrigin(out.AppSlug, s.domain)
+	if out.AppOrigin == "" {
+		api.WriteProblem(w, api.ErrCapacity("regional traffic origin is not configured"))
+		return false
+	}
+	return true
 }

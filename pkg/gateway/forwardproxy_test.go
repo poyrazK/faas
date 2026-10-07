@@ -12,6 +12,7 @@
 // streaming RPC is the only bridge today; every test uses the
 // fakeBidiStream scaffold.
 
+// adr: 657
 package gateway_test
 
 import (
@@ -363,6 +364,14 @@ type fakeVmmdClient struct {
 	// in without changing the field shape. The fakeRawBidiStream
 	// implements the same interface.
 	RawStream grpc.BidiStreamingClient[vmmdpb.ForwardRawRequest, vmmdpb.ForwardRawResponse]
+}
+
+func (f *fakeVmmdClient) ObserveNativeRuntimeInventory(context.Context, *vmmdpb.ObserveNativeRuntimeInventoryRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.NativeRuntimeInventoryFrame], error) {
+	return nil, status.Error(codes.Unimplemented, "gateway fake cannot observe native inventory")
+}
+
+func (f *fakeVmmdClient) RetireRegionalRuntime(context.Context, *vmmdpb.RetireRegionalRuntimeRequest, ...grpc.CallOption) (*vmmdpb.RetireRegionalRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway fake cannot retire regional runtime")
 }
 
 // ForwardHTTPStream returns the configured Stream. The forwarder

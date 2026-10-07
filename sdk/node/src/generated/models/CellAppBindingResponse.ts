@@ -15,5 +15,9 @@ export type CellAppBindingResponse = {
   org_id?: string;
   app_id: string;
   app_slug: string;
+  /**
+   * Exact HTTPS regional app origin, returned only for traffic_origin=1. This is configuration evidence, not health or runtime eligibility.
+   */
+  app_origin?: string;
 };
 

@@ -5179,6 +5179,466 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/global-apps/{slug}/runtime-consents/{consent_id}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Canonical slug identifying retained runtime consent management.
+        schema:
+          type: string
+      - name: consent_id
+        in: path
+        required: true
+        description: Canonical consent id identifying retained runtime consent management.
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags:
+        - apps
+      operationId: putGlobalRuntimeConsent
+      summary: Register original regional runtime consent.
+      description: Requires verified directory personal owner write access, MFA when enabled, and a request-only regional account-admin key. Active consent lasts at most six days and is bounded to 32 records per app. UUID and input retries retain the original authority. Redirects must never be followed; regional credentials are never retained. Request bodies are bounded to 4096 bytes.
+      responses:
+        '200':
+          description: Original consent registration and regional observation, including matching retries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalRuntimeConsentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          description: Regional verification failed during putGlobalRuntimeConsent.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutGlobalRuntimeConsentRequest'
+    get:
+      tags:
+        - apps
+      operationId: getGlobalRuntimeConsent
+      summary: Read retained regional runtime consent.
+      description: Requires directory personal owner read access. Returns the original consent and observed state, including expiry and revocation. Does not contact a region or activate runtime admission.
+      responses:
+        '200':
+          description: Retained consent authority and its current observed status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalRuntimeConsentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          description: Regional verification failed during getGlobalRuntimeConsent.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    delete:
+      tags:
+        - apps
+      operationId: revokeGlobalRuntimeConsent
+      summary: Revoke the original regional runtime consent.
+      description: Requires verified directory personal owner write access and the original regional owner account-admin key. Retains the original identity and timestamps through retries. Does not release issued quota holds. Redirects must never be followed; the request-only key is not retained.
+      responses:
+        '200':
+          description: Original consent with retained regional revocation state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalRuntimeConsentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          description: Regional verification failed during revokeGlobalRuntimeConsent.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeGlobalRuntimeConsentRequest'
+  /v1/global-apps/{slug}/runtime-quotas/{allocation_id}/deliver/{region}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Canonical slug identifying original signed regional delivery.
+        schema:
+          type: string
+      - name: allocation_id
+        in: path
+        required: true
+        description: Canonical allocation id identifying original signed regional delivery.
+        schema:
+          type: string
+          format: uuid
+      - name: region
+        in: path
+        required: true
+        description: Canonical region identifying original signed regional delivery.
+        schema:
+          type: string
+    post:
+      tags:
+        - apps
+      operationId: deliverGlobalRuntimeQuota
+      summary: Deliver original signed quota authority to one region.
+      description: Requires verified directory personal owner write access. Uses either the request-only regional owner key or the original active runtime consent. The exact current selected binding, issuer, owner plan and original issued allocation are checked. Redirects must never be followed. A receipt records storage only; regional admission remains frozen and retirement still requires independent native acknowledgement.
+      responses:
+        '200':
+          description: Verified regional receipt for the original issued authority.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegionalRuntimeQuotaDeliveryReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          description: Regional verification failed during deliverGlobalRuntimeQuota.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliverGlobalRuntimeQuotaRequest'
+  /v1/global-apps/{slug}/runtime-quotas/{allocation_id}/deliveries/{delivery_id}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Canonical slug identifying durable delivery registration and lookup.
+        schema:
+          type: string
+      - name: allocation_id
+        in: path
+        required: true
+        description: Canonical allocation id identifying durable delivery registration and lookup.
+        schema:
+          type: string
+          format: uuid
+      - name: delivery_id
+        in: path
+        required: true
+        description: Canonical delivery id identifying durable delivery registration and lookup.
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags:
+        - apps
+      operationId: queueGlobalQuotaDelivery
+      summary: Queue durable delivery of original quota authority.
+      description: Requires verified directory personal owner write access and an available directory signing authority. Grant requires the original active consent; retirement excludes consent. The delivery UUID, region, purpose and consent are immutable across retries. No customer credential is stored. Background delivery retains the original signed envelopes and never activates admission or frees held capacity.
+      responses:
+        '200':
+          description: Original queued delivery identity and background dispatch status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalQuotaDeliveryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          description: Regional verification failed during queueGlobalQuotaDelivery.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueGlobalQuotaDeliveryRequest'
+    get:
+      tags:
+        - apps
+      operationId: getGlobalQuotaDelivery
+      summary: Read retained durable quota delivery.
+      description: Requires directory personal owner read access. Accepted means a verified original regional receipt was stored; it is not readiness, billing authority or a native drain acknowledgement.
+      responses:
+        '200':
+          description: Retained delivery state, original binding and attempt metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalQuotaDeliveryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          description: Regional verification failed during getGlobalQuotaDelivery.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/global-apps/{slug}/runtime-quotas/{allocation_id}/deliveries/{delivery_id}/retry:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Canonical slug identifying original durable delivery retry.
+        schema:
+          type: string
+      - name: allocation_id
+        in: path
+        required: true
+        description: Canonical allocation id identifying original durable delivery retry.
+        schema:
+          type: string
+          format: uuid
+      - name: delivery_id
+        in: path
+        required: true
+        description: Canonical delivery id identifying original durable delivery retry.
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags:
+        - apps
+      operationId: retryGlobalQuotaDelivery
+      summary: Retry the original durable quota delivery.
+      description: Requires verified directory personal owner write access. Moves only pending or blocked delivery back to pending; it does not replace original identities or signed envelopes. Accepted or claimed work cannot be substituted.
+      responses:
+        '200':
+          description: Original pending or blocked delivery returned to the dispatch queue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalQuotaDeliveryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          description: Regional verification failed during retryGlobalQuotaDelivery.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/cells/{cell_id}/apps/{app_id}/runtime-quotas/{allocation_id}:
+    parameters:
+      - name: cell_id
+        in: path
+        required: true
+        description: Canonical cell id identifying regional signed grant acceptance.
+        schema:
+          type: string
+          format: uuid
+      - name: app_id
+        in: path
+        required: true
+        description: Canonical app id identifying regional signed grant acceptance.
+        schema:
+          type: string
+          format: uuid
+      - name: allocation_id
+        in: path
+        required: true
+        description: Canonical allocation id identifying regional signed grant acceptance.
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags:
+        - apps
+      operationId: acceptCellRuntimeQuota
+      summary: Store an original signed regional quota grant.
+      description: Requires a bound regional database, pinned directory trust, the exact configured management origin and an authenticated regional personal owner admin key. Canonical signed authority must match the original path and binding. Direct delivery rejects consent_id. Receipt storage leaves admission frozen and grants no native execution authority. Redirects must never be followed.
+      responses:
+        '200':
+          description: Stored original regional grant envelope and any earlier retirement tombstone.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegionalRuntimeQuotaDeliveryReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          description: Regional verification failed during acceptCellRuntimeQuota.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegionalRuntimeQuotaDelivery'
+  /v1/cells/{cell_id}/apps/{app_id}/runtime-quotas/{allocation_id}/retirement:
+    parameters:
+      - name: cell_id
+        in: path
+        required: true
+        description: Canonical cell id identifying original signed regional retirement.
+        schema:
+          type: string
+          format: uuid
+      - name: app_id
+        in: path
+        required: true
+        description: Canonical app id identifying original signed regional retirement.
+        schema:
+          type: string
+          format: uuid
+      - name: allocation_id
+        in: path
+        required: true
+        description: Canonical allocation id identifying original signed regional retirement.
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags:
+        - apps
+      operationId: retireCellRuntimeQuota
+      summary: Store original signed regional quota retirement.
+      description: Authenticates only by pinned directory signature over the original grant and retirement, independently of a mutable app or customer key. Requires exact original path and configured management origin; consent_id is rejected. Retains retirement-before-grant tombstones. A receipt does not acknowledge native drain or release held directory capacity. Redirects must never be followed.
+      responses:
+        '200':
+          description: Stored original signed retirement envelope without a native drain assertion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegionalRuntimeQuotaDeliveryReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          description: Regional verification failed during retireCellRuntimeQuota.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegionalRuntimeQuotaDelivery'
+      security: []
   /v1/global-apps/{slug}/runtime-quotas/{allocation_id}:
     parameters:
       - name: slug
@@ -5373,12 +5833,17 @@ paths:
           description: Canonical slug of an existing regional app.
           required: true
           schema: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+        - name: traffic_origin
+          in: query
+          description: Request an HTTPS app origin derived from the regional apps domain. Absence retains the legacy proof shape. This proves configuration, not health or runtime eligibility.
+          schema: { type: integer, enum: [1] }
       responses:
         '200':
           description: Authenticated regional tenant and app identity.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CellAppBindingResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -35969,12 +36434,13 @@ components:
 
     GlobalCellResponse:
       type: object
-      description: Immutable registered cell identity with mutable HTTPS origin and enabled policy. Generation fences verification.
+      description: Immutable registered cell identity with mutable management origin, regional apps domain and enabled policy. Generation fences verification.
       required: [id, region, api_base, enabled, generation]
       properties:
         id: { type: string, format: uuid }
         region: { type: string, minLength: 1, maxLength: 63 }
         api_base: { type: string, format: uri, maxLength: 2048, description: Canonical HTTPS origin without credentials or path. }
+        apps_domain: { type: string, maxLength: 212, description: "Canonical regional apps DNS suffix; omitted when unconfigured. No port, scheme, literal IP or trailing dot." }
         enabled: { type: boolean }
         generation: { type: integer, format: int64, minimum: 1 }
     PutGlobalCellRequest:
@@ -35985,6 +36451,7 @@ components:
       properties:
         region: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
         api_base: { type: string, format: uri, maxLength: 2048, description: Canonical HTTPS API origin. }
+        apps_domain: { type: string, maxLength: 212, description: "Canonical regional apps DNS suffix. Omission preserves the registered suffix; an explicit empty string clears it. A change requires attachment verification again." }
         enabled: { type: boolean }
     CreateGlobalAppRequest:
       type: object
@@ -36060,6 +36527,7 @@ components:
         org_id: { type: string, format: uuid, description: Shared organization attested by this ownership proof; omitted for personal apps. }
         app_id: { type: string, format: uuid }
         app_slug: { type: string }
+        app_origin: { type: string, format: uri, description: "Exact HTTPS regional app origin, returned only for traffic_origin=1. This is configuration evidence, not health or runtime eligibility." }
     PutGlobalImageReleaseRequest:
       type: object
       description: Global image release with sealed scoped consent and background recovery. Regional admin keys are never stored or returned.
@@ -36110,6 +36578,292 @@ components:
         diagnostic: { type: string, enum: ['', regional_unavailable, regional_rejected, identity_changed, receipt_invalid] }
         deployment_id: { type: [string, 'null'], format: uuid }
         updated_at: { type: string, format: date-time }
+    GlobalRuntimeConsentBindingResponse:
+      type: object
+      description: Original verified personal regional binding retained by directory consent and delivery.
+      properties:
+        cell_id:
+          type: string
+          format: uuid
+        regional_account_id:
+          type: string
+          format: uuid
+        regional_app_id:
+          type: string
+          format: uuid
+        region:
+          type: string
+        cell_generation:
+          type: integer
+          format: int64
+          minimum: 1
+        regional_app_slug:
+          type: string
+        api_base:
+          type: string
+          format: uri
+      required:
+        - cell_id
+        - regional_account_id
+        - regional_app_id
+        - region
+        - cell_generation
+        - regional_app_slug
+        - api_base
+    PutGlobalRuntimeConsentRequest:
+      type: object
+      description: One request-only owner key and expiry for an original regional runtime consent.
+      properties:
+        region:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        regional_api_key:
+          type: string
+          writeOnly: true
+      required:
+        - region
+        - expires_at
+        - regional_api_key
+      additionalProperties: false
+    RevokeGlobalRuntimeConsentRequest:
+      type: object
+      description: Request-only regional owner credential to revoke the original runtime consent.
+      properties:
+        regional_api_key:
+          type: string
+          writeOnly: true
+      required:
+        - regional_api_key
+      additionalProperties: false
+    DeliverGlobalRuntimeQuotaRequest:
+      type: object
+      properties:
+        regional_api_key:
+          type: string
+          writeOnly: true
+        runtime_consent_id:
+          type: string
+          format: uuid
+      description: Supply either a request-only regional account-admin key or the original active runtime consent UUID,
+        never both.
+      additionalProperties: false
+    QueueGlobalQuotaDeliveryRequest:
+      type: object
+      description: Immutable selected region, delivery purpose and original consent for durable dispatch.
+      properties:
+        region:
+          type: string
+        purpose:
+          type: string
+          enum:
+            - grant
+            - retirement
+        runtime_consent_id:
+          type: string
+          format: uuid
+      required:
+        - region
+        - purpose
+      additionalProperties: false
+    RegionalRuntimeQuotaEnvelope:
+      type: object
+      properties:
+        key_id:
+          type: string
+        payload:
+          type: string
+        signature:
+          type: string
+      required:
+        - key_id
+        - payload
+        - signature
+      description: Canonical signed directory envelope. Existing quota envelopes are bounded to 8192 bytes; payloads to 4096
+        bytes. This transport never authorizes native execution.
+      additionalProperties: false
+    GlobalRuntimeConsentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        issuer_id:
+          type: string
+          format: uuid
+        global_app_id:
+          type: string
+          format: uuid
+        owner_id:
+          type: string
+          format: uuid
+        global_app_slug:
+          type: string
+        binding:
+          $ref: '#/components/schemas/GlobalRuntimeConsentBindingResponse'
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+            - pending
+            - active
+            - revoking
+            - revoked
+            - expired
+        regional_created_at:
+          type: string
+          format: date-time
+        regional_revoked_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - issuer_id
+        - global_app_id
+        - owner_id
+        - global_app_slug
+        - binding
+        - expires_at
+        - created_at
+        - status
+      description: Original directory consent and regional observation. Personal targets only; not runtime admission or
+        billing authority.
+    GlobalQuotaDeliveryResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        global_app_id:
+          type: string
+          format: uuid
+        allocation_id:
+          type: string
+          format: uuid
+        issuer_id:
+          type: string
+          format: uuid
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+        purpose:
+          type: string
+          enum:
+            - grant
+            - retirement
+        binding:
+          $ref: '#/components/schemas/GlobalRuntimeConsentBindingResponse'
+        created_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+        attempts:
+          type: integer
+          format: int32
+        next_attempt_at:
+          type: string
+          format: date-time
+        runtime_consent_id:
+          type: string
+          format: uuid
+        retirement_id:
+          type: string
+          format: uuid
+        claim_until:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+        last_code:
+          type: string
+      required:
+        - id
+        - global_app_id
+        - allocation_id
+        - issuer_id
+        - generation
+        - purpose
+        - binding
+        - created_at
+        - status
+        - attempts
+        - next_attempt_at
+      description: Retained asynchronous delivery state. Accepted means a verified receipt was stored; it never means
+        admission activated or native capacity drained.
+    RegionalRuntimeQuotaBinding:
+      type: object
+      properties:
+        CellID:
+          type: string
+        Region:
+          type: string
+        RegionalAccountID:
+          type: string
+        RegionalOrgID:
+          type: string
+        RegionalAppID:
+          type: string
+        RegionalAppSlug:
+          type: string
+        APIBase:
+          type: string
+        CellGeneration:
+          type: integer
+          format: int64
+          minimum: 1
+      required:
+        - CellID
+        - Region
+        - RegionalAccountID
+        - RegionalOrgID
+        - RegionalAppID
+        - RegionalAppSlug
+        - APIBase
+        - CellGeneration
+      description: Exact original quota wire binding. Capitalized field spelling and an empty RegionalOrgID are retained for
+        canonical transport compatibility.
+      additionalProperties: false
+    RegionalRuntimeQuotaDelivery:
+      type: object
+      properties:
+        binding:
+          $ref: '#/components/schemas/RegionalRuntimeQuotaBinding'
+        authority:
+          $ref: '#/components/schemas/RegionalRuntimeQuotaEnvelope'
+        consent_id:
+          type: string
+          format: uuid
+      required:
+        - binding
+        - authority
+      description: Canonical delivery body bounded to 20480 bytes. The direct grant and retirement routes reject consent_id;
+        consent-based delivery uses the delegated receiver.
+      additionalProperties: false
+    RegionalRuntimeQuotaDeliveryReceipt:
+      type: object
+      properties:
+        grant:
+          anyOf:
+            - $ref: '#/components/schemas/RegionalRuntimeQuotaEnvelope'
+            - type: 'null'
+        retirement:
+          anyOf:
+            - $ref: '#/components/schemas/RegionalRuntimeQuotaEnvelope'
+            - type: 'null'
+      required:
+        - grant
+        - retirement
+      description: At least one original envelope is present. Receipt storage is independent of frozen admission and native
+        drain acknowledgement.
     GlobalRuntimeQuotaShare:
       type: object
       description: One selected region and its positive steady concurrency reservation.
