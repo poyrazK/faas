@@ -124,6 +124,7 @@ type Loop struct {
 	eventRecipientClaims        bool
 	now                         func() time.Time
 	flowCounts                  FlowCounter
+	flowReaderUnavailable       sync.Once
 	ops                         *wire.OpsMetrics                        // issue #171 shared registry; nil safe
 	audit                       *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
 	watchdog                    *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
@@ -2420,7 +2421,13 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 		if err != nil {
 			l.log.Warn("reaper: list all instances for warm", "err", err)
-		} else if warmErr := warmer.Warm(ctx, all); warmErr != nil {
+		} else if warmErr := warmer.Warm(ctx, all); errors.Is(warmErr, flowcount.ErrUnavailable) {
+			// A host without conntrack (the split-box control plane) can
+			// never count flows; say so once instead of every tick.
+			l.flowReaderUnavailable.Do(func() {
+				l.log.Info("reaper: conntrack unavailable; idle reaping uses compute telemetry and last request", "err", warmErr)
+			})
+		} else if warmErr != nil {
 			l.log.Warn("reaper: warm flow reader", "err", warmErr)
 		}
 	}
