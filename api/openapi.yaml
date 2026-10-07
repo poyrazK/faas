@@ -8969,7 +8969,7 @@ paths:
     put:
       tags: [dev]
       operationId: injectScenarioTestChaos
-      summary: Install a bounded request-level fault plan for an isolated scenario run.
+      summary: Install a bounded fault plan for an isolated scenario run.
       description: Rules apply only to authenticated internal service calls between registered members, expire automatically, and cannot affect production or public traffic.
       requestBody:
         required: true
@@ -8982,6 +8982,38 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/InjectScenarioTestChaosResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [dev]
+      operationId: clearScenarioTestChaos
+      summary: Clear the active fault plan for an isolated scenario run.
+      description: Removes the run's active faults immediately. The run must still have at least one live registered member.
+      responses:
+        '204': { description: Fault plan cleared. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/dev/test-runs/{run_id}/chaos/matches:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Random lowercase hexadecimal identity shared by the run's developer sessions.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    get:
+      tags: [dev]
+      operationId: getScenarioTestChaosMatches
+      summary: Read fault-match counts for the current scenario plan.
+      description: Returns run-scoped counts of HTTP requests and TCP connections matched by the current or most recently cleared fault plan.
+      responses:
+        '200':
+          description: Fault-match evidence for the current plan generation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioTestChaosMatchesResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -39801,25 +39833,47 @@ components:
           items: { $ref: '#/components/schemas/ScenarioTestChaosRule' }
 
     ScenarioTestChaosRule:
-      description: One bounded latency or synthetic server-error fault for matching internal service calls.
+      description: One bounded HTTP request, TCP stream, or new TCP connection fault for matching internal scenario services.
       type: object
       required: [to, kind, percent, seed]
       properties:
         from: { type: string, minLength: 3, maxLength: 40 }
         to: { type: string, minLength: 3, maxLength: 40 }
-        kind: { type: string, enum: [latency, http_status] }
+        kind: { type: string, enum: [latency, http_status, tcp_latency, tcp_bandwidth, tcp_timeout, tcp_reset, tcp_connect_timeout, tcp_connect_refused] }
         percent: { type: integer, minimum: 1, maximum: 100 }
         latency_ms: { type: integer, minimum: 1, maximum: 30000 }
         status_code: { type: integer, minimum: 500, maximum: 599 }
         seed: { type: integer, minimum: 0 }
+        port: { type: integer, minimum: 1, maximum: 65535, description: Required target port for TCP rules. }
+        direction: { type: string, enum: [upstream, downstream, both], description: TCP direction relative to the calling application. Defaults to both; connection faults require both. }
+        rate_kib_per_second: { type: integer, minimum: 1, maximum: 1000000, description: Required per-connection directional throughput cap for tcp_bandwidth. }
+        reset_after_ms: { type: integer, minimum: 0, maximum: 30000, description: Delay before tcp_reset. Defaults to an immediate reset. }
 
     InjectScenarioTestChaosResponse:
-      description: Receipt confirming the number of rules installed and the automatic expiry time.
+      description: Receipt confirming the plan generation, number of rules installed, and automatic expiry time.
       type: object
-      required: [expires_at, rules_installed]
+      required: [expires_at, rules_installed, generation]
       properties:
         expires_at: { type: string, format: date-time }
         rules_installed: { type: integer, minimum: 1, maximum: 16 }
+        generation: { type: string, format: uuid }
+
+    ScenarioTestChaosMatchesResponse:
+      description: Run-scoped counts of HTTP requests and TCP connections that matched the current or most recently cleared plan.
+      type: object
+      required: [matches]
+      properties:
+        generation: { type: string, format: uuid }
+        matches:
+          type: array
+          items: { $ref: '#/components/schemas/ScenarioTestChaosMatch' }
+
+    ScenarioTestChaosMatch:
+      type: object
+      required: [rule_id, count]
+      properties:
+        rule_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        count: { type: integer, minimum: 0 }
 
     DevPostgresRequest:
       description: Opts the developer environment into an isolated managed PostgreSQL database.

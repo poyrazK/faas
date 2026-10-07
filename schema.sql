@@ -20251,9 +20251,28 @@ CREATE TABLE public.scenario_test_members (
     app_id uuid NOT NULL,
     chaos_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
     chaos_expires_at timestamp with time zone,
+    chaos_generation uuid,
     CONSTRAINT scenario_test_members_chaos_rules_array_check CHECK ((jsonb_typeof(chaos_rules) = 'array'::text)),
     CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
     CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+);
+
+
+--
+-- Name: scenario_test_chaos_matches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_test_chaos_matches (
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    caller_app_id uuid NOT NULL,
+    generation uuid NOT NULL,
+    rule_id text NOT NULL,
+    matches bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT scenario_test_chaos_matches_matches_check CHECK ((matches >= 0)),
+    CONSTRAINT scenario_test_chaos_matches_rule_id_check CHECK ((rule_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT scenario_test_chaos_matches_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text))
 );
 
 
@@ -26101,6 +26120,14 @@ ALTER TABLE ONLY public.scenario_test_members
 
 
 --
+-- Name: scenario_test_chaos_matches scenario_test_chaos_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_chaos_matches
+    ADD CONSTRAINT scenario_test_chaos_matches_pkey PRIMARY KEY (account_id, run_id, caller_app_id, generation, rule_id);
+
+
+--
 -- Name: schedule_occurrences schedule_occurrences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31524,6 +31551,13 @@ CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USI
 --
 
 CREATE INDEX scenario_test_members_run_idx ON public.scenario_test_members USING btree (account_id, run_id);
+
+
+--
+-- Name: scenario_test_chaos_matches_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_test_chaos_matches_run_idx ON public.scenario_test_chaos_matches USING btree (account_id, run_id, generation);
 
 
 --
@@ -41100,6 +41134,22 @@ ALTER TABLE ONLY public.scenario_test_members
 
 ALTER TABLE ONLY public.scenario_test_members
     ADD CONSTRAINT scenario_test_members_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_test_chaos_matches scenario_test_chaos_matches_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_chaos_matches
+    ADD CONSTRAINT scenario_test_chaos_matches_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_test_chaos_matches scenario_test_chaos_matches_caller_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_chaos_matches
+    ADD CONSTRAINT scenario_test_chaos_matches_caller_app_id_fkey FOREIGN KEY (caller_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

@@ -225,6 +225,106 @@ func testBaselineFailure(result *testBaselineEvidence) string {
 	return "performance baseline failed: " + strings.Join(failures, "; ")
 }
 
+func compareTestStagedLoadRelative(baselineStep string, baseline, current *testLoadEvidence, spec *testLoadRelativeSpec) *testStagedLoadComparisonEvidence {
+	result := &testStagedLoadComparisonEvidence{BaselineStep: baselineStep, Status: "passed"}
+	add := func(step, baselineHTTPStep, currentHTTPStep, metric, operator string, before, after, limit float64, passed bool) {
+		result.Checks = append(result.Checks, testStagedLoadComparisonCheck{
+			Step: step, BaselineHTTPStep: baselineHTTPStep, CurrentHTTPStep: currentHTTPStep,
+			Metric: metric, Operator: operator, Baseline: before, Current: after,
+			Delta: after - before, Limit: limit, Passed: passed,
+		})
+		if !passed {
+			result.Status = "failed"
+		}
+	}
+	compareMetrics := func(step, baselineHTTPStep, currentHTTPStep string, before, after testLoadMetrics, minSamples int,
+		p95IncreasePercent, p99IncreasePercent, errorRateIncrease, successRateDrop *float64) {
+		add(step, baselineHTTPStep, currentHTTPStep, "samples", ">=", float64(before.Requests), float64(after.Requests), float64(minSamples),
+			before.Requests >= minSamples && after.Requests >= minSamples)
+		if p95IncreasePercent != nil {
+			limit := before.Latency.P95MS * (1 + *p95IncreasePercent/100)
+			add(step, baselineHTTPStep, currentHTTPStep, "p95_ms", "<=", before.Latency.P95MS, after.Latency.P95MS, limit, after.Latency.P95MS <= limit)
+		}
+		if p99IncreasePercent != nil {
+			limit := before.Latency.P99MS * (1 + *p99IncreasePercent/100)
+			add(step, baselineHTTPStep, currentHTTPStep, "p99_ms", "<=", before.Latency.P99MS, after.Latency.P99MS, limit, after.Latency.P99MS <= limit)
+		}
+		if errorRateIncrease != nil {
+			limit := math.Min(1, before.ErrorRate+*errorRateIncrease)
+			add(step, baselineHTTPStep, currentHTTPStep, "error_rate", "<=", before.ErrorRate, after.ErrorRate, limit, after.ErrorRate <= limit)
+		}
+		if successRateDrop != nil {
+			limit := math.Max(0, before.SuccessRate-*successRateDrop)
+			add(step, baselineHTTPStep, currentHTTPStep, "success_rate", ">=", before.SuccessRate, after.SuccessRate, limit, after.SuccessRate >= limit)
+		}
+	}
+	compareMetrics("", "", "", baseline.testLoadMetrics, current.testLoadMetrics, spec.MinSamples,
+		spec.P95IncreasePercent, spec.P99IncreasePercent, spec.ErrorRateIncrease, spec.SuccessRateDrop)
+	stepNames := make([]string, 0, len(spec.Steps))
+	for name := range spec.Steps {
+		stepNames = append(stepNames, name)
+	}
+	sort.Strings(stepNames)
+	for _, name := range stepNames {
+		configured := spec.Steps[name]
+		before, baselineFound := testLoadMetricsForStep(baseline, configured.BaselineStep)
+		after, currentFound := testLoadMetricsForStep(current, configured.CurrentStep)
+		if !baselineFound || !currentFound {
+			result.Status = "failed"
+			message := "missing per-request load evidence"
+			if !baselineFound && !currentFound {
+				message = fmt.Sprintf("baseline HTTP step %q and current HTTP step %q have no load evidence", configured.BaselineStep, configured.CurrentStep)
+			} else if !baselineFound {
+				message = fmt.Sprintf("baseline HTTP step %q has no load evidence", configured.BaselineStep)
+			} else {
+				message = fmt.Sprintf("current HTTP step %q has no load evidence", configured.CurrentStep)
+			}
+			result.Checks = append(result.Checks, testStagedLoadComparisonCheck{
+				Step: name, BaselineHTTPStep: configured.BaselineStep, CurrentHTTPStep: configured.CurrentStep,
+				Metric: "step_available", Operator: "==", Baseline: 1, Current: 0, Limit: 1, Passed: false, Error: message,
+			})
+			continue
+		}
+		minSamples := configured.MinSamples
+		if minSamples == 0 {
+			minSamples = spec.MinSamples
+		}
+		compareMetrics(name, configured.BaselineStep, configured.CurrentStep, before, after, minSamples,
+			configured.P95IncreasePercent, configured.P99IncreasePercent, configured.ErrorRateIncrease, configured.SuccessRateDrop)
+	}
+	return result
+}
+
+func testLoadMetricsForStep(evidence *testLoadEvidence, name string) (testLoadMetrics, bool) {
+	if evidence == nil {
+		return testLoadMetrics{}, false
+	}
+	for _, step := range evidence.Steps {
+		if step.Name == name {
+			return step.testLoadMetrics, true
+		}
+	}
+	return testLoadMetrics{}, false
+}
+
+func testStagedLoadComparisonFailure(result *testStagedLoadComparisonEvidence) string {
+	var failures []string
+	for _, check := range result.Checks {
+		if !check.Passed {
+			label := check.Metric
+			if check.Step != "" {
+				label = fmt.Sprintf("%s (%s → %s) %s", check.Step, check.BaselineHTTPStep, check.CurrentHTTPStep, check.Metric)
+			}
+			if check.Error != "" {
+				failures = append(failures, label+": "+check.Error)
+			} else {
+				failures = append(failures, fmt.Sprintf("%s %.6g %s %.6g (baseline %.6g)", label, check.Current, check.Operator, check.Limit, check.Baseline))
+			}
+		}
+	}
+	return fmt.Sprintf("relative SLO against step %q failed: %s", result.BaselineStep, strings.Join(failures, "; "))
+}
+
 func testBenchmarkMetricsValid(metrics testLoadMetrics) error {
 	if metrics.Requests < 0 || metrics.Requests > testLoadMaxRequests || metrics.Failures < 0 || metrics.Failures > metrics.Requests || metrics.Latency.Samples != metrics.Requests {
 		return errors.New("inconsistent request, failure, or sample counts")

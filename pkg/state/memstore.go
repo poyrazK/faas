@@ -253,6 +253,7 @@ type MemStore struct {
 	apps                      map[string]App
 	scenarioTestMembers       map[string]ScenarioTestMember
 	scenarioTestChaosPlans    map[string]chaos.Lease
+	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
 
@@ -1172,6 +1173,8 @@ func NewMemStore() *MemStore {
 		deployTokens:                map[string]DeployToken{},
 		deployTokenByHash:           map[string]DeployToken{},
 		apps:                        map[string]App{},
+		scenarioTestChaosPlans:      map[string]chaos.Lease{},
+		scenarioTestChaosMatches:    map[string]map[string]int64{},
 		privateNetworkAttachments:   map[string]AppPrivateNetworkAttachment{},
 
 		privateNetworkAttachmentNodeStatuses: map[string]PrivateNetworkAttachmentNodeStatus{},

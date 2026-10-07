@@ -62,6 +62,21 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 	if err != nil || lease.CallerWorkload != "worker" || len(lease.Rules) != 1 || lease.Rules[0].StatusCode != 503 {
 		t.Fatalf("ScenarioTestChaosForCall = (%+v, %v)", lease, err)
 	}
+	for _, rule := range []chaos.Rule{
+		{Kind: chaos.KindTCPLatency, LatencyMS: 100},
+		{Kind: chaos.KindTCPBandwidth, RateKiBPerSecond: 32, Direction: chaos.DirectionDownstream},
+		{Kind: chaos.KindTCPTimeout},
+		{Kind: chaos.KindTCPReset, ResetAfterMS: 25},
+	} {
+		rule.To, rule.Port, rule.Percent = "worker", 6379, 100
+		if _, err := s.SetScenarioTestChaosPlan(ctx, accountID, runID, chaos.Plan{DurationMS: 1000, Rules: []chaos.Rule{rule}}); err != nil {
+			t.Fatalf("TCP plan store: %v", err)
+		}
+		got, err := s.ScenarioTestChaosForCall(ctx, runID, app.ID, "worker")
+		if err != nil || len(got.Rules) != 1 || got.Rules[0] != rule {
+			t.Fatalf("TCP rule roundtrip: %+v %v", got, err)
+		}
+	}
 	if lease, err := s.ScenarioTestChaosForCall(ctx, strings.Repeat("b", 32), app.ID, "worker"); err != nil || len(lease.Rules) != 0 {
 		t.Fatalf("cross-run chaos lookup = (%+v, %v), want empty", lease, err)
 	}
