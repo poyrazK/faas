@@ -86,7 +86,7 @@ func renderFishHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "      set after_separator 1")
 	_, _ = fmt.Fprintln(w, "    end")
 	_, _ = fmt.Fprintln(w, "  end")
-	_, _ = fmt.Fprintln(w, "  printf '%s\\n' $normalized")
+	_, _ = io.WriteString(w, "  printf '%s\\n' $normalized\n")
 	_, _ = fmt.Fprintln(w, "end")
 	_, _ = fmt.Fprintln(w)
 	renderFishAppSlugPosition(w)
