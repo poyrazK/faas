@@ -21094,6 +21094,27 @@ CREATE TABLE public.workflow_runs (
 
 
 --
+-- Name: platform_tenant_workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_workflow_schedule_cursors (
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    deployment_id uuid,
+    trigger_snapshot jsonb NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    scheduled_for timestamp with time zone,
+    status text NOT NULL,
+    last_run_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_workflow_name_check CHECK ((workflow_name <> ''::text))
+);
+
+
+--
 -- Name: workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26391,6 +26412,14 @@ ALTER TABLE ONLY public.workflow_runs
 
 ALTER TABLE ONLY public.workflow_schedule_cursors
     ADD CONSTRAINT workflow_schedule_cursors_pkey PRIMARY KEY (app_id, workflow_name);
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_pkey PRIMARY KEY (app_id, platform_tenant_id, workflow_name);
 
 
 --
@@ -31932,6 +31961,20 @@ CREATE INDEX workflow_runs_dispatch_idx ON public.workflow_runs USING btree (sch
 --
 
 CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: workflow_runs_app_tenant_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_tenant_history_idx ON public.workflow_runs USING btree (app_id, platform_tenant_id, created_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: platform_tenant_workflow_schedule_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_workflow_schedule_tenant_idx ON public.platform_tenant_workflow_schedule_cursors USING btree (platform_tenant_id, app_id);
 
 
 --
@@ -41325,6 +41368,38 @@ ALTER TABLE ONLY public.workflow_runs
 
 ALTER TABLE ONLY public.workflow_runs
     ADD CONSTRAINT workflow_runs_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_last_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_last_run_id_fkey FOREIGN KEY (last_run_id) REFERENCES public.workflow_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --

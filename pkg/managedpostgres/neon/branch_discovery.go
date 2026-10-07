@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
@@ -72,8 +73,10 @@ func (p *Provider) listProjectBranches(ctx context.Context, projectID, name stri
 		if err := p.doJSON(ctx, http.MethodGet, path, query, nil, &response, http.StatusOK); err != nil {
 			return nil, err
 		}
+		// Neon reports "ASC" even when the request uses "asc". Casing does
+		// not change the ordering, but a different order remains unsafe.
 		if response.Branches == nil || response.Pagination.SortBy != "" && response.Pagination.SortBy != "created_at" ||
-			response.Pagination.SortOrder != "" && response.Pagination.SortOrder != "asc" {
+			response.Pagination.SortOrder != "" && strings.ToLower(response.Pagination.SortOrder) != "asc" {
 			return nil, managedpostgres.ErrUnavailable
 		}
 		for _, candidate := range response.Branches {

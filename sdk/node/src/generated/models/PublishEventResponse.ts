@@ -7,6 +7,10 @@
  */
 export type PublishEventResponse = {
   id: string;
+  /**
+   * Original caller-chosen event identifier when tenant-scoped publication is used.
+   */
+  client_event_id?: string;
   accepted_at: string;
   account_id: string;
   /**

@@ -76,8 +76,13 @@ func (s *PgStore) AdmitEventWorkflow(ctx context.Context, outboxID int64, token,
 	}
 	plan := api.Plan(target.Plan)
 	if (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid ||
-		!plan.WorkflowsAllowed() || target.MaintenanceMode || target.PlatformTenantRequired {
+		!plan.WorkflowsAllowed() || target.MaintenanceMode || (target.PlatformTenantRequired && recipient.PlatformTenantID == "") {
 		return "", ErrWorkflowEventTargetUnavailable
+	}
+	if recipient.PlatformTenantID != "" {
+		if !target.PlatformTenantRequired || lockTenantPublishedEventBinding(ctx, tx, recipient.AccountID, recipient.PlatformTenantID, recipient.AppID) != nil {
+			return "", ErrWorkflowEventTargetUnavailable
+		}
 	}
 	run, err := eventWorkflowRun(recipient, accepted.Payload, plan)
 	if err != nil {
@@ -92,7 +97,7 @@ func (s *PgStore) AdmitEventWorkflow(ctx context.Context, outboxID int64, token,
 	}
 	if err := queries.InsertEventWorkflowRun(ctx, tx, sqlc.InsertEventWorkflowRunParams{
 		ID: mustPgUUID(run.ID), AppID: mustPgUUID(run.AppID), WorkflowName: run.WorkflowName,
-		Input: run.Input, DefinitionSnapshot: run.DefinitionSnapshot,
+		PlatformTenantID: run.PlatformTenantID, Input: run.Input, DefinitionSnapshot: run.DefinitionSnapshot,
 	}); err != nil {
 		return "", err
 	}
