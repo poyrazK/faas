@@ -192,6 +192,11 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 				return nil, fmt.Errorf("object storage: backend %s mixes S3 and GCS settings", b.ID)
 			}
 		case "gcs":
+			for _, algorithm := range b.Encryption.Algorithms {
+				if algorithm != "AES256" {
+					return nil, fmt.Errorf("object storage: backend %s only supports GCS managed AES256 encryption", b.ID)
+				}
+			}
 			if !validGCSLocation.MatchString(b.GCSLocation) || !validGCSServiceAccount.MatchString(b.GCSServiceAccount) {
 				return nil, fmt.Errorf("object storage: backend %s requires a valid GCS location and service account", b.ID)
 			}

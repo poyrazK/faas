@@ -5696,6 +5696,66 @@ func (q *Queries) CompleteCustomerOperationBlobCleanup(ctx context.Context, db D
 	return result.RowsAffected(), nil
 }
 
+const completeCustomerOperationWorkflowStep = `-- name: CompleteCustomerOperationWorkflowStep :execrows
+UPDATE workflow_steps SET status=$1::text,output=$2::jsonb,error=$3::text,
+ next_retry_at=NULL,finished_at=now()
+WHERE run_id=$4::uuid AND step_name=$5::text AND status='running' AND attempt=$6::integer
+`
+
+type CompleteCustomerOperationWorkflowStepParams struct {
+	Status   string
+	Output   []byte
+	Error    pgtype.Text
+	RunID    pgtype.UUID
+	StepName string
+	Attempt  int32
+}
+
+func (q *Queries) CompleteCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg CompleteCustomerOperationWorkflowStepParams) (int64, error) {
+	result, err := db.Exec(ctx, completeCustomerOperationWorkflowStep,
+		arg.Status,
+		arg.Output,
+		arg.Error,
+		arg.RunID,
+		arg.StepName,
+		arg.Attempt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeCustomerOperationWorkflowStepAttempt = `-- name: CompleteCustomerOperationWorkflowStepAttempt :execrows
+UPDATE workflow_step_attempts SET status=$1::text,http_status=$2::integer,
+ error=$3::text,finished_at=now(),next_attempt_at=NULL
+WHERE run_id=$4::uuid AND step_name=$5::text AND attempt=$6::integer AND status='running'
+`
+
+type CompleteCustomerOperationWorkflowStepAttemptParams struct {
+	Status     string
+	HttpStatus pgtype.Int4
+	Error      pgtype.Text
+	RunID      pgtype.UUID
+	StepName   string
+	Attempt    int32
+}
+
+func (q *Queries) CompleteCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg CompleteCustomerOperationWorkflowStepAttemptParams) (int64, error) {
+	result, err := db.Exec(ctx, completeCustomerOperationWorkflowStepAttempt,
+		arg.Status,
+		arg.HttpStatus,
+		arg.Error,
+		arg.RunID,
+		arg.StepName,
+		arg.Attempt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const completeEnvironmentGitOpsEffect = `-- name: CompleteEnvironmentGitOpsEffect :execrows
 UPDATE environment_gitops_effects SET completed_at = now()
 WHERE source_id = $1::uuid AND id = $2::uuid
@@ -15600,6 +15660,70 @@ func (q *Queries) GetCustomerOperationWorkflowCustody(ctx context.Context, db DB
 	return i, err
 }
 
+const getCustomerOperationWorkflowStep = `-- name: GetCustomerOperationWorkflowStep :one
+SELECT run_id, step_name, status, attempt, input, output, started_at, finished_at, error, created_at, next_check_at, next_retry_at, outbound_attempt_token, foreach_parent, foreach_index, foreach_count, retry_base, when_matched, when_evaluated_at, skip_reason FROM workflow_steps WHERE run_id=$1::uuid AND step_name=$2::text
+`
+
+type GetCustomerOperationWorkflowStepParams struct {
+	RunID    pgtype.UUID
+	StepName string
+}
+
+func (q *Queries) GetCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepParams) (WorkflowStep, error) {
+	row := db.QueryRow(ctx, getCustomerOperationWorkflowStep, arg.RunID, arg.StepName)
+	var i WorkflowStep
+	err := row.Scan(
+		&i.RunID,
+		&i.StepName,
+		&i.Status,
+		&i.Attempt,
+		&i.Input,
+		&i.Output,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.NextCheckAt,
+		&i.NextRetryAt,
+		&i.OutboundAttemptToken,
+		&i.ForeachParent,
+		&i.ForeachIndex,
+		&i.ForeachCount,
+		&i.RetryBase,
+		&i.WhenMatched,
+		&i.WhenEvaluatedAt,
+		&i.SkipReason,
+	)
+	return i, err
+}
+
+const getCustomerOperationWorkflowStepAttempt = `-- name: GetCustomerOperationWorkflowStepAttempt :one
+SELECT run_id, step_name, attempt, status, http_status, started_at, finished_at, next_attempt_at, error FROM workflow_step_attempts WHERE run_id=$1::uuid AND step_name=$2::text AND attempt=$3::integer
+`
+
+type GetCustomerOperationWorkflowStepAttemptParams struct {
+	RunID    pgtype.UUID
+	StepName string
+	Attempt  int32
+}
+
+func (q *Queries) GetCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepAttemptParams) (WorkflowStepAttempt, error) {
+	row := db.QueryRow(ctx, getCustomerOperationWorkflowStepAttempt, arg.RunID, arg.StepName, arg.Attempt)
+	var i WorkflowStepAttempt
+	err := row.Scan(
+		&i.RunID,
+		&i.StepName,
+		&i.Attempt,
+		&i.Status,
+		&i.HttpStatus,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.NextAttemptAt,
+		&i.Error,
+	)
+	return i, err
+}
+
 const getDataUpstreamByID = `-- name: GetDataUpstreamByID :one
 SELECT
     id, account_id, app_id, source, scope, deployment_scope, kind, host, port,
@@ -18977,6 +19101,22 @@ func (q *Queries) InsertCustomerOperationWorkflowStep(ctx context.Context, db DB
 		arg.Input,
 		arg.CreatedAt,
 	)
+	return err
+}
+
+const insertCustomerOperationWorkflowStepAttempt = `-- name: InsertCustomerOperationWorkflowStepAttempt :exec
+INSERT INTO workflow_step_attempts(run_id,step_name,attempt,status)
+VALUES($1::uuid,$2::text,$3::integer,'running')
+`
+
+type InsertCustomerOperationWorkflowStepAttemptParams struct {
+	RunID    pgtype.UUID
+	StepName string
+	Attempt  int32
+}
+
+func (q *Queries) InsertCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowStepAttemptParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationWorkflowStepAttempt, arg.RunID, arg.StepName, arg.Attempt)
 	return err
 }
 
@@ -62717,6 +62857,33 @@ func (q *Queries) StartCustomerOperationWorkflowRun(ctx context.Context, db DBTX
 	return err
 }
 
+const startCustomerOperationWorkflowStep = `-- name: StartCustomerOperationWorkflowStep :one
+UPDATE workflow_steps SET status='running',attempt=$1::integer,input=$2::jsonb,error=NULL,
+ started_at=coalesce(started_at,now()),next_retry_at=NULL,finished_at=NULL
+WHERE run_id=$3::uuid AND step_name=$4::text
+AND status IN ('pending','awaiting_event') AND attempt=$1::integer-1
+RETURNING input
+`
+
+type StartCustomerOperationWorkflowStepParams struct {
+	Attempt  int32
+	Input    []byte
+	RunID    pgtype.UUID
+	StepName string
+}
+
+func (q *Queries) StartCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowStepParams) ([]byte, error) {
+	row := db.QueryRow(ctx, startCustomerOperationWorkflowStep,
+		arg.Attempt,
+		arg.Input,
+		arg.RunID,
+		arg.StepName,
+	)
+	var input []byte
+	err := row.Scan(&input)
+	return input, err
+}
+
 const stopEnvironmentQualificationInstance = `-- name: StopEnvironmentQualificationInstance :one
 UPDATE instances i SET state=CASE WHEN i.state IN ('parked','stopped','failed','evicting_account_deleting') THEN i.state ELSE 'stopped' END,
 terminal_at=e.retired_at FROM environment_qualification_executions e
@@ -62862,6 +63029,20 @@ WHERE scaling.app_id=a.id AND a.id=$1::uuid AND scaling.scope='production'
 
 func (q *Queries) SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, syncProductionScalingStates, appID)
+	return err
+}
+
+const touchCustomerOperationWorkflowStep = `-- name: TouchCustomerOperationWorkflowStep :exec
+UPDATE workflow_runs SET current_step=$1::text,updated_at=now() WHERE id=$2::uuid
+`
+
+type TouchCustomerOperationWorkflowStepParams struct {
+	StepName string
+	RunID    pgtype.UUID
+}
+
+func (q *Queries) TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error {
+	_, err := db.Exec(ctx, touchCustomerOperationWorkflowStep, arg.StepName, arg.RunID)
 	return err
 }
 

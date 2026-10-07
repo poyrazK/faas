@@ -147,6 +147,19 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	safeToSettle = false
+	ctx = objectstorage.WithMultipartCopyReadRecorder(ctx, func(ctx context.Context, bytes int64) error {
+		if err := objectstorage.RecordGatewayProviderRequest(ctx, h.requestMetrics, sourceReq.bucket.ID, h.now().UTC(), h.registry.Accounting); err != nil {
+			return err
+		}
+		if h.registry.Accounting.GatewaySafety() {
+			metrics, ok := h.requestMetrics.(state.ObjectStorageGatewayEgressStore)
+			if !ok {
+				return objectstorage.ErrConfiguration
+			}
+			return metrics.ReserveObjectStorageGatewayEgress(ctx, sourceReq.bucket.ID, bytes, h.now().UTC(), h.registry.Accounting)
+		}
+		return nil
+	})
 	var result objectstorage.CopyObjectResult
 	if req.copySource != nil {
 		result, err = req.provider.(objectstorage.CrossBucketMultipartPartCopier).CopyCrossBucketMultipartPart(ctx, req.copySource.PhysicalName, req.bucket.PhysicalName, c, source)

@@ -72,13 +72,13 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 		h.providerHTTPError(w, r, req, response.StatusCode, c.Key)
 		return
 	}
-	ack, err := objectstorage.VerifyObjectWriteAcknowledgment(response.Header)
+	ack, err := objectstorage.VerifyProviderObjectWriteAcknowledgment(req.provider, response.Header)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return
 	}
 	c.ETag = ack.ETag
-	verified, err := objectstorage.VerifyEncryptionAcknowledgment(response.Header, c.Encryption)
+	verified, err := objectstorage.VerifyProviderEncryptionAcknowledgment(req.provider, response.Header, c.Encryption)
 	if err != nil {
 		h.providerError(w, r, req, err, c.Key)
 		return
@@ -94,6 +94,17 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 			h.providerError(w, r, req, err, c.Key)
 			return
 		}
+	}
+	if _, gcs := req.provider.(*objectstorage.GCS); gcs && !c.Encryption.Empty() {
+		if !h.recordProviderRequest(w, r, req) {
+			return
+		}
+		proof, err := req.provider.(objectstorage.ObjectEncryptionProvider).ConfirmEncryptedObject(r.Context(), req.bucket.PhysicalName, c.Key, c.ID, c.Bytes, c.Encryption)
+		if err != nil || proof.ProviderVersionID != ack.ProviderVersionID {
+			h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
+			return
+		}
+		verified = proof.Encryption
 	}
 	c.VerifiedEncryption = verified
 	c.Status = "completed"

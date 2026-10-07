@@ -335,11 +335,19 @@ var cliCommands = []cliCommand{
 	},
 	{
 		Name: "bucket", DocSlug: "object-storage", Short: "Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity",
-		Subcommands: []cliSub{{Name: "copy-sources", Short: "Manage copy-only owned source grants", Subcommands: []cliSub{
-			{Name: "list", Short: "List source grants for a destination credential", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>"}},
-			{Name: "grant", Short: "Allow copying an owned source bucket or prefix", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>", "[prefix]"}},
-			{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
-		}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
+		Subcommands: []cliSub{
+			{Name: "uploads", Short: "Inspect owned multipart upload sessions and parts", Subcommands: []cliSub{
+				{Name: "list", Short: "List multipart sessions", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "cursor", Value: "ID", Short: "next page cursor"}}},
+				{Name: "status", Short: "Inspect a multipart session returned by an upload", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}},
+				{Name: "parts", Short: "List uploaded multipart parts", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "part-number-marker", Value: "N", Short: "last part from the previous page"}}},
+			}},
+			{Name: "upload", Short: "Upload a file, using multipart above the single PUT limit", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "content-type", Value: "TYPE", Short: "object MIME type"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
+			{Name: "download", Short: "Download an object to a file after a complete transfer", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "force", Short: "replace destination after a complete transfer"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
+			{Name: "copy-sources", Short: "Manage copy-only owned source grants", Subcommands: []cliSub{
+				{Name: "list", Short: "List source grants for a destination credential", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>"}},
+				{Name: "grant", Short: "Allow copying an owned source bucket or prefix", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>", "[prefix]"}},
+				{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
+			}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "encryption", Short: "Inspect or configure verified bucket encryption defaults", Subcommands: []cliSub{
 				{Name: "status", Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "clear", Short: "Remove the default for new writes", Positionals: []string{"<app>", "<bucket-id>"}},
@@ -3059,6 +3067,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "daily", Short: "Per-day breakdown"},
 			{Name: "storage", Short: "Per-app storage bytes"},
+			{Name: "object-storage", Short: "Account object storage observations, safety policy and billing state"},
 			{Name: "summary", Short: "Account roll-up"},
 		},
 		Flags: []cliFlag{

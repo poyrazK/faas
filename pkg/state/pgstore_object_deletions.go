@@ -127,6 +127,12 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	}
 	if !immutableDeletion(j) {
 		j.ProviderStatus = v.ObservedStatus
+		if j.NativeGCS && j.Selector == "" {
+			if v.ObservedStatus == "" {
+				return ObjectDeletion{}, false, ErrConflict
+			}
+			j.ProviderStatus = "GCS_" + v.ObservedStatus
+		}
 	}
 	if fenced || ready.Pending > 0 || ready.Multipart || !immutableDeletion(j) && ready.Unsafe && (ready.Versions.Bool || j.ProviderStatus != "") {
 		return ObjectDeletion{}, false, ErrConflict
@@ -142,7 +148,7 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	if !immutableDeletion(j) && ready.Versions.Bool && (!versionAdmissionMode(snapshot, j.BucketID) || j.ProviderStatus == "") {
 		return ObjectDeletion{}, false, ErrConflict
 	}
-	if j.Selector == "" && j.ProviderStatus != "" {
+	if j.Selector == "" && j.ProviderStatus != "" && !nativeGCSDeletionStatus(j.ProviderStatus) {
 		j.ReservedBytes = int64(len(j.Key))
 		if _, _, e = checkObjectAdmission(snapshot, j.BucketID, j.ReservedBytes, 0, false, true, policy, now.Time); e != nil {
 			return j, false, e
