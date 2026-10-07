@@ -250,8 +250,8 @@ func fingerprint(config BackendConfig) string {
 	// SecretEnv is intentionally excluded: credential rotation or renaming an
 	// environment variable must not change placement. DataAPIEnabled is a
 	// rollout capability, fenced by qualification's credential-access equality.
-	// Namespace and all
-	// non-secret settings fail closed if a backend is accidentally repurposed.
+	// Namespace and all non-secret settings fail closed if a backend is
+	// accidentally repurposed.
 	payload := struct {
 		Driver    string            `json:"driver"`
 		Region    string            `json:"region"`

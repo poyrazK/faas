@@ -99,6 +99,11 @@ function openAPISpec(response, res) {
     if (res.writableEnded) return
     try {
       const document = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      // Swagger 2 defaults an omitted host/scheme to the document's origin.
+      // The engine's loopback address must not become the public client URL.
+      delete document.host
+      delete document.schemes
+      document.basePath = '/rest/v1'
       for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) delete document.paths[path]
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify(document))

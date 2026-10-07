@@ -108,6 +108,8 @@ test('real PostgREST, restricted SQL, JWT RLS, typed client and schema refresh',
   assert.equal((await client(alice).from('private_notes').select()).status,404)
   const openapi = await (await fetch(base+'/openapi.json',{headers:{Authorization:`Bearer ${alice}`}})).json()
   assert.ok(openapi.paths['/notes'])
+  assert.equal(openapi.host,undefined)
+  assert.equal(openapi.basePath,'/rest/v1')
   assert.equal(openapi.paths['/private_notes'],undefined)
   assert.equal(openapi.paths['/rpc/echo'],undefined)
   assert.equal((await fetch(base+'/rest/v1/rpc/echo',{headers:{Authorization:`Bearer ${alice}`}})).status,404)
