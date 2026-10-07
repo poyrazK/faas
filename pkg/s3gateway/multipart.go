@@ -190,11 +190,18 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		upstream.Header.Set(name, value)
 	}
 	safeToSettle = false
-	receipt, err := objectstorageactivity.DispatchMultipartPart(transferCtx, h.store, transfers, req.bucket, upload.ID, part, transferToken)
+	receipt, err := objectstorageactivity.DispatchMultipartPartPut(transferCtx, h.store, transfers, req.bucket, upload.ID, part, transferToken, multipartPartPutIntent(upload, r.ContentLength, integrity))
 	if err != nil {
 		safeToSettle = true
 		h.providerError(w, r, req, err, key)
 		return
+	}
+	var partBody *multipartPartBodyReader
+	if receipt.MultipartPartWriterID != "" {
+		partBody = newMultipartPartBodyReader(body, r.ContentLength, func(digest string) error {
+			return objectstorageactivity.ObserveMultipartPartBody(transferCtx, transfers, receipt, digest)
+		})
+		upstream.Body = io.NopCloser(partBody)
 	}
 	response, err := h.client.Do(upstream)
 	if err != nil {
@@ -211,7 +218,11 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 	if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
 		return
 	}
-	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && integrity.remaining != 0 {
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && partBody != nil && !partBody.Completed() {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && partBody == nil && integrity.remaining != 0 {
 		writeS3Error(w, http.StatusBadRequest, "IncompleteBody", "You did not provide the number of bytes specified by Content-Length.", r.URL.Path, req.requestID)
 		return
 	}
@@ -611,4 +622,12 @@ func (h *Handler) proxyMultipartPart(w http.ResponseWriter, r *http.Request, req
 	}
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
+}
+
+func multipartPartPutIntent(u state.ObjectMultipartUpload, size int64, body *requestIntegrityReader) state.ObjectMultipartPartPutIntent {
+	i := state.ObjectMultipartPartPutIntent{Schema: 1, DestinationKey: u.Key, ProviderUploadID: u.ProviderUploadID, ExpectedSize: size}
+	if len(body.expectedPayload) > 0 {
+		i.ExpectedSHA256 = hex.EncodeToString(body.expectedPayload)
+	}
+	return i
 }

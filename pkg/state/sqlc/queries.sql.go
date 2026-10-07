@@ -37191,6 +37191,42 @@ func (q *Queries) ObjectMultipartPartBegin(ctx context.Context, db DBTX, arg Obj
 	return err
 }
 
+const objectMultipartPartBodyObserve = `-- name: ObjectMultipartPartBodyObserve :execrows
+UPDATE object_multipart_part_writers d SET body_sha256=$1
+FROM object_storage_multipart_uploads u
+WHERE d.id=$2 AND d.upload_id=u.id AND u.account_id=$3 AND u.app_id=$4
+AND d.bucket_id=$5 AND d.backend_id=$6 AND d.backend_fingerprint=$7 AND d.physical_name=$8
+AND d.managed AND d.dispatched AND NOT d.settled AND d.put_intent IS NOT NULL AND (d.body_sha256='' OR d.body_sha256=$1)
+`
+
+type ObjectMultipartPartBodyObserveParams struct {
+	BodySha256         string
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+func (q *Queries) ObjectMultipartPartBodyObserve(ctx context.Context, db DBTX, arg ObjectMultipartPartBodyObserveParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartPartBodyObserve,
+		arg.BodySha256,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectMultipartPartCopyIntentRead = `-- name: ObjectMultipartPartCopyIntentRead :one
 SELECT d.copy_intent FROM object_multipart_part_writers d
 JOIN object_storage_multipart_uploads u ON u.id=d.upload_id
@@ -37258,6 +37294,47 @@ type ObjectMultipartPartGrantUpsertParams struct {
 func (q *Queries) ObjectMultipartPartGrantUpsert(ctx context.Context, db DBTX, arg ObjectMultipartPartGrantUpsertParams) error {
 	_, err := db.Exec(ctx, objectMultipartPartGrantUpsert, arg.UploadID, arg.PartNumber, arg.MaxBytes)
 	return err
+}
+
+const objectMultipartPartPutIntentRead = `-- name: ObjectMultipartPartPutIntentRead :one
+SELECT d.put_intent,d.body_sha256 FROM object_multipart_part_writers d
+JOIN object_storage_multipart_uploads u ON u.id=d.upload_id
+JOIN object_buckets b ON b.id=d.bucket_id
+WHERE d.id=$1 AND u.account_id=$2 AND u.app_id=$3
+AND d.bucket_id=$4 AND d.backend_id=$5
+AND d.backend_fingerprint=$6 AND d.physical_name=$7
+AND b.state='ready' AND b.backend_id=d.backend_id AND b.backend_fingerprint=d.backend_fingerprint AND b.physical_name=d.physical_name
+AND d.dispatched AND d.put_intent IS NOT NULL
+`
+
+type ObjectMultipartPartPutIntentReadParams struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+type ObjectMultipartPartPutIntentReadRow struct {
+	PutIntent  []byte
+	BodySha256 string
+}
+
+func (q *Queries) ObjectMultipartPartPutIntentRead(ctx context.Context, db DBTX, arg ObjectMultipartPartPutIntentReadParams) (ObjectMultipartPartPutIntentReadRow, error) {
+	row := db.QueryRow(ctx, objectMultipartPartPutIntentRead,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	var i ObjectMultipartPartPutIntentReadRow
+	err := row.Scan(&i.PutIntent, &i.BodySha256)
+	return i, err
 }
 
 const objectMultipartPartRevision = `-- name: ObjectMultipartPartRevision :exec
@@ -37328,17 +37405,18 @@ func (q *Queries) ObjectMultipartPartTransfer(ctx context.Context, db DBTX, arg 
 }
 
 const objectMultipartPartWriterDispatch = `-- name: ObjectMultipartPartWriterDispatch :one
-UPDATE object_multipart_part_writers d SET dispatched=true,copy_intent=$1
+UPDATE object_multipart_part_writers d SET dispatched=true,copy_intent=$1,put_intent=$2
 FROM object_storage_multipart_uploads u
-WHERE d.upload_id=u.id AND d.upload_id=$2 AND d.part_number=$3 AND d.transfer_token=$4
-AND u.account_id=$5 AND u.app_id=$6 AND d.bucket_id=$7
-AND d.backend_id=$8 AND d.backend_fingerprint=$9 AND d.physical_name=$10
+WHERE d.upload_id=u.id AND d.upload_id=$3 AND d.part_number=$4 AND d.transfer_token=$5
+AND u.account_id=$6 AND u.app_id=$7 AND d.bucket_id=$8
+AND d.backend_id=$9 AND d.backend_fingerprint=$10 AND d.physical_name=$11
 AND d.managed AND NOT d.dispatched AND NOT d.settled
-RETURNING d.id, d.upload_id, d.part_number, d.transfer_token, d.managed, d.dispatched, d.settled, d.bucket_id, d.backend_id, d.backend_fingerprint, d.physical_name, d.copy_intent
+RETURNING d.id, d.upload_id, d.part_number, d.transfer_token, d.managed, d.dispatched, d.settled, d.bucket_id, d.backend_id, d.backend_fingerprint, d.physical_name, d.copy_intent, d.put_intent, d.body_sha256
 `
 
 type ObjectMultipartPartWriterDispatchParams struct {
 	CopyIntent         []byte
+	PutIntent          []byte
 	UploadID           pgtype.UUID
 	PartNumber         int32
 	TransferToken      string
@@ -37353,6 +37431,7 @@ type ObjectMultipartPartWriterDispatchParams struct {
 func (q *Queries) ObjectMultipartPartWriterDispatch(ctx context.Context, db DBTX, arg ObjectMultipartPartWriterDispatchParams) (ObjectMultipartPartWriter, error) {
 	row := db.QueryRow(ctx, objectMultipartPartWriterDispatch,
 		arg.CopyIntent,
+		arg.PutIntent,
 		arg.UploadID,
 		arg.PartNumber,
 		arg.TransferToken,
@@ -37377,6 +37456,8 @@ func (q *Queries) ObjectMultipartPartWriterDispatch(ctx context.Context, db DBTX
 		&i.BackendFingerprint,
 		&i.PhysicalName,
 		&i.CopyIntent,
+		&i.PutIntent,
+		&i.BodySha256,
 	)
 	return i, err
 }

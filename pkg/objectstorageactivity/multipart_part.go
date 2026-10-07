@@ -42,3 +42,25 @@ func DispatchMultipartPartCopy(ctx context.Context, store, journal any, b state.
 	}
 	return Begin(ctx, store, b, state.ObjectBucketMutationRequest)
 }
+
+// A bound PUT journal must persist intent before IO; missing capability cannot
+// silently downgrade the admitted writer to an unqualified ordinary claim.
+func DispatchMultipartPartPut(ctx context.Context, store, journal any, b state.ObjectBucket, id string, part int32, token string, i state.ObjectMultipartPartPutIntent) (state.ObjectBucketMutation, error) {
+	if st, ok := journal.(state.ObjectMultipartPartPutMutationStore); ok {
+		return st.DispatchObjectMultipartPartPutMutation(ctx, b, id, part, token, i)
+	}
+	if _, ok := journal.(state.ObjectMultipartPartMutationStore); ok {
+		return state.ObjectBucketMutation{}, state.ErrConflict
+	}
+	return Begin(ctx, store, b, state.ObjectBucketMutationRequest)
+}
+
+func ObserveMultipartPartBody(ctx context.Context, journal any, r state.ObjectBucketMutation, digest string) error {
+	st, ok := journal.(state.ObjectMultipartPartPutMutationStore)
+	if !ok || r.MultipartPartWriterID == "" {
+		return state.ErrConflict
+	}
+	observationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectMutationObservationTimeout)
+	defer cancel()
+	return st.ObserveObjectMultipartPartBody(observationCtx, r, digest)
+}

@@ -7545,3 +7545,62 @@ SQLC v1.31.1 parity, migration-ID and repository policy checks pass. These are
 local tests; no live provider or common-checkpoint qualification is claimed.
 Pinned golangci-lint v2.4.0 reports zero issues across state, object storage,
 activity, gateway and APID. Optional Packer/live nft checks remain skipped.
+
+### Preserve streamed part PUT intent and validated body identity (2026-10-07)
+
+Managed part PUTs now persist a versioned private intent with the once-only
+part dispatch: original destination key and native upload ID, exact requested
+size and the authenticated SigV4 payload SHA-256 when one exists. The capacity
+grant may exceed the requested size; this record retains the current request.
+Broker part URLs use a zero incremental byte grant because their parent layout
+already reserves capacity; intent validation instead requires the exact part
+size from that admitted layout, including the shorter final part.
+Unsigned payloads and streaming signature markers do not become invented
+pre-dispatch hashes. Existing attempts remain without PUT intent on migration.
+
+The gateway hashes forwarded plaintext incrementally. Once the incoming body
+has reached its exact decoded length and passed payload, checksum and chunked
+trailer validation, it durably observes its SHA-256 against the original writer
+before releasing the final bytes to the provider transport. This observation
+uses a bounded context that survives caller cancellation. Ordinary parts keep
+streaming and do not acquire spool capacity; protected parts retain their
+existing spool and checksum behavior. A separate transport-body completion
+signal prevents an early provider response from settling a protected part just
+because its incoming spool was already validated.
+
+Intent and observed body identity are immutable. Observation is idempotent only
+for the same original digest and unsettled writer, checks any declared SHA-256,
+and neither settles the transfer nor retires its receipt. Wrong destination
+scope or placement, partial or invalid bodies, hash rewriting, replay and late
+intent insertion fail closed. Positive synchronous provider proof still settles
+the original transfer and receipt atomically, retaining its intent and body hash
+in writer history. Busy downgrade refuses unresolved PUT intent or capture holds.
+All new columns are operational and excluded from stage copies.
+
+A complete body observation proves which validated bytes the gateway intended
+to forward, not provider acceptance, ownership or drainage. An unknown request
+can remain in flight after observation, and partial uncertain streams can lack
+an observed hash entirely. No hash, timeout, listing or restart releases their
+capture custody. Journals lacking PUT-intent support cannot downgrade a bound
+writer to ordinary dispatch; legacy journals retain held ordinary admission.
+Qualified provider reconciliation, live R2/OVH writer coverage and the common
+PostgreSQL/object checkpoint remain further work. Public fully copyable capture
+stays gated.
+
+Validation: selected memory/PostgreSQL multipart, binding, capture-hold and
+schema-registry contracts pass under the race detector, including unsigned and
+signed intent, scoped and idempotent body observations, declared-hash mismatch,
+raw SQL rewrites, rollback, restart, retained history and busy downgrade.
+The full gateway and activity race suites pass, including complete streamed
+body identity before final native bytes, retained hashes after lost or invalid
+ACKs, unobserved custody after an early ACK, protected-spool forwarding,
+chunked integrity, encryption and cross-bucket-copy regressions. Ordinary PUT
+fixtures deliberately have no available spool space. SQLC v1.31.1 parity,
+migration-ID and repository policy checks pass. These are local checks, not
+live provider or common-checkpoint qualification.
+Control-API multipart, signed part URL, default-encryption, version-quota and
+recovery checks pass after validating zero incremental URL grants against the
+parent layout, including its shorter final part. Optional Packer/live nft
+checks remain skipped.
+Pinned golangci-lint v2.4.0 reports zero issues across state, object storage,
+activity, gateway and APID.

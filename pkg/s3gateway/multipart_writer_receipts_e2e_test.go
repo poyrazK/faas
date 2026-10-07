@@ -4,6 +4,8 @@ package s3gateway
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"strconv"
@@ -29,6 +31,26 @@ type observingPartCopyJournal struct {
 func (s *observingPartCopyJournal) DispatchObjectMultipartPartCopyMutation(ctx context.Context, b state.ObjectBucket, id string, part int32, token string, i state.ObjectMultipartPartCopyIntent) (state.ObjectBucketMutation, error) {
 	r, err := s.ObjectMultipartPartCopyMutationStore.DispatchObjectMultipartPartCopyMutation(ctx, b, id, part, token, i)
 	if err == nil {
+		s.dispatched <- r
+	}
+	return r, err
+}
+
+type observingPartPutJournal struct {
+	state.ObjectMultipartUploadStore
+	state.ObjectMultipartTransferStore
+	state.ObjectMultipartPartMutationStore
+	state.ObjectMultipartPartPutMutationStore
+	dispatched chan state.ObjectBucketMutation
+}
+
+func (s *observingPartPutJournal) DispatchObjectMultipartPartPutMutation(ctx context.Context, b state.ObjectBucket, id string, part int32, token string, i state.ObjectMultipartPartPutIntent) (state.ObjectBucketMutation, error) {
+	r, err := s.ObjectMultipartPartPutMutationStore.DispatchObjectMultipartPartPutMutation(ctx, b, id, part, token, i)
+	if err == nil {
+		saved, readErr := s.ReadObjectMultipartPartPutIntent(ctx, r)
+		if readErr != nil || saved.BodySHA256 != "" || saved.ExpectedSize != 3 {
+			return r, state.ErrConflict
+		}
 		s.dispatched <- r
 	}
 	return r, err
@@ -62,6 +84,8 @@ func multipartIndependentWriterReceipts(t *testing.T, newStore func(*testing.T) 
 				var writes atomic.Int32
 				holds := make(chan state.ObjectBucketWriteFence, 1)
 				copyReceipts := make(chan state.ObjectBucketMutation, 1)
+				putReceipts := make(chan state.ObjectBucketMutation, 1)
+				putObserved := make(chan state.ObjectBucketMutation, 1)
 				origin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					q := r.URL.Query()
 					w.Header().Set("Content-Type", "application/xml")
@@ -73,6 +97,17 @@ func multipartIndependentWriterReceipts(t *testing.T, newStore func(*testing.T) 
 						w.Header().Set("ETag", `"source"`)
 					case r.Method == http.MethodPut && q.Get("uploadId") == "native-part":
 						writes.Add(1)
+						var putReceipt state.ObjectBucketMutation
+						if !copyPart {
+							select {
+							case putReceipt = <-putReceipts:
+							default:
+								t.Error("PUT intent missing before IO")
+								w.WriteHeader(500)
+								return
+							}
+						}
+
 						if copyPart {
 							select {
 							case receipt := <-copyReceipts:
@@ -99,6 +134,17 @@ func multipartIndependentWriterReceipts(t *testing.T, newStore func(*testing.T) 
 						}
 						holds <- hold
 						_, _ = io.Copy(io.Discard, r.Body)
+						if !copyPart {
+							value, err := st.(state.ObjectMultipartPartPutMutationStore).ReadObjectMultipartPartPutIntent(r.Context(), putReceipt)
+							sum := sha256.Sum256([]byte("abc"))
+							if err != nil || value.BodySHA256 != hex.EncodeToString(sum[:]) || value.ExpectedSize != 3 {
+								t.Error("native body completed without durable identity", value, err)
+								w.WriteHeader(500)
+								return
+							}
+							putObserved <- putReceipt
+						}
+
 						if outcome == "lost-reply" {
 							conn, _, err := w.(http.Hijacker).Hijack()
 							if err != nil {
@@ -138,6 +184,11 @@ func multipartIndependentWriterReceipts(t *testing.T, newStore func(*testing.T) 
 				})
 				f = newMultipartCopyIntegrationWithProvider(t, st, origin)
 				id := f.initiate(t, "destination")
+
+				if !copyPart {
+					f.handler.spoolAvailable = func() (uint64, error) { return 0, nil }
+					f.handler.multipartStore = &observingPartPutJournal{ObjectMultipartUploadStore: st, ObjectMultipartTransferStore: st, ObjectMultipartPartMutationStore: st.(state.ObjectMultipartPartMutationStore), ObjectMultipartPartPutMutationStore: st.(state.ObjectMultipartPartPutMutationStore), dispatched: putReceipts}
+				}
 				if copyPart {
 					f.handler.multipartStore = &observingPartCopyJournal{ObjectMultipartUploadStore: st, ObjectMultipartTransferStore: st, ObjectMultipartPartMutationStore: st.(state.ObjectMultipartPartMutationStore), ObjectMultipartPartCopyMutationStore: st.(state.ObjectMultipartPartCopyMutationStore), dispatched: copyReceipts}
 				}
@@ -153,6 +204,18 @@ func multipartIndependentWriterReceipts(t *testing.T, newStore func(*testing.T) 
 				}
 				if (err == nil) != (outcome == "validated") {
 					t.Fatal("unexpected acknowledgment", err)
+				}
+
+				if !copyPart {
+					select {
+					case receipt := <-putObserved:
+						saved, err := st.(state.ObjectMultipartPartPutMutationStore).ReadObjectMultipartPartPutIntent(t.Context(), receipt)
+						if err != nil || saved.BodySHA256 == "" {
+							t.Fatal("acknowledgment lost durable identity", saved, err)
+						}
+					default:
+						t.Fatal("no complete PUT body observation")
+					}
 				}
 				var hold state.ObjectBucketWriteFence
 				select {
@@ -175,5 +238,50 @@ func multipartIndependentWriterReceipts(t *testing.T, newStore func(*testing.T) 
 				}
 			})
 		}
+	}
+}
+
+func TestMultipartPartEarlyProviderACKRetainsUnobservedWriter(t *testing.T) {
+	st := state.NewMemStore()
+	f := newMultipartCopyIntegration(t, st)
+	id := f.initiate(t, "destination")
+	receipts := make(chan state.ObjectBucketMutation, 1)
+	f.handler.multipartStore = &observingPartPutJournal{ObjectMultipartUploadStore: st, ObjectMultipartTransferStore: st, ObjectMultipartPartMutationStore: st, ObjectMultipartPartPutMutationStore: st, dispatched: receipts}
+	holds := make(chan state.ObjectBucketWriteFence, 1)
+	f.handler.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		hold, err := st.AcquireObjectBucketWriteFence(r.Context(), f.bucket, uuid.NewString())
+		if err != nil {
+			t.Error(err)
+		}
+		holds <- hold
+		header := http.Header{}
+		header.Set("ETag", `"part"`)
+		// No body is read. Even syntactically valid ACK headers cannot establish
+		// complete forwarding or release the original dispatch.
+		return &http.Response{StatusCode: 200, Header: header, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})}
+	_, err := f.client.UploadPart(t.Context(), &awss3.UploadPartInput{Bucket: aws.String("assets"), Key: aws.String("destination"), UploadId: aws.String(id), PartNumber: aws.Int32(1), ContentLength: aws.Int64(3), Body: bytes.NewReader([]byte("abc"))})
+	if err == nil {
+		t.Fatal("early ACK settled writer")
+	}
+	var receipt state.ObjectBucketMutation
+	select {
+	case receipt = <-receipts:
+	default:
+		t.Fatal("no original dispatch")
+	}
+	var hold state.ObjectBucketWriteFence
+	select {
+	case hold = <-holds:
+	default:
+		t.Fatal("no capture custody")
+	}
+	saved, err := st.ReadObjectMultipartPartPutIntent(t.Context(), receipt)
+	if err != nil || saved.BodySHA256 != "" {
+		t.Fatal("unread body adopted identity", saved, err)
+	}
+	got, err := st.ReadObjectBucketWriteFence(t.Context(), f.bucket, hold.Token)
+	if err != nil || got.Requests != 2 {
+		t.Fatal("early ACK lost custody", got, err)
 	}
 }

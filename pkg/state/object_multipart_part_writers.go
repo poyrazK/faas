@@ -18,5 +18,6 @@ type multipartPartWriterKey struct {
 type multipartPartWriter struct {
 	receipt             ObjectBucketMutation
 	copyIntent          *ObjectMultipartPartCopyIntent
+	putIntent           *ObjectMultipartPartPutIntent
 	dispatched, settled bool
 }

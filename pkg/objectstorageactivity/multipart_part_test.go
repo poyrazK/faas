@@ -64,3 +64,53 @@ func TestMultipartPartCopyCannotDowngradeBoundJournal(t *testing.T) {
 		t.Fatal("legacy copy bypassed hold", err)
 	}
 }
+
+func TestMultipartPartPutCannotDowngradeBoundJournal(t *testing.T) {
+	ordinary := &mutationStore{}
+	journal := &partMutationJournal{}
+	if _, err := objectstorageactivity.DispatchMultipartPartPut(t.Context(), ordinary, journal, state.ObjectBucket{}, "session", 1, "token", state.ObjectMultipartPartPutIntent{}); !errors.Is(err, state.ErrConflict) || ordinary.active != 0 {
+		t.Fatal("bound PUT silently downgraded", err)
+	}
+	if err := objectstorageactivity.ObserveMultipartPartBody(t.Context(), journal, state.ObjectBucketMutation{MultipartPartWriterID: "writer"}, "digest"); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("missing body observer accepted", err)
+	}
+}
+
+type putMutationJournal struct {
+	partMutationJournal
+	observed bool
+}
+
+func (s *putMutationJournal) DispatchObjectMultipartPartPutMutation(ctx context.Context, b state.ObjectBucket, id string, part int32, token string, i state.ObjectMultipartPartPutIntent) (state.ObjectBucketMutation, error) {
+	return s.receipt, s.dispatchErr
+}
+func (s *putMutationJournal) ReadObjectMultipartPartPutIntent(ctx context.Context, r state.ObjectBucketMutation) (state.ObjectMultipartPartPutIntent, error) {
+	return state.ObjectMultipartPartPutIntent{}, nil
+}
+func (s *putMutationJournal) ObserveObjectMultipartPartBody(ctx context.Context, r state.ObjectBucketMutation, digest string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return errors.New("unbounded body observation")
+	}
+	s.observed = true
+	return nil
+}
+func TestMultipartPartPutActivityUsesActualJournalWithoutRetiringReceipt(t *testing.T) {
+	ordinary := &mutationStore{beginErr: state.ErrObjectBucketWriteFenced}
+	journal := &putMutationJournal{partMutationJournal: partMutationJournal{receipt: state.ObjectBucketMutation{ID: "original", MultipartPartWriterID: "original"}}}
+	r, err := objectstorageactivity.DispatchMultipartPartPut(t.Context(), ordinary, journal, state.ObjectBucket{}, "session", 1, "token", state.ObjectMultipartPartPutIntent{})
+	if err != nil || r.ID != "original" || ordinary.active != 0 {
+		t.Fatal("PUT used wrong journal", r, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err = objectstorageactivity.ObserveMultipartPartBody(ctx, journal, r, "digest"); err != nil || !journal.observed || journal.finished || ordinary.active != 0 {
+		t.Fatal("body observation lost evidence or retired receipt", err)
+	}
+	journal.dispatchErr = state.ErrConflict
+	if _, err = objectstorageactivity.DispatchMultipartPartPut(t.Context(), ordinary, journal, state.ObjectBucket{}, "session", 1, "token", state.ObjectMultipartPartPutIntent{}); !errors.Is(err, state.ErrConflict) || ordinary.active != 0 {
+		t.Fatal("rejected PUT claim fell back", err)
+	}
+}

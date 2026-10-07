@@ -109,9 +109,13 @@ func TestPgObjectMultipartPartWriterMigrationRoundTripLegacyAndBusyDown(t *testi
 		t.Fatal(err)
 	}
 	copyIntentParts := strings.SplitN(string(copyIntent), "-- +goose Down", 2)
+	putIntentParts := partPutMigrationParts(t)
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, putIntentParts[1]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(ctx, copyIntentParts[1]); err != nil {
@@ -126,12 +130,18 @@ func TestPgObjectMultipartPartWriterMigrationRoundTripLegacyAndBusyDown(t *testi
 	if _, err = tx.Exec(ctx, copyIntentParts[0]); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = tx.Exec(ctx, putIntentParts[0]); err != nil {
+		t.Fatal(err)
+	}
 	if err = tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
 	b, u := activeTrackedUpload(t, st, "legacy-part")
 	// Existing transfers predate the binding. Reinstalling may preserve them as
 	// uncertain evidence, but must never give them fresh dispatch ownership.
+	if _, err = pool.Exec(ctx, putIntentParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pool.Exec(ctx, copyIntentParts[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +159,9 @@ func TestPgObjectMultipartPartWriterMigrationRoundTripLegacyAndBusyDown(t *testi
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, copyIntentParts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, putIntentParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = st.DispatchObjectMultipartPartMutation(ctx, b, u.ID, 1, "legacy"); !errors.Is(err, state.ErrConflict) {

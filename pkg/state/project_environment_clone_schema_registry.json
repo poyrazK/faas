@@ -4658,6 +4658,7 @@
     "columns": [
       "backend_fingerprint",
       "backend_id",
+      "body_sha256",
       "bucket_id",
       "copy_intent",
       "dispatched",
@@ -4665,6 +4666,7 @@
       "managed",
       "part_number",
       "physical_name",
+      "put_intent",
       "settled",
       "transfer_token",
       "upload_id"

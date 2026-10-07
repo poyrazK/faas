@@ -62,8 +62,19 @@ func TestPgObjectMultipartPartCopyIntentRollbackRestartGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	parts := strings.SplitN(string(raw), "-- +goose Down", 2)
-	if _, err = pool.Exec(ctx, parts[1]); err == nil {
+	putIntentParts := partPutMigrationParts(t)
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, putIntentParts[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, parts[1]); err == nil {
 		t.Fatal("busy downgrade discarded intent")
+	}
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
 	}
 	if err = restarted.FinishObjectMultipartPartMutation(ctx, r); err != nil {
 		t.Fatal(err)
@@ -73,10 +84,16 @@ func TestPgObjectMultipartPartCopyIntentRollbackRestartGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err = tx.Exec(ctx, putIntentParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = tx.Exec(ctx, parts[1]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(ctx, parts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, putIntentParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	// Reinstallation cannot invent historical copy identity.

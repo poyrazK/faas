@@ -14,7 +14,7 @@ var _ ObjectMultipartPartCopyMutationStore = (*PgStore)(nil)
 var _ ObjectMultipartPartMutationStore = (*PgStore)(nil)
 
 func (s *PgStore) DispatchObjectMultipartPartMutation(ctx context.Context, b ObjectBucket, id string, part int32, token string) (ObjectBucketMutation, error) {
-	return s.dispatchMultipartPart(ctx, b, id, part, token, nil)
+	return s.dispatchMultipartPart(ctx, b, id, part, token, nil, nil)
 }
 
 func (s *PgStore) DispatchObjectMultipartPartCopyMutation(ctx context.Context, b ObjectBucket, id string, part int32, token string, intent ObjectMultipartPartCopyIntent) (ObjectBucketMutation, error) {
@@ -25,10 +25,10 @@ func (s *PgStore) DispatchObjectMultipartPartCopyMutation(ctx context.Context, b
 	if err != nil {
 		return ObjectBucketMutation{}, ErrConflict
 	}
-	return s.dispatchMultipartPart(ctx, b, id, part, token, data)
+	return s.dispatchMultipartPart(ctx, b, id, part, token, data, nil)
 }
 
-func (s *PgStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id string, part int32, token string, intent []byte) (ObjectBucketMutation, error) {
+func (s *PgStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id string, part int32, token string, intent, putIntent []byte) (ObjectBucketMutation, error) {
 	if !validObjectMutationBucket(b) || !validObjectMutationToken(id) || part < 1 || part > api.MaxMultipartParts || token == "" || len(token) > 128 {
 		return ObjectBucketMutation{}, ErrConflict
 	}
@@ -44,7 +44,7 @@ func (s *PgStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id 
 	if _, err = lockObjectMutationBucket(ctx, tx, b); err != nil {
 		return ObjectBucketMutation{}, err
 	}
-	d, err := q.ObjectMultipartPartWriterDispatch(ctx, tx, sqlc.ObjectMultipartPartWriterDispatchParams{CopyIntent: intent, UploadID: mustPgUUID(id), PartNumber: part, TransferToken: token, AccountID: mustPgUUID(b.AccountID), AppID: mustPgUUID(b.AppID), BucketID: mustPgUUID(b.ID), BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName})
+	d, err := q.ObjectMultipartPartWriterDispatch(ctx, tx, sqlc.ObjectMultipartPartWriterDispatchParams{CopyIntent: intent, PutIntent: putIntent, UploadID: mustPgUUID(id), PartNumber: part, TransferToken: token, AccountID: mustPgUUID(b.AccountID), AppID: mustPgUUID(b.AppID), BucketID: mustPgUUID(b.ID), BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ObjectBucketMutation{}, ErrConflict
 	}

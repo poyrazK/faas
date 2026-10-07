@@ -33,17 +33,17 @@ func (m *MemStore) reserveMultipartPartWriterLocked(id string, part int32, token
 }
 
 func (m *MemStore) DispatchObjectMultipartPartMutation(ctx context.Context, b ObjectBucket, id string, part int32, token string) (ObjectBucketMutation, error) {
-	return m.dispatchMultipartPart(ctx, b, id, part, token, nil)
+	return m.dispatchMultipartPart(ctx, b, id, part, token, nil, nil)
 }
 
 func (m *MemStore) DispatchObjectMultipartPartCopyMutation(ctx context.Context, b ObjectBucket, id string, part int32, token string, intent ObjectMultipartPartCopyIntent) (ObjectBucketMutation, error) {
 	if !validMultipartPartCopyIntent(intent) {
 		return ObjectBucketMutation{}, ErrConflict
 	}
-	return m.dispatchMultipartPart(ctx, b, id, part, token, &intent)
+	return m.dispatchMultipartPart(ctx, b, id, part, token, &intent, nil)
 }
 
-func (m *MemStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id string, part int32, token string, intent *ObjectMultipartPartCopyIntent) (ObjectBucketMutation, error) {
+func (m *MemStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id string, part int32, token string, intent *ObjectMultipartPartCopyIntent, putIntent *ObjectMultipartPartPutIntent) (ObjectBucketMutation, error) {
 	if err := ctx.Err(); err != nil {
 		return ObjectBucketMutation{}, err
 	}
@@ -63,6 +63,13 @@ func (m *MemStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id
 		}
 		value := *intent
 		d.copyIntent = &value
+	}
+	if putIntent != nil {
+		if u.Key != putIntent.DestinationKey || u.ProviderUploadID != putIntent.ProviderUploadID || !m.validMultipartPartPutSizeLocked(u, part, putIntent.ExpectedSize) || t.copySource.BucketID != "" {
+			return ObjectBucketMutation{}, ErrConflict
+		}
+		value := *putIntent
+		d.putIntent = &value
 	}
 	d.dispatched = true
 	m.objectMultipartPartWriters[key] = d
@@ -115,4 +122,11 @@ func (m *MemStore) ReadObjectMultipartPartCopyIntent(ctx context.Context, r Obje
 		}
 	}
 	return ObjectMultipartPartCopyIntent{}, ErrConflict
+}
+
+func (m *MemStore) validMultipartPartPutSizeLocked(u ObjectMultipartUpload, part int32, size int64) bool {
+	if u.PartCount > 0 {
+		return validFixedMultipartLayout(u) && part <= u.PartCount && size == min(u.PartSizeBytes, u.SizeBytes-int64(part-1)*u.PartSizeBytes)
+	}
+	return size <= m.objectMultipartPartGrants[u.ID][part]
 }
