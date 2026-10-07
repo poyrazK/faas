@@ -7,22 +7,25 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.worker_scaling_metric import WorkerScalingMetric, check_worker_scaling_metric
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="WorkerScaling")
 
 
 @_attrs_define
 class WorkerScaling:
-    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
 
     min_: int
     """Minimum worker instances to maintain. 0 enables scale-to-zero."""
     max_: int
     """Maximum worker instances (bounded by plan WorkerReplicasMax and app max_concurrency)."""
     metric: WorkerScalingMetric
-    """Queue metric driving autoscaling."""
+    """Queue or customer-pushed metric driving autoscaling."""
     target: float
-    """Target backlog per worker instance (e.g. 500 messages per worker)."""
+    """Target backlog per worker instance. Custom metric targets use the custom gauge's units."""
+    name: str | Unset = UNSET
+    """Required when metric is custom; the app-scoped custom gauge name."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -31,6 +34,8 @@ class WorkerScaling:
         max_ = self.max_
 
         metric: str = self.metric
+
+        name = self.name
 
         target = self.target
 
@@ -44,6 +49,8 @@ class WorkerScaling:
                 "target": target,
             }
         )
+        if not isinstance(name, Unset):
+            field_dict["name"] = name
 
         return field_dict
 
@@ -56,12 +63,15 @@ class WorkerScaling:
 
         metric = check_worker_scaling_metric(d.pop("metric"))
 
+        name = d.pop("name", UNSET)
+
         target = d.pop("target")
 
         worker_scaling = cls(
             min_=min_,
             max_=max_,
             metric=metric,
+            name=name,
             target=target,
         )
 

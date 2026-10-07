@@ -2150,7 +2150,7 @@ type Querier interface {
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)
 	ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error
 	ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
-	ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ObjectUsageBucketsRow, error)
+	ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error)
 	ObjectUsageGrant(ctx context.Context, db DBTX, arg ObjectUsageGrantParams) (int64, error)
 	ObjectUsageGrantIncrement(ctx context.Context, db DBTX, arg ObjectUsageGrantIncrementParams) error
 	ObjectUsageGrantUpsert(ctx context.Context, db DBTX, arg ObjectUsageGrantUpsertParams) error

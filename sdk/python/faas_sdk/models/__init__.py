@@ -1556,11 +1556,13 @@ from .object_storage_compute_binding import ObjectStorageComputeBinding
 from .object_storage_compute_binding_list import ObjectStorageComputeBindingList
 from .object_storage_compute_binding_secret_keys import ObjectStorageComputeBindingSecretKeys
 from .object_storage_policy import ObjectStoragePolicy
+from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
 from .object_storage_pricing import ObjectStoragePricing
 from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
 from .object_storage_usage_response_billing_mode import ObjectStorageUsageResponseBillingMode
+from .object_storage_usage_unavailable_meters_item import ObjectStorageUsageUnavailableMetersItem
 from .object_tagging_request import ObjectTaggingRequest
 from .object_tagging_request_tags import ObjectTaggingRequestTags
 from .object_tagging_result import ObjectTaggingResult
@@ -4304,11 +4306,13 @@ __all__ = (
     "ObjectStorageComputeBindingList",
     "ObjectStorageComputeBindingSecretKeys",
     "ObjectStoragePolicy",
+    "ObjectStoragePolicyAccountingMode",
     "ObjectStoragePricing",
     "ObjectStorageUsage",
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
     "ObjectStorageUsageResponseBillingMode",
+    "ObjectStorageUsageUnavailableMetersItem",
     "ObjectTaggingRequest",
     "ObjectTaggingRequestTags",
     "ObjectTaggingResult",

@@ -117,9 +117,8 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # Cold package loading exceeded eight minutes with bounded memory.
-    # Allow full lint, cold builds, nftables and all remaining policy gates
-    # to finish within a bounded job budget.
+    # Full cold-cache lint exceeded twenty minutes with bounded memory.
+    # Leave time for analysis, cold builds and the remaining policy gates.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7

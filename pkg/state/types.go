@@ -1669,6 +1669,7 @@ type WorkerScaling struct {
 	Min    int     `json:"min"`
 	Max    int     `json:"max"`
 	Metric string  `json:"metric,omitempty"`
+	Name   string  `json:"name,omitempty"`
 	Target float64 `json:"target,omitempty"`
 }
 

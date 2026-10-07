@@ -4807,9 +4807,12 @@ SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
 COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
 JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
-WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
+WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes,
+COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
+COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
-WHERE b.account_id = $1;
+LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = sqlc.arg(period_start)
+WHERE b.account_id = sqlc.arg(account_id);
 
 -- name: ObjectUsageGrant :one
 SELECT max_bytes FROM object_storage_key_grants WHERE bucket_id = $1 AND key_hash = $2;

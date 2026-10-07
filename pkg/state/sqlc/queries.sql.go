@@ -44722,10 +44722,18 @@ SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
 COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
 JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
-WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
+WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes,
+COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
+COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
-WHERE b.account_id = $1
+LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = $1
+WHERE b.account_id = $2
 `
+
+type ObjectUsageBucketsParams struct {
+	PeriodStart pgtype.Timestamptz
+	AccountID   pgtype.UUID
+}
 
 type ObjectUsageBucketsRow struct {
 	ID                             pgtype.UUID
@@ -44761,10 +44769,12 @@ type ObjectUsageBucketsRow struct {
 	Token                          pgtype.Text
 	InventoryScope                 pgtype.Text
 	MultipartBytes                 int64
+	GatewayRequestCount            int64
+	GatewayEgressBytes             int64
 }
 
-func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ObjectUsageBucketsRow, error) {
-	rows, err := db.Query(ctx, objectUsageBuckets, accountID)
+func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
+	rows, err := db.Query(ctx, objectUsageBuckets, arg.PeriodStart, arg.AccountID)
 	if err != nil {
 		return nil, err
 	}
@@ -44806,6 +44816,8 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgt
 			&i.Token,
 			&i.InventoryScope,
 			&i.MultipartBytes,
+			&i.GatewayRequestCount,
+			&i.GatewayEgressBytes,
 		); err != nil {
 			return nil, err
 		}

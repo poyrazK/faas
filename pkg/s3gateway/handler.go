@@ -96,6 +96,17 @@ func New(c Config) (*Handler, error) {
 	if c.Registry == nil || c.Store == nil || c.OpenSecret == nil {
 		return nil, errors.New("s3 gateway: registry, store and secret opener are required")
 	}
+	if c.Registry.Accounting.GatewaySafety() {
+		if c.RequestMetrics == nil {
+			c.RequestMetrics, _ = c.Store.(state.ObjectStorageProviderUsageStore)
+		}
+		if _, ok := c.RequestMetrics.(state.ObjectStorageGatewayEgressStore); !ok {
+			return nil, errors.New("s3 gateway: gateway safety accounting requires durable request and egress meters")
+		}
+		if _, ok := c.RequestMetrics.(state.ObjectStorageGatewayRequestStore); !ok {
+			return nil, errors.New("s3 gateway: gateway safety accounting requires atomic request admission")
+		}
+	}
 	if c.Host == "" {
 		endpoint, err := url.Parse(c.Registry.PublicEndpoint)
 		if err != nil {
@@ -142,6 +153,7 @@ func New(c Config) (*Handler, error) {
 	}
 	if c.HTTPClient == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DisableCompression = true
 		transport.ResponseHeaderTimeout = 30 * time.Second
 		transport.ExpectContinueTimeout = 5 * time.Second
 		c.HTTPClient = &http.Client{Transport: transport, Timeout: c.Registry.TransferTimeout(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -924,6 +936,13 @@ func (h *Handler) recordProviderRequest(w http.ResponseWriter, r *http.Request, 
 		// startup when the configured store lacks this capability.
 		return true
 	}
+	if h.registry.Accounting.GatewaySafety() && r.Method != http.MethodDelete {
+		metrics, ok := h.requestMetrics.(state.ObjectStorageGatewayRequestStore)
+		if !ok {
+			return h.writeAdmissionError(w, r, req, state.ErrObjectUsageStale)
+		}
+		return h.writeAdmissionError(w, r, req, metrics.ReserveObjectStorageGatewayRequest(r.Context(), req.bucket.ID, h.now().UTC(), h.registry.Accounting))
+	}
 	if err := h.requestMetrics.RecordObjectStorageProviderRequest(r.Context(), req.bucket.ID, h.now().UTC()); err != nil {
 		h.log.Warn("S3 provider request metric write failed", "request_id", req.requestID)
 		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not record object storage usage.", r.URL.Path, req.requestID)
@@ -1066,11 +1085,25 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 		h.providerError(w, r, req, err, key)
 		return
 	}
+	if r.Method == http.MethodGet && h.registry.Accounting.GatewaySafety() {
+		if !h.writeAdmissionError(w, r, req, objectstorage.ReserveGatewayRead(r.Context(), h.requestMetrics, req.bucket.ID, response, h.registry.Accounting, h.now().UTC())) {
+			return
+		}
+	}
 	copyObjectHeaders(w.Header(), response.Header)
 	setURLDownloadHeaders(w.Header(), r, req)
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {
-		_, _ = io.Copy(w, response.Body)
+		body := io.Reader(response.Body)
+		if h.registry.Accounting.GatewaySafety() {
+			body = io.LimitReader(body, response.ContentLength)
+		}
+		n, _ := io.Copy(w, body)
+		if !h.registry.Accounting.GatewaySafety() {
+			if err := objectstorage.RecordDeliveredEgress(r.Context(), h.requestMetrics, req.bucket.ID, n, h.now().UTC()); err != nil {
+				h.log.Warn("S3 egress metric write failed", "request_id", req.requestID)
+			}
+		}
 	}
 }
