@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|queues|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -72,6 +72,10 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentRoutes(args[1:])
 	case "policies":
 		return cmdProjectsEnvironmentPolicies(args[1:])
+	case "queues":
+		return cmdProjectsEnvironmentQueues(args[1:])
+	case "gitops":
+		return cmdProjectsEnvironmentGitOps(args[1:])
 	case "diff":
 		return cmdProjectsEnvironmentConfigDiff(args[1:])
 	case "preview", "promotion-preview":
@@ -541,7 +545,7 @@ func secretCellSummary(cell api.ProjectEnvironmentSecretCellResponse) string {
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key", "wait", "progress", "sync-config")
+	flags, positional := splitArgsForFlags(args, "yes", "wait", "progress", "sync-config")
 	fs := newFlagSet("projects-environments-promote", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
@@ -550,7 +554,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	wait := fs.Bool("wait", false, "wait for the promotion to reach a terminal status")
 	progress := fs.Bool("progress", false, "print promotion transitions while waiting (human output only)")
 	syncConfig := fs.Bool("sync-config", false, "copy source non-secret environment configuration to the target")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for promotion completion")
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for promotion completion")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
 		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout SECONDS]", "projects environments")
 		return 1
@@ -691,7 +695,7 @@ func cmdProjectsEnvironmentPromotionStatus(args []string) int {
 }
 
 func cmdProjectsEnvironmentPromotionRollback(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key")
+	flags, positional := splitArgsForFlags(args, "yes")
 	fs := newFlagSet("projects-environments-rollback", flag.ContinueOnError)
 	to := fs.String("to", "", "target environment")
 	yes := fs.Bool("yes", false, "confirm the rollback")
@@ -834,7 +838,7 @@ func cmdProjectsEnvironmentsList(args []string) int {
 }
 
 func cmdProjectsEnvironmentCreate(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "protected", "share-resources")
 	fs := newFlagSet("projects-environments-create", flag.ContinueOnError)
 	protected := fs.Bool("protected", false, "protect the environment from promotion")
 	from := fs.String("from", "", "source environment to clone")
@@ -891,9 +895,9 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  protected: %t\n  updated: %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
 	if environment.Clone != nil {
-		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d routes=%d policies=%d\n  shared: %s\n",
+		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d secret references=%d workloads=%d bindings=%d routes=%d policies=%d\n  shared: %s\n",
 			environment.ClonedFrom, environment.Clone.ConfigurationCopied, environment.Clone.VariablesCopied,
-			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, environment.Clone.BindingsCopied, environment.Clone.RoutesCopied, environment.Clone.PoliciesCopied,
+			environment.Clone.SecretsCopied, environment.Clone.SecretReferencesCopied, environment.Clone.WorkloadsCopied, environment.Clone.BindingsCopied, environment.Clone.RoutesCopied, environment.Clone.PoliciesCopied,
 			strings.Join(environment.Clone.SharedResources, ", "))
 		if strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "managed_postgres_data") ||
 			strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "object_storage_bucket_data") {

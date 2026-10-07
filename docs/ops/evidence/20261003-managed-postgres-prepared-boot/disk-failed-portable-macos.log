@@ -1,0 +1,54 @@
+github.com/segmentio/kafka-go/protocol/offsetfetch: mkdir /tmp/mpb-d4841725/go-build551893577/b1130/: no space left on device
+# github.com/segmentio/kafka-go/protocol/produce
+compile: writing output: write $WORK/b1131/_pkg_.a: no space left on device
+github.com/segmentio/kafka-go/protocol/saslauthenticate: mkdir /tmp/mpb-d4841725/go-build551893577/b1133/: no space left on device
+github.com/segmentio/kafka-go/protocol/saslhandshake: open /tmp/mpb-d4841725/go-build551893577/b1134/importcfg: no space left on device
+github.com/segmentio/kafka-go/protocol/syncgroup: mkdir /tmp/mpb-d4841725/go-build551893577/b1135/: no space left on device
+github.com/segmentio/kafka-go/protocol/txnoffsetcommit: mkdir /tmp/mpb-d4841725/go-build551893577/b1136/: no space left on device
+github.com/segmentio/kafka-go/sasl: mkdir /tmp/mpb-d4841725/go-build551893577/b1137/: no space left on device
+github.com/xdg-go/pbkdf2: mkdir /tmp/mpb-d4841725/go-build551893577/b1141/: no space left on device
+github.com/xdg-go/stringprep: mkdir /tmp/mpb-d4841725/go-build551893577/b1142/: no space left on device
+github.com/onebox-faas/faas/pkg/secretscan: mkdir /tmp/mpb-d4841725/go-build551893577/b1143/: no space left on device
+github.com/kylelemons/godebug/diff: mkdir /tmp/mpb-d4841725/go-build551893577/b1145/: no space left on device
+github.com/prometheus/client_golang/prometheus/testutil/promlint/validations: mkdir /tmp/mpb-d4841725/go-build551893577/b1147/: no space left on device
+github.com/onebox-faas/faas/pkg/api/canary: open /tmp/mpb-d4841725/go-build551893577/b149/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/cronexpr: open /tmp/mpb-d4841725/go-build551893577/b150/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/safetext: open /tmp/mpb-d4841725/go-build551893577/b214/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/redact: open /tmp/mpb-d4841725/go-build551893577/b213/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/devbridge: open /tmp/mpb-d4841725/go-build551893577/b155/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/productcap: open /tmp/mpb-d4841725/go-build551893577/b226/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/reqbudget: open /tmp/mpb-d4841725/go-build551893577/b228/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/sourcecontext: open /tmp/mpb-d4841725/go-build551893577/b276/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/statefuldenylist: open /tmp/mpb-d4841725/go-build551893577/b277/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/workpolicy: open /tmp/mpb-d4841725/go-build551893577/b278/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/api: open /tmp/mpb-d4841725/go-build551893577/b135/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/jobresult: open /tmp/mpb-d4841725/go-build551893577/b287/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/apptaskproto: open /tmp/mpb-d4841725/go-build551893577/b286/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/cursor: open /tmp/mpb-d4841725/go-build551893577/b320/vet.cfg: no space left on device
+github.com/onebox-faas/faas/migrations: open /tmp/mpb-d4841725/go-build551893577/b323/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/db: open /tmp/mpb-d4841725/go-build551893577/b321/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/dispatch: open /tmp/mpb-d4841725/go-build551893577/b341/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/jsonschemautil: open /tmp/mpb-d4841725/go-build551893577/b343/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/lruutil: open /tmp/mpb-d4841725/go-build551893577/b351/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/edgevalidate: open /tmp/mpb-d4841725/go-build551893577/b342/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/flags: open /tmp/mpb-d4841725/go-build551893577/b355/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/hostport: open /tmp/mpb-d4841725/go-build551893577/b356/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/issues: open /tmp/mpb-d4841725/go-build551893577/b357/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/networkip: open /tmp/mpb-d4841725/go-build551893577/b447/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/outbound/routepolicy: open /tmp/mpb-d4841725/go-build551893577/b448/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/previewset: open /tmp/mpb-d4841725/go-build551893577/b449/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/publicstatus: open /tmp/mpb-d4841725/go-build551893577/b450/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/servicecaller: open /tmp/mpb-d4841725/go-build551893577/b451/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/state/sqlc: open /tmp/mpb-d4841725/go-build551893577/b456/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/state: open /tmp/mpb-d4841725/go-build551893577/b289/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/events: open /tmp/mpb-d4841725/go-build551893577/b288/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/executionproto: open /tmp/mpb-d4841725/go-build551893577/b457/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/extension: open /tmp/mpb-d4841725/go-build551893577/b458/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/fcvm/logbuf: open /tmp/mpb-d4841725/go-build551893577/b459/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/frameworkready: open /tmp/mpb-d4841725/go-build551893577/b460/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/netns: open /tmp/mpb-d4841725/go-build551893577/b461/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/privatenetwork: open /tmp/mpb-d4841725/go-build551893577/b462/vet.cfg: no space left on device
+github.com/onebox-faas/faas/pkg/secretbox: open /tmp/mpb-d4841725/go-build551893577/b463/vet.cfg: no space left on device
+FAIL	github.com/onebox-faas/faas/pkg/fcvm [build failed]
+FAIL	github.com/onebox-faas/faas/cmd/vmmd [build failed]
+FAIL

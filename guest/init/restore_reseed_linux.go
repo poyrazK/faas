@@ -17,7 +17,7 @@ import (
 var activeRestoreReseedBarrier atomic.Pointer[restoreReseedBarrier]
 
 // startRestoreReseedServer materializes the preloads and binds the reseed
-// socket (ADR-481). It must run after pivot_root, where the workload sees the
+// socket (ADR-680). It must run after pivot_root, where the workload sees the
 // same /run/guest-init, and before the workload starts, because env stamping
 // only injects the preloads once they exist.
 func startRestoreReseedServer(log *slog.Logger, uid int) error {
@@ -63,7 +63,7 @@ func reseedRestoredWorkloads() error {
 }
 
 // restoreReseedContractHolds reports whether this guest may advertise the
-// ADR-481 capability after a successful resume. An app guest holds it only
+// ADR-680 capability after a successful resume. An app guest holds it only
 // when its barrier started (otherwise its Node and Python processes carry
 // no preload). A warm builder holds it trivially: it runs no workload
 // process across the snapshot, and each build's processes start after the

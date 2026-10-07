@@ -1680,7 +1680,7 @@ func handleFakeVsockHook(t *testing.T, c net.Conn, ack byte, onHook func(hostTim
 const ackOK = byte(0)
 
 // fakeGuestAckFrame models a current guest-init: an OK ack is followed by
-// the ADR-481 userspace reseed capability byte.
+// the ADR-680 userspace reseed capability byte.
 func fakeGuestAckFrame(ack byte) []byte {
 	if ack == ackOK {
 		return []byte{ack, resumeCapUserspaceReseed}
@@ -1689,7 +1689,7 @@ func fakeGuestAckFrame(ack byte) []byte {
 }
 
 // TestTriggerResumeHookRefusesGuestWithoutReseedBarrier: a guest-init that
-// predates ADR-481 acks OK and closes. Its processes may replay the
+// predates ADR-680 acks OK and closes. Its processes may replay the
 // snapshot's random state, so the restore must be refused (the manager then
 // cold-boots) and the resume must not be re-sent by the transport retry.
 func TestTriggerResumeHookRefusesGuestWithoutReseedBarrier(t *testing.T) {
@@ -1732,7 +1732,7 @@ func TestTriggerResumeHookRefusesGuestWithoutReseedBarrier(t *testing.T) {
 }
 
 // oneByteAckConn drops everything after the first byte of the final ack
-// frame, which is what a pre-ADR-481 guest-init writes.
+// frame, which is what a pre-ADR-680 guest-init writes.
 type oneByteAckConn struct {
 	net.Conn
 }
@@ -2002,7 +2002,9 @@ func TestRestore_MaterializesBaseViaStorage(t *testing.T) {
 	// Asserting on its result here would couple to the kill semantics;
 	// instead, exercise sweepMaterialised directly so the test is
 	// focused on the storage seam.
-	v.sweepMaterialised("i-base")
+	if err := v.sweepMaterialised("i-base"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
 		t.Errorf("sweepMaterialised did not remove tmp %q: stat err=%v (trackMaterialised/sweepMaterialised must keep tmp files accounted for)", tmp, err)
 	}
@@ -2086,7 +2088,9 @@ func TestRestoreMemSource_OCIUsesStorageKey(t *testing.T) {
 	if timing.Bytes != int64(len(mem)) {
 		t.Errorf("bytes = %d, want %d", timing.Bytes, len(mem))
 	}
-	v.sweepMaterialised("i-oci")
+	if err := v.sweepMaterialised("i-oci"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestBoot_MaterializesKernelViaStorage pins the cold-boot leg

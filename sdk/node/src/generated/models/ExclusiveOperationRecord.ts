@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationEffectRecord } from './OperationEffectRecord.js';
 /**
  * Public receipt. Accepted request contents, claim tokens, and renewal credentials are never returned.
  */
@@ -23,6 +24,7 @@ export type ExclusiveOperationRecord = {
    * Platform-committed invocation result; arbitrary JSON value.
    */
   result?: any;
+  effects?: Array<OperationEffectRecord>;
   last_error?: string;
   created_at: string;
   completed_at?: string;

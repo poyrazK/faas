@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/routehealth"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -18,7 +19,7 @@ func TestRouteLatencyAPIConfigurationAndUnavailableEvidence(t *testing.T) {
 		t.Helper()
 		rec := e.do(t, "PUT", path, req, nil)
 		var gate api.RouteHealthGate
-		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &gate) != nil || len(gate.Routes) != 1 || gate.Routes[0] != req.Routes[0] || gate.UpdatedAt == nil {
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &gate) != nil || !routehealth.RoutesEqual(gate.Routes, req.Routes) || gate.UpdatedAt == nil {
 			t.Fatalf("latency configuration: %d %s", rec.Code, rec.Body)
 		}
 		return gate

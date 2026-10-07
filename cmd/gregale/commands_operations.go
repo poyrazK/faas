@@ -288,7 +288,7 @@ func cmdOperationBindTrigger(args []string) int {
 	key := fs.String("key", "", "JSON scalar business coordination key")
 	tenant := fs.String("tenant", "", "account-authorized platform tenant ID for a tenant-scoped policy")
 	equivalence := fs.String("equivalence-key", "", "equivalent request identity for join_existing policies")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 2 || *policy == "" || *key == "" || !json.Valid([]byte(*key)) {
@@ -324,7 +324,7 @@ func cmdOperationBindTrigger(args []string) int {
 
 func cmdOperationUnbindTrigger(args []string) int {
 	fs := newFlagSet("operations unbind-trigger", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 2 {
@@ -378,7 +378,7 @@ func cmdOperationPolicy(args []string) int {
 	case "upsert":
 		fs := newFlagSet("operations policy upsert", flag.ContinueOnError)
 		policyFile := fs.String("file", "", "JSON file containing the policy")
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parseInterspersed(fs, args[1:]); err != nil {
 			return 1
 		}
 		if fs.NArg() != 1 || *policyFile == "" {
@@ -419,7 +419,7 @@ func cmdOperationPolicy(args []string) int {
 
 func cmdOperationPolicyRetire(args []string) int {
 	fs := newFlagSet("operations policy retire", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
+	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale operations policy retire <name>", "operations")
 		return 1
 	}
@@ -449,7 +449,7 @@ func cmdOperationStart(args []string) int {
 	payload := fs.String("payload", "{}", "JSON request body")
 	method := fs.String("method", http.MethodPost, "HTTP method delivered to the app")
 	path := fs.String("path", "/", "app route")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 || *policy == "" || *key == "" || !json.Valid([]byte(*key)) || !json.Valid([]byte(*payload)) || (*self && *tenant != "") {
@@ -505,7 +505,7 @@ func cmdOperationStartJob(args []string) int {
 	requestKey := fs.String("idempotency-key", "", "stable request retry key")
 	tasks := fs.Int("tasks", 1, "number of Job tasks when --run-file is omitted")
 	runFile := fs.String("run-file", "", "JSON CreateJobRunRequest to submit")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 || *policy == "" || *key == "" || !json.Valid([]byte(*key)) || *tasks < 1 || *tasks > 5000 {
@@ -566,7 +566,7 @@ func cmdOperationStartJob(args []string) int {
 func cmdOperationGet(args []string) int {
 	fs := newFlagSet("operations get", flag.ContinueOnError)
 	self := fs.Bool("self", false, "use the authenticated platform-customer scope")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
@@ -605,6 +605,13 @@ func cmdOperationGet(args []string) int {
 	if len(row.Result) > 0 {
 		_, _ = fmt.Fprintf(os.Stdout, "Result: %s\n", row.Result)
 	}
+	for _, effect := range row.Effects {
+		if effect.DeliveryID == "" {
+			_, _ = fmt.Fprintf(os.Stdout, "Effect %s: %s\n", effect.Name, effect.Status)
+			continue
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "Effect %s: %s (delivery %s, attempt %d)\n", effect.Name, effect.Status, effect.DeliveryID, effect.Attempt)
+	}
 	return 0
 }
 
@@ -613,7 +620,7 @@ func cmdOperationWait(args []string) int {
 	timeout := fs.Duration("timeout", 0, "stop waiting after this duration")
 	interval := fs.Duration("interval", time.Second, "poll interval")
 	self := fs.Bool("self", false, "use the authenticated platform-customer scope")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 || *timeout < 0 || *interval <= 0 {
@@ -664,7 +671,7 @@ func cmdOperationWait(args []string) int {
 func cmdOperationCancel(args []string) int {
 	fs := newFlagSet("operations cancel", flag.ContinueOnError)
 	self := fs.Bool("self", false, "use the authenticated platform-customer scope")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {

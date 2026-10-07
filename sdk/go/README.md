@@ -144,6 +144,19 @@ For long-lived consumers, call `c.WatchExecution` directly and repeatedly
 call `Next`. `Cursor` exposes the latest replay position for checkpointing;
 `Close` is idempotent and releases the active stream.
 
+## Transactional operation handlers
+
+For managed HTTP operations, use `OperationRequestFromHTTP(r, originalBody)` and
+`WithOperationTransaction(ctx, db, operation, callback)`. The callback receives an
+`OperationSQLTransaction` and returns an `OperationOutcome`. The wrapper commits
+business writes and the result/webhook intent together; retries return the saved
+body without repeating committed writes.
+
+Install `OperationReceiptSchema` explicitly as the database owner and send
+`response.Body` unchanged as `application/json`. `response.Replayed` reports
+recovery. See the [transactional handler guide](../../docs/operation-transactions.md)
+for scope checks, receipt retention, and `ErrOperationCommitUnknown` handling.
+
 ## Idempotency
 
 Every mutating call (POST/PATCH/DELETE) carries an `Idempotency-Key`
@@ -285,3 +298,61 @@ home for the wire DTOs.
 - OpenAPI spec: `../../api/openapi.yaml` (canonical), `../../pkg/apid/openapi.yaml` (embedded).
 - ADR-038 (issue #266): documents the split contract between the SDK and the daemon.
 - PR plan: `/.claude/plans/lets-create-imp-plan-bubbly-engelbart.md` (the 14-PR sequence).
+
+## Object lifecycle
+
+The public client exposes `GetObjectBucketLifecycle`,
+`PutObjectBucketLifecycle`, `DeleteObjectBucketLifecycle`,
+`CreateObjectLifecycleScan` and `GetObjectLifecycleScan`. Requests and responses
+use exported `faas.ObjectLifecycle*` and `faas.ObjectBucketLifecycle*` types.
+Configuration requires storage manage scope and a bucket write grant.
+
+```go
+days := int32(7)
+policy, err := c.PutObjectBucketLifecycle(ctx, "demo", bucketID,
+    faas.ObjectBucketLifecycleRequest{Rules: []faas.ObjectLifecycleRule{{
+        ID: "temporary", Status: "Enabled",
+        Filter: faas.ObjectLifecycleFilter{Prefix: "tmp/"},
+        AbortIncompleteMultipartDays: &days,
+    }}},
+)
+```
+
+A replacement must contain at least one rule; use DELETE to clear it. Starting
+or resuming a due scan returns its durable ID. A completed scan means discovery
+finished; admitted cleanup can still be retrying. Removing rules preserves that
+cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules-and-discovery).
+## Internal HTTP Operations preview
+
+Operations is staged; production admission remains disabled. The typed client
+includes `StartPlatformTenantSelfOperation`, status, cancellation, event pages
+and resumable streams. Submission requires a caller-owned stable idempotency key.
+`DownloadPlatformTenantSelfOperationArtifact` and `DownloadOperationArtifact`
+verify the retained length and SHA-256 and reject credential-bearing redirects.
+Account `RecoverOperation` requires the current generation and recovery evidence.
+
+HTTP runtimes can call `ReportOperationProgress` and `AttachOperationArtifact`
+with a fresh workload bearer and the invocation's `OperationRuntimeProof`.
+The proof redacts its capability from formatted output and JSON. Do not persist
+or share it between requests. See [Operations](../../docs/operations.md).
+
+Completion delivery inspection, attempt history, and immutable retry decisions
+are exposed through the Operations APIs (`getOperationDelivery`,
+`getOperationDeliveryAttempts`, `retryOperationDeliveryWithReceipt`; PascalCase
+in Go and snake_case Python modules). New retries carry `retry_id`, `delivery_id`
+and an explicit `expected_replay_generation`, including zero. Reuse the same
+request after an uncertain reply; the returned `queued` receipt describes the
+original decision. Read delivery status separately. Business results and
+execution generations are unaffected. The legacy retry method remains available.
+
+
+## Object version protection
+
+The Storage API supports typed retention/legal-hold reads and mutations, plus
+protection operation inspection. Use an explicit owned public version UUIDv4
+(or `null` in an eligible Object Lock bucket). Mutations require a stable UUIDv4
+operation ID and return a durable receipt; retain the returned ID for retries
+and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
+holds are supported. Event-hold changes and governance bypass are unsupported.
+See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+for enrollment, pending-operation fences and recovery behavior.

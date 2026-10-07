@@ -45,7 +45,7 @@ func TestPlatformTenantInvocationSelfService(t *testing.T) {
 	enqueue := func(tenant string) state.Invocation {
 		t.Helper()
 		inv, err := e.store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: e.acct.ID, PlatformTenantID: tenant,
-			Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/documents", Headers: []byte(`{"Secret":"private"}`), Payload: []byte(`{"secret":"private"}`), DueAt: time.Now()})
+			DeploymentScope: "staging", Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/documents", Headers: []byte(`{"Secret":"private"}`), Payload: []byte(`{"secret":"private"}`), DueAt: time.Now()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,7 +103,7 @@ func TestPlatformTenantInvocationSelfService(t *testing.T) {
 	// The same key on the same path cannot expose Alice's cached acceptance.
 	call("POST", path+"/replay", bob.token, http.StatusNotFound)
 	replay, err := e.store.InvocationByID(ctx, accepted.ID)
-	if err != nil || replay.PlatformTenantID != alice.tenant.ID || replay.Attempts != 0 {
+	if err != nil || replay.PlatformTenantID != alice.tenant.ID || replay.Attempts != 0 || replay.DeploymentScope != "staging" || replay.ReplayedFromInvocationID != inv.ID || replay.ReplayRootInvocationID != inv.ID {
 		t.Fatalf("replay identity: %+v %v", replay, err)
 	}
 	call("POST", accepted.StatusURL+"/cancel", alice.token, http.StatusOK)
@@ -112,7 +112,8 @@ func TestPlatformTenantInvocationSelfService(t *testing.T) {
 	if cancelled.State != state.InvocationCancelled || cancelled.PlatformTenantID != alice.tenant.ID {
 		t.Fatalf("cancelled tenant work: %+v", cancelled)
 	}
-	ownerReplay := e.do(t, "POST", "/v1/invocations/"+inv.ID+"/replay", nil, nil)
+	tenantReplayID := accepted.ID
+	ownerReplay := e.do(t, "POST", "/v1/invocations/"+inv.ID+"/replay", nil, map[string]string{"Idempotency-Key": "owner-different-key"})
 	if ownerReplay.Code != http.StatusAccepted {
 		t.Fatalf("owner replay: %d %s", ownerReplay.Code, ownerReplay.Body)
 	}
@@ -120,7 +121,7 @@ func TestPlatformTenantInvocationSelfService(t *testing.T) {
 		t.Fatal(err)
 	}
 	replay, _ = e.store.InvocationByID(ctx, accepted.ID)
-	if replay.PlatformTenantID != alice.tenant.ID {
+	if replay.PlatformTenantID != alice.tenant.ID || replay.ID != tenantReplayID {
 		t.Fatal("owner replay dropped tenant identity")
 	}
 }

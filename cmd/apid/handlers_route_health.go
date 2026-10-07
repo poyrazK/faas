@@ -56,6 +56,11 @@ func (s *server) putRouteHealthGate(w http.ResponseWriter, r *http.Request, acct
 	writeJSON(w, http.StatusOK, gate)
 }
 func (s *server) getRouteHealthReport(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	opts, err := routeCustomerHealthOptions(r)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	id, err := uuid.Parse(r.PathValue("deployment"))
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation("deployment must be a UUID"))
@@ -65,7 +70,7 @@ func (s *server) getRouteHealthReport(w http.ResponseWriter, r *http.Request, ac
 	if !ok {
 		return
 	}
-	report, err := store.GetRouteHealthReport(r.Context(), acct.ID, app.ID, id.String())
+	report, err := s.readRouteHealthReport(r.Context(), store, acct.ID, app.ID, id.String(), opts)
 	if err != nil {
 		s.routeHealthError(w, err)
 		return

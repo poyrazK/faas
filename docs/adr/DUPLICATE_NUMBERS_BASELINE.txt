@@ -1,6 +1,6 @@
 # Frozen baseline of ADR numbers that are already duplicated on main.
 #
-# docs/adr/ carries 489 numbered files under 378 distinct numbers, with 72
+# docs/adr/ carries 671 numbered files under 558 distinct numbers, with 75
 # duplicated numbers, because concurrent PRs each pick "the next number" and
 # whichever merges second keeps it.
 # scripts/ci/check_adr_number_uniqueness.sh fails on any number duplicated
@@ -23,7 +23,10 @@
 # reads, plus metric help strings and runbooks — ADR-190 alone had 67
 # references. Renumbering is its own PR, one ADR at a time.
 #
-# Generated 2026-10-01 from main @ 74d34ba57.
+# Generated 2026-10-06 from main @ 564e1d26c0.
+# ADR-493 independently duplicated on merged main @ c86bdbc7c (2026-10-03).
+# ADR-606 through ADR-609 independently duplicated across merged main PRs
+# #4257 and #4259 (2026-10-06).
 021
 022
 031

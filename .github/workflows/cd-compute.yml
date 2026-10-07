@@ -705,7 +705,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ inputs.release_tag }}
-          fetch-depth: 0
+          # Only the tag's tree and the tag ref are used (git rev-list -n1 on
+          # the tag below); full history cost 20-35 s per rollout job.
+          fetch-depth: 1
 
       - id: fleet_bundle_auth
         name: Authenticate fleet bundle reader with GitHub OIDC
@@ -717,6 +719,24 @@ jobs:
           service_account: ${{ env.GCP_FLEET_BUNDLE_READER_SERVICE_ACCOUNT }}
           token_format: access_token
           access_token_scopes: https://www.googleapis.com/auth/devstorage.read_only
+
+      - name: Install pinned Ansible toolchain
+        # The fleet runner's apt ansible-core (2.16) and collections are not
+        # what CI lints and tests. Use the same ansible-core pin as ci.yml and
+        # cd-controlplane, in a per-job venv (the runner's interpreter is
+        # externally managed, PEP 668), and only the collection versions
+        # deploy/ansible/requirements.yml pins.
+        # Cached across jobs on the long-lived fleet runner (keyed by this pin
+        # and requirements.yml); a fresh venv plus Galaxy download per job cost
+        # 25-60 s, four or more times per rollout.
+        run: |
+          set -euo pipefail
+          toolchain="$(scripts/ci/ensure-ansible-toolchain.sh 'ansible-core==2.21.2' deploy/ansible/requirements.yml)"
+          venv_bin="$(sed -n 's/^ANSIBLE_VENV_BIN=//p' <<<"$toolchain")"
+          collections="$(sed -n 's/^ANSIBLE_COLLECTIONS_PATH=//p' <<<"$toolchain")"
+          [[ -x "$venv_bin/ansible-playbook" && -d "$collections" ]]
+          echo "$venv_bin" >> "$GITHUB_PATH"
+          echo "ANSIBLE_COLLECTIONS_PATH=$collections" >> "$GITHUB_ENV"
 
       - name: Check fleet runner prerequisites
         run: |

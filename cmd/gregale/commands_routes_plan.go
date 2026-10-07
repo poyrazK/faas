@@ -19,6 +19,8 @@ import (
 func cmdRoutes(args []string) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "monitor":
+			return cmdRoutesMonitor(args[1:])
 		case "health":
 			return cmdRoutesHealth(args[1:])
 		case "gate":
@@ -35,9 +37,13 @@ func cmdRoutes(args []string) int {
 			return cmdRoutesApply(args[1:])
 		case "impact":
 			return cmdRoutesImpact(args[1:])
+		case "contract":
+			return cmdRoutesContract(args[1:])
+		case "lifecycle":
+			return cmdRoutesLifecycle(args[1:])
 		}
 	}
-	PrintUsage(osStderr, "usage: gregale routes <requirements|gate|health|check|results|plan|apply|impact> [slug] [flags]", "cli")
+	PrintUsage(osStderr, "usage: gregale routes <requirements|gate|health|monitor|check|results|plan|apply|impact|contract|lifecycle> [slug] [flags]", "cli")
 	return 1
 }
 

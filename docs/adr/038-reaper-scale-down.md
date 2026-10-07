@@ -203,3 +203,68 @@ expensive to miss if a regression lands — the same pattern as
 - Live smoke: `curl http://localhost:8080/metrics | grep
   schedd_scale_down_decisions_total` shows `outcome="park"` and
   `outcome="keep"` rows after the box has run a scale-down cycle.
+
+## Amendment (2026-10-04): in-flight demand bounds scale-in
+
+The completion-and-start rate can read zero while demand is at its
+peak. On production-us a 200-client surge against a 4-instance Scale
+app stalled: the local gateway completed nothing for 15 s and vmmd saw
+no new request starts. The mirror reported `desired=0`, and the reaper
+parked three of the four instances over the next 60 s, while the
+gateway's burst admission was asking schedd for more capacity
+(`capacity_exhausted`). A closed-loop client also stops *arriving* while
+it waits, so no rate signal can see this demand. Only in-flight counts
+can.
+
+`desired` is now
+`max(ceil(windowed_rps / autoscale_target_rps), ceil(inflight / per_vm))`.
+The terms are:
+
+- `per_vm` is the plan's `ConcurrencyPerVMBound`, the same per-instance
+  slot bound the gateway enforces.
+- `inflight` is the larger of two counts:
+  - the local gateway's `gateway_app_inflight_requests{app}`, the
+    window peak. It counts requests that passed the edge rate limits
+    and have not completed, scraped from `/metrics/gateway-requests`
+    beside `gateway_requests_total`.
+  - the sum of vmmd's per-instance in-flight requests across the app's
+    running instances, from the owner's fleet stats.
+
+Each count is a lower bound on demand: the gateway count misses the
+other gateways, and the vmmd count misses requests that haven't been
+forwarded yet. Taking the larger keeps scale-in conservative. A fresh
+zero in-flight reading still lets a real drop park down to the `+1`
+buffer. A missing in-flight scrape leaves the rate-only behaviour
+unchanged, and an absent rate signal still defers to `ReapIdle`.
+
+Verification: `TestLoopReaperAggressiveHoldsForGatewayInflight`,
+`TestLoopReaperAggressiveCountsVMMDInflight`,
+`TestLoopReaperAggressiveIdleGatewayStillScalesDown`
+(`pkg/sched/loop_reaper_inflight_test.go`); the
+`TestRecentLoad_Inflight*` mirror tests; `TestHTTPPromScraper_ScrapeLoad`;
+and `TestHandlerReportsAppInflightWhileUpstreamIsSlow` in `pkg/gateway`.
+
+## Amendment 2026-10-07 — fleet-wide request rate (production-us hunt #4, H4-70)
+
+An app's home schedd decides scale-in from its local gateway's completions,
+that gateway's in-flight gauge, and its local vmmd's in-flight count. A
+gatewayd-internal forwards to instances on every node, so the home node can
+see almost no traffic for an app that is busy through another node's gateway.
+
+On production-us a 50–106 rps closed-loop load on a 4-instance app
+(`h4-edge`, target 50 rps per instance) read `desired=0` (or 1) and parked
+three instances at a time, five times in seven minutes. Every park was
+followed by a cold start, and the run also logged
+`scale.decision ... capacity_exhausted`.
+
+`instances.request_count` is bumped by whichever gateway served the request
+(ReportActivity batches every 250 ms). The reaper now remembers each running
+instance's count between ticks. The sum of the rates over an app's instances
+is the app's fleet-wide demand. Scale-in takes the largest of three counts:
+- the rate-derived count;
+- the in-flight count;
+- `ceil(fleet_rps / autoscale_target_rps)`.
+
+An instance contributes only from its second sample, so a reaper restart is
+"no signal", never zero demand. A counter that goes backwards (a replaced
+row) contributes nothing.

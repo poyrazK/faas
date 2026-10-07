@@ -13,42 +13,51 @@ gregale init --template customer-platform --path customer-platform
 cd customer-platform
 ```
 
-Create a PostgreSQL database and a login role without `SUPERUSER` or `BYPASSRLS`.
-The role must own the `public.customer_documents` table (or have permission to
-create it). Use a dedicated application database. Create a secrets file outside
-the source directory, containing the database URL, then restrict its permissions:
+Use an existing Gregale managed PostgreSQL database, or create one with
+`gregale postgres create customer-db --region <region>`. Reserve the app and
+attach separate runtime and migration bindings:
 
 ```sh
-chmod 600 ../customer-platform.secrets
-# File contents: DATABASE_URL=postgres://user:password@host:5432/database?sslmode=require
-# Reserve before configuring outbound access to a remote database on port 5432.
 gregale deploy --create-only --template customer-platform --name <slug>
+gregale postgres attach customer-db <slug> --access read_write --env DATABASE_URL
+gregale postgres attach customer-db <slug> --access migration --env MIGRATION_DATABASE_URL
+# Pro/Scale: permit PostgreSQL on TCP 5432 when required by your egress policy.
 gregale app <slug> egress-ports add 5432
-gregale deploy --template customer-platform --name <slug> \
-  --secrets-file ../customer-platform.secrets
+gregale deploy --name <slug> --platform-tenant-required --no-require-authn
 ```
 
 Template deployment enables `platform_tenant_required` from app creation.
-The `Procfile` release command runs the idempotent schema migration before
-activation; failure prevents activation. After editing your local scaffold, deploy
-that source with explicit ingress settings:
-
-```sh
-gregale deploy --name <slug> --platform-tenant-required --no-require-authn \
-  --secrets-file ../customer-platform.secrets
-```
+The Procfile release command installs the tenant-scoped schema through
+`MIGRATION_DATABASE_URL` before activation. The managed migration binding reaches
+only the release task; serving processes use `DATABASE_URL` without DDL access,
+SUPERUSER, or BYPASSRLS. Migrations take an advisory lock, with a 30-second lock
+timeout and a 120-second statement timeout. A failure keeps the previous app
+serving; committed schema changes survive an application rollback.
 
 `--no-require-authn` selects the open account-auth mode; verified customer identity
 is still required by the independent tenant policy. If your existing app has
 another account-auth policy, configure it before onboarding. Use `/healthz` as
 the health path; `/` also provides a database liveness response for rollout probes.
-Both contain no customer data. Configure the database's network access and
-Gregale's egress policy for your database host and port. Extra TCP ports are a
-Pro/Scale feature; a database reachable only on an extra port may require that plan.
-Use TLS with certificate verification for remote databases.
+Both contain no customer data. Configure network access and TLS certificate
+verification for your PostgreSQL host and port.
 
-After the app exists, `gregale secrets set --app <slug> DATABASE_URL=...` updates
-its configuration. Start a new deployment after changing the database credential;
+For external PostgreSQL, keep the schema-owner connection on your operator
+machine and run `MIGRATION_DATABASE_URL=... npm run migrate` locally. Remove the
+`release:` line from the Procfile, grant the runtime login data access to
+`public.customer_documents`, and supply only `DATABASE_URL` in a 0600 secrets
+file outside the source directory:
+
+```sh
+# File contents: DATABASE_URL=postgres://runtime:password@host:5432/database?sslmode=require
+chmod 600 ../customer-platform.secrets
+gregale deploy --name <slug> --platform-tenant-required --no-require-authn \
+  --secrets-file ../customer-platform.secrets
+```
+
+The runtime login must have neither SUPERUSER nor BYPASSRLS. An ordinary secret
+named `MIGRATION_DATABASE_URL` lacks a managed binding's delivery restriction.
+After app creation, `gregale secrets set --app <slug> DATABASE_URL=...` updates
+an external connection. Start a new deployment after changing that credential;
 this starter reads it at process startup.
 
 ## Onboard and issue a customer key
@@ -111,6 +120,87 @@ Foreign and missing IDs both return 404. Request bodies cannot select a tenant;
 query parameters are rejected. Responses use `Cache-Control: no-store`. The
 sample operator tools issue `write` scope, which allows all app methods; use
 Gregale's credential API to issue narrower `read` keys when appropriate.
+
+## Durable workflow boundary
+
+This starter requires a verified customer identity on every app request.
+Manual workflow runs can use the authenticated tenant's identity through
+`POST /v1/platform-tenant-self/apps/{slug}/workflows/{name}/runs`. Gregale
+persists that tenant ID and checks it again before dispatching each step. Tenants
+can inspect, cancel, and safely resume their own runs through the
+`/v1/platform-tenant-self/workflows/runs/{id}` endpoints. They can also list
+callback handles, complete callback waits, and inject events through the
+tenant-self continuation endpoints, which verify the token's tenant identity
+and the active tenant-to-app link when recording each continuation.
+
+Use `platform_tenant:invocations:read` to list callback handles and
+`platform_tenant:invocations:manage` to complete a callback or send an event:
+
+- `GET /v1/platform-tenant-self/workflows/runs/{id}/callbacks`
+- `POST /v1/platform-tenant-self/workflows/runs/{id}/callbacks/{callback_id}`
+- `POST /v1/platform-tenant-self/workflows/runs/{id}/events` with an
+  `event_name` and optional JSON `payload` (retries can reuse `Idempotency-Key`)
+
+Tenant-bound workflows support managed-operation steps with effects delivered
+to a receiver owned by that same tenant. They can also call an existing
+customer-managed outbound integration explicitly bound to the app. The run's
+tenant identity is included in private authorization and rechecked against the
+active tenant-to-app link before dispatch and by outboundd. Integration
+credentials and route permissions remain app-owned and shared across tenants;
+per-tenant credentials are not part of this workflow interface. A published
+schedule trigger starts one run per active tenant link with independent overlap
+and duplicate-minute state. By default, the app owner controls the cadence,
+timezone, overlap behavior, and input. A schedule trigger may opt in to
+tenant-specific cadence controls with `tenant_configurable: true`; the app owner
+still controls the workflow definition and input, and the app-wide concurrency
+limit is shared across tenants. Grant a tenant token
+`platform_tenant:automations:read` to list opted-in schedules and
+`platform_tenant:automations:manage` to change that tenant's schedule:
+
+```http
+GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules
+Authorization: Bearer <tenant-token>
+```
+
+Use the returned `version` as `expected_version`. Zero creates the tenant's
+first override; subsequent updates must send the latest version or receive a
+409 conflict. Omitted `timezone` and `overlap` use the published defaults, and
+`enabled: false` pauses only this tenant's future runs. Runs already admitted
+continue with their captured workflow definition:
+
+```http
+PUT /v1/platform-tenant-self/apps/{slug}/workflows/schedules/nightly
+Authorization: Bearer <tenant-token>
+Content-Type: application/json
+
+{"expected_version":0,"schedule":"0 6 * * 1-5","timezone":"Europe/Istanbul","overlap":"skip"}
+```
+
+Published workflows with an `event` trigger can also start automatically from
+events published by the authenticated tenant. Grant the tenant token
+`platform_tenant:events:manage` to publish and `platform_tenant:events:read` to
+inspect receipts:
+
+```http
+POST /v1/platform-tenant-self/apps/{slug}/events:publish
+Authorization: Bearer <tenant-token>
+Content-Type: application/json
+
+{"id":"invoice-42","source":"billing.stripe","type":"invoice.paid","data":{"amount":125}}
+```
+
+The response includes a platform event `id`, the original `client_event_id`,
+and a tenant-authenticated `receipt_url`. Repeating the same caller id, source,
+and content is safe. The platform derives tenant identity from the bearer token,
+routes only to that tenant's linked app workflows, and rechecks the active link
+before accepting the event and admitting each workflow run. The receipt reports
+captured workflows and their run IDs without exposing account-operator recovery
+actions.
+
+Account-scoped apps can use managed workflow transactions and app-owned effects.
+The [transaction guide](https://github.com/poyrazK/faas/blob/main/docs/operation-transactions.md)
+and [effect delivery guide](https://github.com/poyrazK/faas/blob/main/docs/managed-operation-effects.md)
+show the handler, receipt schema, receiver setup, and recovery contract.
 
 ## Rotate, inspect usage, and suspend
 
@@ -225,12 +315,14 @@ login, payments, hostname provisioning, or a customer-facing administration UI.
 
 ```sh
 npm ci --ignore-scripts
-# Set DATABASE_URL to a disposable database using the non-superuser role.
+# Set MIGRATION_DATABASE_URL to the direct schema-owner connection.
 npm run migrate
+# Set DATABASE_URL to the restricted runtime connection.
 HOST=127.0.0.1 npm start
 npm test
 # Uses a disposable database; this explicit gate fails if no URL is supplied.
-CUSTOMER_DATABASE_URL="$DATABASE_URL" npm run test:postgres
+CUSTOMER_DATABASE_URL="$DATABASE_URL" \
+  CUSTOMER_MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL" npm run test:postgres
 ```
 
 The dependency-free tests cover tenant-scoped HTTP CRUD, invalid input, private
@@ -240,7 +332,8 @@ rollback. The Gregale repository's `make test-customer-platform` gate runs this
 starter behind the actual gateway and PostgreSQL-backed owner API: two customers,
 forged tenant headers, denied cross-customer reads/writes, atomic rotation,
 suspension, resumption, and usage lookup. It requires disposable `DATABASE_URL`
-and `CUSTOMER_DATABASE_URL` databases; no KVM is needed.
+and `CUSTOMER_DATABASE_URL` databases, plus `CUSTOMER_MIGRATION_DATABASE_URL`
+for schema changes; no KVM is needed.
 
 The gate also exercises monthly draft review, explicit finalization, replayable
 invoice handoff, and late-usage adjustments through the real owner API and

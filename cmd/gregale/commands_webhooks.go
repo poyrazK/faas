@@ -98,17 +98,29 @@ func cmdWebhooks(args []string) int {
 
 func cmdWebhooksList(args []string) int {
 	fs := newFlagSet("webhooks-list", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
-	if err := fs.Parse(args); err != nil {
+	app := fs.String("app", "", appSlugFlagUsage)
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	// production-us hunt #4: the help advertised a bare `webhooks list` and
+	// the command then demanded --app. Like every other app-scoped read, it
+	// takes the slug positionally or via --app, and falls back to the linked
+	// project.
+	positional, err := mergeAppFlag(fs.Args(), strings.TrimSpace(*app), 1)
+	if err != nil || len(positional) > 1 {
+		PrintUsage(os.Stderr, "usage: gregale webhooks list [<slug>|--app <slug>]", "webhooks")
 		return 1
 	}
-	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale webhooks list --app <slug>", "webhooks")
+	explicit := ""
+	if len(positional) == 1 {
+		explicit = positional[0]
+	}
+	resolved, err := resolveRequiredAppSlug(explicit)
+	if err != nil || resolved == "" {
+		PrintUsage(os.Stderr, "usage: gregale webhooks list [<slug>|--app <slug>]", "webhooks")
 		return 1
 	}
+	slug := &resolved
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -413,7 +425,7 @@ func cmdWebhookRotateSecret(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	secret := fs.String("secret", "", "replacement HMAC-SHA256 secret")
 	fromStdin := fs.Bool("from-stdin", false, "read the replacement secret from stdin (one line)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {

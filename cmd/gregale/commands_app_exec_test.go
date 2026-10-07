@@ -2,14 +2,91 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const appTaskCLIReceipt = `{"id":"2bdd4251-f567-4a48-9f66-a155bbfa7751","app_id":"0123456789abcdef0123456789abcdef","deployment_id":"abcdef0123456789abcdef0123456789","deployment_scope":"default","kind":"manual","command":["bin/task","--compact"],"command_shell":false,"status":"queued","timeout_seconds":30,"max_output_bytes":2048,"output_truncated":false,"created_at":"2026-09-23T00:00:00Z","updated_at":"2026-09-23T00:00:00Z"}`
+
+func TestRunAppExecPreservesArgumentsAfterTerminator(t *testing.T) {
+	for _, remoteFlag := range []string{"--help", "-h", "--json", "-j", "--json=custom"} {
+		for _, useJSON := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", remoteFlag, useJSON), func(t *testing.T) {
+				resetJSONOut(t)
+				t.Setenv("FAAS_JSON", "0")
+				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/my-app/tasks" {
+						t.Errorf("request = %s %s", r.Method, r.URL.Path)
+					}
+					var request api.CreateAppTaskRequest
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Errorf("decode request: %v", err)
+					}
+					if got := strings.Join(request.Command, "|"); got != "bin/task|"+remoteFlag {
+						t.Errorf("remote command = %q", got)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(appTaskCLIReceipt))
+				}))
+				defer server.Close()
+				t.Setenv("FAAS_API", server.URL)
+				t.Setenv("FAAS_TOKEN", "test-token")
+				out, stderr, restore := swapIO(t)
+				defer restore()
+				args := []string{"app", "my-app", "exec", "--detach", "--", "bin/task", remoteFlag}
+				if useJSON {
+					args = append([]string{"--json"}, args...)
+				}
+				if code := run(args); code != 0 || requests.Load() != 1 {
+					t.Fatalf("exit=%d requests=%d stdout=%s stderr=%s", code, requests.Load(), out.String(), stderr())
+				}
+				if useJSON {
+					var receipt api.AppTaskResponse
+					if err := json.Unmarshal(out.Bytes(), &receipt); err != nil || receipt.ID == "" {
+						t.Fatalf("invalid JSON receipt: %v: %s", err, out.String())
+					}
+				} else if !strings.Contains(out.String(), "queued for my-app") {
+					t.Fatalf("human receipt = %s", out.String())
+				}
+			})
+		}
+	}
+}
+
+func TestCmdAppExecPreservesIdempotencyKeyOnRetry(t *testing.T) {
+	resetJSONOut(t)
+	var submissions atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		submissions.Add(1)
+		if got := r.Header.Get("Idempotency-Key"); got != "stable-task-submit" {
+			t.Errorf("Idempotency-Key = %q, want stable-task-submit", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(appTaskCLIReceipt))
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	_, _, restore := swapIO(t)
+	defer restore()
+	for attempt := 0; attempt < 2; attempt++ {
+		if code := cmdAppExec("my-app", []string{"--detach", "--idempotency-key", "stable-task-submit", "--", "bin/task"}); code != 0 {
+			t.Fatalf("attempt %d exit = %d", attempt, code)
+		}
+	}
+	if submissions.Load() != 2 {
+		t.Fatalf("submissions = %d, want 2", submissions.Load())
+	}
+}
 
 func TestCmdAppExecDetachedSubmitsArgv(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

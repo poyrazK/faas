@@ -19,6 +19,8 @@ gregale runs list --status running --json
 gregale runs list --workflow-id incident-42 --json
 gregale runs workflow incident-42 --json
 gregale runs workflow run --manifest incident.json --json
+gregale runs workflow run --manifest incident.json --managed
+gregale runs workflow run --manifest incident.json --dry-run --json
 gregale runs capabilities --json
 gregale runs status <execution-id>
 gregale runs cancel <execution-id>
@@ -59,7 +61,8 @@ wide as well.
 * `GET /v1/executions/capabilities` — read the account's Runs admission contract and request limits; requires `runs:read`, `runs:write`, `apps:read`, or `admin`.
 * `GET /v1/executions` — list receipts visible to the caller with `limit`, `offset`, and optional `status` filters; requires `runs:read`, `runs:write`, `apps:read`, or `admin`.
 * `GET /v1/executions?workflow_id=...` — list receipts in one workflow, with the same visibility and pagination rules.
-* `GET /v1/execution-workflows/{workflow_id}` — aggregate lifecycle counts and terminal-run usage for one visible workflow.
+* `POST /v1/execution-workflows` — store an encrypted sequential plan and continue admitting Runs after the client disconnects; requires `runs:write`, `deploy:write`, or `admin`.
+* `GET /v1/execution-workflows/{workflow_id}` — aggregate lifecycle counts and terminal-run usage, plus server-managed continuation status when present.
 * `GET /v1/executions/{id}` — read the current or terminal receipt; requires `runs:read`, `runs:write`, `apps:read`, or `admin`.
 * `GET /v1/executions/{id}/events` — stream ordered status/output events over SSE; reconnect with `after` or `Last-Event-ID`; requires `runs:read`, `runs:write`, `apps:read`, or `admin`.
 * `DELETE /v1/executions/{id}` — request idempotent cancellation; requires `runs:write`, `deploy:write`, or `admin`.
@@ -86,31 +89,140 @@ can aggregate all matching runs. The workflow summary reports counts for every
 lifecycle state; its wall time, CPU time, output bytes, and maximum per-run peak
 memory cover terminal runs only.
 
-`gregale runs workflow run --manifest PLAN.json` is a restartable sequential
-runner for agent-owned plans. Each step is an ordinary Run with a namespaced
-step label; Gregale persists its receipt, event log, result, and artifacts as
-usual. The label contains a short digest of the complete manifest, including
-its version and every step request, so changing a later step cannot silently
-reuse earlier receipts. The control plane enforces one `gwf:` step receipt per
-workflow and API-key family; if two copies of the same manifest resume at once,
-the runner adopts the receipt created by the other copy. Before creating Runs,
-the CLI checks every pending step against the account's current runtime,
-profile, network, and statically knowable request limits. The API checks again
-at admission because capabilities can change after preflight, and artifact
-size and ownership depend on the producer's stored receipt.
+`gregale runs workflow run --manifest PLAN.json` is a restartable runner for
+agent-owned plans. Add `--dry-run` to validate the plan and preview its current
+receipt state, dependency readiness, account concurrency cap, and available
+parallel slots without creating Runs. Step states distinguish dependency-ready
+work, waiting dependencies, in-progress receipts, failed contracts, blocked
+dependents, and steps withheld by fail-fast policy. The preview reads workflow
+receipts and (when new steps can be admitted) current Runs capabilities. It
+does not reserve quota; admission and limits may change before the actual run,
+which repeats preflight. The command runs steps sequentially by default; set
+`max_parallel_steps` to opt into bounded fan-out. The runner caps that value at
+the account's current `MaxConcurrentRuns` limit, so an agent can run independent
+work concurrently without bypassing its account quota. Each step remains an
+ordinary Run with its own fresh, disposable VM and namespaced step label;
+Gregale persists its receipt, event log, result, and artifacts as usual. The
+label contains a short digest of the complete manifest, including its version
+and every step request, so changing a later step cannot silently reuse earlier
+receipts. The control plane enforces one `gwf:` step receipt per workflow and
+API-key family; if two copies of the same manifest resume at once, the runner
+adopts the receipt created by the other copy. Before creating Runs, the CLI
+checks every pending step against the account's current runtime, profile,
+network, and statically knowable request limits. The API checks again at
+admission because capabilities can change after preflight, and artifact size
+and ownership depend on the producer's stored receipt.
+Each step may declare a `result_schema` to validate its JSON output locally
+before the runner admits any dependent step. A mismatch is reported in
+`result_contract_failures`; the Run receipt remains visible with its original
+Run status, and dependents treat the output as `contract_failed`. Schemas use
+JSON Schema Draft 2020-12, may use local fragment references, and cannot fetch
+external resources. A schema is limited to 64 KiB and all schemas in one
+manifest to 1 MiB.
 Later steps can consume the previous JSON result or explicitly named artifacts
 from earlier successful steps. If a step uses artifact inputs with inline
 `source`, the runner wraps that source as a one-file ephemeral bundle. If the
 CLI exits or the machine restarts, rerun the same manifest and workflow ID:
 completed steps are reused, in-flight steps are watched to terminal state, and
-later steps continue only after success. A failed step stops the plan. The
-runner does not retry a terminal failure or cancel a Run when local waiting is
-interrupted, so it will not silently repeat a side effect. The manifest remains
-with the caller and must be supplied again; this command does not create a
-persistent guest workspace or a server-side workflow definition. JSON output
-includes a `plan_id` digest, a `complete` flag, and retains the current Run
-receipt if local waiting is interrupted. Use a new `workflow_id` when you want
-to run an edited manifest.
+later steps continue only after their dependencies succeed. By default, a
+failed Run stops admission of new steps while already-started Runs settle. Set
+`failure_policy` to `continue_independent` to keep admitting independent
+branches after a Run reaches a failed, timed-out, or canceled state. Ordinary
+dependents of an unsuccessful step are reported in `blocked_steps`. A step
+using `include_dependency_results` waits until all direct dependencies settle
+and receives their statuses, so it can summarize partial results; a failed Run
+or result contract still makes the overall workflow incomplete and the command
+exits with an error. Artifact handoffs still require a successful producer.
+Control-plane, submission, and local handoff errors keep the runner fail-fast.
+The runner does not retry terminal failures or cancel a Run when local waiting
+is interrupted, so it will not silently repeat a side effect. In default local
+mode, the manifest remains with the caller and must be supplied again; it does
+not create a server-side workflow definition. JSON output includes a `plan_id`
+digest, a `complete` flag, result contract failures, any blocked step labels,
+and Run receipts if local waiting is interrupted. Use a new `workflow_id` when
+you want to run an edited manifest.
+
+Add `--managed` to submit a bounded DAG to the control plane. Gregale stores
+the plan encrypted with the host age identity, admits ready steps up to
+`max_parallel_steps` and the account's concurrent Run limit, and resumes from
+Run receipts after apid restarts or CLI disconnects. Every step still runs in
+its own fresh, disposable VM. `depends_on` declares prerequisites;
+`input_from_previous_result` passes the preceding successful Run's JSON result,
+and `include_dependency_results` passes a status/result object for every direct
+dependency to a fan-in step. `failure_policy: fail_fast` stops new admissions
+after a failed Run while already-admitted Runs settle. With
+`continue_independent`, Gregale can keep running unrelated branches, and a
+fan-in step that includes dependency results can inspect failed or blocked
+dependency statuses. The manifest is erased from the workflow job at terminal
+state. A step can also declare `artifact_inputs` from an earlier step's
+`output_files`; Gregale adds that producer as a dependency and stages the
+verified artifact in the consumer's fresh files bundle. The CLI converts
+inline source to an entrypoint bundle when needed. Direct API requests with
+artifact inputs must provide `request.entrypoint` and `request.files`. Artifact
+bytes remain in ordinary bounded Run receipts and are copied into the next
+Run's sealed request; guest filesystems remain disposable, with no persistent
+disk. `gregale runs workflow <workflow-id>` reports managed status and the
+number of admitted steps alongside normal Run counts. Managed steps can declare
+the same bounded `result_schema` contract as local workflows. The control plane
+checks each successful Run result before admitting dependents and retains the
+original Run receipt status. A mismatch appears as `contract_failed` in fan-in
+input, omits that dependency's result, blocks ordinary dependents, and fails the
+overall workflow. With `continue_independent`, unrelated branches and fan-in
+steps that include dependency results can still proceed. Managed schemas use
+Draft 2020-12 and local fragment references; external resources are not loaded.
+Each account can have 16 active managed workflows; a terminal workflow
+releases its queue slot.
+
+The manifest supports up to 16 steps. `max_parallel_steps` accepts 1 through 8
+and defaults to 1 for existing manifests. `failure_policy` accepts `fail_fast`
+(the default) or `continue_independent`. Dependencies must name earlier steps,
+which keeps the manifest topologically ordered. `depends_on` declares
+dependencies explicitly; previous-result and artifact handoffs also add their
+producer as a dependency. `include_dependency_results` passes one object keyed
+by direct dependency label. Each value contains `status` and, when the Run
+succeeded with valid JSON output, `result`. For example, a failed Run is
+`{"status":"failed"}`, a blocked step is `{"status":"blocked"}`, and a
+successful dependency can be `{"status":"succeeded","result":{"count":12}}`.
+A successful Run whose result violates its declared schema is reported as
+`{"status":"contract_failed"}` and does not pass a result downstream. With
+`continue_independent`, this lets an aggregator inspect partial results after
+every dependency settles. An artifact input still requires its producer to
+succeed. The runner uses receipts and result or artifact handoffs between
+fresh Runs; it does not provide persistent disks or a shared guest filesystem.
+
+```json
+{
+  "workflow_id": "incident-43",
+  "version": "v1",
+  "max_parallel_steps": 4,
+  "failure_policy": "continue_independent",
+  "steps": [
+    {
+      "label": "logs",
+      "result_schema": {
+        "type": "object",
+        "required": ["count"],
+        "properties": {"count": {"type": "integer"}}
+      },
+      "request": {"runtime": "python313", "source": "def main(input, context): return {'count': 12}"}
+    },
+    {
+      "label": "metrics",
+      "request": {"runtime": "python313", "source": "def main(input, context): return {'errors': 2}"}
+    },
+    {
+      "label": "deployments",
+      "request": {"runtime": "python313", "source": "def main(input, context): return {'recent': []}"}
+    },
+    {
+      "label": "summarize",
+      "depends_on": ["logs", "metrics", "deployments"],
+      "include_dependency_results": true,
+      "request": {"runtime": "python313", "source": "def main(input, context): return input"}
+    }
+  ]
+}
+```
 
 ```json
 {
@@ -121,7 +233,7 @@ to run an edited manifest.
       "label": "collect",
       "request": {
         "runtime": "python313",
-        "source": "print('collect evidence')",
+        "source": "def main(input, context): return {'items': []}",
         "output_files": ["evidence.json"]
       }
     },
@@ -133,19 +245,19 @@ to run an edited manifest.
       ],
       "request": {
         "runtime": "python313",
-        "source": "print(input)"
+        "source": "def main(input, context): return input"
       }
     }
   ]
 }
 ```
 
-The manifest supports up to 16 sequential steps. Step labels are unique within
-the plan. Its short `version` is namespaced into the persisted step labels.
-Keep the manifest unchanged when resuming the same workflow ID and version: the
-runner reuses matching step receipts and does not compare source contents. Use
-a new workflow ID whenever an already-started plan changes. Each step still
-gets its own normal Run limits, execution, result budget, and billing.
+Step labels are unique within the plan. Its short `version` is namespaced into
+the persisted step labels. Keep the manifest unchanged when resuming the same
+workflow ID and version: the runner reuses matching step receipts and does not
+compare source contents. Use a new workflow ID whenever an already-started plan
+changes. Each step still gets its own normal Run limits, execution, result
+budget, and billing.
 
 ```json
 {

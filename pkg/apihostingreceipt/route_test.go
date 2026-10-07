@@ -23,14 +23,18 @@ func TestRouteVerificationContract(t *testing.T) {
 		{"app auth", 401, "candidate", "candidate", SmokeVerified},
 		{"app forbidden", 403, "candidate", "candidate", SmokeVerified},
 		{"missing root", 404, "candidate", "candidate", SmokeVerified},
-		{"old revision", 200, "old", "old", SmokeFailed},
-		{"old revision missing root", 404, "old", "old", SmokeFailed},
-		{"gateway not found", 404, "", "", SmokeFailed},
-		{"selected but no app response", 404, "candidate", "", SmokeFailed},
-		{"mismatched proof", 200, "candidate", "old", SmokeFailed},
-		{"gateway refusal", 429, "candidate", "", SmokeFailed},
+		// A gRPC server answers a plain GET with 415 (gRPC over HTTP/2 spec).
+		// From the proven candidate that is connectivity, not a failure.
+		{"grpc server", 415, "candidate", "candidate", SmokeVerified},
+		{"unproven 415", 415, "candidate", "", SmokeSkipped},
+		{"old revision", 200, "old", "old", SmokeSkipped},
+		{"old revision missing root", 404, "old", "old", SmokeSkipped},
+		{"gateway not found", 404, "", "", SmokeSkipped},
+		{"selected but no app response", 404, "candidate", "", SmokeSkipped},
+		{"mismatched proof", 200, "candidate", "old", SmokeSkipped},
+		{"gateway refusal", 429, "candidate", "", SmokeSkipped},
 		{"guest unavailable", 503, "candidate", "candidate", SmokeFailed},
-		{"gateway unavailable", 503, "candidate", "", SmokeFailed},
+		{"gateway unavailable", 503, "candidate", "", SmokeSkipped},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +49,8 @@ func TestRouteVerificationContract(t *testing.T) {
 			}))
 			defer srv.Close()
 			got, err := (Verifier{BaseURL: srv.URL, Authorize: allowTestSmoke}).VerifyDeploymentRoute(context.Background(), "demo", "candidate")
-			if err != nil || got.Status != tc.want || got.StatusCode != tc.status || got.Verification != VerificationRouteConnectivity || got.Authentication != AuthenticationPlatformChallenge {
+			unavailable := VerificationRecoveryCode(err) != ""
+			if unavailable != (tc.want == SmokeSkipped) || (err != nil && !unavailable) || got.Status != tc.want || got.StatusCode != tc.status || got.Verification != VerificationRouteConnectivity || got.Authentication != AuthenticationPlatformChallenge {
 				t.Fatalf("result=%+v err=%v, want %s", got, err, tc.want)
 			}
 		})
@@ -62,7 +67,7 @@ func TestRouteVerificationRejectsReplayedProof(t *testing.T) {
 	}))
 	defer srv.Close()
 	got, err := (Verifier{BaseURL: srv.URL, Authorize: allowTestSmoke}).VerifyDeploymentRoute(context.Background(), "demo", "candidate")
-	if err != nil || got.Status != SmokeFailed || got.ErrorCode != SmokeErrorResponseUnproven {
+	if VerificationRecoveryCode(err) != SmokeErrorResponseUnproven || got.Status != SmokeSkipped || got.ErrorCode != SmokeErrorResponseUnproven {
 		t.Fatalf("result=%+v err=%v", got, err)
 	}
 }
@@ -116,7 +121,7 @@ func TestRouteVerificationTimesOutWithoutResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
 	defer srv.Close()
 	got, err := (Verifier{BaseURL: srv.URL, Timeout: 30 * time.Millisecond, Authorize: allowTestSmoke}).VerifyDeploymentRoute(context.Background(), "demo", "candidate")
-	if err != nil || got.Status != SmokeFailed || got.ErrorCode != "smoke_request_failed" {
+	if VerificationRecoveryCode(err) != SmokeErrorTransportUnavailable || got.Status != SmokeSkipped || got.ErrorCode != SmokeErrorTransportUnavailable {
 		t.Fatalf("result=%+v err=%v", got, err)
 	}
 }
@@ -131,7 +136,7 @@ func TestRouteVerificationRejectsTruncatedCandidateResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 	got, err := (Verifier{BaseURL: srv.URL, Authorize: allowTestSmoke}).VerifyDeploymentRoute(context.Background(), "demo", "candidate")
-	if err != nil || got.Status != SmokeFailed || got.ErrorCode != "smoke_request_failed" {
+	if VerificationRecoveryCode(err) != SmokeErrorTransportUnavailable || got.Status != SmokeSkipped || got.ErrorCode != SmokeErrorTransportUnavailable {
 		t.Fatalf("result=%+v err=%v", got, err)
 	}
 }

@@ -32,7 +32,7 @@ func cmdPreviewWait(args []string) int {
 	fs := newFlagSet("preview wait", flag.ContinueOnError)
 	progress := fs.Bool("progress", false, "print workload transitions while waiting (human output only)")
 	openURL := fs.Bool("open", false, "open the preview URL after it becomes ready")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for preview readiness")
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for preview readiness")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}

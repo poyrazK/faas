@@ -205,7 +205,7 @@ func cmdTriggersGet(args []string) int {
 }
 
 func cmdTriggersCreate(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
 	usage := "usage: gregale triggers create --app <slug> --kind <" + triggerBrokerKindsUsage + "> [flags]"
 	fs := triggerFlagSet("triggers-create", usage)
 	appSlug := fs.String("app", "", "app slug (required)")
@@ -230,7 +230,9 @@ func cmdTriggersCreate(args []string) int {
 		return triggerUsageError(usage, "--app and --kind are required")
 	}
 	if !triggerKindValid(*kind) {
-		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerKindsUsage)
+		// cron is a valid trigger kind but not one `triggers create` makes,
+		// so list only the kinds this command accepts.
+		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
 	}
 	if *kind == string(api.TriggerKindCron) {
 		return triggerUsageError(usage, "kind=cron is managed by `gregale crons add`; POST /v1/triggers rejects cron rows")
@@ -291,7 +293,7 @@ func cmdTriggersCreate(args []string) int {
 }
 
 func cmdTriggersUpdate(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
 	usage := "usage: gregale triggers update <id> [flags]"
 	fs := triggerFlagSet("triggers-update", usage)
 	enabled := fs.Bool("enabled", false, "enable the trigger")
@@ -373,13 +375,13 @@ func cmdTriggersUpdate(args []string) int {
 }
 
 func cmdTriggersDelete(args []string) int {
-	flags, pos := splitArgsForFlags(args)
 	usage := "usage: gregale triggers delete <id> [--quiet]"
 	fs := triggerFlagSet("triggers-delete", usage)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
-	if err := fs.Parse(flags); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	pos := fs.Args()
 	if len(pos) != 1 {
 		return triggerUsageError(usage, "expected one trigger ID")
 	}
@@ -587,7 +589,7 @@ func triggerEnabledValue(explicit map[string]bool, enabled, disabled bool) *bool
 }
 
 func triggerJSONFlag(value string) (json.RawMessage, error) {
-	raw, err := resolvePayload(value)
+	raw, err := resolveJSONFlag("--config", value)
 	if err != nil {
 		return nil, err
 	}

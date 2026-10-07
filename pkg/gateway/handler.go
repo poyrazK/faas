@@ -30,8 +30,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -96,6 +98,9 @@ type App struct {
 	// security_scan_regressed parking reason. The edge rejects requests before
 	// auth, wake, or proxy work so a stale target cannot serve after quarantine.
 	SecurityQuarantined bool
+	// A known stage under preparation has no stable serving graph. Reject
+	// before authentication, edge answers, admission or any production fallback.
+	EnvironmentNotReady bool
 	// Visibility controls public edge routing. Internal apps are deliberately
 	// omitted by the public hostname resolver; service-proxy resolution uses
 	// the app store directly and remains available to authenticated callers.
@@ -165,6 +170,9 @@ type App struct {
 	// identify which app is in maintenance. Default-empty in
 	// fakeBackend unit tests; production path always populates.
 	Slug string
+	// CanonicalHost is router-authored, so app-wide MCP policies also cover
+	// deployment previews, environment aliases and custom domains.
+	CanonicalHost string
 	// IsPreview identifies preview applications. Fixed response rules are
 	// deliberately limited to these apps and the gateway rechecks this flag
 	// even when a rule was written through a non-HTTP path.
@@ -1100,6 +1108,11 @@ type Handler struct {
 	// Off by default; with it off, proxyAttempt calls the forwarder directly
 	// and the tree is byte-identical to the pre-ADR-201 path.
 	retryEnabled bool
+	// breaker is the instance-health breaker shared with the service proxy
+	// (ADR-201 §2). Nil when FAAS_GATEWAY_CIRCUIT_BREAKER is off.
+	breaker *circuit.Group
+	// circuitLastSweep paces idle breaker-key pruning on the public path.
+	circuitLastSweep atomic.Int64
 	// retryDefault is the policy applied when the gate is on and no
 	// kind=retry rule matched. Zero MaxAttempts means no replay, so an
 	// operator can enable the gate and roll the behaviour out per-app via
@@ -1234,6 +1247,7 @@ type Handler struct {
 	// asyncRoutes persists requests matched by kind=async. Nil is a fail-closed
 	// runtime wiring error only when such a rule actually matches.
 	asyncRoutes AsyncRouteEnqueuer
+	operations  OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -1858,7 +1872,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	allowed, err := h.declaredRoutes.MatchDeclaredRoute(r.Context(), app, requestPath, requestMethod)
 	if err != nil {
 		if h.log != nil {
-			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", requestPath, "method", requestMethod, "err", err)
+			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", logsanitize.Field(requestPath), "method", logsanitize.Field(requestMethod), "err", logsanitize.FieldAny(err))
 		}
 		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
@@ -2749,7 +2763,14 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	if h.edgeRules == nil {
 		return false
 	}
+	if h.applyMCPAliasPolicy(w, r, app) {
+		return true
+	}
 	rule := h.edgeRules.MatchJWT(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	if rule != nil && rule.Unavailable {
+		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_policy_unavailable")
+		return true
+	}
 	if rule == nil {
 		// Clean miss: no rule for this host. The match counter
 		// surfaces this on the §12 dashboard chip; an audit row
@@ -2769,6 +2790,9 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 			"app_account_id":  app.AccountID,
 		})
 		return false
+	}
+	if rule.MCP != nil {
+		return h.applyMCPResourcePolicy(w, r, app, rule)
 	}
 	if h.jwtVerifier == nil {
 		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_verifier_not_configured")
@@ -5326,6 +5350,26 @@ func (c *capWriter) WriteHeader(statusCode int) {
 		// only thing on the wire.
 		return
 	}
+	// Production-us hunt #4 (H4-67): a response that announces a body
+	// larger than the cap used to go out as a 2xx with the full
+	// Content-Length and then stop mid-body, which a client sees only as a
+	// truncated transfer. Refuse it before the headers are written.
+	if c.cap > 0 && statusCode >= http.StatusOK {
+		if n, err := strconv.ParseInt(c.Header().Get("Content-Length"), 10, 64); err == nil && n > c.cap {
+			if c.disabled.CompareAndSwap(false, true) {
+				for _, k := range []string{"Content-Length", "Content-Encoding", "Content-Range", "Etag", "Last-Modified", "Accept-Ranges"} {
+					c.Header().Del(k)
+				}
+				if c.onCap != nil {
+					c.onCap()
+				}
+				if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
+					c.onWarn("exceeded")
+				}
+			}
+			return
+		}
+	}
 	c.ResponseWriter.WriteHeader(statusCode)
 }
 
@@ -5625,6 +5669,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the response and gateway-private context, leaving cold-wake timelines
 	// without the customer-visible correlation handle.
 	r.Header.Set(api.RequestIDHeader, rid)
+	if !isSyntheticInvocation(r.Context()) {
+		for name := range r.Header {
+			if api.IsReservedOperationHeader(name) {
+				delete(r.Header, name)
+			}
+		}
+	}
 	// Direct HTTP calls do not have a scheduler invocation row. Give function
 	// adapters the same public-safe correlation id returned to the caller,
 	// while preserving the durable id already attached to synthetic work.
@@ -5675,27 +5726,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Issue #561 / ADR-089 PR 3 — consult the per-host
-	// edge-rule matcher BEFORE Backend.Lookup. On a
-	// `kind=route` hit the matcher overwrites `app` with
-	// the target App and we skip the Lookup entirely
-	// (the substituted App is authoritative; re-running
-	// Lookup on the inbound hostname would waste a cache
-	// miss). Downstream RequireAuthn / PublicAuth / wake
-	// gate / proxy all see the *target* app's context,
-	// not the inbound host's. nil-safe: h.edgeRules nil
-	// (default) returns false and we fall through to the
-	// legacy host→app lookup.
+	// ADR-590: resolve source-host readiness before route substitution. Once
+	// ready, the ADR-089 route matcher may select another app whose auth,
+	// admission and proxy settings apply to the rest of the request.
 	var (
 		app       App
 		lookedApp App
 		ok        bool
 	)
+	//nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	lookedApp, ok = h.backend.Lookup(r.Context(), appHost)
+	// A source host under preparation cannot escape its readiness gate through
+	// a route rewrite to another workload or through an edge answer.
+	if ok && lookedApp.EnvironmentNotReady {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
+		h.observe(r, rec.status, lookedApp.ID, string(lookedApp.Plan), false, Target{})
+		return
+	}
 	if h.matchAndSubstituteRoute(r, appHost, &app) {
 		goto haveApp
 	}
-	//nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
-	lookedApp, ok = h.backend.Lookup(r.Context(), appHost)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", appHost)))
@@ -5704,6 +5755,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	if app.EnvironmentNotReady {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	// Edge-rule matching from here on ignores rules another account
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
@@ -5720,12 +5777,10 @@ haveApp:
 		return
 	}
 	if api.MustLimitsFor(app.Plan).DebugTelemetryEnabled {
-		if err := h.recordRequestIDJournal(r.Context(), app, rid, start); err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
-				api.CodeCapacity, "Request correlation is temporarily unavailable",
-				"the platform could not durably record this request ID; retry shortly"))
-			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
-			return
+		// ADR-634: the request-ID journal is a debugging index; a write it
+		// could not make (or queue) never stops the request.
+		if err := h.recordRequestIDJournal(r.Context(), app, rid, start); err != nil && h.log != nil {
+			h.log.Debug("gateway: request ID journal not recorded", "app_id", app.ID, "err", err)
 		}
 	}
 	if app.SecurityQuarantined {
@@ -5745,6 +5800,7 @@ haveApp:
 	)
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
+	rec.deploymentSmoke = deploymentSmoke
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -6285,7 +6341,7 @@ haveApp:
 			r = r.WithContext(withVersionAffinityDeployment(r.Context(), clientRevisionID))
 		}
 	}
-	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule); served {
+	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule, deploymentSmoke); served {
 		return
 	} else if isNonUserTriggerClass(triggerClass) && normalizeCrawlerPolicy(app.CrawlerPolicy) == "cached" {
 		// A fresh kind=cache hit returned above. A miss (including a stale
@@ -6293,7 +6349,7 @@ haveApp:
 		writeCrawlerPolicyResponse(w, "cached")
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
-	} else if rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
+	} else if !deploymentSmoke && rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
 		// Stash the matched rule before installing the cache writer so a
 		// follower can replay an eligible stale entry without creating a
 		// store-skipped capture. The wake leader continues to the origin;
@@ -6491,6 +6547,10 @@ haveApp:
 		admittedBody := r.Body
 		defer func() { _ = admittedBody.Close() }()
 	}
+	if h.applyOperationRoute(w, r, app, sidecarName) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	if h.applyEdgeRuleAsync(w, r, app, asyncRule) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6498,6 +6558,8 @@ haveApp:
 
 	burstDone := h.burstPressure.begin(app.ID)
 	defer burstDone()
+	h.metrics.AdjustAppInflight(app.ID, 1)
+	defer h.metrics.AdjustAppInflight(app.ID, -1)
 	limits, _ := api.LimitsFor(app.Plan)
 	var (
 		cold              bool
@@ -6575,6 +6637,9 @@ haveApp:
 			// before its exact URL is visited. Admit one deployment-scoped
 			// instance; schedd remains authoritative for the bounded rollout
 			// overlap and node RAM/vCPU limits.
+			platformWakeStart = time.Now()
+			platformWakeTrace = newWakePhaseTrace(platformWakeStart)
+			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
 			maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 			admittedWakeID, method, atCapacity, admitErr := h.backend.Admit(
 				r.Context(), app.ID, exactDeploymentID, exactDeploymentScope,
@@ -6780,7 +6845,7 @@ haveApp:
 			// fallback path. Failure here means the cold
 			// bucket won't wake this request — the next
 			// notify will refresh weights.
-			h.log.Warn("apid: wake-fan-out admit failed", "err", bucketErr, "deployment_id", pick.ColdBucket)
+			h.log.Warn("apid: wake-fan-out admit failed", "err", logsanitize.FieldAny(bucketErr), "deployment_id", pick.ColdBucket)
 		} else if bucketWakeID != "" {
 			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}
@@ -6796,6 +6861,21 @@ haveApp:
 		writeWakeError(w, wakeErr)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+	// ADR-201 §2 (H4-68): an instance whose circuit is open is not
+	// selectable. An exact-deployment smoke must reach its deployment and is
+	// never re-picked.
+	if !exactDeployment {
+		var allowed, probe bool
+		pick, allowed, probe = h.selectByCircuit(app.ID, pick, func() PickResult { return h.pickAfterCapacity(app, "", versionKey) })
+		if !allowed {
+			writeCircuitOpen(w)
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
+		if probe {
+			defer h.releaseCircuitProbe(app.ID, pick.Target.InstanceID)
+		}
 	}
 	// The wake admission result is now known. Replace the hot default before
 	// any response body is committed by the proxy.
@@ -7018,6 +7098,7 @@ haveApp:
 	// from a non-retry failure would make the two paths diverge in exactly the
 	// situation an operator is trying to read.
 	retireStaleTarget := func(failed Target) {
+		h.recordCircuitFailure(app.ID, failed.InstanceID)
 		// Evict synchronously with the transport failure so a
 		// concurrent request cannot pick this known-dead target.
 		// RecoverStaleTarget detaches and bounds lifecycle work in
@@ -7680,8 +7761,15 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 						SourceIP: auditSourceIPFrom(r),
 					}
 				}
-				err := h.usageOutbox.Enqueue(usageEvent)
-				if err != nil {
+				if unattributedUsage(usageEvent) {
+					// ADR-234 amendment: an anonymous request with no tenant,
+					// audit, or discovery evidence only bumped the
+					// __anonymous__ minute aggregate, which nothing reads.
+					// Skipping it removes a write transaction per request.
+					// Marking it outboxed keeps the debugger fallback from
+					// writing the same fact.
+					row.UsageOutboxed = true
+				} else if err := h.usageOutbox.Enqueue(usageEvent); err != nil {
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
 				} else {
@@ -8152,6 +8240,9 @@ type statusRecorder struct {
 	// in declared order (Cloudflare "first wins" semantics for
 	// `set`).
 	headerOps []EdgeRuleHeaderOp
+	// Validated candidate probes must remain uncacheable after guest headers
+	// and customer header rules, including gateway failures before forwarding.
+	deploymentSmoke bool
 
 	// Streaming fields (PR-B, nil → buffered path). Install via
 	// installFlushHook; the fields stay zero otherwise.
@@ -8249,6 +8340,9 @@ func (s *statusRecorder) WriteHeader(code int) {
 		}
 		s.Header().Del(preAuthTargetHeader)
 	}
+	if s.deploymentSmoke {
+		s.Header().Set("Cache-Control", "no-store")
+	}
 	s.ResponseWriter.WriteHeader(code)
 }
 
@@ -8287,6 +8381,9 @@ func (s *statusRecorder) installHeaderOps(ops []EdgeRuleHeaderOp) {
 
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
 func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.deploymentSmoke {
+		s.Header().Set("Cache-Control", "no-store")
+	}
 	if !s.wroteHeader {
 		// First Write with no explicit WriteHeader → 200.
 		s.status = http.StatusOK
@@ -8321,6 +8418,9 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // Nil-safe: returns instantly if the recorder is on the buffered
 // path (no flusher installed).
 func (s *statusRecorder) Flush() {
+	if s.deploymentSmoke {
+		s.Header().Set("Cache-Control", "no-store")
+	}
 	if s.flusher == nil {
 		// gRPC messages must reach the client while its request stream remains
 		// open, including when the ordinary response streaming flag is off.

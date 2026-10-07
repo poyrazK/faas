@@ -23,6 +23,7 @@ export type { OpenAPIConfig } from './generated/index.js';
 // Generated services (one class per OpenAPI tag).
 export { AccountService } from './generated/services/AccountService.js';
 export { AppsService } from './generated/services/AppsService.js';
+export { AlertRulesService } from './generated/services/AlertRulesService.js';
 export { AuditService } from './generated/services/AuditService.js';
 export { AuthService } from './generated/services/AuthService.js';
 export { CronsService } from './generated/services/CronsService.js';
@@ -33,13 +34,20 @@ export { GithubService } from './generated/services/GithubService.js';
 export { InstancesService } from './generated/services/InstancesService.js';
 export { InvocationsService } from './generated/services/InvocationsService.js';
 export { KeysService } from './generated/services/KeysService.js';
+export { ManagedPostgresService } from './generated/services/ManagedPostgresService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
+export { OperationsService } from './generated/services/OperationsService.js';
+export { OutboundService } from './generated/services/OutboundService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
+export { TriggersService } from './generated/services/TriggersService.js';
+export { ProjectsService } from './generated/services/ProjectsService.js';
 export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
 export { UsageService } from './generated/services/UsageService.js';
 export { WebhooksService } from './generated/services/WebhooksService.js';
+export { WorkflowsService } from './generated/services/WorkflowsService.js';
+export { InboundWebhooksService } from './generated/services/InboundWebhooksService.js';
 
 // Generated models (one type per OpenAPI schema).
 export type * from './generated/models/index.js';
@@ -153,4 +161,23 @@ export {
 } from './dev-bridge.js';
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
-export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";
+
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './customer-operations.js';
+export { GregaleOperations, type GregaleOperationsOptions, type OperationExecutionContext } from './operations-runtime.js';
+
+export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
+
+export { operationReceiptSchema } from "./operation-contract.js";
+export {
+  operationRequestFromHeaders,
+  operationRequestDigest,
+  withOperationTransaction,
+  OperationConflictError,
+  OperationCommitUnknownError,
+  type OperationRequest,
+  type OperationOutcome,
+  type OperationTransaction,
+  type OperationConnection,
+  type OperationPool,
+  type OperationTransactionResult,
+} from "./operations.js";

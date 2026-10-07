@@ -43,9 +43,9 @@ const (
 	ConformanceMetal       ConformanceTier = "metal"
 )
 
-// ConformanceRef points at a test function that exercises a standard's
+// ConformanceRef points at an executable test that exercises a standard's
 // published subset. Targets are repository-relative paths in the form
-// path/to/file_test.go::TestName.
+// path/to/file_test.go::TestName or path/to/file.test.js::test title.
 type ConformanceRef struct {
 	Fixture string          `json:"fixture"`
 	Tier    ConformanceTier `json:"tier"`

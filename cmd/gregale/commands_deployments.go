@@ -375,12 +375,12 @@ func cmdDeployment(args []string) int {
 // deployment). --timeout is expressed in seconds to keep the GitHub Action
 // input and CLI contract identical.
 func cmdDeploymentWait(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "progress", "rollout")
 	fs := newFlagSet("deployment wait", flag.ContinueOnError)
 	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	rollout := fs.Bool("rollout", false, "wait for a safe rollout to reach 100% traffic")
 	progress := fs.Bool("progress", false, "print rollout transitions while waiting (human output only)")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum seconds to wait (default %d)", defaultDeployWaitTimeoutSeconds))
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) (default %d)", defaultDeployWaitTimeoutSeconds))
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -406,6 +406,7 @@ func cmdDeploymentWait(args []string) int {
 		waitTarget = "live and rollout-complete"
 	}
 	var progressState *deploymentProgressSnapshot
+	var held rolloutHeldNotice
 
 	for {
 		d, getErr := client.GetDeployment(ctx, pos[0])
@@ -417,6 +418,9 @@ func cmdDeploymentWait(args []string) int {
 		}
 		if *progress && !jsonOutput {
 			progressState = renderDeploymentProgress(osStdout, d, progressState)
+		}
+		if *rollout && !jsonOutput {
+			held.maybeWarn(osStderr, d, time.Now())
 		}
 		if isCompletedDeployment(d) {
 			if d.Status != statusLive {

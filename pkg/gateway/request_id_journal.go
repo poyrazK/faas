@@ -21,29 +21,25 @@ type RequestIDJournalRecord struct {
 	ReceivedAt time.Time
 }
 
-// RequestIDJournalWriter synchronously persists an exact public-ID mapping.
-// Production wires an apid-backed writer; tests and local handlers may omit it.
+// RequestIDJournalWriter persists an exact public-ID mapping. Production
+// installs RequestIDJournalQueue.Submit over an apid-backed writer, so the
+// handler never waits on apid (ADR-634); tests and local handlers may omit it.
 type RequestIDJournalWriter func(context.Context, RequestIDJournalRecord) error
 
 func (h *Handler) recordRequestIDJournal(ctx context.Context, app App, requestID string, receivedAt time.Time) error {
 	if h.requestIDJournal == nil {
 		return nil
 	}
-	started := time.Now()
-	finish := func(err error) error {
-		h.metrics.ObserveRequestIDJournalWrite(time.Since(started), err)
-		return err
-	}
 	if len(requestID) == 0 || len(requestID) > 128 || strings.IndexFunc(requestID, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return finish(fmt.Errorf("gateway: invalid public request id"))
+		return fmt.Errorf("gateway: invalid public request id")
 	}
 	accountID, err := uuid.Parse(app.AccountID)
 	if err != nil {
-		return finish(fmt.Errorf("gateway: invalid request journal account id: %w", err))
+		return fmt.Errorf("gateway: invalid request journal account id: %w", err)
 	}
 	appID, err := uuid.Parse(app.ID)
 	if err != nil {
-		return finish(fmt.Errorf("gateway: invalid request journal app id: %w", err))
+		return fmt.Errorf("gateway: invalid request journal app id: %w", err)
 	}
 	err = h.requestIDJournal(ctx, RequestIDJournalRecord{
 		ID:         uuid.NewString(),
@@ -53,5 +49,5 @@ func (h *Handler) recordRequestIDJournal(ctx context.Context, app App, requestID
 		TraceID:    traceIDForTelemetry(ctx),
 		ReceivedAt: receivedAt.UTC(),
 	})
-	return finish(err)
+	return err
 }

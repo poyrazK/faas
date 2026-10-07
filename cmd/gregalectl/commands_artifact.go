@@ -30,6 +30,8 @@ import (
 
 const dispatchArtifact = "artifact"
 
+var artifactBackendFromEnv = storage.BackendFromEnvContext
+
 var storageEnvNames = []string{
 	"FAAS_STORAGE_BACKEND",
 	"FAAS_STORAGE_ROOT",
@@ -174,7 +176,7 @@ func cmdArtifactPublish(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	be, err := storage.BackendFromEnvContext(ctx)
+	be, err := artifactBackendFromEnv(ctx)
 	if err != nil {
 		return printErr("gregalectl artifact publish", err)
 	}
@@ -184,7 +186,7 @@ func cmdArtifactPublish(args []string) int {
 	}
 	report.Backend = os.Getenv("FAAS_STORAGE_BACKEND")
 	if jsonEnabled() {
-		jsonEmit(os.Stdout, report)
+		jsonEmit(osStdout, report)
 	} else {
 		fmt.Printf("artifact publish: key=%s sha256=%s bytes=%d already_present=%t\n", report.Key, report.SHA256, report.Bytes, report.AlreadyPresent)
 	}
@@ -228,7 +230,7 @@ func cmdArtifactVerify(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	be, err := storage.BackendFromEnvContext(ctx)
+	be, err := artifactBackendFromEnv(ctx)
 	if err != nil {
 		return printErr("gregalectl artifact verify", err)
 	}
@@ -244,7 +246,7 @@ func cmdArtifactVerify(args []string) int {
 	}
 	report.Backend = os.Getenv("FAAS_STORAGE_BACKEND")
 	if jsonEnabled() {
-		jsonEmit(os.Stdout, report)
+		jsonEmit(osStdout, report)
 	} else {
 		fmt.Printf("artifact verify: key=%s sha256=%s bytes=%d\n", report.Key, report.SHA256, report.Bytes)
 	}
@@ -292,7 +294,7 @@ func cmdArtifactLifecycleCheck(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	be, err := storage.BackendFromEnvContext(ctx)
+	be, err := artifactBackendFromEnv(ctx)
 	if err != nil {
 		return printErr("gregalectl artifact lifecycle-check", err)
 	}
@@ -306,7 +308,7 @@ func cmdArtifactLifecycleCheck(args []string) int {
 		return printErr("gregalectl artifact lifecycle-check", err)
 	}
 	if jsonEnabled() {
-		jsonEmit(os.Stdout, report)
+		jsonEmit(osStdout, report)
 	} else {
 		fmt.Printf("artifact lifecycle-check: read_verified=%t deleted=%t bytes=%d\n", report.ReadVerified, report.Deleted, report.Bytes)
 	}

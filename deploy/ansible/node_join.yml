@@ -1353,6 +1353,33 @@
         path: /etc/systemd/system/faas-gatewayd-internal.service.d/zz-emergency-release.conf
         state: absent
 
+    # An audit hotfix (scripts/ops/request_evidence_hotfix_host.py) pins a
+    # daemon to a binary under /opt/faas/hotfixes through a
+    # `98-audit-*-hotfix.conf` ExecStart override and says "remove before a
+    # later full release". Nothing removed it, so a rollout restarted the
+    # daemon on the hotfix build instead of the release it just installed
+    # (FaasDeployVersionSkew). Retire every such override before activation;
+    # the hotfix binary stays on disk for audit evidence.
+    - name: Find audit hotfix ExecStart overrides before service activation
+      ansible.builtin.find:
+        paths:
+          - /etc/systemd/system/faas-vmmd.service.d
+          - /etc/systemd/system/faas-schedd.service.d
+          - /etc/systemd/system/faas-realtimed.service.d
+          - /etc/systemd/system/faas-gatewayd-internal.service.d
+          - /etc/systemd/system/faas-builderd.service.d
+          - /etc/systemd/system/faas-imaged.service.d
+        patterns: "*-audit-*-hotfix.conf"
+      register: faas_join_audit_hotfix_overrides
+
+    - name: Retire audit hotfix ExecStart overrides before service activation
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ faas_join_audit_hotfix_overrides.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
     - name: Stage the reusable box-age identity when supplied
       ansible.builtin.copy:
         src: "{{ faas_join_box_age_key_source }}"
@@ -1401,7 +1428,7 @@
         state: directory
         owner: node_exporter
         group: node_exporter
-        mode: "0755"
+        mode: "0775"
 
     - name: Prove fleet customer-secret and shared-kid access before service activation
       ansible.builtin.command:
@@ -1475,6 +1502,10 @@
                 (faas_join_archive_envelope_source | default('') | trim) != '')
                else 'error' }}
           - --json
+      environment:
+        # imaged stages this ref into the read-through cache when it starts;
+        # the doctor accepts an evicted cache copy when the ref is known.
+        FAAS_BUILDER_BASE_REF: "{{ faas_builder_base_ref | default(faas_join_builder_base_ref) }}"
       register: faas_join_doctor
       changed_when: false
       failed_when: faas_join_doctor.rc != 0

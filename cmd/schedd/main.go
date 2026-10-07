@@ -595,7 +595,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		ResidentBytes: func(_ context.Context) (int64, error) {
 			return int64(ledger.ResidentRAM()) * 1024 * 1024, nil
 		},
-		LvFcUsedPct: fcvm.DefaultLvFcUsedPct(api.LvFcName),
+		LvFcUsedPct: fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
 	})
 	engine, err := sched.NewEngine(ctx, store, ledger, vmmRouter, sched.PoolNotifier{Pool: pool}, fcVersion, log)
 	if err != nil {
@@ -1635,6 +1635,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pinging when the beat is older than sched.MainLoopBudget.
 	liveness := wire.NewLiveness()
 	loop := sched.NewLoop(pool, engine, log).
+		WithEventRecipientClaims(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED") == "1").
 		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
 		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).
@@ -1963,10 +1964,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// minter is nil-safe: a dev box without either
 			// source leaves the minter nil and SynthesizeRequest
 			// logs a loud warn + internal_only requests 403.
+			var workflowOutboundMinter sched.WorkflowOutboundMinter
 			if minter, mErr := newSchedInternalSvcMinter(ctx, store, log); mErr != nil {
 				log.Warn("schedd: internal-svc minter not wired; internal_only cron requests will 403 until corrected",
 					"err", mErr.Error())
 			} else {
+				workflowOutboundMinter = minter.MintWorkflow
 				modeLookup := sched.PublicAuthModeFromStore(store.AppByID)
 				internalSvcModeLookup = modeLookup
 				internalSvcTokenMinter = minter.AsFunc()
@@ -1997,8 +2000,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			loop.WithGatewaySynth(synth)
 			if workflowsDispatchEnabled(os.Getenv("FAAS_WORKFLOWS_ENABLED")) {
 				if executor, ok := synth.(sched.WorkflowStepExecutor); ok {
+					orchestrator := sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, workflowMetrics, log)
+					if os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
+						key, keyErr := store.LoadClusterSigningKey(ctx)
+						if keyErr != nil || key.RetiredAt != nil {
+							return errors.New("workflow outbound requires an active cluster signing key")
+						}
+						if workflowOutboundMinter == nil {
+							return errors.New("workflow outbound requires the scheduler signing key")
+						}
+						orchestrator.WithOutboundExecutor(sched.NewWorkflowOutboundExecutor(store, workflowOutboundMinter))
+					}
 					loop.WithWorkflowsDispatched(true).
-						WithWorkflowOrchestrator(sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, workflowMetrics, log)).
+						WithWorkflowOrchestrator(orchestrator).
 						WithWorkflowRetention(sched.NewWorkflowRetention(store, log))
 					log.Info("schedd workflows dispatch enabled — FAAS_WORKFLOWS_ENABLED=1")
 				} else {
@@ -2103,14 +2117,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
 	loopErr := make(chan error, 1)
-	go func() { loopErr <- loop.Run(ctx) }()
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		loopErr <- loop.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		drainTimer := time.NewTimer(2*sched.DestroyTimeout + 10*time.Second)
+		defer drainTimer.Stop()
+		select {
+		case <-loopDone:
+		case <-drainTimer.C:
+			log.Warn("schedd: timed out waiting for scheduler loop shutdown")
+		}
+	}()
 	// Durable deploy handoffs recover the snapshot_prime edge when a LISTEN
 	// delivery is missed during a Postgres or schedd restart. The normal
 	// subscriber acknowledges rows after dispatching the same handler; this
 	// worker only sees rows that remain pending after the wakeup grace period.
 	go func() {
 		err := db.RunNotificationOutbox(ctx, pool, "schedd",
-			[]string{db.NotifyAppWake, db.NotifyRuntimeConfigRestart, db.NotifySnapshotPrime}, loop.HandleDurableNotification, log)
+			[]string{db.NotifyAppWake, db.NotifyRuntimeConfigRestart, db.NotifySnapshotPrime}, durableReplayHandler(ctx, loop.HandleDurableNotification), log)
 		if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}
@@ -2326,8 +2354,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 
-	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stopCancel()
 	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
 	stopGRPCServer(stopCtx, gsrv)
 	if httpSrv != nil {
@@ -2545,6 +2573,12 @@ func (s schedScaleUpEngine) EnsureWake(ctx context.Context, appID, trigger strin
 // cap rejection).
 type schedTargetsEngine struct {
 	engine *sched.Engine
+}
+
+var _ targets.ScopedWorkerPoolEngine = schedTargetsEngine{}
+
+func (s schedTargetsEngine) ReconcileWorkerPools(ctx context.Context, appID, trigger string) error {
+	return s.engine.ReconcileWorkerPools(ctx, appID, trigger)
 }
 
 // AdmitInstance implements targets.Engine: delegates to the wrapped

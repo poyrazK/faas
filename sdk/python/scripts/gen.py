@@ -24,6 +24,8 @@ import argparse
 import shutil
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 # scripts/gen.py            (this file)
@@ -112,6 +114,15 @@ def pre_normalize_spec(spec: Path) -> Path:
         return node
 
     fixed = fix_flow_scalars(safe_data)
+    # 0.29 interprets validation-only required/not compositions as Any,
+    # dropping these named DTOs and their nested types. Preserve the source
+    # schema and its runtime validation; give codegen the same object fields
+    # without cross-field predicates it cannot express in attrs models.
+    for name in ("ObjectRetentionPeriod", "ObjectLockDefaultRetention"):
+        schema = fixed["components"]["schemas"].get(name)
+        if schema is not None:
+            for keyword in ("oneOf", "anyOf", "not"):
+                schema.pop(keyword, None)
     # The pinned generator discards object properties when a oneOf contains
     # only required-field constraints, producing body: Any instead of the
     # existing typed request model. Keep its wire shape in generated clients;
@@ -128,6 +139,70 @@ def pre_normalize_spec(spec: Path) -> Path:
     return tmp
 
 
+WRAPPER_MODULES = (
+    "_wrapper.py",
+    "_rfc7807.py",
+    "_sse.py",
+    "_transport.py",
+    "idempotency.py",
+    "executions.py",
+    "release_context.py",
+    "dev_bridge.py",
+    "webhook.py",
+    "pre_auth_target.py",
+    "issues.py",
+    "flags.py",
+    "commit.py",
+    "operations_runtime.py",
+    "operations.py",
+    "_operation_contract.py",
+    "operation_schema.sql",
+)
+PROJECT_FILES = ("pyproject.toml", "README.md")
+
+
+@contextmanager
+def _preserve_handwritten_sdk(output: Path):
+    """Back up before deletion and restore on every generator exit path.
+
+    A failed backup leaves the original tree untouched. A failed restoration
+    retains the backup and reports its location instead of discarding source.
+    This includes hand-written modules that have not yet been committed.
+    """
+    stash = Path(tempfile.mkdtemp(prefix="faas-sdk-preserved-"))
+    preserved = []
+    try:
+        for relative in [
+            *(Path("faas_sdk") / name for name in WRAPPER_MODULES),
+            *(Path(name) for name in PROJECT_FILES),
+        ]:
+            source = output / relative
+            if source.exists():
+                backup = stash / relative
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, backup)
+                preserved.append(relative)
+    except BaseException:
+        # No original files have been modified at this point.
+        shutil.rmtree(stash)
+        raise
+
+    def restore():
+        try:
+            for relative in preserved:
+                destination = output / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(stash / relative, destination)
+        except BaseException as exc:
+            raise RuntimeError(f"gen: restore failed; source backup retained at {stash}") from exc
+
+    try:
+        yield restore
+    finally:
+        restore()
+        shutil.rmtree(stash)
+
+
 def regen(overwrite: bool = True) -> None:
     """Invoke the openapi-python-client generator.
 
@@ -139,264 +214,212 @@ def regen(overwrite: bool = True) -> None:
     if not CONFIG.exists():
         sys.exit(f"gen: missing config at {CONFIG}")
 
-    # `openapi-python-client generate` writes into `<OUT>/<project>/api`,
-    # `<OUT>/<project>/models`, `<OUT>/<project>/client.py`. We delete
-    # just the project subdirectory (so we don't nuke pyproject.toml
-    # etc.) and then re-create it; regenerated files overwrite cleanly,
-    # but the generator doesn't prune files that have disappeared from
-    # the spec (e.g. a route that was removed between regens).
-    # Stash hand-written wrapper modules before `rmtree` wipes them.
-    # The wrapper (`_wrapper.py`, `_rfc7807.py`, `_sse.py`,
-    # `_transport.py`, `idempotency.py`, `release_context.py`, `webhook.py`,
-    # `pre_auth_target.py`) lives INSIDE `faas_sdk/`
-    # because it imports the generated service classes, but the
-    # regen deletes the whole tree. This includes the runtime flags client;
-    # copy every hand-written wrapper to a temp dir,
-    # rmtree, run the generator, then copy them back so the
-    # wrapper imports keep working.
-    import tempfile
-
-    wrapper_stash = Path(tempfile.mkdtemp(prefix="faas-sdk-wrapper-"))
-    try:
-        wrapper_modules = [
-            "_wrapper.py",
-            "_rfc7807.py",
-            "_sse.py",
-            "_transport.py",
-            "idempotency.py",
-            "executions.py",
-            "release_context.py",
-            "dev_bridge.py",
-            "webhook.py",
-            "pre_auth_target.py",
-            "issues.py",
-            "flags.py",
-            "commit.py",
-        ]
-        target = OUT / "faas_sdk"
-        if target.exists():
-            for name in wrapper_modules:
-                src = target / name
-                if src.exists():
-                    shutil.copy2(src, wrapper_stash / name)
-            shutil.rmtree(target)
-        target.mkdir(parents=True)
-    except Exception:
-        # If stashing failed for any reason, fall through to the
-        # normal rmtree (the wrapper will be deleted; the operator
-        # re-runs the regen with the wrapper modules intact).
-        if wrapper_stash.exists():
-            shutil.rmtree(wrapper_stash)
-        wrapper_stash = None  # type: ignore[assignment]
+    # Back up every hand-written input before deleting generated files.
+    # Restore even when cleanup, normalization, generation or postprocessing fails.
+    with _preserve_handwritten_sdk(OUT) as restore_handwritten:
         target = OUT / "faas_sdk"
         if target.exists():
             shutil.rmtree(target)
         target.mkdir(parents=True)
 
-    # `openapi-python-client generate` returns 0 on a clean regen,
-    # 1 if the spec was non-canonical (e.g. a $ref to a missing model).
-    # Non-zero must fail the build via Makefile and CI.
-    #
-    # We invoke via `python -m openapi_python_client` rather than the
-    # CLI script: the script needs a console-script entry on $PATH,
-    # which a bare `pip install` doesn't always drop into PATH in CI
-    # images. The module form is the canonical, always-available
-    # invocation.
-    #
-    # Stash hand-curated project files BEFORE the generator runs — the
-    # generator emits its own README and Poetry-default pyproject.toml
-    # at OUT, which would otherwise clobber our SDK docs and pytest
-    # config + per-file ruff ignores.
-    project_stash = Path(tempfile.mkdtemp(prefix="faas-sdk-project-"))
-    project_files = ("pyproject.toml", "README.md")
-    for name in project_files:
-        src = OUT / name
-        if src.exists():
-            shutil.copy2(src, project_stash / name)
-
-    spec_for_generator = pre_normalize_spec(SPEC)
-    try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "openapi_python_client",
-                "generate",
-                "--path",
-                str(spec_for_generator),
-                "--config",
-                str(CONFIG),
-                "--output-path",
-                str(OUT),
-            ]
-            + (["--overwrite"] if overwrite else []),
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    finally:
+        # `openapi-python-client generate` returns 0 on a clean regen,
+        # 1 if the spec was non-canonical (e.g. a $ref to a missing model).
+        # Non-zero must fail the build via Makefile and CI.
+        #
+        # We invoke via `python -m openapi_python_client` rather than the
+        # CLI script: the script needs a console-script entry on $PATH,
+        # which a bare `pip install` doesn't always drop into PATH in CI
+        # images. The module form is the canonical, always-available
+        # invocation.
+        #
+        spec_for_generator = pre_normalize_spec(SPEC)
         try:
-            spec_for_generator.unlink()
-        except OSError:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "openapi_python_client",
+                    "generate",
+                    "--path",
+                    str(spec_for_generator),
+                    "--config",
+                    str(CONFIG),
+                    "--output-path",
+                    str(OUT),
+                ]
+                + (["--overwrite"] if overwrite else []),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        finally:
+            try:
+                spec_for_generator.unlink()
+            except OSError:
+                pass
+
+        if result.returncode != 0:
+            sys.stderr.write(result.stdout)
+            sys.stderr.write(result.stderr)
+            sys.exit(f"gen: openapi-python-client exited {result.returncode}")
+
+        # `openapi-python-client` emits `pyproject.toml` (Poetry default),
+        # `README.md`, `.gitignore`, `CHANGELOG.md`, `poetry.lock`,
+        # `poetry.toml`, `client.py`, `client.pyi`, `errors.py`, and
+        # `__init__.py` at the project root every regen. We KEEP the
+        # project metadata (pyproject.toml, README.md, .gitignore,
+        # CHANGELOG.md, poetry.lock, poetry.toml) — they are the
+        # canonical source of truth after the first hand-tweak, and
+        # customers pin against them. We STRIP the generated
+        # `client.py`/`client.pyi`/`errors.py` (the generator's types-
+        # only Client / AuthenticatedClient / UnexpectedStatus are
+        # replaced by our hand-written wrapper) and OVERWRITE the
+        # generated `__init__.py` with the hand-written barrel that
+        # re-exports the wrapper's `FaaSClient` + sentinels + idempotency
+        # helpers + SSE, release-context, and webhook verification helpers. The generated service functions still
+        # ship under `faas_sdk.api.<tag>.` and are reached through the
+        # wrapper's `client.inner`.
+        #
+        # The generator's pyproject.toml clobbers our hand-curated one
+        # (which carries the pytest config + per-file ruff ignores the
+        # generator does not know about). The stash happens BEFORE the
+        # generator runs (see comment block above); here we strip the
+        # generated `client.py` / `client.pyi` / `errors.py` siblings
+        # (the generator's types-only Client / AuthenticatedClient /
+        # UnexpectedStatus are replaced by our hand-written wrapper).
+        for sibling in ("client.py", "client.pyi", "errors.py"):
+            path = OUT / sibling
+            if path.exists():
+                path.unlink()
+
+        restore_handwritten()
+
+        _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
+        _patch_generator_bugs(OUT / "faas_sdk")
+
+        # Preserve the previous inline request model import after naming the schema.
+        models = OUT / "faas_sdk" / "models"
+        (models / "create_commit_source_body.py").write_text(
+            '"""Backward-compatible name for the Commit source creation request."""\n\n'
+            "from .create_commit_source_request import CreateCommitSourceRequest as CreateCommitSourceBody\n\n"
+            '__all__ = ("CreateCommitSourceBody",)\n'
+        )
+        barrel = models / "__init__.py"
+        barrel.write_text(
+            barrel.read_text()
+            .replace(
+                "from .create_commit_source_request import CreateCommitSourceRequest",
+                "from .create_commit_source_body import CreateCommitSourceBody\n"
+                "from .create_commit_source_request import CreateCommitSourceRequest",
+            )
+            .replace(
+                '    "CreateCommitSourceRequest",', '    "CreateCommitSourceBody",\n    "CreateCommitSourceRequest",'
+            )
+        )
+
+        # Run `ruff check --fix` over the generated tree + the
+        # hand-written test files so import ordering stays canonical.
+        # `gen.py` is run by CI as a dirty-diff gate; if a future
+        # generator version emits a new import order that ruff flags,
+        # this brings the tree back to green without making the
+        # operator re-run an out-of-band command.
+        #
+        # The cosmetic-drift reconciler at the END of `regen()`
+        # (`_canonicalise_to_head`) closes the residual dirty-diff gate:
+        # any `.py` file whose regen bytes diverge from HEAD by only
+        # import-statement / blank-line noise (opc 0.29.x template
+        # drift between Linux CI and macOS dev) gets restored to HEAD's
+        # bytes. Real structural drift (model bodies, route signatures,
+        # schema modules) is left alone so `git diff --exit-code` still
+        # fires for spec changes.
+        try:
+            sdk_root = OUT / "faas_sdk"
+            if sdk_root.exists():
+                # `--fix` only patches import ordering; it does not reformat.
+                # `ruff format` is the canonicalisation step that closes
+                # the dirty-diff gate regardless of which openapi-python-client
+                # template revision produced the bytes — without it the
+                # `make sdk-gen` aggregator (which boots a fresh `.venv`)
+                # differs from the standalone `sdk-gen-python` job (which
+                # `pip install -e .`s first), and the dirty-diff gate
+                # reports 180 false-positive files. We run format on the
+                # generated tree only (everything EXCEPT the hand-written
+                # wrapper modules) — the wrappers are canonically
+                # formatted in `sdk/python/faas_sdk/_wrapper.py` and
+                # friends, and `ruff format`'s 120-char preference would
+                # otherwise collapse hand-laid line breaks that the
+                # wrappers rely on for readability.
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "ruff",
+                        "check",
+                        "--fix",
+                        "--quiet",
+                        str(sdk_root),
+                    ],
+                    check=False,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "ruff",
+                        "format",
+                        "--quiet",
+                        str(sdk_root),
+                        "--exclude",
+                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,__init__.py",
+                    ],
+                    check=False,
+                    capture_output=True,
+                )
+            tests_root = OUT / "tests"
+            if tests_root.exists():
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "ruff",
+                        "check",
+                        "--fix",
+                        "--quiet",
+                        str(tests_root),
+                    ],
+                    check=False,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "ruff",
+                        "format",
+                        "--quiet",
+                        str(tests_root),
+                    ],
+                    check=False,
+                    capture_output=True,
+                )
+        except FileNotFoundError:
+            # ruff not installed (the regen ran in a minimal venv);
+            # skip the auto-fix; `make sdk-gen-python-check` will fail
+            # at the dirty-diff stage if imports drift.
             pass
 
-    if result.returncode != 0:
-        sys.stderr.write(result.stdout)
-        sys.stderr.write(result.stderr)
-        sys.exit(f"gen: openapi-python-client exited {result.returncode}")
+        # Cosmetic-drift reconciler: any `.py` file whose regen bytes
+        # diverge from HEAD by only import-statement / blank-line /
+        # docstring-padding noise (opc 0.29.x template revisions) gets
+        # restored to HEAD's bytes. Real structural drift (model bodies,
+        # route signatures, schema modules) is left alone so the
+        # `git diff --exit-code` gate still fires for spec changes.
+        # Future-proof against upstream generator drift without
+        # chasing each new template revision.
+        _canonicalise_to_head(OUT / "faas_sdk", REPO_ROOT, sdk_relpath="sdk/python")
 
-    # `openapi-python-client` emits `pyproject.toml` (Poetry default),
-    # `README.md`, `.gitignore`, `CHANGELOG.md`, `poetry.lock`,
-    # `poetry.toml`, `client.py`, `client.pyi`, `errors.py`, and
-    # `__init__.py` at the project root every regen. We KEEP the
-    # project metadata (pyproject.toml, README.md, .gitignore,
-    # CHANGELOG.md, poetry.lock, poetry.toml) — they are the
-    # canonical source of truth after the first hand-tweak, and
-    # customers pin against them. We STRIP the generated
-    # `client.py`/`client.pyi`/`errors.py` (the generator's types-
-    # only Client / AuthenticatedClient / UnexpectedStatus are
-    # replaced by our hand-written wrapper) and OVERWRITE the
-    # generated `__init__.py` with the hand-written barrel that
-    # re-exports the wrapper's `FaaSClient` + sentinels + idempotency
-    # helpers + SSE, release-context, and webhook verification helpers. The generated service functions still
-    # ship under `faas_sdk.api.<tag>.` and are reached through the
-    # wrapper's `client.inner`.
-    #
-    # The generator's pyproject.toml clobbers our hand-curated one
-    # (which carries the pytest config + per-file ruff ignores the
-    # generator does not know about). The stash happens BEFORE the
-    # generator runs (see comment block above); here we strip the
-    # generated `client.py` / `client.pyi` / `errors.py` siblings
-    # (the generator's types-only Client / AuthenticatedClient /
-    # UnexpectedStatus are replaced by our hand-written wrapper).
-    for sibling in ("client.py", "client.pyi", "errors.py"):
-        path = OUT / sibling
-        if path.exists():
-            path.unlink()
-
-    # Restore the wrapper modules we stashed before the rmtree.
-    if wrapper_stash is not None and wrapper_stash.exists():
-        for name in wrapper_modules:
-            src = wrapper_stash / name
-            if src.exists():
-                shutil.copy2(src, OUT / "faas_sdk" / name)
-        shutil.rmtree(wrapper_stash)
-
-    _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
-    _patch_generator_bugs(OUT / "faas_sdk")
-
-    # Restore the hand-curated project files that we stashed before
-    # the generator ran (see comment block above).
-    for name in project_files:
-        src = project_stash / name
-        if src.exists():
-            shutil.copy2(src, OUT / name)
-    if project_stash.exists():
-        shutil.rmtree(project_stash)
-
-    # Run `ruff check --fix` over the generated tree + the
-    # hand-written test files so import ordering stays canonical.
-    # `gen.py` is run by CI as a dirty-diff gate; if a future
-    # generator version emits a new import order that ruff flags,
-    # this brings the tree back to green without making the
-    # operator re-run an out-of-band command.
-    #
-    # The cosmetic-drift reconciler at the END of `regen()`
-    # (`_canonicalise_to_head`) closes the residual dirty-diff gate:
-    # any `.py` file whose regen bytes diverge from HEAD by only
-    # import-statement / blank-line noise (opc 0.29.x template
-    # drift between Linux CI and macOS dev) gets restored to HEAD's
-    # bytes. Real structural drift (model bodies, route signatures,
-    # schema modules) is left alone so `git diff --exit-code` still
-    # fires for spec changes.
-    try:
-        sdk_root = OUT / "faas_sdk"
-        if sdk_root.exists():
-            # `--fix` only patches import ordering; it does not reformat.
-            # `ruff format` is the canonicalisation step that closes
-            # the dirty-diff gate regardless of which openapi-python-client
-            # template revision produced the bytes — without it the
-            # `make sdk-gen` aggregator (which boots a fresh `.venv`)
-            # differs from the standalone `sdk-gen-python` job (which
-            # `pip install -e .`s first), and the dirty-diff gate
-            # reports 180 false-positive files. We run format on the
-            # generated tree only (everything EXCEPT the hand-written
-            # wrapper modules) — the wrappers are canonically
-            # formatted in `sdk/python/faas_sdk/_wrapper.py` and
-            # friends, and `ruff format`'s 120-char preference would
-            # otherwise collapse hand-laid line breaks that the
-            # wrappers rely on for readability.
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "ruff",
-                    "check",
-                    "--fix",
-                    "--quiet",
-                    str(sdk_root),
-                ],
-                check=False,
-                capture_output=True,
-            )
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "ruff",
-                    "format",
-                    "--quiet",
-                    str(sdk_root),
-                    "--exclude",
-                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,__init__.py",
-                ],
-                check=False,
-                capture_output=True,
-            )
-        tests_root = OUT / "tests"
-        if tests_root.exists():
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "ruff",
-                    "check",
-                    "--fix",
-                    "--quiet",
-                    str(tests_root),
-                ],
-                check=False,
-                capture_output=True,
-            )
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "ruff",
-                    "format",
-                    "--quiet",
-                    str(tests_root),
-                ],
-                check=False,
-                capture_output=True,
-            )
-    except FileNotFoundError:
-        # ruff not installed (the regen ran in a minimal venv);
-        # skip the auto-fix; `make sdk-gen-python-check` will fail
-        # at the dirty-diff stage if imports drift.
-        pass
-
-    # Cosmetic-drift reconciler: any `.py` file whose regen bytes
-    # diverge from HEAD by only import-statement / blank-line /
-    # docstring-padding noise (opc 0.29.x template revisions) gets
-    # restored to HEAD's bytes. Real structural drift (model bodies,
-    # route signatures, schema modules) is left alone so the
-    # `git diff --exit-code` gate still fires for spec changes.
-    # Future-proof against upstream generator drift without
-    # chasing each new template revision.
-    _canonicalise_to_head(OUT / "faas_sdk", REPO_ROOT, sdk_relpath="sdk/python")
-
-    print(f"gen: regenerated {OUT} from {SPEC.name}")
+        print(f"gen: regenerated {OUT} from {SPEC.name}")
 
 
 def _strip_cosmetic(src: bytes) -> bytes:
@@ -685,7 +708,7 @@ from .dev_bridge import (
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
-from .commit import insert_commit_event
+from .commit import CommitEventRouting, insert_commit_event
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -693,6 +716,19 @@ from .idempotency import (
     with_idempotency_key,
 )
 from .issues import IssueReporter
+from .operations import (
+    OperationCommitUnknownError,
+    OperationConflictError,
+    OperationEffect,
+    OperationOutcome,
+    OperationRequest,
+    OperationTransactionResult,
+    awith_operation_transaction,
+    operation_receipt_schema,
+    operation_request_digest,
+    operation_request_from_headers,
+    with_operation_transaction,
+)
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,
@@ -785,6 +821,18 @@ __all__ = (
     "current_dev_bridge_context",
     "with_dev_bridge_context",
     "insert_commit_event",
+    "CommitEventRouting",
+    "OperationCommitUnknownError",
+    "OperationConflictError",
+    "OperationEffect",
+    "OperationOutcome",
+    "OperationRequest",
+    "OperationTransactionResult",
+    "awith_operation_transaction",
+    "operation_receipt_schema",
+    "operation_request_digest",
+    "operation_request_from_headers",
+    "with_operation_transaction",
 )
 '''
 

@@ -1,4 +1,4 @@
-# Gregale restore reseed preload (GHSA-24j2-p895-mwc9, ADR-481).
+# Gregale restore reseed preload (GHSA-24j2-p895-mwc9, ADR-680).
 #
 # guest-init puts this directory first on PYTHONPATH. A snapshot restores a
 # Python process with the random state it held at capture, so every restore of

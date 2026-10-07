@@ -29,6 +29,13 @@ type PromScraper = scaleup.PromScraper
 // PromScraperFunc is the closure adapter (mirrors scaleup.PromScraperFunc).
 type PromScraperFunc = scaleup.PromScraperFunc
 
+// LoadScraper is a gateway scraper that also reports each app's in-flight
+// requests from the same scrape. HTTPPromScraper implements it; a plain
+// PromScraper leaves the in-flight signal absent.
+type LoadScraper interface {
+	ScrapeLoad(ctx context.Context) (counts, inflight map[string]int64, err error)
+}
+
 // RequestRateReader supplies the provider-independent app request rates
 // derived from VMMD telemetry. It is the scale-down fallback when a split-box
 // scheduler cannot scrape one local gateway metrics endpoint.
@@ -70,6 +77,12 @@ type RecentLoad struct {
 	rateReader RequestRateReader
 	byApp      map[string]*appWindow
 	rateByApp  map[string]*rateWindow
+	// inflightByApp holds the gateway's per-app in-flight samples, and
+	// inflightSeen the bucket of the last successful in-flight scrape. An app
+	// missing from a successful scrape had nothing in flight.
+	inflightByApp map[string]*rateWindow
+	inflightSeen  int64
+	inflightOK    bool
 }
 
 // New constructs the mirror. windowSize is the number of buckets
@@ -86,11 +99,12 @@ func New(scraper PromScraper, windowSize int, bucketSize time.Duration) *RecentL
 		bucketSize = time.Second
 	}
 	return &RecentLoad{
-		windowSize: windowSize,
-		bucketSize: bucketSize,
-		scraper:    scraper,
-		byApp:      map[string]*appWindow{},
-		rateByApp:  map[string]*rateWindow{},
+		windowSize:    windowSize,
+		bucketSize:    bucketSize,
+		scraper:       scraper,
+		byApp:         map[string]*appWindow{},
+		rateByApp:     map[string]*rateWindow{},
+		inflightByApp: map[string]*rateWindow{},
 	}
 }
 
@@ -123,7 +137,13 @@ func (r *RecentLoad) Touch(ctx context.Context, now time.Time) {
 	if r == nil {
 		return
 	}
-	if r.scraper != nil {
+	if loadScraper, ok := r.scraper.(LoadScraper); ok {
+		counts, inflight, err := loadScraper.ScrapeLoad(ctx)
+		if err == nil {
+			r.touchCounts(now, counts)
+			r.touchInflight(now, inflight)
+		}
+	} else if r.scraper != nil {
 		counts, err := r.scraper.Scrape(ctx)
 		if err == nil {
 			r.touchCounts(now, counts)
@@ -205,6 +225,70 @@ func (r *RecentLoad) touchRates(now time.Time, rates map[string]float64) {
 			window.buckets = window.buckets[first:]
 		}
 	}
+}
+
+func (r *RecentLoad) touchInflight(now time.Time, inflight map[string]int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	currentBucket := now.UnixNano() / int64(r.bucketSize)
+	r.inflightSeen = currentBucket
+	r.inflightOK = true
+	for appID, value := range inflight {
+		if appID == "" || value < 0 {
+			continue
+		}
+		window := r.inflightByApp[appID]
+		if window == nil {
+			window = &rateWindow{}
+			r.inflightByApp[appID] = window
+		}
+		last := len(window.buckets) - 1
+		if last >= 0 && window.buckets[last].bucket == currentBucket {
+			if float64(value) > window.buckets[last].rate {
+				window.buckets[last].rate = float64(value)
+			}
+		} else {
+			window.buckets = append(window.buckets, rateBucket{bucket: currentBucket, rate: float64(value)})
+		}
+	}
+	cutoff := currentBucket - int64(r.windowSize) + 1
+	for appID, window := range r.inflightByApp {
+		first := 0
+		for first < len(window.buckets) && window.buckets[first].bucket < cutoff {
+			first++
+		}
+		window.buckets = window.buckets[first:]
+		if len(window.buckets) == 0 {
+			delete(r.inflightByApp, appID)
+		}
+	}
+}
+
+// RecentInflight returns the largest gateway in-flight request count seen for
+// appID over the window, and whether the gateway reported in-flight demand
+// within it. The gauge stays high while requests are stuck or slow, which is
+// exactly when completion and start rates fall toward zero. It covers the
+// local gateway only, so it is a lower bound on the app's demand.
+func (r *RecentLoad) RecentInflight(appID string, now time.Time) (int64, bool) {
+	if r == nil || appID == "" {
+		return 0, false
+	}
+	currentBucket := now.UnixNano() / int64(r.bucketSize)
+	cutoff := currentBucket - int64(r.windowSize) + 1
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.inflightOK || r.inflightSeen < cutoff {
+		return 0, false
+	}
+	var peak float64
+	if window := r.inflightByApp[appID]; window != nil {
+		for _, b := range window.buckets {
+			if b.bucket >= cutoff && b.rate > peak {
+				peak = b.rate
+			}
+		}
+	}
+	return int64(peak), true
 }
 
 // RecentRPS returns the windowed sum for appID. Returns 0 when the

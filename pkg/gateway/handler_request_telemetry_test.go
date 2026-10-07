@@ -166,8 +166,9 @@ func TestHandlerObserveOutboxAndDebuggerShareEventIDWithoutDoubleUsage(t *testin
 		t.Fatal(err)
 	}
 	h := &Handler{usageOutbox: q, requestTelemetry: makeTestRecorder()}
-	acct, app := uuid.New(), uuid.New()
+	acct, app, consumer := uuid.New(), uuid.New(), uuid.New()
 	r := withAppAndAccount(httptest.NewRequest(http.MethodGet, "/items", nil), acct, app)
+	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: consumer.String(), AppID: app.String()}))
 	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{})
 	item, ok, err := q.Next()
 	if err != nil || !ok {
@@ -176,6 +177,51 @@ func TestHandlerObserveOutboxAndDebuggerShareEventIDWithoutDoubleUsage(t *testin
 	rows := h.requestTelemetry.DrainBatch(1)
 	if len(rows) != 1 || !rows[0].UsageOutboxed || rows[0].EventID.String() != item.Event.EventID {
 		t.Fatalf("debug row=%+v usage=%+v", rows, item.Event)
+	}
+}
+
+// adr: 234
+// TestHandlerObserveSkipsUnattributedAnonymousUsage pins the amendment: an
+// anonymous request with no tenant, audit, or discovery evidence is not
+// journaled. Its debugger row is still marked outboxed, so apid's legacy
+// fallback cannot write the skipped fact either.
+func TestHandlerObserveSkipsUnattributedAnonymousUsage(t *testing.T) {
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{usageOutbox: q, requestTelemetry: makeTestRecorder()}
+	acct, app := uuid.New(), uuid.New()
+	r := withAppAndAccount(httptest.NewRequest(http.MethodGet, "/items", nil), acct, app)
+	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{})
+	if item, ok, err := q.Next(); err != nil || ok {
+		t.Fatalf("anonymous usage was journaled: item=%+v ok=%t err=%v", item, ok, err)
+	}
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 || !rows[0].UsageOutboxed {
+		t.Fatalf("debug row=%+v, want one row marked outboxed so apid skips its legacy write", rows)
+	}
+}
+
+func TestUnattributedUsage(t *testing.T) {
+	id := uuid.NewString()
+	cases := []struct {
+		name  string
+		event usageoutbox.Event
+		want  bool
+	}{
+		{"anonymous", usageoutbox.Event{}, true},
+		{"consumer", usageoutbox.Event{ConsumerID: id}, false},
+		{"tenant", usageoutbox.Event{PlatformTenantID: id}, false},
+		{"tenant surface", usageoutbox.Event{PlatformTenantSurfaceID: id}, false},
+		{"tenant jwt rule", usageoutbox.Event{PlatformTenantJWTAuthorizationRuleID: id}, false},
+		{"audit", usageoutbox.Event{Audit: &usageoutbox.AuditEvidence{}}, false},
+		{"discovered route", usageoutbox.Event{DiscoveredRoute: "/items/{id}"}, false},
+	}
+	for _, tc := range cases {
+		if got := unattributedUsage(tc.event); got != tc.want {
+			t.Errorf("%s: unattributedUsage = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -433,7 +479,9 @@ func TestHandlerObservePersistsGuestEvidence(t *testing.T) {
 	}
 }
 
-func TestHandlerJournalsPublicRequestIDBeforeProxyAndFailsClosed(t *testing.T) {
+// ADR-634 (production-us hunt #4, H4-69): a journal write failure is counted
+// but never stops the request; it used to answer 503 before guest work.
+func TestHandlerJournalsPublicRequestIDAndNeverFailsTheRequest(t *testing.T) {
 	accountID, appID := uuid.NewString(), uuid.NewString()
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 	spanID := "00f067aa0ba902b7"
@@ -474,12 +522,6 @@ func TestHandlerJournalsPublicRequestIDBeforeProxyAndFailsClosed(t *testing.T) {
 
 			if !journaled {
 				t.Fatal("debugger-enabled request did not attempt journal write")
-			}
-			if failJournal {
-				if w.Code != http.StatusServiceUnavailable || proxied || backend.pickCalls.Load() != 0 {
-					t.Fatalf("write failure status=%d proxied=%t picks=%d; must stop before guest work", w.Code, proxied, backend.pickCalls.Load())
-				}
-				return
 			}
 			if w.Code != http.StatusNoContent || !proxied {
 				t.Fatalf("status=%d proxied=%t, want successful proxy", w.Code, proxied)

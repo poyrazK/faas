@@ -91,6 +91,19 @@ func (h *Handler) EnsureBaseExt4(
 	ref, baseKey, digestKey, outImage string,
 	parentRef, parentBaseKey string, // ADR-053; empty = legacy path
 ) (BaseStageResult, error) {
+	res, err := h.ensureBaseExt4(ctx, ref, baseKey, digestKey, outImage, parentRef, parentBaseKey)
+	if err == nil {
+		// ADR-567: keep this node's copy aligned with the shared publication.
+		h.rememberStagedBase(ref, baseKey, digestKey)
+	}
+	return res, err
+}
+
+func (h *Handler) ensureBaseExt4(
+	ctx context.Context,
+	ref, baseKey, digestKey, outImage string,
+	parentRef, parentBaseKey string,
+) (BaseStageResult, error) {
 	if ref == "" {
 		return BaseStageResult{}, errors.New("imaged: EnsureBaseExt4: empty ref")
 	}
@@ -170,9 +183,13 @@ func (h *Handler) EnsureBaseExt4(
 	// daemon for nothing; the sidecar is the source of truth. A missing
 	// base would surface as Get returning ErrNotFound, which the next
 	// cold-boot would also surface — no silent corruption.
+	var haveSidecar string
 	if haveRC, err := be.Get(ctx, digestKey); err == nil {
 		haveBytes, rerr := io.ReadAll(haveRC)
 		_ = haveRC.Close()
+		if rerr == nil {
+			haveSidecar = string(haveBytes)
+		}
 		if rerr == nil && baseDigestSidecarMatches(string(haveBytes), wantDigest, guestInitDigest) {
 			if existingErr := h.validateExistingBaseArtifact(ctx, be, baseKey); existingErr == nil &&
 				!h.baseSkipDeclined(be, baseKey, outImage, "digest sidecar match") {
@@ -209,6 +226,12 @@ func (h *Handler) EnsureBaseExt4(
 					"key", baseKey, "err", existingErr)
 			}
 		}
+	}
+
+	// Only guest-init changed (the common release): swap PID 1 in the
+	// staged artifact rather than rebuilding the userland around it.
+	if res, ok := h.tryPatchBaseGuestInit(ctx, be, ref, baseKey, digestKey, outImage, wantDigest, guestInitDigest, haveSidecar); ok {
+		return res, nil
 	}
 
 	// ADR-053: dispatch on parentRef. The parent-ref branch asks
@@ -268,6 +291,9 @@ func (h *Handler) EnsureBaseExt4(
 	}
 	if err := h.validateBaseArtifact(ctx, be, baseKey); err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: validate base ext4 %q: %w", baseKey, err)
+	}
+	if err := h.writeBaseContentSidecar(ctx, be, baseKey); err != nil {
+		h.log.Warn("imaged: write base content sidecar", "key", baseKey, "err", err)
 	}
 
 	if err := h.writeBaseDigestSidecar(ctx, be, digestKey, wantDigest, guestInitDigest, ref); err != nil {
@@ -619,6 +645,9 @@ func (h *Handler) ensureBaseExt4ParentRef(
 	}
 	if err := h.validateBaseArtifact(ctx, be, baseKey); err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: validate parent-ref base ext4 %q: %w", baseKey, err)
+	}
+	if err := h.writeBaseContentSidecar(ctx, be, baseKey); err != nil {
+		h.log.Warn("imaged: write base content sidecar", "key", baseKey, "err", err)
 	}
 
 	if err := h.writeBaseDigestSidecar(ctx, be, digestKey, wantDigest, guestInitDigest, ref); err != nil {

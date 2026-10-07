@@ -208,6 +208,49 @@ func TestRunnerRevalidationDoesNotChangeInitialFanoutMetrics(t *testing.T) {
 	}
 }
 
+// Prod hunt #3: revalidation re-downloaded every replica the bounded cache had
+// evicted, which evicted another, so idle compute nodes rewrote 1-2 GiB
+// snapshot files every few seconds. An evicted replica must be retired
+// without a parent read; a resident one stays ready without a fetch.
+func TestRunnerRevalidationRetiresEvictedReplicaWithoutRefetching(t *testing.T) {
+	const mem, vmstate = "snap/dep-evicted/mem", "snap/dep-evicted/vmstate"
+	for _, tc := range []struct {
+		name      string
+		resident  []string
+		wantReady bool
+	}{
+		{name: "evicted", resident: []string{mem}, wantReady: false},
+		{name: "resident", resident: []string{mem, vmstate}, wantReady: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := &fakeBackend{objects: map[string][]byte{mem: []byte("memory"), vmstate: []byte("vmstate")}}
+			cache, err := storage.NewLocalCacheBackend(parent, t.TempDir(), 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range tc.resident {
+				if err := cache.Put(context.Background(), key, bytes.NewReader(parent.objects[key])); err != nil {
+					t.Fatal(err)
+				}
+			}
+			store := &fakeReplicaStore{job: state.SnapshotReplicaJob{
+				SnapshotID: "snap-evicted", DeploymentID: "dep-evicted", NodeID: "node-2",
+				StorageKey: mem, VMStateStorageKey: vmstate, Attempts: 1, Revalidation: true,
+			}}
+			New(store, cache, "node-2", slog.Default()).runWorkTick(context.Background())
+			if len(parent.gets) != 0 {
+				t.Fatalf("revalidation read the parent: %v", parent.gets)
+			}
+			if store.ready != tc.wantReady {
+				t.Fatalf("ready = %v, want %v (failed=%v)", store.ready, tc.wantReady, store.failed)
+			}
+			if !tc.wantReady && !errors.Is(store.failed, errReplicaEvicted) {
+				t.Fatalf("failed = %v, want an eviction retirement", store.failed)
+			}
+		})
+	}
+}
+
 func TestRunnerDefaultIntervalFitsPrepositionedWakeBudget(t *testing.T) {
 	if DefaultInterval >= 200*time.Millisecond {
 		t.Fatalf("DefaultInterval = %s, want < 200ms prepositioned-wake budget", DefaultInterval)
@@ -534,5 +577,57 @@ func TestPrometheusMetricsRecordsFanoutLatency(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing latency metric %q in:\n%s", want, body)
 		}
+	}
+}
+
+// TestSyncJobSharesAFetchedDriveWithItsLayer pins ADR-633's replica half: a
+// snapshot drive fetched whole from the parent hands its unchanged blocks
+// back to the app layer, and a drive that was already local (the capturing
+// node) or a periodic revalidation is left alone.
+func TestSyncJobSharesAFetchedDriveWithItsLayer(t *testing.T) {
+	const (
+		mem   = "snap/dep/captures/c1/v2/mem"
+		drive = "snap/dep/captures/c1/v2/drive"
+		layer = "apps/acme/dep.ext4"
+	)
+	cases := []struct {
+		name         string
+		driveLocal   bool
+		revalidation bool
+		wantShare    bool
+	}{
+		{"fetched drive", false, false, true},
+		{"drive captured on this node", true, false, false},
+		{"revalidation", false, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls [][2]string
+			prev := shareUnchangedBlocks
+			shareUnchangedBlocks = func(_ context.Context, _ storage.StorageBackend, key, base string) (int64, error) {
+				calls = append(calls, [2]string{key, base})
+				return 0, nil
+			}
+			t.Cleanup(func() { shareUnchangedBlocks = prev })
+			backend := &fakeLocalBackend{
+				fakeBackend: &fakeBackend{objects: map[string][]byte{
+					"snap/dep/captures/c1/v2/vmstate": []byte("vmstate"),
+					drive:                             []byte("drive"),
+				}},
+				local: map[string]bool{mem: true, layer: true, drive: tc.driveLocal},
+			}
+			job := state.SnapshotReplicaJob{
+				StorageKey: mem, VMStateStorageKey: "snap/dep/captures/c1/v2/vmstate",
+				LayerStorageKeys: []string{layer}, Revalidation: tc.revalidation,
+			}
+			r := New(&fakeReplicaStore{job: job}, backend, "node-2", slog.Default())
+			r.leaseRenewInterval = 0
+			if err := r.syncJob(context.Background(), job); err != nil && !tc.revalidation {
+				t.Fatal(err)
+			}
+			if got := len(calls) == 1 && calls[0] == [2]string{drive, layer}; got != tc.wantShare {
+				t.Fatalf("share calls = %v, want shared=%v", calls, tc.wantShare)
+			}
+		})
 	}
 }

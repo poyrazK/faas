@@ -1431,8 +1431,9 @@ func (s *Server) Ping(_ context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingRes
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
 	return &vmmdpb.PingResponse{
-		FcVersion:  s.fcVer,
-		ServerTime: timestamppb.Now(),
+		FcVersion:             s.fcVer,
+		ServerTime:            timestamppb.Now(),
+		SupportsSecretAliases: true,
 	}, nil
 }
 
@@ -2098,6 +2099,14 @@ func ParseSeccompLines(r io.Reader) (string, int32, error) {
 func toProblem(err error) *api.Problem {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, fcvm.ErrAppAdmissionFenced) {
+		return api.NewProblem(409, api.CodeDatabaseCutoverFenced,
+			"Database cutover in progress", "app admission is fenced for a managed PostgreSQL cutover")
+	}
+	if errors.Is(err, fcvm.ErrAppAdmissionUnavailable) {
+		return api.NewProblem(503, api.CodeAppAdmissionUnavailable,
+			"App admission unavailable", "vmmd could not verify durable app admission")
 	}
 	if errors.Is(err, fcvm.ErrBeforeCheckpointFailed) {
 		return api.NewProblem(422, api.CodeBeforeCheckpointFailed,

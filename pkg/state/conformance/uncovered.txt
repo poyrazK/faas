@@ -52,7 +52,6 @@ CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
 CheckWebhookReplay
-ClaimNextDueWorkflowRun
 ClaimNextPendingRun
 ClearDeployment
 ClearInstanceFrameworkReadyAt
@@ -119,7 +118,6 @@ CreateEdgeRuleIfUnderQuota
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateProjectEnvironmentApproval
-CreateQueueBinding
 CreateSessionWithBinding
 CreateTenantHostnameIfUnderQuota
 CreateTenantSurfaceIfUnderQuota
@@ -155,7 +153,6 @@ DeleteDeploymentOpenAPIDoc
 DeleteDeploymentScopeExclusion
 DeleteEdgeRule
 DeleteGithubInstallBinding
-DeleteInstance
 DeleteInvocationsByIDs
 DeleteManagedObjectStorageSecrets
 DeleteManagedPostgresSecret
@@ -163,12 +160,9 @@ DeleteMirrorRule
 DeleteOIDCExchangedToken
 DeleteOldEvents
 DeleteOldLoginTokens
-DeleteProject
-DeleteQueueBinding
 DeleteSnapshotsStaleOlderThan
 DeleteTenantHostname
 DeleteTenantSurface
-DeleteTrigger
 DeleteTriggerRecordsByIDs
 DeploymentClearSnapshotBackoff
 DeploymentRecordSnapshotMiss
@@ -221,6 +215,7 @@ GetTenantSurfaceByName
 GetUploadCommitOutcome
 GetUploadSession
 GetWorkflowEventsForRun
+GetWorkflowRunByIdempotencyKey
 GitHubBindingForApp
 GitHubInstallForAccount
 GitHubInstallForAccountInstallation
@@ -340,7 +335,6 @@ ListEdgeRulesForApp
 ListEgressCircuitCandidates
 ListEnabledAlertRules
 ListEnabledAppLogDrains
-ListEnabledTriggers
 ListEventsBySidecar
 ListEventsByTraceID
 ListEventsByWakeID
@@ -380,7 +374,6 @@ ListOrphanedJobInstances
 ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListProjectsForAccount
-ListQueueBindingsForApp
 ListRecentEventsForAccount
 ListRequestTelemetryByApp
 ListRequestTelemetryByPlatformTenant
@@ -396,9 +389,7 @@ ListTenantHostnamesForSurface
 ListTenantSurfacesForAccount
 ListTenantSurfacesForApp
 ListTenantSurfacesNearingExpiry
-ListTriggerDeadLetter
 ListTriggerRecordsForTrigger
-ListTriggersForApp
 ListUnplacedApps
 ListVerifiedTenantHostnamesForSurface
 ListWorkflowRuns
@@ -414,7 +405,6 @@ MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
 MarkAppRegistryCredentialUsed
-MarkAutoRollback
 MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
@@ -427,7 +417,6 @@ MarkRuntimeConfigApplied
 MarkRuntimeConfigOperationBlocked
 MarkRuntimeConfigOperationFailed
 MarkRuntimeConfigOperationSucceeded
-MarkSnapshotStale
 MarkSnapshotStaleByAppProtocol
 MarkTenantHostnameCheckFailed
 MarkTenantHostnameVerified
@@ -435,8 +424,6 @@ MarkTriggerRecordDeadLetter
 MarkTriggerRecordRetry
 MarkTriggerRecordSucceeded
 MarkUploadSessionCommitted
-MarkWorkflowRunStatus
-MarkWorkflowStepStatus
 MatchEdgeRulesForHost
 MatchRecoveryCode
 MinCertExpiryForApp
@@ -471,7 +458,6 @@ PublishRuntimeSnapshot
 PutIdempotent
 PutManagedObjectStorageSecret
 PutManagedPostgresSecret
-QueueBindingByID
 QueueDeadLetter
 QueuePeek
 QueueState
@@ -515,8 +501,6 @@ ResolveStaleRegressionObservations
 ResolveStatusIncident
 RetireRuntimeSnapshot
 RetryDeploymentFromStage
-RetryQueueDeadLetter
-RetryTriggerRecordByOperator
 RevokeConsumerKey
 RevokeOrgAPIKey
 RevokeOrgInvitation
@@ -539,7 +523,6 @@ SetDeploymentFailedEx
 SetDeploymentParked
 SetDeploymentSourceURL
 SetInstanceFrameworkReadyAt
-SetInstanceMode
 SetInstanceRuntime
 SetMFARequired
 SetMFASecret
@@ -547,7 +530,6 @@ SetProjectScanSource
 SoftDeleteOrg
 StampAppScaleIn
 StampAppScaleOut
-StampFirstWake
 StampInstanceInvocation
 StartProjectEnvironmentPromotionRollback
 StorageUsage
@@ -565,8 +547,6 @@ TouchTenantSurfaceForRenewal
 TrafficAnomalyAggregate
 TrafficAnomalyAggregateByNode
 TransferOrgOwnership
-TriggerByID
-TriggerRecordIDByItemIdentifier
 UpdateAccountBillingInfo
 UpdateAccountProviderCustomerID
 UpdateAccountStripeSubscriptionItem
@@ -584,7 +564,6 @@ UpdateDataUpstreamCircuitBreaker
 UpdateDeploymentMinInstances
 UpdateDeploymentTraffic
 UpdateEdgeRule
-UpdateInstanceStateToTerminal
 UpdateOrgMemberRole
 UpdateOrgName
 UpdateOrgPlan
@@ -595,15 +574,12 @@ UpdateProjectEnvironmentPromotionRollbackWorkload
 UpdateProjectEnvironmentPromotionVerification
 UpdateProjectEnvironmentPromotionVerificationWorkload
 UpdateProjectEnvironmentPromotionWorkload
-UpdateQueueBinding
 UpdateSessionBinding
 UpdateSpansSummary
 UpdateTenantSurfaceCert
 UpdateTenantSurfaceStatus
-UpdateTrigger
 UpsertAccountSpendSnapshot
 UpsertAppEnv
-UpsertAppEnvInScope
 UpsertAppLogDrainHealth
 UpsertAppOpenAPIDoc
 UpsertAppOpenAPIDocIfUnderQuota

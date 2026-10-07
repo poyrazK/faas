@@ -7,6 +7,7 @@ import type { CommitBlockedEventsResponse } from '../models/CommitBlockedEventsR
 import type { CommitEventRequest } from '../models/CommitEventRequest.js';
 import type { CommitReceiptResponse } from '../models/CommitReceiptResponse.js';
 import type { CommitSourceResponse } from '../models/CommitSourceResponse.js';
+import type { CreateCommitSourceRequest } from '../models/CreateCommitSourceRequest.js';
 import type { CreateQueueBindingRequest } from '../models/CreateQueueBindingRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
 import type { DeadLetterEventsResponse } from '../models/DeadLetterEventsResponse.js';
@@ -245,13 +246,7 @@ export class QueuesService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
-    requestBody: {
-      name: string;
-      /**
-       * Active account-scoped queue policy containing this application. The source application and policy are immutable.
-       */
-      operation_policy: string;
-    },
+    requestBody: CreateCommitSourceRequest,
   }): CancelablePromise<CommitSourceResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -654,17 +649,24 @@ export class QueuesService {
    * Returns the durable mappings between logical queues and worker/job
    * workloads. Bindings are the configuration source for push consumers
    * and queue-depth autoscaling; queue messages remain under /queues*.
+   * Active bindings are returned by default. Set include_retired=true to
+   * retrieve retained identities and retirement timestamps for reviewed recovery.
    *
    * @returns QueueBindingResponse Queue bindings.
    * @throws ApiError
    */
   public static listQueueBindings({
     slug,
+    includeRetired = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Include retained retired bindings belonging to this app.
+     */
+    includeRetired?: boolean,
   }): CancelablePromise<Array<QueueBindingResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -672,7 +674,11 @@ export class QueuesService {
       path: {
         'slug': slug,
       },
+      query: {
+        'include_retired': includeRetired,
+      },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -753,6 +759,7 @@ export class QueuesService {
         'id': id,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -829,6 +836,7 @@ export class QueuesService {
         'id': id,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -871,6 +879,7 @@ export class QueuesService {
         'id': id,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses

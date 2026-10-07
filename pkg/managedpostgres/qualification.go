@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,21 +41,58 @@ type ScaleToZeroEvidence struct {
 // a mutating qualification run. It contains no provider resource ID; the
 // target is deleted before the source resource is cleaned up.
 type RestoreEvidence struct {
-	Restored bool `json:"restored"`
-	Deleted  bool `json:"deleted"`
+	Restored            bool `json:"restored"`
+	DataVerified        bool `json:"data_verified"`
+	Deleted             bool `json:"deleted"`
+	CredentialsIsolated bool `json:"credentials_isolated"`
+}
+
+// CredentialPrivilegeEvidence contains no identities, SQL, or secrets.
+type CredentialPrivilegeEvidence struct {
+	RuntimeRestricted     bool `json:"runtime_restricted"`
+	MigrationSeparated    bool `json:"migration_separated"`
+	RotationPreservesData bool `json:"rotation_preserves_data"`
+}
+
+func (e CredentialPrivilegeEvidence) Validate() error {
+	if !e.RuntimeRestricted || !e.MigrationSeparated || !e.RotationPreservesData {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+type ReadOnlyCredentialEvidence struct {
+	Restricted            bool `json:"restricted"`
+	PasswordRecovered     bool `json:"password_recovered"`
+	RotationPreservesData bool `json:"rotation_preserves_data"`
+	Revoked               bool `json:"revoked"`
+}
+
+func (e ReadOnlyCredentialEvidence) Validate() error {
+	if !e.Restricted || !e.PasswordRecovered || !e.RotationPreservesData || !e.Revoked {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 // QualificationReport is safe to persist in an operator audit log. It does
 // not contain provider resource IDs, endpoint hosts, passwords, or URLs.
 type QualificationReport struct {
-	Provider    string               `json:"provider"`
-	ResourceID  string               `json:"resource_id"`
-	Mutating    bool                 `json:"mutating"`
-	StartedAt   time.Time            `json:"started_at"`
-	CompletedAt time.Time            `json:"completed_at"`
-	Checks      []QualificationCheck `json:"checks"`
-	ScaleToZero *ScaleToZeroEvidence `json:"scale_to_zero,omitempty"`
-	Restore     *RestoreEvidence     `json:"restore,omitempty"`
+	Provider             string                       `json:"provider"`
+	ResourceID           string                       `json:"resource_id"`
+	Mutating             bool                         `json:"mutating"`
+	StartedAt            time.Time                    `json:"started_at"`
+	CompletedAt          time.Time                    `json:"completed_at"`
+	Checks               []QualificationCheck         `json:"checks"`
+	ScaleToZero          *ScaleToZeroEvidence         `json:"scale_to_zero,omitempty"`
+	Restore              *RestoreEvidence             `json:"restore,omitempty"`
+	CredentialPrivileges *CredentialPrivilegeEvidence `json:"credential_privileges,omitempty"`
+	CredentialAccess     []CredentialAccess           `json:"credential_access"`
+	ReadOnlyCredentials  *ReadOnlyCredentialEvidence  `json:"read_only_credentials,omitempty"`
+	ClassResize          bool                         `json:"class_resize"`
+	ScaleToZeroUpdate    bool                         `json:"scale_to_zero_update"`
+	ComputePolicy        *ComputePolicyEvidence       `json:"compute_policy,omitempty"`
+	Resize               *ResizeEvidence              `json:"resize,omitempty"`
 }
 
 // LifecycleQualificationReport contains the non-sensitive evidence from a
@@ -67,19 +105,21 @@ type LifecycleQualificationReport struct {
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 1
+const QualificationArtifactVersion = 6
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
 var requiredProviderQualificationChecks = [...]string{
 	"provider_present", "resource_identity", "spec_valid", "capabilities_valid", "spec_supported",
 	"provision", "provision_observed", "provision_idempotent", "provision_idempotent_identity",
-	"inspect", "inspect_observed", "usage", "usage_valid", "credentials_issue", "credentials_valid",
-	"scale_to_zero_probe", "credentials_revoke", "delete", "delete_recovery", "delete_complete", "delete_recovery_complete",
+	"inspect", "inspect_observed", "usage", "usage_valid", "credentials_issue", "credentials_valid", "credentials_idempotent",
+	"scale_to_zero_probe", "credential_privileges_probe", "credentials_revoke", "delete", "delete_recovery", "delete_complete", "delete_recovery_complete",
 }
 
 var restoreQualificationChecks = [...]string{
-	"restore", "restore_observed", "restore_delete", "restore_delete_complete",
+	"restore_prepare", "restore", "restore_observed", "restore_ready",
+	"restore_credentials_issue", "restore_credentials_valid", "restore_data_verified", "restore_credentials_isolated", "restore_credentials_revoke",
+	"restore_delete", "restore_delete_complete", "restore_cleanup",
 }
 
 var requiredLifecycleQualificationChecks = [...]string{
@@ -222,6 +262,40 @@ func ValidateQualificationReport(report QualificationReport) error {
 		return ErrInvalid
 	}
 	requiredChecks := requiredProviderQualificationChecks[:]
+	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > 3 {
+		return ErrInvalid
+	}
+	seenAccess := make(map[CredentialAccess]bool, len(report.CredentialAccess))
+	for _, access := range report.CredentialAccess {
+		if seenAccess[access] || (access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration) {
+			return ErrInvalid
+		}
+		seenAccess[access] = true
+	}
+	if seenAccess[CredentialReadOnly] {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "read_only_credentials_probe")
+		if report.ReadOnlyCredentials == nil || report.ReadOnlyCredentials.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.ReadOnlyCredentials != nil {
+		return ErrInvalid
+	}
+	if report.ClassResize {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "compute_resize_probe")
+		if report.Resize == nil || report.Resize.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.Resize != nil {
+		return ErrInvalid
+	}
+	if report.ScaleToZeroUpdate {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "compute_policy_probe")
+		if report.ComputePolicy == nil || report.ComputePolicy.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.ComputePolicy != nil {
+		return ErrInvalid
+	}
 	if report.Restore != nil {
 		requiredChecks = append(append([]string(nil), requiredChecks...), restoreQualificationChecks[:]...)
 	}
@@ -231,7 +305,10 @@ func ValidateQualificationReport(report QualificationReport) error {
 	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS < 0 {
 		return ErrUnavailable
 	}
-	if report.Restore != nil && (!report.Restore.Restored || !report.Restore.Deleted) {
+	if report.CredentialPrivileges == nil || report.CredentialPrivileges.Validate() != nil {
+		return ErrUnavailable
+	}
+	if report.Restore != nil && (!report.Restore.Restored || !report.Restore.DataVerified || !report.Restore.Deleted || !report.Restore.CredentialsIsolated) {
 		return ErrUnavailable
 	}
 	return nil
@@ -307,7 +384,9 @@ func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBacke
 		case errors.Is(err, ErrQualificationFailed):
 			add("provider_checks_failed")
 		case errors.Is(err, ErrUnavailable):
-			if artifact.Report.Restore != nil && (!artifact.Report.Restore.Restored || !artifact.Report.Restore.Deleted) {
+			if artifact.Report.CredentialPrivileges == nil || artifact.Report.CredentialPrivileges.Validate() != nil {
+				add("credential_privileges_evidence_missing")
+			} else if artifact.Report.Restore != nil && (!artifact.Report.Restore.Restored || !artifact.Report.Restore.DataVerified || !artifact.Report.Restore.CredentialsIsolated || !artifact.Report.Restore.Deleted) {
 				add("restore_evidence_missing")
 			} else {
 				add("scale_to_zero_evidence_missing")
@@ -346,7 +425,7 @@ func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBacke
 		add("canary_accounts_mismatch")
 	}
 	if len(artifact.ApprovalEnv) > 0 {
-		if artifact.ApprovalEnv[QualificationEnv] != "true" || artifact.ApprovalEnv[QualificationBackendEnv] != approval.BackendID || artifact.ApprovalEnv[QualificationFingerprintEnv] != approval.BackendFingerprint || artifact.ApprovalEnv[QualificationUntilEnv] != approval.ExpiresAt.UTC().Format(time.RFC3339) {
+		if artifact.ApprovalEnv[QualificationEnv] != "true" || artifact.ApprovalEnv[QualificationVersionEnv] != strconv.Itoa(qualificationArtifactVersion) || artifact.ApprovalEnv[QualificationBackendEnv] != approval.BackendID || artifact.ApprovalEnv[QualificationFingerprintEnv] != approval.BackendFingerprint || artifact.ApprovalEnv[QualificationUntilEnv] != approval.ExpiresAt.UTC().Format(time.RFC3339) {
 			add("approval_env_mismatch")
 		}
 		if len(approval.CanaryAccounts) > 0 && artifact.ApprovalEnv[CanaryAccountsEnv] != strings.Join(approval.CanaryAccounts, ",") {
@@ -380,7 +459,31 @@ func (r *Registry) VerifyQualificationArtifact(artifact QualificationArtifact, e
 		readiness.Reasons = append(readiness.Reasons, "spec_unsupported")
 		readiness.Ready = false
 	}
+	if !sameCredentialAccess(backend.Capabilities.CredentialAccess, artifact.Report.CredentialAccess) {
+		readiness.Reasons = append(readiness.Reasons, "credential_capabilities_mismatch")
+		readiness.Ready = false
+	}
+	if backend.Capabilities.ClassResize != artifact.Report.ClassResize {
+		readiness.Reasons = append(readiness.Reasons, "resize_capabilities_mismatch")
+		readiness.Ready = false
+	}
+	if backend.Capabilities.ScaleToZeroUpdate != artifact.Report.ScaleToZeroUpdate {
+		readiness.Reasons = append(readiness.Reasons, "compute_policy_capabilities_mismatch")
+		readiness.Ready = false
+	}
 	return readiness
+}
+
+func sameCredentialAccess(a, b []CredentialAccess) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, access := range a {
+		if !contains(b, access) {
+			return false
+		}
+	}
+	return true
 }
 
 func qualificationReportSHA256(report QualificationReport) string {
@@ -445,9 +548,14 @@ type QualificationOptions struct {
 	Spec         Spec
 	Timeout      time.Duration
 	Mutating     bool
+	PollInterval time.Duration
+	// ContinueAfterUsageFailure allows independent diagnostics on a fresh
+	// resource with no settled usage yet. The failed check remains mandatory:
+	// the run returns ErrQualificationFailed and cannot authorize provisioning.
+	ContinueAfterUsageFailure bool
 }
 
-const defaultQualificationTimeout = 10 * time.Minute
+const defaultQualificationTimeout = 20 * time.Minute
 
 const qualificationCleanupTimeout = 2 * time.Minute
 
@@ -481,14 +589,14 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	// Cleanup must retain a separate budget when a provider call hits the
 	// qualification deadline; otherwise an ambiguous create could be left
 	// behind precisely when the harness is under pressure.
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(parent), qualificationCleanupTimeout)
-	defer cleanupCancel()
 
 	record := func(name string, err error) bool {
 		check := QualificationCheck{Name: name, Passed: err == nil}
 		if err != nil {
 			check.Error = qualificationErrorCode(err)
-			resultErr = fmt.Errorf("%w: %s", ErrQualificationFailed, name)
+			if resultErr == nil {
+				resultErr = fmt.Errorf("%w: %s", ErrQualificationFailed, name)
+			}
 		}
 		report.Checks = append(report.Checks, check)
 		return err == nil
@@ -509,6 +617,9 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	}
 
 	capabilities := provider.Capabilities()
+	report.CredentialAccess = append([]CredentialAccess(nil), capabilities.CredentialAccess...)
+	report.ClassResize = capabilities.ClassResize
+	report.ScaleToZeroUpdate = capabilities.ScaleToZeroUpdate
 	if err := capabilities.Validate(); !record("capabilities_valid", err) {
 		return report, resultErr
 	}
@@ -534,8 +645,14 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	restoreTargetProviderResourceID := ""
 	restoreAttempted := false
 	restoreDeleted := false
+	restorePointInTime := time.Time{}
 	deleted := false
 	credentialIssued := false
+	restoreCredentialIssued := false
+	var restoreCredentialRequest CredentialRequest
+	var restoreProber RestoreDataProber
+	var material CredentialMaterial
+	restoreProbePrepared := false
 	credentialRequest := CredentialRequest{
 		ProviderResourceID: providerResourceID,
 		IdentityKey:        qualificationKey("identity", options.ResourceID),
@@ -543,39 +660,54 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		IdempotencyKey:     credentialKey,
 	}
 	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(parent), qualificationCleanupTimeout)
+		defer cleanupCancel()
 		// A failed revoke or delete is retried during cleanup. Do not expose the
 		// provider error; the operator can rerun the qualification safely.
+		if restoreProbePrepared {
+			if cleanupErr := restoreProber.CleanupRestore(cleanupCtx, providerResourceID, material); cleanupErr != nil {
+				record("cleanup_restore_probe", cleanupErr)
+			}
+		}
 		if credentialIssued && providerResourceID != "" {
-			if cleanupErr := provider.RevokeCredentials(cleanupCtx, credentialRequest); cleanupErr != nil && resultErr == nil {
-				report.Checks = append(report.Checks, QualificationCheck{Name: "cleanup_credentials", Error: qualificationErrorCode(cleanupErr)})
-				resultErr = fmt.Errorf("%w: cleanup_credentials", ErrQualificationFailed)
+			if cleanupErr := provider.RevokeCredentials(cleanupCtx, credentialRequest); cleanupErr != nil {
+				record("cleanup_credentials", cleanupErr)
+			}
+		}
+		if restoreCredentialIssued {
+			if cleanupErr := provider.RevokeCredentials(cleanupCtx, restoreCredentialRequest); cleanupErr != nil {
+				record("cleanup_restore_credentials", cleanupErr)
 			}
 		}
 		if restoreAttempted && !restoreDeleted {
-			cleanupResult, cleanupErr := provider.Delete(cleanupCtx, DeleteRequest{
+			cleanupResult, cleanupErr := qualifyProviderDelete(cleanupCtx, provider, options.PollInterval, DeleteRequest{
 				ResourceID:              restoreResourceID,
 				ProviderResourceID:      restoreTargetProviderResourceID,
 				RestoreSourceResourceID: providerResourceID,
+				RestorePointInTime:      restorePointInTime,
 				IdempotencyKey:          qualificationKey("restore-delete", options.ResourceID),
 			})
 			if cleanupErr == nil && !cleanupResult.Done {
 				cleanupErr = ErrUnavailable
 			}
-			if cleanupErr != nil && resultErr == nil {
-				report.Checks = append(report.Checks, QualificationCheck{Name: "cleanup_restore", Error: qualificationErrorCode(cleanupErr)})
-				resultErr = fmt.Errorf("%w: cleanup_restore", ErrQualificationFailed)
+			if cleanupErr != nil {
+				record("cleanup_restore", cleanupErr)
 			} else {
 				restoreDeleted = true
 			}
 		}
-		if !deleted && providerResourceID != "" {
-			cleanupResult, cleanupErr := provider.Delete(cleanupCtx, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey})
+		if !deleted {
+			// Retain a source-delete budget even if target cleanup exhausted
+			// its deadline. The logical identity also recovers a lost create
+			// response that never supplied an opaque provider resource ID.
+			sourceCleanupCtx, sourceCleanupCancel := context.WithTimeout(context.WithoutCancel(parent), qualificationCleanupTimeout)
+			defer sourceCleanupCancel()
+			cleanupResult, cleanupErr := qualifyProviderDelete(sourceCleanupCtx, provider, options.PollInterval, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey})
 			if cleanupErr == nil && !cleanupResult.Done {
 				cleanupErr = ErrUnavailable
 			}
-			if cleanupErr != nil && resultErr == nil {
-				report.Checks = append(report.Checks, QualificationCheck{Name: "cleanup_resource", Error: qualificationErrorCode(cleanupErr)})
-				resultErr = fmt.Errorf("%w: cleanup_resource", ErrQualificationFailed)
+			if cleanupErr != nil {
+				record("cleanup_resource", cleanupErr)
 			}
 		}
 	}()
@@ -600,11 +732,11 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	}
 	record("provision_idempotent_identity", nil)
 
-	inspected, inspectErr := provider.Inspect(ctx, providerResourceID)
+	inspected, inspectErr := qualifyProviderReady(ctx, provider, providerResourceID, options.PollInterval)
 	if !record("inspect", inspectErr) {
 		return report, resultErr
 	}
-	if inspected.ProviderResourceID != providerResourceID || (inspected.Status != ProviderStatusPending && inspected.Status != ProviderStatusReady) {
+	if inspected.ProviderResourceID != providerResourceID || inspected.Status != ProviderStatusReady || inspected.Spec != options.Spec {
 		record("inspect_observed", ErrUnavailable)
 		return report, resultErr
 	}
@@ -612,19 +744,30 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 
 	windowTo := time.Now().UTC().Truncate(time.Hour)
 	usage, usageErr := provider.Usage(ctx, providerResourceID, UsageWindow{From: windowTo.Add(-time.Hour), To: windowTo})
-	if !record("usage", usageErr) {
-		return report, resultErr
-	}
-	if err := usage.Validate(); !record("usage_valid", err) {
+	if record("usage", usageErr) {
+		if err := usage.Validate(); !record("usage_valid", err) && !options.ContinueAfterUsageFailure {
+			return report, resultErr
+		}
+	} else if !options.ContinueAfterUsageFailure {
 		return report, resultErr
 	}
 
-	material, credentialErr := provider.IssueCredentials(ctx, credentialRequest)
+	var credentialErr error
+	// Issuance can commit a login before its response is lost. Revoke using
+	// the original deterministic request even when no material was returned.
+	credentialIssued = true
+	material, credentialErr = provider.IssueCredentials(ctx, credentialRequest)
 	if !record("credentials_issue", credentialErr) {
 		return report, resultErr
 	}
-	credentialIssued = true
 	if err := material.Validate(); !record("credentials_valid", err) {
+		return report, resultErr
+	}
+	retriedMaterial, retryErr := provider.IssueCredentials(ctx, credentialRequest)
+	if retryErr == nil && (retriedMaterial.Validate() != nil || retriedMaterial.ProviderIdentityID != material.ProviderIdentityID || retriedMaterial.Username != material.Username || retriedMaterial.Password != material.Password || retriedMaterial.Database != material.Database || retriedMaterial.TLSMode != material.TLSMode) {
+		retryErr = ErrUnavailable
+	}
+	if !record("credentials_idempotent", retryErr) {
 		return report, resultErr
 	}
 	if options.Spec.ScaleToZero {
@@ -646,21 +789,90 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			return report, resultErr
 		}
 	}
-	if options.Spec.RestoreWindowSeconds > 0 {
-		restoreAttempted = true
-		report.Restore = &RestoreEvidence{}
-		window := time.Duration(options.Spec.RestoreWindowSeconds) * time.Second
-		offset := window / 2
-		if offset <= 0 {
-			offset = time.Nanosecond
+	privilegeProber, hasPrivilegeProber := provider.(CredentialPrivilegeProber)
+	if !hasPrivilegeProber {
+		record("credential_privileges_probe", ErrUnsupported)
+		return report, resultErr
+	}
+	privileges, privilegeErr := privilegeProber.ProbeCredentialPrivileges(ctx, providerResourceID, material)
+	report.CredentialPrivileges = &privileges
+	if privilegeErr == nil {
+		privilegeErr = privileges.Validate()
+	}
+	if !record("credential_privileges_probe", privilegeErr) {
+		return report, resultErr
+	}
+	if contains(capabilities.CredentialAccess, CredentialReadOnly) {
+		prober, ok := provider.(ReadOnlyCredentialProber)
+		if !ok {
+			record("read_only_credentials_probe", ErrUnsupported)
+			return report, resultErr
 		}
+		evidence, probeErr := prober.ProbeReadOnlyCredentials(ctx, providerResourceID)
+		report.ReadOnlyCredentials = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("read_only_credentials_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if capabilities.ClassResize {
+		prober, ok := provider.(ComputeResizeProber)
+		if !ok {
+			record("compute_resize_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeComputeResize(ctx, providerResourceID, options.Spec)
+		report.Resize = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("compute_resize_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if capabilities.ScaleToZeroUpdate {
+		prober, ok := provider.(ComputePolicyProber)
+		if !ok {
+			record("compute_policy_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeComputePolicy(ctx, providerResourceID, options.Spec)
+		report.ComputePolicy = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("compute_policy_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if options.Spec.RestoreWindowSeconds > 0 {
+		report.Restore = &RestoreEvidence{}
+		prober, ok := provider.(RestoreDataProber)
+		if !ok {
+			record("restore_prepare", ErrUnsupported)
+			return report, resultErr
+		}
+		restoreProber = prober
+		restoreProbePrepared = true
+		probe, prepareErr := prober.PrepareRestore(ctx, providerResourceID, material)
+		if prepareErr == nil && (probe.PointInTime.Before(started) || probe.PointInTime.After(time.Now().UTC()) || probe.Marker == "") {
+			prepareErr = ErrInvalid
+		}
+		if !record("restore_prepare", prepareErr) {
+			return report, resultErr
+		}
+		restorePointInTime = probe.PointInTime
+		restoreAttempted = true
 		restored, restoreErr := provider.Restore(ctx, RestoreRequest{
 			ResourceID:       restoreResourceID,
 			SourceResourceID: providerResourceID,
 			Spec:             options.Spec,
-			PointInTime:      time.Now().UTC().Add(-offset),
+			PointInTime:      restorePointInTime,
 			IdempotencyKey:   qualificationKey("restore", options.ResourceID),
 		})
+		restoreTargetProviderResourceID = restored.ProviderResourceID
 		if !record("restore", restoreErr) {
 			return report, resultErr
 		}
@@ -671,10 +883,46 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		restoreTargetProviderResourceID = restored.ProviderResourceID
 		report.Restore.Restored = true
 		record("restore_observed", nil)
-		deletedRestore, deleteRestoreErr := provider.Delete(ctx, DeleteRequest{
+		ready, readyErr := qualifyProviderReady(ctx, provider, restoreTargetProviderResourceID, options.PollInterval)
+		if readyErr == nil && (ready.ProviderResourceID != restoreTargetProviderResourceID || ready.Spec != options.Spec) {
+			readyErr = ErrUnavailable
+		}
+		if !record("restore_ready", readyErr) {
+			return report, resultErr
+		}
+		restoreCredentialRequest = CredentialRequest{ProviderResourceID: restoreTargetProviderResourceID,
+			IdentityKey: qualificationKey("restore-identity", options.ResourceID), Access: CredentialReadWrite,
+			IdempotencyKey: qualificationKey("restore-credential", options.ResourceID)}
+		restoreCredentialIssued = true
+		restoreMaterial, issueErr := provider.IssueCredentials(ctx, restoreCredentialRequest)
+		if !record("restore_credentials_issue", issueErr) {
+			return report, resultErr
+		}
+		if !record("restore_credentials_valid", restoreMaterial.Validate()) {
+			return report, resultErr
+		}
+		if !record("restore_data_verified", prober.VerifyRestore(ctx, restoreTargetProviderResourceID, restoreMaterial, probe)) {
+			return report, resultErr
+		}
+		report.Restore.DataVerified = true
+		isolationProber, ok := provider.(RestoreCredentialIsolationProber)
+		isolationErr := ErrUnsupported
+		if ok {
+			isolationErr = isolationProber.VerifyRestoreCredentialIsolation(ctx, material, restoreMaterial)
+		}
+		if !record("restore_credentials_isolated", isolationErr) {
+			return report, resultErr
+		}
+		report.Restore.CredentialsIsolated = true
+		if !record("restore_credentials_revoke", provider.RevokeCredentials(ctx, restoreCredentialRequest)) {
+			return report, resultErr
+		}
+		restoreCredentialIssued = false
+		deletedRestore, deleteRestoreErr := qualifyProviderDelete(ctx, provider, options.PollInterval, DeleteRequest{
 			ResourceID:              restoreResourceID,
 			ProviderResourceID:      restoreTargetProviderResourceID,
 			RestoreSourceResourceID: providerResourceID,
+			RestorePointInTime:      restorePointInTime,
 			IdempotencyKey:          qualificationKey("restore-delete", options.ResourceID),
 		})
 		if !record("restore_delete", deleteRestoreErr) {
@@ -687,13 +935,17 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		restoreDeleted = true
 		report.Restore.Deleted = true
 		record("restore_delete_complete", nil)
+		if !record("restore_cleanup", prober.CleanupRestore(ctx, providerResourceID, material)) {
+			return report, resultErr
+		}
+		restoreProbePrepared = false
 	}
 	if err := provider.RevokeCredentials(ctx, credentialRequest); !record("credentials_revoke", err) {
 		return report, resultErr
 	}
 	credentialIssued = false
 
-	deletedResult, deleteErr := provider.Delete(ctx, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey})
+	deletedResult, deleteErr := qualifyProviderDelete(ctx, provider, options.PollInterval, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey})
 	if !record("delete", deleteErr) {
 		return report, resultErr
 	}
@@ -701,7 +953,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		record("delete_complete", ErrUnavailable)
 		return report, resultErr
 	}
-	recoveryResult, recoveryErr := provider.Delete(ctx, DeleteRequest{ResourceID: options.ResourceID, IdempotencyKey: deleteRecoveryKey})
+	recoveryResult, recoveryErr := qualifyProviderDelete(ctx, provider, options.PollInterval, DeleteRequest{ResourceID: options.ResourceID, IdempotencyKey: deleteRecoveryKey})
 	if !record("delete_recovery", recoveryErr) {
 		return report, resultErr
 	}
@@ -712,7 +964,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	deleted = true
 	record("delete_complete", nil)
 	record("delete_recovery_complete", nil)
-	return report, nil
+	return report, resultErr
 }
 
 // QualifyLifecycle exercises the provider-neutral control-plane saga with a
@@ -741,7 +993,7 @@ func QualifyLifecycle(parent context.Context, service *Service, bindings *Bindin
 		recordQualificationFailure(&report, "lifecycle_identity", ErrInvalid, &resultErr)
 		return report, resultErr
 	}
-	if options.Access != CredentialReadWrite && options.Access != CredentialReadOnly {
+	if options.Access != CredentialReadWrite && options.Access != CredentialReadOnly && options.Access != CredentialMigration {
 		recordQualificationFailure(&report, "lifecycle_access", ErrInvalid, &resultErr)
 		return report, resultErr
 	}

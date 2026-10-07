@@ -357,6 +357,14 @@ func (s *server) createExclusiveAppTaskOperation(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, api.ErrValidation("invalid managed app task request body"))
 		return
 	}
+	if req.Task.VerificationDeploymentID != "" || req.Task.SmokeDeploymentID != "" {
+		detail := "verification_deployment_id is only supported by direct binding verification task admission"
+		if req.Task.SmokeDeploymentID != "" {
+			detail = "smoke_deployment_id is only supported by direct service smoke task admission"
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid task selector", detail))
+		return
+	}
 	resolved, problem := req.Task.Resolve()
 	if problem != nil {
 		api.WriteProblem(w, problem)

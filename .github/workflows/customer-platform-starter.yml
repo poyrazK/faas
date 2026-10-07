@@ -26,7 +26,62 @@ permissions:
 jobs:
   acceptance:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold builds of the complete API/state test sources reached the old
+    # fifteen-minute deadline. Keep acceptance bounded without dropping tests.
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          # pgtest drops fully migrated schemas; the default lock table can
+          # exhaust shared memory. Match the main CI PostgreSQL fixture.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
+      CUSTOMER_MIGRATION_DATABASE_URL: postgres://customer_migration:customer_migration_test@127.0.0.1:5432/customer_platform?sslmode=disable
+      CUSTOMER_DATABASE_URL: postgres://customer_app:customer_test@127.0.0.1:5432/customer_platform?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Create separate schema-owner and runtime roles
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U faas -d faas -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE customer_migration LOGIN PASSWORD 'customer_migration_test' NOSUPERUSER NOBYPASSRLS;" \
+            -c "CREATE ROLE customer_app LOGIN PASSWORD 'customer_test' NOSUPERUSER NOBYPASSRLS;" \
+            -c "CREATE DATABASE customer_platform OWNER customer_migration;"
+          docker exec "${{ job.services.postgres.id }}" psql -U faas -d customer_platform -v ON_ERROR_STOP=1 \
+            -c "REVOKE CREATE ON SCHEMA public FROM PUBLIC;" \
+            -c "GRANT USAGE ON SCHEMA public TO customer_app;" \
+            -c "ALTER DEFAULT PRIVILEGES FOR ROLE customer_migration IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO customer_app;"
+      - name: Test two-customer lifecycle and PostgreSQL isolation
+        # Serial package builds alone do not bound a large compiler heap.
+        # Bound GC pressure, omit APID test debug metadata and serialize its
+        # compiler backend. Production build jobs retain their debug metadata.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
+        run: make test-customer-platform
+
+  mcp-task-postgres:
+    name: MCP durable Tasks PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -40,21 +95,17 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
-    env:
-      DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
-      CUSTOMER_DATABASE_URL: postgres://customer_app:customer_test@127.0.0.1:5432/customer_platform?sslmode=disable
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - name: Create a database role subject to row security
-        run: |
-          docker exec "${{ job.services.postgres.id }}" psql -U faas -d faas -v ON_ERROR_STOP=1 \
-            -c "CREATE ROLE customer_app LOGIN PASSWORD 'customer_test' NOSUPERUSER NOBYPASSRLS;" \
-            -c "CREATE DATABASE customer_platform OWNER customer_app;"
-      - name: Test two-customer lifecycle and PostgreSQL isolation
-        run: make test-customer-platform
+          cache: npm
+          cache-dependency-path: cmd/gregale/templates/mcp-node/package-lock.json
+      - name: Install MCP starter dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix cmd/gregale/templates/mcp-node
+      - name: Verify durable task SQL against PostgreSQL 16
+        env:
+          MCP_TASKS_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
+          MCP_TASKS_REQUIRE_POSTGRES: "1"
+        run: npm run test:postgres --prefix cmd/gregale/templates/mcp-node

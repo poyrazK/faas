@@ -80,7 +80,9 @@ func TestResolveRestoreArtifactsKeepsRemoteMaterializationSequential(t *testing.
 	if err != nil {
 		t.Fatalf("resolveRestoreArtifacts: %v", err)
 	}
-	v.sweepMaterialised("instance")
+	if err := v.sweepMaterialised("instance"); err != nil {
+		t.Fatal(err)
+	}
 	if elapsed := time.Since(started); elapsed < 110*time.Millisecond {
 		t.Fatalf("two 60ms remote reads took %s; remote materialization became concurrent", elapsed)
 	}
@@ -102,7 +104,11 @@ func TestResolveColdBootArtifactAttributesMaterializedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveColdBootArtifact: %v", err)
 	}
-	defer v.sweepMaterialised("instance")
+	t.Cleanup(func() {
+		if err := v.sweepMaterialised("instance"); err != nil {
+			t.Error(err)
+		}
+	})
 	if path == "" {
 		t.Fatal("resolved path is empty")
 	}
@@ -138,7 +144,11 @@ func TestResolveRestoreBlobAttributesMaterializedFetch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveRestoreBlob: %v", err)
 	}
-	t.Cleanup(func() { v.sweepMaterialised("instance") })
+	t.Cleanup(func() {
+		if err := v.sweepMaterialised("instance"); err != nil {
+			t.Error(err)
+		}
+	})
 
 	if path == "/legacy/vmstate" {
 		t.Fatal("resolved to the legacy host path instead of the storage key")

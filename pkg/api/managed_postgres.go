@@ -34,22 +34,37 @@ func ManagedPostgresLimitsFor(p Plan) (ManagedPostgresPlanLimits, bool) {
 }
 
 type ManagedPostgresDatabase struct {
-	ID                      string `json:"id"`
-	Name                    string `json:"name"`
-	Region                  string `json:"region"`
-	PostgresMajor           int    `json:"postgres_major"`
-	ServiceClass            string `json:"service_class"`
-	Availability            string `json:"availability"`
-	ScaleToZero             bool   `json:"scale_to_zero"`
-	StorageLimitBytes       int64  `json:"storage_limit_bytes"`
-	RestoreWindowSeconds    int64  `json:"restore_window_seconds"`
-	RestoreSourceDatabaseID string `json:"restore_source_database_id,omitempty"`
-	RestorePointInTime      string `json:"restore_point_in_time,omitempty"`
-	State                   string `json:"state"`
-	LastErrorCode           string `json:"last_error_code,omitempty"`
-	CreatedAt               string `json:"created_at"`
-	UpdatedAt               string `json:"updated_at"`
-	DeletedAt               string `json:"deleted_at,omitempty"`
+	Health                  *ManagedPostgresHealth `json:"health,omitempty"`
+	ID                      string                 `json:"id"`
+	Name                    string                 `json:"name"`
+	Region                  string                 `json:"region"`
+	PostgresMajor           int                    `json:"postgres_major"`
+	ServiceClass            string                 `json:"service_class"`
+	Availability            string                 `json:"availability"`
+	ScaleToZero             bool                   `json:"scale_to_zero"`
+	StorageLimitBytes       int64                  `json:"storage_limit_bytes"`
+	RestoreWindowSeconds    int64                  `json:"restore_window_seconds"`
+	RestoreSourceDatabaseID string                 `json:"restore_source_database_id,omitempty"`
+	RestorePointInTime      string                 `json:"restore_point_in_time,omitempty"`
+	State                   string                 `json:"state"`
+	LastErrorCode           string                 `json:"last_error_code,omitempty"`
+	CreatedAt               string                 `json:"created_at"`
+	UpdatedAt               string                 `json:"updated_at"`
+	DeletedAt               string                 `json:"deleted_at,omitempty"`
+}
+
+// ManagedPostgresHealth reports cached provider metadata. Healthy does not
+// assert application-to-database SQL connectivity; use bindings verify for it.
+type ManagedPostgresHealth struct {
+	Enabled           bool   `json:"enabled"`
+	Status            string `json:"status"`
+	Fresh             bool   `json:"fresh"`
+	ProviderStatus    string `json:"provider_status"`
+	ComputeState      string `json:"compute_state"`
+	StaleAfterSeconds int64  `json:"stale_after_seconds"`
+	CheckedAt         string `json:"checked_at,omitempty"`
+	LastSuccessAt     string `json:"last_success_at,omitempty"`
+	LastErrorCode     string `json:"last_error_code,omitempty"`
 }
 
 type ManagedPostgresDatabaseList struct {
@@ -156,4 +171,35 @@ type CreateManagedPostgresBindingRequest struct {
 	Scope          string `json:"scope"`
 	EnvironmentKey string `json:"environment_key"`
 	Access         string `json:"access"`
+}
+
+// ManagedPostgresCutover reports staging and control-plane SQL evidence only.
+// Credentials remain unpublished and workloads continue using the source.
+type ManagedPostgresCutover struct {
+	ID                        string                         `json:"id"`
+	SourceDatabaseID          string                         `json:"source_database_id"`
+	TargetDatabaseID          string                         `json:"target_database_id"`
+	AppID                     string                         `json:"app_id"`
+	Scope                     string                         `json:"scope"`
+	State                     string                         `json:"state"`
+	VerificationFresh         bool                           `json:"verification_fresh"`
+	VerificationMaxAgeSeconds int64                          `json:"verification_max_age_seconds"`
+	VerifiedAt                string                         `json:"verified_at,omitempty"`
+	LastErrorCode             string                         `json:"last_error_code,omitempty"`
+	Members                   []ManagedPostgresCutoverMember `json:"members"`
+	CreatedAt                 string                         `json:"created_at"`
+	UpdatedAt                 string                         `json:"updated_at"`
+}
+type ManagedPostgresCutoverMember struct {
+	SourceBindingID string `json:"source_binding_id"`
+	EnvironmentKey  string `json:"environment_key"`
+	Access          string `json:"access"`
+	State           string `json:"state"`
+	VerifiedAt      string `json:"verified_at,omitempty"`
+}
+type PrepareManagedPostgresCutoverRequest struct {
+	SourceDatabaseID string `json:"source_database_id"`
+	TargetDatabaseID string `json:"target_database_id"`
+	AppID            string `json:"app_id"`
+	Scope            string `json:"scope"`
 }

@@ -43,7 +43,8 @@ func (s *Server) RestoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskR
 			"App task restore failed", "vmmd returned an empty instance"))
 	}
 	return &vmmdpb.RestoreAppTaskResponse{
-		Instance: inst.Lease.Instance, LeaseUid: int32(inst.Lease.UID), Method: wakeMethodFrom(inst.Method),
+		SupportsSecretAliases: true,
+		Instance:              inst.Lease.Instance, LeaseUid: int32(inst.Lease.UID), Method: wakeMethodFrom(inst.Method),
 	}, nil
 }
 
@@ -179,6 +180,8 @@ func appTaskResponseFromResult(taskID string, result apptaskproto.Result) *vmmdp
 
 func appTaskProblem(err error) *api.Problem {
 	switch {
+	case errors.Is(err, fcvm.ErrAppAdmissionFenced), errors.Is(err, fcvm.ErrAppAdmissionUnavailable):
+		return toProblem(err)
 	case errors.Is(err, context.Canceled):
 		return api.NewProblem(int(codes.Canceled), api.CodeInternal, "App task cancelled", "app task request was cancelled")
 	case errors.Is(err, context.DeadlineExceeded):

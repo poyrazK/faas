@@ -42,6 +42,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -115,7 +116,7 @@ func cmdCors(args []string) int {
 // platform subdomain shape `<slug>.<host>` (always, since
 // AppResponse doesn't surface the app's verified custom domains).
 func cmdCorsAllow(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "credentials")
 	if len(positional) < 2 {
 		PrintUsage(os.Stderr,
 			"usage: gregale cors allow <slug> <origin> [<origin>...] [--method VERB] [--credentials] [--max-age N] [--host HOST]",
@@ -277,11 +278,21 @@ func cmdCorsLs(args []string) int {
 // uses (404 on foreign-account rule ids; no 403 to avoid leaking
 // existence).
 func cmdCorsRm(args []string) int {
-	if len(args) < 1 {
-		PrintUsage(os.Stderr, "usage: gregale cors rm <rule-id>", "cors")
+	// `cors ls <slug>` lists the rules, so `cors rm <slug> <rule-id>` is the
+	// natural follow-up. production-us hunt #4: the slug was taken as the rule
+	// id, the real id was silently ignored, and the answer was "no such edge
+	// rule". The slug is optional; the rule id must be the one `cors ls` prints.
+	if len(args) == 2 {
+		args = args[1:]
+	}
+	if len(args) != 1 {
+		PrintUsage(os.Stderr, "usage: gregale cors rm [<slug>] <rule-id>", "cors")
 		return 1
 	}
 	id := args[0]
+	if _, err := uuid.Parse(id); err != nil {
+		return printErr("Invalid CORS rule id", fmt.Errorf("%q is not a rule id; use the id `gregale cors ls <slug>` prints", id))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

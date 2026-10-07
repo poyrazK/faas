@@ -17,6 +17,10 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // (dto.go, build.go, appmanifest.go, cliauth.go, secrets.go). New
 // DTOs in internal/api should be added here on the next PR.
 type (
+	RouteCustomerUsageOptions  = api.RouteCustomerUsageOptions
+	RouteCustomerUsageResponse = api.RouteCustomerUsageResponse
+	RouteCustomerUsage         = api.RouteCustomerUsage
+	RouteCustomerObservation   = api.RouteCustomerObservation
 	// App lifecycle.
 	CreateAppRequest          = api.CreateAppRequest
 	UpdateAppRequest          = api.UpdateAppRequest
@@ -88,6 +92,7 @@ type (
 
 	// Custom domains.
 	CustomDomainResponse      = api.CustomDomainResponse
+	DNSRecordInstruction      = api.DNSRecordInstruction
 	CreateCustomDomainRequest = api.CreateCustomDomainRequest
 
 	// Crons.
@@ -199,6 +204,10 @@ type (
 	ExclusiveWorkPolicyRecord          = api.ExclusiveWorkPolicyRecord
 	ExclusiveWorkPolicyList            = api.ExclusiveWorkPolicyList
 	ExclusiveOperationRecord           = api.ExclusiveOperationRecord
+	ManagedOperationResult             = api.ManagedOperationResult
+	ManagedOperationEffect             = api.ManagedOperationEffect
+	OperationEffectRecord              = api.OperationEffectRecord
+	OperationEffectPayload             = api.OperationEffectPayload
 	InvocationDestinations             = api.InvocationDestinations
 	QueueSendRequest                   = api.QueueSendRequest
 	QueueSendResponse                  = api.QueueSendResponse
@@ -346,10 +355,21 @@ type (
 	CreateIssueIngestTokenRequest       = api.CreateIssueIngestTokenRequest
 	IssueIngestToken                    = api.IssueIngestToken
 )
+
+// Queue bindings preserve their immutable project environment identity.
+type (
+	QueueBindingResponse       = api.QueueBindingResponse
+	QueueBindingStatusResponse = api.QueueBindingStatusResponse
+	CreateQueueBindingRequest  = api.CreateQueueBindingRequest
+	UpdateQueueBindingRequest  = api.UpdateQueueBindingRequest
+	InvokeWork                 = api.InvokeWork
+)
 type CommitSourceResponse = api.CommitSourceResponse
 type CommitReceiptResponse = api.CommitReceiptResponse
 type CommitOperationResponse = api.CommitOperationResponse
 type CommitEventRequest = api.CommitEventRequest
+type CommitRouting = api.CommitRouting
+type CreateCommitSourceRequest = api.CreateCommitSourceRequest
 
 type CommitBlockedEventResponse = api.CommitBlockedEventResponse
 type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse

@@ -30,6 +30,8 @@ import (
 // e2e harness (which sets TLSConfig.Disabled=true via env) keeps working
 // without a config file.
 type Config struct {
+	// Empty keeps Operations admission closed; declared routes remain fenced.
+	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
 	// PublicAddr is the bind address for the customer-facing listener.
 	// Defaults to ":8080" (the legacy plain-HTTP path). When TLS is enabled
 	// via the [tls] table, the public listener moves to ":443" — this
@@ -53,6 +55,15 @@ type Config struct {
 	ServiceProxyTLSCertPath string `toml:"service_proxy_tls_cert_path"`
 	ServiceProxyTLSKeyPath  string `toml:"service_proxy_tls_key_path"`
 	ServiceProxyTLSCAPath   string `toml:"service_proxy_tls_ca_path"`
+
+	// ServiceTCPListen enables private TCP service addresses (ADR-576). It
+	// must bind the service proxy bridge address on the reserved port 10082,
+	// where the host DNATs service-address traffic. Empty disables it.
+	ServiceTCPListen string `toml:"service_tcp_listen"`
+	// ServiceTCPDNS makes <service>.svc.gregale answer with service
+	// addresses (ADR-576). It is the customer-visible switch and requires
+	// ServiceTCPListen, so raw TCP to an answered address always has a proxy.
+	ServiceTCPDNS bool `toml:"service_tcp_dns"`
 
 	// AppsDomain is the platform wildcard suffix (e.g. "gregale.dev").
 	// gatewayd routes <slug>.<apps_domain> to the customer's app and

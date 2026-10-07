@@ -40,6 +40,10 @@ func cmdDomainsVerify(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
+	}
 	d, err := client.VerifyDomain(ctx, domain)
 	if err != nil {
 		return printErr("Verify failed", err)
@@ -49,9 +53,10 @@ func cmdDomainsVerify(args []string) int {
 			return code
 		}
 	} else {
-		printDomainRow(osStdout, d, true)
+		printDomainRow(osStdout, d, slugs, true)
 		if !d.Verified {
 			PrintWarn(osStdout, "Domain is still pending verification; check DNS records and retry.")
+			printDomainDNSRecords(osStdout, d)
 		}
 	}
 	if !d.Verified {
@@ -77,6 +82,10 @@ func cmdDomainsShow(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
+	}
 	d, err := client.GetDomain(ctx, domain)
 	if err != nil {
 		return printErr("Request failed", err)
@@ -84,7 +93,7 @@ func cmdDomainsShow(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(d))
 	}
-	printDomainRow(osStdout, d, true)
+	printDomainRow(osStdout, d, slugs, true)
 	return 0
 }
 
@@ -132,12 +141,12 @@ func cmdDomainsStatus(args []string) int {
 
 // printDomainRow is the shared printer for both verify + show.
 // When verbose is true, it also prints the cert NotAfter + SANs.
-func printDomainRow(w io.Writer, d api.CustomDomainResponse, verbose bool) {
+func printDomainRow(w io.Writer, d api.CustomDomainResponse, slugs map[string]string, verbose bool) {
 	verified := statusPending
 	if d.Verified {
 		verified = statusVerified
 	}
-	target := d.AppID
+	target := appLabel(slugs, d.AppID)
 	if d.Environment != "" {
 		target += " [" + d.Environment + "]"
 	}
@@ -149,5 +158,21 @@ func printDomainRow(w io.Writer, d api.CustomDomainResponse, verbose bool) {
 		if len(d.CertSANs) > 0 {
 			_, _ = fmt.Fprintf(w, "    cert_sans:      %v\n", d.CertSANs)
 		}
+	}
+}
+
+// printDomainDNSRecords prints the records the customer publishes for a
+// custom domain (ADR-520). Older servers send only the TXT proof.
+func printDomainDNSRecords(w io.Writer, d api.CustomDomainResponse) {
+	if len(d.DNSRecords) == 0 {
+		_, _ = fmt.Fprintf(w, "  _faas-verify.%s  TXT  %s\n", d.Domain, d.ChallengeToken)
+		return
+	}
+	for _, r := range d.DNSRecords {
+		note := ""
+		if r.Alternative {
+			note = "  (at a zone apex, instead of the CNAME)"
+		}
+		_, _ = fmt.Fprintf(w, "  %s  %s  %s%s\n", r.Name, r.Type, r.Value, note)
 	}
 }

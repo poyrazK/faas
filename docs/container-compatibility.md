@@ -60,6 +60,29 @@ application-owned authentication. Connectivity probes record redirects without
 following them. Roll out the gateway response-proof support before the new
 imaged verifier; older gateways cannot satisfy the connectivity check.
 
+Both candidate verification contracts require an authenticated candidate
+response, including explicit HTTP health checks. A deployment header alone,
+gateway error, or missing/invalid response proof cannot verify the candidate.
+Candidate redirects are never followed; HTTP health requires a proven 2xx on
+the configured path.
+
+If challenge publication, the public gateway response, or the verification
+transport remains unavailable, the candidate stays `snapshotting` and retries
+through the durable notification outbox. A transport failure does not establish
+whether the app or platform caused it. The existing serving deployment keeps
+traffic. Recovery progress is
+available in `stage_state.hosting_verification`: `attempts`, `deadline_at`,
+`last_error_code`, and `retry_not_before` (the earliest eligible retry, not a
+promised delivery time). `last_error_code` distinguishes publication, gateway,
+transport, missing-proof and wrong-deployment failures. The five-minute
+recovery window survives imaged restarts and changes of outage reason. If it
+expires, the deployment fails with `deployment_verification_unavailable`;
+inspect deployment and gateway diagnostics before retrying. A proven candidate
+response with an unhealthy status retains `deployment_smoke_failed`.
+
+Roll out response-proof support to all gateways before enabling this verifier
+for HTTP health checks; an older gateway cannot verify a candidate.
+
 Gregale adds the managed infrastructure around that process: TLS, readiness,
 logs and metrics, snapshots, autoscaling, and scale-to-zero.
 
@@ -72,7 +95,7 @@ call is always safe: `/dev/urandom`, `getrandom(2)`, Go `crypto/rand`, Python
 `secrets`, `os.urandom` and `uuid.uuid4`, and Node `crypto.webcrypto`.
 
 For Node and Python, Gregale also reseeds the process itself before a woken
-instance serves traffic (ADR-481). It covers Node `crypto` (and the OpenSSL
+instance serves traffic (ADR-680). It covers Node `crypto` (and the OpenSSL
 state behind TLS), `crypto.randomUUID`, `crypto.randomInt` and `Math.random`,
 and Python `random`, `ssl`, and numpy's global `numpy.random` functions. If a
 process cannot confirm the reseed, the instance cold-boots instead of waking
@@ -100,6 +123,7 @@ keys, nonces or identifiers.
 | Main listener | Explicit deployment port, otherwise one exposed TCP port, otherwise 8080 | Multiple TCP declarations do not select the main port. Bind to `0.0.0.0`. |
 | Additional listeners | Declared TCP listeners use `<slug>--port-<name>.<apps-domain>` selectors through the gateway | These are HTTP gateway selectors. Raw TCP uses separately configured app-owned listeners; UDP uses the separate opt-in listener service below. |
 | Raw TCP ingress | Opt-in public edge binds stable app-owned TCP listener ports and forwards bytes through admission and vmmd; optional per-listener TLS termination | Disabled by default; requires gateway/firewall rollout. TLS defaults to passthrough; termination requires verified app-owned hostname and provisioned edge bundle. Native TLS acceptance remains pending. See [rollout](ops/tcp-ingress.md). |
+| Private TCP between services | Same-account services dial `<name>.svc.gregale:<port>` on any declared TCP listener or the serving port; compose `expose:` declares internal-only listeners (ADR-576) | Node-level rollout; until enabled, service names answer HTTP only. Internal listeners never get public selectors or raw TCP listeners. Ports 10080, 10081 and 443 stay on the HTTP mesh. See [networking](networking.md#private-tcp-between-services). |
 | Raw UDP ingress | Opt-in public edge reserves app-owned UDP endpoints and forwards framed datagrams through schedd and VMMD | Disabled by default; requires IPv4 source CIDRs and matching firewall rollout. Local API/storage/socket tests pass; native cold/restore acceptance is pending. See [ADR-389](adr/389-public-udp-ingress.md). |
 | Host ports | Durable per-node TCP/UDP lease allocation | A lease does not bind a socket or enable direct ingress. |
 | Readiness | TCP by default for direct images; explicit health path selects HTTP | Image HEALTHCHECK metadata is separate from verifying public-route readiness. |

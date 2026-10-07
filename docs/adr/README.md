@@ -56,8 +56,80 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 481 | [Restored processes reseed their userspace random generators before serving](481-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
+| 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
+| 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
+| 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
+| 636 | [Tenant-scoped scheduled workflow starts](636-tenant-scheduled-workflow-starts.md) | accepted | Per-tenant schedule cursors and atomic tenant-bound run admission |
+| 637 | [Tenant-configurable workflow schedules](637-tenant-configurable-workflow-schedules.md) | accepted | Explicitly opt in to tenant-owned cadence, overlap, and enablement settings |
+| 680 | [Restored processes reseed their userspace random generators before serving](680-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
+| 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
+| 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
+| 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
+| 620 | [Protection-aware object lifecycle deletion](620-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |
+| 619 | [Durable object write protection](619-durable-object-write-protection.md) | accepted | Immutable bounded write policies and exact native version verification for PUT, copy and multipart |
+| 596 | [Service binding dependency evidence](596-service-binding-dependency-evidence.md) | accepted | Versioned evidence for service binding dependencies. |
+| 597 | [Exact caller deployment for service smoke tests](597-caller-pinned-service-smoke.md) | accepted | Probe the exact selected caller deployment. |
+| 598 | [Stored binding release policy per deployment scope](598-stored-binding-release-policy.md) | accepted | Persist and enforce binding checks at release transitions. |
+| 599 | [Binding-checked exact canary recovery](599-binding-checked-canary-recovery.md) | accepted | Recover an exact canary pair with fresh binding evidence. |
+| 600 | [Binding-checked service routing and abort handoffs](600-binding-checked-service-handoffs.md) | accepted | Fence service handoff, application ACK and drain completion. |
+| 601 | [Binding-checked historical rollback](601-binding-checked-historical-rollback.md) | accepted | Prepare and restore an exact historical deployment safely. |
+| 602 | [Durable binding-checked alert rollback](602-durable-binding-checked-alert-rollback.md) | accepted | Persist alert-triggered canary recovery and resume retries. |
+| 603 | [Alert-driven service rollback](603-alert-driven-service-rollback.md) | accepted | Resume alert-triggered service recovery through its handoff barriers. |
+| 604 | [Alert-driven rollback after completed releases](604-alert-driven-historical-rollback.md) | accepted | Pin completed-release alert recovery to an eligible predecessor. |
+| 605 | [Deployment evidence for post-release automatic rollback](605-deployment-evidence-for-post-release-rollback.md) | accepted | Require exact post-cutover error evidence before accepting automatic rollback. |
+| 589 | [Versioned business-key and customer routing for Commit](589-commit-customer-routing.md) | accepted; operator qualification only | Versioned customer-scoped business keys route unrelated Commit work independently and serialize matching work |
+| 588 | [In-place retry of a failed workflow step](588-in-place-workflow-step-retry.md) | accepted | Retry a failed step within its existing run while preserving attempt history and managed operation identity |
+| 587 | [Transactional managed HTTP workflow steps](587-transactional-workflow-http-steps.md) | accepted | Reuse customer transaction receipts and durably deliver workflow operation effects |
+| 586 | [Transactional operation handler SDK](586-transactional-operation-handler-sdk.md) | accepted for implementation | Node, Go, and Python helpers atomically save customer PostgreSQL writes, replay receipts, and webhook intent |
+| 585 | [Managed operation results with durable webhook effects](585-managed-operation-webhook-effects.md) | accepted for implementation; promotion requires runtime qualification | Atomically fence managed HTTP completion with receiver-scoped durable webhook delivery |
+| 584 | [Durable object version protection](584-durable-object-version-protection.md) | accepted | Exact-version retention and legal holds with durable mutation/readback recovery |
+| 568 | [Git-owned environment intent and continuous reconciliation](568-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, scoped ownership and binding retirement, bounded reports, durable effects, and scoped runtime convergence |
+| 576 | [Private TCP addressing between services](576-private-tcp-service-addressing.md) | proposed | Account-scoped service addresses in 198.19.0.0/16 give non-HTTP protocols natural-port private reachability through a node-local TCP proxy |
+| 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
+| 580 | [Control-plane role convergence in CD](580-control-plane-convergence-in-cd.md) | proposed | CD runs the control-plane bootstrap play before release activation whenever a hash of its inputs (roles, inventory, operator vars) changes |
+| 567 | [Runtime base convergence](567-runtime-base-convergence.md) | proposed | Keep each node's cached runtime base byte-identical to its shared publication so ADR-510 snapshots restore on any node |
+| 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
+| 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
+| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | visibility preview; enforcement pending | Retained compute/egress costs, forecasts and disabled budget drafts; runtime enforcement has separate acceptance gates |
+| 565 | [Managed PostgreSQL fleet usage recovery](565-managed-postgres-fleet-usage-recovery.md) | accepted | Recover one window per database per round across the fleet before correction replay, using durable observation order |
+| 569 | [Managed PostgreSQL terminal usage coverage](569-managed-postgres-terminal-usage-coverage.md) | accepted | Retain known resources through shutdown, recover finite final windows, and require every final correction before completing automatic accounting |
+- [ADR-581: Managed PostgreSQL uncertain accounting intent](581-managed-postgres-uncertain-accounting-intent.md) — durable provider-attempt ownership and identity recovery before deletion
+- [ADR-582: Managed PostgreSQL accounting diagnostics](582-managed-postgres-accounting-diagnostics.md) — operator-only per-database evidence and admission blockers
+- [ADR-583: Managed PostgreSQL retained usage import](583-managed-postgres-retained-usage-import.md) — previewed, atomic accounting repairs with immutable evidence
+- [ADR-591: Managed PostgreSQL legacy accounting reconciliation](591-managed-postgres-legacy-accounting-reconciliation.md) — attested identity/shutdown repair with audited coverage reset
+| 529 | [Bindings gate at traffic promotion](529-binding-gated-promotion.md) | accepted | Require evidence and atomically fence traffic promotion on observed revisions |
+| 528 | [Deployment selection for bindings verification](528-deployment-binding-verification.md) | accepted | Probe the exact deployment artifact with its scoped runtime configuration |
+| 527 | [Bindings preflight policy](527-binding-preflight-policy.md) | accepted | Apply configurable readiness, age, rotation and runtime gates |
+| 526 | [Object-storage binding verification](526-object-storage-binding-verification.md) | accepted | Verify storage credentials and identity through task guest and rotation metadata |
+| 525 | [Binding runtime configuration freshness](525-binding-runtime-freshness.md) | accepted | Expose configuration and secret revisions for resident instances without reading values |
+| 524 | [Durable binding verification evidence](524-binding-verification-evidence.md) | accepted | Persist versioned verification evidence for exact binding configurations |
+| 509 | [Per-target binding adoption diagnostics](509-binding-adoption-target-diagnostics.md) | accepted | Return stable, sanitized workload-secret statuses and blocker reasons in binding checks |
+| 508 | [Process-generation secret acknowledgements](508-process-generation-secret-acknowledgements.md) | accepted | Register each execution before start and require matching generation evidence for strict adoption |
+| 507 | [Wait for the initial secret revision](507-initial-secret-revision-wait.md) | accepted | Bound bootstrap polling for an empty initial revision, cancel on shutdown and serve only after application ACK |
+| 506 | [Startup-safe runtime secret notifications](506-startup-safe-runtime-secret-notifications.md) | accepted | Gate reloads on per-process readiness, skip redundant startup signals and recover queued or failed delivery |
+| 505 | [Atomic runtime secret snapshots](505-atomic-runtime-secret-snapshots.md) | accepted | Publish values, revision and legacy views as one generation; bind application reads and acknowledgements to one envelope |
+| 504 | [Workload secret reload restart consistency](504-workload-secret-reload-restart-consistency.md) | accepted | Prepare projections once, preserve revisions across sidecar restarts and remove revoked credentials from restart environments |
+| 503 | [Main-workload secret reload with sidecars](503-main-secret-reload-with-sidecars.md) | accepted | Independent main and sidecar reload, grants and application receipts in the same deployment |
+| 502 | [Version-bound application adoption for managed bindings](502-binding-application-adoption.md) | accepted | Require an application receipt for the exact deployed binding version |
+| 523 | [Queue consumer readiness at bindings promotion](523-queue-binding-readiness.md) | accepted | Include queue consumer health and poll freshness in promotion checks |
+| 522 | [Deployment-pinned outbound binding verification](522-outbound-binding-verification.md) | accepted | Verify configured outbound probes without disclosing credential material |
+| 497 | [Stateless automation simulation with bounded sample data](497-automation-simulation.md) | accepted | Validate definitions and sample traces without invoking app handlers or external integrations |
+| 496 | [Start customer automations from verified Stripe webhooks](496-verified-webhook-automation-starts.md) | accepted | Verify inbound webhook signatures, deduplicate provider events, and route directly into published automations |
+| 495 | [Customer-requested continuation of failed workflow runs](495-failed-workflow-run-resume.md) | accepted | Resume failed runs with fenced retries and an auditable continuation history |
+| 494 | [Bounded workflow iteration](494-bounded-workflow-iteration.md) | accepted | Execute bounded list iterations durably and recover completed items without restarting them |
+| 575 | [Stateless automation simulation with bounded sample data](575-automation-simulation.md) | accepted | Validate definitions and sample traces without invoking app handlers or external integrations |
+| 574 | [Start customer automations from verified Stripe webhooks](574-verified-webhook-automation-starts.md) | accepted | Verify inbound webhook signatures, deduplicate provider events, and route directly into published automations |
+| 573 | [Customer-requested continuation of failed workflow runs](573-failed-workflow-run-resume.md) | accepted | Resume failed runs with fenced retries and an auditable continuation history |
+| 572 | [Bounded workflow iteration](572-bounded-workflow-iteration.md) | accepted | Execute bounded list iterations durably and recover completed items without restarting them |
+| 491 | [Native workflow branch joins](491-native-workflow-branch-joins.md) | accepted | Merge selected conditional branches with deterministic outputs and durable skip propagation |
+| 490 | [Declarative workflow step guards](490-declarative-workflow-step-guards.md) | accepted | Select workflow paths from prior step outputs without a customer adapter handler |
+| 489 | [Managed outbound integration steps in workflows](489-workflow-outbound-integration-steps.md) | accepted (preview) | Call managed integrations with scoped identity, bounded responses, and durable retry decisions |
+| 488 | [Customer automation drafts and publication](488-customer-automation-authoring.md) | accepted (preview) | Create versioned drafts and publish them independently from YAML-owned definitions |
+| 487 | [Scheduled workflow starts](487-scheduled-workflow-starts.md) | accepted (preview) | Start workflow runs from durable schedules with overlap controls and missed-minute semantics |
+| 432 | [Start workflows through durable event fanout](432-event-workflow-starts.md) | accepted | Capture matching event recipients and admit workflow runs through the durable fanout ledger |
+| 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
+| 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
 | 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
 | 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
@@ -69,6 +141,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 389 | [Invoice detail lifecycle tracking](389-invoice-detail-lifecycle.md) | accepted | Independent record timestamps, exact row fingerprints, and historical coverage |
 | 388 | [Provider invoice facts for FOCUS](388-provider-invoice-facts.md) | accepted | Durable provider facts, reconciled line classifications, and source coverage |
 | 387 | [FOCUS invoice projection](387-focus-invoice-projection.md) | accepted | Account-scoped invoice CSV and metadata, exact reconciliation, and declared source gaps |
+| 461 | [Managed PostgreSQL credential privileges](482-managed-postgres-credential-privileges.md) | accepted for gated preview | SQL runtime and migration logins, stable schema ownership, and verified role isolation |
 | 386 | [HTTP/1 upgrade socket ownership](386-http1-upgrade-socket-ownership.md) | accepted | Hijack successful raw upgrades, retain buffered duplex bytes, and cancel both directions on session closure |
 | 385 | [Durable scheduled work policies](385-scheduled-work-policies.md) | accepted for recurring Jobs and deployment-command Crons | Persist versioned schedule decisions and classified retries with per-occurrence history |
 | 384 | [Fetch-compatible internal service port](384-fetch-compatible-internal-service-port.md) | accepted | Canonical HTTP bindings use 10081 with the existing authorization path; legacy 10080 remains available |
@@ -79,6 +152,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 379 | [Complete the local development bridge workflow](379-development-bridge-workflow.md) | accepted for internal HTTP use | Supervised execution, framework propagation, session activity, dashboard controls and native acceptance |
 | 393 | [Managed exclusive operations](393-managed-exclusive-operations.md) | implementation in progress | Account and trusted customer scope, explicit contention modes, durable ownership generations, lease recovery, and stale-owner fencing |
 | 378 | [Local processes in development environments](378-development-bridge.md) | accepted for internal HTTP use | Scoped one-hour sessions, local service routing, bounded inspection and webhook replay; operator-gated pending native acceptance |
+| 590 | [Complete project-environment clones and qualified promotion](590-complete-project-environment-clones.md) | proposed | Complete effective-state snapshots, isolated data capture, exact qualification, and guarded full promotion |
 | 430 | [Managed PostgreSQL Commit outbox](430-managed-postgresql-commit-outbox.md) | accepted; gated | Customer transaction outbox → managed relay → atomic durable HTTP operation receipt; at-least-once delivery with consumer-owned deduplication |
 | 374 | [Application-keyed background work policies](374-application-keyed-work-policy.md) | accepted | Shared durable policy for per-key admission, claim, replacement, debounce, expiry, and fairness |
 | 372 | [Tenant egress through a dedicated WireGuard gateway](372-tenant-egress-gateway.md) | accepted | Opt-in manifest gateway; bridged tenant IPv4 leaves from the gateway's address, fails closed, and gets a second deny layer there |
@@ -131,7 +205,6 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 312 | [PR preview freshness](312-pr-preview-freshness.md) | accepted | Verify current PR state and head before preview mutation and fence older preview promotions |
 | 311 | [GitHub push freshness and promotion fence](311-github-push-freshness-and-promotion-fence.md) | accepted | Verify remote branch heads before webhook dispatch and fence older GitHub revisions at promotion |
 | 310 | [Git-driven deployment ownership and preview quotas](310-git-driven-deployment-ownership-and-preview-quotas.md) | accepted | One production push owner, terminal Action checks, and a bounded separate PR-preview allowance |
-| 300 | [Tenant-scoped self-service hostname onboarding](300-platform-tenant-self-service-hostnames.md) | accepted | Narrow hostnames:manage credential; existing linked surfaces, delegated DNS suffixes, and DNS proof only |
 | 299 | [Owner-controlled platform-tenant hostname delegation](299-platform-tenant-hostname-delegation.md) | accepted | Deny-by-default DNS suffix allowlist and tenant-wide hostname cap for downstream self-service |
 | 298 | [Tenant-scoped surface deployment outcome webhooks](298-platform-tenant-deployment-webhooks.md) | accepted | Transactional live/failed deployment outcomes for explicitly linked surfaces; safe revision metadata without source details or raw errors |
 | 337 | [Platform-tenant customer lifecycle webhooks](337-platform-tenant-customer-lifecycle-webhooks.md) | accepted | Transactional linked/offboarded events for app-local customer identities, with stable cross-app references and no credentials |
@@ -231,8 +304,17 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 157 | [Named container resource profiles](157-container-resource-profiles.md): stable micro-to-xlarge RAM/CPU shapes mapped to existing cgroup enforcement | accepted | Container predictability milestone |
 | 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting plus default-off Polar month-close billing; live provider qualification remains a launch gate |
 | 157 | [Developer config parity](157-developer-config-parity.md): explicit `gregale dev --env-file` secret sync with key-only output and archive exclusion | accepted | `gregale dev` DX follow-up to ADR-156 |
-| 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting plus default-off Polar month-close billing; live provider qualification remains a launch gate |
 | 155 | [Provider-neutral managed PostgreSQL](155-provider-neutral-managed-postgres.md): account-owned databases, app-scoped bindings, durable placement, lifecycle reconciliation, and canonical usage meters | foundation accepted; preview pending | Managed PostgreSQL foundation; provider qualification, billing, and recovery remain launch gates |
+| 492 | [Validate the Neon consumption contract](492-managed-postgres-consumption-contract.md) | accepted | Correct byte-month normalization, require complete usage coverage, and reconcile prior ledgers |
+| 500 | [Managed PostgreSQL provider rate-limit cooldowns](500-managed-postgres-provider-rate-limit-cooldowns.md) | accepted | Honor retry guidance, isolate consumption throttling, and preserve canceled response reads |
+| 623 | [Durable managed PostgreSQL compute resizing](623-managed-postgres-durable-compute-resizing.md) | accepted for operator preview | Persist class-only resize intent, preserve data and credentials, and recover uncertain provider updates |
+| 624 | [Durable managed PostgreSQL idle policy changes](624-managed-postgres-durable-idle-policy.md) | accepted for operator preview | Change scale-to-zero through the shared fenced compute journal and qualified provider contract |
+| 625 | [First-wake 5xx auto-rollback evaluated by apid](625-first-wake-5xx-rollback-from-request-telemetry.md) | accepted | Evaluate opt-in post-release rollback from per-deployment request telemetry and preserve readiness-gated rollback semantics |
+| 627 | [Prospective gateway object-storage safety accounting](627-prospective-gateway-storage-safety-accounting.md) | accepted for operator preview | Use durable gateway meters and complete inventories for admission with billing off and explicit unknown costs |
+| 628 | [GCS tracked writes and native generations](628-gcs-tracked-writes-and-native-generations.md) | accepted for local qualification | Recover native receipts, fence generation copies and deletes, and stream CLI transfers |
+| 631 | [Reclaim unowned layer clones and tenant cgroups, and retry failed teardowns](631-unowned-layer-clone-reclamation.md) | accepted | Reap clones and empty tenant cgroup scopes no Manager, journal record or live row owns, in cache buckets and /srv/fc/base; retry retained teardowns |
+| 632 | [Converge cached runtime bases](632-converge-cached-runtime-bases.md) | proposed | ADR-567 convergence also covers runtime bases an earlier daemon cached, not only the ones this process staged |
+| 633 | [Snapshot drive layer block sharing](633-snapshot-drive-layer-block-sharing.md) | proposed | Snapshot drives share their app layer's unchanged blocks and the node cache counts shared blocks once, so a node holds ~2.4x more snapshots |
 | 154 | [Disposable developer source deltas](154-developer-source-delta.md): changed-entry transfer with full-archive reconstruction and automatic full fallback | accepted | `gregale dev` DX follow-up to ADR-153 |
 | 153 | [Developer BuildKit dependency cache](153-developer-buildkit-cache.md): tenant/workspace-scoped Railpack cache across ephemeral developer builder VMs | accepted | `gregale dev` rebuild latency |
 | 152 | [Configurable sustained CPU per app](152-configurable-app-cpu.md): 250m, 500m, and 1000m cgroup quotas with configured/effective API visibility | accepted | Cloud Run gap analysis |
@@ -412,6 +494,44 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-286: runtime freshness for object-storage binding creation](286-object-storage-binding-create-runtime-freshness.md) — stamp runtime configuration and stale snapshots in the binding creation transaction
 - [ADR-287: atomic object-storage binding revocation](287-atomic-object-storage-binding-revocation.md) — revoke both keys, remove managed secrets, and invalidate runtime snapshots in one transaction
 
+## S3 service decisions
+
+- [ADR-530: S3 compatibility and multipart capacity admission](530-s3-compatibility-and-multipart-capacity.md)
+- [ADR-531: S3 multipart transfer fencing and cleanup](531-s3-multipart-transfer-fencing-and-cleanup.md)
+- [ADR-532: Conditional S3 multipart completion](532-conditional-s3-multipart-completion.md)
+- [ADR-533: Safe object capacity reconciliation](533-safe-object-capacity-reconciliation.md)
+- [ADR-534: Recoverable application object uploads](534-recoverable-application-object-uploads.md)
+- [ADR-535: Recoverable S3 gateway PUTs](535-recoverable-s3-gateway-puts.md)
+- [ADR-536: Recoverable S3 gateway copies](536-recoverable-s3-gateway-copies.md)
+- [ADR-537: Customer object write receipts](537-customer-object-write-receipts.md)
+- [ADR-538: S3 multipart copy and source ETag conditions](538-s3-multipart-copy-and-source-etag-conditions.md)
+- [ADR-539: Historical S3 write receipt recovery](539-historical-s3-write-receipt-recovery.md)
+- [ADR-540: Native S3 version capacity inventory](540-native-s3-version-capacity-inventory.md)
+- [ADR-541: Immutable S3 copy sources and date conditions](541-immutable-s3-copy-sources-and-date-conditions.md)
+- [ADR-542: Customer S3 version identities and reads](542-customer-s3-version-identities-and-reads.md)
+- [ADR-543: Customer-selected S3 copy sources](543-customer-selected-s3-copy-sources.md)
+- [ADR-544: Durable S3 multipart completion identities](544-durable-s3-multipart-completion-identities.md)
+- [ADR-545: Durable bucket versioning configuration](545-durable-bucket-versioning-configuration.md)
+- [ADR-546: Permanent immutable S3 version deletion](546-immutable-s3-version-deletion.md)
+- [ADR-547: Durable ordinary and mutable null S3 deletion](547-durable-s3-mutable-deletion.md)
+- [ADR-548: Coordinate immutable deletion with version inventory](548-immutable-deletion-inventory-coordination.md)
+- [ADR-549: Tag current and retained object versions](549-version-specific-object-tagging.md)
+- [ADR-550: Durable object lifecycle discovery and expiration](550-durable-object-lifecycle.md)
+- [ADR-551: Atomic object mutation events](551-atomic-object-mutation-events.md)
+- [ADR-552: Owned S3 notification destinations](552-owned-s3-notification-destinations.md)
+- [ADR-553: Bounded production object transfers](553-bounded-production-object-transfers.md)
+- [ADR-554: Owned key bindings and native S3 encryption](554-owned-key-bindings-and-native-s3-encryption.md)
+- [ADR-555: Durable object encryption journals](555-durable-object-encryption-journals.md)
+- [ADR-556: Customer S3 encryption and owned response metadata](556-customer-s3-encryption.md)
+- [ADR-557: Branded object URL capabilities with one write receipt](557-branded-object-url-capabilities.md)
+- [ADR-558: Branded control multipart uploads](558-branded-control-multipart-uploads.md)
+- [ADR-559: Owned encryption on upload routes](559-owned-encryption-on-upload-routes.md)
+- [ADR-560: Atomic fixed multipart admission](560-fixed-multipart-admission.md)
+- [ADR-561: Bucket default encryption](561-bucket-default-encryption.md)
+- [ADR-562: Owned cross-bucket copy sources](562-owned-cross-bucket-copy-sources.md)
+- [ADR-563: Native Object Lock protocol and versioning lock order](563-native-object-lock-protocol.md)
+- [ADR-564: Durable owned bucket Object Lock](564-durable-bucket-object-lock.md)
+
 ## Snapshot restore optimization decisions
 
 - [ADR-147: request activity flush cadence](147-request-activity-flush-cadence.md)
@@ -419,6 +539,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
 - [ADR-425: retained cache materialization](425-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
+
+## Environment intent decisions
+
+- [ADR-568: Git-owned environment intent](568-environment-gitops-contract.md) — explicit field ownership, reviewed adoption and continuous reconciliation
 
 ## Managed service recovery decisions
 
@@ -430,6 +554,13 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-433: candidate connectivity and HTTP health verification](433-candidate-connectivity-verification.md) — preserve TCP-ready API compatibility with proof of a candidate response
 - [ADR-434: atomic hosting failure finalization](434-atomic-hosting-failure-finalization.md) — commit failed verdicts with terminal state and retry interrupted persistence through the existing notification outbox
+- [ADR-459: candidate verification cache isolation](459-candidate-verification-cache-isolation.md) — bypass response caches for validated candidate probes
+- [ADR-481: durable challenge-publication recovery](481-durable-challenge-publication-recovery.md) — recover temporary publication outages on the same candidate with a persisted deadline
+- [ADR-482: candidate verdict attribution and durable verification recovery](482-candidate-verdict-attribution.md) — require proof for app verdicts and retry unavailable gateway/transport evidence
+- [ADR-483: node-owned deployment handoffs](483-node-owned-deployment-handoffs.md) — only the owning imaged claims or acknowledges a local builder export
+- [ADR-484: resumable image preparation](484-resumable-image-preparation.md) — resume layer publication, scanning and snapshot handoff across imaged restarts
+- [ADR-485: renewable notification ownership](485-renewable-notification-ownership.md) — share fenced delivery claims between imaged LISTEN and replay, with renewal during long work
+- [ADR-486: recover interrupted snapshot primes](486-recover-interrupted-snapshot-primes.md) — keep graceful schedd shutdown from terminally failing snapshot preparation and clean up its specific VM before recovery
 
 ## Route review and release protection
 
@@ -457,3 +588,37 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
 - [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
 - [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
+- [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
+- [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
+- [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
+- [ADR-495: Advisory watched response codes](495-advisory-route-client-errors.md) — detect selected 4xx regressions without changing rollout decisions
+- [ADR-496: Route regression investigation](496-route-regression-investigation.md) — connect route findings to bounded, scoped request examples
+- [ADR-497: Route latency investigation](497-route-latency-investigation.md) — add dependency and execution evidence to route latency findings
+- [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
+- [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
+- [ADR-576: Private TCP addressing between services](576-private-tcp-service-addressing.md)
+- [ADR-593: Static Go net/http route impact](593-go-nethttp-route-impact.md) — map Go ServeMux source changes to route-level review evidence
+- [ADR-594: Static Go Chi route impact](594-go-chi-route-impact.md) — map literal Chi routes, groups, mounts, and middleware to route-level review evidence
+
+## Customer operation decisions
+
+- [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
+
+- [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
+
+## Events and delivery
+
+- [ADR-606: Independent event recipient routing and recovery](606-independent-event-recipient-routing.md)
+- [ADR-607: Unified event receipt inspection](607-unified-event-receipts.md)
+- [ADR-608: Trusted handler replay lineage in event receipts](608-event-receipt-replay-lineage.md)
+- [ADR-609: Safe recovery for failed keyed invocations](609-safe-keyed-invocation-replay.md)
+- [ADR-610 · Keyed dead-letter replay respects running claims](610-keyed-dead-letter-replay-claim-exclusion.md)
+- [ADR-611 · Invocation-backed event delivery attempt history](611-invocation-backed-event-attempt-history.md)
+- [ADR-612: Durable deduplication for plain invocation replay](612-durable-plain-invocation-replay.md)
+- [ADR-613: Atomic event routing handoff](613-atomic-event-routing-handoff.md)
+- [ADR-614: Event delivery backpressure and fair routing](614-event-delivery-backpressure.md)
+- [ADR-615: Customer event storage admission](615-customer-event-storage-admission.md)
+- [ADR-616: Bounded event routing history](616-bounded-event-routing-history.md)
+- [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
+- [ADR-645: Subscription-scoped retained-event replay preview](645-subscription-retained-event-replay-preview.md)
+- [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)

@@ -26,6 +26,14 @@ const (
 	MaxOutboundCircuitBreakerOpenSeconds      = 300
 )
 
+// OutboundBindingProbePolicy selects an endpoint the owner declares safe to probe.
+// Only successful HTTP statuses can satisfy verification.
+type OutboundBindingProbePolicy struct {
+	Method         string `json:"method"`
+	Path           string `json:"path"`
+	ExpectedStatus int    `json:"expected_status"`
+}
+
 // OutboundIntegrationOffer is an account-visible managed integration. It
 // intentionally contains no provider credential or gateway admission token;
 // its request limits are effective for customer integrations after applying

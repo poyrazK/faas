@@ -4,12 +4,105 @@ Gregale can compare observed 5xx rates and optional p95 latency checks on select
 critical routes between a canary and its serving stable deployment. A busy healthy
 route cannot hide a failure on a selected checkout or login route. This operates independently of
 saved route policy requirements and the Test CLI.
+For monitoring after promotion, use [production route budgets](route-production-monitoring.md).
+For customer-safe retirement reviews, see [route lifecycle review](route-lifecycle.md).
 
 Create a JSON selector file using exact **gateway-normalized telemetry paths**.
 Use the method/path labels in debugger analytics, rather than expanded request
 URLs or arbitrary OpenAPI parameter names. For example, the gateway normalizes
 `GET /profiles/238` to `GET /profiles/{id}`. Method and path must match exactly;
 wildcards, queries and fragments are rejected. Select up to 20 routes.
+
+Use observed customer reach and request volume to draft a focused selector set:
+
+```sh
+gregale routes health suggest my-api --deployment DEPLOYMENT_UUID \
+  --since 168h --customer-group-by tenant --limit 10 --out suggested-routes.json
+gregale routes health set my-api --routes suggested-routes.json \
+  --mode report --expected-revision CURRENT_REVISION
+```
+
+Suggestions rank the returned route inventory by distinct tenants (or consumers)
+and then observed requests. The output includes request counts, identity coverage,
+last observation time, inventory bounds and a sample assessment. Customer IDs
+are not emitted. Suggestions are read-only; `--out` writes a new local selector
+file but does not save route-health configuration. The route inventory is capped
+at 200 routes, and truncated inventories are clearly marked.
+
+The historical total is not a canary-readiness prediction. Route health needs
+at least 20 requests per route on both deployments in each of two closed
+one-minute windows; an aggregate lookback cannot establish that distribution.
+Use a report-mode gate and inspect `routes health report` after candidate traffic
+arrives to see whether its evidence is sufficient.
+
+To focus suggestions on routes linked to the current release's source changes,
+create a preview report with source impact and pass it to `suggest`:
+
+```sh
+gregale preview report pr-42-api --baseline-deployment BASELINE_UUID \
+  --source-impact route-impact.json --json > preview-report.json
+gregale routes health suggest api --deployment BASELINE_UUID \
+  --preview-report preview-report.json --since 168h --limit 10 \
+  --out affected-routes.json
+```
+
+The preview report must identify the same parent app and baseline deployment as
+the suggestion command. Suggestions include only mapped source-changed,
+potentially affected or uncertain routes present in both captured revisions,
+with matching observed route traffic. They rank by observed tenant/consumer
+reach and requests. Added/removed routes, routes with no matching observation,
+and unselectable mappings are counted in the release-scope evidence; incomplete
+source analysis, unmatched mappings and a truncated observed inventory appear
+as caveats. This scoping is advisory and still writes only a reviewable selector
+file; it does not change saved route-health policy.
+
+After a candidate receives canary traffic, review the release's affected-route
+coverage against the configured health gate:
+
+```sh
+gregale routes health review api --deployment CANDIDATE_UUID \
+  --preview-report preview-report.json --json
+gregale routes health review api --deployment CANDIDATE_UUID \
+  --preview-report preview-report.json --fail-on-incomplete --json
+```
+
+The preview baseline must match the canary report's stable deployment, and a
+preview candidate deployment (when present) must match the requested candidate.
+For every mapped, source-affected route present in both captured revisions, the
+review reports whether the health gate selected it and classifies matching
+candidate evidence as healthy, regressed or insufficient. It also lists
+unmatched source routes, added/removed routes skipped by exact selectors, and
+baseline routes without observed customer traffic when that preview evidence is
+available. Identity mismatches withhold route verdicts. Health remains based on
+observed telemetry, and absent customer observations do not prove a route is
+unused. This is a read-only report; it does not change the saved gate.
+The JSON `release_gate` field gives a machine-readable `ready` or `not_ready`
+result and reason codes. `--fail-on-incomplete` exits nonzero unless source
+analysis and mapping are complete, the release identities match, affected routes
+are selected and healthy, no structural routes were skipped, and the candidate's
+overall route-health report is healthy. The report is still printed on failure,
+so CI can retain the evidence and reason codes.
+
+For a release spanning multiple apps, run the aggregate preview review with
+source-impact reports, then join every available app to its candidate canary
+health in one release gate:
+
+```sh
+gregale preview review api-preview worker-preview \
+  --source-impact api-preview=api-impact.json \
+  --source-impact worker-preview=worker-impact.json --json > release-review.json
+gregale routes health review-release --release-report release-review.json \
+  --fail-on-incomplete --json
+```
+
+The release-wide command reads the candidate deployment and affected routes
+from each app's preview report, checks its configured canary route-health gate,
+and emits one `release_gate` result with app-prefixed reason codes (an
+unavailable preview is scoped by its preview slug because its parent app is
+unknown). A missing preview, source-impact report, deployment identity or
+candidate health response keeps the release `not_ready`; no app can be hidden
+by another app's healthy result. The command is read-only and preserves each
+app's full route evidence under `previews` for CI artifacts and review.
 
 ```json
 [
@@ -50,7 +143,7 @@ breaker can still abort independently under its existing policy.
 
 Each route is compared in two consecutive closed UTC minute windows, with a
 30-second ingestion allowance. Both windows must begin after the current stage
-and the latest selector, latency-check or mode update. Changes therefore require
+and the latest selector, latency-check, watched-status or mode update. Changes therefore require
 new observations.
 At least 20 represented requests are required on each deployment **per route,
 per window**. Counts preserve telemetry publisher aggregation weights.
@@ -69,6 +162,23 @@ stored observations; it is not a full capture guarantee or a statistical SLO.
 Low-traffic routes may need more real requests before progression can resume.
 Live reports move with their observation windows. Evaluated canary advances now
 retain their exact decision evidence for later explanation.
+
+## Advisory customer comparisons
+
+Use [route investigation](route-investigation.md) to retrieve bounded matching
+5xx or watched-code examples and open their existing debugger evidence.
+
+Use `--customers` to compare tenants or API consumers within the same observation
+windows. IDs require `--customer-details`. Customer evidence remains advisory;
+see [customer health](route-customer-health.md) for samples, attribution and caps.
+
+## Advisory 4xx comparisons
+
+Add `watch_statuses` to a selector to compare selected 401, 403, 404, 422 or 429
+response rates against stable. Reports expose separate aggregate and optional
+customer evidence. These findings stay advisory and do not affect the report's
+aggregate health verdict or rollout decisions. See
+[watched response codes](route-client-errors.md) for configuration and thresholds.
 
 ## Optional latency checks
 

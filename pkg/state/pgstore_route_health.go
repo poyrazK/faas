@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -53,7 +52,7 @@ func (s *PgStore) SetRouteHealthGate(ctx context.Context, accountID, appID strin
 	if req.Mode == "enforce" && (!snapshot.Account.Plan.TrafficSplitAllowed() || !snapshot.Account.Plan.DebugTelemetryEnabled()) {
 		return g, ErrRouteHealthPlan
 	}
-	if g.Mode == req.Mode && g.OnRegression == req.OnRegression && slices.Equal(g.Routes, req.Routes) {
+	if g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
 		return g, tx.Commit(ctx)
 	}
 	if g.Revision >= api.RouteRequirementsMaxRevision {
@@ -122,6 +121,10 @@ func pgRouteHealthReport(ctx context.Context, db sqlc.DBTX, snapshot RoutePolicy
 	return report, nil
 }
 func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport) error {
+	return pgRouteHealthObservationsForCustomer(ctx, db, accountID, g, report, api.RouteHealthInvestigationSelection{})
+}
+
+func pgRouteHealthObservationsForCustomer(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, selection api.RouteHealthInvestigationSelection) error {
 	windows := routehealth.Windows(report.CheckedAt)
 	routesJSON, err := json.Marshal(g.Routes)
 	if err != nil {
@@ -131,7 +134,7 @@ func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID stri
 	if err != nil {
 		return fmt.Errorf("encode observation windows: %w", err)
 	}
-	body, err := (&sqlc.Queries{}).RouteHealthObservation(ctx, db, sqlc.RouteHealthObservationParams{AppID: report.AppID, AccountID: accountID, CandidateID: report.DeploymentID, StableID: report.StableDeploymentID, Routes: routesJSON, Windows: windowsJSON, LatencyQuantile: api.RouteHealthLatencyQuantile, Since: NewPgtypeTime(windows[0].Start), Until: NewPgtypeTime(windows[len(windows)-1].End)})
+	body, err := (&sqlc.Queries{}).RouteHealthObservation(ctx, db, sqlc.RouteHealthObservationParams{AppID: report.AppID, AccountID: accountID, CandidateID: report.DeploymentID, StableID: report.StableDeploymentID, Routes: routesJSON, Windows: windowsJSON, LatencyQuantile: api.RouteHealthLatencyQuantile, Since: NewPgtypeTime(windows[0].Start), Until: NewPgtypeTime(windows[len(windows)-1].End), CustomerID: selection.CustomerID, CustomerGroupBy: selection.CustomerGroupBy})
 	if err != nil {
 		return fmt.Errorf("read route health observations: %w", err)
 	}
@@ -155,6 +158,9 @@ func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID stri
 	return nil
 }
 func (s *PgStore) GetRouteHealthReport(ctx context.Context, accountID, appID, deploymentID string) (api.RouteHealthReport, error) {
+	return s.getRouteHealthReport(ctx, accountID, appID, deploymentID, "", false)
+}
+func (s *PgStore) getRouteHealthReport(ctx context.Context, accountID, appID, deploymentID, groupBy string, details bool) (api.RouteHealthReport, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return api.RouteHealthReport{}, fmt.Errorf("begin route health report: %w", err)
@@ -175,6 +181,14 @@ func (s *PgStore) GetRouteHealthReport(ctx context.Context, accountID, appID, de
 	report, err := pgRouteHealthReport(ctx, tx, snapshot, d, now.Time)
 	if err != nil {
 		return report, err
+	}
+	if err := pgRouteClientErrors(ctx, tx, accountID, &report); err != nil {
+		return report, err
+	}
+	if groupBy != "" {
+		if err := pgRouteCustomerHealth(ctx, tx, accountID, &report, groupBy, details); err != nil {
+			return report, err
+		}
 	}
 	return report, tx.Commit(ctx)
 }

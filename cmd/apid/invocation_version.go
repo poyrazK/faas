@@ -15,12 +15,28 @@ import (
 // enqueueVersionedInvocation captures the selected release when work is
 // accepted. The drain validates it again at delivery, including after retries.
 func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders http.Header, inv state.Invocation, capacityDetail string, work ...*api.InvokeWork) (state.Invocation, *api.Problem) {
+	var problem *api.Problem
+	inv, problem = s.prepareInvocationVersion(ctx, requestHeaders, inv)
+	if problem != nil {
+		return state.Invocation{}, problem
+	}
+	return s.enqueuePreparedInvocation(ctx, inv, capacityDetail, work...)
+}
+
+func (s *server) prepareInvocationVersion(ctx context.Context, requestHeaders http.Header, inv state.Invocation) (state.Invocation, *api.Problem) {
 	var err error
 	inv.Headers, err = mergeInvocationVersionHeaders(inv.Headers, requestHeaders)
 	if err != nil {
 		return state.Invocation{}, api.ErrValidation("revision and release headers must be unique UUIDs")
 	}
-	inv, _, err = state.ResolveInvocationVersion(ctx, s.store, inv)
+	// Replay retains the original invocation's scope and environment lifetime.
+	// A first-class queue has already selected its immutable binding and scope.
+	// Other shared producers remain pinned to their default environment.
+	if inv.Source == state.InvocationReplay || inv.Source == state.InvocationQueue && inv.QueueBindingID != "" {
+		inv, _, err = state.ResolveInvocationVersion(ctx, s.store, inv)
+	} else {
+		inv, _, err = state.ResolveInvocationVersionForEnvironment(ctx, s.store, inv, "")
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrInvalidArgument):
@@ -33,6 +49,11 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 			return state.Invocation{}, api.ErrCapacity("resolve invocation version")
 		}
 	}
+	return inv, nil
+}
+
+func (s *server) enqueuePreparedInvocation(ctx context.Context, inv state.Invocation, capacityDetail string, work ...*api.InvokeWork) (state.Invocation, *api.Problem) {
+	var err error
 	var created state.Invocation
 	if len(work) > 0 && work[0] != nil {
 		policyStore, ok := s.store.(state.AppWorkPolicyStore)
@@ -63,6 +84,12 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 	} else {
 		created, err = s.store.EnqueueInvocation(ctx, inv)
 	}
+	if errors.Is(err, state.ErrQueueBindingRetired) {
+		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_retired", "Queue binding retired", "this queue is held for explicit recovery")
+	}
+	if errors.Is(err, state.ErrQueueBindingEnvironmentUnavailable) || s.queueAdmissionEnvironmentUnavailable(ctx, inv, err) {
+		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_environment_unavailable", "Queue environment unavailable", "the captured queue environment is unavailable; review the queue selection before retrying")
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrInvalidArgument) && inv.PlatformTenantID != "" {
 			return state.Invocation{}, api.ErrValidation("flag_context customer must be active in the app account")
@@ -73,6 +100,29 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 		return state.Invocation{}, api.ErrCapacity(capacityDetail)
 	}
 	return created, nil
+}
+
+// Both stores can reject stale explicit binding IDs as invalid admission.
+// Inspect the captured identity before classifying a tenant validation error;
+// inherited flag context must not conceal a deleted/recreated environment.
+func (s *server) queueAdmissionEnvironmentUnavailable(ctx context.Context, inv state.Invocation, err error) bool {
+	if !errors.Is(err, state.ErrInvalidArgument) || inv.QueueBindingID == "" {
+		return false
+	}
+	history, ok := s.store.(state.QueueBindingHistoryStore)
+	if !ok {
+		return false
+	}
+	binding, lookupErr := history.QueueBindingHistoryByID(ctx, inv.AccountID, inv.AppID, inv.QueueBindingID)
+	if lookupErr != nil || binding.DeploymentScope == "" {
+		return false
+	}
+	app, lookupErr := s.store.AppByID(ctx, inv.AppID)
+	if lookupErr != nil {
+		return false
+	}
+	available, problem := s.queueBindingEnvironmentAvailable(ctx, state.Account{ID: inv.AccountID}, app, binding)
+	return problem == nil && !available
 }
 
 // The HTTP control headers and JSON invocation headers share one namespace.

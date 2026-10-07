@@ -210,7 +210,9 @@ unknown names, self-edges, and ambiguous names are rejected.
 
 By default, `GREGALE_SERVICE_BILLING_URL` remains the legacy HTTP URL, and
 `GREGALE_SERVICE_BILLING_HTTPS_URL=https://billing.internal` is available as
-an explicit HTTPS alias. A caller can opt into HTTPS-first transport for all
+an explicit HTTPS alias. `GREGALE_SERVICE_BILLING_HOST=billing.svc.gregale`
+is the bare host for non-HTTP clients (see
+[Private TCP between services](#private-tcp-between-services)). A caller can opt into HTTPS-first transport for all
 of its declared service bindings:
 
 ```yaml
@@ -232,12 +234,211 @@ same choice as `service_binding_transport` for standalone apps. `gregale
 bindings <app>` reports the effective transport.
 
 The same declared edges are exposed as service bindings by the app API and by
-`gregale bindings public-api`, alongside database, object-storage, and queue
-bindings. New project workloads use the `declared` caller policy: the gateway
+`gregale bindings public-api`, alongside database, object-storage, queue,
+and outbound integration bindings. New project workloads use the `declared` caller policy: the gateway
 returns 403 for calls to services not listed in `depends_on`. Existing apps
 retain their persisted policy on reapply. For an intentional same-account
 escape hatch, set `x-gregale-service-policy: account` on the caller. The CLI
 reports declared service bindings as `enforced`.
+
+`GET /v1/apps/{slug}/bindings` provides the shared binding inventory used by
+the CLI and SDKs. It batches app-scoped catalog reads for services, PostgreSQL,
+object storage, queues, and outbound integrations. Omit `scope` to inspect all
+resource scopes, or use `?scope=staging` / `gregale bindings public-api --scope
+staging` to filter database and bucket bindings. App-wide service, queue, and
+outbound bindings remain included; the filter does not create or isolate
+resources for that environment.
+
+The binding inventory separates configuration from queue consumer state and
+liveness. An enabled queue binding is shown as `enabled`; its consumer can
+still be `not_configured`, `not_observed`, `degraded`, or `stale`. Service
+`declared`/`enforced`, database `ready`, and storage credential `active` describe
+their configuration or provisioning state, not verified application
+connectivity. JSON `runtime_status` is `unknown` unless a queue consumer has a
+scheduler observation; `observed_at` identifies that observation, while
+`generated_at` is the inventory collection time. `verification_status` is
+`passed`, `failed`, `unknown`, or `stale` for service and PostgreSQL entries.
+The optional `verification` contains sanitized stage statuses, the actual task
+scope and deployment, completion time, and PostgreSQL credential generation.
+Other binding families remain `unknown`. Outbound entries show integration enablement, credential
+configuration, and the app binding's allowed methods and path prefixes. They
+do not expose provider credentials, resource IDs, or sealed secret names.
+
+`runtime_freshness` separately compares resident app instance start timestamps
+with the latest app-wide environment or secret change. It groups live
+deployments and deployments with resident instances by deployment and scope.
+`serving` counts running instances; `resident` also includes starting, warm,
+snapshotting, draining and migrating instances. Each count is `current`
+(started after the stamp), `stale` (at or before it), or `unknown` (missing
+stamp or timestamp). `starting` is a subset of resident counts. Task guests,
+jobs, mirrors, parked and terminal instances are excluded. A deployment is
+`stale` while any stale resident remains, then `unknown` if any resident is
+unknown, `updating` while a replacement starts, `current` when its remaining
+residents are current, and `inactive` when it has none. Scope filtering also
+filters this projection. The app-wide stamp conservatively applies to every
+binding; these timestamps do not prove guest acknowledgement, readiness,
+credential use or connectivity. A passing canary never changes these counts.
+
+Pending PostgreSQL and object-storage rotations may include `refresh`, the
+durable rolling restart's correlation `wake_id`, status, attempts and sanitized
+failure reason. `not_queued` means no retained outbox record was found, including
+rotations staged before handoff or waiting for a later wake. It is not proof
+that a restart never happened. `unknown` means status could not be read.
+`completed` describes that handoff; it does not override stale runtime counts
+or verification. The CLI prints freshness alongside verification and warns
+when serving instances predate the configuration change. Freshness or refresh
+read failures preserve other results and make inventory incomplete.
+
+The endpoint requires app read access and completed MFA for browser sessions.
+PostgreSQL metadata additionally requires `managed-postgres:read`; storage
+metadata requires `storage:manage`, matching the existing compute-binding read
+surface. An admin key or authenticated session has the existing full access.
+Insufficient resource permissions omit that section without reading it.
+
+If a section or consumer status cannot be read, the API returns HTTP 200 with
+the available results, `complete: false`, sanitized `warnings`, and structured
+`issues` (`type`, `code`, `severity`, `message`). The CLI prints the available
+results and warnings in the same document; failed queue status reads remain
+`unknown`. Error issues, including denied resource permissions, return CLI exit status 1 after printing the partial
+inventory. A gated, unavailable PostgreSQL preview remains a warning by
+default; use `gregale bindings public-api --require-complete` to return status 1 for
+any incomplete inventory, including that preview. `complete: true` means all
+inventory and status reads succeeded, not that every dependency is healthy.
+The response is a best-effort projection, not an atomic snapshot, and uses
+`Cache-Control: no-store`. An unobserved consumer is not a failed read: its
+configuration can be known while its runtime status remains `unknown`.
+The command only reads metadata; it does not invoke application handlers or
+providers. Use `bindings verify` for service, PostgreSQL or object-storage connection probes.
+
+Use `bindings check` to evaluate those recorded observations in CI:
+
+```sh
+gregale bindings verify public-api --all
+gregale bindings check public-api --scope production --max-verification-age 10m --json
+```
+
+The default check makes one inventory GET and returns exit status 0 when its policy
+passes, or 1 for blockers, invalid options or failed reads. It does not create
+tasks, invoke providers or restart instances. Omit `--deployment` to use the
+current manual-task deployment. Use `--deployment ID|vN` to select an exact live,
+materialized deployment, including a candidate receiving zero traffic. Revision
+handles resolve within the named app. An explicit `--scope` asserts that the
+selected deployment uses that scope; omit it to use the deployment's scope.
+App-wide service, queue and outbound bindings remain included. PostgreSQL and
+object-storage bindings in other scopes are explicitly skipped.
+
+Use `--wait --timeout 5m --poll-interval 1s` to observe already pending probes,
+credential refreshes, runtime replacement or application acknowledgements. Waiting
+pins the first selected deployment and scope and prints one final report. It
+creates no tasks or refreshes. Terminal failures and missing probe evidence stop
+immediately; timeout returns the last blocked report and exit status 1. Ctrl-C
+returns 130. Failed reads stop the wait with a nonzero result.
+
+For a staged rollout, verify and check the same deployment before promotion:
+
+```sh
+gregale bindings verify public-api --deployment v12 --all
+gregale bindings check public-api --deployment v12 --max-verification-age 10m --json
+gregale traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --max-verification-age 10m
+```
+
+`--require-bindings` makes the server repeat the exact deployment check and
+compare binding/configuration, probe and runtime facts inside the traffic
+transaction. Blockers, changed facts or evidence that expires while waiting
+leave traffic unchanged. The gated promotion API is
+`POST /v1/deployments/{id}/promote`; older servers return 404 before mutation.
+JSON receipts include `bindings_check`, the applied policy and coverage. Check
+failures return structured blockers in the problem envelope. An already
+promoted target still requires a current passed check. The default maximum
+verification age is ten minutes; `--allow-unsupported` explicitly waives
+queue/outbound probe coverage and keeps it partial. These policy flags require
+`--require-bindings` on promotion. Promotion creates no probes or restarts.
+The gate protects committed platform observations at promotion; later changes
+and upstream outages still require monitoring. See [ADR-529](adr/529-binding-gated-promotion.md).
+
+Evidence stays separate per deployment, binding and scope. A passing serving
+revision cannot hide a failed or unprobed candidate. The CLI requires the server
+to confirm explicit selection and rejects admission or polling receipts from
+another deployment or scope. Older servers that ignore the selector cannot
+produce a passing result. UUID selection uses one inventory read; revision
+selection first resolves the app's deployment ladder. Probes use the selected
+artifact with current scoped configuration. A check does not lock configuration
+or traffic promotion against subsequent changes.
+
+The default policy requires a complete inventory, ready managed bindings and
+passed service, PostgreSQL and object-storage evidence matching the selected
+deployment and scope. Evidence must have a completion timestamp no more than
+ten minutes old, including the boundary, and must not be in the future. Use a
+positive `--max-verification-age` duration to change that window. Missing,
+pending, failed, stale or contradictory evidence blocks the check. PostgreSQL
+credential generations must also match.
+
+In the selected scope, stale or unknown residents and starting replacements
+block the check, including residents from superseded deployments. A fresh
+passing task probe cannot hide an old serving instance. An inactive deployment
+is allowed with a warning that no resident adoption can be assessed. Pending
+credential retirement or an unfinished, failed or unknown refresh handoff also
+blocks; a completed handoff does not override pending retirement or runtime
+freshness. Inventory read issues block even when their severity is `warning`.
+
+Active queue bindings and outbound bindings without a supported configured probe have unsupported connectivity coverage and
+block by default. `--allow-unsupported` explicitly waives only this coverage gap;
+the report retains `coverage: partial`, `status: unsupported` and a warning when
+consumer readiness has no blockers.
+Disabled queue and outbound bindings are skipped. Unknown binding types always
+block and require a CLI update. A selected scope with no active bindings reports
+`coverage: none` with a warning rather than claiming connectivity coverage.
+
+Enabled push queue bindings also require an active, healthy scheduler consumer
+with a nonzero poll timestamp at most thirty seconds old and no later than the
+check clock. Missing, paused, degraded, unobserved, unknown or stale consumers
+block with `queue_consumer_*` findings, including under `--allow-unsupported`;
+their per-binding status is `blocked`. `--max-verification-age` affects probe
+evidence only. Gated promotion checks poll expiry again at the traffic write,
+and a concurrent consumer change also rejects promotion. Inspect
+`gregale queue status APP` and binding status, restore or resume the consumer,
+resolve its errors or scheduler clock/polling problems, and retry after a fresh
+healthy poll. A healthy idle queue needs no delivered message. External pull
+consumers retain partial coverage because their liveness is not observed by the
+scheduler. Polling health establishes control-plane readiness; it does not
+prove guest queue access or message delivery. See
+[ADR-523](adr/523-queue-binding-readiness.md).
+
+Human output identifies blockers and remediation. JSON includes `passed`, the
+applied policy, scope and deployment, per-binding coverage, runtime counts,
+inventory issues and stable blocker codes such as `verification_expired`,
+`verification_scope_mismatch`, `runtime_stale`, `rotation_pending` and
+`verification_unsupported`. This is a point-in-time policy result from a
+best-effort projection. It does not prove application readiness or resident
+credential use; object-storage evidence covers bucket-list read access only.
+
+Customer-sealed outbound integrations can opt into verification by declaring a
+provider endpoint safe to call:
+
+```sh
+gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
+gregale bindings verify public-api --deployment v12 --outbound INTEGRATION_ID
+gregale bindings check public-api --deployment v12
+gregale traffic promote --app public-api --deployment v12 --require-bindings
+```
+
+The method must be GET or HEAD, the canonical path must fit the integration's
+route policy, and the expected status must be 2xx. This declaration sends no
+provider requests. `bindings verify --all` includes configured outbound probes;
+use `bindings probe-policy INTEGRATION_ID --delete` to remove a policy. Calls
+use the candidate task's workload identity through outboundd, with normal
+credential injection, route restrictions and admission budgets. Probes bypass
+response caching and never include provider bodies, headers or credentials in
+reports. Evidence becomes stale when credentials, probe policy, binding policy
+or integration configuration change. A failed configured probe remains a
+blocker even with `--allow-unsupported`.
+
+Operators configure `outbound_probe_gateway_url = "https://outbound.example.com"`
+in apid.toml and route that trusted, guest-reachable origin to outboundd. Normal
+TLS verification applies. Operator-environment credentials, missing probe
+policies and installations without this gateway configuration retain unsupported
+coverage. A successful probe establishes only the configured endpoint. See
+[ADR-522](adr/522-outbound-binding-verification.md).
 
 Each declared outbound dependency can carry a request deadline and retry
 policy. For a project workload, put it beside `depends_on`:
@@ -376,7 +577,10 @@ for caller-side verification.
 `gregale bindings verify <app> <service>` runs a platform-owned HTTPS canary
 inside a disposable task guest attached to the caller's deployment. Use
 `gregale bindings verify <app> --all` to check every declared service before
-switching the caller to HTTPS-first transport. The all-bindings form reports
+switching the caller to HTTPS-first transport. The all-bindings form also
+checks managed PostgreSQL and object-storage bindings in the scope selected for manual app tasks,
+reported as `verification_scope` in the inventory. Other resource scopes and
+unsupported binding families are not probed by this command. The form reports
 each result and exits nonzero if any check fails. Both forms check the
 `.internal` DNS alias, verify the gateway certificate against the
 workload-scoped CA bundle, and exercise the same binding and target
@@ -399,6 +603,61 @@ database connection, and runs only `SELECT 1`. It reports the environment,
 configuration, connection, and query stages; the URL, host, username, password,
 and database response are never included in the report. This confirms basic
 connectivity and query permission, not application-specific schema readiness.
+
+Platform service, managed PostgreSQL and object-storage canaries admitted through the app-task
+API carry a server-selected binding revision pin stored atomically with the
+task. Inventory derives typed outcomes from the durable task result, without
+returning its raw output, free-form details, or errors. A malformed, truncated,
+pending, cancelled, or unmanaged task cannot supply a passing result. The
+latest admission wins even when an older task completes later. A caller
+deployment change, binding replacement, credential generation change, or app
+runtime-configuration change marks prior evidence `stale`. Unsupported or
+unrecorded results remain `unknown`.
+
+`gregale bindings verify <app> --object-storage GREGALE_S3_ASSETS` checks the
+six injected S3 environment variables and makes one signed, path-style
+`ListObjectsV2` request with `MaxKeys=1`. It has a five-second deadline, does
+not retry or follow redirects, and caps provider response XML at 64 KiB.
+Empty buckets pass. The report separates environment, configuration,
+connection, authorization and bucket access, and excludes endpoint URLs,
+credentials, object names and raw provider errors. It never writes objects;
+a pass establishes bucket-list read access, not write permission or successful
+object downloads. `HeadBucket` alone would only check Gregale gateway access,
+without testing the storage provider.
+
+Object-storage evidence uses internal binding and latest rotation identities,
+plus the app configuration stamp. Credential cutover invalidates older evidence
+even before rotation stamps the app configuration. Rotation cleanup preserves
+that identity. Object-storage metadata and evidence require `storage:manage`
+or admin, matching the existing compute-binding inventory permission boundary.
+See [ADR-526](adr/526-object-storage-binding-verification.md).
+
+The CLI rejects a passing result when task admission selected a different
+deployment or scope from the inventory selection. Batch results include the
+actual task scope so a deployment change cannot silently mix environments.
+
+`bindings verify --all` reports every inventory binding. Unsupported queue probes
+and outbound bindings without probe configuration have explicit reasons;
+disabled bindings and resources outside the deployment scope are marked skipped.
+JSON includes `total`, `checked`, `passed`, `failed`, `unsupported`, `skipped`,
+`not_checked` and `coverage` (`complete`, `partial` or `none`). A supported probe
+failure, incomplete inventory, unknown binding type, unfinished probe or absence
+of supported probes returns nonzero. Known unsupported bindings retain partial
+coverage even when supported probes succeed with exit status 0. Use `bindings
+check` to enforce coverage and its explicit unsupported waiver policy.
+
+Service probe evidence includes private dependency revisions for target identity,
+service authorization, project preview policy and test-run membership. Changes
+invalidate service evidence and binding-gated promotion approvals together. This
+conservatively invalidates service probes across the account; target metadata and
+revision tokens stay private. Run verification again after such changes. See
+[ADR-596](adr/596-service-binding-dependency-evidence.md).
+
+Verification is point-in-time connectivity from a fresh task guest, not an
+acknowledgement that resident application VMs adopted current credentials.
+The GET inventory remains read-only. Explicit `bindings verify` tasks can
+consume compute, establish database connections and issue bucket-list requests; service canaries do not
+wake targets or call customer handlers.
 
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
@@ -599,17 +858,32 @@ exact deployment, use an explicit smoke request from the caller:
 
 ```bash
 gregale bindings smoke public-api billing \
-  --deployment DEPLOYMENT_ID \
-  --path /health
+  --caller-deployment v12 \
+  --target-deployment TARGET_DEPLOYMENT_ID \
+  --path /health \
+  --expect-status 200
 ```
 
-Find the ID with `gregale traffic status billing`. This command sends one GET
+Find the target ID with `gregale traffic status billing`. `--caller-deployment`
+selects an exact app-owned live caller deployment, including a candidate at 0%
+traffic; `v12` resolves within `public-api`. Omit it to retain automatic caller
+selection. `--deployment` remains an alias for `--target-deployment`; conflicting
+aliases are rejected. Neither selector changes traffic. This command sends one GET
 over the caller's verified `https://billing.internal` binding and accepts any
 2xx response by default; `--expect-status 204` requires one exact status. It
 does not follow redirects, retain the response body, or include the request
 query in its report. This is an active smoke test: a parked selected deployment
 is woken before forwarding, so its handler may have application-level side
 effects. Use `bindings verify` for a no-wake infrastructure preflight.
+
+The CLI confirms the admitted caller deployment and scope on every task read.
+Success requires a complete matching guest report, the expected HTTP status,
+and a successful task with exit code zero. Truncated, malformed or mismatched
+reports fail. The test exercises the target handler from the caller's task
+runtime; it does not execute the caller's own application handler or count as
+binding-verification evidence. Ctrl-C requests bounded task cancellation;
+`--wait-timeout` bounds CLI reads and waiting, while the task retains its own
+90-second execution limit.
 
 The equivalent raw request sends that same target override explicitly:
 
@@ -842,6 +1116,256 @@ ordinary gRPC client against `http://APP_SLUG.svc.gregale:10081`. Response
 trailers — including `grpc-status` — are preserved across the hop.
 `Connection: Upgrade` requests (WebSocket and friends) take the verbatim-bytes
 bridge and are neither buffered nor retried; they require the target app to
-have WebSockets enabled and return `501` otherwise. Non-HTTP raw TCP between
-services is not part of the discovery contract: address those listeners
-through named ports instead.
+have WebSockets enabled and return `501` otherwise. Non-HTTP protocols use
+private TCP addresses, described below.
+
+### Managed binding application adoption
+
+Bindings inventory reports `application_adoption` for PostgreSQL and object
+storage. It maps the binding's managed secret versions to authorized resident
+main/sidecar workloads and shows separate guest reload and application counts
+(`current`, `failed`, `stale`, `unknown`). Counts represent workload/secret
+pairs. PostgreSQL expects its connection secret; object storage expects the
+endpoint, region, bucket, access key, secret key and addressing style metadata.
+Workload grants determine which of those secrets require acknowledgement.
+Task guests, jobs, mirrors and stopped/parked instances are excluded. JSON
+includes each target's deployment, runtime, workload, key and observed versions.
+It contains no credential values, hashes or private binding owner IDs.
+
+To require application acknowledgements during a rollout:
+
+```sh
+gregale bindings check public-api --deployment v12 --require-application-ack --json
+gregale traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --require-application-ack
+```
+
+Strict mode requires current version-bound acknowledgements from every
+eligible authorized resident workload of each PostgreSQL/object-storage
+binding in the candidate scope, including a resident candidate target for
+each binding. Enable the workload's existing secret reload/application
+acknowledgement contract, start the candidate and wait for it to apply and
+acknowledge the current secrets. Missing, stale, failed, unsupported and
+invalid observations block. Current-version reload failures also block.
+Main workloads and long-running sidecars can independently opt into reload
+and application acknowledgements in the same deployment. Each workload is
+evaluated against its own secret grants and image reload opt-in. Main receives
+no implicit secrets when companions are declared; explicitly grant its binding
+secrets through `env_secrets`. Main acknowledgements use the standard endpoint;
+sidecar acknowledgements include their stamped `?workload=<name>` identity.
+An older valid guest projection remains separate from a newer application
+receipt. Application receipts have no probe-age expiry; a changed secret
+version makes an old acknowledgement stale. The existing probe, rotation and
+instance timestamp checks still apply. `--allow-unsupported` cannot waive
+application adoption. The default policy remains unchanged.
+
+Strict promotion uses
+`POST /v1/deployments/{id}/promote-with-application-ack`, which always enforces
+this policy even if its request field is omitted or false. CLI and Go clients
+select it automatically for `require_application_ack=true`; Node/Python
+clients expose `promoteDeploymentWithApplicationAck` /
+`promote_deployment_with_application_ack`. Older servers return 404 before
+changing traffic; do not fall back to ordinary promotion. Receipts echo
+`require_application_ack`, and changes to secret versions, workload grants,
+reload support or acknowledgements invalidate the check at the traffic write.
+
+An optional adoption read failure produces incomplete/unknown adoption and a
+sanitized warning; it blocks strict checks. Application acknowledgements are
+self-attestations and do not independently prove readiness, ongoing health or
+actual credential use. See [ADR-502](adr/502-binding-application-adoption.md).
+### Stored binding release enforcement
+
+Enable verification enforcement for an app's deployment scope after establishing
+its stable serving deployment:
+
+```sh
+gregale bindings release-policy get public-api --scope production
+gregale bindings release-policy set public-api --scope production \
+  --require-verification --max-age 10m --expected-revision 0
+```
+
+Add `--require-application-ack` to require current managed-secret application
+acknowledgements. Use the current revision from `get` for subsequent updates.
+Unconfigured scopes remain off. Enabling the policy does not change serving
+traffic or run probes. Verification age must be a whole number of seconds from
+1s through 24h.
+
+Admit new candidates with explicit zero traffic, verify the exact candidate,
+then promote it or advance its existing canary. The server enforces the saved
+policy on ordinary traffic PATCH, promotion and manual/worker canary advances,
+including any deployment gaining redistributed traffic. Request flags cannot
+relax the saved policy. Missing, stale or changed evidence returns a structured
+conflict with binding blockers. Smoke tests remain diagnostic and do not count
+as binding verification.
+
+To admit a new canary under enforcement, use a custom ladder whose first stage
+is 0%. The built-in presets start with positive traffic and are blocked at
+admission. The zero stage keeps the stable deployment serving while you verify
+the candidate; subsequent advances apply the stored binding policy.
+
+To abort an active canary while enforcement stays enabled, first verify the
+exact retained predecessor, then pin both deployments:
+
+```sh
+gregale bindings verify public-api --deployment v41 --all
+gregale rollouts recover public-api --action abort --deployment v42 \
+  --expected-predecessor v41 --reason 'Restore verified predecessor'
+```
+
+The predecessor must remain live and serving in the same deployment scope.
+Recovery checks its current bindings, policy revision and evidence expiry in
+the traffic transaction, restores it to 100%, and aborts the selected canary.
+The JSON receipt includes both IDs, the committed restored percentage, binding
+check reports and the audit ID. Automatic canary aborts from the circuit breaker,
+alert demotion, stuck-rollout recovery, critical route health and an expired
+progression-worker lease also check the restored recipient. Health and lease
+recovery retain their existing safety conditions. Missing or changed evidence
+leaves traffic unchanged; recovery does not run verification tasks implicitly.
+Binding refusals can be retried with the same idempotency key after supplying
+fresh evidence, while successful recovery responses are replayed.
+
+Positive initial canary admission, legacy canary recovery,
+unchecked historical rollback and project release graph switches currently fail closed in
+enforced scopes when they would increase protected traffic. Graph-wide checked
+activation is not yet supported. During an incident, explicitly disable the
+policy with a reason before using an unguarded recovery path:
+
+```sh
+gregale bindings release-policy set public-api --scope production \
+  --mode off --expected-revision 1 --reason 'Restore stable deployment during incident'
+```
+
+Recover, then re-enable with the new revision. Every policy update has durable
+history; disabling does not require binding/provider availability. Policy
+changes and evidence are rechecked inside the traffic transaction, so a
+concurrent update or expired observation cannot carry an old approval into a
+traffic increase.
+
+
+### Binding-checked service handoffs
+
+A service rollout under enforcement keeps its predecessor serving while APID
+checks the exact ready candidate. Missing evidence appears as bounded blockers
+in `service_rollout_handoff.bindings_check`; supplying current verification lets
+the worker retry without changing the policy. The routing transaction rechecks
+policy, evidence and ready service capacity before publishing weights. Gateway
+acknowledgement and request drain still determine handoff completion.
+
+An exact abort uses the same pinned pair as canary recovery, including a retained
+live predecessor at zero weight after service cutover. Verify that predecessor,
+then request the abort and wait for the selected rollout:
+
+```sh
+gregale bindings verify public-api --deployment v41 --all
+gregale rollouts recover public-api --action abort --deployment v42 \
+  --expected-predecessor v41 --reason 'Restore verified predecessor'
+gregale rollouts status public-api --deployment v42 --wait --timeout 10m
+```
+
+Service recovery returns 202 and `service_recovery` with the request UUID and
+both IDs. This confirms acceptance only. `rollouts status` shows binding checks,
+routing, missing gateway acknowledgements and drain progress. With `--wait`, a
+service abort succeeds only at `rollout_state=aborted` and handoff phase
+`complete`; promotion waits for its corresponding complete handoff. Status and
+wait use GETs only, never run verification, and preserve the last status on a
+timeout. Add `--json` for the exact deployment response. APID restarts resume
+the durable request; a missing pinned predecessor cannot be replaced silently.
+See [ADR-600](adr/600-binding-checked-service-handoffs.md).
+
+Completed deployments can be restored through an exact binding-checked rollback:
+
+```sh
+gregale rollback api --to v41 --expected-current v42 --reason "restore previous release" --wait
+```
+
+The accepted operation retains both deployments through readiness and binding
+checks. The current release keeps serving while the target prepares at zero
+traffic. If bindings are blocked, verify the exact target with the existing
+`gregale bindings verify-all api --deployment v41` command, then inspect or resume
+waiting for the accepted operation:
+
+```sh
+gregale rollback status api --operation OPERATION_UUID --wait
+```
+
+Both waits use read-only operation polling. A changed current release fails the
+operation rather than selecting another deployment. Service completion includes
+gateway acknowledgement and draining. A timeout keeps the last status and binding
+blockers visible; an interrupt exits 130. Add `--json` for the operation receipt.
+See [ADR-601](adr/601-binding-checked-historical-rollback.md) for transaction boundaries.
+
+## Private TCP between services
+
+Same-account services can also talk over plain TCP, which covers protocols
+such as PostgreSQL, Redis, MQTT, AMQP and custom binary protocols. Dial the
+service name on its own port:
+
+```text
+redis://cache.svc.gregale:6379
+postgres://db.svc.gregale:5432
+```
+
+`cache.svc.gregale` resolves to a stable private address for the `cache` app,
+for example `198.19.0.7`. The address belongs to the app, not to a machine,
+so it stays the same across restarts, scale-to-zero and moves between
+nodes. It is meaningful only inside your account; another account's
+workloads cannot use it to reach your services. HTTP calls to
+`http://cache.svc.gregale:10081` keep working on the same name.
+
+A service exposes these TCP ports:
+
+- every TCP port it declares in `ports`, including internal ones (see below);
+- the port it serves on (its main listener).
+
+Image `EXPOSE` entries other than the serving port are not exposed
+automatically: declare them. Ports 10080, 10081 and 443 on a service address
+always belong to the HTTP service mesh.
+
+Declare listeners that should never be public with compose `expose:`:
+
+```yaml
+services:
+  api:
+    build: ./api
+    depends_on: [cache]
+  cache:
+    build: ./cache
+    expose: ["6379"]
+```
+
+`expose:` entries become `internal` listeners. Same-account services reach
+them at the service address, but they never get a public
+`--port-<name>` hostname or a public raw TCP listener. Only TCP entries are
+supported; UDP and port ranges are skipped with a warning. Through the app
+API, set `"internal": true` on an entry in `ports`.
+
+Each declared dependency also receives `GREGALE_SERVICE_<NAME>_HOST`, the bare
+host for non-HTTP clients:
+
+```bash
+redis-cli -h "$GREGALE_SERVICE_CACHE_HOST" -p 6379 PING
+```
+
+The same caller policy as HTTP service calls applies when the connection
+opens: same account, the caller's `depends_on` (under the `declared` policy),
+the target's allowed callers, and preview scoping. A target that grants a
+caller only method/path scopes (`x-gregale-allow-call-scopes`) refuses that
+caller's raw TCP connections, because those scopes cannot be enforced on raw
+bytes.
+
+A parked service is woken when a connection arrives. The connection is held
+for up to 30 seconds, then forwarded. While bytes keep flowing, the target
+stays running. A connection that is idle for longer than the target's idle
+timeout is closed, so an idle connection pool does not keep a service awake
+longer than idle HTTP traffic would. Configure your client pool to reconnect.
+Concurrent private TCP connections are capped per account on each node, by
+plan.
+
+A connection that is refused (unknown service, undeclared port, denied
+caller, or a target that cannot be woken) is reset with no data, since raw
+TCP carries no error message. Raw TCP connections carry no caller-assertion
+header; authenticate inside your protocol if the target must know the
+caller.
+
+Private TCP addresses are a node-level rollout. Until your node has it
+enabled, `*.svc.gregale` keeps answering with the HTTP-only address, and HTTP
+service calls work as before.

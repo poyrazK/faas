@@ -128,6 +128,28 @@ func TestCheckConformanceResolvesTestTarget(t *testing.T) {
 	}
 }
 
+func TestCheckConformanceResolvesJavaScriptTestTarget(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "test", "contract.test.js")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("import test from 'node:test';\ntest('durable task journey', () => {});\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog := Catalog{
+		Version: 1,
+		Standards: []Standard{{
+			ID: "fixture-standard", Name: "Fixture", Version: "1", Category: "protocol", Surface: "edge",
+			Status: StatusSupported, Scope: "scope", Limitations: "limits", DocsURL: "https://example.com/fixture", Evidence: "evidence",
+			Conformance: []ConformanceRef{{Fixture: "fixture-test", Tier: ConformanceIntegration, Target: "test/contract.test.js::durable task journey"}},
+		}},
+	}
+	if err := CheckConformance(catalog, root); err != nil {
+		t.Fatalf("CheckConformance: %v", err)
+	}
+}
+
 func TestCheckConformanceRejectsMissingTestTarget(t *testing.T) {
 	catalog := Catalog{
 		Version: 1,

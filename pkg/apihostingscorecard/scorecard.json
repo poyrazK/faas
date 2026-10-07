@@ -144,7 +144,7 @@
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney"},
-        {"kind": "test", "locator": "cmd/gregale/commands_mcp_test.go::TestMCPDeploymentVerificationFailureEnablesMaintenance"},
+        {"kind": "test", "locator": "cmd/gregale/commands_mcp_release_test.go::TestMCPCandidatePromotion"},
         {"kind": "test", "locator": "cmd/apid/handlers_templates_test.go::TestListTemplates_ReturnsAllNames"},
         {"kind": "test", "locator": "cmd/apid/secretscan_mcp_test.go::TestScanExtractedMCPStarterPreservesSecretDefense"},
         {"kind": "test", "locator": "pkg/mcphosting/client_test.go::TestStatelessDiscoveryAndStreaming"},

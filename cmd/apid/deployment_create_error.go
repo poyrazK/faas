@@ -12,6 +12,14 @@ import (
 // capacity failures. CreateDeployment uses ErrNotFound when the app vanished
 // or became terminal after the handler's initial lookup.
 func (s *server) writeDeploymentCreateError(w http.ResponseWriter, err error) {
+	if state.IsBindingReleaseRequired(err) {
+		api.WriteProblem(w, bindingReleaseRequiredProblem())
+		return
+	}
+	if problem := api.AsProblem(err); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "app no longer accepts deployments")
 		return

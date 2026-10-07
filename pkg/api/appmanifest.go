@@ -143,6 +143,7 @@ type WorkerScaling struct {
 	Min    int     `json:"min" yaml:"min"`
 	Max    int     `json:"max" yaml:"max"`
 	Metric string  `json:"metric,omitempty" yaml:"metric,omitempty"`
+	Name   string  `json:"name,omitempty" yaml:"name,omitempty"`
 	Target float64 `json:"target,omitempty" yaml:"target,omitempty"`
 }
 
@@ -196,6 +197,8 @@ type AppManifest struct {
 	// replacement followed by this signal. The application must handle the
 	// signal, reread FAAS_SECRETS_FILE, and apply the new values itself.
 	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
+	// SecretReloadReadiness waits for a per-process ready marker before signaling.
+	SecretReloadReadiness bool `json:"secret_reload_readiness,omitempty"`
 	// StopGracePeriod mirrors OCI StopGracePeriod (the OCI image
 	// spec doesn't carry it; M-2 will populate from operator
 	// override or per-plan cap). Currently always zero.
@@ -230,7 +233,7 @@ type AppManifest struct {
 	// lays the schema + admission; M-4 workstream E lands the
 	// rolling deploy / rollback / digest-pinning semantics.
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
-	// WorkerReplicas is the queue-driven autoscaling policy for worker mode.
+	// WorkerReplicas is the queue- or custom-metric autoscaling policy for worker mode.
 	WorkerReplicas *WorkerScaling `json:"worker_replicas,omitempty"`
 	// Favicon is an optional base64-encoded favicon payload for the edge
 	// /favicon.ico answer. The gateway enforces a 32 KiB maximum.
@@ -447,6 +450,11 @@ type WorkloadPort struct {
 	Name     string               `json:"name,omitempty"`
 	Port     int                  `json:"port"`
 	Protocol WorkloadPortProtocol `json:"protocol"`
+	// Internal keeps a listener off every public surface (the --port-<name>
+	// selector and raw TCP listeners) while same-account services still
+	// reach it at the app's private service address (ADR-576). Compose
+	// `expose:` declares internal listeners.
+	Internal bool `json:"internal,omitempty"`
 }
 
 var workloadPortNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
@@ -706,6 +714,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	if m.Healthcheck != nil && m.Healthcheck.GRPC != nil {
 		return fmt.Errorf("app manifest: grpc health checks are supported only for companion probes")
 	}
+	if m.SecretReloadReadiness && m.SecretReloadSignal == "" {
+		return fmt.Errorf("app manifest: secret_reload_readiness requires secret_reload_signal")
+	}
 	if m.SecretReloadSignal != "" {
 		switch m.SecretReloadSignal {
 		case "SIGHUP", "SIGUSR1", "SIGUSR2":
@@ -850,6 +861,13 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		r := m.WorkerReplicas
 		if r.Min < 0 || r.Max <= 0 || r.Max < r.Min {
 			return fmt.Errorf("app manifest: worker_replicas values invalid (got min=%d max=%d)", r.Min, r.Max)
+		}
+		if r.Metric == "" {
+			if r.Name != "" || r.Target != 0 {
+				return fmt.Errorf("app manifest: worker_replicas name and target require a metric")
+			}
+		} else if problem := ValidateScalingTargets("worker_replicas", []ScalingTarget{{Metric: r.Metric, Name: r.Name, Value: r.Target}}); problem != nil {
+			return fmt.Errorf("app manifest: %s", problem.Detail)
 		}
 		if r.Max > limits.WorkerReplicasMax {
 			return fmt.Errorf("app manifest: worker_replicas.max %d exceeds plan %q cap %d", r.Max, plan, limits.WorkerReplicasMax)

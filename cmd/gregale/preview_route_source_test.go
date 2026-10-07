@@ -27,6 +27,35 @@ func previewSourceFixture() routeimpact.Report {
 	}
 }
 
+func previewGoSourceFixture() routeimpact.Report {
+	source := previewSourceFixture()
+	source.Version, source.Framework = 3, "go-nethttp"
+	source.Scope = "Static Go net/http source impact."
+	source.Base.PythonFiles, source.Candidate.PythonFiles = 0, 0
+	source.Base.GoFiles, source.Candidate.GoFiles = 2, 2
+	for i := range source.Routes {
+		for _, route := range []*routeimpact.Route{source.Routes[i].Before, source.Routes[i].After} {
+			if route == nil {
+				continue
+			}
+			route.Source.File, route.Registration.File = "main.go", "main.go"
+			route.RegistrationHash = strings.Repeat("a", 64)
+			for j := range route.ContextFiles {
+				route.ContextFiles[j] = "main.go"
+			}
+		}
+		for j := range source.Routes[i].Evidence {
+			evidence := &source.Routes[i].Evidence[j]
+			evidence.File = "helper.go"
+			for k := range evidence.ViaSymbols {
+				evidence.ViaSymbols[k].File = "main.go"
+			}
+		}
+	}
+	source.ChangedFiles = []routeimpact.FileChange{{File: "main.go", Change: "modified"}}
+	return source
+}
+
 func previewSourceDeploymentFixture(commit, appID string) *api.DeploymentResponse {
 	return &api.DeploymentResponse{ID: "deployment-" + appID, AppID: appID, Status: "live", CommitSHA: commit, SourceURL: "https://user:secret-origin@github.com/Team/Service.git", SourceRoot: ".", SourceSHA256: strings.Repeat("9", 64)}
 }
@@ -37,7 +66,8 @@ func previewSourceReportFixture() previewRouteReport {
 	row.Change, row.RouteSource = "unchanged", "captured_deployment_contract"
 	row.TestProfiles = []previewReportTest{{Profile: "warm", Passed: 1}}
 	row.BaselineTraffic = &previewReportTraffic{Requests: 100, From: "start", Until: "end"}
-	return previewRouteReport{Version: 1, Outcome: "no_findings", Routes: []previewReportRoute{*row},
+	row.PolicyDrift = &previewRoutePolicyDrift{Status: "unchanged", Changes: []previewRoutePolicyRuleChange{}}
+	return previewRouteReport{Version: 7, Outcome: "no_findings", PolicyDrift: previewRoutePolicyDriftEvidence{Status: "available", Scope: "deployment_pair"}, Routes: []previewReportRoute{*row},
 		baselineSource:  previewSourceDeployment(previewSourceDeploymentFixture(source.Base.Revision, "parent"), "parent"),
 		candidateSource: previewSourceDeployment(previewSourceDeploymentFixture(source.Candidate.Revision, "preview"), "preview"),
 	}
@@ -50,7 +80,7 @@ func TestPreviewSourceBindsDeclaredMetadataAndKeepsContractClassification(t *tes
 	if report.SourceImpact.CandidateRevision != source.Candidate.Revision || report.SourceImpact.Repository != source.Repository || report.SourceImpact.SourceRoot != source.SourceRoot {
 		t.Fatal("analyzed provenance absent from the joined report")
 	}
-	if report.Version != 4 || report.SourceImpact.Status != "aligned" || report.SourceImpact.MappingStatus != "complete" || report.SourceImpact.Base.Status != "declared_match" {
+	if report.Version != 7 || report.SourceImpact.Status != "aligned" || report.SourceImpact.MappingStatus != "complete" || report.SourceImpact.Base.Status != "declared_match" {
 		t.Fatalf("binding=%+v", report.SourceImpact)
 	}
 	row := report.Routes[0]
@@ -70,6 +100,24 @@ func TestPreviewSourceBindsDeclaredMetadataAndKeepsContractClassification(t *tes
 		if strings.Contains(string(body), secret) {
 			t.Fatalf("leaked %s", secret)
 		}
+	}
+}
+
+func TestPreviewSourceAcceptsGoNetHTTPReportVersion3(t *testing.T) {
+	source := previewGoSourceFixture()
+	body, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := routeimpact.ParseReport(body)
+	if err != nil {
+		t.Fatalf("Go net/http source impact did not validate: %v", err)
+	}
+	report := previewSourceReportFixture()
+	attachPreviewSourceImpact(&report, parsed, "digest")
+	prioritizePreviewRouteReview(&report)
+	if report.SourceImpact.Status != "aligned" || report.SourceImpact.MappingStatus != "complete" || report.Routes[0].SourceImpact == nil || report.Routes[0].SourceImpact.Match != "parameter_names" {
+		t.Fatalf("Go source impact did not join to the captured route: %+v", report.SourceImpact)
 	}
 }
 
@@ -346,8 +394,14 @@ func TestPreviewSourceReportCommandAndMarkdown(t *testing.T) {
 			writePreviewReportDoc(t, w, "deployment-parent", previewReportBefore)
 		case "/v1/apps/pr-42-api/deployments/deployment-preview/openapi":
 			writePreviewReportDoc(t, w, "deployment-preview", previewReportBefore)
+		case "/v1/apps/api/deployments/deployment-parent/route-policy":
+			writePreviewPolicySnapshotTest(w, "deployment-parent", "parent", []api.EdgeRuleResponse{})
+		case "/v1/apps/pr-42-api/deployments/deployment-preview/route-policy":
+			writePreviewPolicySnapshotTest(w, "deployment-preview", "preview", []api.EdgeRuleResponse{})
 		case "/v1/apps/pr-42-api/openapi/preview":
 			writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{})
+		case "/v1/apps/api/edge-rules", "/v1/apps/pr-42-api/edge-rules":
+			writeJSONTest(w, []api.EdgeRuleResponse{})
 		case "/v1/apps/api/analytics":
 			writeJSONTest(w, previewReportAnalytics("deployment-parent", 100, 42))
 		case "/v1/apps/pr-42-api/analytics":
@@ -370,7 +424,7 @@ func TestPreviewSourceReportCommandAndMarkdown(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if reads != 6 || report.Version != 4 || report.SourceImpact.SHA256 != fmt.Sprintf("%x", sha256.Sum256(body)) || report.SourceImpact.Status != "aligned" || report.Outcome != "incomplete" {
+	if reads != 9 || report.Version != 7 || report.SourceImpact.SHA256 != fmt.Sprintf("%x", sha256.Sum256(body)) || report.SourceImpact.Status != "aligned" || report.Outcome != "incomplete" {
 		t.Fatalf("reads=%d report=%+v", reads, report)
 	}
 	for _, secret := range []string{"secret-origin", "secret-scope", "secret-issue"} {

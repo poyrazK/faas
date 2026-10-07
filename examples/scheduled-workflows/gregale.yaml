@@ -1,0 +1,22 @@
+schema_version: 1
+workflows:
+  - name: daily_report
+    trigger:
+      type: schedule
+      schedule: "0 7 * * *"
+      timezone: Europe/Istanbul
+      input:
+        report: daily
+      overlap: skip
+      enabled: true
+    steps:
+      - name: generate
+        run: generate_report
+        retry:
+          max_attempts: 3
+          backoff: exponential
+      - name: send
+        run: send_report
+        depends_on: [generate]
+        input:
+          report_id: "{{steps.generate.output.report_id}}"

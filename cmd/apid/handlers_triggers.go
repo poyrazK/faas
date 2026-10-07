@@ -70,6 +70,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/triggerconfig"
@@ -284,7 +285,7 @@ func (s *server) persistCreatedTrigger(
 	appUUID := uuidFromPgtype(t.AppID).String()
 	_ = s.notif.Notify(ctx, db.NotifyTriggerChanged,
 		notifyTriggerChangedJSON("created", appUUID, triggerUUID))
-	s.log.Info("trigger created", "trigger", triggerUUID, "app", appUUID, "account", acct.ID, "kind", req.Kind)
+	s.log.Info("trigger created", "trigger", triggerUUID, "app", appUUID, "account", acct.ID, "kind", logsanitize.Field(string(req.Kind)))
 	s.audit.Emit(ctx, "trigger.created", &acct.ID, map[string]any{
 		"trigger_id": triggerUUID,
 		"app_id":     appUUID,
@@ -712,6 +713,9 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such trigger")
 		return
 	}
+	if !publicTriggerWritable(w, t) {
+		return
+	}
 	var req api.UpdateTriggerRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -901,6 +905,9 @@ func (s *server) deleteTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such trigger")
 		return
 	}
+	if !publicTriggerWritable(w, t) {
+		return
+	}
 	if err := s.store.DeleteTrigger(r.Context(), id, uuidFromPgtype(t.AppID).String()); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not delete trigger"))
 		return
@@ -914,6 +921,15 @@ func (s *server) deleteTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		"app_id":     appUUID,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func publicTriggerWritable(w http.ResponseWriter, trigger sqlc.Trigger) bool {
+	if !trigger.QueueBindingID.Valid {
+		return true
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+		"Queue consumer is binding-owned", "manage this consumer through its queue binding"))
+	return false
 }
 
 // --- pause / resume --------------------------------------------------------
@@ -942,6 +958,9 @@ func (s *server) setTriggerEnabled(w http.ResponseWriter, r *http.Request, acct 
 	app, err := s.store.AppByID(r.Context(), uuidFromPgtype(t.AppID).String())
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such trigger")
+		return
+	}
+	if !publicTriggerWritable(w, t) {
 		return
 	}
 	updated, err := s.store.UpdateTrigger(r.Context(), id, &enabled, nil, nil, nil, nil, nil, nil, nil, nil)

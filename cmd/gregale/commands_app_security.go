@@ -86,7 +86,7 @@ func cmdAppSecurity(slug string, args []string) int {
 	// would silently drop --require-signed=false if we parsed args
 	// directly. The reorder helper pulls the flag to the front so
 	// the parser sees it. Mirrors cmdDelayedTaskAdd (commands_delayed_task.go:118).
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "posture")
 	fs := newFlagSet("app security", flag.ContinueOnError)
 	requireSigned := fs.String("require-signed", "", "require signed images on deploy (true|false)")
 	securityPolicy := fs.String("security-policy", "", "deploy posture policy (off|warn|enforce)")
@@ -110,6 +110,11 @@ func cmdAppSecurity(slug string, args []string) int {
 	}
 	if *securityPolicy != "" && *securityPolicy != securityPolicyOff && *securityPolicy != securityPolicyWarn && *securityPolicy != securityPolicyEnforce {
 		return printErr("Invalid --security-policy", fmt.Errorf("must be \"off\", \"warn\", or \"enforce\"; got %q", *securityPolicy))
+	}
+	// Without a mutation flag this is a read. production-us hunt #4: a bare
+	// `app <slug> security` sent an empty PATCH and printed "security updated".
+	if *requireSigned == "" && *securityPolicy == "" {
+		*posture = true
 	}
 	client, err := authedClient()
 	if err != nil {

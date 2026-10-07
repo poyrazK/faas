@@ -354,7 +354,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			"app_protocol", protocol)
 	}
 
-	stream, err := cli.ForwardHTTPStream(ctx)
+	stream, err := cli.ForwardHTTPStream(grpcStreamContext{ctx}) //nolint:contextcheck // wraps ctx: keeps cancellation, hides only the deadline from grpc-timeout
 	if err != nil {
 		if handleForwardRequestCancellation(w, r, true) {
 			return
@@ -594,7 +594,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
 					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
 				}
-				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
+				evs.EmitAsyncOnce(r.Context(), t.WakeID, evts.ProxyFirstByte{
 					EmitAt:          emitAt,
 					WakeID:          t.WakeID,
 					AppID:           t.AppID,
@@ -751,7 +751,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		metrics.ObserveWSSessionDuration(string(plan), wsOutcome, time.Since(sessionStart))
 	}()
 
-	stream, err := cli.ForwardRawStream(ctx)
+	stream, err := cli.ForwardRawStream(grpcStreamContext{ctx}) //nolint:contextcheck // wraps ctx: keeps cancellation, hides only the deadline from grpc-timeout
 	if err != nil {
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder stream open failed",
@@ -933,7 +933,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
 					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
 				}
-				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
+				evs.EmitAsyncOnce(r.Context(), t.WakeID, evts.ProxyFirstByte{
 					EmitAt:          emitAt,
 					WakeID:          t.WakeID,
 					AppID:           t.AppID,

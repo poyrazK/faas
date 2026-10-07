@@ -248,6 +248,10 @@ func (r *deploymentResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if err := r.client.deploymentOwnership(ctx, plan.AppSlug.ValueString(), stringValue(plan.Environment), false); err != nil {
+		appendClientError(&resp.Diagnostics, "Could not reserve Terraform source ownership", err)
+		return
+	}
 	var out deploymentResponse
 	var err error
 	if plan.Image.ValueString() != "" {
@@ -303,6 +307,10 @@ func (r *deploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 		appendClientError(&resp.Diagnostics, "Could not read Gregale deployment", err)
 		return
 	}
+	if err := r.client.deploymentOwnership(ctx, state.AppSlug.ValueString(), out.Scope, false); err != nil {
+		appendClientError(&resp.Diagnostics, "Could not reserve Terraform source ownership", err)
+		return
+	}
 	preview, err := r.client.getDeploymentURL(ctx, state.DeploymentID.ValueString())
 	if err != nil && !isNotFound(err) {
 		appendClientError(&resp.Diagnostics, "Could not read Gregale deployment preview URL", err)
@@ -326,12 +334,15 @@ func (r *deploymentResource) Delete(ctx context.Context, req resource.DeleteRequ
 		return
 	}
 	status := stringValue(state.Status)
+	// Immutable deployment removal leaves scoped source intent in place. Keep
+	// its shared reservation across replacement; release only at explicit handoff.
 	if status != "pending" && status != "building" && status != "imaging" && status != "snapshotting" {
 		return
 	}
 	_, err := r.client.cancelDeployment(ctx, state.AppSlug.ValueString(), state.DeploymentID.ValueString(), "user")
 	if err != nil && !isDeploymentCancellationRace(err) {
 		appendClientError(&resp.Diagnostics, "Could not cancel Gregale deployment", err)
+		return
 	}
 }
 

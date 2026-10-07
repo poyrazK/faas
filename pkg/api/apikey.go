@@ -414,6 +414,12 @@ const (
 	ScopePlatformTenantConsumersManage   = "platform_tenant:consumers:manage"
 	ScopePlatformTenantInvocationsRead   = "platform_tenant:invocations:read"
 	ScopePlatformTenantInvocationsManage = "platform_tenant:invocations:manage"
+	ScopePlatformTenantOperationsRead    = "platform_tenant:operations:read"
+	ScopePlatformTenantOperationsManage  = "platform_tenant:operations:manage"
+	ScopePlatformTenantEventsRead        = "platform_tenant:events:read"
+	ScopePlatformTenantEventsManage      = "platform_tenant:events:manage"
+	ScopePlatformTenantAutomationsRead   = "platform_tenant:automations:read"
+	ScopePlatformTenantAutomationsManage = "platform_tenant:automations:manage"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The

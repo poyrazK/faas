@@ -23,12 +23,6 @@ type roleResponse struct {
 	Operations []operation `json:"operations"`
 }
 
-type createRoleRequest struct {
-	Role struct {
-		Name string `json:"name"`
-	} `json:"role"`
-}
-
 type connectionURIResponse struct {
 	URI string `json:"uri"`
 }
@@ -46,7 +40,7 @@ func (p *Provider) IssueCredentials(ctx context.Context, request managedpostgres
 	if err := validateCredentialRequest(request); err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	if request.Access != managedpostgres.CredentialReadWrite {
+	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
 	}
 	ref, err := parseResourceRef(request.ProviderResourceID)
@@ -60,11 +54,15 @@ func (p *Provider) IssueCredentials(ctx context.Context, request managedpostgres
 	if err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	roleName := p.roleName(request.ProviderResourceID, request.IdentityKey)
-	if err := p.ensureRole(ctx, ref.projectID, branchID, roleName); err != nil {
+	role := p.credentialRole(request)
+	owner, err := p.ownerCredentials(ctx, ref.projectID, branchID)
+	if err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	return p.credentialMaterial(ctx, ref.projectID, branchID, roleName)
+	if err := p.roles.Ensure(ctx, owner, role); err != nil {
+		return managedpostgres.CredentialMaterial{}, credentialSQLError(err)
+	}
+	return p.credentialMaterial(ctx, ref.projectID, branchID, role.name, request.Access)
 }
 
 func (p *Provider) RevokeCredentials(ctx context.Context, request managedpostgres.CredentialRequest) error {
@@ -85,8 +83,18 @@ func (p *Provider) RevokeCredentials(ctx context.Context, request managedpostgre
 		}
 		return err
 	}
-	roleName := p.roleName(request.ProviderResourceID, request.IdentityKey)
-	path := "/projects/" + url.PathEscape(ref.projectID) + "/branches/" + url.PathEscape(branchID) + "/roles/" + url.PathEscape(roleName)
+	role := p.credentialRole(request)
+	owner, err := p.ownerCredentials(ctx, ref.projectID, branchID)
+	if err != nil {
+		return err
+	}
+	if err := p.roles.Revoke(ctx, owner, role); err != nil {
+		return credentialSQLError(err)
+	}
+	// Previous preview releases created a deterministic API administrator role
+	// for this identity. Its retirement remains recoverable after upgrading.
+	legacy := p.roleName(request.ProviderResourceID, request.IdentityKey)
+	path := "/projects/" + url.PathEscape(ref.projectID) + "/branches/" + url.PathEscape(branchID) + "/roles/" + url.PathEscape(legacy)
 	var response roleResponse
 	err = p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, http.StatusOK, http.StatusNoContent)
 	if errors.Is(err, managedpostgres.ErrNotFound) {
@@ -98,24 +106,40 @@ func (p *Provider) RevokeCredentials(ctx context.Context, request managedpostgre
 	return p.waitForOperations(ctx, ref.projectID, response.Operations)
 }
 
+// Owner credentials are control-plane only and never reach CredentialSink.
+func (p *Provider) ownerCredentials(ctx context.Context, projectID, branchID string) (managedpostgres.CredentialMaterial, error) {
+	var response connectionURIResponse
+	if err := p.connectionURI(ctx, projectID, branchID, ownerLogin, false, &response); err != nil {
+		return managedpostgres.CredentialMaterial{}, err
+	}
+	parsed, err := parseConnectionURI(response.URI)
+	if err != nil || parsed.username != ownerLogin || parsed.database != p.databaseName {
+		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnavailable
+	}
+	return managedpostgres.CredentialMaterial{ProviderIdentityID: ownerLogin, Username: parsed.username, Password: parsed.password,
+		Database: parsed.database, TLSMode: parsed.tlsMode, Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: parsed.host, Port: parsed.port}}}, nil
+}
+
 func validateCredentialRequest(request managedpostgres.CredentialRequest) error {
 	if _, err := parseResourceRef(request.ProviderResourceID); err != nil || request.IdentityKey == "" || len(request.IdentityKey) > 1024 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 {
 		return managedpostgres.ErrInvalid
 	}
-	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly {
+	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration {
 		return managedpostgres.ErrInvalid
 	}
 	return nil
 }
 
 func (p *Provider) defaultBranch(ctx context.Context, projectID string) (string, error) {
-	path := "/projects/" + url.PathEscape(projectID) + "/branches"
-	var response branchesResponse
-	if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+	branches, err := p.listProjectBranches(ctx, projectID, "")
+	if err != nil {
+		if errors.Is(err, managedpostgres.ErrConflict) {
+			err = managedpostgres.ErrUnavailable
+		}
 		return "", err
 	}
 	branchID := ""
-	for _, candidate := range response.Branches {
+	for _, candidate := range branches {
 		if !candidate.Default {
 			continue
 		}
@@ -128,39 +152,6 @@ func (p *Provider) defaultBranch(ctx context.Context, projectID string) (string,
 		return "", managedpostgres.ErrUnavailable
 	}
 	return branchID, nil
-}
-
-func (p *Provider) ensureRole(ctx context.Context, projectID, branchID, roleName string) error {
-	path := "/projects/" + url.PathEscape(projectID) + "/branches/" + url.PathEscape(branchID) + "/roles/" + url.PathEscape(roleName)
-	var existing roleResponse
-	err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &existing, http.StatusOK)
-	if err == nil {
-		if existing.Role.Name != roleName {
-			return managedpostgres.ErrUnavailable
-		}
-		return nil
-	}
-	if !errors.Is(err, managedpostgres.ErrNotFound) {
-		return err
-	}
-	var request createRoleRequest
-	request.Role.Name = roleName
-	var created roleResponse
-	collectionPath := "/projects/" + url.PathEscape(projectID) + "/branches/" + url.PathEscape(branchID) + "/roles"
-	err = p.doJSON(ctx, http.MethodPost, collectionPath, nil, request, &created, http.StatusCreated)
-	if errors.Is(err, managedpostgres.ErrConflict) {
-		// A previous request can have succeeded after the response path
-		// failed. The deterministic role name makes the conflict a safe
-		// recovery point; never reset the password on an idempotent retry.
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if created.Role.Name != roleName {
-		return managedpostgres.ErrUnavailable
-	}
-	return p.waitForOperations(ctx, projectID, created.Operations)
 }
 
 func (p *Provider) waitForOperations(ctx context.Context, projectID string, operations []operation) error {
@@ -197,9 +188,23 @@ func operationFinished(status string) bool {
 	return status == "finished" || status == "skipped"
 }
 
-func (p *Provider) credentialMaterial(ctx context.Context, projectID, branchID, roleName string) (managedpostgres.CredentialMaterial, error) {
+func (p *Provider) credentialMaterial(ctx context.Context, projectID, branchID, roleName string, access managedpostgres.CredentialAccess) (managedpostgres.CredentialMaterial, error) {
 	var directResponse connectionURIResponse
 	var pooledResponse connectionURIResponse
+	if access == managedpostgres.CredentialMigration {
+		if err := p.connectionURI(ctx, projectID, branchID, roleName, false, &directResponse); err != nil {
+			return managedpostgres.CredentialMaterial{}, err
+		}
+		direct, err := parseConnectionURI(directResponse.URI)
+		if err != nil || direct.username != roleName || direct.database != p.databaseName {
+			return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnavailable
+		}
+		material := managedpostgres.CredentialMaterial{ProviderIdentityID: roleName, Username: direct.username, Password: direct.password, Database: direct.database, TLSMode: direct.tlsMode, Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: direct.host, Port: direct.port}}}
+		if material.Validate() != nil {
+			return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnavailable
+		}
+		return material, nil
+	}
 	group, groupContext := errgroup.WithContext(ctx)
 	group.Go(func() error {
 		return p.connectionURI(groupContext, projectID, branchID, roleName, false, &directResponse)
@@ -215,7 +220,7 @@ func (p *Provider) credentialMaterial(ctx context.Context, projectID, branchID, 
 		return managedpostgres.CredentialMaterial{}, err
 	}
 	pooled, err := parseConnectionURI(pooledResponse.URI)
-	if err != nil || direct.username != pooled.username || direct.password != pooled.password || direct.database != pooled.database || direct.tlsMode != pooled.tlsMode {
+	if err != nil || direct.username != roleName || direct.database != p.databaseName || direct.username != pooled.username || direct.password != pooled.password || direct.database != pooled.database || direct.tlsMode != pooled.tlsMode {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnavailable
 	}
 	material := managedpostgres.CredentialMaterial{
@@ -236,11 +241,22 @@ func (p *Provider) credentialMaterial(ctx context.Context, projectID, branchID, 
 }
 
 func (p *Provider) connectionURI(ctx context.Context, projectID, branchID, roleName string, pooled bool, response *connectionURIResponse) error {
+	return p.connectionURIForDatabase(ctx, projectID, branchID, p.databaseName, roleName, pooled, response)
+}
+
+func (p *Provider) connectionURIForDatabase(ctx context.Context, projectID, branchID, databaseName, roleName string, pooled bool, response *connectionURIResponse) error {
+	return p.connectionURIForDatabaseEndpoint(ctx, projectID, branchID, "", databaseName, roleName, pooled, response)
+}
+
+func (p *Provider) connectionURIForDatabaseEndpoint(ctx context.Context, projectID, branchID, endpointID, databaseName, roleName string, pooled bool, response *connectionURIResponse) error {
 	query := url.Values{
 		"branch_id":     {branchID},
-		"database_name": {p.databaseName},
+		"database_name": {databaseName},
 		"role_name":     {roleName},
 		"pooled":        {strconv.FormatBool(pooled)},
+	}
+	if endpointID != "" {
+		query.Set("endpoint_id", endpointID)
 	}
 	path := "/projects/" + url.PathEscape(projectID) + "/connection_uri"
 	return p.doJSON(ctx, http.MethodGet, path, query, nil, response, http.StatusOK)

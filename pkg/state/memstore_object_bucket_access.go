@@ -41,7 +41,7 @@ func (m *MemStore) ListObjectBucketAccessGrants(_ context.Context, accountID, bu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	bucket, ok := m.objectBuckets[bucketID]
-	if !ok || bucket.AccountID != accountID || bucket.State == "deleted" {
+	if !ok || bucket.AccountID != accountID || bucket.State == "deleted" || !m.cloneBucketAccessibleLocked(bucket) {
 		return nil, ErrNotFound
 	}
 	out := make([]ObjectBucketAccessGrant, 0)
@@ -64,7 +64,7 @@ func (m *MemStore) SetObjectBucketAccessGrant(_ context.Context, accountID, buck
 	defer m.mu.Unlock()
 	bucket, bucketOK := m.objectBuckets[bucketID]
 	key, keyOK := m.keys[keyID]
-	if !bucketOK || bucket.AccountID != accountID || bucket.State == "deleted" || !keyOK || key.AccountID != accountID {
+	if !bucketOK || bucket.AccountID != accountID || bucket.State == "deleted" || !m.cloneBucketAccessibleLocked(bucket) || !keyOK || key.AccountID != accountID {
 		return ObjectBucketAccessGrant{}, ErrNotFound
 	}
 	if (key.Status != string(APIKeyStatusActive) && key.Status != string(APIKeyStatusGrace)) || !keySupportsObjectBucketPermission(key, permission) {
@@ -103,7 +103,7 @@ func (m *MemStore) ObjectBucketKeyCan(_ context.Context, accountID, bucketID, ke
 	bucket, bucketOK := m.objectBuckets[bucketID]
 	key, keyOK := m.keys[keyID]
 	grant, grantOK := m.objectAccessGrants[objectBucketAccessGrantKey(bucketID, keyID)]
-	if !bucketOK || bucket.AccountID != accountID || bucket.State == "deleted" || !keyOK || key.AccountID != accountID || !grantOK || grant.AccountID != accountID {
+	if !bucketOK || bucket.AccountID != accountID || bucket.State == "deleted" || !m.cloneBucketAccessibleLocked(bucket) || !keyOK || key.AccountID != accountID || !grantOK || grant.AccountID != accountID {
 		return false, nil
 	}
 	if key.Status != string(APIKeyStatusActive) && key.Status != string(APIKeyStatusGrace) {
@@ -131,7 +131,7 @@ func (m *MemStore) ListObjectBucketsForKey(_ context.Context, accountID, appID, 
 	out := make([]ObjectBucket, 0)
 	for _, bucket := range m.objectBuckets {
 		grant, granted := m.objectAccessGrants[objectBucketAccessGrantKey(bucket.ID, keyID)]
-		if bucket.AccountID == accountID && bucket.AppID == appID && bucket.State != "deleted" && granted && grant.AccountID == accountID {
+		if bucket.AccountID == accountID && bucket.AppID == appID && bucket.State != "deleted" && m.cloneBucketAccessibleLocked(bucket) && granted && grant.AccountID == accountID {
 			out = append(out, bucket)
 		}
 	}

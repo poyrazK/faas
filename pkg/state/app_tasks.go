@@ -54,6 +54,7 @@ func (s AppTaskStatus) Terminal() bool {
 // to an immutable deployment artifact. Environment and secret values are
 // resolved only by the scheduler immediately before the fresh VM boots.
 type AppTask struct {
+	BindingVerification  *BindingVerificationPin
 	WorkDecision         *workpolicy.Decision
 	OutcomeCode          string
 	FailureRules         *workpolicy.FailureRules
@@ -107,24 +108,26 @@ const (
 // CreateAppTaskParams is already-resolved app-task intent. Scope, artifact
 // key, and image digest are copied atomically from DeploymentID by the store.
 type CreateAppTaskParams struct {
-	FailureRules         *workpolicy.FailureRules
-	OccurrenceID         string
-	StartDeadlineAt      *time.Time
-	AccountID            string
-	AppID                string
-	ExclusiveOperationID string
-	ExclusiveGeneration  int64
-	DeploymentID         string
-	CronID               string
-	ScheduledFor         *time.Time
-	Kind                 AppTaskKind
-	Command              []string
-	CommandShell         bool
-	TimeoutSeconds       int
-	MaxOutputBytes       int
-	RetryMax             int
-	RetryBackoffSeconds  int
-	CreatedAt            time.Time
+	RequireLiveDeployment bool                    // Explicit binding probes and smoke callers must remain live at atomic admission.
+	BindingVerification   *BindingVerificationPin // Internal admission metadata, never caller-selected.
+	FailureRules          *workpolicy.FailureRules
+	OccurrenceID          string
+	StartDeadlineAt       *time.Time
+	AccountID             string
+	AppID                 string
+	ExclusiveOperationID  string
+	ExclusiveGeneration   int64
+	DeploymentID          string
+	CronID                string
+	ScheduledFor          *time.Time
+	Kind                  AppTaskKind
+	Command               []string
+	CommandShell          bool
+	TimeoutSeconds        int
+	MaxOutputBytes        int
+	RetryMax              int
+	RetryBackoffSeconds   int
+	CreatedAt             time.Time
 }
 
 // CompleteAppTaskParams is the scheduler-owned terminal compare-and-swap.
@@ -222,6 +225,9 @@ func validateExclusiveCommandCronAdmission(admission ExclusiveAdmission, account
 }
 
 func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, error) {
+	if err := validateBindingVerificationPin(params); err != nil {
+		return CreateAppTaskParams{}, err
+	}
 	if params.AccountID == "" || params.AppID == "" || params.DeploymentID == "" {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: account, app, and deployment are required", ErrAppTaskInvalid)
 	}
@@ -279,6 +285,7 @@ func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, erro
 	} else {
 		params.CreatedAt = params.CreatedAt.UTC()
 	}
+	params.BindingVerification = cloneBindingVerificationPin(params.BindingVerification)
 	params.Command = append([]string(nil), params.Command...)
 	params.FailureRules = workpolicy.Clone(params.FailureRules)
 	params.StartDeadlineAt = cloneAppTaskTimePtr(params.StartDeadlineAt)
@@ -415,6 +422,7 @@ func normalizeAppTaskPage(limit, offset int) (int, int) {
 }
 
 func cloneAppTask(task AppTask) AppTask {
+	task.BindingVerification = cloneBindingVerificationPin(task.BindingVerification)
 	task.FailureRules = workpolicy.Clone(task.FailureRules)
 	task.WorkDecision = workpolicy.Clone(task.WorkDecision)
 	task.StartDeadlineAt = cloneAppTaskTimePtr(task.StartDeadlineAt)

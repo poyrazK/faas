@@ -364,29 +364,6 @@ func TestParseJSONMetadata_Mega4(t *testing.T) {
 
 // --- envSecretsFromDep -------------------------------------------
 
-func TestEnvSecretsFromDep_Mega4(t *testing.T) {
-	t.Parallel()
-	// Empty: nil.
-	if got := envSecretsFromDep(state.Deployment{}); got != nil {
-		t.Errorf("empty: %v", got)
-	}
-	// Malformed: nil (defensive).
-	got := envSecretsFromDep(state.Deployment{OverrideEnvSecrets: []byte("{not-json")})
-	if got != nil {
-		t.Errorf("malformed: %v", got)
-	}
-	// Valid JSON empty object: nil (coalesced).
-	got = envSecretsFromDep(state.Deployment{OverrideEnvSecrets: []byte("{}")})
-	if got != nil {
-		t.Errorf("empty json: %v", got)
-	}
-	// Valid populated.
-	got = envSecretsFromDep(state.Deployment{OverrideEnvSecrets: []byte(`{"K":"V"}`)})
-	if got["K"] != "V" {
-		t.Errorf("got %v", got)
-	}
-}
-
 // --- healthcheckPathFromDep --------------------------------------
 
 func TestHealthcheckPathFromDep_Mega4(t *testing.T) {

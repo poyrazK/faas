@@ -23,6 +23,18 @@ func deploymentRuntimePort(dep state.Deployment) int {
 // deployments derive the value at wake time from the durable hosting receipt
 // or inference profile, so they gain HTTP readiness without a redeploy.
 func healthcheckPathFromDep(dep state.Deployment) string {
+	if raw, declared := scopedDeploymentRuntimeField(dep, "healthcheck"); declared {
+		var hc api.AppManifestHealthcheck
+		if json.Unmarshal(raw, &hc) == nil && hc.GRPC != nil {
+			return ""
+		}
+	}
+	if raw, declared := scopedDeploymentRuntimeField(dep, "healthz"); declared {
+		var path string
+		if json.Unmarshal(raw, &path) == nil {
+			return path
+		}
+	}
 	if len(dep.OverrideHealthcheck) > 0 {
 		var hc api.DeploymentHealthcheck
 		if err := json.Unmarshal(dep.OverrideHealthcheck, &hc); err == nil {
@@ -66,6 +78,13 @@ func healthcheckPathFromDep(dep state.Deployment) string {
 // healthcheckGRPCFromDep resolves the explicit primary-app gRPC readiness
 // override. Inferred profiles currently describe HTTP paths only.
 func healthcheckGRPCFromDep(dep state.Deployment) (bool, string) {
+	if raw, declared := scopedDeploymentRuntimeField(dep, "healthcheck"); declared {
+		var hc api.AppManifestHealthcheck
+		if json.Unmarshal(raw, &hc) == nil && hc.GRPC != nil {
+			return true, hc.GRPC.Service
+		}
+		return false, ""
+	}
 	if len(dep.OverrideHealthcheck) == 0 {
 		return false, ""
 	}
@@ -84,6 +103,14 @@ func validRuntimeHealthPath(path string) bool {
 // resolution to gateway restart reconciliation. Both paths must rebuild the
 // same Target or a custom-port app becomes unreachable after gatewayd restarts.
 func DeploymentRuntimePort(dep state.Deployment) int {
+	// Imaging applies explicit environment fields after deployment overrides
+	// and inference. Host DNAT/readiness must resolve that same final port.
+	if raw, declared := scopedDeploymentRuntimeField(dep, "port"); declared {
+		var port int
+		if json.Unmarshal(raw, &port) == nil && port >= 0 && port <= 65535 {
+			return port
+		}
+	}
 	if dep.OverridePort != 0 {
 		return dep.OverridePort
 	}
@@ -104,4 +131,13 @@ func DeploymentRuntimePort(dep state.Deployment) int {
 		return 0
 	}
 	return profile.Port
+}
+
+func scopedDeploymentRuntimeField(dep state.Deployment, key string) (json.RawMessage, bool) {
+	frozen, err := dep.ScopedWorkloadRuntime()
+	if err != nil || frozen == nil {
+		return nil, false
+	}
+	raw, declared := frozen.Runtime[key]
+	return raw, declared
 }

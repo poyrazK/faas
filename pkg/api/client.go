@@ -140,10 +140,15 @@ func NewClient(baseURL, token string) *Client {
 	return &Client{
 		baseURL: baseURL,
 		token:   token,
-		http:    &http.Client{Timeout: 30 * time.Second, Transport: newClientTransport()},
+		http:    &http.Client{Timeout: DefaultClientTimeout, Transport: newClientTransport()},
 		cache:   NewCompletionCache(),
 	}
 }
+
+// DefaultClientTimeout bounds every request a NewClient makes. Server-side
+// long-polls (SyncInvokeWaitSeconds) stay below it so the server's answer
+// arrives before the client gives up.
+const DefaultClientTimeout = 30 * time.Second
 
 // newClientTransport returns a private copy of the standard transport. The
 // default HTTP transport is process-global; httptest.Server.Close calls
@@ -1425,6 +1430,67 @@ func (c *Client) UpdateApp(ctx context.Context, slug string, req UpdateAppReques
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug, req, &out)
 }
 
+func (c *Client) GetAppInEnvironment(ctx context.Context, slug, environment string) (AppResponse, error) {
+	var out AppResponse
+	if !ValidProjectEnvironmentSlug(environment) {
+		return out, fmt.Errorf("invalid project environment")
+	}
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"?environment="+url.QueryEscape(environment), nil, &out)
+}
+
+// GetAppInEnvironmentRevision returns the revision observed with the settings.
+// Callers merging nested configuration should pass it to the guarded update.
+func (c *Client) GetAppInEnvironmentRevision(ctx context.Context, slug, environment string) (AppResponse, int64, error) {
+	var out AppResponse
+	if !ValidProjectEnvironmentSlug(environment) {
+		return out, 0, fmt.Errorf("invalid project environment")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/apps/"+slug+"?environment="+url.QueryEscape(environment), nil)
+	if err != nil {
+		return out, 0, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Accept", "application/json")
+	var revision int64
+	var revisionErr error
+	err = c.doReqWithSuccess(c.http, req, &out, func(response *http.Response) bool {
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			return false
+		}
+		revision, revisionErr = strconv.ParseInt(response.Header.Get("X-Gregale-Workload-Revision"), 10, 64)
+		if revisionErr == nil && revision < 0 {
+			revisionErr = fmt.Errorf("negative workload revision")
+		}
+		return true
+	})
+	if err != nil {
+		return out, 0, err
+	}
+	if revisionErr != nil {
+		return out, 0, fmt.Errorf("API did not return a valid workload revision: %w", revisionErr)
+	}
+	return out, revision, nil
+}
+
+func (c *Client) UpdateAppInEnvironment(ctx context.Context, slug, environment string, req UpdateAppRequest) (AppResponse, error) {
+	var out AppResponse
+	if !ValidProjectEnvironmentSlug(environment) {
+		return out, fmt.Errorf("invalid project environment")
+	}
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"?environment="+url.QueryEscape(environment), req, &out)
+}
+
+func (c *Client) UpdateAppInEnvironmentAtRevision(ctx context.Context, slug, environment string, expectedRevision int64, req UpdateAppRequest) (AppResponse, error) {
+	var out AppResponse
+	if !ValidProjectEnvironmentSlug(environment) || expectedRevision < 0 {
+		return out, fmt.Errorf("invalid project environment or workload revision")
+	}
+	headers := http.Header{"If-Workload-Revision": []string{strconv.FormatInt(expectedRevision, 10)}}
+	return out, c.doWithHeaders(ctx, "PATCH", "/v1/apps/"+slug+"?environment="+url.QueryEscape(environment), req, &out, headers)
+}
+
 // RenameApp swaps an app's slug atomically (issue #63).
 func (c *Client) RenameApp(ctx context.Context, oldSlug, newSlug string) (AppResponse, error) {
 	var out AppResponse
@@ -1689,6 +1755,9 @@ func (c *Client) GetProjectEnvironmentDiff(ctx context.Context, projectSlug, tar
 
 // CreateProjectEnvironment adds a named environment to a project.
 func (c *Client) CreateProjectEnvironment(ctx context.Context, projectSlug string, req CreateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
+	if req.Full {
+		return c.CreateFullProjectEnvironmentClone(ctx, projectSlug, req)
+	}
 	var out ProjectEnvironmentResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments"
 	return out, c.do(ctx, http.MethodPost, path, req, &out)
@@ -2177,6 +2246,7 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 
 // PatchDeploymentTrafficIfServing updates traffic only if the named live
 // sibling still owns all production traffic at the transaction boundary.
+// An empty servingID requires no live sibling with positive traffic.
 func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string, percent int, servingID string) (DeploymentResponse, error) {
 	var out DeploymentResponse
 	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
@@ -3673,20 +3743,22 @@ func (c *Client) CancelPlatformTenantExclusiveOperation(ctx context.Context, id 
 	return c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
 
-// ReplayInvocation re-issues a failed invocation. The server
-// enqueues a fresh async invocation carrying the original payload,
-// headers, method, and path; returns 202 + AsyncInvokeResponse on
-// success and 409 if the original is not in a replayable state (the
-// handler's allow-list is {failed, dead_letter} — see
-// cmd/apid/handlers_invocations.go::replayInvocation for the source
-// of truth, issue #315 tier-2 DX).
-//
-// Account-scoped: a customer can't replay another tenant's
-// invocation; the server surfaces ErrInvocationNotFound in that
-// case (same IDOR-safe path as GetInvocation).
+// ReplayInvocation recovers failed or dead-lettered unbound unkeyed work.
+// Each parent creates one durable child, preserving its request, customer,
+// environment and trusted lineage. Repeated calls return that child regardless
+// of request keys, including after completion. Further recovery targets the
+// failed child. A pruned child returns 409 invocation_replay_unavailable.
+// The parent and its current app must still belong to the caller.
 func (c *Client) ReplayInvocation(ctx context.Context, id string) (AsyncInvokeResponse, error) {
 	var out AsyncInvokeResponse
 	return out, c.do(ctx, "POST", "/v1/invocations/"+id+"/replay", nil, &out)
+}
+
+// ReplayKeyedInvocation recovers failed keyed work in its captured lane.
+// Repeating the same parent returns its existing child without re-execution.
+func (c *Client) ReplayKeyedInvocation(ctx context.Context, id string) (AsyncInvokeResponse, error) {
+	var out AsyncInvokeResponse
+	return out, c.do(ctx, "POST", "/v1/invocations/"+url.PathEscape(id)+"/replay-keyed", nil, &out)
 }
 
 // QueueDeadLetterReplay resets a dead-letter queue row back to
@@ -6278,6 +6350,14 @@ func (c *Client) GetAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deployme
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+deployment+"/openapi", nil, &out)
 }
 
+// GetAppsDeploymentRoutePolicySnapshot returns the gateway edge-rule policy
+// captured with one deployment's first live transition. Missing snapshots for
+// older deployments are reported as 404 and remain unknown to route reports.
+func (c *Client) GetAppsDeploymentRoutePolicySnapshot(ctx context.Context, slug, deployment string) (DeploymentRoutePolicySnapshotResponse, error) {
+	var out DeploymentRoutePolicySnapshotResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+deployment+"/route-policy", nil, &out)
+}
+
 // PatchAppsDeploymentOpenAPIDoc manually uploads (or overwrites) the
 // OpenAPI document for a deployment. Body is the raw OpenAPI
 // document — the server validates shape against Draft 2020-12 +
@@ -6853,19 +6933,45 @@ func (c *Client) DeleteCorsPreset(ctx context.Context, id string) error {
 
 // RunWorkflow (ADR-081) triggers a new workflow execution run for an app.
 func (c *Client) RunWorkflow(ctx context.Context, slug, workflowName string, input json.RawMessage) (WorkflowRunResponse, error) {
+	return c.RunWorkflowWithIdempotencyKey(ctx, slug, workflowName, input, "")
+}
+
+// RunWorkflowWithIdempotencyKey starts a durable run with a caller-stable key.
+// Reuse the same key after an uncertain response; a different input with that
+// key returns a conflict. An empty key uses the SDK's per-request default.
+func (c *Client) RunWorkflowWithIdempotencyKey(ctx context.Context, slug, workflowName string, input json.RawMessage, idempotencyKey string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse
 	path := fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", slug, workflowName)
-	err := c.do(ctx, "POST", path, input, &resp)
+	err := c.doWithIdempotencyKey(ctx, "POST", path, input, &resp, idempotencyKey)
 	return resp, err
 }
 
 // ListWorkflowRuns (ADR-081) lists workflow runs for an app.
 func (c *Client) ListWorkflowRuns(ctx context.Context, slug string, limit, offset int, status string) (ListWorkflowRunsResponse, error) {
+	return c.ListWorkflowRunsWithOptions(ctx, slug, WorkflowRunListOptions{
+		Limit: limit, Offset: offset, Status: status,
+	})
+}
+
+// ListWorkflowRunsWithOptions lists workflow runs for an app with optional filters.
+func (c *Client) ListWorkflowRunsWithOptions(ctx context.Context, slug string, opts WorkflowRunListOptions) (ListWorkflowRunsResponse, error) {
 	var resp ListWorkflowRunsResponse
-	path := fmt.Sprintf("/v1/apps/%s/workflows/runs?limit=%d&offset=%d", slug, limit, offset)
-	if status != "" {
-		path += "&status=" + status
+	query := url.Values{}
+	query.Set("limit", strconv.Itoa(opts.Limit))
+	query.Set("offset", strconv.Itoa(opts.Offset))
+	if opts.Status != "" {
+		query.Set("status", opts.Status)
 	}
+	if opts.WorkflowName != "" {
+		query.Set("workflow_name", opts.WorkflowName)
+	}
+	if opts.CreatedAfter != nil {
+		query.Set("created_after", opts.CreatedAfter.UTC().Format(time.RFC3339Nano))
+	}
+	if opts.CreatedBefore != nil {
+		query.Set("created_before", opts.CreatedBefore.UTC().Format(time.RFC3339Nano))
+	}
+	path := fmt.Sprintf("/v1/apps/%s/workflows/runs?%s", slug, query.Encode())
 	err := c.do(ctx, "GET", path, nil, &resp)
 	return resp, err
 }
@@ -6931,6 +7037,32 @@ func (c *Client) SendWorkflowEvent(ctx context.Context, runID, eventName string,
 	req := InjectWorkflowEventRequest{EventName: eventName, Payload: payload}
 	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/events", req, &resp)
 	return resp, err
+}
+
+// ListPlatformTenantSelfWorkflowCallbacks lists callback waits for a run owned
+// by the authenticated platform tenant.
+func (c *Client) ListPlatformTenantSelfWorkflowCallbacks(ctx context.Context, runID string) (ListWorkflowCallbacksResponse, error) {
+	var out ListWorkflowCallbacksResponse
+	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(runID) + "/callbacks"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// CompletePlatformTenantSelfWorkflowCallback supplies the JSON value for one
+// callback wait owned by the authenticated platform tenant.
+func (c *Client) CompletePlatformTenantSelfWorkflowCallback(ctx context.Context, runID, callbackID string, payload json.RawMessage) (CompleteWorkflowCallbackResponse, error) {
+	var out CompleteWorkflowCallbackResponse
+	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID)
+	return out, c.do(ctx, http.MethodPost, path, payload, &out)
+}
+
+// SendPlatformTenantSelfWorkflowEvent injects an event into a run owned by the
+// authenticated platform tenant. Reuse idempotencyKey when retrying an
+// uncertain request.
+func (c *Client) SendPlatformTenantSelfWorkflowEvent(ctx context.Context, runID, eventName string, payload json.RawMessage, idempotencyKey string) (InjectWorkflowEventResponse, error) {
+	var out InjectWorkflowEventResponse
+	request := InjectWorkflowEventRequest{EventName: eventName, Payload: payload}
+	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(runID) + "/events"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
 }
 
 // PublishEvent durably accepts one tenant-scoped internal event envelope.
@@ -7071,6 +7203,14 @@ func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowR
 	return resp, err
 }
 
+// RetryWorkflowStep retries one safe failed HTTP step inside its existing run.
+func (c *Client) RetryWorkflowStep(ctx context.Context, runID, stepName string) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/steps/" + url.PathEscape(stepName) + "/retry"
+	err := c.do(ctx, "POST", path, nil, &resp)
+	return resp, err
+}
+
 // --- ADR-202 custom application metrics ---------------------------------
 //
 // Method names come from cmd/sdk-coverage's explicit alias map rather than
@@ -7103,4 +7243,49 @@ func (c *Client) PutAppCustomMetric(ctx context.Context, slug, name string, valu
 // per-app name cap. Deleting a name that does not exist succeeds.
 func (c *Client) DeleteAppCustomMetric(ctx context.Context, slug, name string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/custom-metrics/"+name, nil, nil)
+}
+
+// GetEventReceipt reads one account-scoped event identity and a bounded page
+// of acceptance-time recipients. Pass NextAfter verbatim for another page.
+func (c *Client) GetEventReceipt(ctx context.Context, source, id, after string, limit int) (EventReceiptResponse, error) {
+	var out EventReceiptResponse
+	query := url.Values{"source": {source}, "id": {id}}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/events/receipt?"+query.Encode(), nil, &out)
+}
+
+func (c *Client) GetEventReceiptReplays(ctx context.Context, source, id, subscriptionID, after string, limit int) (EventReceiptReplayHistoryResponse, error) {
+	var out EventReceiptReplayHistoryResponse
+	query := url.Values{"source": {source}, "id": {id}, "subscription_id": {subscriptionID}}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/events/receipt/replays?"+query.Encode(), nil, &out)
+}
+
+func (c *Client) GetEventReceiptAttempts(ctx context.Context, source, id, subscriptionID, after string, limit int) (EventReceiptAttemptHistoryResponse, error) {
+	var out EventReceiptAttemptHistoryResponse
+	query := url.Values{"source": {source}, "id": {id}, "subscription_id": {subscriptionID}}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/events/receipt/attempts?"+query.Encode(), nil, &out)
+}
+
+// GetEventStorageUsage reads retained customer event usage and plan budgets.
+func (c *Client) GetEventStorageUsage(ctx context.Context) (EventStorageUsageResponse, error) {
+	var out EventStorageUsageResponse
+	err := c.do(ctx, http.MethodGet, "/v1/events/storage", nil, &out)
+	return out, err
 }
