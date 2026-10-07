@@ -23,7 +23,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|resources|resource-read|prompts|prompt-get|call|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -35,7 +35,13 @@ func cmdMCP(args []string) int {
 		return cmdMCPLock(args[1:])
 	case "diff":
 		return cmdMCPDiff(args[1:])
-	case "doctor", "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "config":
+	case "watch":
+		return cmdMCPWatch(args[1:])
+	case "resource-watch":
+		return cmdMCPResourceWatch(args[1:])
+	case "complete":
+		return cmdMCPComplete(args[1:])
+	case "doctor", "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
 		return printErr("Unknown MCP command", fmt.Errorf("%q", args[0]))
@@ -288,6 +294,8 @@ func cmdMCPRemote(command string, args []string) int {
 	legacy := fs.Bool("legacy", false, "also check legacy compatibility (doctor), or use protocol 2025-11-25")
 	interactive := fs.Bool("interactive", false, "answer modern MCP input forms in the terminal (call only)")
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
+	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
+	waitForTask := fs.Bool("wait", false, "wait for a task result and request cancellation if this command times out (call only; implies --tasks)")
 	tool := fs.String("tool", "", "tool to call")
 	streamTool := fs.String("stream-tool", "", "explicitly execute this tool to verify live progress (doctor)")
 	inline := fs.String("arguments", "", "tool arguments as a JSON object")
@@ -295,6 +303,7 @@ func cmdMCPRemote(command string, args []string) int {
 	name := fs.String("name", "gregale", "connection name (config)")
 	uri := fs.String("uri", "", "resource URI to read (resource-read only)")
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
+	taskID := fs.String("task-id", "", "opaque task ID (task-get or task-cancel)")
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
 	// `mcp tools <slug>` addresses the app the way the other leaves do
 	// (production-us hunt #5, H5-3).
@@ -315,8 +324,17 @@ func cmdMCPRemote(command string, args []string) int {
 		return printErr("Invalid MCP input flags", errors.New("choose either --interactive or --input-responses-file"))
 	}
 	inputMode := *interactive || *inputResponsesFile != ""
-	if inputMode && (command != "call" || *legacy) {
-		return printErr("Invalid MCP input flags", errors.New("interactive input is supported only by modern mcp call"))
+	if inputMode && ((command != "call" && command != "task-wait") || *legacy) {
+		return printErr("Invalid MCP input flags", errors.New("interactive input is supported only for modern mcp call and mcp task-wait"))
+	}
+	if (*enableTasks || *waitForTask) && (command != "call" || *legacy) {
+		return printErr("Invalid MCP Tasks flags", errors.New("MCP Tasks support is available only for modern mcp call"))
+	}
+	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
+		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
+	}
+	if (command == "task-get" || command == "task-wait" || command == "task-cancel") && (*taskID == "" || *legacy) {
+		return printErr("Invalid MCP task flags", errors.New("modern task-get, task-wait and task-cancel require --task-id"))
 	}
 	if *interactive && !mcpInputIsTerminal(osStdin) {
 		return printErr("MCP interactive input", errors.New("--interactive requires terminal stdin; use --input-responses-file for non-interactive calls"))
@@ -336,7 +354,7 @@ func cmdMCPRemote(command string, args []string) int {
 			timeoutExplicit = true
 		}
 	})
-	if *interactive && !timeoutExplicit {
+	if (*interactive || *waitForTask || command == "task-wait") && !timeoutExplicit {
 		timeoutValue = 5 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutValue)
@@ -389,10 +407,10 @@ func cmdMCPRemote(command string, args []string) int {
 	if command == "prompt-get" && *promptName == "" {
 		return printErr("MCP prompt get", errors.New("--prompt is required"))
 	}
-	return runMCPRemoteWithResponder(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, arguments, responder)
+	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask)
 }
 
-func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName string, args map[string]any, respond mcphosting.InputResponder) int {
+func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask bool) int {
 	if command == "config" {
 		return jsonOut(writeJSON(mcphosting.ConnectionConfig(name, c.Endpoint)))
 	}
@@ -458,6 +476,33 @@ func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphostin
 			return printErr("MCP prompt get", err)
 		}
 		return jsonOut(writeJSON(x))
+	case "task-get":
+		task, _, err := c.GetTask(ctx, taskID)
+		if err != nil {
+			return printErr("MCP task get", err)
+		}
+		return jsonOut(writeJSON(task))
+	case "task-wait":
+		task, err := c.WaitTask(ctx, taskID, mcphosting.CallOptions{
+			Responder: respond,
+			OnTask: func(task mcphosting.Task) {
+				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
+			},
+		})
+		if task.TaskID != "" {
+			if code := jsonOut(writeJSON(task)); code != 0 {
+				return code
+			}
+		}
+		if err != nil {
+			return printErr("MCP task wait", err)
+		}
+		return 0
+	case "task-cancel":
+		if _, err := c.CancelTask(ctx, taskID); err != nil {
+			return printErr("MCP task cancel", err)
+		}
+		return jsonOut(writeJSON(map[string]any{"task_id": taskID, "cancellation_requested": true}))
 	}
 	tools, discovery, err := c.Tools(ctx)
 	if err != nil {
@@ -478,11 +523,12 @@ func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphostin
 			continue
 		}
 		var x mcphosting.Exchange
-		if respond == nil {
-			x, err = c.Call(ctx, candidate, args, true)
-		} else {
-			x, err = c.CallInteractive(ctx, candidate, args, true, respond)
-		}
+		x, err = c.CallWithOptions(ctx, candidate, args, mcphosting.CallOptions{
+			Progress: true, Responder: respond, EnableTasks: enableTasks, WaitForTask: waitForTask,
+			OnTask: func(task mcphosting.Task) {
+				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
+			},
+		})
 		if x.Result != nil {
 			if code := jsonOut(writeJSON(x)); code != 0 {
 				return code

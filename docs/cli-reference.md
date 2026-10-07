@@ -263,6 +263,27 @@ Examples:
 gregale mcp resource-read --app my-mcp --uri 'file:///reports/current'
 ```
 
+### mcp resource-watch
+
+Watch one resource URI for content updates
+
+`gregale mcp resource-watch [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] --uri <URI> [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--uri <URI>` | resource URI to read and watch | required |
+| `--interval <DURATION>` | poll and stream reconciliation interval (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp resource-watch --app my-mcp --uri 'file:///reports/current'
+```
+
 ### mcp prompts
 
 Discover prompt definitions without rendering them
@@ -316,14 +337,42 @@ Render one explicitly selected prompt
 Examples:
 
 ```sh
-gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"period":"week"}'
+gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'
+```
+
+### mcp complete
+
+Request bounded suggestions for a prompt or resource-template argument
+
+`gregale mcp complete [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--prompt <NAME>] [--resource-template <URI-TEMPLATE>] --argument <NAME> --value <TEXT> [--context <JSON>] [--context-file <PATH>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | use protocol 2025-11-25 |  |
+| `--prompt <NAME>` | prompt name to complete |  |
+| `--resource-template <URI-TEMPLATE>` | resource URI template to complete |  |
+| `--argument <NAME>` | prompt argument or template variable name | required |
+| `--value <TEXT>` | partial value; empty requests the first suggestions | required |
+| `--context <JSON>` | previously resolved arguments as a JSON object |  |
+| `--context-file <PATH>` | read previous arguments from a JSON file |  |
+| `--timeout <DURATION>` | total completion request timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp complete --app my-mcp --prompt summarize --argument style --value exec
+gregale mcp complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-
 ```
 
 ### mcp call
 
-Execute one discovered tool; resume input requests only when explicitly enabled
+Execute one discovered tool; opt in to input requests or durable tasks
 
-`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [<slug>]`
+`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [--tasks] [--wait] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -339,15 +388,132 @@ Execute one discovered tool; resume input requests only when explicitly enabled
 | `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
 | `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
-| `--timeout <DURATION>` | total request timeout (default 30s; interactive 5m) |  |
+| `--timeout <DURATION>` | total request timeout (default 30s; interactive/--wait 5m) |  |
 | `--interactive` | answer modern MCP input forms in the terminal |  |
 | `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
+| `--tasks` | accept modern MCP task handles for later inspection |  |
+| `--wait` | wait for a task result; request cancellation on timeout |  |
 
 Examples:
 
 ```sh
 gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'
-gregale mcp call --app my-mcp --tool report_preview --interactive
+gregale mcp call --app my-mcp --tool report_preview --wait
+gregale mcp call --app my-mcp --tool report_preview --tasks
+```
+
+### mcp task-get
+
+Read the status or result of a previously returned task handle
+
+`gregale mcp task-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+
+Examples:
+
+```sh
+gregale mcp task-get --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+```
+
+### mcp task-wait
+
+Resume waiting for a task to finish
+
+`gregale mcp task-wait [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--interactive] [--input-responses-file <PATH>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total task wait timeout (default 5m) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+| `--interactive` | answer modern MCP task input forms in the terminal |  |
+| `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
+
+Examples:
+
+```sh
+gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive
+```
+
+### mcp task-cancel
+
+Request cooperative cancellation of a previously returned task
+
+`gregale mcp task-cancel [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+
+Examples:
+
+```sh
+gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+```
+
+### mcp watch
+
+Watch caller-visible MCP catalog definitions for drift
+
+`gregale mcp watch [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] --baseline <PATH> [--interval <DURATION>] [--tools] [--resources] [--prompts]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--baseline <PATH>` | contract snapshot to watch for drift | required |
+| `--interval <DURATION>` | poll interval and stream reconciliation interval (default 30s) |  |
+| `--tools` | subscribe to tool definition changes |  |
+| `--resources` | subscribe to resource and template definition changes |  |
+| `--prompts` | subscribe to prompt definition changes |  |
+
+Examples:
+
+```sh
+gregale mcp watch --app my-mcp --baseline gregale-mcp.lock.json
 ```
 
 ### mcp config
@@ -518,6 +684,60 @@ Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle
 
 `gregale bucket [<subcommand>]`
 
+### bucket uploads
+
+Inspect owned multipart upload sessions and parts
+
+#### bucket uploads list
+
+List multipart sessions
+
+`gregale bucket uploads list [--limit <N>] [--cursor <ID>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--cursor <ID>` | next page cursor |  |
+
+#### bucket uploads status
+
+Inspect a multipart session returned by an upload
+
+`gregale bucket uploads status <app> <bucket-id> <upload-id>`
+
+#### bucket uploads parts
+
+List uploaded multipart parts
+
+`gregale bucket uploads parts [--limit <N>] [--part-number-marker <N>] <app> <bucket-id> <upload-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--part-number-marker <N>` | last part from the previous page |  |
+
+### bucket upload
+
+Upload a file, using multipart above the single PUT limit
+
+`gregale bucket upload [--content-type <TYPE>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--content-type <TYPE>` | object MIME type |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket download
+
+Download an object to a file after a complete transfer
+
+`gregale bucket download [--force] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--force` | replace destination after a complete transfer |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
 ### bucket copy-sources
 
 Manage copy-only owned source grants
@@ -656,6 +876,12 @@ Read or change an independent legal hold
 
 `gregale bucket protection legal-hold <app> <bucket-id> <key> <version-id> [ON|OFF operation-id]`
 
+#### bucket protection event-hold
+
+Set or release event retention for an exact version
+
+`gregale bucket protection event-hold <app> <bucket-id> <key> <version-id> <GOVERNANCE|COMPLIANCE> <ON|OFF> [days|years duration] [--retain-until timestamp] <operation-id>`
+
 ### bucket reconcile
 
 Start, inspect or cancel a fenced capacity inventory
@@ -754,6 +980,28 @@ Show a persisted deletion receipt
 Permanently delete an owned immutable version or marker
 
 `gregale bucket version-delete <app> <bucket-id> <key> <version-id>`
+
+### bucket notifications
+
+Manage bucket event notifications
+
+#### bucket notifications get
+
+Read notification rules
+
+`gregale bucket notifications get <app> <bucket-id>`
+
+#### bucket notifications set
+
+Replace rules from a JSON file or stdin
+
+`gregale bucket notifications set <app> <bucket-id> <JSON-file|->`
+
+#### bucket notifications clear
+
+Remove notification rules
+
+`gregale bucket notifications clear <app> <bucket-id>`
 
 ### bucket lifecycle
 
@@ -2433,14 +2681,15 @@ Tail logs for a background worker pool
 
 Adjust scaling bounds and graceful drain for a worker pool
 
-`gregale workers scale [--min <N>] [--max <N>] [--target <N>] [--metric <METRIC>] [--drain-timeout <DURATION>] [--stop-signal <SIG>] <app>`
+`gregale workers scale [--min <N>] [--max <N>] [--target <N>] [--metric <METRIC>] [--name <CUSTOM_METRIC>] [--drain-timeout <DURATION>] [--stop-signal <SIG>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--min <N>` | min worker replicas (0 = scale-to-zero) |  |
 | `--max <N>` | max worker replicas |  |
-| `--target <N>` | target messages per worker |  |
-| `--metric <METRIC>` | autoscaling metric (queue_lag \| queue_depth) |  |
+| `--target <N>` | target backlog per worker |  |
+| `--metric <METRIC>` | autoscaling metric (queue_lag \| queue_depth \| custom) |  |
+| `--name <CUSTOM_METRIC>` | custom metric name (required with --metric custom) |  |
 | `--drain-timeout <DURATION>` | shutdown grace duration (e.g. 90s, 2m) |  |
 | `--stop-signal <SIG>` | stop signal (e.g. SIGTERM, SIGINT, SIGQUIT) |  |
 
@@ -7291,6 +7540,10 @@ Per-day breakdown
 ### usage storage
 
 Per-app storage bytes
+
+### usage object-storage
+
+Account object storage observations, safety policy and billing state
 
 ### usage summary
 

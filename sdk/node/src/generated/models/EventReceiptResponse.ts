@@ -8,6 +8,10 @@ import type { EventReceiptRecipientResponse } from './EventReceiptRecipientRespo
  */
 export type EventReceiptResponse = {
   event_id: string;
+  /**
+   * Original caller-chosen identifier for tenant-scoped events.
+   */
+  client_event_id?: string;
   event_source: string;
   event_type: string;
   schema_version?: string;

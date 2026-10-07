@@ -38,6 +38,8 @@ class EventReceiptResponse:
     routing_summary: EventReceiptResponseRoutingSummary
     """Counts across all captured recipients by current routing checkpoint state."""
     recipients: list[EventReceiptRecipientResponse]
+    client_event_id: str | Unset = UNSET
+    """Original caller-chosen identifier for tenant-scoped events."""
     schema_version: str | Unset = UNSET
     routing_settled_at: datetime.datetime | Unset = UNSET
     """All routing candidates settled, including filtered and failed outcomes; absent while routing is active."""
@@ -68,6 +70,8 @@ class EventReceiptResponse:
             recipients_item = recipients_item_data.to_dict()
             recipients.append(recipients_item)
 
+        client_event_id = self.client_event_id
+
         schema_version = self.schema_version
 
         routing_settled_at: str | Unset = UNSET
@@ -95,6 +99,8 @@ class EventReceiptResponse:
                 "recipients": recipients,
             }
         )
+        if client_event_id is not UNSET:
+            field_dict["client_event_id"] = client_event_id
         if schema_version is not UNSET:
             field_dict["schema_version"] = schema_version
         if routing_settled_at is not UNSET:
@@ -135,6 +141,8 @@ class EventReceiptResponse:
 
             recipients.append(recipients_item)
 
+        client_event_id = d.pop("client_event_id", UNSET)
+
         schema_version = d.pop("schema_version", UNSET)
 
         _routing_settled_at = d.pop("routing_settled_at", UNSET)
@@ -163,6 +171,7 @@ class EventReceiptResponse:
             recipient_count=recipient_count,
             routing_summary=routing_summary,
             recipients=recipients,
+            client_event_id=client_event_id,
             schema_version=schema_version,
             routing_settled_at=routing_settled_at,
             retain_until=retain_until,

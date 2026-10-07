@@ -335,11 +335,19 @@ var cliCommands = []cliCommand{
 	},
 	{
 		Name: "bucket", DocSlug: "object-storage", Short: "Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity",
-		Subcommands: []cliSub{{Name: "copy-sources", Short: "Manage copy-only owned source grants", Subcommands: []cliSub{
-			{Name: "list", Short: "List source grants for a destination credential", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>"}},
-			{Name: "grant", Short: "Allow copying an owned source bucket or prefix", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>", "[prefix]"}},
-			{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
-		}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
+		Subcommands: []cliSub{
+			{Name: "uploads", Short: "Inspect owned multipart upload sessions and parts", Subcommands: []cliSub{
+				{Name: "list", Short: "List multipart sessions", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "cursor", Value: "ID", Short: "next page cursor"}}},
+				{Name: "status", Short: "Inspect a multipart session returned by an upload", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}},
+				{Name: "parts", Short: "List uploaded multipart parts", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "part-number-marker", Value: "N", Short: "last part from the previous page"}}},
+			}},
+			{Name: "upload", Short: "Upload a file, using multipart above the single PUT limit", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "content-type", Value: "TYPE", Short: "object MIME type"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
+			{Name: "download", Short: "Download an object to a file after a complete transfer", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "force", Short: "replace destination after a complete transfer"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
+			{Name: "copy-sources", Short: "Manage copy-only owned source grants", Subcommands: []cliSub{
+				{Name: "list", Short: "List source grants for a destination credential", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>"}},
+				{Name: "grant", Short: "Allow copying an owned source bucket or prefix", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>", "[prefix]"}},
+				{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
+			}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "encryption", Short: "Inspect or configure verified bucket encryption defaults", Subcommands: []cliSub{
 				{Name: "status", Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "clear", Short: "Remove the default for new writes", Positionals: []string{"<app>", "<bucket-id>"}},
@@ -357,6 +365,7 @@ var cliCommands = []cliCommand{
 				{Name: "status", Short: "Inspect a durable protection operation", Positionals: []string{"<app>", "<bucket-id>", "<operation-id>"}},
 				{Name: "retention", Short: "Read, set or clear fixed retention", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>", "[clear operation-id | GOVERNANCE|COMPLIANCE retain-until operation-id]"}},
 				{Name: "legal-hold", Short: "Read or change an independent legal hold", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>", "[ON|OFF operation-id]"}},
+				{Name: "event-hold", Short: "Set or release event retention for an exact version", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>", "<GOVERNANCE|COMPLIANCE>", "<ON|OFF>", "[days|years duration]", "[--retain-until timestamp]", "<operation-id>"}},
 			}}, {Name: "reconcile", Short: "Start, inspect or cancel a fenced capacity inventory", Subcommands: []cliSub{
 				{Name: "start", Short: "Pause writes and request capacity reconciliation", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "status", Short: "Show reconciliation progress and reclaimed capacity", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
@@ -380,7 +389,11 @@ var cliCommands = []cliCommand{
 				{Name: "start", Short: "Delete current data or an owned version with a retry identity", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<request-id>", "[version-id|null]"}},
 				{Name: "status", Short: "Show a persisted deletion receipt", Positionals: []string{"<app>", "<bucket-id>", "<request-id>"}},
 			}}, {Name: "version-delete", Short: "Permanently delete an owned immutable version or marker", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>"}},
-			{Name: "lifecycle", Short: "Manage lifecycle rules and discovery progress", Subcommands: []cliSub{
+			{Name: "notifications", Short: "Manage bucket event notifications", Subcommands: []cliSub{
+				{Name: "get", Short: "Read notification rules", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "set", Short: "Replace rules from a JSON file or stdin", Positionals: []string{"<app>", "<bucket-id>", "<JSON-file|->"}},
+				{Name: "clear", Short: "Remove notification rules", Positionals: []string{"<app>", "<bucket-id>"}},
+			}}, {Name: "lifecycle", Short: "Manage lifecycle rules and discovery progress", Subcommands: []cliSub{
 				{Name: "get", Short: "Read the complete lifecycle policy", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "set", Short: "Replace rules from a JSON file or stdin", Positionals: []string{"<app>", "<bucket-id>", "<JSON-file|->"}},
 				{Name: "clear", Short: "Remove rules; admitted cleanup continues", Positionals: []string{"<app>", "<bucket-id>"}},
@@ -1058,8 +1071,9 @@ var cliCommands = []cliCommand{
 			{Name: "scale", Short: "Adjust scaling bounds and graceful drain for a worker pool", Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "min", Short: "min worker replicas (0 = scale-to-zero)", Value: "N"},
 				{Name: "max", Short: "max worker replicas", Value: "N"},
-				{Name: "target", Short: "target messages per worker", Value: "N"},
-				{Name: "metric", Short: "autoscaling metric (queue_lag | queue_depth)", Value: "METRIC"},
+				{Name: "target", Short: "target backlog per worker", Value: "N"},
+				{Name: "metric", Short: "autoscaling metric (queue_lag | queue_depth | custom)", Value: "METRIC"},
+				{Name: "name", Short: "custom metric name (required with --metric custom)", Value: "CUSTOM_METRIC"},
 				{Name: "drain-timeout", Short: "shutdown grace duration (e.g. 90s, 2m)", Value: "DURATION"},
 				{Name: "stop-signal", Short: "stop signal (e.g. SIGTERM, SIGINT, SIGQUIT)", Value: "SIG"},
 			}},
@@ -3023,6 +3037,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "daily", Short: "Per-day breakdown"},
 			{Name: "storage", Short: "Per-app storage bytes"},
+			{Name: "object-storage", Short: "Account object storage observations, safety policy and billing state"},
 			{Name: "summary", Short: "Account roll-up"},
 		},
 		Flags: []cliFlag{

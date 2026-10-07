@@ -546,6 +546,111 @@ func TestWorkerScopedDemandUnknownLagPreservesFleet(t *testing.T) {
 	}
 }
 
+func TestWorkerCustomMetricScalesOnFreshAppBacklog(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "mcp-worker-scale@example.test", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricName := "mcp_tasks_outstanding"
+	target := 2.0
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, Slug: "mcp-worker-scale", Type: state.AppTypeApp,
+		WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 10,
+		Manifest: state.AppManifest{
+			ExecutionMode:  api.ExecutionModeWorker,
+			WorkerReplicas: &state.WorkerScaling{Min: 1, Max: 10, Metric: api.ScalingMetricCustom, Name: metricName, Target: target},
+		},
+		ScalingPolicy: &state.ScalingPolicy{MinInstances: 1, MaxInstances: 10, Target: &state.ScalingTarget{Metric: api.ScalingMetricCustom, Name: metricName, Value: target}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:mcp-worker", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("bootstrap worker before first custom metric: %v", err)
+	}
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 1 {
+		t.Fatalf("missing initial metric should start the configured minimum of 1 worker, got %d", got)
+	}
+	if err := store.PutCustomMetric(ctx, app.ID, metricName, 10, time.Now(), api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 5 {
+		t.Fatalf("fresh custom backlog desired ceil(10/2)=5 replicas, got %d", got)
+	}
+	if err := store.PutCustomMetric(ctx, app.ID, metricName, 0, time.Now(), api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 1 {
+		t.Fatalf("empty custom backlog should return to the minimum of 1 replica, got %d", got)
+	}
+}
+
+func TestWorkerCustomMetricMissingOrStalePreservesFleet(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		name := "missing"
+		if stale {
+			name = "stale"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			account, err := store.CreateAccount(ctx, "mcp-worker-"+name+"@example.test", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			metricName := "mcp_tasks_outstanding"
+			target := 2.0
+			app, err := store.CreateApp(ctx, state.App{
+				AccountID: account.ID, Slug: "mcp-worker-" + name, Type: state.AppTypeApp,
+				WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 5,
+				Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker,
+					WorkerReplicas: &state.WorkerScaling{Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: metricName, Target: target}},
+				ScalingPolicy: &state.ScalingPolicy{Target: &state.ScalingTarget{Metric: api.ScalingMetricCustom, Name: metricName, Value: target}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:mcp-worker-" + name, Status: state.DeployLive})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
+				t.Fatal(err)
+			}
+			seedScopedWorker(t, store, app, dep)
+			if stale {
+				observedAt := time.Now().Add(-time.Duration(api.CustomMetricFreshnessSeconds+1) * time.Second)
+				if err := store.PutCustomMetric(ctx, app.ID, metricName, 0, observedAt, api.MaxCustomMetricsPerApp); err != nil {
+					t.Fatal(err)
+				}
+			}
+			engine := newEngine(t, store, &recordingStopVMM{fakeVMM: &fakeVMM{}}, &fakeNotifier{}, "1.10.0")
+			if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("missing custom metric error = %v, want conflict", err)
+			}
+			if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 1 {
+				t.Fatalf("missing/stale custom metric changed worker fleet to %d replicas", got)
+			}
+		})
+	}
+}
+
 // adr: 590 — each deployed environment owns its worker runtime policy.
 func TestWorkerReconcileHonorsPinnedStageReplicas(t *testing.T) {
 	ctx := context.Background()

@@ -255,3 +255,32 @@ isolation guards merely because they exist. Controlled adapter validation and
 public claim, advancement, recovery and cancellation guards remain activation
 gates. Native admission stays unavailable until those gates and native lifecycle
 qualification pass. These source seams do not establish exactly-once execution.
+
+## Native workflow coordinator custody ledger — 2026-10-06
+
+A scheduler coordinator needs custody separate from guest reporting authority,
+bound to the operation, real native run, generation and monotonic claim attempt.
+Only its digest is stored. The ledger checks positive integer generations and
+attempts, a SHA-256 digest, a finite lease and the owned execution association.
+Custody is operational clone state and cascades with its execution history.
+
+A qualified adapter must lock the native run before the operation and re-read
+custody after the run lock; a stale joined candidate cannot authorize stealing a
+renewed lease. It must enforce the existing two-minute execution lease and the
+positive PostgreSQL integer claim bound in pkg/api/limits.go. These private SQL
+queries do not themselves validate a presented capability or enforce monotonic
+claim transitions. Such checks remain mandatory in the controlled adapter.
+
+Parking requires no unresolved running step and preserves an earlier callback
+wake. Idle expiry or a callback needs fresh custody without changing run identity
+or erasing confirmed steps. An expired coordinator with unresolved running work
+instead revokes custody and records requires_reconciliation in the common
+operation transaction; it stops the native run without resetting step evidence.
+Suspension does not prove that an external effect failed. Idle suspended work
+parks until tenant activation; unresolved running work requires reconciliation.
+These unwired ledger seams leave native admission, fenced step dispatch and
+instance-bound guest authority unavailable pending their qualified adapter.
+
+## Fenced native workflow step writes — 2026-10-06
+
+The scheduler step mutation seam requires current custody and exact consecutive native attempts. Resolved input is frozen on the first dispatch and reused for an already persisted retry. Attempt history and compact step results commit together; identical terminal receipts preserve their first finished time, while conflicting receipts are rejected. A released or expired coordinator cannot change step history. Suspension denies fresh step starts while allowing a still-owned in-flight step to record its confirmed result. Resolved inputs and outputs obey the admitted operation value bound; step attempt counters use `OperationWorkflowStepAttemptsMax` (2,147,483,647), and retained error text uses `OperationWorkflowStepErrorMaxBytes` (4 KiB), both in `pkg/api/limits.go`. The coordinator remains responsible for native DAG readiness and recovery classification. This internal write seam does not itself dispatch handlers, grant guest authority, settle business outcomes or enable workflow admission.

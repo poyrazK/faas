@@ -38,7 +38,7 @@ import (
 )
 
 // backingIdentityVersion versions the sidecar document. Version 2 adds the
-// guest timer profile (ADR-637): every version-1 capture was booted with the
+// guest timer profile (ADR-642): every version-1 capture was booted with the
 // tsc/lapic-deadline timers that lose interrupts after a restore, so it is
 // refused once and re-captured from a cold boot.
 const backingIdentityVersion = 2

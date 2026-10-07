@@ -8,7 +8,7 @@ import (
 )
 
 // healthOutcomeLookup reads the app's most recently started instance for the
-// edge health answer (ADR-636).
+// edge health answer (ADR-641).
 func healthOutcomeLookup(store state.Store) gateway.HealthOutcomeLookup {
 	return func(ctx context.Context, appID string) (string, bool, error) {
 		instances, err := store.ListLatestInstancesForApp(ctx, appID, 1)

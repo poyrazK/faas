@@ -11,6 +11,7 @@ import type { InjectWorkflowEventRequest } from '../models/InjectWorkflowEventRe
 import type { InjectWorkflowEventResponse } from '../models/InjectWorkflowEventResponse.js';
 import type { ListAutomationRevisionsResponse } from '../models/ListAutomationRevisionsResponse.js';
 import type { ListAutomationsResponse } from '../models/ListAutomationsResponse.js';
+import type { ListTenantWorkflowSchedulesResponse } from '../models/ListTenantWorkflowSchedulesResponse.js';
 import type { ListWorkflowCallbacksResponse } from '../models/ListWorkflowCallbacksResponse.js';
 import type { ListWorkflowResumesResponse } from '../models/ListWorkflowResumesResponse.js';
 import type { ListWorkflowRunsResponse } from '../models/ListWorkflowRunsResponse.js';
@@ -24,6 +25,8 @@ import type { SaveAutomationDraftRequest } from '../models/SaveAutomationDraftRe
 import type { SetAutomationEnabledRequest } from '../models/SetAutomationEnabledRequest.js';
 import type { SimulateAutomationRequest } from '../models/SimulateAutomationRequest.js';
 import type { SimulateAutomationResponse } from '../models/SimulateAutomationResponse.js';
+import type { TenantWorkflowScheduleResponse } from '../models/TenantWorkflowScheduleResponse.js';
+import type { UpdateTenantWorkflowScheduleRequest } from '../models/UpdateTenantWorkflowScheduleRequest.js';
 import type { ValidateAutomationRequest } from '../models/ValidateAutomationRequest.js';
 import type { ValidateAutomationResponse } from '../models/ValidateAutomationResponse.js';
 import type { WorkflowCallbackWebhookBindingResponse } from '../models/WorkflowCallbackWebhookBindingResponse.js';
@@ -32,6 +35,93 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class WorkflowsService {
+  /**
+   * List schedules this tenant may customize for a linked app.
+   * Requires platform_tenant:automations:read. Results include only live published schedule triggers that the app owner marked tenant_configurable. Version zero means the tenant still uses the published defaults.
+   * @returns ListTenantWorkflowSchedulesResponse Tenant-visible schedules and their current versions.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowSchedules({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListTenantWorkflowSchedulesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/apps/{slug}/workflows/schedules',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Set this tenant's cadence for an opted-in workflow.
+   * Requires platform_tenant:automations:manage. expected_version is zero
+   * to create a tenant override and otherwise must match the current version.
+   * A stale version returns 409. Omitting timezone or overlap keeps the
+   * published defaults; enabled defaults to true. The tenant controls only
+   * its own cadence, timezone, overlap behavior, and enabled state. Input,
+   * workflow steps, credentials, and app concurrency remain app-owned.
+   * Existing runs keep their admitted definition.
+   *
+   * @returns TenantWorkflowScheduleResponse The updated tenant schedule and its new version.
+   * @throws ApiError
+   */
+  public static updatePlatformTenantSelfWorkflowSchedule({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Name of an opted-in schedule workflow from the live deployment.
+     */
+    name: string,
+    /**
+     * The tenant's complete schedule settings and the version currently observed by the caller.
+     */
+    requestBody: UpdateTenantWorkflowScheduleRequest,
+  }): CancelablePromise<TenantWorkflowScheduleResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
   /**
    * List drafts and published automations, including YAML definitions.
    * @returns ListAutomationsResponse listAutomations result.
@@ -743,8 +833,10 @@ export class WorkflowsService {
    * app-bound customer-managed integration; the signed run identity and
    * active tenant-to-app link are checked at dispatch and outbound
    * authorization. Integration credentials and route policies remain
-   * app-scoped and shared across tenants. Event waits and callbacks remain
-   * unsupported for tenant-bound workflows.
+   * app-scoped and shared across tenants. Tenant-bound runs can wait for
+   * externally supplied events and callbacks through the authenticated
+   * tenant-self continuation routes. Schedule-triggered workflows on tenant-required apps
+   * are admitted once per active linked tenant from the live default publication.
    *
    * @returns WorkflowRunResponse The new pending tenant-scoped workflow run.
    * @throws ApiError
@@ -803,8 +895,12 @@ export class WorkflowsService {
    * tenant. Outbound steps can use an existing app-bound customer-managed
    * integration; the signed run identity and active tenant-to-app link are
    * checked at dispatch and outbound authorization. Integration credentials
-   * and route policies remain app-scoped and shared across tenants. Event
-   * waits and callbacks remain unsupported.
+   * and route policies remain app-scoped and shared across tenants. This
+   * tenant-self API also supports authenticated event waits and callbacks.
+   * Schedule-triggered workflows are admitted independently for each active
+   * tenant link. The published cadence is the default; triggers marked
+   * tenant_configurable can be overridden through the tenant-self schedule
+   * API without changing workflow input or steps.
    *
    * @returns WorkflowRunResponse A pending workflow run created with the authenticated tenant identity.
    * @throws ApiError
@@ -848,6 +944,82 @@ export class WorkflowsService {
     });
   }
   /**
+   * List durable workflow runs for the authenticated tenant in an app.
+   * Requires platform_tenant:invocations:read. The tenant must be actively
+   * linked to the app. Results are filtered by the authenticated tenant in
+   * storage, include only that tenant's runs, and use the same filters and
+   * offset pagination as the account-owned app run history endpoint.
+   * Foreign or unbound apps return 404.
+   *
+   * @returns ListWorkflowRunsResponse A page of workflow runs owned by the authenticated tenant.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowRuns({
+    slug,
+    status,
+    workflowName,
+    createdAfter,
+    createdBefore,
+    limit = 50,
+    offset,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Return only runs in this lifecycle state.
+     */
+    status?: 'pending' | 'running' | 'awaiting_event' | 'succeeded' | 'failed' | 'dead',
+    /**
+     * Restrict results to one workflow name.
+     */
+    workflowName?: string,
+    /**
+     * Keep runs created at or after this RFC3339 timestamp.
+     */
+    createdAfter?: string,
+    /**
+     * Keep runs created at or before this RFC3339 timestamp.
+     */
+    createdBefore?: string,
+    /**
+     * Maximum tenant-owned runs to include in this response.
+     */
+    limit?: number,
+    /**
+     * Number of matching tenant-owned runs to skip.
+     */
+    offset?: number,
+  }): CancelablePromise<ListWorkflowRunsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/apps/{slug}/workflows/runs',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'status': status,
+        'workflow_name': workflowName,
+        'created_after': createdAfter,
+        'created_before': createdBefore,
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
    * Read this tenant's workflow run status and result.
    * Requires a tenant-bound token with platform_tenant:invocations:read. Foreign, unbound, and missing runs return the same 404.
    * @returns WorkflowRunResponse Workflow status and result for the authenticated tenant.
@@ -870,7 +1042,139 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List callback handles for this tenant's workflow run.
+   * Requires platform_tenant:invocations:read. Callback IDs identify waits but are not bearer credentials. Foreign, unbound, inactive-link, and missing runs return the same 404.
+   * @returns ListWorkflowCallbacksResponse The run's declared callback waits and their handles.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowCallbacks({
+    id,
+  }: {
+    /**
+     * Run whose callback waits are visible to the authenticated tenant.
+     */
+    id: string,
+  }): CancelablePromise<ListWorkflowCallbacksResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflows/runs/{id}/callbacks',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Complete a callback wait for this tenant's workflow run.
+   * Requires platform_tenant:invocations:manage. The callback ID is not a
+   * credential; the authenticated tenant identity and active tenant-to-app
+   * link are checked at the durable write. An identical retry returns
+   * duplicate=true, including after the run finishes; a different payload
+   * conflicts. Completion may arrive before the step parks and will be
+   * consumed when the step becomes runnable. Foreign, unbound, inactive-link,
+   * and missing runs return the same 404.
+   *
+   * @returns CompleteWorkflowCallbackResponse Receipt for a new callback value or an identical retry.
+   * @throws ApiError
+   */
+  public static completePlatformTenantSelfWorkflowCallback({
+    id,
+    callbackId,
+    requestBody,
+  }: {
+    /**
+     * Tenant-owned run receiving this callback.
+     */
+    id: string,
+    /**
+     * UUID handle for the declared callback wait in this run.
+     */
+    callbackId: string,
+    requestBody?: any,
+  }): CancelablePromise<CompleteWorkflowCallbackResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflows/runs/{id}/callbacks/{callback_id}',
+      path: {
+        'id': id,
+        'callback_id': callbackId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found | workflow_step_not_found — the tenant cannot access the run or its callback handle is not declared.`,
+        409: `The wait is closed or this handle already contains a different JSON value.`,
+        410: `The configured callback wait timeout has elapsed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Deliver an external event to this tenant's waiting workflow run.
+   * Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404.
+   * @returns InjectWorkflowEventResponse The run accepted the event for processing.
+   * @throws ApiError
+   */
+  public static injectPlatformTenantSelfWorkflowEvent({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Tenant-owned run receiving the event.
+     */
+    id: string,
+    requestBody: InjectWorkflowEventRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<InjectWorkflowEventResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflows/runs/{id}/events',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
+        409: `code: workflow_not_running — only active runs accept events.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -902,7 +1206,7 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -944,7 +1248,7 @@ export class WorkflowsService {
         401: `code: unauthorized`,
         402: `The account plan does not include durable workflows.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         409: `The run is stale, unsafe to resume, or has reached its resume limit.`,
         413: `Resume requests are limited to 4096 bytes.`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -1045,7 +1349,7 @@ export class WorkflowsService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -1075,7 +1379,7 @@ export class WorkflowsService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -1157,7 +1461,7 @@ export class WorkflowsService {
         401: `code: unauthorized`,
         402: `The account plan does not include workflows.`,
         403: `The account has reached its concurrent workflow run limit.`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         409: `The run or step is not in a state that can be safely retried.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -1169,7 +1473,7 @@ export class WorkflowsService {
   }
   /**
    * List callback handles for a workflow run.
-   * Callback IDs identify waits but are not bearer credentials; completion requires account authorization.
+   * Callback IDs identify waits but are not bearer credentials; completion requires authorization for the run owner.
    * @returns ListWorkflowCallbacksResponse Callback handles from the run's snapshotted definition.
    * @throws ApiError
    */
@@ -1189,7 +1493,7 @@ export class WorkflowsService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -1235,7 +1539,7 @@ export class WorkflowsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found | workflow_step_not_found — the caller does not own the run or its callback handle is not declared.`,
         409: `Callback is closed or the ID was completed with different JSON.`,
         410: `Callback wait has expired.`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -1284,7 +1588,7 @@ export class WorkflowsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         409: `The callback is closed, or the callback/provider event already has a different binding.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -1321,7 +1625,7 @@ export class WorkflowsService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -1358,7 +1662,7 @@ export class WorkflowsService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -1393,7 +1697,7 @@ export class WorkflowsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         409: `code: workflow_not_running — only running or awaiting_event runs accept events.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -1440,7 +1744,7 @@ export class WorkflowsService {
         401: `code: unauthorized`,
         402: `code: plan_workflows_not_allowed — this plan does not include workflows.`,
         403: `code: plan_workflows_quota | forbidden — active-run quota exhausted or required scope missing.`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         409: `code: workflow_resume_conflict, workflow_resume_unsafe, or workflow_resume_limit.`,
         413: `code: request_body_too_large — resume requests are limited to 4096 bytes.`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -1472,7 +1776,7 @@ export class WorkflowsService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -1506,7 +1810,7 @@ export class WorkflowsService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

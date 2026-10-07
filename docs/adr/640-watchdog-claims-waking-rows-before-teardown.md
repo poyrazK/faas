@@ -1,4 +1,4 @@
-# ADR-635 · The watchdog claims a WAKING row before it tears the VM down
+# ADR-640 · The watchdog claims a WAKING row before it tears the VM down
 
 - **Status:** proposed
 - **Date:** 2026-10-07

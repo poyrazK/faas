@@ -78,6 +78,10 @@ creating a target or declaring it absent. Discovery pins creation-time ordering
 and rejects missing lists, overlapping identities, duplicate owner names and
 cursor cycles. An incomplete provider listing cannot authorize another create
 or report cleanup complete.
+Live local Neon tests on 2026-10-07 observed `sort_order: "ASC"` in responses
+to the lowercase `asc` query. Inventory validation accepts ascending ordering
+regardless of casing; descending ordering on any page still stops discovery,
+replay and cleanup before mutation.
 Lifecycle inspection, read-only health observation and default-source selection
 use the same complete branch inventory, so a later-page branch is not reported
 missing. A missing or null branch list is unknown; an explicit empty list can
@@ -331,3 +335,28 @@ specification. Reconciliation continues after admission closes. Diagnose safe
 generations. Existing connections may disconnect and reconnect using their
 existing credentials. Rollback of the additive migration is blocked once any
 policy history exists so completed receipts cannot silently disappear.
+
+## Failed creation custody and compensation
+
+Apply `20261007112111335_managed_postgres_creation_receipts.sql` before deploying
+creation-custody recovery (ADR-638). The private creation journal is separate
+from verified restore proofs and retained snapshot receipts. Its requested point
+is an intent fence; it is never evidence of restored contents or retention.
+
+A successful Neon creation response with complete ownership metadata is recorded
+before correctness polling. After a verification failure or worker takeover,
+recovery observes that exact physical ID. Compensation independently rechecks
+its source, operation owner, resource type and creation time, then confirms
+physical absence after deletion. A durable cleanup checkpoint records prior
+independent visibility; early absence of a creation that has never been observed
+cannot finish compensation. Missing capture timestamp or expiry can still
+block readiness while an independently owned failed resource is cleaned up.
+Snapshot compensation does not invent a retained receipt, and database cleanup
+preserves the physical accounting identity and outstanding usage holds.
+
+Do not remove source projects to compensate failed customer resources. Resources
+without an acknowledged ownership receipt retain conservative full-proof
+recovery. Missing inventory entries do not establish that an uncertain creation
+never happened. Keep provisioning disabled: PITR timestamp/LSN mapping, snapshot
+capture and retention evidence, restored login/data isolation, and completed
+settled usage qualification remain open.

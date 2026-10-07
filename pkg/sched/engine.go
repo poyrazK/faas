@@ -8369,7 +8369,7 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 
 	// appMu is process-local, so the schedd that owns this wake may run on
 	// another node and publish RUNNING while this one tears the VM down.
-	// Claim a WAKING row before Destroy (ADR-635): the owner's publication
+	// Claim a WAKING row before Destroy (ADR-640): the owner's publication
 	// expects WAKING and aborts on the lost CAS instead of exposing a RUNNING
 	// row with no VM. COLD_BOOTING still counts RAM, so a failed Destroy
 	// keeps the reservation and the cold-boot sweep retries it (ADR-470).

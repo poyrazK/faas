@@ -1,14 +1,14 @@
 //go:build metal
 
-// adr: 637
+// adr: 642
 
 package fcvm
 
-// Diagnostic for ADR-637 (production-us hunt #5, H5-25): restored guests on
+// Diagnostic for ADR-642 (production-us hunt #5, H5-25): restored guests on
 // Firecracker 1.7 lost timer interrupts, so a 1 s timer fired every 5 s. The
 // guest runs a 250 ms tick loop; the test cold-boots it, lets it run, parks it
 // and restores the capture several times, then counts how often the guest
-// ticked after each restore. FAAS_DIAG_GUEST_TIMER=legacy boots the pre-ADR-637
+// ticked after each restore. FAAS_DIAG_GUEST_TIMER=legacy boots the pre-ADR-642
 // tsc/lapic-deadline profile as the control.
 
 import (
@@ -64,7 +64,7 @@ func timerDiagSample(ip string, d time.Duration) (ticks int, longest time.Durati
 
 func TestDiagnosticGuestTimersAfterRestore(t *testing.T) {
 	if os.Getenv("FAAS_DIAG_GUEST_TIMER") == "" {
-		t.Skip("set FAAS_DIAG_GUEST_TIMER=new|legacy to run the ADR-637 timer diagnostic")
+		t.Skip("set FAAS_DIAG_GUEST_TIMER=new|legacy to run the ADR-642 timer diagnostic")
 	}
 	if os.Getenv("FAAS_DIAG_GUEST_TIMER") == "legacy" {
 		previous := guestTimerProfile
@@ -151,6 +151,6 @@ func TestDiagnosticGuestTimersAfterRestore(t *testing.T) {
 	}
 	t.Logf("SUMMARY profile=%q stalled=%d/%d cold_boot=%s", guestTimerProfile, stalled, restores, coldBoot.Round(time.Millisecond))
 	if os.Getenv("FAAS_DIAG_GUEST_TIMER") != "legacy" && stalled > 0 {
-		t.Fatalf("%d of %d restores stalled guest timers with the ADR-637 profile", stalled, restores)
+		t.Fatalf("%d of %d restores stalled guest timers with the ADR-642 profile", stalled, restores)
 	}
 }

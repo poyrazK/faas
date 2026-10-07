@@ -164,7 +164,7 @@ func fetchV6Ext4(url, wantSHA, dst string) error {
 // process's working directory, so any host that has `go` on PATH and the
 // repo checkout can build it.
 // v6ShimExtra runs in the fixture's entry script before httpd starts; a
-// diagnostic test sets it to launch a guest-side probe (ADR-637).
+// diagnostic test sets it to launch a guest-side probe (ADR-642).
 var v6ShimExtra string
 
 func buildV6BaseExt4(dst, repoRoot string) error {

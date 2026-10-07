@@ -148,7 +148,7 @@ const (
 const guestBootConsoleArgs = "console=ttyS0,115200n8 quiet i8042.nokbd i8042.noaux "
 
 // guestTimerArgs pins the guest timekeeping that survives a snapshot restore
-// (ADR-637). The default x86 choice, the tsc clocksource with the
+// (ADR-642). The default x86 choice, the tsc clocksource with the
 // lapic-deadline clockevent, loses timer interrupts after a Firecracker 1.7
 // restore: KVM restores MSR_IA32_TSC_DEADLINE relative to a TSC that is
 // written later (firecracker#4099, fixed in 1.8 by #4666/#4618), and vCPUs can

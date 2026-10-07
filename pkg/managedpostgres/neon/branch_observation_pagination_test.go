@@ -15,7 +15,7 @@ import (
 
 func TestObserveReadsCompleteBranchPagesBeforeReportingHealth(t *testing.T) {
 	for _, selector := range []string{"quiet-river-12345678", "quiet-river-12345678/br-main-123"} {
-		for _, fault := range []string{"later_branch", "missing_list", "missing_later_list", "cycle", "page_budget", "duplicate", "foreign_project"} {
+		for _, fault := range []string{"later_branch", "uppercase_sort_order", "descending_later_page", "missing_list", "missing_later_list", "cycle", "page_budget", "duplicate", "foreign_project"} {
 			t.Run(selector+"/"+fault, func(t *testing.T) {
 				var lists, mutations atomic.Int32
 				base := readyProjectHandler(t, &mutations)
@@ -31,10 +31,17 @@ func TestObserveReadsCompleteBranchPagesBeforeReportingHealth(t *testing.T) {
 					rows := []branch{{ID: fmt.Sprintf("br-other-%d", page), ProjectID: "quiet-river-12345678", CurrentState: "ready"}}
 					target := branch{ID: "br-main-123", ProjectID: "quiet-river-12345678", Default: true, CurrentState: "ready"}
 					next := "page-2"
+					pagination := map[string]any{"sort_by": "created_at", "sort_order": "asc"}
 					if page == 2 {
 						rows, next = []branch{target}, ""
 					}
 					switch fault {
+					case "uppercase_sort_order":
+						pagination["sort_order"] = "ASC"
+					case "descending_later_page":
+						if page == 2 {
+							pagination["sort_order"] = "DESC"
+						}
 					case "missing_list":
 						rows, next = nil, ""
 					case "missing_later_list":
@@ -52,10 +59,11 @@ func TestObserveReadsCompleteBranchPagesBeforeReportingHealth(t *testing.T) {
 						target.ProjectID = "project-other"
 						rows, next = []branch{target}, ""
 					}
-					writeResponse(t, w, http.StatusOK, map[string]any{"branches": rows, "pagination": map[string]any{"next": next}})
+					pagination["next"] = next
+					writeResponse(t, w, http.StatusOK, map[string]any{"branches": rows, "pagination": pagination})
 				}))
 				actual, err := p.Observe(t.Context(), selector)
-				if fault == "later_branch" {
+				if fault == "later_branch" || fault == "uppercase_sort_order" {
 					if err != nil || actual.Status != managedpostgres.ProviderStatusReady || actual.ComputeState != managedpostgres.ComputeStateSuspended || lists.Load() != 2 {
 						t.Fatalf("later branch health: %+v %v; pages=%d", actual, err, lists.Load())
 					}

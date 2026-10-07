@@ -18,6 +18,7 @@ type Report struct {
 	OK                bool               `json:"ok"`
 	Checks            []Check            `json:"checks"`
 	Capabilities      []string           `json:"capabilities,omitempty"`
+	Extensions        []string           `json:"extensions,omitempty"`
 	Tools             []Tool             `json:"tools,omitempty"`
 	Resources         []Resource         `json:"resources,omitempty"`
 	ResourceTemplates []ResourceTemplate `json:"resource_templates,omitempty"`
@@ -54,6 +55,7 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 	}
 	report.Tools = catalog.Tools
 	report.Capabilities = catalog.Capabilities
+	report.Extensions = catalog.Extensions
 	report.Resources = catalog.Resources
 	report.ResourceTemplates = catalog.ResourceTemplates
 	report.Prompts = catalog.Prompts

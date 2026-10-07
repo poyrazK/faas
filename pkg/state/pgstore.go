@@ -19518,7 +19518,7 @@ func (s *PgStore) AppendEvent(ctx context.Context, actor, kind string, subject *
 // the best-effort events worker reaches Postgres later.
 func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error {
 	if subject != nil && customerPublishedEvent(kind, data) && !at.IsZero() {
-		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, nil, &at)
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, "", "", data, nil, &at)
 	}
 	if at.IsZero() {
 		return s.AppendEvent(ctx, actor, kind, subject, data)
@@ -19544,7 +19544,7 @@ func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject
 // value surfaces as SQLSTATE 23514 to the caller.
 func (s *PgStore) AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error {
 	if subject != nil && customerPublishedEvent(kind, data) {
-		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, traceID, nil)
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, "", "", data, traceID, nil)
 	}
 	var subj *uuid.UUID
 	if subject != nil {
@@ -25068,6 +25068,12 @@ func mapErr(err error) error {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "55000":
+			if pgErr.ConstraintName == "object_deletion_capture_fenced" || pgErr.ConstraintName == "object_protection_capture_fenced" || pgErr.ConstraintName == "object_upload_capture_fenced" || pgErr.ConstraintName == "object_multipart_part_capture_fenced" {
+				return ErrObjectBucketWriteFenced
+			}
+			if pgErr.ConstraintName == "clone_configuration_write_fenced" || pgErr.ConstraintName == "clone_configuration_guard_missing" {
+				return ErrProjectEnvironmentCloneConfigurationFenced
+			}
 			if pgErr.ConstraintName == "layer_artifact_retention_reference_fence" {
 				return ErrLayerArtifactRetired
 			}
@@ -25093,6 +25099,8 @@ func mapErr(err error) error {
 			case "binding_release_policy_revision":
 				return ErrBindingReleasePolicyRevision
 			case "object_version_protection_fenced":
+				return ErrConflict
+			case "object_multipart_part_writer_conflict", "object_multipart_initiation_original", "object_multipart_initiation_immutable", "object_multipart_initiation_positive_result", "object_multipart_initiation_intent", "object_multipart_initiation_uncertain":
 				return ErrConflict
 			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
@@ -25905,6 +25913,11 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// `delete from accounts` at the bottom be the natural sentinel.
 	if err := purgeOperationOwnerTx(ctx, tx, id, ""); err != nil {
 		return fmt.Errorf("state: purge customer operation owner: %w", err)
+	}
+	// Custody outlives provider cleanup until final account erasure. Refuse to
+	// purge any acknowledgement whose lifecycle has not confirmed deletion.
+	if err := sqlc.New().PurgeAccountManagedPostgresCreationReceipts(ctx, tx, mustPgUUID(id)); err != nil {
+		return fmt.Errorf("state: purge deleted managed PostgreSQL custody: %w", err)
 	}
 
 	steps := []struct {

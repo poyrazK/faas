@@ -32,7 +32,7 @@ import (
 const (
 	// WakingSweepBudget is the spec §6.1 budget for a WAKING restore. Every
 	// WAKING row is snapshot-backed, so runOne adds the cold-boot fallback
-	// budget vmmd may spend after a refused restore (ADR-635).
+	// budget vmmd may spend after a refused restore (ADR-640).
 	WakingSweepBudget = 5 * time.Second
 
 	// ColdBootSweepBudget is the spec §6.1 budget for COLD_BOOTING.
@@ -115,7 +115,7 @@ func (w *Watchdog) runOne(ctx context.Context, now time.Time, st state.State, bu
 		// snapshot, and vmmd can spend the restore budget and then fall back
 		// to a cold boot. Its engine context is bounded by ColdBootTimeout,
 		// so the 5-second WAKING backstop must not race it. Do not look the
-		// snapshot up again (ADR-635): after a fallback the owner marks the
+		// snapshot up again (ADR-640): after a fallback the owner marks the
 		// refused snapshot stale before it publishes RUNNING, and a sibling
 		// wake's fallback can do the same mid-restore, so the lookup misses
 		// exactly the wakes that need the reprieve. Do not exempt the row

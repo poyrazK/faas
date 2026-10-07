@@ -38,11 +38,13 @@ func TestGCSMultipartActualResult(t *testing.T) {
 				_, _ = io.WriteString(w, tc.body)
 			}))
 			defer upstream.Close()
-			p := testGCS(upstream.URL, &fakeGCSStore{})
+			store := &fakeGCSStore{}
+			p := testGCS(upstream.URL, store)
 			p.httpClient = upstream.Client()
 			r := MultipartCompleteRequest{SessionID: uuid.NewString(), Key: "key", ProviderUploadID: "upload", SizeBytes: 10, Parts: []CompletedPart{{PartNumber: 1, ETag: `"part"`}}, BeforeRequest: func(context.Context) error { billed++; return nil }}
+			store.object = gcsObjectState{Key: r.Key, Size: r.SizeBytes, Version: 123, ETag: `"stored"`, Metadata: map[string]string{ReservedMultipartSessionMetadataKey: r.SessionID}}
 			out, err := p.CompleteMultipartWithResult(t.Context(), "bucket", r, ObjectWriteConditions{})
-			if !errors.Is(err, tc.want) || calls != 1 || err == nil && (out.ETag != `"actual-gcs"` || out.ProviderVersionID != "") {
+			if !errors.Is(err, tc.want) || calls != 1 || err == nil && (out.ETag != `"actual-gcs"` || out.ProviderVersionID != "123" || !out.VersionsObserved || billed != 2) {
 				t.Fatal(out, err, calls)
 			}
 		})

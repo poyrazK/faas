@@ -1762,6 +1762,19 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_workflow_claims",
+    "kind": "operational",
+    "columns": [
+      "attempt",
+      "capability_digest",
+      "execution_kind",
+      "generation",
+      "lease_until",
+      "operation_id",
+      "workflow_run_id"
+    ]
+  },
+  {
     "table": "customer_operations",
     "columns": [
       "account_id",
@@ -3926,6 +3939,25 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_creation_receipts",
+    "columns": [
+      "account_id",
+      "backend_fingerprint",
+      "backend_id",
+      "cleanup_started_at",
+      "database_id",
+      "generation",
+      "kind",
+      "point_in_time",
+      "provider_created_at",
+      "provider_resource_id",
+      "recorded_at",
+      "resource_id",
+      "source_resource_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_cutover_credentials",
     "columns": [
       "access",
@@ -4493,7 +4525,10 @@
       "created_at",
       "id",
       "kind",
-      "physical_name"
+      "multipart_part_writer_id",
+      "multipart_upload_id",
+      "physical_name",
+      "upload_id"
     ],
     "kind": "operational"
   },
@@ -4637,6 +4672,36 @@
       "scanned_uploads",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_multipart_initiation_dispatches",
+    "columns": [
+      "dispatch_token",
+      "dispatched",
+      "multipart_upload_id",
+      "provider_upload_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_multipart_part_writers",
+    "columns": [
+      "backend_fingerprint",
+      "backend_id",
+      "body_sha256",
+      "bucket_id",
+      "copy_intent",
+      "dispatched",
+      "id",
+      "managed",
+      "part_number",
+      "physical_name",
+      "put_intent",
+      "settled",
+      "transfer_token",
+      "upload_id"
     ],
     "kind": "operational"
   },
@@ -5692,6 +5757,28 @@
       "configuration_hash",
       "operation_id",
       "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_configuration_clock",
+    "columns": [
+      "generation",
+      "singleton"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_configuration_guards",
+    "columns": [
+      "account_id",
+      "generation",
+      "held_at",
+      "operation_id",
+      "project_id",
+      "source_environment",
+      "source_revision_hash",
+      "state"
     ],
     "kind": "operational"
   },
@@ -7526,6 +7613,22 @@
       "workflow_name"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "platform_tenant_workflow_schedule_cursors",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "last_evaluated_at",
+      "last_run_id",
+      "platform_tenant_id",
+      "scheduled_for",
+      "status",
+      "trigger_snapshot",
+      "updated_at",
+      "workflow_name"
+    ]
   },
   {
     "table": "workflow_schedule_cursors",

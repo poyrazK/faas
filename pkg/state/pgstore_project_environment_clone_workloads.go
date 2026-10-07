@@ -15,6 +15,13 @@ func lockCloneWorkloadOperationTx(ctx context.Context, tx pgx.Tx, accountID, pro
 	if _, err := q.LockProjectEnvironmentCloneProject(ctx, tx, sqlc.LockProjectEnvironmentCloneProjectParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID)}); err != nil {
 		return ProjectEnvironmentCloneOperation{}, mapErr(err)
 	}
+	return lockCloneWorkloadOperationRowTx(ctx, tx, accountID, projectID, operationID)
+}
+
+// Configuration-fence callers synchronize project scope through their clock
+// and guard. Ordinary workload mutations use the project-locking wrapper above.
+func lockCloneWorkloadOperationRowTx(ctx context.Context, tx pgx.Tx, accountID, projectID, operationID string) (ProjectEnvironmentCloneOperation, error) {
+	q := new(sqlc.Queries)
 	r, err := q.LockProjectEnvironmentCloneWorkloadOperation(ctx, tx, sqlc.LockProjectEnvironmentCloneWorkloadOperationParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), OperationID: mustPgUUID(operationID)})
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, mapErr(err)
@@ -140,6 +147,10 @@ func (s *PgStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, a
 }
 
 func captureCloneWorkloadTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, appID, scope string) (projectCloneWorkloadSnapshot, error) {
+	return captureCloneWorkloadDB(ctx, tx, op, appID, scope, true)
+}
+
+func captureCloneWorkloadDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, appID, scope string, lockFlags bool) (projectCloneWorkloadSnapshot, error) {
 	q := new(sqlc.Queries)
 	snapshot := projectCloneWorkloadSnapshot{SidecarSignals: map[string]string{}}
 	artifact, err := q.ReadProjectEnvironmentCloneSelectedArtifact(ctx, tx, sqlc.ReadProjectEnvironmentCloneSelectedArtifactParams{AppID: mustPgUUID(appID), SourceScope: scope, ReleaseID: op.SourceReleaseSetID})
@@ -156,7 +167,7 @@ func captureCloneWorkloadTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if err != nil {
 		return snapshot, err
 	}
-	flagSource, err := readCloneFeatureFlagsTx(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
+	flagSource, err := readCloneFeatureFlagsDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment, lockFlags)
 	if err != nil {
 		return snapshot, err
 	}

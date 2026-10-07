@@ -46,8 +46,12 @@ func (m *MemStore) BeginObjectURLMultipartPart(_ context.Context, id, token stri
 	if !validObjectURLMultipartUpload(c, u, now) {
 		return ErrConflict
 	}
+	if _, held := m.objectWriteFences[u.BucketID]; held {
+		return ErrObjectBucketWriteFenced
+	}
 	old := m.objectMultipartTransfers[u.ID][part.PartNumber]
-	if old.token != "" && old.unsafeUntil.After(now) {
+	_, reused := m.objectMultipartPartWriters[multipartPartWriterKey{u.ID, part.PartNumber, token}]
+	if reused || m.multipartPartWriterPendingLocked(u.ID, part.PartNumber) || old.token != "" && old.unsafeUntil.After(now) {
 		return ErrConflict
 	}
 	key := objectProviderRequestKey(u.BucketID, time.Now().UTC())
@@ -64,6 +68,7 @@ func (m *MemStore) BeginObjectURLMultipartPart(_ context.Context, id, token stri
 		m.objectMultipartTransfers[u.ID] = map[int32]multipartPartTransfer{}
 	}
 	m.objectMultipartTransfers[u.ID][part.PartNumber] = multipartPartTransfer{token: token, unsafeUntil: now.Add(multipartTransferWindow()), tracked: true}
+	m.reserveMultipartPartWriterLocked(u.ID, part.PartNumber, token)
 	u.PartRevision++
 	u.UpdatedAt = now.UTC()
 	m.objectMultipartUploads[u.ID] = u

@@ -1573,6 +1573,16 @@ type CustomerOperationStreamLease struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
+type CustomerOperationWorkflowClaim struct {
+	WorkflowRunID    pgtype.UUID
+	OperationID      pgtype.UUID
+	Generation       int32
+	ExecutionKind    string
+	Attempt          int32
+	CapabilityDigest string
+	LeaseUntil       pgtype.Timestamptz
+}
+
 type DataUpstream struct {
 	ID                             pgtype.UUID
 	AccountID                      pgtype.UUID
@@ -3452,6 +3462,22 @@ type ManagedPostgresCheckpointMaintenance struct {
 	UpdatedAt                pgtype.Timestamptz
 }
 
+type ManagedPostgresCreationReceipt struct {
+	Kind               string
+	ResourceID         string
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Generation         int64
+	PointInTime        pgtype.Timestamptz
+	SourceResourceID   string
+	ProviderResourceID string
+	ProviderCreatedAt  pgtype.Timestamptz
+	RecordedAt         pgtype.Timestamptz
+	CleanupStartedAt   pgtype.Timestamptz
+}
+
 type ManagedPostgresCutover struct {
 	ID                       pgtype.UUID
 	AccountID                pgtype.UUID
@@ -3937,13 +3963,16 @@ type ObjectBucketLifecycle struct {
 }
 
 type ObjectBucketMutation struct {
-	ID                 pgtype.UUID
-	BucketID           pgtype.UUID
-	Kind               string
-	BackendID          string
-	BackendFingerprint string
-	PhysicalName       string
-	CreatedAt          pgtype.Timestamptz
+	ID                    pgtype.UUID
+	BucketID              pgtype.UUID
+	Kind                  string
+	BackendID             string
+	BackendFingerprint    string
+	PhysicalName          string
+	CreatedAt             pgtype.Timestamptz
+	UploadID              pgtype.UUID
+	MultipartUploadID     pgtype.UUID
+	MultipartPartWriterID pgtype.UUID
 }
 
 type ObjectBucketNotification struct {
@@ -4042,6 +4071,30 @@ type ObjectLifecycleScan struct {
 	Phase          string
 	LastUploadID   pgtype.UUID
 	ScannedUploads int64
+}
+
+type ObjectMultipartInitiationDispatch struct {
+	MultipartUploadID pgtype.UUID
+	Dispatched        bool
+	DispatchToken     string
+	ProviderUploadID  string
+}
+
+type ObjectMultipartPartWriter struct {
+	ID                 pgtype.UUID
+	UploadID           pgtype.UUID
+	PartNumber         int32
+	TransferToken      string
+	Managed            bool
+	Dispatched         bool
+	Settled            bool
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CopyIntent         []byte
+	PutIntent          []byte
+	BodySha256         string
 }
 
 type ObjectS3CopySourceEpoch struct {
@@ -4805,6 +4858,19 @@ type PlatformTenantUsageMinute struct {
 	SourceKind       string
 }
 
+type PlatformTenantWorkflowScheduleCursor struct {
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	WorkflowName     string
+	DeploymentID     pgtype.UUID
+	TriggerSnapshot  []byte
+	LastEvaluatedAt  pgtype.Timestamptz
+	ScheduledFor     pgtype.Timestamptz
+	Status           string
+	LastRunID        pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type PrPreviewSet struct {
 	InstallationID int64
 	RepoFullName   string
@@ -4996,6 +5062,22 @@ type ProjectEnvironmentCloneConfigurationCapture struct {
 	Version           int32
 	ConfigurationHash string
 	Configuration     []byte
+}
+
+type ProjectEnvironmentCloneConfigurationClock struct {
+	Singleton  bool
+	Generation int64
+}
+
+type ProjectEnvironmentCloneConfigurationGuard struct {
+	ProjectID          pgtype.UUID
+	AccountID          pgtype.UUID
+	Generation         int64
+	OperationID        pgtype.UUID
+	State              string
+	SourceEnvironment  string
+	SourceRevisionHash string
+	HeldAt             pgtype.Timestamptz
 }
 
 type ProjectEnvironmentCloneLayerPin struct {

@@ -3295,45 +3295,6 @@ $$;
 
 
 --
--- Name: faas_invocation_headers_own_stage(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.faas_invocation_headers_own_stage(owner_app uuid, pin_headers jsonb) RETURNS boolean
-    LANGUAGE sql STABLE
-    AS $$
-SELECT
-    EXISTS(SELECT 1 FROM deployments stage
-        WHERE stage.app_id=owner_app AND stage.scope NOT IN ('production','default')
-            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
-                WHERE lower(pin.key)='x-gregale-revision' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')))
-    OR EXISTS(SELECT 1 FROM project_release_sets stage JOIN apps owner
-        ON owner.project_id=stage.project_id AND owner.account_id=stage.account_id
-        WHERE owner.id=owner_app AND stage.environment_slug NOT IN ('production','default')
-            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
-                WHERE lower(pin.key)='x-gregale-release' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')));
-$$;
-
-
---
--- Name: faas_retain_dead_letter_environment_ownership(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.faas_retain_dead_letter_environment_ownership() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-    IF TG_OP='UPDATE' THEN NEW.environment_owned := NEW.environment_owned OR OLD.environment_owned; END IF;
-    NEW.environment_owned := NEW.environment_owned OR (NEW.source='invocation' AND (faas_invocation_headers_own_stage(NEW.app_id,NEW.headers)
-        OR EXISTS(SELECT 1 FROM invocations i WHERE i.id=NEW.source_id
-            AND NOT EXISTS(SELECT 1 FROM production_invocation_work p WHERE p.id=i.id))));
-    RETURN NEW;
-END;
-$$;
-
-
---
-
-
 -- Name: faas_capture_workflow_finished_webhook_event(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3396,8 +3357,43 @@ $$;
 
 
 --
+-- Name: faas_invocation_headers_own_stage(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_invocation_headers_own_stage(owner_app uuid, pin_headers jsonb) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT
+    EXISTS(SELECT 1 FROM deployments stage
+        WHERE stage.app_id=owner_app AND stage.scope NOT IN ('production','default')
+            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
+                WHERE lower(pin.key)='x-gregale-revision' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')))
+    OR EXISTS(SELECT 1 FROM project_release_sets stage JOIN apps owner
+        ON owner.project_id=stage.project_id AND owner.account_id=stage.account_id
+        WHERE owner.id=owner_app AND stage.environment_slug NOT IN ('production','default')
+            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
+                WHERE lower(pin.key)='x-gregale-release' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')));
+$$;
 
 
+--
+-- Name: faas_retain_dead_letter_environment_ownership(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_retain_dead_letter_environment_ownership() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP='UPDATE' THEN NEW.environment_owned := NEW.environment_owned OR OLD.environment_owned; END IF;
+    NEW.environment_owned := NEW.environment_owned OR (NEW.source='invocation' AND (faas_invocation_headers_own_stage(NEW.app_id,NEW.headers)
+        OR EXISTS(SELECT 1 FROM invocations i WHERE i.id=NEW.source_id
+            AND NOT EXISTS(SELECT 1 FROM production_invocation_work p WHERE p.id=i.id))));
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: faas_stamp_app_deletion_deadline(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16532,11 +16528,12 @@ CREATE TABLE public.object_deletions (
     CONSTRAINT object_deletions_check4 CHECK (((state <> 'completed'::text) OR (selector <> 'null'::text) OR (version_id = 'null'::text))),
     CONSTRAINT object_deletions_check5 CHECK (((state <> 'completed'::text) OR (provider_status <> 'Enabled'::text) OR (selector <> ''::text) OR (delete_marker AND (version_id <> ALL (ARRAY[''::text, 'null'::text])) AND (provider_version_id <> ALL (ARRAY[''::text, 'null'::text]))))),
     CONSTRAINT object_deletions_check6 CHECK (((reserved_bytes = 0) OR ((selector = ''::text) AND (provider_status <> ''::text)))),
-    CONSTRAINT object_deletions_check7 CHECK (((provider_status = 'Enabled'::text) OR (baseline = '[]'::jsonb))),
+    CONSTRAINT object_deletions_check7 CHECK (((provider_status = ANY (ARRAY['Enabled'::text, 'GCS_Enabled'::text, 'GCS_Suspended'::text])) OR (baseline = '[]'::jsonb))),
+    CONSTRAINT object_deletions_gcs_generation_fence CHECK (((provider_status <> ALL (ARRAY['GCS_Enabled'::text, 'GCS_Suspended'::text])) OR ((selector = ''::text) AND (target_provider_version_id = ''::text) AND (reserved_bytes = 0) AND (NOT delete_marker) AND (version_id = ''::text) AND (provider_version_id = ''::text) AND (((state = ANY (ARRAY['prepared'::text, 'failed'::text])) AND (baseline = '[]'::jsonb)) OR ((jsonb_array_length(baseline) = 1) AND (jsonb_typeof((baseline -> 0)) = 'string'::text) AND ((baseline ->> 0) ~ '^0{48}[0-7][0-9a-f]{15}$'::text)))))),
     CONSTRAINT object_deletions_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'configuration'::text, 'preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text, 'object_protected'::text]))),
     CONSTRAINT object_deletions_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
     CONSTRAINT object_deletions_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
-    CONSTRAINT object_deletions_provider_status_check CHECK ((provider_status = ANY (ARRAY[''::text, 'Enabled'::text, 'Suspended'::text]))),
+    CONSTRAINT object_deletions_provider_status_check CHECK ((provider_status = ANY (ARRAY[''::text, 'Enabled'::text, 'Suspended'::text, 'GCS_Enabled'::text, 'GCS_Suspended'::text]))),
     CONSTRAINT object_deletions_provider_version_id_check CHECK ((octet_length(provider_version_id) <= 1024)),
     CONSTRAINT object_deletions_reserved_bytes_check CHECK (((reserved_bytes >= 0) AND (reserved_bytes <= 1024))),
     CONSTRAINT object_deletions_selector_check CHECK (((selector = ANY (ARRAY[''::text, 'null'::text])) OR (selector ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
@@ -20971,7 +20968,7 @@ CREATE TABLE public.workflow_automation_revisions (
     legacy_snapshot boolean DEFAULT false NOT NULL,
     published_by_account_id uuid NOT NULL,
     published_by_api_key_id uuid,
-    CONSTRAINT workflow_automation_revisions_definition_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
+    CONSTRAINT workflow_automation_revisions_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
     CONSTRAINT workflow_automation_revisions_name_check CHECK ((length(name) > 0)),
     CONSTRAINT workflow_automation_revisions_version_check CHECK ((version > 0))
 );
@@ -21091,6 +21088,27 @@ CREATE TABLE public.workflow_runs (
     CONSTRAINT workflow_runs_create_idempotency_check CHECK ((((create_idempotency_key IS NULL) AND (create_request_fingerprint IS NULL)) OR ((create_idempotency_key IS NOT NULL) AND ((octet_length(create_idempotency_key) >= 1) AND (octet_length(create_idempotency_key) <= 255)) AND (create_request_fingerprint IS NOT NULL) AND (octet_length(create_request_fingerprint) = 32)))),
     CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
+);
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_workflow_schedule_cursors (
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    deployment_id uuid,
+    trigger_snapshot jsonb NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    scheduled_for timestamp with time zone,
+    status text NOT NULL,
+    last_run_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_workflow_name_check CHECK ((workflow_name <> ''::text))
 );
 
 
@@ -26392,6 +26410,14 @@ ALTER TABLE ONLY public.workflow_runs
 
 ALTER TABLE ONLY public.workflow_schedule_cursors
     ADD CONSTRAINT workflow_schedule_cursors_pkey PRIMARY KEY (app_id, workflow_name);
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_pkey PRIMARY KEY (app_id, platform_tenant_id, workflow_name);
 
 
 --
@@ -31902,17 +31928,18 @@ CREATE INDEX workflow_runs_app_id_idx ON public.workflow_runs USING btree (app_i
 
 
 --
+-- Name: workflow_runs_app_name_concurrency_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_name_concurrency_idx ON public.workflow_runs USING btree (app_id, workflow_name, status, started_at) WHERE (status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text]));
+
+
+--
 -- Name: workflow_runs_app_name_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX workflow_runs_app_name_created_idx ON public.workflow_runs USING btree (app_id, workflow_name, created_at DESC);
 
-
---
--- Name: workflow_runs_app_name_concurrency_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX workflow_runs_app_name_concurrency_idx ON public.workflow_runs USING btree (app_id, workflow_name, status, started_at) WHERE (status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text]));
 
 --
 -- Name: workflow_runs_create_idempotency_idx; Type: INDEX; Schema: public; Owner: -
@@ -31933,6 +31960,20 @@ CREATE INDEX workflow_runs_dispatch_idx ON public.workflow_runs USING btree (sch
 --
 
 CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: workflow_runs_app_tenant_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_tenant_history_idx ON public.workflow_runs USING btree (app_id, platform_tenant_id, created_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: platform_tenant_workflow_schedule_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_workflow_schedule_tenant_idx ON public.platform_tenant_workflow_schedule_cursors USING btree (platform_tenant_id, app_id);
 
 
 --
@@ -34862,17 +34903,17 @@ CREATE TRIGGER workflow_runs_capture_dead_letter_event AFTER UPDATE OF status ON
 
 
 --
+-- Name: workflow_runs workflow_runs_capture_finished_webhook_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_runs_capture_finished_webhook_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_finished_webhook_event();
+
+
+--
 -- Name: workflow_webhook_bindings workflow_webhook_routing_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.workflow_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
-
-
---
--- Name: workflow_runs_capture_finished_webhook_event; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER workflow_runs_capture_finished_webhook_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_finished_webhook_event();
 
 
 --
@@ -41329,6 +41370,38 @@ ALTER TABLE ONLY public.workflow_runs
 
 
 --
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_last_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_last_run_id_fkey FOREIGN KEY (last_run_id) REFERENCES public.workflow_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_schedule_cursors workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -41394,3 +41467,1136 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+--
+-- Name: customer_operation_workflow_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_workflow_claims (
+    workflow_run_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    execution_kind text DEFAULT 'workflow'::text NOT NULL,
+    attempt integer NOT NULL,
+    capability_digest text NOT NULL,
+    lease_until timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_workflow_claims_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT customer_operation_workflow_claims_capability_digest_check CHECK ((capability_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_workflow_claims_execution_kind_check CHECK ((execution_kind = 'workflow'::text)),
+    CONSTRAINT customer_operation_workflow_claims_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_workflow_claims_lease_until_check CHECK (isfinite(lease_until))
+);
+
+
+--
+-- Name: customer_operation_workflow_claims customer_operation_workflow_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_claims
+    ADD CONSTRAINT customer_operation_workflow_claims_pkey PRIMARY KEY (workflow_run_id);
+
+
+--
+-- Name: customer_operation_workflow_claim_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_workflow_claim_expiry_idx ON public.customer_operation_workflow_claims USING btree (lease_until, workflow_run_id);
+
+
+--
+-- Name: workflow_runs_operation_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_operation_due_idx ON public.workflow_runs USING btree (operation_id, status, scheduled_for) WHERE (operation_id IS NOT NULL);
+
+
+--
+-- Name: customer_operation_workflow_claims customer_operation_workflow_claims_execution_identity_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_claims
+    ADD CONSTRAINT customer_operation_workflow_claims_execution_identity_fkey FOREIGN KEY (operation_id, generation, workflow_run_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, execution_id, execution_kind) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_claims customer_operation_workflow_claims_workflow_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_claims
+    ADD CONSTRAINT customer_operation_workflow_claims_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_creation_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_creation_receipts (
+    kind text NOT NULL,
+    resource_id text NOT NULL,
+    account_id uuid NOT NULL,
+    database_id uuid,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    generation bigint NOT NULL,
+    point_in_time timestamp with time zone NOT NULL,
+    source_resource_id text NOT NULL,
+    provider_resource_id text NOT NULL,
+    provider_created_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    cleanup_started_at timestamp with time zone,
+    CONSTRAINT managed_postgres_creation_receipts_cleanup_started_at_check CHECK (((cleanup_started_at IS NULL) OR isfinite(cleanup_started_at))),
+    CONSTRAINT managed_postgres_creation_receipts_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_creation_receipts_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_check CHECK (((provider_resource_id <> source_resource_id) AND (point_in_time <= provider_created_at) AND (provider_created_at <= recorded_at))),
+    CONSTRAINT managed_postgres_creation_receipts_check1 CHECK ((((kind = 'restore'::text) AND (database_id IS NOT NULL) AND (resource_id = (database_id)::text)) OR ((kind = 'snapshot'::text) AND (database_id IS NULL)))),
+    CONSTRAINT managed_postgres_creation_receipts_generation_check CHECK ((generation > 0)),
+    CONSTRAINT managed_postgres_creation_receipts_kind_check CHECK ((kind = ANY (ARRAY['restore'::text, 'snapshot'::text]))),
+    CONSTRAINT managed_postgres_creation_receipts_point_in_time_check CHECK (isfinite(point_in_time)),
+    CONSTRAINT managed_postgres_creation_receipts_provider_created_at_check CHECK (isfinite(provider_created_at)),
+    CONSTRAINT managed_postgres_creation_receipts_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_resource_id_check CHECK (((resource_id <> ''::text) AND (length(resource_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255)))
+);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_rec_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_rec_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_pkey PRIMARY KEY (kind, backend_id, resource_id);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+--
+-- Name: assert_clone_configuration_mutable(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assert_clone_configuration_mutable(project uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    guard_state text;
+BEGIN
+    IF project IS NULL THEN RETURN; END IF;
+    -- A locking read also prevents repeatable-read writers with a snapshot
+    -- predating acquisition from bypassing the committed hold.
+    SELECT state INTO guard_state FROM project_environment_clone_configuration_guards
+    WHERE project_id = project FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'project configuration guard is missing'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
+    END IF;
+    IF guard_state <> 'open' THEN
+        RAISE EXCEPTION 'source configuration is held for stage capture'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_write_fenced';
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: guard_clone_configuration_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_clone_configuration_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    before_row jsonb := CASE WHEN TG_OP <> 'INSERT' THEN to_jsonb(OLD) ELSE '{}'::jsonb END;
+    after_row jsonb := CASE WHEN TG_OP <> 'DELETE' THEN to_jsonb(NEW) ELSE '{}'::jsonb END;
+    before_id uuid := nullif(before_row ->> TG_ARGV[1], '')::uuid;
+    after_id uuid := nullif(after_row ->> TG_ARGV[1], '')::uuid;
+    project uuid;
+BEGIN
+    -- Protection intents are frozen customer configuration. Only the original
+    -- journal's operational progress may change during a capture hold.
+    IF TG_TABLE_NAME = 'object_version_protection' AND TG_OP = 'UPDATE' THEN
+        IF (before_row - ARRAY['state','lease_token','lease_until','retry_at','dispatched','last_error_code','updated_at','event_hold_baseline'])
+            IS DISTINCT FROM (after_row - ARRAY['state','lease_token','lease_until','retry_at','dispatched','last_error_code','updated_at','event_hold_baseline'])
+            OR ((before_row ->> 'dispatched')::boolean AND NOT (after_row ->> 'dispatched')::boolean)
+            OR ((before_row ->> 'state') IN ('ready','failed') AND before_row IS DISTINCT FROM after_row)
+            OR (nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS NOT NULL AND nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS DISTINCT FROM nullif(after_row -> 'event_hold_baseline', 'null'::jsonb))
+            OR ((before_row ->> 'dispatched')::boolean AND nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS DISTINCT FROM nullif(after_row -> 'event_hold_baseline', 'null'::jsonb))
+            OR ((after_row ->> 'state') = 'failed' AND (after_row ->> 'last_error_code') NOT IN ('preparation_failed','provider_rejected'))
+            OR ((after_row ->> 'state') = 'failed' AND (after_row ->> 'dispatched')::boolean AND (after_row ->> 'last_error_code') <> 'provider_rejected') THEN
+            RAISE EXCEPTION 'original protection intent and settled evidence are immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'object_protection_original_immutable';
+        END IF;
+        RETURN NEW;
+    END IF;
+    PERFORM generation FROM project_environment_clone_configuration_clock WHERE singleton FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'configuration synchronization clock is missing'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
+    END IF;
+    FOR project IN
+        SELECT DISTINCT p.project_id FROM (
+            SELECT before_id AS project_id WHERE TG_ARGV[0] = 'project'
+            UNION ALL SELECT after_id WHERE TG_ARGV[0] = 'project'
+            UNION ALL SELECT a.project_id FROM apps a
+                WHERE TG_ARGV[0] = 'app' AND a.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM deployments d JOIN apps a ON a.id = d.app_id
+                WHERE TG_ARGV[0] = 'deployment' AND d.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM object_buckets b JOIN apps a ON a.id = b.app_id
+                WHERE TG_ARGV[0] = 'bucket' AND b.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM managed_postgres_bindings b JOIN apps a ON a.id = b.app_id
+                WHERE TG_ARGV[0] = 'database' AND b.database_id IN (before_id, after_id)
+        ) p WHERE p.project_id IS NOT NULL ORDER BY p.project_id
+    LOOP
+        PERFORM assert_clone_configuration_mutable(project);
+    END LOOP;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: initialize_clone_configuration_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.initialize_clone_configuration_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO project_environment_clone_configuration_guards(project_id, account_id)
+    VALUES (NEW.id, NEW.account_id)
+    ON CONFLICT (project_id) DO UPDATE SET account_id = EXCLUDED.account_id,
+        generation = project_environment_clone_configuration_guards.generation + 1
+    WHERE project_environment_clone_configuration_guards.state = 'open';
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: project_environment_clone_configuration_clock; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_configuration_clock (
+    singleton boolean DEFAULT true NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT project_environment_clone_configuration_clock_generation_check CHECK ((generation > 0)),
+    CONSTRAINT project_environment_clone_configuration_clock_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: project_environment_clone_configuration_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_configuration_guards (
+    project_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    operation_id uuid,
+    state text DEFAULT 'open'::text NOT NULL,
+    source_environment text DEFAULT ''::text NOT NULL,
+    source_revision_hash text DEFAULT ''::text NOT NULL,
+    held_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_configuration_guards_check CHECK ((((state = 'open'::text) AND (operation_id IS NULL) AND (source_environment = ''::text) AND (source_revision_hash = ''::text) AND (held_at IS NULL)) OR ((state = 'held'::text) AND (operation_id IS NOT NULL) AND (source_environment <> ''::text) AND (source_revision_hash ~ '^[a-f0-9]{64}$'::text) AND (held_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_configuration_guards_generation_check CHECK ((generation > 0)),
+    CONSTRAINT project_environment_clone_configuration_guards_state_check CHECK ((state = ANY (ARRAY['open'::text, 'held'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_configuration_clock project_environment_clone_configuration_clock_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_clock
+    ADD CONSTRAINT project_environment_clone_configuration_clock_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guards_pkey PRIMARY KEY (project_id);
+
+
+--
+-- Name: app_environment_secret_ref_suppressions clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_ref_suppressions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_environment_secret_refs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_refs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_environment_workload_intents clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_envs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_secrets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_work_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_work_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: apps clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: deployment_sidecar_layers clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+
+--
+-- Name: deployment_sidecar_secret_reload_signals clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_secret_reload_signals FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+
+--
+-- Name: deployments clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: environment_git_sources clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: event_subscription_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.event_subscription_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: feature_flag_versions clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.feature_flag_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: managed_postgres_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: managed_postgres_databases clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('database', 'id');
+
+
+--
+-- Name: object_bucket_encryption clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_bucket_lifecycle clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_lifecycle FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_bucket_object_lock clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_bucket_versioning clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_buckets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: object_storage_s3_credentials clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_version_protection clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: project_environment_config_versions clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_environment_edge_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_environment_route_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_environment_workload_deployment_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+
+--
+-- Name: project_environment_workload_heads clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_environment_workload_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_environments clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_release_members clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_release_sets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: projects clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE DELETE OR UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'id');
+
+
+--
+-- Name: queue_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: trigger_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.trigger_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: projects initialize_clone_configuration_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER initialize_clone_configuration_guard AFTER INSERT OR UPDATE OF account_id ON public.projects FOR EACH ROW EXECUTE FUNCTION public.initialize_clone_configuration_guard();
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guard_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guard_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guards_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guards_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guards_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: fence_object_deletion_capture_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_deletion_capture_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bucket_state text;
+BEGIN
+ -- Fence queries need a fresh snapshot after waiting for the source lock.
+ -- Reject old transaction snapshots rather than hiding a committed hold.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_admission_isolation',MESSAGE='Deletion admission requires READ COMMITTED';
+ END IF;
+ SELECT state INTO bucket_state FROM object_buckets WHERE id=NEW.bucket_id FOR UPDATE;
+ IF bucket_state IS DISTINCT FROM 'ready' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_bucket_not_ready',MESSAGE='Bucket cleanup fences deletion admission';
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=NEW.bucket_id) THEN
+  RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_deletion_capture_fenced',MESSAGE='Checkpoint capture fences new deletion admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_deletions object_deletion_capture_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_capture_admission BEFORE INSERT ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion_capture_admission();
+
+
+--
+-- Name: fence_object_protection_capture_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_protection_capture_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bucket_state text;
+BEGIN
+ -- Fence queries need a fresh snapshot after waiting for the source lock.
+ -- Reject old transaction snapshots rather than hiding a committed hold.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_protection_admission_isolation',MESSAGE='Protection admission requires READ COMMITTED';
+ END IF;
+ SELECT state INTO bucket_state FROM object_buckets WHERE id=NEW.bucket_id FOR UPDATE;
+ IF bucket_state IS DISTINCT FROM 'ready' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_protection_bucket_not_ready',MESSAGE='Bucket cleanup fences protection admission';
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=NEW.bucket_id) THEN
+  RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_protection_capture_fenced',MESSAGE='Checkpoint capture fences new protection admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+--
+-- Name: object_version_protection object_protection_capture_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_protection_capture_admission BEFORE INSERT ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.fence_object_protection_capture_admission();
+
+
+--
+-- Name: fence_object_upload_capture_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_upload_capture_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE bucket_state text;
+BEGIN
+ -- Fence queries need a fresh snapshot after waiting for the source lock.
+ -- Reject old transaction snapshots rather than hiding a committed hold.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_admission_isolation',MESSAGE='Upload admission requires READ COMMITTED';
+ END IF;
+ -- Match the application admission order: account before source bucket.
+ -- An older replica's INSERT must not invert the account FK/row locks.
+ PERFORM id FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ SELECT state INTO bucket_state FROM object_buckets
+ WHERE id=NEW.bucket_id AND account_id=NEW.account_id AND app_id=NEW.app_id FOR UPDATE;
+ IF bucket_state IS DISTINCT FROM 'ready' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_bucket_not_ready',MESSAGE='Bucket cleanup fences upload admission';
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=NEW.bucket_id) THEN
+  RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_upload_capture_fenced',MESSAGE='Checkpoint capture fences new upload admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+CREATE TRIGGER object_upload_capture_admission BEFORE INSERT ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.fence_object_upload_capture_admission();
+CREATE TRIGGER object_multipart_capture_admission BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_upload_capture_admission();
+CREATE INDEX object_upload_capture_pending_idx ON public.object_upload_completions USING btree (bucket_id) WHERE status='pending' OR (write_phase='untracked' AND status='failed');
+
+ALTER TABLE object_bucket_mutations ADD COLUMN upload_id uuid UNIQUE REFERENCES object_upload_completions(id) ON DELETE RESTRICT;
+CREATE FUNCTION guard_bound_upload_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE u object_upload_completions%ROWTYPE;
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF OLD.upload_id IS NOT NULL OR NEW.upload_id IS NOT NULL THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_mutation_immutable',MESSAGE='Original upload receipts are immutable';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' THEN
+  IF OLD.upload_id IS NOT NULL AND EXISTS(SELECT 1 FROM object_upload_completions WHERE id=OLD.upload_id AND (write_phase<>'settled' OR status NOT IN ('completed','failed'))) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_mutation_unsettled',MESSAGE='Settle the original upload before removing its provider receipt';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW.upload_id IS NOT NULL THEN
+  IF current_setting('transaction_isolation')<>'read committed' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_mutation_isolation',MESSAGE='Upload receipt binding requires READ COMMITTED';
+  END IF;
+  SELECT * INTO u FROM object_upload_completions WHERE id=NEW.upload_id;
+  PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+  PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+  SELECT * INTO u FROM object_upload_completions WHERE id=NEW.upload_id FOR UPDATE;
+  IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
+   RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_upload_capture_fenced',MESSAGE='Capture fences new receipt binding';
+  END IF;
+  IF u.id IS NULL OR u.bucket_id<>NEW.bucket_id OR u.status<>'pending' OR u.write_phase<>'prepared' OR NEW.kind<>'request' OR NOT EXISTS(SELECT 1 FROM object_buckets WHERE id=u.bucket_id AND backend_id=NEW.backend_id AND backend_fingerprint=NEW.backend_fingerprint AND physical_name=NEW.physical_name AND state='ready') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_mutation_original',MESSAGE='Bind only the original prepared upload placement';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER object_upload_mutation_guard BEFORE INSERT OR UPDATE OR DELETE ON object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION guard_bound_upload_mutation();
+CREATE FUNCTION compose_object_upload_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='INSERT' AND NEW.write_phase='prepared' AND NEW.status='pending' THEN
+  INSERT INTO object_bucket_mutations(id,bucket_id,kind,backend_id,backend_fingerprint,physical_name,upload_id)
+  SELECT NEW.id,id,'request',backend_id,backend_fingerprint,physical_name,NEW.id FROM object_buckets WHERE id=NEW.bucket_id;
+ ELSIF TG_OP='UPDATE' AND NEW.write_phase='settled' AND NEW.status IN ('completed','failed') THEN
+  DELETE FROM object_bucket_mutations WHERE upload_id=NEW.id;
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER object_upload_mutation_composition AFTER INSERT OR UPDATE ON object_upload_completions FOR EACH ROW EXECUTE FUNCTION compose_object_upload_mutation();
+
+CREATE FUNCTION protect_bound_upload_journal() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE upload_id=OLD.id) AND
+  ((to_jsonb(NEW)-ARRAY['route_id','status','etag','error_code','write_phase','recovery_token','recovery_lease_until','recovery_retry_at','recovery_cursor','recovery_versions_observed','version_id','protection_verified','protection_dispatched','encryption_dispatched','encryption_verified']) IS DISTINCT FROM
+   (to_jsonb(OLD)-ARRAY['route_id','status','etag','error_code','write_phase','recovery_token','recovery_lease_until','recovery_retry_at','recovery_cursor','recovery_versions_observed','version_id','protection_verified','protection_dispatched','encryption_dispatched','encryption_verified']) OR
+   (NEW.route_id IS NOT NULL AND NEW.route_id IS DISTINCT FROM OLD.route_id)) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_bound_journal_immutable',MESSAGE='An original provider receipt cannot be reassigned to a different upload intent';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER object_upload_bound_journal BEFORE UPDATE ON object_upload_completions FOR EACH ROW EXECUTE FUNCTION protect_bound_upload_journal();
+
+-- +goose Up
+-- ADR-590: bind only newly reserved sessions; never adopt legacy receipts.
+ALTER TABLE object_bucket_mutations ADD COLUMN multipart_upload_id uuid UNIQUE REFERENCES object_storage_multipart_uploads(id) ON DELETE RESTRICT;
+ALTER TABLE object_bucket_mutations ADD CONSTRAINT object_mutation_single_owner CHECK(upload_id IS NULL OR multipart_upload_id IS NULL);
+-- +goose StatementBegin
+CREATE FUNCTION guard_bound_multipart_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE u object_storage_multipart_uploads%ROWTYPE;
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF OLD.multipart_upload_id IS NOT NULL OR NEW.multipart_upload_id IS NOT NULL THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_mutation_immutable',MESSAGE='Original multipart receipts are immutable';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' THEN
+  IF OLD.multipart_upload_id IS NOT NULL AND EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE id=OLD.multipart_upload_id AND state NOT IN ('completed','aborted')) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_mutation_unsettled',MESSAGE='Settle the original session before removing its provider receipt';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW.multipart_upload_id IS NOT NULL THEN
+  IF current_setting('transaction_isolation')<>'read committed' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_mutation_isolation',MESSAGE='Multipart receipt binding requires READ COMMITTED';
+  END IF;
+  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id;
+  PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+  PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id FOR UPDATE;
+  IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
+   RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_multipart_capture_fenced',MESSAGE='Capture fences new receipt binding';
+  END IF;
+  IF u.id IS NULL OR u.bucket_id<>NEW.bucket_id OR u.state<>'initiating' OR u.provider_upload_id<>'' OR NEW.kind<>'request' OR NOT EXISTS(SELECT 1 FROM object_buckets WHERE id=u.bucket_id AND account_id=u.account_id AND app_id=u.app_id AND backend_id=NEW.backend_id AND backend_fingerprint=NEW.backend_fingerprint AND physical_name=NEW.physical_name AND state='ready') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_mutation_original',MESSAGE='Bind only the original reserved session placement';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+CREATE TRIGGER object_multipart_mutation_guard BEFORE INSERT OR UPDATE OR DELETE ON object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION guard_bound_multipart_mutation();
+-- +goose StatementBegin
+CREATE FUNCTION compose_object_multipart_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='INSERT' AND NEW.state='initiating' AND NEW.provider_upload_id='' THEN
+  INSERT INTO object_bucket_mutations(id,bucket_id,kind,backend_id,backend_fingerprint,physical_name,multipart_upload_id)
+  SELECT NEW.id,id,'request',backend_id,backend_fingerprint,physical_name,NEW.id FROM object_buckets WHERE id=NEW.bucket_id;
+ ELSIF TG_OP='UPDATE' AND NEW.state IN ('completed','aborted') THEN
+  DELETE FROM object_bucket_mutations WHERE multipart_upload_id=NEW.id;
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+CREATE TRIGGER object_multipart_mutation_composition AFTER INSERT OR UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION compose_object_multipart_mutation();
+-- +goose StatementBegin
+CREATE FUNCTION protect_bound_multipart_journal() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE multipart_upload_id=OLD.id) AND (
+  (to_jsonb(NEW)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified']) IS DISTINCT FROM
+  (to_jsonb(OLD)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified']) OR
+  (NEW.expires_at>OLD.expires_at) OR
+  (NEW.provider_upload_id IS DISTINCT FROM OLD.provider_upload_id AND NOT (OLD.state='initiating' AND OLD.provider_upload_id='' AND NEW.state='active' AND NEW.provider_upload_id<>'')) OR
+  (OLD.completion_dispatched AND (NEW.size_bytes IS DISTINCT FROM OLD.size_bytes OR NEW.completion_parts IS DISTINCT FROM OLD.completion_parts OR NEW.completion_if_match IS DISTINCT FROM OLD.completion_if_match OR NEW.completion_if_none_match IS DISTINCT FROM OLD.completion_if_none_match))
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_bound_journal_immutable',MESSAGE='An original provider receipt cannot be reassigned to another session intent';
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+CREATE TRIGGER object_multipart_bound_journal BEFORE UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION protect_bound_multipart_journal();
+
+-- +goose Up
+
+-- ADR-590: never infer that an existing initiating journal was not dispatched.
+CREATE TABLE object_multipart_initiation_dispatches (
+ multipart_upload_id uuid PRIMARY KEY REFERENCES object_storage_multipart_uploads(id) ON DELETE CASCADE,
+ dispatched boolean NOT NULL DEFAULT false,
+ dispatch_token text NOT NULL DEFAULT '',
+ provider_upload_id text NOT NULL DEFAULT '',
+ CHECK (dispatched OR (dispatch_token='' AND provider_upload_id='')),
+ CHECK (octet_length(dispatch_token)<=128),
+ CHECK (octet_length(provider_upload_id)<=4096)
+);
+INSERT INTO object_multipart_initiation_dispatches(multipart_upload_id,dispatched,provider_upload_id)
+SELECT u.id,true,u.provider_upload_id FROM object_storage_multipart_uploads u
+JOIN object_bucket_mutations m ON m.multipart_upload_id=u.id;
+-- +goose StatementBegin
+CREATE FUNCTION guard_object_multipart_initiation_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE u object_storage_multipart_uploads%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE multipart_upload_id=OLD.multipart_upload_id) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_live',MESSAGE='Retain original initiation evidence while the provider receipt is outstanding';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_isolation',MESSAGE='Initiation dispatch requires READ COMMITTED';
+ END IF;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id;
+ PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id FOR UPDATE;
+ IF u.id IS NULL OR u.state<>'initiating' OR u.provider_upload_id<>'' OR NOT EXISTS(
+  SELECT 1 FROM object_bucket_mutations m JOIN object_buckets b ON b.id=m.bucket_id
+  WHERE m.multipart_upload_id=u.id AND m.kind='request' AND b.id=u.bucket_id AND b.account_id=u.account_id AND b.app_id=u.app_id
+  AND b.state='ready' AND b.backend_id=m.backend_id AND b.backend_fingerprint=m.backend_fingerprint AND b.physical_name=m.physical_name
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_original',MESSAGE='Initiation requires the original session receipt and placement';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.dispatched OR NEW.dispatch_token<>'' OR NEW.provider_upload_id<>'' OR u.lease_token IS NOT NULL THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_reserved',MESSAGE='Initialize dispatch evidence only with a new reservation';
+  END IF;
+ ELSIF NEW.multipart_upload_id<>OLD.multipart_upload_id OR u.lease_token IS NULL OR u.lease_token='' OR u.lease_until IS NULL OR u.lease_until<=clock_timestamp() OR NOT (
+  (NOT OLD.dispatched AND NEW.dispatched AND NEW.dispatch_token=u.lease_token AND NEW.provider_upload_id='') OR
+  (OLD.dispatched AND NEW.dispatched AND OLD.dispatch_token=u.lease_token AND NEW.dispatch_token=OLD.dispatch_token AND OLD.provider_upload_id='' AND btrim(NEW.provider_upload_id)<>'' AND NEW.provider_upload_id !~ '[[:cntrl:]]')
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_immutable',MESSAGE='Dispatch is once-only and only its live owner may record a positive reply';
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+CREATE TRIGGER object_multipart_initiation_dispatch_guard BEFORE INSERT OR UPDATE OR DELETE ON object_multipart_initiation_dispatches FOR EACH ROW EXECUTE FUNCTION guard_object_multipart_initiation_dispatch();
+-- +goose StatementBegin
+CREATE FUNCTION compose_object_multipart_initiation_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.multipart_upload_id IS NOT NULL THEN
+  INSERT INTO object_multipart_initiation_dispatches(multipart_upload_id) VALUES(NEW.multipart_upload_id);
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+CREATE TRIGGER object_multipart_initiation_dispatch_composition AFTER INSERT ON object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION compose_object_multipart_initiation_dispatch();
+-- +goose StatementBegin
+CREATE FUNCTION protect_object_multipart_initiation_result() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE d object_multipart_initiation_dispatches%ROWTYPE;
+BEGIN
+ SELECT * INTO d FROM object_multipart_initiation_dispatches WHERE multipart_upload_id=OLD.id;
+ IF d.multipart_upload_id IS NOT NULL AND OLD.state='initiating' AND (NEW.size_bytes IS DISTINCT FROM OLD.size_bytes OR NEW.part_count IS DISTINCT FROM OLD.part_count) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_intent',MESSAGE='Original initiation layout cannot change between authority checks and dispatch';
+ END IF;
+ IF d.dispatched AND d.dispatch_token<>'' AND NEW.provider_upload_id IS DISTINCT FROM OLD.provider_upload_id AND (
+  OLD.state<>'initiating' OR NEW.state<>'active' OR OLD.lease_token IS NULL OR OLD.lease_until IS NULL OR OLD.lease_until<=clock_timestamp() OR d.provider_upload_id='' OR NEW.provider_upload_id<>d.provider_upload_id
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_positive_result',MESSAGE='Activate only the durably observed original initiation reply';
+ END IF;
+ IF d.dispatched AND d.provider_upload_id='' AND OLD.provider_upload_id='' AND NEW.state IN ('completed','aborted') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_uncertain',MESSAGE='An uncertain initiation cannot be settled by an empty listing or a timeout';
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+CREATE TRIGGER object_multipart_initiation_result_guard BEFORE UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_initiation_result();
+
+
+-- ADR-590: reserve attempt identity with the transfer, claim before IO, and
+-- retain uncertain dispatch forever. Existing transfers are never adopted.
+CREATE TABLE object_multipart_part_writers (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ upload_id uuid NOT NULL REFERENCES object_storage_multipart_uploads(id) ON DELETE CASCADE,
+ part_number integer NOT NULL CHECK(part_number BETWEEN 1 AND 10000),
+ transfer_token text NOT NULL CHECK(octet_length(transfer_token) BETWEEN 1 AND 128),
+ managed boolean NOT NULL DEFAULT true,
+ dispatched boolean NOT NULL DEFAULT false,
+ settled boolean NOT NULL DEFAULT false,
+ bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE RESTRICT,
+ backend_id text NOT NULL,
+ backend_fingerprint text NOT NULL,
+ physical_name text NOT NULL,
+ UNIQUE(upload_id,part_number,transfer_token),
+ CHECK(managed OR dispatched)
+);
+INSERT INTO object_multipart_part_writers(upload_id,part_number,transfer_token,managed,dispatched,bucket_id,backend_id,backend_fingerprint,physical_name)
+SELECT g.upload_id,g.part_number,g.transfer_token,false,true,b.id,b.backend_id,b.backend_fingerprint,b.physical_name
+FROM object_storage_multipart_part_grants g JOIN object_storage_multipart_uploads u ON u.id=g.upload_id JOIN object_buckets b ON b.id=u.bucket_id
+WHERE g.transfer_token IS NOT NULL;
+ALTER TABLE object_bucket_mutations ADD COLUMN multipart_part_writer_id uuid UNIQUE REFERENCES object_multipart_part_writers(id) ON DELETE RESTRICT;
+ALTER TABLE object_bucket_mutations DROP CONSTRAINT object_mutation_single_owner;
+ALTER TABLE object_bucket_mutations ADD CONSTRAINT object_mutation_single_owner CHECK(num_nonnulls(upload_id,multipart_upload_id,multipart_part_writer_id)<=1);
+-- +goose StatementBegin
+CREATE FUNCTION guard_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE u object_storage_multipart_uploads%ROWTYPE; g object_storage_multipart_part_grants%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.dispatched AND NOT OLD.settled THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Uncertain part evidence cannot be deleted';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writers require READ COMMITTED';
+ END IF;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id;
+ PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id FOR UPDATE;
+ SELECT * INTO g FROM object_storage_multipart_part_grants WHERE upload_id=NEW.upload_id AND part_number=NEW.part_number;
+ IF u.id IS NULL OR u.bucket_id<>NEW.bucket_id OR NOT EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=u.bucket_id AND b.account_id=u.account_id AND b.app_id=u.app_id AND b.state='ready' AND b.backend_id=NEW.backend_id AND b.backend_fingerprint=NEW.backend_fingerprint AND b.physical_name=NEW.physical_name) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writer requires its original placement';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
+   RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_multipart_part_capture_fenced',MESSAGE='Capture fences new part transfer admission';
+  END IF;
+  IF NOT NEW.managed OR NEW.dispatched OR NEW.settled OR u.state<>'active' OR g.transfer_token IS DISTINCT FROM NEW.transfer_token THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Reserve part evidence only with new unfenced transfer authority';
+  END IF;
+ ELSIF (to_jsonb(NEW)-ARRAY['dispatched','settled']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['dispatched','settled']) OR OLD.settled OR NOT OLD.managed OR NOT (
+  (NOT OLD.dispatched AND NEW.dispatched AND NOT NEW.settled AND u.state='active' AND u.expires_at>clock_timestamp() AND g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token AND g.unsafe_until>clock_timestamp()) OR
+  (NEW.dispatched=OLD.dispatched AND NEW.settled AND (NOT OLD.dispatched OR g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token))
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Dispatch once; settle only the original attempt with qualified proof';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER object_multipart_part_writer_guard BEFORE INSERT OR UPDATE OR DELETE ON object_multipart_part_writers FOR EACH ROW EXECUTE FUNCTION guard_object_multipart_part_writer();
+
+CREATE FUNCTION guard_object_multipart_part_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.multipart_part_writer_id IS NOT NULL AND EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE id=OLD.multipart_part_writer_id AND NOT settled) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Settle the original part writer before deleting its receipt';
+  END IF;
+  RETURN OLD;
+ ELSIF TG_OP='UPDATE' THEN
+  IF NEW.multipart_part_writer_id IS NOT NULL OR OLD.multipart_part_writer_id IS NOT NULL THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Original part receipts are immutable';
+  END IF;
+ ELSIF NEW.multipart_part_writer_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM object_multipart_part_writers d WHERE d.id=NEW.multipart_part_writer_id AND d.id=NEW.id AND d.managed AND d.dispatched AND NOT d.settled AND d.bucket_id=NEW.bucket_id AND d.backend_id=NEW.backend_id AND d.backend_fingerprint=NEW.backend_fingerprint AND d.physical_name=NEW.physical_name AND NEW.kind='request') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Bind the receipt to its original claimed part attempt';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER object_multipart_part_receipt_guard BEFORE INSERT OR UPDATE OR DELETE ON object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION guard_object_multipart_part_receipt();
+
+CREATE FUNCTION compose_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.dispatched AND NOT OLD.dispatched THEN
+  INSERT INTO object_bucket_mutations(id,bucket_id,kind,backend_id,backend_fingerprint,physical_name,multipart_part_writer_id)
+  VALUES(NEW.id,NEW.bucket_id,'request',NEW.backend_id,NEW.backend_fingerprint,NEW.physical_name,NEW.id);
+ ELSIF NEW.settled AND NOT OLD.settled THEN
+  UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL WHERE upload_id=NEW.upload_id AND part_number=NEW.part_number AND transfer_token=NEW.transfer_token;
+  DELETE FROM object_bucket_mutations WHERE multipart_part_writer_id=NEW.id;
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER object_multipart_part_writer_composition AFTER UPDATE ON object_multipart_part_writers FOR EACH ROW EXECUTE FUNCTION compose_object_multipart_part_writer();
+
+CREATE FUNCTION protect_object_multipart_part_transfer() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP<>'INSERT' AND EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE upload_id=OLD.upload_id AND part_number=OLD.part_number AND transfer_token=OLD.transfer_token AND dispatched AND NOT settled) AND (TG_OP='DELETE' OR NEW IS DISTINCT FROM OLD) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='An uncertain dispatched transfer cannot expire, change or be replaced';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER object_multipart_part_transfer_guard BEFORE UPDATE OR DELETE ON object_storage_multipart_part_grants FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_part_transfer();
+
+CREATE FUNCTION compose_object_multipart_part_transfer() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP<>'INSERT' AND OLD.transfer_token IS NOT NULL AND (TG_OP='DELETE' OR NEW.transfer_token IS DISTINCT FROM OLD.transfer_token) THEN
+  UPDATE object_multipart_part_writers SET settled=true WHERE upload_id=OLD.upload_id AND part_number=OLD.part_number AND transfer_token=OLD.transfer_token AND NOT dispatched AND NOT settled;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ IF NEW.transfer_token IS NOT NULL AND (TG_OP='INSERT' OR NEW.transfer_token IS DISTINCT FROM OLD.transfer_token) THEN
+  INSERT INTO object_multipart_part_writers(upload_id,part_number,transfer_token,bucket_id,backend_id,backend_fingerprint,physical_name)
+  SELECT NEW.upload_id,NEW.part_number,NEW.transfer_token,b.id,b.backend_id,b.backend_fingerprint,b.physical_name FROM object_storage_multipart_uploads u JOIN object_buckets b ON b.id=u.bucket_id WHERE u.id=NEW.upload_id;
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER object_multipart_part_transfer_composition AFTER INSERT OR UPDATE OR DELETE ON object_storage_multipart_part_grants FOR EACH ROW EXECUTE FUNCTION compose_object_multipart_part_transfer();
+
+CREATE FUNCTION protect_object_multipart_part_session() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF (NEW.state IN ('completed','aborted') AND EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE upload_id=OLD.id AND dispatched AND NOT settled)) OR (EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE upload_id=OLD.id AND NOT settled) AND (
+  (NEW.account_id,NEW.app_id,NEW.bucket_id,NEW.object_key,NEW.provider_upload_id,NEW.encryption_snapshot,NEW.protection_snapshot) IS DISTINCT FROM
+  (OLD.account_id,OLD.app_id,OLD.bucket_id,OLD.object_key,OLD.provider_upload_id,OLD.encryption_snapshot,OLD.protection_snapshot)
+ )) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Uncertain independent writers retain their original parent intent';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER object_multipart_part_session_guard BEFORE UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_part_session();
+-- +goose StatementEnd
+
+-- +goose Up
+-- ADR-590: copy intent is recorded only in the original once-only dispatch.
+-- Existing uncertain attempts remain without intent; they cannot be adopted.
+ALTER TABLE object_multipart_part_writers ADD COLUMN copy_intent jsonb
+ CHECK(copy_intent IS NULL OR (dispatched AND COALESCE((jsonb_typeof(copy_intent)='object' AND copy_intent->>'schema'='1'),false)));
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION guard_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE u object_storage_multipart_uploads%ROWTYPE; g object_storage_multipart_part_grants%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.dispatched AND NOT OLD.settled THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Uncertain part evidence cannot be deleted';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writers require READ COMMITTED';
+ END IF;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id;
+ PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id FOR UPDATE;
+ SELECT * INTO g FROM object_storage_multipart_part_grants WHERE upload_id=NEW.upload_id AND part_number=NEW.part_number;
+ IF u.id IS NULL OR u.bucket_id<>NEW.bucket_id OR NOT EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=u.bucket_id AND b.account_id=u.account_id AND b.app_id=u.app_id AND b.state='ready' AND b.backend_id=NEW.backend_id AND b.backend_fingerprint=NEW.backend_fingerprint AND b.physical_name=NEW.physical_name) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writer requires its original placement';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
+   RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_multipart_part_capture_fenced',MESSAGE='Capture fences new part transfer admission';
+  END IF;
+  IF NOT NEW.managed OR NEW.dispatched OR NEW.settled OR u.state<>'active' OR g.transfer_token IS DISTINCT FROM NEW.transfer_token THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Reserve part evidence only with new unfenced transfer authority';
+  END IF;
+ ELSIF (to_jsonb(NEW)-ARRAY['dispatched','settled','copy_intent']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['dispatched','settled','copy_intent']) OR OLD.settled OR NOT OLD.managed OR NOT (
+  (OLD.copy_intent IS NULL AND NOT OLD.dispatched AND NEW.dispatched AND NOT NEW.settled AND u.state='active' AND u.expires_at>clock_timestamp() AND g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token AND g.unsafe_until>clock_timestamp()) OR
+  (NEW.copy_intent IS NOT DISTINCT FROM OLD.copy_intent AND NEW.dispatched=OLD.dispatched AND NEW.settled AND (NOT OLD.dispatched OR g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token))
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Dispatch once; settle only the original attempt with qualified proof';
+ END IF;
+ IF TG_OP='UPDATE' AND NOT OLD.dispatched AND NEW.dispatched AND NEW.copy_intent IS NOT NULL AND NOT COALESCE((
+  NEW.copy_intent->>'destination_key'=u.object_key AND NEW.copy_intent->>'provider_upload_id'=u.provider_upload_id
+  AND (NEW.copy_intent->>'expected_size')::bigint BETWEEN 1 AND g.max_bytes
+  AND (NEW.copy_intent->>'source_size')::bigint >= (NEW.copy_intent->>'expected_size')::bigint
+  AND NEW.copy_intent->>'source_etag'<>'' AND NEW.copy_intent->>'source_key'<>''
+  AND ((g.source_bucket_id IS NULL AND NEW.copy_intent->>'source_bucket_id'=u.bucket_id::text)
+   OR (NEW.copy_intent->>'source_bucket_id'=g.source_bucket_id::text AND NEW.copy_intent->>'source_key'=g.source_key))
+  AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.id::text=NEW.copy_intent->>'source_bucket_id' AND b.account_id=u.account_id AND b.state='ready'
+   AND b.backend_id=NEW.copy_intent->>'source_backend_id' AND b.backend_fingerprint=NEW.copy_intent->>'source_backend_fingerprint' AND b.physical_name=NEW.copy_intent->>'source_physical_name')
+  AND (((NEW.copy_intent->>'has_range')::boolean AND (NEW.copy_intent->>'range_first')::bigint>=0 AND (NEW.copy_intent->>'range_last')::bigint<(NEW.copy_intent->>'source_size')::bigint
+    AND (NEW.copy_intent->>'expected_size')::bigint=(NEW.copy_intent->>'range_last')::bigint-(NEW.copy_intent->>'range_first')::bigint+1)
+   OR (NOT (NEW.copy_intent->>'has_range')::boolean AND (NEW.copy_intent->>'range_first')::bigint=0 AND (NEW.copy_intent->>'range_last')::bigint=0 AND NEW.copy_intent->>'expected_size'=NEW.copy_intent->>'source_size'))
+ ),false) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Copy intent requires the original measured source, range and destination';
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+
+-- +goose Up
+-- ADR-590: preserve intended PUT size and signed hash; observe validated body
+-- identity without inventing provider ownership or draining unknown writes.
+ALTER TABLE object_multipart_part_writers
+ ADD COLUMN put_intent jsonb CHECK(put_intent IS NULL OR (dispatched AND copy_intent IS NULL AND COALESCE(put_intent->'schema'='1'::jsonb,false))),
+ ADD COLUMN body_sha256 text NOT NULL DEFAULT '' CHECK(body_sha256='' OR (put_intent IS NOT NULL AND body_sha256 ~ '^[0-9a-f]{64}$'));
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION guard_object_multipart_part_writer() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE u object_storage_multipart_uploads%ROWTYPE; g object_storage_multipart_part_grants%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.dispatched AND NOT OLD.settled THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Uncertain part evidence cannot be deleted';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writers require READ COMMITTED';
+ END IF;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id;
+ PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id FOR UPDATE;
+ SELECT * INTO g FROM object_storage_multipart_part_grants WHERE upload_id=NEW.upload_id AND part_number=NEW.part_number;
+ IF u.id IS NULL OR u.bucket_id<>NEW.bucket_id OR NOT EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=u.bucket_id AND b.account_id=u.account_id AND b.app_id=u.app_id AND b.state='ready' AND b.backend_id=NEW.backend_id AND b.backend_fingerprint=NEW.backend_fingerprint AND b.physical_name=NEW.physical_name) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writer requires its original placement';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
+   RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_multipart_part_capture_fenced',MESSAGE='Capture fences new part transfer admission';
+  END IF;
+  IF NOT NEW.managed OR NEW.dispatched OR NEW.settled OR u.state<>'active' OR g.transfer_token IS DISTINCT FROM NEW.transfer_token THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Reserve part evidence only with new unfenced transfer authority';
+  END IF;
+ ELSIF (to_jsonb(NEW)-ARRAY['dispatched','settled','copy_intent','put_intent','body_sha256']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['dispatched','settled','copy_intent','put_intent','body_sha256']) OR OLD.settled OR NOT OLD.managed OR NOT (
+  (OLD.copy_intent IS NULL AND OLD.put_intent IS NULL AND OLD.body_sha256='' AND NEW.body_sha256='' AND NOT OLD.dispatched AND NEW.dispatched AND NOT NEW.settled AND u.state='active' AND u.expires_at>clock_timestamp() AND g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token AND g.unsafe_until>clock_timestamp()) OR
+  (NEW.copy_intent IS NOT DISTINCT FROM OLD.copy_intent AND NEW.put_intent IS NOT DISTINCT FROM OLD.put_intent AND NEW.body_sha256=OLD.body_sha256 AND NEW.dispatched=OLD.dispatched AND NEW.settled AND (NOT OLD.dispatched OR g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token))
+  OR (OLD.dispatched AND NOT OLD.settled AND NEW.dispatched AND NOT NEW.settled AND OLD.put_intent IS NOT NULL AND OLD.copy_intent IS NULL
+   AND NEW.put_intent IS NOT DISTINCT FROM OLD.put_intent AND NEW.copy_intent IS NOT DISTINCT FROM OLD.copy_intent
+   AND (OLD.body_sha256='' OR OLD.body_sha256=NEW.body_sha256) AND NEW.body_sha256 ~ '^[0-9a-f]{64}$' AND g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token
+   AND (OLD.put_intent->>'expected_sha256'='' OR OLD.put_intent->>'expected_sha256'=NEW.body_sha256))
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Dispatch once; settle only the original attempt with qualified proof';
+ END IF;
+ IF TG_OP='UPDATE' AND NOT OLD.dispatched AND NEW.dispatched AND NEW.copy_intent IS NOT NULL AND NOT COALESCE((
+  NEW.copy_intent->>'destination_key'=u.object_key AND NEW.copy_intent->>'provider_upload_id'=u.provider_upload_id
+  AND (NEW.copy_intent->>'expected_size')::bigint BETWEEN 1 AND g.max_bytes
+  AND (NEW.copy_intent->>'source_size')::bigint >= (NEW.copy_intent->>'expected_size')::bigint
+  AND NEW.copy_intent->>'source_etag'<>'' AND NEW.copy_intent->>'source_key'<>''
+  AND ((g.source_bucket_id IS NULL AND NEW.copy_intent->>'source_bucket_id'=u.bucket_id::text)
+   OR (NEW.copy_intent->>'source_bucket_id'=g.source_bucket_id::text AND NEW.copy_intent->>'source_key'=g.source_key))
+  AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.id::text=NEW.copy_intent->>'source_bucket_id' AND b.account_id=u.account_id AND b.state='ready'
+   AND b.backend_id=NEW.copy_intent->>'source_backend_id' AND b.backend_fingerprint=NEW.copy_intent->>'source_backend_fingerprint' AND b.physical_name=NEW.copy_intent->>'source_physical_name')
+  AND (((NEW.copy_intent->>'has_range')::boolean AND (NEW.copy_intent->>'range_first')::bigint>=0 AND (NEW.copy_intent->>'range_last')::bigint<(NEW.copy_intent->>'source_size')::bigint
+    AND (NEW.copy_intent->>'expected_size')::bigint=(NEW.copy_intent->>'range_last')::bigint-(NEW.copy_intent->>'range_first')::bigint+1)
+   OR (NOT (NEW.copy_intent->>'has_range')::boolean AND (NEW.copy_intent->>'range_first')::bigint=0 AND (NEW.copy_intent->>'range_last')::bigint=0 AND NEW.copy_intent->>'expected_size'=NEW.copy_intent->>'source_size'))
+ ),false) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Copy intent requires the original measured source, range and destination';
+ END IF;
+ IF TG_OP='UPDATE' AND NOT OLD.dispatched AND NEW.dispatched AND NEW.put_intent IS NOT NULL AND NOT COALESCE((
+  NEW.copy_intent IS NULL AND g.source_bucket_id IS NULL
+  AND NEW.put_intent->>'destination_key'=u.object_key AND NEW.put_intent->>'provider_upload_id'=u.provider_upload_id
+  AND ((g.url_credential_id IS NULL AND (NEW.put_intent->>'expected_size')::bigint BETWEEN 1 AND g.max_bytes)
+   OR (g.url_credential_id IS NOT NULL AND u.part_count>0 AND u.part_size_bytes>0 AND u.size_bytes>0
+    AND NEW.part_number BETWEEN 1 AND u.part_count
+    AND (NEW.put_intent->>'expected_size')::bigint=least(u.part_size_bytes,u.size_bytes-(NEW.part_number-1)::bigint*u.part_size_bytes)))
+  AND (NEW.put_intent->>'expected_sha256'='' OR NEW.put_intent->>'expected_sha256' ~ '^[0-9a-f]{64}$')
+ ),false) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='PUT intent requires its original destination and admitted size';
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION assert_clone_configuration_mutable(project uuid) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+    guard_state text;
+BEGIN
+    IF project IS NULL THEN RETURN; END IF;
+    -- A locking read also prevents repeatable-read writers with a snapshot
+    -- predating acquisition from bypassing the committed hold.
+    SELECT state INTO guard_state FROM project_environment_clone_configuration_guards
+    WHERE project_id = project FOR SHARE;
+    IF NOT FOUND THEN
+        -- The project BEFORE DELETE guard already admitted this deletion.
+        -- FK cascades can remove the guard before dependent rows are cleaned.
+        -- A live project with missing evidence must still fail closed.
+        IF NOT EXISTS (SELECT 1 FROM projects WHERE id = project) THEN RETURN; END IF;
+        RAISE EXCEPTION 'project configuration guard is missing'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
+    END IF;
+    IF guard_state <> 'open' THEN
+        RAISE EXCEPTION 'source configuration is held for stage capture'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_write_fenced';
+    END IF;
+END;
+$$;
+-- +goose StatementEnd

@@ -1,6 +1,6 @@
 package gateway
 
-// adr: 636 — the edge health answer follows the app's last instance.
+// adr: 641 — the edge health answer follows the app's last instance.
 
 import (
 	"context"

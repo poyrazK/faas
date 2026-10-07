@@ -226,6 +226,8 @@ type MemStore struct {
 	objectS3Credentials         map[string]ObjectS3Credential
 	objectS3CopySources         map[string]ObjectS3CopySource
 	objectMultipartUploads      map[string]ObjectMultipartUpload
+	objectMultipartInitiations  map[string]ObjectMultipartInitiation
+	objectMultipartPartWriters  map[multipartPartWriterKey]multipartPartWriter
 	objectMultipartPartGrants   map[string]map[int32]int64
 	objectMultipartTransfers    map[string]map[int32]multipartPartTransfer
 	objectUploadRoutes          map[string]ObjectUploadRoute
@@ -401,6 +403,7 @@ type MemStore struct {
 	workflowRuns             map[string]WorkflowRun
 	workflowRunCreateKeys    map[workflowRunCreateKey]workflowRunCreateKeyEntry
 	workflowSchedules        map[string]WorkflowScheduleCursor
+	workflowTenantSchedules  map[string]WorkflowScheduleCursor
 	automationVersion        int64
 	automations              map[string]Automation
 	automationRevisions      map[string][]AutomationRevision
@@ -21204,6 +21207,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for uploadID, upload := range m.objectMultipartUploads {
 		if upload.AccountID == id {
 			delete(m.objectMultipartUploads, uploadID)
+			delete(m.objectMultipartInitiations, uploadID)
+			for key := range m.objectMultipartPartWriters {
+				if key.upload == uploadID {
+					delete(m.objectMultipartPartWriters, key)
+				}
+			}
 			delete(m.objectMultipartPartGrants, uploadID)
 			delete(m.objectMultipartTransfers, uploadID)
 		}

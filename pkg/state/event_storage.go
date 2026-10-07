@@ -31,6 +31,13 @@ type EventStorageUsageStore interface {
 	EventStorageUsage(context.Context, string) (api.EventStorageUsageResponse, error)
 }
 
+// TenantPublishedEventStore appends a tenant-authenticated event after
+// validating that the tenant is still linked to the target app. Implementors
+// keep the link check and durable append in one critical section/transaction.
+type TenantPublishedEventStore interface {
+	AppendTenantPublishedEvent(context.Context, string, string, string, string, []byte, *string) error
+}
+
 func eventStorageExceeded(l api.EventStorageLimits, count, size int64) error {
 	if count > l.RetainedEvents {
 		return &EventStorageCapacityError{Resource: "events", Limit: l.RetainedEvents, Observed: count}
@@ -53,7 +60,11 @@ func customerPublishedEvent(kind string, payload []byte) bool {
 // account row exclusively; a share lock keeps the admission plan current.
 // The outbox trigger captures subscriptions in the same transaction as the
 // ledger insert. A quota failure rolls both back. Duplicates add neither row.
-func (s *PgStore) appendCustomerPublishedEvent(ctx context.Context, actor string, accountID string, payload []byte, traceID *string, at *time.Time) error {
+func (s *PgStore) AppendTenantPublishedEvent(ctx context.Context, actor, accountID, tenantID, appID string, payload []byte, traceID *string) error {
+	return s.appendCustomerPublishedEvent(ctx, actor, accountID, tenantID, appID, payload, traceID, nil)
+}
+
+func (s *PgStore) appendCustomerPublishedEvent(ctx context.Context, actor string, accountID, tenantID, appID string, payload []byte, traceID *string, at *time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -72,12 +83,24 @@ func (s *PgStore) appendCustomerPublishedEvent(ctx context.Context, actor string
 	if !ok {
 		return ErrInvalidArgument
 	}
+	if tenantID != "" && !api.Plan(plan).WorkflowsAllowed() {
+		return api.ErrPlanWorkflowsNotAllowed(api.Plan(plan))
+	}
 	if err = q.EventStorageLockAccount(ctx, tx, id); err != nil {
 		return err
 	}
 	var identity publishedEventIdentity
 	if err = json.Unmarshal(payload, &identity); err != nil {
 		return err
+	}
+	if tenantID != "" {
+		if identity.AppID == "" || identity.PlatformTenantID == "" || identity.TenantEventID == "" ||
+			canonicalMemUUID(identity.AppID) != canonicalMemUUID(appID) || canonicalMemUUID(identity.PlatformTenantID) != canonicalMemUUID(tenantID) {
+			return ErrNotFound
+		}
+		if err = lockTenantPublishedEventBinding(ctx, tx, accountID, tenantID, appID); err != nil {
+			return err
+		}
 	}
 	existing, err := q.EventStorageIdentity(ctx, tx, sqlc.EventStorageIdentityParams{AccountID: id, Source: identity.Source, EventID: identity.ID, EventType: identity.Type, SchemaVersion: identity.SchemaVersion, EventData: identity.Data})
 	if err == nil {
@@ -109,6 +132,44 @@ func (s *PgStore) appendCustomerPublishedEvent(ctx context.Context, actor string
 	return tx.Commit(ctx)
 }
 
+// lockTenantPublishedEventBinding serializes event acceptance with tenant
+// suspension, app maintenance/deletion, and link revocation. The held row
+// locks live through the events insert and its fanout trigger.
+func lockTenantPublishedEventBinding(ctx context.Context, tx pgx.Tx, accountID, tenantID, appID string) error {
+	var id string
+	if err := tx.QueryRow(ctx, `SELECT id FROM platform_tenants
+		WHERE id=$1::uuid AND account_id=$2::uuid AND status='active' FOR SHARE`, tenantID, accountID).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if err := tx.QueryRow(ctx, `SELECT id FROM apps
+		WHERE id=$1::uuid AND account_id=$2::uuid AND status<>'deleted'
+		  AND platform_tenant_required AND NOT maintenance_mode FOR SHARE`, appID, accountID).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	err := tx.QueryRow(ctx, `SELECT id FROM api_consumers
+		WHERE account_id=$1::uuid AND app_id=$2::uuid AND platform_tenant_id=$3::uuid
+		  AND status='active' AND revoked_at IS NULL FOR SHARE`, accountID, appID, tenantID).Scan(&id)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	err = tx.QueryRow(ctx, `SELECT id FROM tenant_surfaces
+		WHERE account_id=$1::uuid AND app_id=$2::uuid AND platform_tenant_id=$3::uuid
+		  AND status='active' FOR SHARE`, accountID, appID, tenantID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
 func (s *PgStore) EventStorageUsage(ctx context.Context, accountID string) (api.EventStorageUsageResponse, error) {
 	row, err := sqlc.New().EventStoragePublicUsage(ctx, s.pool, mustPgUUID(accountID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -128,6 +189,38 @@ func (m *MemStore) EventStorageUsage(_ context.Context, accountID string) (api.E
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.eventStorageUsageLocked(accountID)
+}
+
+func (m *MemStore) AppendTenantPublishedEvent(_ context.Context, actor, accountID, tenantID, appID string, payload []byte, traceID *string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var identity publishedEventIdentity
+	if json.Unmarshal(payload, &identity) != nil || identity.AppID == "" || identity.PlatformTenantID == "" || identity.TenantEventID == "" ||
+		!sameMemUUID(identity.AppID, appID) || !sameMemUUID(identity.PlatformTenantID, tenantID) ||
+		!m.workflowOutboundTenantLinkActiveLocked(accountID, tenantID, appID) {
+		return ErrNotFound
+	}
+	app, ok := m.apps[appID]
+	if !ok || !app.PlatformTenantRequired || app.MaintenanceMode || app.Status == AppDeleted || !sameMemUUID(app.AccountID, accountID) {
+		return ErrNotFound
+	}
+	account, ok := m.accounts[accountID]
+	if !ok {
+		for _, candidate := range m.accounts {
+			if sameMemUUID(candidate.ID, accountID) {
+				account, ok = candidate, true
+				break
+			}
+		}
+	}
+	if !ok || !account.Active() {
+		return ErrNotFound
+	}
+	if !account.Plan.WorkflowsAllowed() {
+		return api.ErrPlanWorkflowsNotAllowed(account.Plan)
+	}
+	subject := accountID
+	return m.appendEventLocked(actor, "event.published", &subject, payload, traceID, time.Now().UTC())
 }
 
 func (m *MemStore) eventStorageUsageLocked(accountID string) (api.EventStorageUsageResponse, error) {

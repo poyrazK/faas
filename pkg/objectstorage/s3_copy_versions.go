@@ -42,7 +42,7 @@ func validCopySnapshotVersion(metadata middleware.Metadata, returned, expected s
 
 func validCopyResponseSource(metadata middleware.Metadata, returned, expected string) bool {
 	response, ok := awsmiddleware.GetRawResponse(metadata).(*smithyhttp.Response)
-	if !ok || response == nil || response.Response == nil || len(response.Header.Values("X-Amz-Copy-Source-Version-Id")) > 1 {
+	if !ok || response == nil || response.Response == nil || response.StatusCode != http.StatusOK || len(response.Header.Values("X-Amz-Copy-Source-Version-Id")) > 1 {
 		return false
 	}
 	// Some compatible providers omit this optional header. The request still

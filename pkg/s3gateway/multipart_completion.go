@@ -155,7 +155,7 @@ func (h *Handler) executeMultipartCompletion(w http.ResponseWriter, r *http.Requ
 	}
 	callCtx, cancel := context.WithTimeout(r.Context(), api.ObjectMultipartOperationTimeout)
 	defer cancel()
-	err := objectstorageactivity.Run(callCtx, h.store, req.bucket, func(mutationCtx context.Context) error {
+	err := objectstorageactivity.RunMultipart(callCtx, h.store, store, req.bucket, u, func(mutationCtx context.Context) error {
 		return objectstorage.CompleteMultipart(mutationCtx, req.provider, req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
 			SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: toProviderParts(u.Parts),
 		}, u.CompletionConditions)

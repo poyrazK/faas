@@ -220,6 +220,7 @@ func TestTrackedUploadRejectsReadOnlyKeyAndDefinitiveFailure(t *testing.T) {
 type failingTrackedReceiptStore struct {
 	state.ObjectUploadRouteStore
 	state.ObjectTrackedUploadStore
+	state.ObjectTrackedUploadMutationStore
 }
 
 func (s *failingTrackedReceiptStore) FinishTrackedObjectUpload(context.Context, state.ObjectUploadCompletion) (state.ObjectUploadCompletion, error) {
@@ -227,7 +228,7 @@ func (s *failingTrackedReceiptStore) FinishTrackedObjectUpload(context.Context, 
 }
 func TestTrackedUploadReceiptPersistenceFailureStaysRecoverable(t *testing.T) {
 	f, p := newTrackedUploadFixture(t)
-	f.handler.(*uploadHandler).routes = &failingTrackedReceiptStore{ObjectUploadRouteStore: f.store, ObjectTrackedUploadStore: f.store}
+	f.handler.(*uploadHandler).routes = &failingTrackedReceiptStore{ObjectUploadRouteStore: f.store, ObjectTrackedUploadStore: f.store, ObjectTrackedUploadMutationStore: f.store}
 	res := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "avatar", "image/png", "database-failure")
 	if res.Code != http.StatusServiceUnavailable || p.writes != 1 {
 		t.Fatal(res.Code, p.writes, res.Body.String())
@@ -238,6 +239,14 @@ func TestTrackedUploadReceiptPersistenceFailureStaysRecoverable(t *testing.T) {
 	}
 	if _, err = p.ConfirmTrackedObject(context.Background(), p.bucket, c.Key, c.ID, c.Bytes); err != nil {
 		t.Fatal("receipt missing from accepted object", err)
+	}
+	bucket, err := f.store.GetObjectBucket(t.Context(), c.AccountID, c.AppID, c.BucketID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := f.store.AcquireObjectBucketWriteFence(t.Context(), bucket, c.ID)
+	if err != nil || held.Requests != 1 || held.Uploads != 1 {
+		t.Fatal("provider ACK erased unsettled receipt", held, err)
 	}
 	replay := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "avatar", "image/png", "database-failure")
 	if replay.Code != http.StatusConflict || p.writes != 1 {

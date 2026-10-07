@@ -101,7 +101,7 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 
 	// Each row must be in its terminal state. A WAKING row past the
 	// restore + cold-boot budget is also past the cold-boot budget, so the
-	// same sweep fails its COLD_BOOTING fallback row (ADR-635).
+	// same sweep fails its COLD_BOOTING fallback row (ADR-640).
 	if got := rowState(t, store, waking.ID); got != string(state.StateFailed) {
 		t.Errorf("WAKING row → %s, want FAILED via COLD_BOOTING", got)
 	}

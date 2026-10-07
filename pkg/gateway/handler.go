@@ -979,7 +979,7 @@ type Handler struct {
 	headWakes bool
 	// healthState stores the last known wake outcome per app. It is
 	// process-local, so it is only the fallback when healthOutcomes (the
-	// app's last instance, ADR-636) is unwired or unavailable.
+	// app's last instance, ADR-641) is unwired or unavailable.
 	healthState    sync.Map
 	healthOutcomes *healthOutcomeCache
 	// mirrorRoundTripper (issue #72 / ADR-124 PR-A3) is the

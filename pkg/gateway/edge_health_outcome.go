@@ -1,6 +1,6 @@
 package gateway
 
-// Durable edge health (ADR-636, H5-6). The wake outcome a gateway observes is
+// Durable edge health (ADR-641, H5-6). The wake outcome a gateway observes is
 // process-local, so a restarted gateway, or a compute gateway that did not run
 // the app's last wake, answered 503 "last wake status: unknown" for every
 // parked app until real traffic woke it. The app's most recent instance is

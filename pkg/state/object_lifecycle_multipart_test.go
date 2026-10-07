@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -22,11 +23,9 @@ func TestObjectLifecycleMultipartMem(t *testing.T) {
 
 // adr: 550
 func TestObjectLifecycleMultipartPG(t *testing.T) {
-	s, pool, ctx := pgStoreWithPool(t)
+	s, pool, _ := pgStoreWithPool(t)
 	objectLifecycleMultipartSuite(t, s, func(id string) {
-		if _, err := pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET created_at=created_at-interval '4 days' WHERE id=$1`, id); err != nil {
-			t.Fatal(err)
-		}
+		ageMultipartCreationFixture(t, pool, id)
 	}, func() state.ObjectLifecycleStore { return state.NewPgStore(pool) })
 }
 
@@ -193,9 +192,7 @@ func TestObjectLifecycleMultipartBoundsPG(t *testing.T) {
 	}
 	// Completion wins after discovery: advancing past it must not rewrite it
 	// into an abort, even if its original creation time would now be eligible.
-	if _, err = pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET created_at=created_at-interval '4 days' WHERE id=$1`, rows[0].ID); err != nil {
-		t.Fatal(err)
-	}
+	ageMultipartCreationFixture(t, pool, rows[0].ID)
 	first, err = s.GetObjectMultipartUpload(ctx, b.AccountID, b.AppID, b.ID, rows[0].ID)
 	if err != nil {
 		t.Fatal(err)
@@ -253,5 +250,28 @@ func TestObjectLifecycleMultipartPhaseTransition(t *testing.T) {
 				t.Fatal("empty multipart discovery did not complete", j, err)
 			}
 		})
+	}
+}
+
+// Time travel only this isolated fixture; production creation time stays immutable.
+func ageMultipartCreationFixture(t *testing.T, pool *pgxpool.Pool, id string) {
+	t.Helper()
+	ctx := t.Context()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads DISABLE TRIGGER object_multipart_bound_journal`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE object_storage_multipart_uploads SET created_at=created_at-interval '4 days' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads ENABLE TRIGGER object_multipart_bound_journal`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -1,8 +1,9 @@
 from typing import Literal
 
-WorkerScalingMetric = Literal["queue_depth", "queue_lag"]
+WorkerScalingMetric = Literal["custom", "queue_depth", "queue_lag"]
 
 WORKER_SCALING_METRIC_VALUES: set[WorkerScalingMetric] = {
+    "custom",
     "queue_depth",
     "queue_lag",
 }

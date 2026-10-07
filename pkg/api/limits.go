@@ -204,6 +204,13 @@ const (
 	OCIHealthcheckDurationMaxSeconds   = int64((1<<63 - 1) / time.Second)
 )
 
+// Workflow coordinator attempts use the positive PostgreSQL integer domain.
+const (
+	OperationWorkflowClaimsMaxPerRun   = 1<<31 - 1
+	OperationWorkflowStepAttemptsMax   = 1<<31 - 1
+	OperationWorkflowStepErrorMaxBytes = 4096
+)
+
 // Operations protocol limits apply before customer schemas are evaluated.
 const (
 	OperationJSONMaxDepth                      = 64

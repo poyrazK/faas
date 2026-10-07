@@ -27,9 +27,14 @@ class ObjectStorageUsageResponse:
     """Current UTC-month accounting, customer charge estimate, billing rollout state, and operator safety policy."""
 
     usage: ObjectStorageUsage
-    """Account-wide usage and reserved capacity. Costs are EUR millicents, not a customer invoice."""
+    """Account-wide usage and reserved capacity. In gateway_safety_v1 requests count durable provider attempts and
+    egress counts full response lengths reserved before forwarding; disconnects retain reservations. Fields named in
+    unavailable_meters are unknown, their numeric placeholders are not measured zeros and must not be billed. Legacy
+    costs are EUR millicents, not a customer invoice."""
     policy: ObjectStoragePolicy
-    """Operator safety limits; zero values mean unconfigured and block signing."""
+    """Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit
+    gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other
+    budgets remain positive and finite."""
     billing_mode: ObjectStorageUsageResponseBillingMode
     """Whether finalized object-storage charges are disabled, audited locally, or sent to the billing provider."""
     charges: ObjectStorageCharge | Unset = UNSET

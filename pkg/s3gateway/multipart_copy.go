@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -146,7 +147,25 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 	if req.copySource == nil && !h.recordProviderRequest(w, r, req) {
 		return
 	}
+	receipt, err := objectstorageactivity.DispatchMultipartPartCopy(ctx, h.store, transfers, req.bucket, upload.ID, c.PartNumber, token, multipartPartCopyIntent(sourceReq.bucket, c, source, size))
+	if err != nil {
+		h.providerError(w, r, req, err, upload.Key)
+		return
+	}
 	safeToSettle = false
+	ctx = objectstorage.WithMultipartCopyReadRecorder(ctx, func(ctx context.Context, bytes int64) error {
+		if err := objectstorage.RecordGatewayProviderRequest(ctx, h.requestMetrics, sourceReq.bucket.ID, h.now().UTC(), h.registry.Accounting); err != nil {
+			return err
+		}
+		if h.registry.Accounting.GatewaySafety() {
+			metrics, ok := h.requestMetrics.(state.ObjectStorageGatewayEgressStore)
+			if !ok {
+				return objectstorage.ErrConfiguration
+			}
+			return metrics.ReserveObjectStorageGatewayEgress(ctx, sourceReq.bucket.ID, bytes, h.now().UTC(), h.registry.Accounting)
+		}
+		return nil
+	})
 	var result objectstorage.CopyObjectResult
 	if req.copySource != nil {
 		result, err = req.provider.(objectstorage.CrossBucketMultipartPartCopier).CopyCrossBucketMultipartPart(ctx, req.copySource.PhysicalName, req.bucket.PhysicalName, c, source)
@@ -157,7 +176,14 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 	}
 	if err != nil {
 		safeToSettle = errors.Is(err, objectstorage.ErrWriteRejected)
-		if !safeToSettle {
+		if safeToSettle {
+			safeToSettle = receipt.MultipartPartWriterID == ""
+			if finishErr := objectstorageactivity.FinishMultipartPart(ctx, h.store, transfers, receipt); finishErr != nil {
+				h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
+				return
+			}
+		}
+		if !errors.Is(err, objectstorage.ErrWriteRejected) {
 			h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
 		} else if errors.Is(err, objectstorage.ErrPreconditionFailed) {
 			h.providerHTTPError(w, r, req, http.StatusPreconditionFailed, c.SourceKey)
@@ -170,7 +196,11 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
 		return
 	}
-	safeToSettle = true
+	if err := objectstorageactivity.FinishMultipartPart(ctx, h.store, transfers, receipt); err != nil {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
+		return
+	}
+	safeToSettle = receipt.MultipartPartWriterID == ""
 	if sourceID != "" {
 		w.Header().Set("X-Amz-Copy-Source-Version-Id", sourceID)
 	}
@@ -186,4 +216,20 @@ type copyMultipartPartResult struct {
 	XMLNS        string   `xml:"xmlns,attr"`
 	ETag         string   `xml:"ETag"`
 	LastModified string   `xml:"LastModified,omitempty"`
+}
+
+func multipartPartCopyIntent(b state.ObjectBucket, c objectstorage.MultipartPartCopyRequest, s objectstorage.CopySourceSnapshot, size int64) state.ObjectMultipartPartCopyIntent {
+	i := state.ObjectMultipartPartCopyIntent{Schema: 1, SourceBucketID: b.ID, SourceBackendID: b.BackendID, SourceBackendFingerprint: b.BackendFingerprint, SourcePhysicalName: b.PhysicalName, SourceKey: c.SourceKey, SourceVersionID: s.ProviderVersionID, SourceRequestedVersionID: c.SourceProviderVersionID, SourceETag: s.ETag, SourceSize: s.SizeBytes, DestinationKey: c.Key, ProviderUploadID: c.ProviderUploadID, ExpectedSize: size, IfMatch: c.Conditions.IfMatch, IfNoneMatch: c.Conditions.IfNoneMatch}
+	if c.Range != nil {
+		i.HasRange = true
+		i.RangeFirst = c.Range.First
+		i.RangeLast = c.Range.Last
+	}
+	if c.Conditions.IfModifiedSince != nil {
+		i.IfModifiedSince = c.Conditions.IfModifiedSince.UTC().Format(time.RFC3339Nano)
+	}
+	if c.Conditions.IfUnmodifiedSince != nil {
+		i.IfUnmodifiedSince = c.Conditions.IfUnmodifiedSince.UTC().Format(time.RFC3339Nano)
+	}
+	return i
 }

@@ -24,7 +24,7 @@ type teardownAccountingCase struct {
 }
 
 // retryPlan returns the RAM-counting state a failed teardown leaves behind
-// and the operation that later confirms it. ADR-635: the WAKING claim lands
+// and the operation that later confirms it. ADR-640: the WAKING claim lands
 // before Destroy; COLD_BOOTING still counts RAM and concurrency, and the
 // cold-boot sweep is the retry.
 func (tc teardownAccountingCase) retryPlan() (state.State, func(context.Context, *Engine, state.Instance) error, state.State) {

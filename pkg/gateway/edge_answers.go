@@ -76,7 +76,7 @@ func (h *Handler) healthSnapshotFor(ctx context.Context, app App) healthSnapshot
 		return healthSnapshot{ready: true, reason: "live"}
 	}
 	// Every gateway sees the app's last instance; this process's wake
-	// observation is only a fallback (ADR-636).
+	// observation is only a fallback (ADR-641).
 	if h != nil {
 		if snapshot, ok := h.healthOutcomes.snapshotFor(ctx, app.ID); ok {
 			return snapshot

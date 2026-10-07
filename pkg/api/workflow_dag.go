@@ -62,6 +62,8 @@ var (
 // WorkflowTriggerSpec describes a manual, scheduled, or event-driven start.
 // Omission remains equivalent to a manual trigger. Scheduled starts skip
 // missed minutes and use the same five-field grammar as application crons.
+// TenantConfigurable lets linked platform tenants override only the cadence,
+// timezone, overlap policy, and enabled state of an opted-in schedule.
 type WorkflowTriggerSpec struct {
 	Source    string          `json:"source,omitempty" yaml:"source,omitempty" toml:"source,omitempty"`
 	EventType string          `json:"event_type,omitempty" yaml:"event_type,omitempty" toml:"event_type,omitempty"`
@@ -72,6 +74,9 @@ type WorkflowTriggerSpec struct {
 	Input     json.RawMessage `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
 	Overlap   string          `json:"overlap,omitempty" yaml:"overlap,omitempty" toml:"overlap,omitempty"`
 	Enabled   *bool           `json:"enabled,omitempty" yaml:"enabled,omitempty" toml:"enabled,omitempty"`
+	// TenantConfigurable lets each linked platform tenant manage its own
+	// cadence and enabled state without changing the app owner's definition.
+	TenantConfigurable bool `json:"tenant_configurable,omitempty" yaml:"tenant_configurable,omitempty" toml:"tenant_configurable,omitempty"`
 }
 
 func (t *WorkflowTriggerSpec) UnmarshalJSON(data []byte) error {
@@ -106,6 +111,9 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 	}
 	if trigger.Type != "event" && (trigger.Source != "" || trigger.EventType != "" || len(trigger.Filter) != 0) {
 		return fmt.Errorf("%w: event options require an event trigger", ErrWorkflowInvalidTrigger)
+	}
+	if trigger.TenantConfigurable && trigger.Type != "schedule" {
+		return fmt.Errorf("%w: tenant_configurable requires a schedule trigger", ErrWorkflowInvalidTrigger)
 	}
 	switch trigger.Type {
 	case "manual":

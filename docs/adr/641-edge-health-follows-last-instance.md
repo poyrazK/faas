@@ -1,4 +1,4 @@
-# ADR-636 · The edge health answer follows the app's last instance
+# ADR-641 · The edge health answer follows the app's last instance
 
 - **Status:** proposed
 - **Date:** 2026-10-07

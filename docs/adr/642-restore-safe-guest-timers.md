@@ -1,4 +1,4 @@
-# ADR-637 · Guests boot with restore-safe timers
+# ADR-642 · Guests boot with restore-safe timers
 
 - **Status:** proposed
 - **Date:** 2026-10-07
