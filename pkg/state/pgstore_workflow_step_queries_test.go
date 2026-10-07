@@ -1,7 +1,9 @@
 package state
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -57,7 +59,7 @@ func TestPgCustomerOperationWorkflowStepQueriesFenceAndCommitAttempt(t *testing.
 	if err != nil {
 		t.Fatalf("start next workflow attempt: %v", err)
 	}
-	if string(startedInput) != string(resolvedInput) {
+	if compactWorkflowStepQueryJSON(t, startedInput) != compactWorkflowStepQueryJSON(t, resolvedInput) {
 		t.Fatalf("started input = %s, want %s", startedInput, resolvedInput)
 	}
 	if err := queries.InsertCustomerOperationWorkflowStepAttempt(ctx, tx, sqlc.InsertCustomerOperationWorkflowStepAttemptParams{
@@ -95,7 +97,7 @@ func TestPgCustomerOperationWorkflowStepQueriesFenceAndCommitAttempt(t *testing.
 	if err != nil {
 		t.Fatalf("read completed workflow step: %v", err)
 	}
-	if gotStep.Status != WorkflowStepStatusSucceeded || gotStep.Attempt != attempt || string(gotStep.Input) != string(resolvedInput) || string(gotStep.Output) != string(output) || !gotStep.FinishedAt.Valid {
+	if gotStep.Status != WorkflowStepStatusSucceeded || gotStep.Attempt != attempt || compactWorkflowStepQueryJSON(t, gotStep.Input) != compactWorkflowStepQueryJSON(t, resolvedInput) || compactWorkflowStepQueryJSON(t, gotStep.Output) != compactWorkflowStepQueryJSON(t, output) || !gotStep.FinishedAt.Valid {
 		t.Fatalf("completed workflow step lost its attempt data: %+v", gotStep)
 	}
 	gotAttempt, err := queries.GetCustomerOperationWorkflowStepAttempt(ctx, pool, sqlc.GetCustomerOperationWorkflowStepAttemptParams{
@@ -120,4 +122,13 @@ func TestPgCustomerOperationWorkflowStepQueriesFenceAndCommitAttempt(t *testing.
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("restart terminal step = %v, want no rows", err)
 	}
+}
+
+func compactWorkflowStepQueryJSON(t *testing.T, value []byte) string {
+	t.Helper()
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, value); err != nil {
+		t.Fatalf("compact workflow step JSON %q: %v", value, err)
+	}
+	return compact.String()
 }
