@@ -37,7 +37,7 @@ func TestOperationWorkflowControlReadOnlyAndResume(t *testing.T) {
 			generation, _ := strconv.Atoi(h[api.OperationGenerationHeader])
 			attempt, _ := strconv.Atoi(h[api.OperationAttemptHeader])
 			a := state.OperationWorkflowAuthority{AccountID: f.account.ID, AppID: f.app.ID, InstanceID: instance.ID, RunID: op.WorkflowRunID, StepName: h[api.OperationWorkflowStepHeader], Generation: generation, Attempt: attempt, Capability: h[api.OperationWorkflowCapabilityHeader]}
-			before := f.read(t, op.ID)
+			before := f.read(ctx, t, op.ID)
 			runBefore, _ := store.GetWorkflowRun(ctx, a.RunID)
 			stepsBefore, _ := store.GetWorkflowSteps(ctx, a.RunID)
 			attemptsBefore, _ := store.GetWorkflowStepAttempts(ctx, a.RunID, a.StepName)
@@ -52,7 +52,7 @@ func TestOperationWorkflowControlReadOnlyAndResume(t *testing.T) {
 			runAfter, _ := store.GetWorkflowRun(ctx, a.RunID)
 			stepsAfter, _ := store.GetWorkflowSteps(ctx, a.RunID)
 			attemptsAfter, _ := store.GetWorkflowStepAttempts(ctx, a.RunID, a.StepName)
-			if !reflect.DeepEqual(before, f.read(t, op.ID)) || !reflect.DeepEqual(runBefore, runAfter) || !reflect.DeepEqual(stepsBefore, stepsAfter) || !reflect.DeepEqual(attemptsBefore, attemptsAfter) {
+			if !reflect.DeepEqual(before, f.read(ctx, t, op.ID)) || !reflect.DeepEqual(runBefore, runAfter) || !reflect.DeepEqual(stepsBefore, stepsAfter) || !reflect.DeepEqual(attemptsBefore, attemptsAfter) {
 				t.Fatal("control read changed execution, operation, report quota or events")
 			}
 			for _, mutate := range []func(*state.OperationWorkflowAuthority){
@@ -101,7 +101,7 @@ func TestOperationWorkflowControlReadOnlyAndResume(t *testing.T) {
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if f.read(t, op.ID).State != api.OperationSucceeded || calls["/collect"] != 1 || calls["/transform"] != 2 || calls["/finish"] != 1 {
+		if f.read(ctx, t, op.ID).State != api.OperationSucceeded || calls["/collect"] != 1 || calls["/transform"] != 2 || calls["/finish"] != 1 {
 			t.Fatal("control changed native recovery semantics", calls)
 		}
 	})
@@ -155,7 +155,7 @@ func TestOperationWorkflowControlDeadlineFencesArtifactsAndLateSuccess(t *testin
 		if err := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
-		final := f.read(t, op.ID)
+		final := f.read(ctx, t, op.ID)
 		if final.State != api.OperationRequiresReconciliation || len(final.Result) != 0 || final.CompletionDelivery.State != "awaiting_outcome" {
 			t.Fatalf("deadline expiry accepted late success or authorized retry: %+v", final)
 		}

@@ -38,7 +38,7 @@ func TestOperationRecoveryPreviewMatchesNativeResume(t *testing.T) {
 			t.Fatal(err)
 		}
 		reader := store.(state.OperationRecoveryInspectionStore)
-		before := f.read(t, op.ID)
+		before := f.read(ctx, t, op.ID)
 		inspection, err := reader.InspectOperationRecovery(ctx, f.account.ID, op.ID)
 		if err != nil || len(inspection.Steps) != 3 || !inspection.Steps[0].Confirmed || !inspection.Steps[1].OutcomeUnknown || inspection.Steps[2].OutcomeUnknown || len(inspection.RetryBlockers) != 0 {
 			t.Fatalf("inspection=%+v %v", inspection, err)
@@ -76,11 +76,11 @@ func TestOperationRecoveryPreviewMatchesNativeResume(t *testing.T) {
 		if _, err := f.ops.RecoverOperation(ctx, f.account.ID, "", op.ID, badRevision); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("stale inspection applied", err)
 		}
-		if !reflect.DeepEqual(before, f.read(t, op.ID)) {
+		if !reflect.DeepEqual(before, f.read(ctx, t, op.ID)) {
 			t.Fatal("rejected revision changed operation")
 		}
 		decision, err := store.(state.OperationRecoveryReceiptStore).RecoverOperationWithReceipt(ctx, f.account.ID, op.ID, request)
-		applied := f.read(t, op.ID)
+		applied := f.read(ctx, t, op.ID)
 		if err != nil || applied.Generation != 2 {
 			t.Fatal("preview could not apply", err)
 		}
@@ -97,7 +97,7 @@ func TestOperationRecoveryPreviewMatchesNativeResume(t *testing.T) {
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if done := f.read(t, op.ID); done.State != api.OperationSucceeded || calls["/collect"] != 1 || calls["/transform"] != 2 || calls["/finish"] != 1 {
+		if done := f.read(ctx, t, op.ID); done.State != api.OperationSucceeded || calls["/collect"] != 1 || calls["/transform"] != 2 || calls["/finish"] != 1 {
 			t.Fatalf("previewed resume=%+v calls=%v", done, calls)
 		}
 		replay, err := store.(state.OperationRecoveryReceiptStore).RecoverOperationWithReceipt(ctx, f.account.ID, op.ID, request)
@@ -116,7 +116,7 @@ func assertOperationRecoveryPreviewAdmissionBlockers(t *testing.T, f workflowOpe
 	t.Helper()
 	ctx := t.Context()
 	reader := f.store.(state.OperationRecoveryInspectionStore)
-	before := f.read(t, id)
+	before := f.read(ctx, t, id)
 	check := func(blocker string) {
 		t.Helper()
 		p, err := reader.PreviewOperationRecovery(ctx, f.account.ID, id, api.OperationRecoveryPreviewRequest{ExpectedGeneration: before.Generation, Resolution: "safe_to_retry"})
@@ -153,7 +153,7 @@ func assertOperationRecoveryPreviewAdmissionBlockers(t *testing.T, f workflowOpe
 			t.Fatal(err)
 		}
 	}
-	if !reflect.DeepEqual(before, f.read(t, id)) {
+	if !reflect.DeepEqual(before, f.read(ctx, t, id)) {
 		t.Fatal("blocked previews consumed an operation recovery or changed its projection")
 	}
 }
@@ -162,7 +162,7 @@ func assertOperationRecoveryPreviewReadOnly(t *testing.T, f workflowOperationFix
 	t.Helper()
 	ctx := t.Context()
 	reader := f.store.(state.OperationRecoveryInspectionStore)
-	before := f.read(t, id)
+	before := f.read(ctx, t, id)
 	runBefore, _ := f.store.GetWorkflowRun(ctx, before.WorkflowRunID)
 	stepsBefore, _ := f.store.GetWorkflowSteps(ctx, before.WorkflowRunID)
 	eventsBefore, _ := f.ops.OperationEvents(ctx, f.account.ID, "", id, 0, 100)
@@ -197,7 +197,7 @@ func assertOperationRecoveryPreviewReadOnly(t *testing.T, f workflowOperationFix
 	stepsAfter, _ := f.store.GetWorkflowSteps(ctx, before.WorkflowRunID)
 	eventsAfter, _ := f.ops.OperationEvents(ctx, f.account.ID, "", id, 0, 100)
 	executionsAfter, _ := f.ops.OperationExecutions(ctx, f.account.ID, id, 0, 100)
-	if !reflect.DeepEqual(before, f.read(t, id)) || !reflect.DeepEqual(runBefore, runAfter) || !reflect.DeepEqual(stepsBefore, stepsAfter) || !reflect.DeepEqual(eventsBefore, eventsAfter) || !reflect.DeepEqual(executionsBefore, executionsAfter) {
+	if !reflect.DeepEqual(before, f.read(ctx, t, id)) || !reflect.DeepEqual(runBefore, runAfter) || !reflect.DeepEqual(stepsBefore, stepsAfter) || !reflect.DeepEqual(eventsBefore, eventsAfter) || !reflect.DeepEqual(executionsBefore, executionsAfter) {
 		t.Fatal("preview mutated execution, files, quota, delivery or evidence")
 	}
 }
