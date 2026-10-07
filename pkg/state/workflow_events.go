@@ -25,10 +25,12 @@ var ErrWorkflowEventDefinitionInvalid = errors.New("workflow: invalid captured e
 var ErrWorkflowEventTargetUnavailable = errors.New("workflow: event target is temporarily unavailable")
 
 func workflowEventRecipientID(appID, name string) string {
+	// codeql[go/weak-sensitive-data-hashing] -- This digest preserves the stable UUID bytes used by SQL event routing; it is a routing identity, not password or secret hashing.
 	return uuid.UUID(md5.Sum([]byte("gregale.workflow.event:" + canonicalMemUUID(appID) + ":" + name))).String() // #nosec G401 -- Must match the database recipient identity.
 }
 
 func workflowTenantEventRecipientID(appID, tenantID, name string) string {
+	// codeql[go/weak-sensitive-data-hashing] -- This digest preserves the stable UUID bytes used by SQL event routing; it is a routing identity, not password or secret hashing.
 	return uuid.UUID(md5.Sum([]byte("gregale.workflow.tenant-event:" + canonicalMemUUID(appID) + ":" + canonicalMemUUID(tenantID) + ":" + name))).String() // #nosec G401 -- Must match the database recipient identity.
 }
 

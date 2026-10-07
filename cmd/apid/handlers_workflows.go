@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -380,7 +381,8 @@ func (s *server) listWorkflowRuns(w http.ResponseWriter, r *http.Request, acct s
 
 	runs, total, err := s.store.ListWorkflowRuns(r.Context(), app.ID, opts)
 	if err != nil {
-		s.log.Error("list workflow runs failed", "app_id", app.ID, "err", err)
+		// codeql[go/log-injection] false-positive: request-derived IDs and errors are sanitized before they reach these structured log fields.
+		s.log.Error("list workflow runs failed", "app_id", logsanitize.Field(app.ID), "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("failed to list workflow runs"))
 		return
 	}
@@ -409,7 +411,8 @@ func (s *server) listPlatformTenantSelfWorkflowRuns(w http.ResponseWriter, r *ht
 	opts.PlatformTenantID = tenantID
 	runs, total, err := s.store.ListWorkflowRuns(r.Context(), app.ID, opts)
 	if err != nil {
-		s.log.Error("list platform tenant workflow runs failed", "app_id", app.ID, "platform_tenant_id", tenantID, "err", err)
+		// codeql[go/log-injection] false-positive: request-derived IDs and errors are sanitized before they reach these structured log fields.
+		s.log.Error("list platform tenant workflow runs failed", "app_id", logsanitize.Field(app.ID), "platform_tenant_id", logsanitize.Field(tenantID), "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("failed to list workflow runs"))
 		return
 	}

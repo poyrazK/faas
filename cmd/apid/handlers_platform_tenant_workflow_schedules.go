@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -30,7 +31,8 @@ func (s *server) listPlatformTenantSelfWorkflowSchedules(w http.ResponseWriter, 
 		return
 	}
 	if err != nil {
-		s.log.ErrorContext(r.Context(), "list tenant workflow schedules failed", "err", err)
+		// codeql[go/log-injection] false-positive: FieldAny strips CR/LF and other control characters from errors before they reach this structured log field.
+		s.log.ErrorContext(r.Context(), "list tenant workflow schedules failed", "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("could not list tenant workflow schedules"))
 		return
 	}
@@ -80,7 +82,8 @@ func (s *server) updatePlatformTenantSelfWorkflowSchedule(w http.ResponseWriter,
 			"Invalid workflow schedule", "schedule, timezone, overlap, or enabled state is invalid for this workflow"))
 		return
 	case err != nil:
-		s.log.ErrorContext(r.Context(), "update tenant workflow schedule failed", "err", err)
+		// codeql[go/log-injection] false-positive: FieldAny strips CR/LF and other control characters from errors before they reach this structured log field.
+		s.log.ErrorContext(r.Context(), "update tenant workflow schedule failed", "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("could not update tenant workflow schedule"))
 		return
 	}
