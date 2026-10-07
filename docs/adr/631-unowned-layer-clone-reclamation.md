@@ -45,7 +45,12 @@ drives (`FlatDirs`, derived from the legacy kernel path, `/srv/fc/base`). It
 runs at startup and every 10 minutes, in both recovery modes. Clones from older
 binaries that carry no instance id are still ignored.
 
-vmmd also calls `Manager.RetryPendingCleanups` every 2 minutes. `cleanup` is
+vmmd also calls `Manager.RetryPendingCleanups` every 2 minutes. It retries
+only entries whose last cleanup attempt failed and that no teardown flight
+currently owns. `DestroyWithExport` retains its instance before it waits for
+the guest and exports the drive. On rc.244 the first version of this retry
+treated those in-flight entries as failed: it killed running builder VMs and
+unmounted their drive under the export, and every build failed with `EBADMSG`. `cleanup` is
 idempotent and serialised per instance, so a retry racing a `Destroy` is safe. A
 retry that still fails keeps the instance retained, as before.
 

@@ -324,3 +324,43 @@ func TestKillDoesNotTreatFailedWaitAsConfirmedExit(t *testing.T) {
 		t.Fatalf("failed watchdog wait removed owned resources: %v", err)
 	}
 }
+
+// TestRetryPendingCleanupsLeavesAnInFlightExportAlone pins the rc.244 build
+// outage: DestroyWithExport retains its instance before waiting for the guest
+// and exporting the drive, and builderd holds that call open for the whole
+// build. The background retry treated the entry as a failed teardown, killed
+// running builder VMs and unmounted their drive under the export.
+func TestRetryPendingCleanupsLeavesAnInFlightExportAlone(t *testing.T) {
+	v := &fakeVMM{}
+	entered, release := make(chan struct{}), make(chan struct{})
+	v.destroyWithExportHook = func() {
+		close(entered)
+		<-release
+	}
+	m := newTestManager(&fakeRunner{}, v)
+	if _, err := m.Wake(t.Context(), admissionWake("build-inflight")); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.DestroyWithExport(context.Background(), "build-inflight", t.TempDir())
+		done <- err
+	}()
+	<-entered
+	if completed, pending := m.RetryPendingCleanups(t.Context()); completed != 0 || pending != 0 {
+		t.Fatalf("retry during an in-flight export = (%d completed, %d pending), want (0, 0)", completed, pending)
+	}
+	v.mu.Lock()
+	killed := append([]string(nil), v.killed...)
+	v.mu.Unlock()
+	if len(killed) != 0 {
+		t.Fatalf("retry killed %v while its export was still running", killed)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("DestroyWithExport: %v", err)
+	}
+	if m.HasInstanceOwnership("build-inflight") {
+		t.Fatal("teardown did not finish after the export")
+	}
+}

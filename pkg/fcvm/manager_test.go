@@ -118,6 +118,9 @@ type fakeVMM struct {
 	// so a test can model JailerVMM.Snapshot killing Firecracker itself.
 	snapshotHook  func(Lease)
 	killed        []string
+	// destroyWithExportHook, when set, runs inside DestroyWithExport before it
+	// returns, so a test can hold a teardown in flight.
+	destroyWithExportHook func()
 	restored      []string
 	restoreSpecs  []RestoreSpec
 	snapshotted   []string
@@ -679,7 +682,11 @@ func (v *fakeVMM) Kill(_ context.Context, l Lease) error {
 func (v *fakeVMM) DestroyWithExport(_ context.Context, l Lease, _ string) (int, error) {
 	v.mu.Lock()
 	v.destroyedWithExport = append(v.destroyedWithExport, l.Instance)
+	hook := v.destroyWithExportHook
 	v.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	return v.destroyWithExportExit, v.destroyWithExportErr
 }
 
