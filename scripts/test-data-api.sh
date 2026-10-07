@@ -5,7 +5,7 @@ cd "$repo_root"
 if [[ "${1:-}" == "--integration" ]]; then
   : "${DATA_API_TEST_DATABASE_URL:?A disposable administrative PostgreSQL URL is required}"
   : "${DATA_API_POSTGREST_BIN:?The pinned PostgREST executable is required}"
-  "$DATA_API_POSTGREST_BIN" --version | rg '^PostgREST 14\.3' >/dev/null
+  "$DATA_API_POSTGREST_BIN" --version | grep -E '^PostgREST 14\.3([[:space:]]|$)' >/dev/null
 fi
 # Never install dependencies beneath go:embed templates: they would be shipped
 # in the CLI/template archive. Test a temporary copy of the exact runtime source.
