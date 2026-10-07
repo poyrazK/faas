@@ -1,3 +1,4 @@
+// adr: 121
 // Tests for the buffered reverse-proxy response body cap (issue
 // #995 Phase 2 / ADR-121). The buffered path now installs a
 // capWriter at the dispatch site in handler.go's ServeHTTP; the
