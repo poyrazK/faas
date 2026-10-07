@@ -54,7 +54,6 @@ export async function browserStarter(t, template = 'customer-operation-workflow-
     await page.locator('#token').fill(owner);
     await page.locator('#signin button').click();
     await page.locator('#workspace').waitFor({state: 'visible'});
-    await page.waitForFunction(() => document.getElementById('notice').textContent || !document.getElementById('signin').hidden);
   }, async start() {
     await page.locator('#count').fill('3'); await page.locator('#submit').click();
   }};
