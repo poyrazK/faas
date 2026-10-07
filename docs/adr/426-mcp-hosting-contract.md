@@ -2,6 +2,9 @@
 
 Status: Proposed (implementation and qualification in progress)
 
+The deployment and gateway-policy decisions below are refined by
+[ADR-638](638-mcp-verified-promotion-and-resource-policy.md).
+
 Date: 2026-10-01
 
 ## Problem
@@ -36,8 +39,8 @@ the application's OAuth resource-server contract receives client requests.
 Use exact allowed origins and reject unconfigured browser origins. Log tool name,
 duration, and outcome; exclude arguments, results, tokens, and customer identity.
 Tool calls are never retried automatically: external side effects may have occurred.
-If post-deployment verification fails, put the app in maintenance and require
-explicit review before resuming public traffic. A probe does not roll back code.
+ADR-638 replaces the initial maintenance-on-failure flow with zero-traffic
+candidate verification and guarded promotion, preserving the serving revision.
 
 `mcp call` may opt in to bounded form-mode Multi Round-Trip Requests (SEP-2322)
 with `--interactive` or `--input-responses-file`. The default call remains
@@ -53,13 +56,14 @@ PostgreSQL binding and stable encryption key are configured. By default, the
 HTTP process also claims work. Operators can run a separate worker app using
 Gregale's existing worker lifecycle; both apps must share the database, owner
 key, and explicit task namespace. The worker recovers expired leases. Gregale's
-worker scaling metrics do not currently read depth from this PostgreSQL task
-table, so dedicated worker apps need a nonzero replica floor for prompt
-execution. Tasks remain disabled by default. Custom task handlers can persist
+worker custom metrics can read aggregate depth through the starter publisher.
+An in-process publisher needs a nonzero worker floor; ADR-638 adds an external
+read-only observer for worker scale from zero. Tasks remain disabled by default. Custom task handlers can persist
 client input requests and resume through `tasks/update`; embedded elicitation,
 sampling, and roots requests are limited to capabilities declared by the
 original client. The starter has no built-in sampling, roots, URL elicitation,
-task notifications, or stateful sessions.
+stateful sessions. Task and task-resource subscriptions use bounded
+request-scoped streams.
 Doctor discovers tools without invoking them; an explicit call or stream probe
 authorizes execution. Preserve lockfiles and suppress entropy only for valid
 dependency-integrity digests while retaining provider credential detection.
@@ -81,10 +85,9 @@ integration are qualified.
 that journey and the production scanner upgrade still required for an untouched
 dependency-lockfile deployment.
 
-Follow-on work includes gateway-owned OAuth and per-tool metrics, contract
-promotion checks, PostgreSQL task-queue depth integration with worker scaling,
-and customer-isolated execution. These require separate acceptance and must not
-be advertised as shipped by this implementation.
+ADR-638 adds verified candidate promotion, gateway OAuth resource policy and
+queue operational safeguards. Real provider/client login, native Tasks scaling
+qualification and customer-isolated execution remain release work.
 
 ## Local tool contract checks
 

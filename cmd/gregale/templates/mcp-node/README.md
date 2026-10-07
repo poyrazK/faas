@@ -19,7 +19,9 @@ gregale mcp config --url https://my-mcp.gregale.dev/mcp --name my-mcp
 
 `gregale-mcp.json` declares the MCP contract. `gregale.yaml` declares ordinary
 HTTP hosting. The deploy command uploads the worktree, requires a streaming-enabled
-plan, opens the platform public auth gate and verifies tool discovery. An empty
+plan, stages a zero-traffic candidate, verifies its preview and promotes with a
+serving-revision guard. Failed checks preserve the serving revision. Use
+`--release-policy` with reviewed role baselines to gate catalog changes. An empty
 `allowed_origins` rejects every browser origin; non-browser MCP clients normally
 omit Origin. Add exact trusted origins when a browser client needs access.
 
@@ -266,3 +268,10 @@ read-only database credential, the shared namespace and worker scaling metrics
 credentials. It needs no owner key and never migrates schema or claims tasks.
 Worker-only metrics still require at least one worker replica. Alert on the
 payload-free `mcp_task_metrics_publish_failed` log event.
+
+For an additional gateway JWT/scope gate, run `gregale mcp policy --path . --name
+my-mcp` after configuring external OAuth. This separately updates the app-wide
+JWT edge rule. The provider retains login and token issuance; keep application
+catalog filtering and owner checks. Gateway resource policies accept simple
+`{variable}` templates. Native deployment, restore and real provider/client login
+qualification must be completed before claiming production support.
