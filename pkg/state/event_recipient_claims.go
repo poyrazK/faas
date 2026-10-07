@@ -19,6 +19,7 @@ import (
 type PublishedEventRecipientWork struct {
 	OutboxID                    int64
 	Recipient                   PublishedEventRecipient
+	BackfillJobID               string
 	Payload                     []byte
 	State                       string
 	ClaimToken                  string
@@ -93,6 +94,9 @@ func (s *PgStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.
 		CapacityDeferrals: int(row.CapacityDeferrals), GenerationCapacityDeferrals: int(row.GenerationCapacityDeferrals),
 		AvailableAt: timeFromPgtype(row.AvailableAt), LeaseUntil: timeFromPgtype(row.LeaseUntil),
 	}
+	if row.BackfillJobID.Valid {
+		work.BackfillJobID = uuidFromPgtype(row.BackfillJobID).String()
+	}
 	if err := json.Unmarshal(row.Recipient, &work.Recipient); err != nil {
 		return nil, fmt.Errorf("decode claimed event recipient: %w", err)
 	}
@@ -112,6 +116,11 @@ func (s *PgStore) FinishPublishedEventRecipient(ctx context.Context, work *Publi
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 	q := sqlc.New()
+	if work.BackfillJobID != "" {
+		if _, err := q.EventReplayBackfillLockJob(ctx, tx, mustPgUUID(work.BackfillJobID)); err != nil {
+			return err
+		}
+	}
 	// Every completion/replay locks the parent first, then its recipient. The
 	// claim itself holds only a short recipient lock, never the routing work.
 	if _, err := q.EventRecipientLockReceipt(ctx, tx, work.OutboxID); err != nil {
@@ -128,7 +137,24 @@ func (s *PgStore) FinishPublishedEventRecipient(ctx context.Context, work *Publi
 	if n == 0 {
 		return ErrConflict
 	}
-	if err := recordEventRecipientOutcome(ctx, q, tx, work.OutboxID, work.Recipient.AppID, work.Recipient.ID, EventFanoutAttemptActionAttempt, progress); err != nil {
+	action := EventFanoutAttemptActionAttempt
+	if work.BackfillJobID != "" {
+		action = EventFanoutAttemptActionBackfill
+		updated, err := q.EventReplayBackfillFinishItem(ctx, tx, sqlc.EventReplayBackfillFinishItemParams{
+			JobID: mustPgUUID(work.BackfillJobID), OutboxID: work.OutboxID, State: progress.State,
+			Attempts: int32(progress.Attempts), FailureCode: progress.FailureCode, LastError: progress.LastError, Retryable: progress.Retryable,
+		})
+		if err != nil {
+			return err
+		}
+		if updated == 0 {
+			return ErrConflict
+		}
+		if err := q.EventReplayBackfillFinalize(ctx, tx, mustPgUUID(work.BackfillJobID)); err != nil {
+			return err
+		}
+	}
+	if err := recordEventRecipientOutcome(ctx, q, tx, work.OutboxID, work.Recipient.AppID, work.Recipient.ID, action, progress); err != nil {
 		return err
 	}
 	if err := q.EventRecipientSettleReceipt(ctx, tx, work.OutboxID); err != nil {

@@ -47,13 +47,13 @@ type eventHistorySummary struct {
 }
 
 func eventHistoryWaitScope(action string, p PublishedEventRecipientProgress) string {
-	if action == EventFanoutAttemptActionAttempt && p.State == PublishedEventRecipientPending {
+	if (action == EventFanoutAttemptActionAttempt || action == EventFanoutAttemptActionBackfill) && p.State == PublishedEventRecipientPending {
 		return p.CapacityScope
 	}
 	return ""
 }
 func eventHistoryFailure(action string, p PublishedEventRecipientProgress) bool {
-	return action == EventFanoutAttemptActionAttempt && p.CapacityScope == "" && (p.FailureCode != "" || p.State == PublishedEventRecipientFailed)
+	return (action == EventFanoutAttemptActionAttempt || action == EventFanoutAttemptActionBackfill) && p.CapacityScope == "" && (p.FailureCode != "" || p.State == PublishedEventRecipientFailed)
 }
 func eventHistoryText(s string, limit int) string {
 	s = strings.ToValidUTF8(s, "�")
@@ -96,7 +96,7 @@ func recordBoundedEventHistory(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, 
 		return err
 	}
 	if err := q.EventHistoryMarkDetail(ctx, tx, sqlc.EventHistoryMarkDetailParams{
-		HistoryID: historyID, IsFailure: eventHistoryFailure(action, p), IsReplay: action == EventFanoutAttemptActionReplay, OutboxID: id, SubscriptionID: sub,
+		HistoryID: historyID, IsFailure: eventHistoryFailure(action, p), IsReplay: action == EventFanoutAttemptActionReplay || action == EventFanoutAttemptActionBackfill, OutboxID: id, SubscriptionID: sub,
 	}); err != nil {
 		return err
 	}
@@ -229,7 +229,7 @@ func (m *MemStore) recordEventFanoutHistoryLocked(work *PublishedEventWork, app 
 	if eventHistoryFailure(action, p) {
 		summary.latestFailureID = id
 	}
-	if action == EventFanoutAttemptActionReplay {
+	if action == EventFanoutAttemptActionReplay || action == EventFanoutAttemptActionBackfill {
 		summary.latestReplayID = id
 	}
 	m.compactEventHistoryLocked(key, summary, time.Now().UTC())

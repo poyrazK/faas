@@ -1093,6 +1093,15 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/delayed-tasks/{id}":                                          "CancelDelayedTask",
 	"GET /v1/invocations":                                                    "ListInvocations",
 	"GET /v1/invocations/{id}":                                               "GetInvocation",
+
+	// ADR-638: historical subscription replay is a metadata-only preview.
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview": "PreviewEventReplay",
+	// ADR-639: historical subscription replay is a bounded durable backfill.
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays": "CreateEventReplayBackfill",
+	"GET /v1/event-replays/{jobID}":                                     "GetEventReplayBackfill",
+	"GET /v1/event-replays/{jobID}/items":                               "ListEventReplayBackfillItems",
+	"POST /v1/event-replays/{jobID}/retry-failed":                       "RetryFailedEventReplayBackfill",
+
 	// Issue #279 — operator credits. The auto-derivation produces
 	// "PostAdminAccountsIdCredits" which reads as a Swagger-style
 	// artifact; the SDK verb is "issue" (the operator's mental

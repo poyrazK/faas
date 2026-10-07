@@ -925,6 +925,21 @@ from .event_receipt_response_routing_summary import EventReceiptResponseRoutingS
 from .event_receipt_routing_response import EventReceiptRoutingResponse
 from .event_receipt_routing_response_capacity_scope import EventReceiptRoutingResponseCapacityScope
 from .event_receipt_routing_response_state import EventReceiptRoutingResponseState
+from .event_replay_backfill_item_response import EventReplayBackfillItemResponse
+from .event_replay_backfill_item_response_state import EventReplayBackfillItemResponseState
+from .event_replay_backfill_items_response import EventReplayBackfillItemsResponse
+from .event_replay_backfill_job_response import EventReplayBackfillJobResponse
+from .event_replay_backfill_job_response_duplicate_policy import EventReplayBackfillJobResponseDuplicatePolicy
+from .event_replay_backfill_job_response_state import EventReplayBackfillJobResponseState
+from .event_replay_backfill_progress import EventReplayBackfillProgress
+from .event_replay_backfill_request import EventReplayBackfillRequest
+from .event_replay_backfill_retry_request import EventReplayBackfillRetryRequest
+from .event_replay_backfill_retry_response import EventReplayBackfillRetryResponse
+from .event_replay_preview_match import EventReplayPreviewMatch
+from .event_replay_preview_match_original_recipient import EventReplayPreviewMatchOriginalRecipient
+from .event_replay_preview_response import EventReplayPreviewResponse
+from .event_replay_preview_response_coverage import EventReplayPreviewResponseCoverage
+from .event_replay_preview_retention import EventReplayPreviewRetention
 from .event_schema import EventSchema
 from .event_storage_usage_response import EventStorageUsageResponse
 from .event_storage_usage_response_limits import EventStorageUsageResponseLimits
@@ -1254,6 +1269,7 @@ from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
+from .list_event_replay_backfill_items_state import ListEventReplayBackfillItemsState
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -3651,6 +3667,21 @@ __all__ = (
     "EventReceiptRoutingResponse",
     "EventReceiptRoutingResponseCapacityScope",
     "EventReceiptRoutingResponseState",
+    "EventReplayBackfillItemResponse",
+    "EventReplayBackfillItemResponseState",
+    "EventReplayBackfillItemsResponse",
+    "EventReplayBackfillJobResponse",
+    "EventReplayBackfillJobResponseDuplicatePolicy",
+    "EventReplayBackfillJobResponseState",
+    "EventReplayBackfillProgress",
+    "EventReplayBackfillRequest",
+    "EventReplayBackfillRetryRequest",
+    "EventReplayBackfillRetryResponse",
+    "EventReplayPreviewMatch",
+    "EventReplayPreviewMatchOriginalRecipient",
+    "EventReplayPreviewResponse",
+    "EventReplayPreviewResponseCoverage",
+    "EventReplayPreviewRetention",
     "EventSchema",
     "EventStorageUsageResponse",
     "EventStorageUsageResponseLimits",
@@ -3976,6 +4007,7 @@ __all__ = (
     "ListDeployTokensResponse",
     "ListDevBridgesResponse",
     "ListEventDeliveriesState",
+    "ListEventReplayBackfillItemsState",
     "ListExecutionsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",
