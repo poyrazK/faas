@@ -6027,7 +6027,12 @@ haveApp:
 	// the geo gate at L4269. The two gates share the
 	// clientIPFromTrustedXFF trust chain so a forged XFF fails closed
 	// in both layers without double-charging the audit stream.
-	if h.applyIngressIPAllowlist(w, r, app) {
+	//
+	// Authorized deployment smoke skips this gate and internal_only below,
+	// as it skips bearer/basic in enforcePublicAuth: the platform verifier
+	// probes from its own address, so an allowlisted app could never deploy
+	// (production-us hunt #5, H5-48).
+	if !deploymentSmoke && h.applyIngressIPAllowlist(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6042,7 +6047,7 @@ haveApp:
 	// (SynthServer.handleSynthesize, pkg/gateway/synth.go) is the
 	// parallel cron-fired path — both gates share the same verifier
 	// (cmd/gatewayd-internal/internal_svc_verifier.go).
-	if h.applyIngressInternalSvc(w, r, app) {
+	if !deploymentSmoke && h.applyIngressInternalSvc(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
