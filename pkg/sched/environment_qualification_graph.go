@@ -15,6 +15,7 @@ import (
 )
 
 type qualificationGraphContextKey struct{}
+type qualificationGraphDispatchNodeContextKey struct{}
 
 // WithEnvironmentQualificationGraphRuntimes keeps reviewed dependencies alive
 // throughout one bounded visitor, then retires callers before dependencies.
@@ -69,6 +70,9 @@ func (e *Engine) WithEnvironmentQualificationGraphRuntimes(ctx context.Context, 
 		request := ordered[index]
 		return e.WithEnvironmentWorkloadQualificationRuntime(ctx, request, func(ctx context.Context, ins state.Instance) error {
 			instances[request.Resource] = ins
+			if nodeID, pinned := ctx.Value(qualificationGraphDispatchNodeContextKey{}).(string); !pinned || nodeID == "" {
+				ctx = context.WithValue(ctx, qualificationGraphDispatchNodeContextKey{}, ins.NodeID)
+			}
 			return execute(ctx, index+1)
 		})
 	}

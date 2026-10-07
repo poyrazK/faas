@@ -74,10 +74,18 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if !dep.DisableStartupCPUBoost {
 		startupCPU = startupCPUBoostQuota(acct.Plan, cpu)
 	}
+	preferredNodeID := app.NodeID
+	graphNodeID, graphNodePinned := ctx.Value(qualificationGraphDispatchNodeContextKey{}).(string)
+	if graphNodePinned && graphNodeID != "" {
+		preferredNodeID = graphNodeID
+	}
 	placement, err := e.choosePlacementLocked(ctx, Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
-		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: app.NodeID})
+		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID})
 	if err != nil {
 		return err
+	}
+	if graphNodePinned && graphNodeID != "" && placement.NodeID != graphNodeID {
+		return fmt.Errorf("qualification graph placement escaped its private node: %w", state.ErrConflict)
 	}
 	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(ctx, claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB})

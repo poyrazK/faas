@@ -13,7 +13,17 @@ import (
 
 type EnvironmentQualificationVisitor func(context.Context, state.EnvironmentWorkloadQualificationRequest, state.Instance) error
 
+type EnvironmentQualificationGraphVisitor func(context.Context, map[string]state.Instance) error
+
 type EnvironmentQualificationDispatchPage struct {
+	Examined   int
+	Claimed    int
+	Executed   int
+	Skipped    int
+	NextCursor string
+}
+
+type EnvironmentQualificationGraphDispatchPage struct {
 	Examined   int
 	Claimed    int
 	Executed   int
@@ -65,6 +75,54 @@ func (e *Engine) DispatchEnvironmentWorkloadQualifications(ctx context.Context, 
 		}
 		if err != nil {
 			result = errors.Join(result, fmt.Errorf("qualification dispatch request %s: %w", id, err))
+		}
+	}
+	if len(ids) < limit {
+		page.NextCursor = ""
+	}
+	return page, result
+}
+
+// Dispatch service-binding graphs as a single durable cohort. Each graph gets
+// all member attempts atomically before the private dependency-first execution
+// window starts; successful return still does not qualify or activate it.
+func (e *Engine) DispatchEnvironmentWorkloadQualificationGraphs(ctx context.Context, nodeID, workerID, afterGraphID string, limit int, visit EnvironmentQualificationGraphVisitor) (page EnvironmentQualificationGraphDispatchPage, result error) {
+	store, ok := e.store.(state.EnvironmentGitOpsQualificationGraphDispatchStore)
+	if !ok || visit == nil || !e.qualificationDispatchArgumentsValid(nodeID, workerID, afterGraphID, limit) {
+		return page, state.ErrInvalidArgument
+	}
+	if !e.qualificationDispatchCapabilitiesAvailable() || e.environmentQualificationServiceURL == nil {
+		return page, fmt.Errorf("qualification graph dispatch requires private binding and attempt-aware retirement adapters: %w", state.ErrConflict)
+	}
+	if err := ctx.Err(); err != nil {
+		return page, err
+	}
+	ids, err := store.ListEnvironmentWorkloadQualificationGraphsForDispatch(ctx, nodeID, afterGraphID, limit)
+	if err != nil {
+		return page, err
+	}
+	page.NextCursor = afterGraphID
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return page, errors.Join(result, err)
+		}
+		page.Examined++
+		page.NextCursor = id
+		claimed, err := store.ClaimEnvironmentWorkloadQualificationGraphForNode(ctx, id, nodeID, workerID, api.EnvironmentGitOpsQualificationLeaseDuration)
+		if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
+			page.Skipped++
+			continue
+		}
+		if err == nil {
+			page.Claimed++
+			graphCtx := context.WithValue(ctx, qualificationGraphDispatchNodeContextKey{}, nodeID)
+			err = e.WithEnvironmentQualificationGraphRuntimes(graphCtx, claimed, visit)
+			if err == nil {
+				page.Executed++
+			}
+		}
+		if err != nil {
+			result = errors.Join(result, fmt.Errorf("qualification graph dispatch %s: %w", id, err))
 		}
 	}
 	if len(ids) < limit {

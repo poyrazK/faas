@@ -8290,7 +8290,7 @@ SELECT * FROM environment_workload_qualification_requests WHERE graph_id=sqlc.ar
 
 -- Called after qualificationCurrentTx locks the source and its mapped apps.
 -- name: EnvironmentWorkloadQualificationAppOwner :one
-SELECT node_id, status FROM apps WHERE id = $1;
+SELECT node_id, status, app_protocol FROM apps WHERE id = $1;
 
 -- Discovery grants no execution authority. Claim rechecks the full observation
 -- and cohort under source/app/request locks before issuing a new attempt.
@@ -8311,6 +8311,40 @@ WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
  AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)
 ORDER BY q.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- Graph discovery is advisory. Every member is claimed atomically by the
+-- graph claim method, which rechecks source authority, artifacts and owners.
+-- The page intentionally contains only complete HTTP/service binding graphs;
+-- worker/job execution remains behind its separate adapter.
+-- name: ListEnvironmentWorkloadQualificationGraphsForDispatch :many
+SELECT g.id FROM environment_workload_graphs g
+JOIN environment_git_sources s ON s.id=g.source_id
+JOIN accounts c ON c.id=s.account_id
+WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
+ AND g.generation=s.generation AND g.intent_version=s.intent_version
+ AND g.revision_id=s.approved_revision_id AND g.environment_id=s.environment_id
+ AND c.status='active' AND c.abuse_hold_at IS NULL
+ AND (sqlc.arg(after_graph_id)::text='' OR g.id>nullif(sqlc.arg(after_graph_id)::text,'')::uuid)
+ AND EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)<>'{}'::jsonb)
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)<>'{}'::jsonb
+     AND q.frozen_inputs->'baseline'->>'service_binding_transport'='https')
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+     JOIN apps a ON a.id=q.app_id
+     WHERE q.graph_id=g.id AND (q.execution_mode IN ('worker','job') OR a.account_id<>s.account_id OR a.project_id<>s.project_id
+       OR a.status NOT IN ('active','evicted_cold') OR (a.app_protocol IS NOT NULL AND a.app_protocol<>'http1')
+       OR (a.node_id IS NOT NULL AND a.node_id<>sqlc.arg(node_id)::uuid)
+       OR NOT (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+       OR EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
+       OR EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)))
+ AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+     WHERE m ? 'candidate_deployment_id' AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+       WHERE q.graph_id=g.id AND q.resource=m->>'resource' AND q.deployment_id=(m->>'candidate_deployment_id')::uuid))
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+       WHERE m ? 'candidate_deployment_id' AND m->>'resource'=q.resource AND q.deployment_id=(m->>'candidate_deployment_id')::uuid))
+ORDER BY g.id LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: EnvironmentWorkloadQualificationSourceForUpdate :one
 SELECT s.* FROM environment_workload_qualification_requests q

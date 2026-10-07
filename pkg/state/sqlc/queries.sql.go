@@ -6897,19 +6897,20 @@ func (q *Queries) EnvironmentWorkloadIntentLockSource(ctx context.Context, db DB
 }
 
 const environmentWorkloadQualificationAppOwner = `-- name: EnvironmentWorkloadQualificationAppOwner :one
-SELECT node_id, status FROM apps WHERE id = $1
+SELECT node_id, status, app_protocol FROM apps WHERE id = $1
 `
 
 type EnvironmentWorkloadQualificationAppOwnerRow struct {
-	NodeID pgtype.UUID
-	Status string
+	NodeID      pgtype.UUID
+	Status      string
+	AppProtocol string
 }
 
 // Called after qualificationCurrentTx locks the source and its mapped apps.
 func (q *Queries) EnvironmentWorkloadQualificationAppOwner(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadQualificationAppOwnerRow, error) {
 	row := db.QueryRow(ctx, environmentWorkloadQualificationAppOwner, id)
 	var i EnvironmentWorkloadQualificationAppOwnerRow
-	err := row.Scan(&i.NodeID, &i.Status)
+	err := row.Scan(&i.NodeID, &i.Status, &i.AppProtocol)
 	return i, err
 }
 
@@ -17377,6 +17378,67 @@ func (q *Queries) ListEnvironmentQualificationExecutionsForRecovery(ctx context.
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentWorkloadQualificationGraphsForDispatch = `-- name: ListEnvironmentWorkloadQualificationGraphsForDispatch :many
+SELECT g.id FROM environment_workload_graphs g
+JOIN environment_git_sources s ON s.id=g.source_id
+JOIN accounts c ON c.id=s.account_id
+WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
+ AND g.generation=s.generation AND g.intent_version=s.intent_version
+ AND g.revision_id=s.approved_revision_id AND g.environment_id=s.environment_id
+ AND c.status='active' AND c.abuse_hold_at IS NULL
+ AND ($1::text='' OR g.id>nullif($1::text,'')::uuid)
+ AND EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)<>'{}'::jsonb)
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)<>'{}'::jsonb
+     AND q.frozen_inputs->'baseline'->>'service_binding_transport'='https')
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+     JOIN apps a ON a.id=q.app_id
+     WHERE q.graph_id=g.id AND (q.execution_mode IN ('worker','job') OR a.account_id<>s.account_id OR a.project_id<>s.project_id
+       OR a.status NOT IN ('active','evicted_cold') OR (a.app_protocol IS NOT NULL AND a.app_protocol<>'http1')
+       OR (a.node_id IS NOT NULL AND a.node_id<>$2::uuid)
+       OR NOT (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+       OR EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
+       OR EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)))
+ AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+     WHERE m ? 'candidate_deployment_id' AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+       WHERE q.graph_id=g.id AND q.resource=m->>'resource' AND q.deployment_id=(m->>'candidate_deployment_id')::uuid))
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+       WHERE m ? 'candidate_deployment_id' AND m->>'resource'=q.resource AND q.deployment_id=(m->>'candidate_deployment_id')::uuid))
+ORDER BY g.id LIMIT $3::integer
+`
+
+type ListEnvironmentWorkloadQualificationGraphsForDispatchParams struct {
+	AfterGraphID string
+	NodeID       pgtype.UUID
+	PageLimit    int32
+}
+
+// Graph discovery is advisory. Every member is claimed atomically by the
+// graph claim method, which rechecks source authority, artifacts and owners.
+// The page intentionally contains only complete HTTP/service binding graphs;
+// worker/job execution remains behind its separate adapter.
+func (q *Queries) ListEnvironmentWorkloadQualificationGraphsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationGraphsForDispatchParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listEnvironmentWorkloadQualificationGraphsForDispatch, arg.AfterGraphID, arg.NodeID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -29,6 +29,144 @@ func dispatchIDs(t *testing.T, store state.EnvironmentGitOpsQualificationDiscove
 	return ids
 }
 
+func preparedServiceBindingQualificationFixture(t *testing.T, basic gitOpsTestStore) ([]state.EnvironmentWorkloadQualificationRequest, state.App) {
+	return preparedServiceBindingQualificationFixtureWithProtocolTransport(t, basic, "", "")
+}
+
+func preparedServiceBindingQualificationFixtureWithProtocolTransport(t *testing.T, basic gitOpsTestStore, appProtocol string, transport api.ServiceBindingTransport) ([]state.EnvironmentWorkloadQualificationRequest, state.App) {
+	t.Helper()
+	store, source, desired, _, _, _ := workloadIntentFixtureWithProtocolTransport(t, basic, "enforce", state.AppTypeApp, appProtocol, transport)
+	backend, err := store.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID,
+		Slug: "shop-private-backend", WorkloadName: "private-backend", Type: state.AppTypeApp, Status: state.AppActive,
+		RAMMB: 512, CPUMillicores: 250, MaxConcurrency: 1, WorkloadClass: state.WorkloadClassHTTP,
+		Manifest: state.AppManifest{Port: 8079, ExecutionMode: api.ExecutionModeService}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: backend.ID, Scope: "production", Kind: state.DeploymentKindImage,
+		Status: state.DeployLive, ImageDigest: "registry.example/backend@sha256:" + strings.Repeat("c", 64)}); err != nil {
+		t.Fatal(err)
+	}
+	caller := desired.Definition.Workloads["api"]
+	caller.ServiceBindings = map[string]api.EnvironmentServiceBinding{"backend": {Workload: "backend", EnvKey: "BACKEND_URL"}}
+	desired.Definition.Workloads["api"] = caller
+	desired.Definition.Workloads["backend"] = api.EnvironmentWorkload{App: backend.Slug,
+		Source:  &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/backend@sha256:" + strings.Repeat("d", 64)},
+		Runtime: json.RawMessage(`{"port":8082,"execution_mode":"service"}`)}
+	desired, err = environmentsync.Compile(desired.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), approval(source, desired, strings.Repeat("b", 40)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adoptWorkloadIntent(t, store, source)
+	lease, err := store.ClaimEnvironmentGitOps(t.Context(), "graph-dispatch-preparer", time.Now(), 3*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyEnvironmentGitOps(t.Context(), lease, claimedIntentPlan(t, store, lease, desired)); err != nil {
+		t.Fatal(err)
+	}
+	plan := claimedIntentPlan(t, store, lease, desired)
+	candidates, err := basic.(state.EnvironmentGitOpsPreparationStore).PrepareEnvironmentGitOpsImageCandidates(t.Context(), lease, plan)
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("binding candidates: %+v %v", candidates, err)
+	}
+	for _, candidate := range candidates {
+		if err := basic.SetDeploymentRootfs(t.Context(), candidate.DeploymentID, "/reviewed.ext4", "binding-"+candidate.Resource, 4096); err != nil {
+			t.Fatal(err)
+		}
+		if err := basic.UpdateDeploymentStatus(t.Context(), candidate.DeploymentID, state.DeploySnapshotting, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if graph, err := basic.(state.EnvironmentGitOpsGraphPreparationStore).ReconcileEnvironmentGitOpsPreparation(t.Context(), lease, plan); err != nil || graph.Phase != "prepared" {
+		t.Fatalf("binding graph: %+v %v", graph, err)
+	}
+	requests, err := basic.(state.EnvironmentGitOpsQualificationStore).QueueEnvironmentGitOpsQualification(t.Context(), lease, plan)
+	if err != nil || len(requests) != 2 {
+		t.Fatalf("binding qualification requests: %+v %v", requests, err)
+	}
+	return requests, backend
+}
+
+func TestEnvironmentQualificationGraphDispatchDiscoversAndClaimsWholeCohort(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		requests, backend := preparedServiceBindingQualificationFixture(t, basic)
+		dispatch := basic.(state.EnvironmentGitOpsQualificationGraphDispatchStore)
+		nodeA := qualificationPlacement(t, basic, 4096).NodeID
+		nodeB := qualificationPlacement(t, basic, 4096).NodeID
+		if err := basic.SetAppNodeID(t.Context(), backend.ID, nodeB); err != nil {
+			t.Fatal(err)
+		}
+		if ids, err := dispatch.ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), nodeA, "", 10); err != nil || len(ids) != 0 {
+			t.Fatalf("split-owner graph discovered on the wrong node: %v %v", ids, err)
+		}
+		qualifier := basic.(state.EnvironmentGitOpsQualificationStore)
+		if _, err := qualifier.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "individual", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("binding member bypassed the atomic graph claim: %v", err)
+		}
+		if _, err := basic.(state.EnvironmentGitOpsQualificationDispatchStore).ClaimEnvironmentWorkloadQualificationForNode(
+			t.Context(), requests[0].ID, nodeB, "individual-node", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("node-scoped member bypassed the atomic graph claim: %v", err)
+		}
+		ids, err := dispatch.ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), nodeB, "", 10)
+		if err != nil || len(ids) != 1 || ids[0] != requests[0].GraphID {
+			t.Fatalf("complete binding graph discovery: %v %v", ids, err)
+		}
+		if _, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), ids[0], nodeA, "wrong-node", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("wrong-node graph claim: %v", err)
+		}
+		claimed, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), ids[0], nodeB, "graph-scheduler", time.Minute)
+		if err != nil || len(claimed) != 2 {
+			t.Fatalf("atomic graph claim: %+v %v", claimed, err)
+		}
+		for _, request := range claimed {
+			if request.Attempt != 1 || request.Phase != "claimed" || request.WorkerID != "graph-scheduler" || request.LeaseToken == "" || request.ReservedInstanceID == "" {
+				t.Fatalf("incomplete graph member claim: %+v", request)
+			}
+		}
+		if claimed[0].ReservedInstanceID == claimed[1].ReservedInstanceID || claimed[0].LeaseToken == claimed[1].LeaseToken {
+			t.Fatal("graph members shared an attempt identity")
+		}
+		if _, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), ids[0], nodeB, "duplicate", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("active graph lease was replayed: %v", err)
+		}
+		for _, request := range claimed {
+			if err := basic.(state.EnvironmentGitOpsQualificationStore).ValidateEnvironmentWorkloadQualification(t.Context(), request); err != nil {
+				t.Fatalf("atomic claim published an invalid member lease: %v", err)
+			}
+		}
+	})
+}
+
+func TestEnvironmentQualificationGraphDispatchRejectsUnsupportedTransportAndProtocol(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		protocol  string
+		transport api.ServiceBindingTransport
+	}{
+		{name: "https", transport: api.ServiceBindingTransportHTTPS},
+		{name: "grpc", protocol: "grpc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stores(t, func(t *testing.T, basic gitOpsTestStore) {
+				requests, _ := preparedServiceBindingQualificationFixtureWithProtocolTransport(t, basic, tc.protocol, tc.transport)
+				dispatch := basic.(state.EnvironmentGitOpsQualificationGraphDispatchStore)
+				nodeID := qualificationPlacement(t, basic, 4096).NodeID
+				if ids, err := dispatch.ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), nodeID, "", 10); err != nil || len(ids) != 0 {
+					t.Fatalf("unsupported graph was discoverable: %v %v", ids, err)
+				}
+				if _, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), requests[0].GraphID, nodeID, "unsupported", time.Minute); !errors.Is(err, state.ErrConflict) {
+					t.Fatalf("unsupported graph was claimable: %v", err)
+				}
+			})
+		})
+	}
+}
+
 func TestEnvironmentQualificationDispatchDiscoveryPagesWithoutClaiming(t *testing.T) {
 	stores(t, func(t *testing.T, basic gitOpsTestStore) {
 		_, _, requests := preparedQualificationFixture(t, basic)

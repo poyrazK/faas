@@ -69,23 +69,23 @@ func privateQualificationServiceFixture(t *testing.T, basic gitOpsTestStore) (st
 		t.Fatal("cohort", err)
 	}
 	placement := qualificationPlacement(t, basic, 4096)
+	requests, err = basic.(state.EnvironmentGitOpsQualificationGraphDispatchStore).ClaimEnvironmentWorkloadQualificationGraphForNode(
+		t.Context(), requests[0].GraphID, placement.NodeID, "scheduler", time.Minute)
+	if err != nil || len(requests) != 2 {
+		t.Fatalf("atomic private service graph claim: %+v %v", requests, err)
+	}
 	instances := make([]state.Instance, 0, len(requests))
 	for i, request := range requests {
-		claimed, err := basic.(state.EnvironmentGitOpsQualificationStore).ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "scheduler", time.Minute)
-		if err != nil {
-			t.Fatal(err)
-		}
-		requests[i] = claimed
 		placement.WakeID = uuid.NewString()
-		admission, err := basic.(state.EnvironmentGitOpsQualificationInstanceStore).CreateEnvironmentWorkloadQualificationInstance(t.Context(), claimed, placement)
+		admission, err := basic.(state.EnvironmentGitOpsQualificationInstanceStore).CreateEnvironmentWorkloadQualificationInstance(t.Context(), request, placement)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := basic.(state.EnvironmentQualificationExecutionStore).MarkEnvironmentQualificationDispatched(t.Context(), claimed, admission.Execution); err != nil {
+		if err := basic.(state.EnvironmentQualificationExecutionStore).MarkEnvironmentQualificationDispatched(t.Context(), request, admission.Execution); err != nil {
 			t.Fatal(err)
 		}
-		ins, err := basic.(state.EnvironmentGitOpsQualificationRuntimeStore).PublishEnvironmentWorkloadQualificationRuntime(t.Context(), claimed, state.EnvironmentWorkloadQualificationRuntime{
-			NodeID: placement.NodeID, WakeID: placement.WakeID, Netns: "private-" + claimed.ReservedInstanceID, HostIP: fmt.Sprintf("10.100.0.%d", i+2), GuestUID: 20001 + i,
+		ins, err := basic.(state.EnvironmentGitOpsQualificationRuntimeStore).PublishEnvironmentWorkloadQualificationRuntime(t.Context(), request, state.EnvironmentWorkloadQualificationRuntime{
+			NodeID: placement.NodeID, WakeID: placement.WakeID, Netns: "private-" + request.ReservedInstanceID, HostIP: fmt.Sprintf("10.100.0.%d", i+2), GuestUID: 20001 + i,
 			Inputs: state.RuntimeConfigInputs{Scope: "production", Boundary: time.Unix(0, 0), Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}})
 		if err != nil {
 			t.Fatal(err)

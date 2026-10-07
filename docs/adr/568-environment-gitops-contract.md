@@ -3512,3 +3512,31 @@ full `pkg/state` test command could not finish because the host ran out of disk
 while linking its test binaries. This preflight does not enable production
 qualification dispatch; durable graph dispatch, guest binding acknowledgement,
 smoke/restore evidence and activation remain gated.
+
+### Internal atomic service-binding graph dispatch (2026-10-07)
+
+Durable discovery now pages complete prepared HTTP service-binding graphs rather
+than exposing their members as independently claimable work. Each page is
+advisory. The claim transaction rechecks current source authority, every frozen
+candidate artifact, graph completeness, same-node ownership, supported HTTP
+execution mode and the absence of active or unretired attempts. It then assigns
+distinct lease tokens and reserved instance IDs to all members in one commit;
+a stale or ineligible member rolls back the whole cohort.
+The per-request claim API also refuses binding members, so a caller cannot
+bypass graph dispatch by supplying a discovered request ID directly.
+
+The internal scheduler adapter requires the private node-local binding resolver
+and attempt-aware execution and retirement adapters. It pins every graph member
+to the node that atomically claimed the cohort, opens runtimes dependency-first
+for one lease-bounded visitor, then retires callers before dependencies. This
+supports the scoped HTTP binding graph during
+qualification without allowing a caller to substitute a retained deployment,
+serve through production routing, or qualify only part of its graph.
+
+Memory/PostgreSQL tests cover split ownership, direct per-member claim refusal,
+HTTPS/non-HTTP exclusion, and graph claim atomicity; scheduler tests cover graph
+execution, binding-route resolution and reverse retirement. This adapter is not
+wired into production polling and supports neither HTTPS nor worker/job graphs. A
+successful visitor still grants no guest acknowledgement, isolated smoke,
+restore evidence, readiness or activation. Production qualification and
+serving convergence remain gated.

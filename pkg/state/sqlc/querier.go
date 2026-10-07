@@ -1081,6 +1081,11 @@ type Querier interface {
 	// Discovery does not authorize cleanup. Recheck under the original request
 	// and immutable frame locks before any native retirement RPC.
 	ListEnvironmentQualificationExecutionsForRecovery(ctx context.Context, db DBTX, arg ListEnvironmentQualificationExecutionsForRecoveryParams) ([]EnvironmentQualificationExecution, error)
+	// Graph discovery is advisory. Every member is claimed atomically by the
+	// graph claim method, which rechecks source authority, artifacts and owners.
+	// The page intentionally contains only complete HTTP/service binding graphs;
+	// worker/job execution remains behind its separate adapter.
+	ListEnvironmentWorkloadQualificationGraphsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationGraphsForDispatchParams) ([]pgtype.UUID, error)
 	// Discovery grants no execution authority. Claim rechecks the full observation
 	// and cohort under source/app/request locks before issuing a new attempt.
 	ListEnvironmentWorkloadQualificationsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationsForDispatchParams) ([]pgtype.UUID, error)

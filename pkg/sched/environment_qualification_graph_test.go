@@ -46,14 +46,12 @@ func claimedQualificationGraphFixture(t *testing.T) (*state.MemStore, []state.En
 	t.Helper()
 	store, _, requests := queuedQualificationExecutionFixtureWithBindings(t,
 		map[string]api.EnvironmentServiceBinding{"backend": {Workload: "api2", EnvKey: "BACKEND_URL"}}, api.ExecutionModeRequest, api.ExecutionModeService)
-	for i, request := range requests {
-		claimed, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "scheduler", time.Minute)
-		if err != nil {
-			t.Fatal(err)
-		}
-		requests[i] = claimed
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "test-fc")
+	claimed, err := store.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), requests[0].GraphID, engine.defaultLocalNodeID, "scheduler", time.Minute)
+	if err != nil || len(claimed) != len(requests) {
+		t.Fatalf("atomic qualification graph claim: %+v %v", claimed, err)
 	}
-	return store, requests
+	return store, claimed
 }
 
 func TestEnvironmentQualificationGraphKeepsDependenciesUntilCallerRetires(t *testing.T) {

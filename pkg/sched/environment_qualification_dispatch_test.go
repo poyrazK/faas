@@ -4,6 +4,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -99,6 +100,65 @@ func TestEnvironmentQualificationDispatchPagesRetireBeforeAdvancingWithoutActiva
 	current, err := store.EnvironmentGitSource(t.Context(), source.AccountID, source.ProjectID, "production")
 	if err != nil || current.AppliedRevisionID != "" {
 		t.Fatal("successful visitor became complete environment convergence", err)
+	}
+}
+
+func TestEnvironmentQualificationGraphDispatchClaimsExecutesAndRetiresPrivateCohort(t *testing.T) {
+	store, _, requests := queuedQualificationExecutionFixtureWithBindings(t,
+		map[string]api.EnvironmentServiceBinding{"backend": {Workload: "api2", EnvKey: "BACKEND_URL"}}, api.ExecutionModeRequest, api.ExecutionModeService)
+	var callerID string
+	for _, request := range requests {
+		if request.Resource == "workload/api" {
+			callerID = request.AppID
+		}
+	}
+	v := &qualificationGraphVMM{qualificationRuntimeVMM: newQualificationRuntimeVMM(&fakeVMM{}), callerID: callerID}
+	e := newEngine(t, store, v, &fakeNotifier{}, "test-fc").WithEnvironmentQualificationServiceProxy(
+		func(context.Context, string) (string, error) { return "http://10.100.0.1:10081", nil })
+	visited := false
+	claimedInstances := map[string]state.Instance{}
+	page, err := e.DispatchEnvironmentWorkloadQualificationGraphs(t.Context(), e.defaultLocalNodeID, "graph-scheduler", "", 2,
+		func(ctx context.Context, instances map[string]state.Instance) error {
+			visited = true
+			claimedInstances = instances
+			if len(instances) != 2 || fmt.Sprint(v.boots) != "[workload/api2 workload/api]" || len(v.retired) != 0 {
+				t.Fatal("binding graph did not execute dependency first", instances, v.boots, v.retired)
+			}
+			for resource, instance := range instances {
+				if instance.NodeID != e.defaultLocalNodeID {
+					return fmt.Errorf("qualification graph member %s escaped its dispatch node", resource)
+				}
+			}
+			caller := instances["workload/api"]
+			route, err := store.ResolveEnvironmentQualificationService(ctx, state.EnvironmentQualificationServiceRequest{
+				NodeID: caller.NodeID, HostIP: caller.HostIP, GraphID: requests[0].GraphID, Binding: "backend"})
+			if err != nil || route.Target.InstanceID != instances["workload/api2"].ID || route.Port != 8087 {
+				return fmt.Errorf("private graph route: %+v: %w", route, err)
+			}
+			found := false
+			for _, entry := range v.callerSpec.APIEnv {
+				if entry.Key == "BACKEND_URL" {
+					found = entry.Value == "http://10.100.0.1:10081"+api.EnvironmentQualificationServicePrefix+requests[0].GraphID+"/backend"
+				}
+			}
+			if !found {
+				return errors.New("private service URL was not delivered to the reviewed caller")
+			}
+			return nil
+		})
+	if err != nil || !visited || page.Examined != 1 || page.Claimed != 1 || page.Executed != 1 || page.Skipped != 0 || page.NextCursor != "" {
+		t.Fatalf("binding graph dispatch: %+v %v", page, err)
+	}
+	if fmt.Sprint(v.retired) != "[workload/api workload/api2]" || e.ledger.ResidentRAM() != 0 {
+		t.Fatal("binding graph runtime was not retired in reverse dependency order", v.retired)
+	}
+	for _, request := range requests {
+		dep, err := store.DeploymentByID(t.Context(), request.DeploymentID)
+		attempt, ok := claimedInstances[request.Resource]
+		ins, instanceErr := store.InstanceByID(t.Context(), attempt.ID)
+		if !ok || err != nil || instanceErr != nil || !dep.EnvironmentWorkloadHeld() || dep.Status != state.DeploySnapshotting || ins.State != string(state.StateStopped) {
+			t.Fatal("qualification graph execution activated or leaked a member", dep, ins, err, instanceErr)
+		}
 	}
 }
 

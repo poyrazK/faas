@@ -99,7 +99,9 @@ func (m *MemStore) qualificationCurrentLocked(memory *environmentGitOpsMemory, r
 			}
 		}
 		current, err := qualificationRequest(graph, member, m.deployments[member.CandidateDeploymentID])
-		if err != nil || captured.ID == "" || current.Artifact != captured.Artifact || !reflect.DeepEqual(current.FrozenInputs, captured.FrozenInputs) {
+		if err != nil || captured.ID == "" || captured.GraphID != graph.ID || captured.Resource != member.Resource ||
+			captured.DeploymentID != member.CandidateDeploymentID || captured.AppID != member.AppID ||
+			current.Artifact != captured.Artifact || !reflect.DeepEqual(current.FrozenInputs, captured.FrozenInputs) {
 			return ErrConflict
 		}
 	}
@@ -132,6 +134,9 @@ func (m *MemStore) claimEnvironmentWorkloadQualification(ctx context.Context, id
 	}
 	if err := m.qualificationCurrentLocked(memory, current); err != nil {
 		return EnvironmentWorkloadQualificationRequest{}, err
+	}
+	if len(current.FrozenInputs.ServiceBindings) != 0 {
+		return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 	}
 	if nodeID != "" {
 		app := m.apps[current.AppID]

@@ -23,6 +23,10 @@ func workloadIntentFixture(t *testing.T, basic gitOpsTestStore, mode string) (in
 }
 
 func workloadIntentFixtureType(t *testing.T, basic gitOpsTestStore, mode string, appType state.AppType) (intentTestStore, state.EnvironmentGitSource, environmentsync.DesiredState, state.App, state.Deployment, state.ProjectEnvironment) {
+	return workloadIntentFixtureWithProtocolTransport(t, basic, mode, appType, "", "")
+}
+
+func workloadIntentFixtureWithProtocolTransport(t *testing.T, basic gitOpsTestStore, mode string, appType state.AppType, appProtocol string, transport api.ServiceBindingTransport) (intentTestStore, state.EnvironmentGitSource, environmentsync.DesiredState, state.App, state.Deployment, state.ProjectEnvironment) {
 	t.Helper()
 	store := basic.(intentTestStore)
 	source, desired := seedMode(t, store, mode)
@@ -30,9 +34,9 @@ func workloadIntentFixtureType(t *testing.T, basic gitOpsTestStore, mode string,
 	if appType == state.AppTypeFunction {
 		runtime = "node22"
 	}
-	app, err := store.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID,
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID, AppProtocol: appProtocol,
 		Slug: "shop-api", Type: appType, Runtime: runtime, RAMMB: 512, MaxConcurrency: 1, Status: state.AppActive,
-		Manifest: state.AppManifest{Entrypoint: []string{"./api"}, Port: 8079, StopGracePeriodS: 10}})
+		Manifest: state.AppManifest{Entrypoint: []string{"./api"}, Port: 8079, StopGracePeriodS: 10, ServiceBindingTransport: transport}})
 	if err != nil {
 		t.Fatal(err)
 	}
