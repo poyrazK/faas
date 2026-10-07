@@ -1,4 +1,4 @@
-# ADR-680: Freeze Compose commands per image deployment
+# ADR-686: Freeze Compose commands per image deployment
 
 - **Status:** accepted
 - **Date:** 2026-10-07
