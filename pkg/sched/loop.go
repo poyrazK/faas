@@ -4734,10 +4734,15 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 			// Fall through to legacy wake-only shape so this
 			// doesn't silently drop. tests may rely on the
 			// SynthesizeRequest call for back-compat assertions.
-			if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
-				l.log.Warn("cron: synthesize (legacy)", "cron_id", c.ID, "err", err)
-				// status="err" via defer; fireSucceeded stays false.
-				return CronRun{InvocationID: enq.ID}, true
+			// A permanent error means the app answered: nothing was
+			// dropped, and a wake-only retry only asks for another
+			// instance (production-us H5-19: scale-out cooldown 500s).
+			if !errors.Is(ierr, ErrPermanentInvoke) {
+				if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
+					l.log.Warn("cron: synthesize (legacy)", "cron_id", c.ID, "err", err)
+					// status="err" via defer; fireSucceeded stays false.
+					return CronRun{InvocationID: enq.ID}, true
+				}
 			}
 		} else if enq.ID != "" {
 			// Stamp the live instance handle + complete the row
