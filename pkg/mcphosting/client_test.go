@@ -451,7 +451,7 @@ func TestResourceAndPromptCatalogsAreExplicitAndPaginated(t *testing.T) {
 		respond := func(body string) { _, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":%s}`, request.ID, body) }
 		switch request.Method {
 		case "server/discover":
-			respond(fmt.Sprintf(`{"supportedVersions":[%q],"capabilities":{"resources":{},"prompts":{}}}`, ProtocolVersion))
+			respond(fmt.Sprintf(`{"supportedVersions":[%q],"capabilities":{"resources":{},"prompts":{},"extensions":{"%s":{}}}}`, ProtocolVersion, TasksExtensionID))
 		case "resources/list":
 			if request.Params["cursor"] == "next" {
 				respond(`{"resources":[{"uri":"file:///two","name":"two","size":9007199254740993}]}`)
@@ -490,7 +490,7 @@ func TestResourceAndPromptCatalogsAreExplicitAndPaginated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Tools) != 0 || len(catalog.Resources) != 2 || len(catalog.ResourceTemplates) != 1 || len(catalog.Prompts) != 1 {
+	if len(catalog.Tools) != 0 || len(catalog.Resources) != 2 || len(catalog.ResourceTemplates) != 1 || len(catalog.Prompts) != 1 || len(catalog.Extensions) != 1 || catalog.Extensions[0] != TasksExtensionID {
 		t.Fatalf("catalog=%+v", catalog)
 	}
 	if *catalog.Resources[1].Size != 9007199254740993 {

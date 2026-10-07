@@ -1573,6 +1573,16 @@ type CustomerOperationStreamLease struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
+type CustomerOperationWorkflowClaim struct {
+	WorkflowRunID    pgtype.UUID
+	OperationID      pgtype.UUID
+	Generation       int32
+	ExecutionKind    string
+	Attempt          int32
+	CapabilityDigest string
+	LeaseUntil       pgtype.Timestamptz
+}
+
 type DataUpstream struct {
 	ID                             pgtype.UUID
 	AccountID                      pgtype.UUID
@@ -4830,6 +4840,19 @@ type PlatformTenantUsageMinute struct {
 	BillableUnits    int64
 	UpdatedAt        pgtype.Timestamptz
 	SourceKind       string
+}
+
+type PlatformTenantWorkflowScheduleCursor struct {
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	WorkflowName     string
+	DeploymentID     pgtype.UUID
+	TriggerSnapshot  []byte
+	LastEvaluatedAt  pgtype.Timestamptz
+	ScheduledFor     pgtype.Timestamptz
+	Status           string
+	LastRunID        pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type PrPreviewSet struct {

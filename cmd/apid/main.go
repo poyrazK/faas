@@ -720,6 +720,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runServiceRolloutBindingWorker(ctx)
 		go srv.runCheckedRollbackWorker(ctx)
 		go srv.runAlertRollbackWorker(ctx)
+		go srv.runRollbackOn5xxWorker(ctx)
 		go srv.runOperationArtifactCleanup(ctx)
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)

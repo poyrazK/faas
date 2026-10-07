@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -107,8 +108,9 @@ func TestLinkedContextRequiredCommandExplainsHowToRecover(t *testing.T) {
 
 // `gregale tail` in a linked checkout resolves the linked app before it
 // attaches, then streams until Ctrl-C.
-func TestLinkedContextScopesTail(t *testing.T) {
+func TestLinkedContextScopesTailJSON(t *testing.T) {
 	resetJSONOut(t)
+	jsonOutput = true
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
@@ -126,9 +128,11 @@ func TestLinkedContextScopesTail(t *testing.T) {
 			resolved.Store(true)
 			_, _ = w.Write([]byte(`{"id":"app-demo","slug":"demo"}`))
 		case "/v1/events":
-			attached.Store(true)
 			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: invocation_done\ndata: {\"invocation_id\":\"inv-other\",\"app_id\":\"app-other\",\"state\":\"completed\"}\n\n"))
+			_, _ = w.Write([]byte("event: invocation_done\ndata: {\"invocation_id\":\"inv-linked\",\"app_id\":\"app-demo\",\"state\":\"completed\"}\n\n"))
 			w.(http.Flusher).Flush()
+			attached.Store(true)
 			<-r.Context().Done()
 		default:
 			http.NotFound(w, r)
@@ -137,14 +141,13 @@ func TestLinkedContextScopesTail(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	oldOut := osStdout
-	osStdout = &bytes.Buffer{}
-	t.Cleanup(func() { osStdout = oldOut })
+	stdout, restore := captureStdout(t)
+	defer restore()
 
 	done := make(chan int, 1)
 	go func() { done <- cmdTail(nil) }()
 	deadline := time.Now().Add(3 * time.Second)
-	for !attached.Load() && time.Now().Before(deadline) {
+	for !strings.Contains(stdout.String(), "inv-linked") && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if !resolved.Load() || !attached.Load() {
@@ -158,6 +161,14 @@ func TestLinkedContextScopesTail(t *testing.T) {
 		case code := <-done:
 			if code != 130 {
 				t.Fatalf("cmdTail exit = %d, want 130", code)
+			}
+			var frame struct {
+				Event        string `json:"event"`
+				InvocationID string `json:"invocation_id"`
+				AppID        string `json:"app_id"`
+			}
+			if err := json.Unmarshal([]byte(stdout.String()), &frame); err != nil || frame.Event != "invocation_done" || frame.InvocationID != "inv-linked" || frame.AppID != "app-demo" {
+				t.Fatalf("tail frame=%+v err=%v stdout=%s", frame, err, stdout.String())
 			}
 			return
 		case <-time.After(200 * time.Millisecond):

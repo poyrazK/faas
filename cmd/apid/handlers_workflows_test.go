@@ -13,26 +13,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestTenantWorkflowDefinitionSupport(t *testing.T) {
-	outbound := &api.WorkflowOutboundSpec{IntegrationID: "integration", Method: http.MethodPost, Path: "/v1/items"}
-	for _, spec := range []api.WorkflowSpec{
-		{Name: "outbound", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: outbound}}},
-		{Name: "foreach-outbound", Steps: []api.WorkflowStepSpec{{Name: "send", ForEach: &api.WorkflowForEachSpec{Items: "input.items", Action: api.WorkflowForEachActionSpec{Outbound: outbound}}}}},
-	} {
-		if !tenantWorkflowDefinitionSupported(spec) {
-			t.Errorf("tenant-bound workflow with app-bound outbound action %q was rejected", spec.Name)
-		}
-	}
-	for _, spec := range []api.WorkflowSpec{
-		{Name: "event", Steps: []api.WorkflowStepSpec{{Name: "wait", WaitForEvent: "order.approved"}}},
-		{Name: "callback", Steps: []api.WorkflowStepSpec{{Name: "wait", WaitForCallback: true}}},
-	} {
-		if tenantWorkflowDefinitionSupported(spec) {
-			t.Errorf("tenant-bound workflow with external continuation %q was accepted", spec.Name)
-		}
-	}
-}
-
 func seedWorkflowApp(t *testing.T, e testEnv, slug string) state.App {
 	t.Helper()
 	app, err := e.store.CreateApp(context.Background(), state.App{
@@ -277,7 +257,7 @@ func TestCreateWorkflowRun_TenantRequiredAppRejectsBeforePersistence(t *testing.
 	}
 }
 
-func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndRejectsUnsupportedFeatures(t *testing.T) {
+func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "tenant-scoped-workflow-app")
 	required := true
@@ -302,6 +282,7 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndRejectsUnsupportedFeat
 	if err := json.Unmarshal(issued.Body.Bytes(), &token); err != nil {
 		t.Fatal(err)
 	}
+	tenantHeaders := map[string]string{"Authorization": "Bearer " + token.Token}
 
 	started := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{"order_id": "ord_42"}, map[string]string{
 		"Authorization": "Bearer " + token.Token,
@@ -344,11 +325,62 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndRejectsUnsupportedFeat
 		t.Fatalf("tenant workflow status response=%+v err=%v", selfRun, err)
 	}
 
-	unsupported := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/approval/runs", map[string]any{}, map[string]string{
-		"Authorization": "Bearer " + token.Token,
-	})
-	if unsupported.Code != http.StatusBadRequest || !strings.Contains(unsupported.Body.String(), "event waits") {
-		t.Fatalf("tenant event wait status=%d body=%s", unsupported.Code, unsupported.Body)
+	eventStarted := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/approval/runs", map[string]any{}, tenantHeaders)
+	if eventStarted.Code != http.StatusCreated {
+		t.Fatalf("tenant event-wait start: %d %s", eventStarted.Code, eventStarted.Body)
+	}
+	var eventRun api.WorkflowRunResponse
+	if err := json.Unmarshal(eventStarted.Body.Bytes(), &eventRun); err != nil || eventRun.PlatformTenantID != tenant.ID {
+		t.Fatalf("tenant event-wait run=%+v err=%v", eventRun, err)
+	}
+	eventPath := "/v1/platform-tenant-self/workflows/runs/" + eventRun.ID + "/events"
+	eventRequest := api.InjectWorkflowEventRequest{EventName: "manager.approved", Payload: json.RawMessage(`{"approved":true}`)}
+	eventHeaders := map[string]string{"Authorization": tenantHeaders["Authorization"], "Idempotency-Key": "tenant-approval-1"}
+	firstEvent := e.do(t, http.MethodPost, eventPath, eventRequest, eventHeaders)
+	if firstEvent.Code != http.StatusOK {
+		t.Fatalf("tenant event continuation: %d %s", firstEvent.Code, firstEvent.Body)
+	}
+	retriedEvent := e.do(t, http.MethodPost, eventPath, eventRequest, eventHeaders)
+	if retriedEvent.Code != http.StatusOK {
+		t.Fatalf("tenant event continuation retry: %d %s", retriedEvent.Code, retriedEvent.Body)
+	}
+	storedEvents, err := e.store.GetWorkflowEventsForRun(context.Background(), eventRun.ID)
+	if err != nil || len(storedEvents) != 1 {
+		t.Fatalf("tenant event retry stored %d events, err=%v", len(storedEvents), err)
+	}
+
+	callbackStarted := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/callback/runs", map[string]any{}, tenantHeaders)
+	if callbackStarted.Code != http.StatusCreated {
+		t.Fatalf("tenant callback-wait start: %d %s", callbackStarted.Code, callbackStarted.Body)
+	}
+	var callbackRun api.WorkflowRunResponse
+	if err := json.Unmarshal(callbackStarted.Body.Bytes(), &callbackRun); err != nil || callbackRun.PlatformTenantID != tenant.ID {
+		t.Fatalf("tenant callback-wait run=%+v err=%v", callbackRun, err)
+	}
+	callbackBase := "/v1/platform-tenant-self/workflows/runs/" + callbackRun.ID + "/callbacks"
+	callbackList := e.do(t, http.MethodGet, callbackBase, nil, tenantHeaders)
+	if callbackList.Code != http.StatusOK {
+		t.Fatalf("tenant callback list: %d %s", callbackList.Code, callbackList.Body)
+	}
+	var callbacks api.ListWorkflowCallbacksResponse
+	if err := json.Unmarshal(callbackList.Body.Bytes(), &callbacks); err != nil || len(callbacks.Callbacks) != 1 {
+		t.Fatalf("tenant callbacks=%+v err=%v", callbacks, err)
+	}
+	callbackID := callbacks.Callbacks[0].ID
+	callbackPath := callbackBase + "/" + callbackID
+	callbackPayload := map[string]any{"approved": true}
+	firstCallback := e.do(t, http.MethodPost, callbackPath, callbackPayload, tenantHeaders)
+	if firstCallback.Code != http.StatusOK {
+		t.Fatalf("tenant callback completion: %d %s", firstCallback.Code, firstCallback.Body)
+	}
+	var firstCallbackReceipt api.CompleteWorkflowCallbackResponse
+	if err := json.Unmarshal(firstCallback.Body.Bytes(), &firstCallbackReceipt); err != nil || firstCallbackReceipt.Duplicate {
+		t.Fatalf("tenant callback first receipt=%+v err=%v", firstCallbackReceipt, err)
+	}
+	retriedCallback := e.do(t, http.MethodPost, callbackPath, callbackPayload, tenantHeaders)
+	var retriedCallbackReceipt api.CompleteWorkflowCallbackResponse
+	if err := json.Unmarshal(retriedCallback.Body.Bytes(), &retriedCallbackReceipt); err != nil || retriedCallback.Code != http.StatusOK || !retriedCallbackReceipt.Duplicate {
+		t.Fatalf("tenant callback retry=%d receipt=%+v err=%v body=%s", retriedCallback.Code, retriedCallbackReceipt, err, retriedCallback.Body)
 	}
 
 	accountStarted := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{"order_id": "ord_43"}, nil)
@@ -359,9 +391,7 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndRejectsUnsupportedFeat
 	if err := json.Unmarshal(accountStarted.Body.Bytes(), &accountRun); err != nil || accountRun.PlatformTenantID != tenant.ID {
 		t.Fatalf("account tenant response=%+v err=%v", accountRun, err)
 	}
-	cancelled := e.do(t, http.MethodPost, "/v1/platform-tenant-self/workflows/runs/"+accountRun.ID+"/cancel", nil, map[string]string{
-		"Authorization": "Bearer " + token.Token,
-	})
+	cancelled := e.do(t, http.MethodPost, "/v1/platform-tenant-self/workflows/runs/"+accountRun.ID+"/cancel", nil, tenantHeaders)
 	var cancelledRun api.WorkflowRunResponse
 	if err := json.Unmarshal(cancelled.Body.Bytes(), &cancelledRun); err != nil || cancelled.Code != http.StatusOK || cancelledRun.Status != state.WorkflowRunStatusFailed {
 		t.Fatalf("tenant cancel: status=%d run=%+v err=%v body=%s", cancelled.Code, cancelledRun, err, cancelled.Body)
@@ -381,10 +411,17 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndRejectsUnsupportedFeat
 	if err := json.Unmarshal(otherIssued.Body.Bytes(), &otherToken); err != nil {
 		t.Fatal(err)
 	}
+	foreignHeaders := map[string]string{"Authorization": "Bearer " + otherToken.Token}
 	foreignRead := e.do(t, http.MethodGet, "/v1/platform-tenant-self/workflows/runs/"+accountRun.ID, nil, map[string]string{
 		"Authorization": "Bearer " + otherToken.Token,
 	})
 	assertProblem(t, foreignRead, http.StatusNotFound, api.CodeWorkflowRunNotFound)
+	foreignEvent := e.do(t, http.MethodPost, eventPath, eventRequest, foreignHeaders)
+	assertProblem(t, foreignEvent, http.StatusNotFound, api.CodeWorkflowRunNotFound)
+	foreignCallbacks := e.do(t, http.MethodGet, callbackBase, nil, foreignHeaders)
+	assertProblem(t, foreignCallbacks, http.StatusNotFound, api.CodeWorkflowRunNotFound)
+	foreignCallback := e.do(t, http.MethodPost, callbackPath, callbackPayload, foreignHeaders)
+	assertProblem(t, foreignCallback, http.StatusNotFound, api.CodeWorkflowRunNotFound)
 	foreign := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+other.ID+"/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{}, nil)
 	assertProblem(t, foreign, http.StatusNotFound, api.CodeWorkflowDefinitionNotFound)
 }

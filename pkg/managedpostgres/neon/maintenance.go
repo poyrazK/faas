@@ -158,13 +158,15 @@ func (p *Provider) maintenanceEndpoint(ctx context.Context, source resourceRef) 
 		return p.doJSON(groupContext, http.MethodGet, path+"/endpoints", nil, nil, &endpointsResult, http.StatusOK)
 	})
 	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, path+"/operations", url.Values{"limit": {"1000"}}, nil, &operationsResult, http.StatusOK)
+		var err error
+		operationsResult.Operations, err = p.listProjectOperations(groupContext, source.projectID)
+		return err
 	})
 	if err := group.Wait(); err != nil {
 		return maintenancePlacement{}, err
 	}
 	if projectResult.Project.ID != source.projectID || projectResult.Project.OrganizationID != p.organizationID ||
-		projectResult.Project.RegionID != p.regionID || operationsResult.Pagination.Cursor != "" {
+		projectResult.Project.RegionID != p.regionID {
 		return maintenancePlacement{}, managedpostgres.ErrConflict
 	}
 	if projectResult.Project.PostgresMajor < 16 || !slices.Contains(p.Capabilities().PostgresMajors, projectResult.Project.PostgresMajor) {

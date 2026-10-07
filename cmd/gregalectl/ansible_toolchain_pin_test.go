@@ -77,12 +77,31 @@ func TestAnsibleToolchainPinnedIdenticallyAcrossCIAndCD(t *testing.T) {
 	}
 	step := compute[install:prereqs]
 	for _, required := range []string{
-		"-r deploy/ansible/requirements.yml",
+		"scripts/ci/ensure-ansible-toolchain.sh 'ansible-core==",
+		"deploy/ansible/requirements.yml",
 		`echo "ANSIBLE_COLLECTIONS_PATH=$collections" >> "$GITHUB_ENV"`,
-		`echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"`,
+		`echo "$venv_bin" >> "$GITHUB_PATH"`,
 	} {
 		if !strings.Contains(step, required) {
 			t.Errorf("cd-compute toolchain step is missing %q", required)
+		}
+	}
+	// The shared installer is what actually honours the pins: a venv, the
+	// exact core pin it is given, and only the collection versions
+	// requirements.yml pins (with the Galaxy-outage clone fallback).
+	installer, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "ensure-ansible-toolchain.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		`python3 -m venv "$dir/venv"`,
+		`pip install --quiet "$core_pin"`,
+		`-r "$requirements"`,
+		`git clone --quiet --depth 1 --branch "$version"`,
+		`^ansible-core==[0-9]+\.[0-9]+\.[0-9]+$`,
+	} {
+		if !strings.Contains(string(installer), required) {
+			t.Errorf("ensure-ansible-toolchain.sh is missing %q", required)
 		}
 	}
 }

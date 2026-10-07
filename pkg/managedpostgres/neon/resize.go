@@ -81,9 +81,6 @@ func (p *Provider) resizeObservation(ctx context.Context, request managedpostgre
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, endpoint{}, err
 	}
-	if metadata.operations.Pagination.Cursor != "" {
-		return managedpostgres.ObservedDatabase{}, endpoint{}, managedpostgres.ErrUnavailable
-	}
 	selected, primary, ready := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, data.branchID)
 	if selected.ID != data.branchID || !validProviderID.MatchString(primary.ID) ||
 		selected.ProjectID != "" && selected.ProjectID != data.projectID || primary.ProjectID != "" && primary.ProjectID != data.projectID ||

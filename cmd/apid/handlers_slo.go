@@ -54,7 +54,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -181,24 +180,25 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 		*p.dest = appmetrics.SafeFloat(v)
 	}
 
-	// 5. error_rate_pct.
-	errQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, app.ID, window),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, app.ID, window))
-	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
-		resp.ErrorRatePct = appmetrics.SafePercent(v)
-	} else {
-		return degradedAppSLO(err, s.log, "error_rate", app.ID, window)
-	}
-
-	// 6. cold_boot_rate_pct.
-	coldQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, app.ID, window),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, app.ID, window))
-	if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
-		resp.ColdBootRatePct = appmetrics.SafePercent(v)
-	} else {
-		return degradedAppSLO(err, s.log, "cold_boot", app.ID, window)
+	// 5-6. error_rate_pct and cold_boot_rate_pct. A ratio over an idle
+	// window has no denominator, so PercentRatioQuery returns no sample; an
+	// app with no requests has zero rates, not unavailable telemetry. The
+	// metrics path got this guard in #4181; production-us hunt #4 found
+	// `gregale slo` still reporting idle apps as "degraded".
+	if resp.RequestsTotal > 0 {
+		if v, err := s.promqlClient.QueryScalar(ctx, appmetrics.ErrorRatePctQuery(app.ID, window)); err == nil {
+			resp.ErrorRatePct = appmetrics.SafePercent(v)
+		} else {
+			return degradedAppSLO(err, s.log, "error_rate", app.ID, window)
+		}
+		coldQ := appmetrics.PercentRatioQuery(
+			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, app.ID, window),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, app.ID, window))
+		if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
+			resp.ColdBootRatePct = appmetrics.SafePercent(v)
+		} else {
+			return degradedAppSLO(err, s.log, "cold_boot", app.ID, window)
+		}
 	}
 
 	// The wake-queue histogram has no app label. Keep the value null and its
@@ -358,7 +358,7 @@ func degradedAppSLO(err error, log *slog.Logger, label, appID, window string) (a
 	if log != nil {
 		log.Warn("handlers_slo: query failed", "label", label, "app_id", appID, "window", window, "err", msg)
 	}
-	return api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, appmetrics.SourceDegradedPrefix + telemetryDegradedReason(err)
+	return api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, appmetrics.SourceDegradedPrefix + appmetrics.TelemetryDegradedReason(err)
 }
 
 // degradedAccountSLO mirrors degradedAppSLO for the
@@ -374,17 +374,5 @@ func degradedAccountSLOPartial(resp api.AccountSLOResponse, err error, log *slog
 	if log != nil {
 		log.Warn("handlers_slo: query failed", "label", label, "account_id", accountID, "window", window, "err", msg)
 	}
-	return resp, appmetrics.SourceDegradedPrefix + telemetryDegradedReason(err)
-}
-
-// telemetryDegradedReason is safe for customer-visible Source fields. The
-// underlying net/http error contains the internal Prometheus URL and the full
-// PromQL expression, including every app UUID in an account matcher. Keep that
-// diagnostic in the sanitized server log above, never in the API response or
-// dashboard HTML.
-func telemetryDegradedReason(err error) string {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "telemetry timeout"
-	}
-	return "telemetry unavailable"
+	return resp, appmetrics.SourceDegradedPrefix + appmetrics.TelemetryDegradedReason(err)
 }

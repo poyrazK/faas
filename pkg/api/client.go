@@ -140,10 +140,15 @@ func NewClient(baseURL, token string) *Client {
 	return &Client{
 		baseURL: baseURL,
 		token:   token,
-		http:    &http.Client{Timeout: 30 * time.Second, Transport: newClientTransport()},
+		http:    &http.Client{Timeout: DefaultClientTimeout, Transport: newClientTransport()},
 		cache:   NewCompletionCache(),
 	}
 }
+
+// DefaultClientTimeout bounds every request a NewClient makes. Server-side
+// long-polls (SyncInvokeWaitSeconds) stay below it so the server's answer
+// arrives before the client gives up.
+const DefaultClientTimeout = 30 * time.Second
 
 // newClientTransport returns a private copy of the standard transport. The
 // default HTTP transport is process-global; httptest.Server.Close calls
@@ -7031,6 +7036,32 @@ func (c *Client) SendWorkflowEvent(ctx context.Context, runID, eventName string,
 	req := InjectWorkflowEventRequest{EventName: eventName, Payload: payload}
 	err := c.do(ctx, "POST", "/v1/workflows/runs/"+runID+"/events", req, &resp)
 	return resp, err
+}
+
+// ListPlatformTenantSelfWorkflowCallbacks lists callback waits for a run owned
+// by the authenticated platform tenant.
+func (c *Client) ListPlatformTenantSelfWorkflowCallbacks(ctx context.Context, runID string) (ListWorkflowCallbacksResponse, error) {
+	var out ListWorkflowCallbacksResponse
+	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(runID) + "/callbacks"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// CompletePlatformTenantSelfWorkflowCallback supplies the JSON value for one
+// callback wait owned by the authenticated platform tenant.
+func (c *Client) CompletePlatformTenantSelfWorkflowCallback(ctx context.Context, runID, callbackID string, payload json.RawMessage) (CompleteWorkflowCallbackResponse, error) {
+	var out CompleteWorkflowCallbackResponse
+	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID)
+	return out, c.do(ctx, http.MethodPost, path, payload, &out)
+}
+
+// SendPlatformTenantSelfWorkflowEvent injects an event into a run owned by the
+// authenticated platform tenant. Reuse idempotencyKey when retrying an
+// uncertain request.
+func (c *Client) SendPlatformTenantSelfWorkflowEvent(ctx context.Context, runID, eventName string, payload json.RawMessage, idempotencyKey string) (InjectWorkflowEventResponse, error) {
+	var out InjectWorkflowEventResponse
+	request := InjectWorkflowEventRequest{EventName: eventName, Payload: payload}
+	path := "/v1/platform-tenant-self/workflows/runs/" + url.PathEscape(runID) + "/events"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
 }
 
 // PublishEvent durably accepts one tenant-scoped internal event envelope.

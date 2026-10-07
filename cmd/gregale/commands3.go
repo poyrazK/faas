@@ -70,7 +70,10 @@ func cmdSecrets(args []string) int {
 		return secretsList(args[1:])
 	case "set":
 		return secretsSet(args[1:])
-	case "unset":
+	case "unset", "rm":
+		// production-us hunt #4: every other resource deletes with `rm`
+		// (crons, domains, keys, alerts, webhooks), and `secrets rm` was an
+		// unknown subcommand.
 		return secretsUnset(args[1:])
 	case "list-all":
 		return secretsListAll(args[1:])

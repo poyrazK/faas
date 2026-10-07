@@ -42,7 +42,7 @@ func (p *Provider) snapshotCopyReaderDeletion(ctx context.Context, d managedpost
 	}
 	capture := resourceRef{projectID: source.projectID, branchID: branchID}
 	result := managedpostgres.SnapshotCopyReaderDeletionObservation{EndpointID: r.Reader.ExpectedEndpointID, CreatedAt: r.Reader.ExpectedCreatedAt}
-	actualBranch, branchErr := p.findSnapshotRestoreBranch(ctx, source.projectID, branchID, p.restoreBranchName(r.Reader.Capture.ResourceID))
+	actualBranch, branchErr := p.findOwnedBranch(ctx, source.projectID, branchID, p.restoreBranchName(r.Reader.Capture.ResourceID))
 	if errors.Is(branchErr, managedpostgres.ErrNotFound) || len(r.CaptureOperationIDs) > 0 {
 		proof, err := p.ObserveSnapshotRestoreDeletion(ctx, d, copyReaderCaptureDeletionRequest(r))
 		if err != nil {

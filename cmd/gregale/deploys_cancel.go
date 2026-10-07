@@ -24,12 +24,8 @@ const deploysCancelUsage = "usage: gregale deploys cancel <id> [--reason <user|a
 func cmdDeploysCancel(args []string) int {
 	fs := newFlagSet("deploys cancel", flag.ContinueOnError)
 	reason := fs.String("reason", "user", "cancel reason (user|auto_quota|auto_health|system)")
-	appSlug := fs.String("app", "", "app slug (required; used as IDOR-gate path segment)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *appSlug == "" {
-		PrintUsage(os.Stderr, deploysCancelUsage+"   (--app is required)", "deploys")
+	appSlug := fs.String("app", "", "app slug (defaults to the linked project, or the deployment's own app)")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
@@ -50,6 +46,10 @@ func cmdDeploysCancel(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	// The app is the IDOR-gate path segment; a deployment UUID names it.
+	if *appSlug, err = deploymentAppSlug(client, *appSlug, id); err != nil {
+		return printErr("Could not resolve deployment", err)
 	}
 	// ADR-198: a vN handle resolves against --app, else the linked project.
 	// A uuid short-circuits without a lookup.

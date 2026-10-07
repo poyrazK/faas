@@ -1,10 +1,57 @@
 package neon
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
+
+const restoreLineageTimeout = 20 * time.Second
+
+// A successful POST may precede Neon's asynchronous parent metadata. Read
+// only the acknowledged identity; never repeat a non-idempotent create or
+// replace the provider's proof with the requested lineage.
+func (p *Provider) awaitRestoredBranch(ctx context.Context, projectID, parentID, name string, target branch, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	ctx, cancel := context.WithTimeout(ctx, restoreLineageTimeout)
+	defer cancel()
+	id := target.ID
+	for {
+		if target.ID != id {
+			return managedpostgres.ObservedDatabase{}, managedpostgres.ErrConflict
+		}
+		observed, err := restoredBranchObservation(projectID, parentID, name, target, request)
+		if err == nil || !errors.Is(err, managedpostgres.ErrUnavailable) || !validProviderID.MatchString(id) || target.Name != name ||
+			(target.ParentID != "" && target.ParentID != parentID) ||
+			(target.ParentID != "" && target.ParentTimestamp != "" && target.ProjectID != "" && target.InitSource != "") {
+			return observed, err
+		}
+		var response struct {
+			Branch branch `json:"branch"`
+		}
+		path := "/projects/" + url.PathEscape(projectID) + "/branches/" + url.PathEscape(id)
+		if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+			if ctx.Err() != nil || errors.Is(err, managedpostgres.ErrNotFound) {
+				err = managedpostgres.ErrUnavailable
+			}
+			return managedpostgres.ObservedDatabase{}, err
+		}
+		target = response.Branch
+		if target.ParentID != "" && target.ParentTimestamp != "" && target.ProjectID != "" && target.InitSource != "" {
+			continue
+		}
+		timer := time.NewTimer(p.credentialPollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+		case <-timer.C:
+		}
+	}
+}
 
 // Both a creation acknowledgement and a deterministic-name recovery must
 // describe the requested data fork. Names alone do not establish ownership.

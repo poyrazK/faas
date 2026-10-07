@@ -326,6 +326,11 @@ func (s *PgStore) ListWorkflowRuns(ctx context.Context, appID string, opts ListW
 	where := `app_id = $1`
 	args := []any{appID}
 	argIdx := 2
+	if opts.PlatformTenantID != "" {
+		where += fmt.Sprintf(` AND platform_tenant_id = $%d`, argIdx)
+		args = append(args, opts.PlatformTenantID)
+		argIdx++
+	}
 	if opts.Status != "" {
 		where += fmt.Sprintf(` AND status = $%d`, argIdx)
 		args = append(args, opts.Status)
@@ -1460,7 +1465,93 @@ func (s *PgStore) ResolveWorkflowEventWait(ctx context.Context, runID, stepName,
 	return nil, true, nil
 }
 
+func lockTenantWorkflowContinuationRun(ctx context.Context, tx pgx.Tx, tenantID, runID string) (string, error) {
+	if _, err := uuid.Parse(tenantID); err != nil {
+		return "", ErrWorkflowRunNotFound
+	}
+	if _, err := uuid.Parse(runID); err != nil {
+		return "", ErrWorkflowRunNotFound
+	}
+	var status string
+	var accountID, appID string
+	err := tx.QueryRow(ctx, `
+		SELECT r.status, a.account_id, a.id
+		FROM workflow_runs r
+		JOIN apps a ON a.id = r.app_id
+		JOIN platform_tenants t ON t.id = r.platform_tenant_id
+		  AND t.account_id = a.account_id AND t.status = 'active'
+		WHERE r.id = $1 AND r.platform_tenant_id = $2
+		FOR UPDATE OF r, t
+	`, runID, tenantID).Scan(&status, &accountID, &appID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrWorkflowRunNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("pgstore: authorize tenant workflow continuation: %w", err)
+	}
+	var hasActiveLink bool
+	rows, err := tx.Query(ctx, `
+		SELECT c.id FROM api_consumers c
+		WHERE c.account_id = $1 AND c.app_id = $2 AND c.platform_tenant_id = $3
+		  AND c.status = 'active' AND c.revoked_at IS NULL
+		FOR UPDATE
+	`, accountID, appID, tenantID)
+	if err != nil {
+		return "", fmt.Errorf("pgstore: lock tenant workflow API consumer link: %w", err)
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return "", fmt.Errorf("pgstore: scan tenant workflow API consumer link: %w", err)
+		}
+		hasActiveLink = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return "", fmt.Errorf("pgstore: read tenant workflow API consumer links: %w", err)
+	}
+	rows.Close()
+	rows, err = tx.Query(ctx, `
+		SELECT ts.id FROM tenant_surfaces ts
+		WHERE ts.account_id = $1 AND ts.app_id = $2 AND ts.platform_tenant_id = $3
+		  AND ts.status = 'active'
+		FOR UPDATE
+	`, accountID, appID, tenantID)
+	if err != nil {
+		return "", fmt.Errorf("pgstore: lock tenant workflow surface link: %w", err)
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return "", fmt.Errorf("pgstore: scan tenant workflow surface link: %w", err)
+		}
+		hasActiveLink = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return "", fmt.Errorf("pgstore: read tenant workflow surface links: %w", err)
+	}
+	rows.Close()
+	if !hasActiveLink {
+		return "", ErrWorkflowRunNotFound
+	}
+	return status, nil
+}
+
 func (s *PgStore) CompleteWorkflowCallback(ctx context.Context, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
+	return s.completeWorkflowCallback(ctx, "", runID, stepName, eventName, eventID, timeout, payload)
+}
+
+func (s *PgStore) CompleteTenantWorkflowCallback(ctx context.Context, tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
+	if tenantID == "" {
+		return false, ErrWorkflowInvalidRecord
+	}
+	return s.completeWorkflowCallback(ctx, tenantID, runID, stepName, eventName, eventID, timeout, payload)
+}
+
+func (s *PgStore) completeWorkflowCallback(ctx context.Context, tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
 	if runID == "" || stepName == "" || eventName == "" || timeout <= 0 {
 		return false, ErrWorkflowInvalidRecord
 	}
@@ -1479,11 +1570,19 @@ func (s *PgStore) CompleteWorkflowCallback(ctx context.Context, runID, stepName,
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 	var runStatus string
-	if err := tx.QueryRow(ctx, `SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, ErrWorkflowRunNotFound
+	if tenantID == "" {
+		if err := tx.QueryRow(ctx, `SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return false, ErrWorkflowRunNotFound
+			}
+			return false, fmt.Errorf("pgstore: lock workflow callback run: %w", err)
 		}
-		return false, fmt.Errorf("pgstore: lock workflow callback run: %w", err)
+	} else {
+		var err error
+		runStatus, err = lockTenantWorkflowContinuationRun(ctx, tx, tenantID, runID)
+		if err != nil {
+			return false, err
+		}
 	}
 	query := fmt.Sprintf(`SELECT %s FROM workflow_events WHERE id = $1`, workflowEventSelectCols)
 	existing, err := scanWorkflowEventCols(tx.QueryRow(ctx, query, eventID).Scan)
@@ -1538,6 +1637,17 @@ func (s *PgStore) CompleteWorkflowCallback(ctx context.Context, runID, stepName,
 }
 
 func (s *PgStore) InsertWorkflowEvent(ctx context.Context, e *WorkflowEvent) error {
+	return s.insertWorkflowEvent(ctx, "", e)
+}
+
+func (s *PgStore) InsertTenantWorkflowEvent(ctx context.Context, tenantID string, e *WorkflowEvent) error {
+	if tenantID == "" {
+		return ErrWorkflowInvalidRecord
+	}
+	return s.insertWorkflowEvent(ctx, tenantID, e)
+}
+
+func (s *PgStore) insertWorkflowEvent(ctx context.Context, tenantID string, e *WorkflowEvent) error {
 	if e == nil {
 		return fmt.Errorf("%w: nil event", ErrWorkflowInvalidRecord)
 	}
@@ -1560,11 +1670,22 @@ func (s *PgStore) InsertWorkflowEvent(ctx context.Context, e *WorkflowEvent) err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 	var runStatus string
-	if err := tx.QueryRow(ctx, `SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, e.RunID).Scan(&runStatus); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrWorkflowRunNotFound
+	if tenantID == "" {
+		if err := tx.QueryRow(ctx, `SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, e.RunID).Scan(&runStatus); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrWorkflowRunNotFound
+			}
+			return fmt.Errorf("pgstore: lock workflow run for event: %w", err)
 		}
-		return fmt.Errorf("pgstore: lock workflow run for event: %w", err)
+	} else {
+		var err error
+		runStatus, err = lockTenantWorkflowContinuationRun(ctx, tx, tenantID, e.RunID)
+		if err != nil {
+			return err
+		}
+		if runStatus != WorkflowRunStatusPending && runStatus != WorkflowRunStatusRunning && runStatus != WorkflowRunStatusAwaitingEvent {
+			return ErrWorkflowNotRunning
+		}
 	}
 	query := `
 		INSERT INTO workflow_events (id, run_id, event_name, payload, received_at)

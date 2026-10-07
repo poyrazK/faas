@@ -22,3 +22,20 @@ the platform user-config directory) with mode `0600`. Supported settings are:
 Environment variables take precedence over the file: `FAAS_API` overrides
 `api-base`, and `FAAS_JSON` overrides `json`. Use `gregale config list --json`
 to see the effective value and its source without exposing credentials.
+
+## Command output and forwarded arguments
+
+Put the global `--json` (or `-j`) flag before a command's `--` separator.
+Arguments after the separator belong to the app command, including flags such
+as `--help` and `--json`:
+
+```bash
+gregale --json app demo exec --detach -- python --help
+```
+
+`gregale invocations wait <id> --json` writes the invocation status to stdout
+and API errors as a single Problem JSON object to stderr. A wait timeout exits
+with `124`, writes the last known status to stdout when available, and writes
+an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
+Stopping the CLI wait leaves the invocation running; inspect it later with
+`gregale invocations get <id>`.

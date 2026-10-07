@@ -34,8 +34,23 @@ func TestMCPCLIJourney(t *testing.T) {
 	if err != nil || cfg.Auth.Mode != "open" {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}
-	if len(cfg.Auth.ToolScopes) != 3 {
-		t.Fatalf("starter must explicitly allow its three harmless tools: %+v", cfg.Auth.ToolScopes)
+	if len(cfg.Auth.ToolScopes) != 4 {
+		t.Fatalf("starter must explicitly allow its four harmless tools: %+v", cfg.Auth.ToolScopes)
+	}
+	if cfg.Tasks == nil || cfg.Tasks.Enabled == nil || *cfg.Tasks.Enabled {
+		t.Fatalf("starter tasks must be explicitly disabled by default: %+v", cfg.Tasks)
+	}
+	workerEntrypoint, err := os.ReadFile(filepath.Join(dir, "tasks-worker.js"))
+	if err != nil || !strings.Contains(string(workerEntrypoint), "role: 'worker'") {
+		t.Fatalf("starter must include a dedicated task worker entrypoint: err=%v", err)
+	}
+	workerRuntime, err := os.ReadFile(filepath.Join(dir, "task-runtime.js"))
+	if err != nil || !strings.Contains(string(workerRuntime), "MCP_TASK_NAMESPACE") {
+		t.Fatalf("starter must include shared task runtime configuration: err=%v", err)
+	}
+	packageJSON, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil || !strings.Contains(string(packageJSON), `"start:tasks-worker": "node tasks-worker.js"`) {
+		t.Fatalf("starter must expose the task worker npm script: err=%v", err)
 	}
 	lock, err := os.ReadFile(filepath.Join(dir, "package-lock.json"))
 	if err != nil {
@@ -168,6 +183,75 @@ func TestMCPCallUsesExplicitInputResponsesFile(t *testing.T) {
 	}
 }
 
+func TestMCPCLIWaitsForAndResumesTaskHandles(t *testing.T) {
+	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+	var output, stderr bytes.Buffer
+	osStdout, osStderr, jsonOutput = &output, &stderr, true
+	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+	var polls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     int            `json:"id"`
+			Method string         `json:"method"`
+			Params map[string]any `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "server/discover":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":[%q],"capabilities":{"tools":{},"extensions":{"%s":{}}}}}`, request.ID, mcphosting.ProtocolVersion, mcphosting.TasksExtensionID)
+		case "tools/list":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"report","inputSchema":{"type":"object"}}]}}`, request.ID)
+		case "tools/call":
+			meta, _ := request.Params["_meta"].(map[string]any)
+			caps, _ := meta["io.modelcontextprotocol/clientCapabilities"].(map[string]any)
+			extensions, _ := caps["extensions"].(map[string]any)
+			if _, ok := extensions[mcphosting.TasksExtensionID]; !ok || r.Header.Get("Mcp-Name") != "report" {
+				t.Errorf("Tasks opt-in or tool name header missing: caps=%v header=%q", caps, r.Header.Get("Mcp-Name"))
+			}
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"task","taskId":"task-123","status":"working","createdAt":"2026-10-06T12:00:00Z","lastUpdatedAt":"2026-10-06T12:00:00Z","ttlMs":60000,"pollIntervalMs":0}}`, request.ID)
+		case "tasks/get":
+			if request.Params["taskId"] != "task-123" || r.Header.Get("Mcp-Name") != "task-123" {
+				t.Errorf("task route mismatch: params=%v header=%q", request.Params, r.Header.Get("Mcp-Name"))
+			}
+			if polls.Add(1) == 1 {
+				_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","taskId":"task-123","status":"working","createdAt":"2026-10-06T12:00:00Z","lastUpdatedAt":"2026-10-06T12:00:00Z","ttlMs":60000,"pollIntervalMs":0}}`, request.ID)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","taskId":"task-123","status":"completed","createdAt":"2026-10-06T12:00:00Z","lastUpdatedAt":"2026-10-06T12:00:01Z","ttlMs":60000,"result":{"resultType":"complete","content":[{"type":"text","text":"report ready"}]}}}`, request.ID)
+		case "tasks/cancel":
+			if request.Params["taskId"] != "task-123" || r.Header.Get("Mcp-Name") != "task-123" {
+				t.Errorf("cancel route mismatch: params=%v header=%q", request.Params, r.Header.Get("Mcp-Name"))
+			}
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete"}}`, request.ID)
+		case "subscriptions/listen":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"error":{"code":-32601,"message":"method not found"}}`, request.ID)
+		default:
+			t.Errorf("unexpected MCP method %q", request.Method)
+		}
+	}))
+	defer server.Close()
+	if code := cmdMCP([]string{"call", "--url", server.URL + "/mcp", "--tool", "report", "--wait"}); code != 0 || !strings.Contains(output.String(), "report ready") || !strings.Contains(stderr.String(), "MCP task status: working") || polls.Load() != 2 {
+		t.Fatalf("wait exit=%d stdout=%s stderr=%s polls=%d", code, output.String(), stderr.String(), polls.Load())
+	}
+	output.Reset()
+	if code := cmdMCP([]string{"task-get", "--url", server.URL + "/mcp", "--task-id", "task-123"}); code != 0 || !strings.Contains(output.String(), `"status": "completed"`) {
+		t.Fatalf("task-get exit=%d stdout=%s", code, output.String())
+	}
+	output.Reset()
+	stderr.Reset()
+	if code := cmdMCP([]string{"task-wait", "--url", server.URL + "/mcp", "--task-id", "task-123"}); code != 0 || !strings.Contains(output.String(), `"status": "completed"`) || !strings.Contains(stderr.String(), "MCP task status: completed") {
+		t.Fatalf("task-wait exit=%d stdout=%s stderr=%s", code, output.String(), stderr.String())
+	}
+	output.Reset()
+	if code := cmdMCP([]string{"task-cancel", "--url", server.URL + "/mcp", "--task-id", "task-123"}); code != 0 || !strings.Contains(output.String(), `"cancellation_requested": true`) {
+		t.Fatalf("task-cancel exit=%d stdout=%s", code, output.String())
+	}
+}
+
 func TestMCPInteractivePromptAndTTYGate(t *testing.T) {
 	for _, tc := range []struct {
 		name, input, action string
@@ -215,7 +299,7 @@ func TestMCPHelpAndCompletion(t *testing.T) {
 	}
 	var reference bytes.Buffer
 	renderMarkdownReference(&reference, []cliCommand{command})
-	for _, required := range []string{"mcp doctor", "mcp deploy", "mcp lock", "mcp diff", "mcp resources", "mcp resource-read", "mcp prompts", "mcp prompt-get", "--uri", "--prompt", "--before", "--after", "--check", "--strict-catalog", "--force", "--token-env", "--stream-tool", "--arguments-file", "--interactive", "--input-responses-file"} {
+	for _, required := range []string{"mcp doctor", "mcp deploy", "mcp lock", "mcp diff", "mcp resources", "mcp resource-read", "mcp resource-watch", "mcp prompts", "mcp prompt-get", "mcp complete", "--resource-template", "--context-file", "mcp task-get", "mcp task-wait", "mcp task-cancel", "mcp watch", "--baseline", "--interval", "--tools", "--resources", "--prompts", "--task-id", "--tasks", "--wait", "--uri", "--prompt", "--before", "--after", "--check", "--strict-catalog", "--force", "--token-env", "--stream-tool", "--arguments-file", "--interactive", "--input-responses-file"} {
 		if !strings.Contains(reference.String(), required) {
 			t.Errorf("MCP help omitted %q", required)
 		}

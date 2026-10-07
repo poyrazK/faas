@@ -34,7 +34,7 @@ func TestObservedDataResourceDoesNotFollowChangedDefault(t *testing.T) {
 				{ID: "ep-original", BranchID: originalID, Type: "read_write", CurrentState: "active", MinimumCU: .25, MaximumCU: 2, SuspendTimeoutSecond: 300},
 				{ID: "ep-replacement", BranchID: replacementID, Type: "read_write", CurrentState: "active", MinimumCU: 1, MaximumCU: 4, SuspendTimeoutSecond: -1}}})
 		case r.Method == http.MethodGet && path == "/operations":
-			writeResponse(t, w, http.StatusOK, operationsResponse{})
+			writeResponse(t, w, http.StatusOK, operationsResponse{Operations: []operation{}})
 		case r.Method == http.MethodPost && path == "/branches":
 			var request createBranchRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {

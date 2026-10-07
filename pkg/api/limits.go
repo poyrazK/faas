@@ -57,6 +57,28 @@ const AlertRollbackEvidenceIngestionLag = 30 * time.Second
 const AlertRollbackEvidenceMaxSampleAge = 2 * time.Minute
 const AlertRollbackEvidenceMaxCheckDelay = 2 * time.Minute
 
+// First-wake 5xx auto-rollback (ADR-625, amends ADR-200). apid evaluates
+// every completed release that opted in (`deploy --rollback-on-5xx`, implied
+// by `--safe`) against request telemetry. The window opens when the release's
+// traffic is first observed; inside it, at least RollbackOn5xxMinServerErrors
+// 5xx responses that are also at least RollbackOn5xxMinErrorPct percent of the
+// release's requests roll it back to its predecessor. Telemetry timestamps
+// collapse to minutes and publish asynchronously, so a closed window stays
+// evaluable for RollbackOn5xxTelemetryGrace. Plan-independent per ADR-200.
+const RollbackOn5xxWindowMinutes = 5
+const RollbackOn5xxMinServerErrors int64 = 5
+const RollbackOn5xxMinErrorPct int64 = 50
+const RollbackOn5xxTelemetryGrace = 2 * time.Minute
+const RollbackOn5xxCheckIntervalSeconds = 15
+const RollbackOn5xxBatchSize = 100
+
+// Synchronous invoke (POST /v1/apps/{slug}/invoke) long-poll. The wait stays
+// below DefaultClientTimeout so a slow invocation answers with a 504 naming
+// the invocation rather than a client-side "could not reach Gregale".
+// production-us hunt #4: both were 30 s, so the SDK always gave up first.
+const SyncInvokeWaitSeconds = 25
+const SyncInvokeWaitSecondsFree = 5
+
 const ServiceBindingCheckBatchSize = 32
 const ServiceBindingCheckIntervalSeconds = 2
 
@@ -181,6 +203,9 @@ const (
 	OCIHealthcheckDefaultStartInterval = 5 * time.Second
 	OCIHealthcheckDurationMaxSeconds   = int64((1<<63 - 1) / time.Second)
 )
+
+// Workflow coordinator attempts use the positive PostgreSQL integer domain.
+const OperationWorkflowClaimsMaxPerRun = 1<<31 - 1
 
 // Operations protocol limits apply before customer schemas are evaluated.
 const (

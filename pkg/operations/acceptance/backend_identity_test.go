@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	operationcontract "github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/pressly/goose/v3"
@@ -142,8 +143,11 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const identityMigration = "20261001012633179_operation_backend_execution_identity.sql"
 	for _, file := range files {
-		if file.Name() == "20261001012633179_operation_backend_execution_identity.sql" || !strings.HasSuffix(file.Name(), ".sql") {
+		// Start from the true pre-identity schema. Later migrations may depend on
+		// columns and keys introduced here and must be applied afterwards in order.
+		if !strings.HasSuffix(file.Name(), ".sql") || file.Name() >= identityMigration {
 			continue
 		}
 		data, err := migrations.FS.ReadFile(file.Name())
@@ -161,12 +165,143 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if _, err := provider.Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	// Current CreateDeployment reads these later-added schema objects. Provision
+	// only their shapes so the fixture can seed a deployment in the pre-identity
+	// schema; leave the migrations unapplied for the ordered upgrade below.
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE workflow_automation_definitions (
+		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+		name text NOT NULL CHECK (length(name)>0),
+		version bigint NOT NULL CHECK (version>0),
+		draft jsonb NOT NULL CHECK (jsonb_typeof(draft)='object' AND draft->>'name'=name),
+		published jsonb CHECK (published IS NULL OR (jsonb_typeof(published)='object' AND published->>'name'=name)),
+		published_version bigint NOT NULL DEFAULT 0 CHECK (published_version>=0 AND published_version<=version),
+		enabled boolean NOT NULL DEFAULT true,
+		updated_at timestamptz NOT NULL DEFAULT now(),
+		PRIMARY KEY (app_id, name),
+		CHECK ((published IS NULL) = (published_version=0))
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `ALTER TABLE deployments ADD COLUMN IF NOT EXISTS environment_workload_runtime jsonb`); err != nil {
+		t.Fatal(err)
+	}
+	// Current CreateDeployment also pins workload settings. Provision the exact
+	// later-migration table shapes so the pre-identity fixture can seed its
+	// deployment; leave the migrations unapplied for the ordered upgrade below.
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS project_environment_workload_specs (
+		id uuid PRIMARY KEY,
+		environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+		revision bigint NOT NULL CHECK (revision > 0),
+		config_hash text NOT NULL CHECK (config_hash ~ '^[a-f0-9]{64}$'),
+		settings json NOT NULL CHECK (json_typeof(settings) = 'object'),
+		created_at timestamptz NOT NULL DEFAULT now(),
+		UNIQUE (environment_id, app_id, revision),
+		UNIQUE (environment_id, app_id, id)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS project_environment_workload_heads (
+		environment_id uuid NOT NULL,
+		app_id uuid NOT NULL,
+		spec_id uuid NOT NULL,
+		PRIMARY KEY (environment_id, app_id),
+		FOREIGN KEY (environment_id, app_id, spec_id)
+			REFERENCES project_environment_workload_specs(environment_id, app_id, id) ON DELETE CASCADE
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS project_environment_workload_deployment_specs (
+		deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+		spec_id uuid NOT NULL REFERENCES project_environment_workload_specs(id) ON DELETE CASCADE
+	)`); err != nil {
+		t.Fatal(err)
+	}
 	s := state.NewPgStore(pool)
-	ctx, account, _, def, tenant, _ := operationFixture(t, s)
-	admission := state.OperationAdmission{AccountID: account.ID, DefinitionID: def.ID,
-		PlatformTenantID: tenant.ID, IdempotencyKey: "populated-main-upgrade", Input: []byte(`{"count":1}`)}
-	op, _, err := s.AdmitOperation(ctx, admission)
+	ctx := context.Background()
+	account, err := s.CreateAccount(ctx, "operations@example.com", api.PlanPro)
 	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "operations-test", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:operations", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := s.CreatePlatformTenant(ctx, account.ID, "alice", "Alice", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := api.MustLimitsFor(api.PlanPro)
+	contract, err := operationcontract.Compile(operationSpec(), limits.Operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionID := uuid.NewString()
+	spec, err := json.Marshal(contract.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO customer_operation_definitions(id,account_id,app_id,scope,name,revision,deployment_id,release_id,spec)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'',$8::jsonb)`, definitionID, account.ID, app.ID, deployment.Scope,
+		contract.Spec.Name, contract.Revision, deployment.ID, spec); err != nil {
+		t.Fatalf("seed legacy operation definition: %v", err)
+	}
+	admission := state.OperationAdmission{AccountID: account.ID, DefinitionID: definitionID,
+		PlatformTenantID: tenant.ID, IdempotencyKey: "populated-main-upgrade", Input: []byte(`{"count":1}`)}
+	canonicalInput, err := operationcontract.CanonicalJSON(admission.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := operationcontract.InputFingerprint(canonicalInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeDigest := operationcontract.IdentityScope(account.ID, app.ID, deployment.Scope, tenant.ID,
+		contract.Spec.Name, admission.IdempotencyKey)
+	operationID, invocationID := uuid.NewString(), uuid.NewString()
+	now := time.Now().UTC()
+	operationExpiry := now.Add(time.Hour)
+	op := state.Operation{OperationResponse: api.OperationResponse{ID: operationID, Name: contract.Spec.Name,
+		Generation: 1, State: api.OperationAccepted, CompletionDelivery: api.OperationDeliveryResponse{State: "not_requested"},
+		LatestSequence: 1, CreatedAt: now, UpdatedAt: now, ExpiresAt: operationExpiry},
+		AccountID: account.ID, AppID: app.ID, Scope: deployment.Scope, PlatformTenantID: tenant.ID,
+		DefinitionID: definitionID, DefinitionRevision: contract.Revision, DeploymentID: deployment.ID,
+		CurrentInvocationID: invocationID, PlanLimits: limits.Operations, ValueMaxBytes: limits.MaxSourceBytesPerInvocation,
+		EventExpiresAt: operationExpiry}
+	record, err := json.Marshal(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = legacyTx.Rollback(ctx) }()
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO invocations(id,app_id,account_id,source,operation_id)
+		VALUES($1,$2,$3,'async_invoke',$4)`, invocationID, app.ID, account.ID, operationID); err != nil {
+		t.Fatalf("seed legacy HTTP invocation: %v", err)
+	}
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,state,record,expires_at,created_at)
+		VALUES($1,$2,$3,$4,$5,$6,'accepted',$7::jsonb,$8,$9)`, operationID, account.ID, app.ID, tenant.ID,
+		definitionID, invocationID, record, operationExpiry, now); err != nil {
+		t.Fatalf("seed legacy HTTP operation: %v", err)
+	}
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO customer_operation_executions(operation_id,generation,invocation_id) VALUES($1,1,$2)`, operationID, invocationID); err != nil {
+		t.Fatalf("seed legacy HTTP execution: %v", err)
+	}
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO customer_operation_events(operation_id,sequence,event_type,execution_id,data,created_at)
+		VALUES($1,1,'accepted',$2,'{"state":"accepted"}'::jsonb,$3)`, operationID, invocationID, now); err != nil {
+		t.Fatalf("seed legacy HTTP event: %v", err)
+	}
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
+		VALUES($1,$2,$3,$4,$5,$6)`, scopeDigest, account.ID, app.ID, operationID, fingerprint, operationExpiry); err != nil {
+		t.Fatalf("seed legacy operation idempotency receipt: %v", err)
+	}
+	if err := legacyTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(ctx, pool); err != nil {

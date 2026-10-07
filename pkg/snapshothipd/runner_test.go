@@ -579,3 +579,55 @@ func TestPrometheusMetricsRecordsFanoutLatency(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncJobSharesAFetchedDriveWithItsLayer pins ADR-633's replica half: a
+// snapshot drive fetched whole from the parent hands its unchanged blocks
+// back to the app layer, and a drive that was already local (the capturing
+// node) or a periodic revalidation is left alone.
+func TestSyncJobSharesAFetchedDriveWithItsLayer(t *testing.T) {
+	const (
+		mem   = "snap/dep/captures/c1/v2/mem"
+		drive = "snap/dep/captures/c1/v2/drive"
+		layer = "apps/acme/dep.ext4"
+	)
+	cases := []struct {
+		name         string
+		driveLocal   bool
+		revalidation bool
+		wantShare    bool
+	}{
+		{"fetched drive", false, false, true},
+		{"drive captured on this node", true, false, false},
+		{"revalidation", false, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls [][2]string
+			prev := shareUnchangedBlocks
+			shareUnchangedBlocks = func(_ context.Context, _ storage.StorageBackend, key, base string) (int64, error) {
+				calls = append(calls, [2]string{key, base})
+				return 0, nil
+			}
+			t.Cleanup(func() { shareUnchangedBlocks = prev })
+			backend := &fakeLocalBackend{
+				fakeBackend: &fakeBackend{objects: map[string][]byte{
+					"snap/dep/captures/c1/v2/vmstate": []byte("vmstate"),
+					drive:                             []byte("drive"),
+				}},
+				local: map[string]bool{mem: true, layer: true, drive: tc.driveLocal},
+			}
+			job := state.SnapshotReplicaJob{
+				StorageKey: mem, VMStateStorageKey: "snap/dep/captures/c1/v2/vmstate",
+				LayerStorageKeys: []string{layer}, Revalidation: tc.revalidation,
+			}
+			r := New(&fakeReplicaStore{job: job}, backend, "node-2", slog.Default())
+			r.leaseRenewInterval = 0
+			if err := r.syncJob(context.Background(), job); err != nil && !tc.revalidation {
+				t.Fatal(err)
+			}
+			if got := len(calls) == 1 && calls[0] == [2]string{drive, layer}; got != tc.wantShare {
+				t.Fatalf("share calls = %v, want shared=%v", calls, tc.wantShare)
+			}
+		})
+	}
+}

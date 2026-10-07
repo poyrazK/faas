@@ -80,6 +80,25 @@ type routeHealthSuggestionReport struct {
 	Caveats         []string                           `json:"caveats,omitempty"`
 }
 
+// routeHealthTargetError names the one problem with the app and deployment
+// the routes health leaves need. production-us hunt #4: `routes health suggest
+// <slug>` without --deployment answered with every requirement at once.
+func routeHealthTargetError(positional []string, deployment string) error {
+	switch {
+	case len(positional) == 0:
+		return errors.New("pass the app slug as the first argument")
+	case len(positional) > 1:
+		return fmt.Errorf("pass exactly one app slug; got %q", positional)
+	case !validCLISlug(positional[0]):
+		return fmt.Errorf("%q is not a valid app slug", positional[0])
+	case strings.TrimSpace(deployment) == "":
+		return fmt.Errorf("--deployment is required: pass the deployment UUID to inspect (list them with `gregale deployments --app %s`)", positional[0])
+	case !canonicalRouteHealthID(deployment):
+		return fmt.Errorf("--deployment must be a canonical deployment UUID; got %q", deployment)
+	}
+	return nil
+}
+
 func cmdRoutesHealthSuggest(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("routes health suggest", flag.ContinueOnError)
@@ -92,10 +111,16 @@ func cmdRoutesHealthSuggest(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || !validCLISlug(positional[0]) || !canonicalRouteHealthID(*deployment) ||
-		!validRouteHealthSuggestionSince(*since) || !slices.Contains([]string{"tenant", "consumer"}, *groupBy) ||
-		*limit < 1 || *limit > api.RouteHealthMaxRoutes {
-		return printErr("Invalid route health suggestion", errors.New("supply an app, canonical --deployment, valid --since, tenant/consumer grouping, and a --limit from 1 to 20"))
+	if err := routeHealthTargetError(positional, *deployment); err != nil {
+		return printErr("Invalid route health suggestion", err)
+	}
+	switch {
+	case !validRouteHealthSuggestionSince(*since):
+		return printErr("Invalid route health suggestion", fmt.Errorf("--since must be a duration such as 168h or 7d, or an RFC3339 time; got %q", *since))
+	case !slices.Contains([]string{"tenant", "consumer"}, *groupBy):
+		return printErr("Invalid route health suggestion", fmt.Errorf("--customer-group-by must be tenant or consumer; got %q", *groupBy))
+	case *limit < 1 || *limit > api.RouteHealthMaxRoutes:
+		return printErr("Invalid route health suggestion", fmt.Errorf("--limit must be between 1 and %d; got %d", api.RouteHealthMaxRoutes, *limit))
 	}
 	var releasePreview *previewRouteReport
 	if *previewReportPath != "" {

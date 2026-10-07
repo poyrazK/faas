@@ -15,6 +15,18 @@ export type EventReceiptRecipientResponse = {
    * Immutable captured subscription or notification identifier.
    */
   subscription_id: string;
+  /**
+   * Published workflow captured as an event recipient.
+   */
+  workflow_name?: string;
+  /**
+   * Durable run id after event-trigger admission.
+   */
+  workflow_run_id?: string;
+  /**
+   * Current workflow run status when retained.
+   */
+  workflow_run_status?: string;
   app_id: string;
   /**
    * Current slug when the target still belongs to the authenticated account.

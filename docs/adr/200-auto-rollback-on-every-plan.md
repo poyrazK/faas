@@ -4,6 +4,9 @@
 - **Date:** 2026-09-21
 - **Amends:** the `RollbackOn5xxAllowed` plan gate from ADR-118 (issue #961)
 - **Follows:** [ADR-199](199-rollouts-on-every-plan.md)
+- **Amended by:** [ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md). The
+  counters and watcher described below were never implemented; apid now
+  evaluates the opt-in from request telemetry.
 
 ## Context
 

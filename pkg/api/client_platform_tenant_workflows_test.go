@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestPlatformTenantWorkflowClientRoutes(t *testing.T) {
@@ -20,6 +21,13 @@ func TestPlatformTenantWorkflowClientRoutes(t *testing.T) {
 		}
 
 		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/platform-tenant-self/apps/shop/workflows/runs":
+			q := r.URL.Query()
+			if q.Get("limit") != "5" || q.Get("offset") != "2" || q.Get("status") != "failed" ||
+				q.Get("workflow_name") != "process-order" || q.Get("created_after") != "2026-10-01T00:00:00Z" {
+				t.Errorf("tenant run-list query = %v", q)
+			}
+			_, _ = w.Write([]byte(`{"runs":[{"id":"` + runID + `","status":"failed"}],"total":1}`))
 		case "POST /v1/account/platform-tenants/" + tenantID + "/apps/shop/workflows/process-order/runs",
 			"POST /v1/platform-tenant-self/apps/shop/workflows/process-order/runs":
 			var body map[string]string
@@ -58,6 +66,13 @@ func TestPlatformTenantWorkflowClientRoutes(t *testing.T) {
 	got, err := client.GetPlatformTenantSelfWorkflowRun(context.Background(), runID)
 	if err != nil || got.Status != "running" {
 		t.Fatalf("tenant run = %+v, err = %v", got, err)
+	}
+	createdAfter := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	listed, err := client.ListPlatformTenantSelfWorkflowRuns(context.Background(), "shop", WorkflowRunListOptions{
+		Limit: 5, Offset: 2, Status: "failed", WorkflowName: "process-order", CreatedAfter: &createdAfter,
+	})
+	if err != nil || listed.Total != 1 || len(listed.Runs) != 1 || listed.Runs[0].ID != runID {
+		t.Fatalf("tenant run history = %+v, err = %v", listed, err)
 	}
 	got, err = client.CancelPlatformTenantSelfWorkflowRun(context.Background(), runID)
 	if err != nil || got.Status != "cancelled" {

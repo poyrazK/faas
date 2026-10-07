@@ -380,7 +380,7 @@ func cmdDeploymentWait(args []string) int {
 	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	rollout := fs.Bool("rollout", false, "wait for a safe rollout to reach 100% traffic")
 	progress := fs.Bool("progress", false, "print rollout transitions while waiting (human output only)")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum seconds to wait (default %d)", defaultDeployWaitTimeoutSeconds))
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) (default %d)", defaultDeployWaitTimeoutSeconds))
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}

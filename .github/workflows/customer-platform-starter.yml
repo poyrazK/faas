@@ -64,3 +64,35 @@ jobs:
             -c "ALTER DEFAULT PRIVILEGES FOR ROLE customer_migration IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO customer_app;"
       - name: Test two-customer lifecycle and PostgreSQL isolation
         run: make test-customer-platform
+
+  mcp-task-postgres:
+    name: MCP durable Tasks PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cmd/gregale/templates/mcp-node/package-lock.json
+      - name: Install MCP starter dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix cmd/gregale/templates/mcp-node
+      - name: Verify durable task SQL against PostgreSQL 16
+        env:
+          MCP_TASKS_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
+          MCP_TASKS_REQUIRE_POSTGRES: "1"
+        run: npm run test:postgres --prefix cmd/gregale/templates/mcp-node

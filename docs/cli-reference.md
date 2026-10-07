@@ -5,6 +5,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | Command | What it does |
 |---|---|
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
+| [`start`](#start) | Get your first app live with a few guided prompts |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
@@ -261,6 +262,27 @@ Examples:
 gregale mcp resource-read --app my-mcp --uri 'file:///reports/current'
 ```
 
+### mcp resource-watch
+
+Watch one resource URI for content updates
+
+`gregale mcp resource-watch [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] --uri <URI> [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--uri <URI>` | resource URI to read and watch | required |
+| `--interval <DURATION>` | poll and stream reconciliation interval (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp resource-watch --app my-mcp --uri 'file:///reports/current'
+```
+
 ### mcp prompts
 
 Discover prompt definitions without rendering them
@@ -314,14 +336,42 @@ Render one explicitly selected prompt
 Examples:
 
 ```sh
-gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"period":"week"}'
+gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'
+```
+
+### mcp complete
+
+Request bounded suggestions for a prompt or resource-template argument
+
+`gregale mcp complete [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--prompt <NAME>] [--resource-template <URI-TEMPLATE>] --argument <NAME> --value <TEXT> [--context <JSON>] [--context-file <PATH>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | use protocol 2025-11-25 |  |
+| `--prompt <NAME>` | prompt name to complete |  |
+| `--resource-template <URI-TEMPLATE>` | resource URI template to complete |  |
+| `--argument <NAME>` | prompt argument or template variable name | required |
+| `--value <TEXT>` | partial value; empty requests the first suggestions | required |
+| `--context <JSON>` | previously resolved arguments as a JSON object |  |
+| `--context-file <PATH>` | read previous arguments from a JSON file |  |
+| `--timeout <DURATION>` | total completion request timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp complete --app my-mcp --prompt summarize --argument style --value exec
+gregale mcp complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-
 ```
 
 ### mcp call
 
-Execute one discovered tool; resume input requests only when explicitly enabled
+Execute one discovered tool; opt in to input requests or durable tasks
 
-`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>]`
+`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [--tasks] [--wait]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -337,15 +387,132 @@ Execute one discovered tool; resume input requests only when explicitly enabled
 | `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
 | `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
-| `--timeout <DURATION>` | total request timeout (default 30s; interactive 5m) |  |
+| `--timeout <DURATION>` | total request timeout (default 30s; interactive/--wait 5m) |  |
 | `--interactive` | answer modern MCP input forms in the terminal |  |
 | `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
+| `--tasks` | accept modern MCP task handles for later inspection |  |
+| `--wait` | wait for a task result; request cancellation on timeout |  |
 
 Examples:
 
 ```sh
 gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'
-gregale mcp call --app my-mcp --tool report_preview --interactive
+gregale mcp call --app my-mcp --tool report_preview --wait
+gregale mcp call --app my-mcp --tool report_preview --tasks
+```
+
+### mcp task-get
+
+Read the status or result of a previously returned task handle
+
+`gregale mcp task-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+
+Examples:
+
+```sh
+gregale mcp task-get --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+```
+
+### mcp task-wait
+
+Resume waiting for a task to finish
+
+`gregale mcp task-wait [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--interactive] [--input-responses-file <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total task wait timeout (default 5m) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+| `--interactive` | answer modern MCP task input forms in the terminal |  |
+| `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
+
+Examples:
+
+```sh
+gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive
+```
+
+### mcp task-cancel
+
+Request cooperative cancellation of a previously returned task
+
+`gregale mcp task-cancel [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+
+Examples:
+
+```sh
+gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+```
+
+### mcp watch
+
+Watch caller-visible MCP catalog definitions for drift
+
+`gregale mcp watch [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] --baseline <PATH> [--interval <DURATION>] [--tools] [--resources] [--prompts]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--baseline <PATH>` | contract snapshot to watch for drift | required |
+| `--interval <DURATION>` | poll interval and stream reconciliation interval (default 30s) |  |
+| `--tools` | subscribe to tool definition changes |  |
+| `--resources` | subscribe to resource and template definition changes |  |
+| `--prompts` | subscribe to prompt definition changes |  |
+
+Examples:
+
+```sh
+gregale mcp watch --app my-mcp --baseline gregale-mcp.lock.json
 ```
 
 ### mcp config
@@ -416,6 +583,19 @@ Examples:
 
 ```sh
 gregale mcp diff --before baseline.json --after candidate.json --check --json
+```
+
+
+## start
+
+Get your first app live with a few guided prompts
+
+`gregale start`
+
+Examples:
+
+```sh
+gregale start
 ```
 
 
@@ -2136,7 +2316,7 @@ List CORS rules bound to &lt;slug&gt; (defaults to linked context)
 
 Delete a CORS rule by id
 
-`gregale cors rm <rule-id>`
+`gregale cors rm [<slug>] <rule-id>`
 
 ### cors show
 
@@ -2154,6 +2334,12 @@ Manage scheduled HTTP requests and deployment commands
 ### crons list
 
 List cron rules
+
+`gregale crons list --app <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 ### crons add
 
@@ -2412,14 +2598,15 @@ Tail logs for a background worker pool
 
 Adjust scaling bounds and graceful drain for a worker pool
 
-`gregale workers scale [--min <N>] [--max <N>] [--target <N>] [--metric <METRIC>] [--drain-timeout <DURATION>] [--stop-signal <SIG>] <app>`
+`gregale workers scale [--min <N>] [--max <N>] [--target <N>] [--metric <METRIC>] [--name <CUSTOM_METRIC>] [--drain-timeout <DURATION>] [--stop-signal <SIG>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--min <N>` | min worker replicas (0 = scale-to-zero) |  |
 | `--max <N>` | max worker replicas |  |
-| `--target <N>` | target messages per worker |  |
-| `--metric <METRIC>` | autoscaling metric (queue_lag \| queue_depth) |  |
+| `--target <N>` | target backlog per worker |  |
+| `--metric <METRIC>` | autoscaling metric (queue_lag \| queue_depth \| custom) |  |
+| `--name <CUSTOM_METRIC>` | custom metric name (required with --metric custom) |  |
 | `--drain-timeout <DURATION>` | shutdown grace duration (e.g. 90s, 2m) |  |
 | `--stop-signal <SIG>` | stop signal (e.g. SIGTERM, SIGINT, SIGQUIT) |  |
 
@@ -3114,14 +3301,14 @@ gregale deployment summary v42 --app my-api --json
 
 Wait until a deployment is live (or safe rollout completes)
 
-`gregale deployment wait [--app <SLUG>] [--rollout] [--progress] [--timeout <SECONDS>] <id|vN>`
+`gregale deployment wait [--app <SLUG>] [--rollout] [--progress] [--timeout <SECONDS|DURATION>] <id|vN>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug for a vN revision outside a linked project |  |
 | `--rollout` | wait for safe rollout to reach 100% traffic |  |
 | `--progress` | print rollout transitions while waiting (human output only) |  |
-| `--timeout <SECONDS>` | maximum seconds to wait |  |
+| `--timeout <SECONDS|DURATION>` | maximum wait (seconds, or a duration such as 10m) |  |
 
 Examples:
 
@@ -3134,7 +3321,11 @@ gregale deployment wait 00000000000000000000000000000001 --rollout --progress
 
 Set the per-deployment cold-wake floor
 
-`gregale deployment set-min-instances <id>`
+`gregale deployment set-min-instances --min <N> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--min <N>` | minimum warm instances for this deployment | required |
 
 
 ## deploys
@@ -3212,6 +3403,15 @@ Hide one deployment from the list
 
 Hide obsolete deployments older than a cutoff
 
+`gregale deploys clear-obsolete --app <slug> [--older-than <D>] [--dry-run] [--force]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--older-than <D>` | cutoff age (default 168h) |  |
+| `--dry-run` | list what would be hidden |  |
+| `--force` | skip the confirmation |  |
+
 ### deploys retry
 
 Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
@@ -3267,7 +3467,7 @@ Deploy an app, function, or project
 | `--persist-exclude` | save --exclude slugs for future project deploys |  |
 | `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
 | `--canary-preset <PRESET>` | canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `custom` |
-| `--canary-stages <STAGES>` | custom percent@duration canary stages |  |
+| `--canary-stages <STAGES>` | custom percent@duration canary stages (requires --canary-preset custom) |  |
 | `--safe` | deploy with the balanced health-gated rollout and first-wake 5xx rollback |  |
 | `--require-authn` | require bearer auth on every request |  |
 | `--no-require-authn` | drop the token requirement |  |
@@ -3793,13 +3993,13 @@ gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.
 
 Wait for a preview deployment to become ready
 
-`gregale preview wait [--progress] [--open] [--timeout <SECONDS>] <preview-slug>`
+`gregale preview wait [--progress] [--open] [--timeout <SECONDS|DURATION>] <preview-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--progress` | print deployment transitions while waiting |  |
 | `--open` | open the preview URL after it becomes ready |  |
-| `--timeout <SECONDS>` | maximum seconds to wait |  |
+| `--timeout <SECONDS|DURATION>` | maximum wait (seconds, or a duration such as 10m) |  |
 
 Examples:
 
@@ -4116,7 +4316,7 @@ Add an edge rule
 | `--cache-stale-while-revalidate-seconds <N>` | kind=cache: serve stale during a background refresh (max 300) |  |
 | `--budget-ms <MS>` | kind=budget: per-request wall-clock budget in ms (max 30000) |  |
 | `--retry-max-attempts <N>` | kind=retry: total attempts including the original (default 2; max 3) |  |
-| `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the breaker (default 0.5) |  |
+| `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the app&#39;s instance-health breaker (default 0.5); the highest-priority rule tunes every instance, selectors do not partition it |  |
 | `--circuit-open-seconds <N>` | kind=circuit_breaker: first open interval (default 5) |  |
 | `--respond-status <CODE>` | kind=respond: response status (default 200) |  |
 | `--respond-body <JSON>` | kind=respond: JSON response body (max 64 KiB) |  |
@@ -4971,13 +5171,13 @@ Show or recover one invocation
 
 ### invocations wait
 
-Wait for one invocation to finish
+Wait for one invocation to finish (exit 124 on timeout, 130 on Ctrl-C)
 
 `gregale invocations wait [--timeout <D>] [--interval <D>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--timeout <D>` | stop waiting after this duration (0 waits indefinitely) |  |
+| `--timeout <D>` | stop waiting without canceling the invocation (0 waits indefinitely) |  |
 | `--interval <D>` | time between status checks (default 1s) |  |
 
 
@@ -5042,21 +5242,23 @@ Read evidence and release history
 
 Assign an issue to an account
 
-`gregale issues assign --app <SLUG> <issue-id>`
+`gregale issues assign --app <SLUG> [--assignee <UUID>] <issue-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--assignee <UUID>` | owner account UUID (empty unassigns) |  |
 
 ### issues resolve
 
 Resolve in a deployment
 
-`gregale issues resolve --app <SLUG> <issue-id>`
+`gregale issues resolve --app <SLUG> --deployment <UUID> <issue-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--deployment <UUID>` | deployment UUID that fixed the issue | required |
 
 ### issues reopen
 
@@ -5072,11 +5274,12 @@ Reopen an issue
 
 Ignore until a timestamp
 
-`gregale issues ignore --app <SLUG> <issue-id>`
+`gregale issues ignore --app <SLUG> --until <RFC3339> <issue-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--until <RFC3339>` | ignore until (RFC3339) | required |
 
 ### issues impact-alert
 
@@ -5112,11 +5315,12 @@ List ingest credentials
 
 Create a deployment-bound ingest credential
 
-`gregale issues create-token --app <SLUG>`
+`gregale issues create-token --app <SLUG> --deployment <UUID>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--deployment <UUID>` | deployment UUID the credential is bound to | required |
 
 ### issues revoke-token
 
@@ -6414,20 +6618,25 @@ Manage realtime endpoints, policies, connections, channels, and auth
 
 List managed realtime endpoints
 
+`gregale realtime list <app>`
+
 ### realtime get
 
 Show one endpoint and safe auth-rotation status
+
+`gregale realtime get <app> <endpoint-id>`
 
 ### realtime create
 
 Create a managed realtime endpoint
 
-`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--max-connections <N>] <slug>`
+`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--max-connections <N>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--callback-url <URL>` | application callback URL | required |
-| `--callback-auth-token-stdin` | read the callback bearer token from stdin |  |
+| `--callback-auth-token-stdin` | read the callback bearer token from stdin (this or --callback-auth-token is required) |  |
+| `--callback-auth-token <TOKEN>` | callback bearer token your app verifies (prefer --callback-auth-token-stdin) |  |
 | `--connect-path <PATH>` | callback path for connect events |  |
 | `--message-path <PATH>` | callback path for message events |  |
 | `--disconnect-path <PATH>` | callback path for disconnect events |  |
@@ -6439,15 +6648,23 @@ Create a managed realtime endpoint
 
 Update endpoint callback, auth, or connection policy
 
+`gregale realtime update <app> <endpoint-id>`
+
 ### realtime delete
 
 Delete a managed realtime endpoint
+
+`gregale realtime delete --yes <value> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes <value>` | confirm the deletion | required |
 
 ### realtime connections
 
 List live connections for an endpoint
 
-`gregale realtime connections [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--limit <N>] [--cursor <TOKEN>]`
+`gregale realtime connections [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--limit <N>] [--cursor <TOKEN>] <app> <endpoint-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6460,7 +6677,7 @@ List live connections for an endpoint
 
 Close a bounded, filtered set of live connections
 
-`gregale realtime drain --reason <TEXT> [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--connection-id <ID>] [--limit <N>] [--dry-run] [--allow-partial] [--wait] [--timeout <DURATION>]`
+`gregale realtime drain --reason <TEXT> [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--connection-id <ID>] [--limit <N>] [--dry-run] [--allow-partial] [--wait] [--timeout <DURATION>] <app> <endpoint-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6478,7 +6695,7 @@ Close a bounded, filtered set of live connections
 
 Show or wait for a durable realtime drain
 
-`gregale realtime drain-status [--wait] [--timeout <DURATION>]`
+`gregale realtime drain-status [--wait] [--timeout <DURATION>] <app> <endpoint-id> <operation-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6489,21 +6706,47 @@ Show or wait for a durable realtime drain
 
 Send a message to one live connection
 
+`gregale realtime send [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id> <connection-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--data <DATA>` | message text (or --data-stdin) |  |
+| `--data-stdin` | read the message from stdin |  |
+| `--binary` | send as a binary frame |  |
+
 ### realtime close
 
 Close one live connection
+
+`gregale realtime close [--reason <TEXT>] <app> <endpoint-id> <connection-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--reason <TEXT>` | close reason |  |
 
 ### realtime subscribe
 
 Subscribe one live connection to a channel
 
+`gregale realtime subscribe <app> <endpoint-id> <connection-id> <channel>`
+
 ### realtime unsubscribe
 
 Remove one live connection from a channel
 
+`gregale realtime unsubscribe <app> <endpoint-id> <connection-id> <channel>`
+
 ### realtime publish
 
 Publish a message to a channel
+
+`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id> <channel>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--data <DATA>` | message text (or --data-stdin) |  |
+| `--data-stdin` | read the message from stdin |  |
+| `--binary` | send as a binary frame |  |
 
 ### realtime auth
 
@@ -6881,7 +7124,7 @@ Plan a promotion
 
 Promote workloads
 
-`gregale projects environments promote --from <ENV> --to <ENV> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS>]`
+`gregale projects environments promote --from <ENV> --to <ENV> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS|DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6892,7 +7135,7 @@ Promote workloads
 | `--idempotency-key <KEY>` | stable key for retrying this promotion |  |
 | `--wait` | wait for the promotion to reach a terminal status |  |
 | `--progress` | print promotion transitions while waiting (human output only) |  |
-| `--timeout <SECONDS>` | maximum seconds to wait for promotion completion |  |
+| `--timeout <SECONDS|DURATION>` | maximum wait for promotion completion (seconds, or a duration such as 10m) |  |
 
 #### projects environments status
 
@@ -7059,7 +7302,7 @@ gregale secrets set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemera
 
 ### secrets unset
 
-Remove a sealed secret
+Remove a sealed secret (alias: rm)
 
 `gregale secrets unset --app <slug> [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] <KEY>`
 
@@ -7517,7 +7760,13 @@ Manage app and account release webhooks (webhooks account &lt;verb&gt;)
 
 ### webhooks list
 
-List webhooks
+List an app&#39;s webhooks (slug defaults to linked context)
+
+`gregale webhooks list [--app <slug>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (alternative to the positional) |  |
 
 ### webhooks add
 
