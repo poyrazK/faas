@@ -7755,3 +7755,67 @@ the full migration chain runs through the new version in the test fixtures.
 SQLC parity, text encoding, shell quoting and ADR numbering checks pass.
 Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
 These remain local tests with a test driver, not native-provider qualification.
+
+## Private successful source-hold release
+
+A separate private successful-release protocol now follows atomic adoption.
+Before native release IO, PostgreSQL stores the exact original checkpoint plan,
+receipt and adoption digest. Plan/source types move into the state package with
+unchanged JSON field order and encoding. Recovery verifies frozen bindings,
+retained PostgreSQL snapshot receipts, complete original object manifests and
+private target reservations against that original proof. It never rebuilds a
+release plan from mutable source configuration.
+
+The journal transitions from planned to requested once under the exact live
+worker lease. Only a known committing dispatch claim authorizes native release.
+Requested retries independently observe the original native request; a lost
+claim acknowledgement or absent terminal evidence cannot authorize redispatch.
+The stable native request identity is `release-<operation ID>`. A qualified
+release driver must authenticate the original pinned placements and operation
+ownership, release only the original native barriers, and preserve all original
+immutable captures. No built-in qualified driver is installed.
+
+Independent release evidence binds the request, plan, checkpoint receipt and
+complete ordered source roster. Every source must report the original capture
+identity, operation owner, pinned physical/data resource, released terminal
+state and original terminal timestamp. The reader must also independently
+verify original capture retention through the worker deadline. Retention
+horizons may extend across leases without changing the immutable release hash.
+Observation must never release, retry, recapture or regrant anything.
+
+Local PostgreSQL and object write fences and the project configuration hold
+remain owned while native release is uncertain. One transaction verifies the
+original adoption again, records the independent release digest, marks owned
+PostgreSQL fences released, deletes owned object fences, reopens the original
+configuration generation and appends a private release marker. The final write
+checks the exact worker token, revision and live lease; any failure rolls back
+all local release effects. Unresolved shared PostgreSQL maintenance or object
+grant revocation prevents settlement.
+
+After a lost commit reply, a replacement worker reads the saved original plan
+and reobserves the original native terminal journal and capture retention.
+Successful replay leaves the operation revision unchanged and never reads or
+clears newly acquired source holds. Source configuration changes after release
+therefore do not rebind the capture or break recovery. Missing or rewritten
+capture journals still fail closed.
+
+This seam remains private and the operation remains capturing. The checkpoint,
+adoption and release markers continue to block generic copying and publication.
+Reserved object targets remain private and unprovisioned. Target preparation,
+PostgreSQL restore, copy verification, complete publication inventory and
+qualified native drivers remain necessary before public full-clone admission.
+Live R2/OVH qualification remains deferred at the user's request.
+
+Validation: PostgreSQL release tests pass for lost native/claim/commit replies,
+source configuration changes and later holds, complete operation replay,
+foreign or incomplete terminal evidence, stale workers, modified capture
+journals and rollback of every local hold after an injected final write failure.
+The verifier reads unpublished targets through the operation-owned private
+lookup and normalizes stored snapshot timestamps to their original UTC instants.
+The release migration's Up/Down/reapply SQL and indexed journal read plan were
+checked in PostgreSQL; owned release journals explicitly block downgrade.
+Configuration guard, schema coverage, snapshot, write-fence and target
+reservation regressions pass, including the complete guard successor migration
+round trip. SQLC parity and text encoding, shell quoting and ADR numbering
+checks pass. These tests use a test driver, not native-provider qualification.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.

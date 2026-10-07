@@ -5751,6 +5751,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_releases",
+    "columns": [
+      "adoption_sha256",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "receipt",
+      "released_at",
+      "requested_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_configuration_captures",
     "columns": [
       "configuration",

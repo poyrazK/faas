@@ -14893,3 +14893,66 @@ SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(
 WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
     AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid
     AND o.lease_until>clock_timestamp()) RETURNING *;
+
+-- ADR-590: once-only successful release, using the original durable plan.
+-- name: ReadCloneCheckpointRelease :one
+SELECT * FROM project_environment_clone_checkpoint_releases WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertCloneCheckpointRelease :one
+INSERT INTO project_environment_clone_checkpoint_releases(operation_id,plan,receipt,adoption_sha256)
+SELECT o.id,sqlc.arg(plan)::jsonb,sqlc.arg(receipt)::jsonb,sqlc.arg(adoption_sha256)::text
+FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid
+ AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: ClaimCloneCheckpointRelease :one
+UPDATE project_environment_clone_checkpoint_releases r SET state='requested',requested_at=clock_timestamp()
+WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.state='planned'
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()) RETURNING r.*;
+
+-- name: RecordCloneCheckpointRelease :execrows
+UPDATE project_environment_clone_checkpoint_releases r SET state='released',observation_sha256=sqlc.arg(observation_sha256)::text,released_at=clock_timestamp()
+WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.state='requested'
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
+
+-- name: ReleaseCloneCheckpointPostgresFence :execrows
+UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state='released',
+ remote_released_at=sqlc.arg(remote_released_at)::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE f.operation_id=sqlc.arg(operation_id)::uuid AND f.source_database_id=sqlc.arg(source_database_id)::uuid AND f.state='held'
+ AND sqlc.arg(remote_released_at)::timestamptz<=clock_timestamp()
+ AND NOT EXISTS (SELECT 1 FROM managed_postgres_checkpoint_maintenance m WHERE m.source_database_id=f.source_database_id AND m.state<>'ready')
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_releases r ON r.operation_id=o.id
+ WHERE o.id=f.operation_id AND o.status='capturing' AND r.state='released'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
+
+-- name: ReleaseCloneCheckpointObjectFence :execrows
+DELETE FROM object_bucket_write_fences f USING project_environment_clone_operations o,project_environment_clone_checkpoint_releases r
+WHERE f.clone_operation_id=o.id AND f.token=o.id AND r.operation_id=o.id AND r.state='released'
+ AND o.id=sqlc.arg(operation_id)::uuid AND f.bucket_id=sqlc.arg(bucket_id)::uuid
+ AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()
+ AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations g
+ WHERE g.operation_id=o.id AND g.source_bucket_id=f.bucket_id AND g.request_started_at IS NOT NULL AND g.state<>'drained');
+
+-- name: ReleaseCloneCheckpointConfiguration :execrows
+UPDATE project_environment_clone_configuration_guards g SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',
+ held_at=NULL,generation=g.generation+1
+WHERE g.project_id=sqlc.arg(project_id)::uuid AND g.account_id=sqlc.arg(account_id)::uuid AND g.state='held'
+ AND g.operation_id=sqlc.arg(operation_id)::uuid AND g.generation=sqlc.arg(generation)::bigint AND g.held_at=sqlc.arg(held_at)::timestamptz
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_releases r ON r.operation_id=o.id
+ WHERE o.id=g.operation_id AND r.state='released' AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
+
+-- name: FinishCloneCheckpointRelease :execrows
+UPDATE project_environment_clone_operations o SET resources=sqlc.arg(resources)::jsonb,revision=o.revision+1,updated_at=clock_timestamp()
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid
+ AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()
+ AND EXISTS (SELECT 1 FROM project_environment_clone_checkpoint_releases r WHERE r.operation_id=o.id AND r.state='released'
+ AND r.observation_sha256=sqlc.arg(observation_sha256)::text)
+ AND EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g WHERE g.project_id=o.project_id AND g.account_id=o.account_id
+ AND g.state='open' AND g.operation_id IS NULL AND g.generation=sqlc.arg(released_generation)::bigint)
+ AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state<>'released')
+ AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=o.id);

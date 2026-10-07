@@ -12,20 +12,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cloneCommonCheckpointSource struct {
-	Kind, ID, AppID, Scope, BackendID, BackendFingerprint string
-	ProviderResourceID, DataResourceID, DefinitionSHA256  string
-}
+type cloneCommonCheckpointSource = state.ProjectEnvironmentCloneCheckpointSource
 
-// No credentials, lease tokens or caller-selected timestamps are in the plan.
-// The held configuration generation and exact frozen roster survive handoff.
-type cloneCommonCheckpointPlan struct {
-	OperationID, AccountID, ProjectID, SourceEnvironment string
-	SourceRevisionHash, SourceReleaseSetID               string
-	ConfigurationGeneration                              int64
-	ConfigurationHeldAt                                  time.Time
-	Sources                                              []cloneCommonCheckpointSource
-}
+type cloneCommonCheckpointPlan = state.ProjectEnvironmentCloneCheckpointPlan
 
 type cloneCommonCheckpointSourceReceipt = state.ProjectEnvironmentCloneCheckpointSourceReceipt
 

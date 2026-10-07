@@ -2520,6 +2520,35 @@ func (q *Queries) ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg Cla
 	return claim, err
 }
 
+const claimCloneCheckpointRelease = `-- name: ClaimCloneCheckpointRelease :one
+UPDATE project_environment_clone_checkpoint_releases r SET state='requested',requested_at=clock_timestamp()
+WHERE r.operation_id=$1::uuid AND r.state='planned'
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='capturing'
+ AND o.revision=$2::bigint AND o.lease_token=$3::uuid AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.plan, r.receipt, r.adoption_sha256, r.state, r.requested_at, r.observation_sha256, r.released_at
+`
+
+type ClaimCloneCheckpointReleaseParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointRelease(ctx context.Context, db DBTX, arg ClaimCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointRelease, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	var i ProjectEnvironmentCloneCheckpointRelease
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.Receipt,
+		&i.AdoptionSha256,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.ReleasedAt,
+	)
+	return i, err
+}
+
 const claimClonePostgresMaintenanceDispatch = `-- name: ClaimClonePostgresMaintenanceDispatch :one
 UPDATE managed_postgres_checkpoint_maintenance m SET state=$1::text,
  role_requested_at=CASE WHEN $1::text='role_requested' THEN clock_timestamp() ELSE m.role_requested_at END,
@@ -12835,6 +12864,47 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 	return i, err
 }
 
+const finishCloneCheckpointRelease = `-- name: FinishCloneCheckpointRelease :execrows
+UPDATE project_environment_clone_operations o SET resources=$1::jsonb,revision=o.revision+1,updated_at=clock_timestamp()
+WHERE o.id=$2::uuid AND o.account_id=$3::uuid AND o.project_id=$4::uuid
+ AND o.status='capturing' AND o.revision=$5::bigint
+ AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+ AND EXISTS (SELECT 1 FROM project_environment_clone_checkpoint_releases r WHERE r.operation_id=o.id AND r.state='released'
+ AND r.observation_sha256=$7::text)
+ AND EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g WHERE g.project_id=o.project_id AND g.account_id=o.account_id
+ AND g.state='open' AND g.operation_id IS NULL AND g.generation=$8::bigint)
+ AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state<>'released')
+ AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=o.id)
+`
+
+type FinishCloneCheckpointReleaseParams struct {
+	Resources          []byte
+	OperationID        pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	ExpectedRevision   int64
+	WorkerToken        pgtype.UUID
+	ObservationSha256  string
+	ReleasedGeneration int64
+}
+
+func (q *Queries) FinishCloneCheckpointRelease(ctx context.Context, db DBTX, arg FinishCloneCheckpointReleaseParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointRelease,
+		arg.Resources,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+		arg.ObservationSha256,
+		arg.ReleasedGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishClonePostgresWriteFenceAbandonment = `-- name: FinishClonePostgresWriteFenceAbandonment :one
 UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state=$1::text,
  remote_released_at=$2::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
@@ -16249,6 +16319,46 @@ func (q *Queries) InsertCheckedRollback(ctx context.Context, db DBTX, arg Insert
 		arg.Receipt,
 	)
 	return err
+}
+
+const insertCloneCheckpointRelease = `-- name: InsertCloneCheckpointRelease :one
+INSERT INTO project_environment_clone_checkpoint_releases(operation_id,plan,receipt,adoption_sha256)
+SELECT o.id,$1::jsonb,$2::jsonb,$3::text
+FROM project_environment_clone_operations o WHERE o.id=$4::uuid AND o.status='capturing'
+ AND o.revision=$5::bigint AND o.lease_token=$6::uuid
+ AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, receipt, adoption_sha256, state, requested_at, observation_sha256, released_at
+`
+
+type InsertCloneCheckpointReleaseParams struct {
+	Plan             []byte
+	Receipt          []byte
+	AdoptionSha256   string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointRelease(ctx context.Context, db DBTX, arg InsertCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointRelease,
+		arg.Plan,
+		arg.Receipt,
+		arg.AdoptionSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointRelease
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.Receipt,
+		&i.AdoptionSha256,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.ReleasedAt,
+	)
+	return i, err
 }
 
 const insertClonePostgresCheckpointSelection = `-- name: InsertClonePostgresCheckpointSelection :one
@@ -45972,6 +46082,27 @@ func (q *Queries) ReadCheckedRollback(ctx context.Context, db DBTX, arg ReadChec
 	return receipt, err
 }
 
+const readCloneCheckpointRelease = `-- name: ReadCloneCheckpointRelease :one
+SELECT operation_id, plan, receipt, adoption_sha256, state, requested_at, observation_sha256, released_at FROM project_environment_clone_checkpoint_releases WHERE operation_id=$1 FOR UPDATE
+`
+
+// ADR-590: once-only successful release, using the original durable plan.
+func (q *Queries) ReadCloneCheckpointRelease(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointRelease, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointRelease, operationID)
+	var i ProjectEnvironmentCloneCheckpointRelease
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.Receipt,
+		&i.AdoptionSha256,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.ReleasedAt,
+	)
+	return i, err
+}
+
 const readClonePostgresCheckpointSelection = `-- name: ReadClonePostgresCheckpointSelection :one
 SELECT operation_id, source_database_id, maintenance_id, scope, fingerprint, key_id, ciphertext_sha256, ciphertext, retained_at FROM project_environment_clone_postgres_checkpoint_selections
 WHERE operation_id=$1::uuid AND source_database_id=$2::uuid FOR UPDATE
@@ -50618,6 +50749,33 @@ func (q *Queries) RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DB
 	return result.RowsAffected(), nil
 }
 
+const recordCloneCheckpointRelease = `-- name: RecordCloneCheckpointRelease :execrows
+UPDATE project_environment_clone_checkpoint_releases r SET state='released',observation_sha256=$1::text,released_at=clock_timestamp()
+WHERE r.operation_id=$2::uuid AND r.state='requested'
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='capturing'
+ AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp())
+`
+
+type RecordCloneCheckpointReleaseParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) RecordCloneCheckpointRelease(ctx context.Context, db DBTX, arg RecordCloneCheckpointReleaseParams) (int64, error) {
+	result, err := db.Exec(ctx, recordCloneCheckpointRelease,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordClonePostgresMaintenance = `-- name: RecordClonePostgresMaintenance :one
 UPDATE managed_postgres_checkpoint_maintenance m SET state=$1::text,
  owner_oid=$2::bigint,database_oid=$3::bigint,
@@ -52262,6 +52420,105 @@ INSERT INTO layer_artifact_retention(storage_key) VALUES ($1::text) ON CONFLICT 
 func (q *Queries) RegisterLayerArtifactRetention(ctx context.Context, db DBTX, storageKey string) error {
 	_, err := db.Exec(ctx, registerLayerArtifactRetention, storageKey)
 	return err
+}
+
+const releaseCloneCheckpointConfiguration = `-- name: ReleaseCloneCheckpointConfiguration :execrows
+UPDATE project_environment_clone_configuration_guards g SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',
+ held_at=NULL,generation=g.generation+1
+WHERE g.project_id=$1::uuid AND g.account_id=$2::uuid AND g.state='held'
+ AND g.operation_id=$3::uuid AND g.generation=$4::bigint AND g.held_at=$5::timestamptz
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_releases r ON r.operation_id=o.id
+ WHERE o.id=g.operation_id AND r.state='released' AND o.status='capturing'
+ AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp())
+`
+
+type ReleaseCloneCheckpointConfigurationParams struct {
+	ProjectID        pgtype.UUID
+	AccountID        pgtype.UUID
+	OperationID      pgtype.UUID
+	Generation       int64
+	HeldAt           pgtype.Timestamptz
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ReleaseCloneCheckpointConfiguration(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointConfigurationParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseCloneCheckpointConfiguration,
+		arg.ProjectID,
+		arg.AccountID,
+		arg.OperationID,
+		arg.Generation,
+		arg.HeldAt,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseCloneCheckpointObjectFence = `-- name: ReleaseCloneCheckpointObjectFence :execrows
+DELETE FROM object_bucket_write_fences f USING project_environment_clone_operations o,project_environment_clone_checkpoint_releases r
+WHERE f.clone_operation_id=o.id AND f.token=o.id AND r.operation_id=o.id AND r.state='released'
+ AND o.id=$1::uuid AND f.bucket_id=$2::uuid
+ AND o.status='capturing' AND o.revision=$3::bigint
+ AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()
+ AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations g
+ WHERE g.operation_id=o.id AND g.source_bucket_id=f.bucket_id AND g.request_started_at IS NOT NULL AND g.state<>'drained')
+`
+
+type ReleaseCloneCheckpointObjectFenceParams struct {
+	OperationID      pgtype.UUID
+	BucketID         pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ReleaseCloneCheckpointObjectFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointObjectFenceParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseCloneCheckpointObjectFence,
+		arg.OperationID,
+		arg.BucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseCloneCheckpointPostgresFence = `-- name: ReleaseCloneCheckpointPostgresFence :execrows
+UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state='released',
+ remote_released_at=$1::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE f.operation_id=$2::uuid AND f.source_database_id=$3::uuid AND f.state='held'
+ AND $1::timestamptz<=clock_timestamp()
+ AND NOT EXISTS (SELECT 1 FROM managed_postgres_checkpoint_maintenance m WHERE m.source_database_id=f.source_database_id AND m.state<>'ready')
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_releases r ON r.operation_id=o.id
+ WHERE o.id=f.operation_id AND o.status='capturing' AND r.state='released'
+ AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type ReleaseCloneCheckpointPostgresFenceParams struct {
+	RemoteReleasedAt pgtype.Timestamptz
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ReleaseCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointPostgresFenceParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseCloneCheckpointPostgresFence,
+		arg.RemoteReleasedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const releaseEdgeRuleMutationLock = `-- name: ReleaseEdgeRuleMutationLock :one

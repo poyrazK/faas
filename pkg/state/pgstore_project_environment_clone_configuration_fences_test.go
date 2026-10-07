@@ -560,6 +560,14 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(purge) != 2 {
 		t.Fatal("missing parent purge downgrade")
 	}
+	reservationRaw, err := migrations.FS.ReadFile("20261007165523001_clone_checkpoint_target_reservations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation := strings.SplitN(string(reservationRaw), "-- +goose Down", 2)
+	if len(reservation) != 2 {
+		t.Fatal("missing target reservation successor downgrade")
+	}
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)
 	if err != nil {
@@ -584,6 +592,9 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if err := tx.QueryRow(f.ctx, shape).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tx.Exec(f.ctx, reservation[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(f.ctx, purge[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -600,6 +611,9 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(f.ctx, purge[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, reservation[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(f.ctx, shape).Scan(&after); err != nil || before != after {
