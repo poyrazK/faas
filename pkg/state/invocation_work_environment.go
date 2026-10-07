@@ -190,8 +190,14 @@ func admissionMatchesInvocation(owner InvocationWorkEnvironmentAdmission, inv In
 		bytes.Equal(owner.KeyDigest, inv.WorkKeyDigest) && bytes.Equal(owner.FairnessDigest, inv.WorkFairnessDigest) && owner.FairnessLimit == inv.WorkFairnessLimit
 }
 
+// syntheticTriggerInvocation reports a delivery that carries a correlation
+// identity instead of a durable ledger UUID: ESM trigger batches and workflow
+// step deliveries ("workflow-<request-id>", pkg/sched/loop.go). production-us
+// rc.242/243: workflow steps were missing here, so the environment-isolation
+// lookups rejected their IDs as invalid and every workflow run went dead.
+// Durable sources with a non-UUID ID remain invalid.
 func syntheticTriggerInvocation(inv Invocation) bool {
-	if inv.ID == "" || inv.Source != InvocationSource("esm") {
+	if inv.ID == "" || (inv.Source != InvocationSource("esm") && inv.Source != InvocationSource("workflow")) {
 		return false
 	}
 	id, err := uuid.Parse(inv.ID)

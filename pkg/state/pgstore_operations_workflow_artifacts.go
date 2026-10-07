@@ -128,11 +128,11 @@ func workflowArtifactMutationTx(ctx context.Context, tx pgx.Tx, op *Operation, r
 		if err != nil {
 			return OperationResultBlob{}, api.OperationWorkflowArtifactResponse{}, err
 		}
-		raw, err := json.Marshal(op)
+		raw, err := operationRecordJSON(*op)
 		if err != nil {
 			return OperationResultBlob{}, api.OperationWorkflowArtifactResponse{}, err
 		}
-		err = q.UpdateCustomerOperation(ctx, tx, sqlc.UpdateCustomerOperationParams{ID: mustPgUUID(op.ID), State: string(op.State), Record: raw, ExpiresAt: operationBlobTime(op.ExpiresAt)})
+		err = q.UpdateCustomerOperation(ctx, tx, sqlc.UpdateCustomerOperationParams{ID: mustPgUUID(op.ID), InvocationID: mustPgUUID(op.CurrentInvocationID), WorkflowRunID: mustPgUUID(op.WorkflowRunID), JobRunID: mustPgUUID(op.JobRunID), State: string(op.State), Record: raw, ExpiresAt: operationBlobTime(op.ExpiresAt)})
 		return blob, response, err
 	}
 	if action == "reuse" {

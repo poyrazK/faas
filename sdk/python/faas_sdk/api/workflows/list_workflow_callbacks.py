@@ -78,8 +78,8 @@ def sync_detailed(
 ) -> Response[ListWorkflowCallbacksResponse | Problem]:
     """List callback handles for a workflow run.
 
-     Callback IDs identify waits but are not bearer credentials; completion requires account
-    authorization.
+     Callback IDs identify waits but are not bearer credentials; completion requires authorization for
+    the run owner.
 
     Args:
         id (UUID):
@@ -110,8 +110,8 @@ def sync(
 ) -> ListWorkflowCallbacksResponse | Problem | None:
     """List callback handles for a workflow run.
 
-     Callback IDs identify waits but are not bearer credentials; completion requires account
-    authorization.
+     Callback IDs identify waits but are not bearer credentials; completion requires authorization for
+    the run owner.
 
     Args:
         id (UUID):
@@ -137,8 +137,8 @@ async def asyncio_detailed(
 ) -> Response[ListWorkflowCallbacksResponse | Problem]:
     """List callback handles for a workflow run.
 
-     Callback IDs identify waits but are not bearer credentials; completion requires account
-    authorization.
+     Callback IDs identify waits but are not bearer credentials; completion requires authorization for
+    the run owner.
 
     Args:
         id (UUID):
@@ -167,8 +167,8 @@ async def asyncio(
 ) -> ListWorkflowCallbacksResponse | Problem | None:
     """List callback handles for a workflow run.
 
-     Callback IDs identify waits but are not bearer credentials; completion requires account
-    authorization.
+     Callback IDs identify waits but are not bearer credentials; completion requires authorization for
+    the run owner.
 
     Args:
         id (UUID):

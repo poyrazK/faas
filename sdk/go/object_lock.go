@@ -16,3 +16,6 @@ type ObjectVersionRetentionRequest = api.ObjectVersionRetentionRequest
 type ObjectVersionLegalHoldRequest = api.ObjectVersionLegalHoldRequest
 type ObjectVersionRetentionResult = api.ObjectVersionRetentionResult
 type ObjectVersionLegalHoldResult = api.ObjectVersionLegalHoldResult
+
+// ObjectWriteProtection selects fixed protection on a newly created version.
+type ObjectWriteProtection = api.ObjectWriteProtection

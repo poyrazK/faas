@@ -14,6 +14,9 @@ var _ managedpostgres.RestoreDataProber = (*Provider)(nil)
 // PrepareRestore writes only to the disposable database created by explicit
 // operator qualification. The database clock supplies a point after the first
 // commit and before a distinct second commit, within the resource's lifetime.
+// Choose a future whole-second boundary because Neon reports parent_timestamp
+// at that precision. Wait before the second commit; truncating a previously
+// captured timestamp could put the recovery point before the first commit.
 func (p *Provider) PrepareRestore(ctx context.Context, id string, _ managedpostgres.CredentialMaterial) (managedpostgres.RestoreProbe, error) {
 	conn, err := p.qualificationOwnerConnection(ctx, id)
 	if err != nil {
@@ -31,10 +34,10 @@ func prepareRestoreProbe(ctx context.Context, conn *pgx.Conn) (managedpostgres.R
 	if _, err := conn.Exec(ctx, `INSERT INTO public.gregale_qualification_restore_probe (id, marker) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET marker = EXCLUDED.marker`, probe.Marker); err != nil {
 		return managedpostgres.RestoreProbe{}, managedpostgres.ErrUnavailable
 	}
-	if err := conn.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&probe.PointInTime); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT date_trunc('second', clock_timestamp()) + interval '1 second'`).Scan(&probe.PointInTime); err != nil {
 		return managedpostgres.RestoreProbe{}, managedpostgres.ErrUnavailable
 	}
-	if _, err := conn.Exec(ctx, `SELECT pg_sleep(1)`); err != nil {
+	if _, err := conn.Exec(ctx, `SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM ($1::timestamptz - clock_timestamp())))::double precision)`, probe.PointInTime); err != nil {
 		return managedpostgres.RestoreProbe{}, managedpostgres.ErrUnavailable
 	}
 	if _, err := conn.Exec(ctx, `UPDATE public.gregale_qualification_restore_probe SET marker = $1 WHERE id = 1`, "after-"+probe.Marker); err != nil {

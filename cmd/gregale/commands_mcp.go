@@ -23,7 +23,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|call|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|resources|resource-read|prompts|prompt-get|call|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -35,7 +35,7 @@ func cmdMCP(args []string) int {
 		return cmdMCPLock(args[1:])
 	case "diff":
 		return cmdMCPDiff(args[1:])
-	case "doctor", "tools", "call", "config":
+	case "doctor", "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
 		return printErr("Unknown MCP command", fmt.Errorf("%q", args[0]))
@@ -76,7 +76,7 @@ func mcpArguments(inline, file string) (map[string]any, error) {
 	if file != "" {
 		f, err := openCustomerFile(file)
 		if err != nil {
-			return nil, fmt.Errorf("read tool arguments: %w", err)
+			return nil, fmt.Errorf("read MCP arguments: %w", err)
 		}
 		defer func() { _ = f.Close() }()
 		r = f
@@ -85,23 +85,23 @@ func mcpArguments(inline, file string) (map[string]any, error) {
 	}
 	body, err := io.ReadAll(io.LimitReader(r, (1<<20)+1))
 	if err != nil {
-		return nil, fmt.Errorf("read tool arguments: %w", err)
+		return nil, fmt.Errorf("read MCP arguments: %w", err)
 	}
 	if len(body) > 1<<20 {
-		return nil, errors.New("tool arguments exceed 1 MiB")
+		return nil, errors.New("MCP arguments exceed 1 MiB")
 	}
 	d := json.NewDecoder(bytes.NewReader(body))
 	d.UseNumber()
 	var args map[string]any
 	if err := d.Decode(&args); err != nil {
-		return nil, fmt.Errorf("tool arguments must be a JSON object: %w", err)
+		return nil, fmt.Errorf("MCP arguments must be a JSON object: %w", err)
 	}
 	if args == nil {
-		return nil, errors.New("tool arguments must be a JSON object")
+		return nil, errors.New("MCP arguments must be a JSON object")
 	}
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF {
-		return nil, errors.New("tool arguments must contain one JSON object")
+		return nil, errors.New("MCP arguments must contain one JSON object")
 	}
 	return args, nil
 }
@@ -293,6 +293,8 @@ func cmdMCPRemote(command string, args []string) int {
 	inline := fs.String("arguments", "", "tool arguments as a JSON object")
 	file := fs.String("arguments-file", "", "read tool arguments from a JSON file")
 	name := fs.String("name", "gregale", "connection name (config)")
+	uri := fs.String("uri", "", "resource URI to read (resource-read only)")
+	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -372,10 +374,16 @@ func cmdMCPRemote(command string, args []string) int {
 			return response, nil
 		}
 	}
-	return runMCPRemoteWithResponder(ctx, command, c, *legacy, *tool, *streamTool, *name, arguments, responder)
+	if command == "resource-read" && *uri == "" {
+		return printErr("MCP resource read", errors.New("--uri is required"))
+	}
+	if command == "prompt-get" && *promptName == "" {
+		return printErr("MCP prompt get", errors.New("--prompt is required"))
+	}
+	return runMCPRemoteWithResponder(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, arguments, responder)
 }
 
-func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name string, args map[string]any, respond mcphosting.InputResponder) int {
+func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName string, args map[string]any, respond mcphosting.InputResponder) int {
 	if command == "config" {
 		return jsonOut(writeJSON(mcphosting.ConnectionConfig(name, c.Endpoint)))
 	}
@@ -391,6 +399,56 @@ func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphostin
 	}
 	if err := c.Initialize(ctx); err != nil {
 		return printErr("MCP initialize", err)
+	}
+	switch command {
+	case "resources":
+		// A server that does not implement a list method offers none of that
+		// kind: report an empty catalog rather than an error (production-us
+		// hunt #4: a tools-only server answered "MCP endpoint returned HTTP 404").
+		resources, err := c.Resources(ctx)
+		if err != nil && !mcphosting.IsMethodNotFound(err) {
+			return printErr("MCP resource discovery", err)
+		}
+		templates, err := c.ResourceTemplates(ctx)
+		if err != nil && !mcphosting.IsMethodNotFound(err) {
+			return printErr("MCP resource template discovery", err)
+		}
+		if resources == nil {
+			resources = []mcphosting.Resource{}
+		}
+		if templates == nil {
+			templates = []mcphosting.ResourceTemplate{}
+		}
+		return jsonOut(writeJSON(map[string]any{"resources": resources, "resource_templates": templates}))
+	case "resource-read":
+		x, err := c.ReadResource(ctx, uri)
+		if err != nil {
+			return printErr("MCP resource read", err)
+		}
+		return jsonOut(writeJSON(x))
+	case "prompts":
+		prompts, _, err := c.Prompts(ctx)
+		if err != nil && !mcphosting.IsMethodNotFound(err) {
+			return printErr("MCP prompt discovery", err)
+		}
+		if prompts == nil {
+			prompts = []mcphosting.Prompt{}
+		}
+		return jsonOut(writeJSON(map[string]any{"prompts": prompts}))
+	case "prompt-get":
+		promptArgs := make(map[string]string, len(args))
+		for key, value := range args {
+			text, ok := value.(string)
+			if !ok {
+				return printErr("MCP prompt arguments", fmt.Errorf("argument %q must be a string", key))
+			}
+			promptArgs[key] = text
+		}
+		x, err := c.GetPrompt(ctx, promptName, promptArgs)
+		if err != nil {
+			return printErr("MCP prompt get", err)
+		}
+		return jsonOut(writeJSON(x))
 	}
 	tools, discovery, err := c.Tools(ctx)
 	if err != nil {

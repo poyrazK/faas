@@ -20,6 +20,68 @@ import (
 	"time"
 )
 
+// Backlog discovery bounds metadata responses and aggregation (ADR-617).
+const (
+	EventBacklogPageDefault      = 100
+	EventBacklogPageMax          = 200
+	EventBacklogCursorMaxBytes   = 8192
+	EventBacklogFilterMaxBytes   = 256
+	EventBacklogMinAgeMaxSeconds = 365 * 24 * 60 * 60
+	EventBacklogReadTimeout      = 5 * time.Second
+)
+
+// Routing detail is bounded independently of pending receipt retention (ADR-616).
+const (
+	EventRoutingHistoryRowOverheadBytes = 128
+	EventRoutingHistoryMaxRows          = 128
+	EventRoutingHistoryMaxBytes         = 64 << 10
+	EventRoutingHistoryErrorMaxBytes    = 1024
+	EventRoutingHistoryCodeMaxBytes     = 128
+	EventRoutingHistoryRetention        = 30 * 24 * time.Hour
+	EventRoutingHistoryPruneBatch       = 50
+)
+
+// Service checks use bounded rotating batches so unavailable bindings cannot
+// monopolize the control-plane worker.
+// Alert rollback sweeps and status lists are bounded independently of rule quotas.
+// Post-deploy rollback is opt-in; zero disables it.
+const AlertRollbackMaxWindowSeconds = 3600
+
+const AlertRollbackBatchSize = 32
+const AlertRollbackCheckIntervalSeconds = 2
+
+// Production telemetry collapses timestamps to minutes. Only complete minutes
+// after cutover qualify, with time for the asynchronous publisher to ingest them.
+const AlertRollbackEvidenceMinRequests int64 = 20
+const AlertRollbackEvidenceIngestionLag = 30 * time.Second
+const AlertRollbackEvidenceMaxSampleAge = 2 * time.Minute
+const AlertRollbackEvidenceMaxCheckDelay = 2 * time.Minute
+
+// First-wake 5xx auto-rollback (ADR-625, amends ADR-200). apid evaluates
+// every completed release that opted in (`deploy --rollback-on-5xx`, implied
+// by `--safe`) against request telemetry. The window opens when the release's
+// traffic is first observed; inside it, at least RollbackOn5xxMinServerErrors
+// 5xx responses that are also at least RollbackOn5xxMinErrorPct percent of the
+// release's requests roll it back to its predecessor. Telemetry timestamps
+// collapse to minutes and publish asynchronously, so a closed window stays
+// evaluable for RollbackOn5xxTelemetryGrace. Plan-independent per ADR-200.
+const RollbackOn5xxWindowMinutes = 5
+const RollbackOn5xxMinServerErrors int64 = 5
+const RollbackOn5xxMinErrorPct int64 = 50
+const RollbackOn5xxTelemetryGrace = 2 * time.Minute
+const RollbackOn5xxCheckIntervalSeconds = 15
+const RollbackOn5xxBatchSize = 100
+
+// Synchronous invoke (POST /v1/apps/{slug}/invoke) long-poll. The wait stays
+// below DefaultClientTimeout so a slow invocation answers with a 504 naming
+// the invocation rather than a client-side "could not reach Gregale".
+// production-us hunt #4: both were 30 s, so the SDK always gave up first.
+const SyncInvokeWaitSeconds = 25
+const SyncInvokeWaitSecondsFree = 5
+
+const ServiceBindingCheckBatchSize = 32
+const ServiceBindingCheckIntervalSeconds = 2
+
 // Queue binding intent ceilings are shared by the API and GitOps compiler.
 const QueueBindingMaxConcurrency = 10000
 const QueueBindingRetryMaxBaseSeconds = 3600
@@ -794,9 +856,24 @@ const (
 // Limits is the full quota/limit set for one plan. Every field has a spec
 // reference. Add a field here (never a literal elsewhere) when a new limit
 // appears, and cover it in limits_test.go.
+// EventDeliveryLimits bounds live application-event deliveries (pending plus
+// dispatching), including retained replay descendants. ADR-614.
+type EventDeliveryLimits struct{ PerConsumer, PerApp, PerAccount int }
+
+// EventStorageLimits bounds retained customer event envelopes and immutable
+// recipient snapshots per account, including settled receipts. ADR-615.
+const EventStorageRetryAfterSeconds = 60
+
+type EventStorageLimits struct {
+	RetainedEvents int64 `json:"retained_events"`
+	RetainedBytes  int64 `json:"retained_bytes"`
+}
+
 type Limits struct {
-	Operations OperationPlanLimits
-	Plan       Plan
+	EventStorage    EventStorageLimits
+	EventDeliveries EventDeliveryLimits
+	Operations      OperationPlanLimits
+	Plan            Plan
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
@@ -2354,6 +2431,8 @@ var planLimits = map[Plan]Limits{
 		// the documented Hobby-customer-trying-Free path; tighter than
 		// Hobby so a customer mid-upgrade sees the cap before the
 		// plan flips. Deadline defaults to 5m, retention to 1d.
+		EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
+		EventStorage:                      EventStorageLimits{4096, 8 << 20},
 		MaxAsyncInvocationsPerAccount:     100,
 		MaxAsyncInvocationDeadlineSeconds: 300,
 		MaxAsyncResultRetentionSeconds:    86400,
@@ -2738,6 +2817,8 @@ var planLimits = map[Plan]Limits{
 		MaxQueueAttempts: 3,
 		// ADR-134 PR-B: Hobby 1k / 1h / 7d. Matches the doubling
 		// from Free's 100/5m/1d.
+		EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
+		EventStorage:                      EventStorageLimits{16384, 64 << 20},
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
 		MaxAsyncResultRetentionSeconds:    604800,
@@ -3155,6 +3236,8 @@ var planLimits = map[Plan]Limits{
 		MaxQueueAttempts: 10,
 		// ADR-134 PR-B: Pro 10k / 6h / 30d. Decadal bumps from
 		// Hobby track the Doubling pattern (1k->10k, 1h->6h, 7d->30d).
+		EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
+		EventStorage:                      EventStorageLimits{131072, 512 << 20},
 		MaxAsyncInvocationsPerAccount:     10000,
 		MaxAsyncInvocationDeadlineSeconds: 21600,
 		MaxAsyncResultRetentionSeconds:    2592000,
@@ -3537,6 +3620,8 @@ var planLimits = map[Plan]Limits{
 		// matches the cron-handler SLA spec ("must finish by 09:00"
 		// pattern); 90d retention matches the audit-grade trace
 		// retention target.
+		EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
+		EventStorage:                      EventStorageLimits{1048576, 4 << 30},
 		MaxAsyncInvocationsPerAccount:     100000,
 		MaxAsyncInvocationDeadlineSeconds: 86400,
 		MaxAsyncResultRetentionSeconds:    7776000,
@@ -5495,31 +5580,35 @@ var (
 )
 
 const (
-	AutomationSimulationRequestMaxBytes  int64 = 3 << 20
-	AutomationSimulationResponseMaxBytes int64 = 4 << 20
-	AutomationSimulationMaxSteps               = 128
-	AutomationSimulationMaxTraceEntries        = 1024
-	AutomationDefinitionMaxBytes         int64 = 1 << 20
-	AutomationNameMaxBytes                     = 128
-	WorkflowRunInputMaxBytes             int64 = 1 << 20
-	WorkflowWebhookBindingMaxBytes       int64 = 64 << 10
-	WorkflowWebhookFilterMaxBytes              = 32 << 10
-	WorkflowWebhookNameMaxBytes                = 128
-	WorkflowWebhookEventMaxBytes               = 256
-	WorkflowOutboundBodyMaxBytes         int64 = 1 << 20
-	WorkflowOutboundStepNameMaxBytes           = 128
-	WorkflowResumeRequestMaxBytes        int64 = 4096
-	WorkflowRunMaxResumes                      = 16
-	WorkflowForEachMaxItems                    = 128
-	WorkflowForEachNameMaxBytes                = 64
-	WorkflowForEachMaxInputBytes         int64 = 1 << 20
-	WorkflowForEachMaxOutputBytes        int64 = 1 << 20
-	WorkflowJoinMaxDependencies                = 128
-	WorkflowGuardMaxBytes                      = 16 << 10
-	WorkflowGuardMaxDepth                      = 8
-	WorkflowGuardMaxNodes                      = 32
-	WorkflowGuardNumberMaxBytes                = 4096
-	WorkflowGuardNumberMaxExponent             = 4096
+	AutomationSimulationRequestMaxBytes     int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes    int64 = 4 << 20
+	AutomationSimulationMaxSteps                  = 128
+	AutomationSimulationMaxTraceEntries           = 1024
+	AutomationDefinitionMaxBytes            int64 = 1 << 20
+	AutomationNameMaxBytes                        = 128
+	WorkflowRunInputMaxBytes                int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes          int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes                 = 32 << 10
+	WorkflowWebhookNameMaxBytes                   = 128
+	WorkflowWebhookEventMaxBytes                  = 256
+	WorkflowAutomationHealthDefaultRange          = 7 * 24 * time.Hour
+	WorkflowAutomationHealthMaxRange              = 30 * 24 * time.Hour
+	WorkflowAutomationHealthMaxFailureSteps       = 10
+	WorkflowOutboundBodyMaxBytes            int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes              = 128
+	WorkflowResumeRequestMaxBytes           int64 = 4096
+	WorkflowRunMaxResumes                         = 16
+	WorkflowForEachMaxItems                       = 128
+	WorkflowForEachMaxParallelLimit               = 16
+	WorkflowForEachNameMaxBytes                   = 64
+	WorkflowForEachMaxInputBytes            int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes           int64 = 1 << 20
+	WorkflowJoinMaxDependencies                   = 128
+	WorkflowGuardMaxBytes                         = 16 << 10
+	WorkflowGuardMaxDepth                         = 8
+	WorkflowGuardMaxNodes                         = 32
+	WorkflowGuardNumberMaxBytes                   = 4096
+	WorkflowGuardNumberMaxExponent                = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -6572,22 +6661,25 @@ const RouteMetricsPerAppCap = 50
 const (
 	RouteRequirementsMaxBytes = 1 << 20
 	// Keep revision counters exactly representable by JSON/JavaScript clients.
-	RouteRequirementsMaxRevision      int64 = 1<<53 - 1
-	RouteRequirementsMaxRoutes              = 500
-	RouteCoverageMaxGroups                  = 100
-	RouteCoverageMaxInventoryRoutes         = 2000
-	RouteCoverageMaxRules                   = 1000
-	RouteCoverageMaxFindings                = 10000
-	RouteCoverageMaxNodes                   = 1000000
-	RouteCoverageMaxSegments                = 64
-	RouteCoverageMaxPathBytes               = 2048
-	RouteCoverageMaxNameBytes               = 128
-	RouteCoverageMaxReasonBytes             = 1024
-	RouteCoverageMaxMetadataBytes           = 4096
-	RouteCoverageMaxWorkBytes               = 16 << 20
-	RoutePolicyRequestMaxBytes              = 2 << 20
-	RoutePolicyArtifactMaxBytes             = 16 << 20
-	RoutePolicyIdempotencyKeyMaxBytes       = 200
+	RouteRequirementsMaxRevision       int64 = 1<<53 - 1
+	RouteRequirementsMaxRoutes               = 500
+	RouteCoverageMaxGroups                   = 100
+	RouteCoverageMaxInventoryRoutes          = 2000
+	RouteCoverageMaxRules                    = 1000
+	RouteCoverageMaxFindings                 = 10000
+	RouteCoverageMaxNodes                    = 1000000
+	RouteCoverageMaxSegments                 = 64
+	RouteCoverageMaxPathBytes                = 2048
+	RouteCoverageMaxNameBytes                = 128
+	RouteCoverageMaxReasonBytes              = 1024
+	RouteCoverageMaxMetadataBytes            = 4096
+	RouteCoverageMaxWorkBytes                = 16 << 20
+	RoutePolicyRequestMaxBytes               = 2 << 20
+	BindingReleasePolicyMaxRevision    int64 = 1<<53 - 1
+	BindingReleasePolicyMaxAge               = 24 * time.Hour
+	BindingReleasePolicyReasonMaxBytes       = 256
+	RoutePolicyArtifactMaxBytes              = 16 << 20
+	RoutePolicyIdempotencyKeyMaxBytes        = 200
 	// Automatic checks retain a bounded latest result and history (ADR-449/405).
 	RouteCheckMaxResultBytes = 16 << 20
 	RouteCheckBatchSize      = 4
@@ -8643,6 +8735,9 @@ const (
 	MaxObjectEncryptionProviderResponseBytes = 64 << 10
 	MaxObjectEncryptionJSONDepth             = 32
 )
+
+// MaxObjectWriteProtectionSnapshotBytes bounds private admitted Object Lock policy.
+const MaxObjectWriteProtectionSnapshotBytes = 16 << 10
 
 // MaxObjectEncryptionSnapshotBytes bounds private immutable write journal data.
 const MaxObjectEncryptionSnapshotBytes = 16 << 10

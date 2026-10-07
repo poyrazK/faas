@@ -19,6 +19,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+const workflowActionCapacityPollInterval = time.Second
+
 // WorkflowStepExecutor dispatches a single step execution to an app instance.
 type WorkflowStepExecutor interface {
 	ExecuteStep(ctx context.Context, appID string, path, method string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte, error)
@@ -507,6 +509,9 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 			return err
 		}
 		advanced, err := o.advanceWorkflowRunOnce(ctx, runID)
+		if errors.Is(err, state.ErrWorkflowActionConcurrencyLimit) {
+			return o.store.ScheduleWorkflowRun(ctx, runID, state.WorkflowRunStatusPending, time.Now().UTC().Add(workflowActionCapacityPollInterval))
+		}
 		if err != nil || !advanced {
 			return err
 		}
@@ -845,6 +850,41 @@ func workflowStepInput(run *state.WorkflowRun, step *state.WorkflowStep, spec ap
 	return resolved, nil
 }
 
+func workflowOutboundTemplateContext(run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec, steps map[string]*state.WorkflowStep) (json.RawMessage, map[string]json.RawMessage, error) {
+	contextInput := run.Input
+	dependencyNames := spec.DependsOn
+	if step.ForEachParent != nil {
+		parentSpec := api.WorkflowRuntimeStep(run.DefinitionSnapshot, *step.ForEachParent)
+		parent, exists := steps[*step.ForEachParent]
+		if parentSpec == nil || parentSpec.ForEach == nil || !exists || step.ForEachIndex == nil {
+			return nil, nil, errors.New("for_each outbound context is incomplete")
+		}
+		var items []json.RawMessage
+		if err := json.Unmarshal(parent.Input, &items); err != nil || *step.ForEachIndex < 0 || *step.ForEachIndex >= len(items) {
+			return nil, nil, errors.New("for_each outbound item is unavailable")
+		}
+		var err error
+		contextInput, err = json.Marshal(struct {
+			Item  json.RawMessage `json:"item"`
+			Index int             `json:"index"`
+			Input json.RawMessage `json:"input"`
+		}{Item: items[*step.ForEachIndex], Index: *step.ForEachIndex, Input: run.Input})
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencyNames = parentSpec.DependsOn
+	}
+	outputs := make(map[string]json.RawMessage, len(dependencyNames))
+	for _, name := range dependencyNames {
+		dependency, exists := steps[name]
+		if !exists || dependency.Status != state.WorkflowStepStatusSucceeded {
+			return nil, nil, fmt.Errorf("workflow outbound dependency %q is not complete", name)
+		}
+		outputs[name] = dependency.Output
+	}
+	return contextInput, outputs, nil
+}
+
 func workflowJSONEqual(left, right []byte) bool {
 	canonical := func(raw []byte) ([]byte, error) {
 		decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -991,16 +1031,27 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	if err != nil {
 		return o.failWorkflowStepInput(ctx, run, step, spec, failureContext, err)
 	}
+	var outboundSpec api.WorkflowOutboundSpec
+	if spec.Outbound != nil {
+		templateInput, dependencyOutputs, contextErr := workflowOutboundTemplateContext(run, step, spec, steps)
+		if contextErr != nil {
+			return o.failWorkflowStepInput(ctx, run, step, spec, failureContext, contextErr)
+		}
+		outboundSpec, err = api.ResolveWorkflowOutboundTarget(*spec.Outbound, templateInput, dependencyOutputs, failureContext)
+		if err != nil {
+			return o.failWorkflowStepInput(ctx, run, step, spec, failureContext, err)
+		}
+	}
 
 	if spec.Outbound != nil {
 		if o.outbound == nil {
 			return o.failWorkflowStepBeforeStart(ctx, run, step, spec, failureContext, "workflow outbound executor is disabled or unavailable")
 		}
-		if step.Attempt-step.RetryBase >= workflowOutboundMaxAttempts(spec) {
+		if step.Attempt-step.RetryBase >= api.WorkflowStepMaxAttempts(spec) {
 			return o.failWorkflowStepBeforeStart(ctx, run, step, spec, failureContext, "workflow outbound attempt limit exhausted after recovery")
 		}
 	}
-	if (step.ForEachParent != nil || run.ResumeCount > 0) && step.Attempt-step.RetryBase >= workflowOutboundMaxAttempts(spec) {
+	if (step.ForEachParent != nil || run.ResumeCount > 0) && step.Attempt-step.RetryBase >= api.WorkflowStepMaxAttempts(spec) {
 		return o.failWorkflowStepBeforeStart(ctx, run, step, spec, nil, "for_each item attempt limit exhausted after recovery")
 	}
 	start := time.Now()
@@ -1043,7 +1094,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	managedOperationID := ""
 	var managedEffects []exclusivework.Effect
 	if spec.Outbound != nil {
-		statusCode, body, outboundRetryAt, err = o.outbound.ExecuteOutboundStep(ctx, run.ID, step.StepName, step.Attempt+1, *spec.Outbound, inputBytes, timeout)
+		statusCode, body, outboundRetryAt, err = o.outbound.ExecuteOutboundStep(ctx, run.ID, step.StepName, step.Attempt+1, outboundSpec, inputBytes, timeout)
 		if errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 			return false, err
 		}
@@ -1161,15 +1212,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 		return true, nil
 	}
 
-	// Handle failures: determine retry policy
-	maxAttempts := 3
-	if spec.Outbound != nil {
-		maxAttempts = workflowOutboundMaxAttempts(spec)
-	}
-	if spec.Retry != nil && spec.Retry.MaxAttempts > 0 {
-		maxAttempts = spec.Retry.MaxAttempts
-	}
-
+	// Handle failures using the policy shared with the automation simulator.
 	errMsg := ""
 	if err != nil {
 		errMsg = err.Error()
@@ -1183,7 +1226,6 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			errMsg = "for_each item request failed"
 		}
 	}
-	retryable := statusCode >= 500 || err != nil
 	if spec.Outbound != nil {
 		errMsg = fmt.Sprintf("Outbound HTTP %d", statusCode)
 		if err != nil {
@@ -1192,9 +1234,10 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 				errMsg = "outbound result unknown; unsafe to repeat"
 			}
 		}
-		retryable = spec.Outbound.SafeToRepeat() && (retryable || statusCode == 408 || statusCode == 425 || statusCode == 429)
 	}
-	if retryable && step.Attempt+1-step.RetryBase < maxAttempts {
+	attemptNumber := step.Attempt + 1 - step.RetryBase
+	retryDecision := api.EvaluateWorkflowRetry(spec, statusCode, err != nil, attemptNumber)
+	if retryDecision.ShouldRetry {
 		// Retry eligible — schedule the next attempt after the configured
 		// backoff so a failing dependency cannot hot-loop the dispatcher.
 		retryAt := time.Now().UTC().Add(workflowRetryDelay(spec, step.Attempt+1-step.RetryBase))
@@ -1209,7 +1252,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 
 	// Failure is terminal for this step
 	finalStatus := state.WorkflowStepStatusFailed
-	if statusCode >= 500 || err != nil {
+	if retryDecision.IsDead {
 		finalStatus = state.WorkflowStepStatusDead
 	}
 

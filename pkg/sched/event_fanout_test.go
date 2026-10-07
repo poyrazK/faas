@@ -419,6 +419,10 @@ func (s eventFanoutEnqueueFailureStore) EnqueueInvocation(context.Context, state
 	return state.Invocation{}, errors.New("temporary enqueue outage")
 }
 
+func (s eventFanoutEnqueueFailureStore) AdmitPublishedEventRecipient(context.Context, state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {
+	return state.PublishedEventRoutingResult{}, &state.EventRecipientAdmissionError{FailureCode: state.EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true, Err: errors.New("temporary enqueue outage")}
+}
+
 func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 	t.Run("invalid subscription", func(t *testing.T) {
 		ctx := context.Background()
@@ -432,7 +436,7 @@ func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		subscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil)
+		subscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", json.RawMessage(`{"data":{"missing":{"$unsupported":1}}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -444,7 +448,6 @@ func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		work.RecipientSnapshot[0].Filter = json.RawMessage(`[]`)
 		loop := &Loop{engine: &Engine{store: store}}
 		if err := loop.routePublishedEventSnapshot(ctx, work); err != nil {
 			t.Fatalf("route snapshot: %v", err)
@@ -480,7 +483,9 @@ func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		work.RecipientSnapshot[0].AppID = uuid.NewString()
+		if _, err := store.SoftDeleteAppCascade(ctx, app.ID); err != nil {
+			t.Fatal(err)
+		}
 		loop := &Loop{engine: &Engine{store: store}}
 		if err := loop.routePublishedEventSnapshot(ctx, work); err != nil {
 			t.Fatalf("route snapshot: %v", err)

@@ -122,8 +122,10 @@ def sync_detailed(
     app-bound customer-managed integration; the signed run identity and
     active tenant-to-app link are checked at dispatch and outbound
     authorization. Integration credentials and route policies remain
-    app-scoped and shared across tenants. Event waits and callbacks remain
-    unsupported for tenant-bound workflows.
+    app-scoped and shared across tenants. Tenant-bound runs can wait for
+    externally supplied events and callbacks through the authenticated
+    tenant-self continuation routes. Schedule-triggered workflows on tenant-required apps
+    are admitted once per active linked tenant from the live default publication.
 
     Args:
         tenant_id (UUID):
@@ -171,8 +173,10 @@ def sync(
     app-bound customer-managed integration; the signed run identity and
     active tenant-to-app link are checked at dispatch and outbound
     authorization. Integration credentials and route policies remain
-    app-scoped and shared across tenants. Event waits and callbacks remain
-    unsupported for tenant-bound workflows.
+    app-scoped and shared across tenants. Tenant-bound runs can wait for
+    externally supplied events and callbacks through the authenticated
+    tenant-self continuation routes. Schedule-triggered workflows on tenant-required apps
+    are admitted once per active linked tenant from the live default publication.
 
     Args:
         tenant_id (UUID):
@@ -215,8 +219,10 @@ async def asyncio_detailed(
     app-bound customer-managed integration; the signed run identity and
     active tenant-to-app link are checked at dispatch and outbound
     authorization. Integration credentials and route policies remain
-    app-scoped and shared across tenants. Event waits and callbacks remain
-    unsupported for tenant-bound workflows.
+    app-scoped and shared across tenants. Tenant-bound runs can wait for
+    externally supplied events and callbacks through the authenticated
+    tenant-self continuation routes. Schedule-triggered workflows on tenant-required apps
+    are admitted once per active linked tenant from the live default publication.
 
     Args:
         tenant_id (UUID):
@@ -262,8 +268,10 @@ async def asyncio(
     app-bound customer-managed integration; the signed run identity and
     active tenant-to-app link are checked at dispatch and outbound
     authorization. Integration credentials and route policies remain
-    app-scoped and shared across tenants. Event waits and callbacks remain
-    unsupported for tenant-bound workflows.
+    app-scoped and shared across tenants. Tenant-bound runs can wait for
+    externally supplied events and callbacks through the authenticated
+    tenant-self continuation routes. Schedule-triggered workflows on tenant-required apps
+    are admitted once per active linked tenant from the live default publication.
 
     Args:
         tenant_id (UUID):

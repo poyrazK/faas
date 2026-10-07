@@ -29,6 +29,7 @@ type ServiceOptions struct {
 	NewID               func() string
 	NewLeaseToken       func() string
 	Admit               func(context.Context, string) error
+	AdmitResize         func(context.Context, string, Spec) error
 	// MaxDatabasesPerAccount supplies the customer-specific reservation limit.
 	// It is evaluated immediately before the store's atomic reservation so
 	// plan entitlements remain race-safe while the service stays provider-neutral.
@@ -47,6 +48,7 @@ type Service struct {
 	newID                  func() string
 	newLeaseToken          func() string
 	admit                  func(context.Context, string) error
+	admitResize            func(context.Context, string, Spec) error
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
 }
 
@@ -130,6 +132,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		newID:                  options.NewID,
 		newLeaseToken:          options.NewLeaseToken,
 		admit:                  options.Admit,
+		admitResize:            options.AdmitResize,
 		maxDatabasesPerAccount: options.MaxDatabasesPerAccount,
 	}, nil
 }
@@ -364,6 +367,8 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		return Database{}, err
 	}
 	switch database.State {
+	case StateUpdating:
+		return s.reconcileResize(ctx, database)
 	case StateReady:
 		if database.EnvironmentCloneOperationID != "" {
 			proofs, ok := s.store.(CloneRestoreProofStore)

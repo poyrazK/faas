@@ -325,7 +325,7 @@ func insertOperationPG(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, op Opera
 	definition, _ := operationUUID(op.DefinitionID)
 	invocation, _ := operationUUID(op.CurrentInvocationID)
 	workflowID, _ := operationUUID(op.WorkflowRunID)
-	record, err := json.Marshal(op)
+	record, err := operationRecordJSON(op)
 	if err != nil {
 		return err
 	}

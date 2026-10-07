@@ -37,7 +37,8 @@ func (s DeletionService) StartLifecycle(ctx context.Context, b state.ObjectBucke
 	if rule == nil {
 		return state.ObjectDeletion{}, ErrInvalid
 	}
-	binding := &state.ObjectLifecycleDeletionBinding{ScanID: scan.ID, ScanToken: scan.Token, RuleID: rule.ID, Kind: decision.Kind, ExpectedProviderVersionID: target.ProviderVersionID, ExpectedLastModified: target.LastModified.UTC()}
+	marker := target.DeleteMarker
+	binding := &state.ObjectLifecycleDeletionBinding{ScanID: scan.ID, ScanToken: scan.Token, RuleID: rule.ID, Kind: decision.Kind, ExpectedProviderVersionID: target.ProviderVersionID, ExpectedLastModified: target.LastModified.UTC(), ExpectedDeleteMarker: &marker}
 	id, err := lifecycleDeletionReceiptID(scan.ID, target, selector, decision)
 	if err != nil {
 		return state.ObjectDeletion{}, err
@@ -75,6 +76,9 @@ func (s DeletionService) lifecyclePreflight(ctx context.Context, b state.ObjectB
 	o, err := lifecycleHistoryObject(versions, j.Lifecycle.ExpectedProviderVersionID, j.Lifecycle.ExpectedLastModified, now)
 	if err != nil {
 		return err
+	}
+	if j.Lifecycle.ExpectedDeleteMarker != nil && o.DeleteMarker != *j.Lifecycle.ExpectedDeleteMarker {
+		return ErrUnavailable
 	}
 	if len(rule.Filter.Tags) != 0 && !o.DeleteMarker {
 		o.Tags, err = s.lifecycleTags(ctx, b, j)

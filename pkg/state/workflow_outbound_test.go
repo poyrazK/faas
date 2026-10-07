@@ -19,7 +19,7 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		if _, err := bindingStore.CreateOutboundIntegration(ctx, offer); err != nil {
 			t.Fatal(err)
 		}
-		spec := api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: &api.WorkflowOutboundSpec{IntegrationID: offer.ID, Method: "POST", Path: "/v1/contacts", IdempotencySupported: true}, Retry: &api.WorkflowRetrySpec{MaxAttempts: 3}}}}
+		spec := api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: &api.WorkflowOutboundSpec{IntegrationID: offer.ID, Method: "POST", Path: "/v1/contacts/{{input.contact_id}}", Query: map[string]string{"source": "automation"}, IdempotencySupported: true}, Retry: &api.WorkflowRetrySpec{MaxAttempts: 3}}}}
 		definition, _ := json.Marshal(spec)
 		author := store.(AutomationStore)
 		draft, err := author.MutateAutomation(ctx, app.ID, spec.Name, AutomationMutation{Action: "save", Draft: definition})
@@ -38,13 +38,24 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		if _, err := author.MutateAutomation(ctx, app.ID, spec.Name, AutomationMutation{Action: "publish", ExpectedVersion: draft.Version}); err != nil {
 			t.Fatal(err)
 		}
-		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"GET"}, []string{"/v1"}); err != nil {
+		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1/other"}); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.(WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, spec); !errors.Is(err, ErrAutomationInvalid) {
 			t.Fatalf("ignored narrowed route: %v", err)
 		}
-		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1"}); err != nil {
+		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1/x"}); err != nil {
+			t.Fatal(err)
+		}
+		unproven := spec
+		unproven.Steps = append([]api.WorkflowStepSpec(nil), spec.Steps...)
+		unprovenOutbound := *spec.Steps[0].Outbound
+		unprovenOutbound.Path = "/v1/{{input.contact_id}}/history"
+		unproven.Steps[0].Outbound = &unprovenOutbound
+		if err := store.(WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, unproven); !errors.Is(err, ErrAutomationInvalid) {
+			t.Fatalf("placeholder sample incorrectly satisfied a narrower route prefix: %v", err)
+		}
+		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1/contacts"}); err != nil {
 			t.Fatal(err)
 		}
 		run := &WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, DefinitionSnapshot: definition}

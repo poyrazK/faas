@@ -57,18 +57,20 @@ func (m *MemStore) GetWorkflowOutboundAttempt(_ context.Context, runID, stepName
 // check atomic with the run and outbound-attempt check without re-locking.
 func (m *MemStore) workflowOutboundTenantLinkActiveLocked(accountID, tenantID, appID string) bool {
 	tenant, ok := m.platformTenants[tenantID]
-	if !ok || tenant.AccountID != accountID || tenant.Status != PlatformTenantActive {
+	if !ok || !sameMemUUID(tenant.AccountID, accountID) || tenant.Status != PlatformTenantActive {
 		return false
 	}
 	for consumerID, linkedTenantID := range m.platformTenantByConsumer {
 		consumer, ok := m.apiConsumers[consumerID]
-		if ok && linkedTenantID == tenantID && consumer.PlatformTenantID == tenantID && consumer.AccountID == accountID && consumer.AppID == appID && consumer.Active() {
+		if ok && sameMemUUID(linkedTenantID, tenantID) && sameMemUUID(consumer.PlatformTenantID, tenantID) &&
+			sameMemUUID(consumer.AccountID, accountID) && sameMemUUID(consumer.AppID, appID) && consumer.Active() {
 			return true
 		}
 	}
 	for surfaceID, linkedTenantID := range m.platformTenantBySurface {
 		surface, ok := m.tenantSurfaces[surfaceID]
-		if ok && linkedTenantID == tenantID && surface.AccountID == accountID && surface.AppID == appID && surface.Active() {
+		if ok && sameMemUUID(linkedTenantID, tenantID) && sameMemUUID(surface.AccountID, accountID) &&
+			sameMemUUID(surface.AppID, appID) && surface.Active() {
 			return true
 		}
 	}
@@ -76,10 +78,10 @@ func (m *MemStore) workflowOutboundTenantLinkActiveLocked(accountID, tenantID, a
 }
 
 func outboundBindingAllows(step api.WorkflowOutboundSpec, methods, paths, bindingMethods, bindingPaths []string) bool {
-	if !(routepolicy.Policy{AllowedMethods: methods, AllowedPathPrefixes: paths}).AllowsRequest(step.Method, step.Path) {
+	if !api.WorkflowOutboundPathAllowedByPolicy(step.Method, step.Path, routepolicy.Policy{AllowedMethods: methods, AllowedPathPrefixes: paths}) {
 		return false
 	}
-	return bindingMethods == nil && bindingPaths == nil || (routepolicy.Policy{AllowedMethods: bindingMethods, AllowedPathPrefixes: bindingPaths}).AllowsRequest(step.Method, step.Path)
+	return bindingMethods == nil && bindingPaths == nil || api.WorkflowOutboundPathAllowedByPolicy(step.Method, step.Path, routepolicy.Policy{AllowedMethods: bindingMethods, AllowedPathPrefixes: bindingPaths})
 }
 func invalidOutboundBinding(name string) error {
 	return fmt.Errorf("%w: step %q requires an enabled customer managed integration with a credential and app binding allowing its route", ErrAutomationInvalid, name)

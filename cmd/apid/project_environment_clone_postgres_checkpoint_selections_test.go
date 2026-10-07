@@ -35,13 +35,17 @@ func (s *cloneCheckpointSelectionFailureStore) RecordProjectEnvironmentClonePost
 
 type cloneCheckpointClosureProvider struct {
 	*cloneMaintenanceProvider
-	closed                        managedpostgres.CheckpointConnectionClosure
-	requests                      []managedpostgres.CheckpointConnectionRequest
-	closes, closureReads          int
-	loseClose, missingObservation bool
-	drained                       bool
-	changedPin                    string
-	onObserve                     func(context.Context) error
+	closed                                managedpostgres.CheckpointConnectionClosure
+	requests                              []managedpostgres.CheckpointConnectionRequest
+	closes, closureReads                  int
+	loseClose, missingObservation         bool
+	drained                               bool
+	changedPin                            string
+	onObserve                             func(context.Context) error
+	discoveries                           int
+	inventory                             []string
+	onDiscover                            func(context.Context) error
+	prepared, unselected, closeUnselected int64
 }
 
 func (p *cloneCheckpointClosureProvider) CloseCheckpointConnections(ctx context.Context, d managedpostgres.RestoreSourceDefinition, m managedpostgres.CheckpointMaintenance, r managedpostgres.CheckpointConnectionRequest) (managedpostgres.CheckpointConnectionClosure, error) {
@@ -61,6 +65,7 @@ func (p *cloneCheckpointClosureProvider) CloseCheckpointConnections(ctx context.
 			p.closed.Databases = append(p.closed.Databases, managedpostgres.CheckpointConnectionDatabase{Name: name, OID: uint32(30303 + i), OwnerOID: 40404, OriginalAllowConnections: true, Sessions: 1})
 		}
 	}
+	p.closed.UnselectedDatabases = p.closeUnselected
 	if p.loseClose {
 		p.loseClose = false
 		return managedpostgres.CheckpointConnectionClosure{}, managedpostgres.ErrUnavailable
@@ -86,7 +91,9 @@ func (p *cloneCheckpointClosureProvider) ObserveCheckpointConnectionClosure(ctx 
 	}
 	actual := p.closed
 	actual.Databases = slices.Clone(p.closed.Databases)
-	actual.Drained = p.drained
+	actual.UnselectedDatabases = p.unselected
+	actual.Databases[0].PreparedTransactions = p.prepared
+	actual.Drained = p.drained && p.prepared == 0
 	if p.drained {
 		for i := range actual.Databases {
 			actual.Databases[i].Sessions = 0
@@ -297,14 +304,24 @@ func TestPGClonePostgresCheckpointConnectionsRecoverOriginalAndRequireIndependen
 		t.Fatalf("missing independent observation supplied proof: %v", err)
 	}
 	provider.missingObservation = false
-	for _, pin := range []string{"oid", "owner", "allow", "time"} {
+	for _, pin := range []string{"oid", "owner", "allow", "time", "catalogue"} {
 		provider.changedPin = pin
+		if pin == "catalogue" {
+			provider.drained, provider.unselected = true, 1
+		}
 		f.lease, actual, err = f.srv.closeProjectEnvironmentClonePostgresCheckpointConnections(t.Context(), f.lease, plan)
 		if !errors.Is(err, state.ErrConflict) || !reflect.DeepEqual(actual, managedpostgres.CheckpointConnectionClosure{}) {
 			t.Fatalf("changed %s supplied proof: %v", pin, err)
 		}
+		assertCloneCheckpointHold(t, f, store)
 	}
-	provider.changedPin, provider.drained = "", true
+	provider.changedPin, provider.drained, provider.unselected, provider.prepared = "", true, 0, 1
+	f.lease, actual, err = f.srv.closeProjectEnvironmentClonePostgresCheckpointConnections(t.Context(), f.lease, plan)
+	if err != nil || actual.Drained || actual.Databases[0].PreparedTransactions != 1 {
+		t.Fatalf("unresolved transaction drained: %v", err)
+	}
+	assertCloneCheckpointHold(t, f, store)
+	provider.prepared = 0
 	f.lease, actual, err = f.srv.closeProjectEnvironmentClonePostgresCheckpointConnections(t.Context(), f.lease, plan)
 	if err != nil || !actual.Drained || !actual.ClosedAt.Equal(provider.closed.ClosedAt) || *reads != 1 || provider.deadlineMissing || provider.roles != 1 || provider.databases != 1 || provider.activations != 1 {
 		t.Fatalf("original closure/drain recovery: %v", err)
@@ -315,6 +332,38 @@ func TestPGClonePostgresCheckpointConnectionsRecoverOriginalAndRequireIndependen
 		}
 	}
 	assertCloneCheckpointHold(t, f, store)
+}
+
+func TestPGClonePostgresCheckpointConnectionsRejectCatalogueOmissionsAtEitherObservation(t *testing.T) {
+	for _, boundary := range []string{"close", "observe"} {
+		t.Run(boundary, func(t *testing.T) {
+			f, store, provider, plan, _, read, reads := cloneCheckpointSelectionWorkerFixture(t)
+			if _, err := f.srv.projectEnvironmentClonePostgresCheckpointSelection(t.Context(), f.lease, plan.source.ID, read); err != nil {
+				t.Fatal(err)
+			}
+			original, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider.drained = true
+			if boundary == "close" {
+				provider.closeUnselected = 1
+			} else {
+				provider.unselected = 1
+			}
+			var actual managedpostgres.CheckpointConnectionClosure
+			f.lease, actual, err = f.srv.closeProjectEnvironmentClonePostgresCheckpointConnections(t.Context(), f.lease, plan)
+			if !errors.Is(err, state.ErrConflict) || !reflect.DeepEqual(actual, managedpostgres.CheckpointConnectionClosure{}) ||
+				provider.closes != 1 || provider.closureReads != 1 || *reads != 1 {
+				t.Fatalf("%s omitted database supplied usable barrier: %v", boundary, err)
+			}
+			assertCloneCheckpointHold(t, f, store)
+			retained, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
+			if err != nil || !bytes.Equal(original.Sealed.Ciphertext, retained.Sealed.Ciphertext) {
+				t.Fatalf("%s catalogue drift replaced original selection: %v", boundary, err)
+			}
+		})
+	}
 }
 
 func TestPGClonePostgresCheckpointConnectionsRejectPostClosureCancellationAndLeaseHandoff(t *testing.T) {

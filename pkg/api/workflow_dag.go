@@ -15,45 +15,55 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	WorkflowRetryMaxAttempts          = 25
+	WorkflowMaxConcurrentRunsLimit    = 200
+	WorkflowMaxConcurrentActionsLimit = 200
+)
+
 var (
-	ErrWorkflowEmptySteps              = errors.New("workflow: must have at least one step")
-	ErrWorkflowNameRequired            = errors.New("workflow: name cannot be empty")
-	ErrWorkflowPlanNotAllowed          = errors.New("workflow: plan does not allow workflows")
-	ErrWorkflowInvalidTrigger          = errors.New("workflow: invalid manual, schedule, or event trigger")
-	ErrWorkflowDuplicateStep           = errors.New("workflow: duplicate step name")
-	ErrWorkflowInvalidStepTarget       = errors.New("workflow: step must specify exactly one of run, path, outbound, wait_for_event, wait_for_callback, wait_for_duration, wait_for_condition, join, or for_each")
-	ErrWorkflowInvalidPath             = errors.New("workflow: step path must start with '/'")
-	ErrWorkflowInvalidMethod           = errors.New("workflow: step method is not supported")
-	ErrWorkflowInvalidRun              = errors.New("workflow: step run cannot be empty")
-	ErrWorkflowInvalidInput            = errors.New("workflow: step input must be valid JSON")
-	ErrWorkflowUnknownDependency       = errors.New("workflow: step depends on unknown step")
-	ErrWorkflowDuplicateDependency     = errors.New("workflow: step has a duplicate dependency")
-	ErrWorkflowSelfDependency          = errors.New("workflow: step cannot depend on itself")
-	ErrWorkflowDAGCycle                = errors.New("workflow: circular dependency detected in steps")
-	ErrWorkflowTimeoutInvalid          = errors.New("workflow: step timeout cannot be negative")
-	ErrWorkflowTimeoutExceeded         = errors.New("workflow: step timeout exceeds plan limit")
-	ErrWorkflowWaitTimeoutInvalid      = errors.New("workflow: event or callback wait timeout must be between 1s and the plan limit")
-	ErrWorkflowConditionTimeoutInvalid = errors.New("workflow: condition wait timeout must be between 1s and 7d")
-	ErrWorkflowWaitDurationInvalid     = errors.New("workflow: wait_for_duration must be between 1s and the plan limit")
-	ErrWorkflowWaitOptionsInvalid      = errors.New("workflow: wait_for_duration cannot have input, method, timeout, on_timeout, on_failure, or retry")
-	ErrWorkflowCallbackOptionsInvalid  = errors.New("workflow: wait_for_callback cannot have input, method, or retry")
-	ErrWorkflowConditionInvalid        = errors.New("workflow: wait_for_condition needs a valid checker, interval, and 1-1000 attempts")
-	ErrWorkflowConditionOptionsInvalid = errors.New("workflow: wait_for_condition cannot have input, method, or retry")
-	ErrWorkflowReservedEventName       = errors.New("workflow: wait_for_event name uses a reserved callback prefix")
-	ErrWorkflowRetryInvalid            = errors.New("workflow: retry must have 1-25 attempts and fixed or exponential backoff")
-	ErrWorkflowUnknownOnTimeout        = errors.New("workflow: on_timeout references unknown step")
-	ErrWorkflowUnknownOnFailure        = errors.New("workflow: on_failure references unknown step")
-	ErrWorkflowInvalidOnFailure        = errors.New("workflow: on_failure must target a distinct handler step and may only be used on handler steps")
-	ErrWorkflowDuplicateFailureTarget  = errors.New("workflow: a failure handler can only handle one source step")
-	ErrWorkflowFailureHandlerDependent = errors.New("workflow: an on_failure handler cannot have dependent steps")
-	ErrWorkflowInvalidFailureContext   = errors.New("workflow: failure context is only available in an on_failure handler")
-	ErrWorkflowInputTemplateInvalid    = errors.New("workflow: invalid step input template")
-	ErrWorkflowInputOutputDependency   = errors.New("workflow: step output references must name a direct dependency")
+	ErrWorkflowEmptySteps               = errors.New("workflow: must have at least one step")
+	ErrWorkflowNameRequired             = errors.New("workflow: name cannot be empty")
+	ErrWorkflowPlanNotAllowed           = errors.New("workflow: plan does not allow workflows")
+	ErrWorkflowInvalidTrigger           = errors.New("workflow: invalid manual, schedule, or event trigger")
+	ErrWorkflowDuplicateStep            = errors.New("workflow: duplicate step name")
+	ErrWorkflowInvalidStepTarget        = errors.New("workflow: step must specify exactly one of run, path, outbound, wait_for_event, wait_for_callback, wait_for_duration, wait_for_condition, join, or for_each")
+	ErrWorkflowInvalidPath              = errors.New("workflow: step path must start with '/'")
+	ErrWorkflowInvalidMethod            = errors.New("workflow: step method is not supported")
+	ErrWorkflowInvalidRun               = errors.New("workflow: step run cannot be empty")
+	ErrWorkflowInvalidInput             = errors.New("workflow: step input must be valid JSON")
+	ErrWorkflowUnknownDependency        = errors.New("workflow: step depends on unknown step")
+	ErrWorkflowDuplicateDependency      = errors.New("workflow: step has a duplicate dependency")
+	ErrWorkflowSelfDependency           = errors.New("workflow: step cannot depend on itself")
+	ErrWorkflowDAGCycle                 = errors.New("workflow: circular dependency detected in steps")
+	ErrWorkflowTimeoutInvalid           = errors.New("workflow: step timeout cannot be negative")
+	ErrWorkflowTimeoutExceeded          = errors.New("workflow: step timeout exceeds plan limit")
+	ErrWorkflowWaitTimeoutInvalid       = errors.New("workflow: event or callback wait timeout must be between 1s and the plan limit")
+	ErrWorkflowConditionTimeoutInvalid  = errors.New("workflow: condition wait timeout must be between 1s and 7d")
+	ErrWorkflowWaitDurationInvalid      = errors.New("workflow: wait_for_duration must be between 1s and the plan limit")
+	ErrWorkflowWaitOptionsInvalid       = errors.New("workflow: wait_for_duration cannot have input, method, timeout, on_timeout, on_failure, or retry")
+	ErrWorkflowCallbackOptionsInvalid   = errors.New("workflow: wait_for_callback cannot have input, method, or retry")
+	ErrWorkflowConditionInvalid         = errors.New("workflow: wait_for_condition needs a valid checker, interval, and 1-1000 attempts")
+	ErrWorkflowConditionOptionsInvalid  = errors.New("workflow: wait_for_condition cannot have input, method, or retry")
+	ErrWorkflowReservedEventName        = errors.New("workflow: wait_for_event name uses a reserved callback prefix")
+	ErrWorkflowRetryInvalid             = errors.New("workflow: retry must have 1-25 attempts and fixed or exponential backoff")
+	ErrWorkflowConcurrencyInvalid       = errors.New("workflow: max_concurrent_runs must be between 1 and 200 when specified")
+	ErrWorkflowActionConcurrencyInvalid = errors.New("workflow: max_concurrent_actions must be between 1 and 200 when specified")
+	ErrWorkflowUnknownOnTimeout         = errors.New("workflow: on_timeout references unknown step")
+	ErrWorkflowUnknownOnFailure         = errors.New("workflow: on_failure references unknown step")
+	ErrWorkflowInvalidOnFailure         = errors.New("workflow: on_failure must target a distinct handler step and may only be used on handler steps")
+	ErrWorkflowDuplicateFailureTarget   = errors.New("workflow: a failure handler can only handle one source step")
+	ErrWorkflowFailureHandlerDependent  = errors.New("workflow: an on_failure handler cannot have dependent steps")
+	ErrWorkflowInvalidFailureContext    = errors.New("workflow: failure context is only available in an on_failure handler")
+	ErrWorkflowInputTemplateInvalid     = errors.New("workflow: invalid step input template")
+	ErrWorkflowInputOutputDependency    = errors.New("workflow: step output references must name a direct dependency")
 )
 
 // WorkflowTriggerSpec describes a manual, scheduled, or event-driven start.
 // Omission remains equivalent to a manual trigger. Scheduled starts skip
 // missed minutes and use the same five-field grammar as application crons.
+// TenantConfigurable lets linked platform tenants override only the cadence,
+// timezone, overlap policy, and enabled state of an opted-in schedule.
 type WorkflowTriggerSpec struct {
 	Source    string          `json:"source,omitempty" yaml:"source,omitempty" toml:"source,omitempty"`
 	EventType string          `json:"event_type,omitempty" yaml:"event_type,omitempty" toml:"event_type,omitempty"`
@@ -64,6 +74,9 @@ type WorkflowTriggerSpec struct {
 	Input     json.RawMessage `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
 	Overlap   string          `json:"overlap,omitempty" yaml:"overlap,omitempty" toml:"overlap,omitempty"`
 	Enabled   *bool           `json:"enabled,omitempty" yaml:"enabled,omitempty" toml:"enabled,omitempty"`
+	// TenantConfigurable lets each linked platform tenant manage its own
+	// cadence and enabled state without changing the app owner's definition.
+	TenantConfigurable bool `json:"tenant_configurable,omitempty" yaml:"tenant_configurable,omitempty" toml:"tenant_configurable,omitempty"`
 }
 
 func (t *WorkflowTriggerSpec) UnmarshalJSON(data []byte) error {
@@ -98,6 +111,9 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 	}
 	if trigger.Type != "event" && (trigger.Source != "" || trigger.EventType != "" || len(trigger.Filter) != 0) {
 		return fmt.Errorf("%w: event options require an event trigger", ErrWorkflowInvalidTrigger)
+	}
+	if trigger.TenantConfigurable && trigger.Type != "schedule" {
+		return fmt.Errorf("%w: tenant_configurable requires a schedule trigger", ErrWorkflowInvalidTrigger)
 	}
 	switch trigger.Type {
 	case "manual":
@@ -141,9 +157,11 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 
 // WorkflowSpec defines the declarative structure of a workflow.
 type WorkflowSpec struct {
-	Name    string               `json:"name" yaml:"name" toml:"name"`
-	Trigger *WorkflowTriggerSpec `json:"trigger,omitempty" yaml:"trigger,omitempty" toml:"trigger,omitempty"`
-	Steps   []WorkflowStepSpec   `json:"steps" yaml:"steps" toml:"steps"`
+	Name                 string               `json:"name" yaml:"name" toml:"name"`
+	Trigger              *WorkflowTriggerSpec `json:"trigger,omitempty" yaml:"trigger,omitempty" toml:"trigger,omitempty"`
+	MaxConcurrentRuns    int                  `json:"max_concurrent_runs,omitempty" yaml:"max_concurrent_runs,omitempty" toml:"max_concurrent_runs,omitempty"`
+	MaxConcurrentActions int                  `json:"max_concurrent_actions,omitempty" yaml:"max_concurrent_actions,omitempty" toml:"max_concurrent_actions,omitempty"`
+	Steps                []WorkflowStepSpec   `json:"steps" yaml:"steps" toml:"steps"`
 }
 
 // WorkflowStepSpec defines an individual step in a workflow DAG. Run and
@@ -455,6 +473,12 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return nil, ErrWorkflowNameRequired
 	}
+	if spec.MaxConcurrentRuns < 0 || spec.MaxConcurrentRuns > WorkflowMaxConcurrentRunsLimit {
+		return nil, ErrWorkflowConcurrencyInvalid
+	}
+	if spec.MaxConcurrentActions < 0 || spec.MaxConcurrentActions > WorkflowMaxConcurrentActionsLimit {
+		return nil, ErrWorkflowActionConcurrencyInvalid
+	}
 	if err := ValidateWorkflowTrigger(spec.Trigger); err != nil {
 		return nil, err
 	}
@@ -516,7 +540,7 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 			return nil, fmt.Errorf("%w in step %q", ErrWorkflowInvalidInput, step.Name)
 		}
 		if step.Retry != nil {
-			if step.Retry.MaxAttempts < 1 || step.Retry.MaxAttempts > 25 ||
+			if step.Retry.MaxAttempts < 1 || step.Retry.MaxAttempts > WorkflowRetryMaxAttempts ||
 				(step.Retry.Backoff != "" && step.Retry.Backoff != "fixed" && step.Retry.Backoff != "exponential") {
 				return nil, fmt.Errorf("%w in step %q", ErrWorkflowRetryInvalid, step.Name)
 			}
@@ -647,6 +671,11 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w in step %q: %w", ErrWorkflowInputTemplateInvalid, step.Name, err)
 		}
+		outboundRefs, err := workflowOutboundInputReferences(step.Outbound, stepNames)
+		if err != nil {
+			return nil, fmt.Errorf("%w in step %q: %w", ErrWorkflowInputTemplateInvalid, step.Name, err)
+		}
+		refs = append(refs, outboundRefs...)
 		dependencies := make(map[string]struct{}, len(step.DependsOn))
 		for _, dep := range step.DependsOn {
 			dependencies[dep] = struct{}{}
@@ -798,6 +827,17 @@ type WorkflowRunResponse struct {
 type ListWorkflowRunsResponse struct {
 	Runs  []WorkflowRunResponse `json:"runs"`
 	Total int                   `json:"total"`
+}
+
+// WorkflowRunListOptions filters and paginates workflow run history.
+// CreatedAfter and CreatedBefore are inclusive UTC timestamps when set.
+type WorkflowRunListOptions struct {
+	Status        string
+	WorkflowName  string
+	CreatedAfter  *time.Time
+	CreatedBefore *time.Time
+	Limit         int
+	Offset        int
 }
 
 // ValidWorkflowRunStatus reports the closed set accepted by the workflow-run

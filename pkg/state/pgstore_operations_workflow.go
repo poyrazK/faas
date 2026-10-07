@@ -61,13 +61,17 @@ func admitOperationWorkflowTx(ctx context.Context, tx pgx.Tx, op *Operation, inv
 		return err
 	}
 	if err := q.InsertCustomerOperationWorkflowRun(ctx, tx, sqlc.InsertCustomerOperationWorkflowRunParams{
-		ID: mustPgUUID(run.ID), AppID: mustPgUUID(run.AppID), TenantID: mustPgUUID(run.PlatformTenantID),
-		WorkflowName: run.WorkflowName, Input: run.Input, Snapshot: run.DefinitionSnapshot, ScheduledFor: pgtype.Timestamptz{Time: run.ScheduledFor, Valid: true},
+		ID: mustPgUUID(run.ID), AppID: mustPgUUID(run.AppID), PlatformTenantID: mustPgUUID(run.PlatformTenantID), OperationID: mustPgUUID(op.ID),
+		WorkflowName: run.WorkflowName, Input: run.Input, DefinitionSnapshot: run.DefinitionSnapshot, CreatedAt: pgtype.Timestamptz{Time: run.ScheduledFor, Valid: true},
 	}); err != nil {
 		return err
 	}
 	for _, step := range steps {
-		if err := q.InsertCustomerOperationWorkflowStep(ctx, tx, sqlc.InsertCustomerOperationWorkflowStepParams{RunID: mustPgUUID(run.ID), StepName: step.StepName}); err != nil {
+		input := step.Input
+		if len(input) == 0 {
+			input = []byte(`{}`)
+		}
+		if err := q.InsertCustomerOperationWorkflowStep(ctx, tx, sqlc.InsertCustomerOperationWorkflowStepParams{RunID: mustPgUUID(run.ID), StepName: step.StepName, Input: input, CreatedAt: pgtype.Timestamptz{Time: step.CreatedAt, Valid: true}}); err != nil {
 			return err
 		}
 	}
@@ -84,7 +88,18 @@ func insertOperationWorkflowExecutionTx(ctx context.Context, tx pgx.Tx, op Opera
 	if err != nil {
 		return err
 	}
-	return sqlc.New().InsertCustomerOperationWorkflowExecution(ctx, tx, sqlc.InsertCustomerOperationWorkflowExecutionParams{
+	q := sqlc.New()
+	if rows, err := q.SetCustomerOperationWorkflowIdentity(ctx, tx, sqlc.SetCustomerOperationWorkflowIdentityParams{RunID: mustPgUUID(run.ID), OperationID: mustPgUUID(op.ID)}); err != nil {
+		return err
+	} else if rows != 1 {
+		return ErrConflict
+	}
+	if rows, err := q.InsertCustomerOperationWorkflowExecution(ctx, tx, sqlc.InsertCustomerOperationWorkflowExecutionParams{OperationID: mustPgUUID(op.ID), Generation: int32(op.Generation), RunID: mustPgUUID(run.ID)}); err != nil {
+		return err
+	} else if rows != 1 {
+		return ErrConflict
+	}
+	return q.InsertCustomerOperationWorkflowExecutionRecord(ctx, tx, sqlc.InsertCustomerOperationWorkflowExecutionRecordParams{
 		OperationID: mustPgUUID(op.ID), Generation: int32(op.Generation), RunID: mustPgUUID(run.ID), ResumeCount: int32(run.ResumeCount), Record: raw, CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 }

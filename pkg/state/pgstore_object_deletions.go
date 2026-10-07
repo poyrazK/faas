@@ -15,6 +15,7 @@ import (
 
 var _ ObjectDeletionStore = (*PgStore)(nil)
 var _ ObjectDeletionActivityStore = (*PgStore)(nil)
+var _ ObjectProtectedLifecycleDeletionStore = (*PgStore)(nil)
 
 func (s *PgStore) HasActiveObjectDeletion(ctx context.Context, account, app, bucket string) (bool, error) {
 	if _, err := s.GetObjectBucket(ctx, account, app, bucket); err != nil {
@@ -34,6 +35,7 @@ func readDeletion(ctx context.Context, db sqlc.DBTX, id string) (ObjectDeletion,
 	j := ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: id, BucketID: pgUUIDString(r.BucketID), Key: r.ObjectKey, Selector: r.Selector, State: r.State, VersionID: r.VersionID, DeleteMarker: r.DeleteMarker, LastErrorCode: r.LastErrorCode, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}, AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), Token: r.LeaseToken, LeaseUntil: r.LeaseUntil.Time, RetryAt: r.RetryAt.Time, ProviderStatus: r.ProviderStatus, ProviderVersionID: r.ProviderVersionID, ReservedBytes: r.ReservedBytes}
 	j.TargetProviderVersionID = r.TargetProviderVersionID
 	j.RecoveryClaimed = r.RecoveryClaimed
+	j.ProtectionRequired, j.ProtectionVerified, j.DeletionVerified = r.ProtectionRequired, r.ProtectionVerified, r.DeletionVerified
 	if r.LifecycleScanID.Valid {
 		var binding ObjectLifecycleDeletionBinding
 		if e = json.Unmarshal(r.LifecycleBinding, &binding); e != nil || !validLifecycleDeletionBinding(&binding, j.Selector) || binding.ScanID != pgUUIDString(r.LifecycleScanID) {
@@ -55,7 +57,7 @@ func saveDeletion(ctx context.Context, db sqlc.DBTX, j ObjectDeletion) error {
 	if !j.LeaseUntil.IsZero() {
 		lease = objectUsageTime(j.LeaseUntil)
 	}
-	return mapErr(sqlc.New().ObjectDeletionSave(ctx, db, sqlc.ObjectDeletionSaveParams{ID: mustPgUUID(j.ID), State: j.State, Baseline: baseline, ProviderVersionID: j.ProviderVersionID, VersionID: j.VersionID, DeleteMarker: j.DeleteMarker, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), LastErrorCode: j.LastErrorCode, UpdatedAt: objectUsageTime(j.UpdatedAt), RecoveryClaimed: j.RecoveryClaimed}))
+	return mapErr(sqlc.New().ObjectDeletionSave(ctx, db, sqlc.ObjectDeletionSaveParams{ID: mustPgUUID(j.ID), State: j.State, Baseline: baseline, ProviderVersionID: j.ProviderVersionID, VersionID: j.VersionID, DeleteMarker: j.DeleteMarker, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), LastErrorCode: j.LastErrorCode, UpdatedAt: objectUsageTime(j.UpdatedAt), RecoveryClaimed: j.RecoveryClaimed, ProtectionVerified: j.ProtectionVerified, DeletionVerified: j.DeletionVerified}))
 }
 func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, policy api.ObjectStoragePolicy) (ObjectDeletion, bool, error) {
 	if !validDeletionIdentity(j) {
@@ -102,6 +104,14 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	}
 	if e = validateLifecycleDeletionTx(ctx, tx, j); e != nil {
 		return ObjectDeletion{}, false, e
+	}
+	lock, e := readObjectBucketObjectLock(ctx, tx, j.BucketID)
+	if e != nil && !errors.Is(e, ErrNotFound) {
+		return j, false, e
+	}
+	j.ProtectionRequired = lifecycleProtectionRequired(j, lock)
+	if j.ProtectionRequired && j.Lifecycle.ExpectedDeleteMarker == nil {
+		return j, false, ErrConflict
 	}
 	fenced, e := q.ObjectCapacityFenced(ctx, tx, mustPgUUID(j.BucketID))
 	if e != nil {
@@ -160,7 +170,7 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 			return j, false, e
 		}
 	}
-	e = q.ObjectDeletionInsert(ctx, tx, sqlc.ObjectDeletionInsertParams{ID: mustPgUUID(j.ID), BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key, Selector: j.Selector, TargetProviderVersionID: j.TargetProviderVersionID, ProviderStatus: j.ProviderStatus, ReservedBytes: j.ReservedBytes, LeaseToken: j.Token, LeaseUntil: objectUsageTime(j.LeaseUntil), RetryAt: objectUsageTime(now.Time), LifecycleScanID: lifecycleID, LifecycleBinding: bound})
+	e = q.ObjectDeletionInsert(ctx, tx, sqlc.ObjectDeletionInsertParams{ID: mustPgUUID(j.ID), BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key, Selector: j.Selector, TargetProviderVersionID: j.TargetProviderVersionID, ProviderStatus: j.ProviderStatus, ReservedBytes: j.ReservedBytes, LeaseToken: j.Token, LeaseUntil: objectUsageTime(j.LeaseUntil), RetryAt: objectUsageTime(now.Time), LifecycleScanID: lifecycleID, LifecycleBinding: bound, ProtectionRequired: j.ProtectionRequired})
 	if e != nil {
 		return j, false, mapErr(e)
 	}
@@ -213,6 +223,12 @@ func (s *PgStore) mutateDeletion(ctx context.Context, id string, fn func(pgx.Tx,
 	return j, tx.Commit(ctx)
 }
 func (s *PgStore) DispatchObjectDeletion(ctx context.Context, id, token, status string, baseline []string) (ObjectDeletion, error) {
+	return s.dispatchObjectDeletion(ctx, id, token, status, baseline, false)
+}
+func (s *PgStore) DispatchObjectProtectedLifecycleDeletion(ctx context.Context, id, token, status string, baseline []string) (ObjectDeletion, error) {
+	return s.dispatchObjectDeletion(ctx, id, token, status, baseline, true)
+}
+func (s *PgStore) dispatchObjectDeletion(ctx context.Context, id, token, status string, baseline []string, verified bool) (ObjectDeletion, error) {
 	return s.mutateDeletion(ctx, id, func(tx pgx.Tx, j ObjectDeletion, now time.Time) (ObjectDeletion, error) {
 		if err := validateLifecycleDeletionTx(ctx, tx, j); err != nil {
 			return j, err
@@ -220,7 +236,7 @@ func (s *PgStore) DispatchObjectDeletion(ctx context.Context, id, token, status 
 		if j.ProviderStatus != status {
 			return j, ErrConflict
 		}
-		return dispatchDeletion(j, token, status, baseline, now)
+		return dispatchVerifiedDeletion(j, token, status, baseline, verified, now)
 	})
 }
 

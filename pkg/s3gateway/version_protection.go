@@ -32,7 +32,7 @@ func (h *Handler) versionProtectionService(req requestContext) objectstorage.Ver
 	st, _ := h.store.(state.ObjectVersionProtectionStore)
 	refs, _ := h.store.(state.ObjectVersionReferenceStore)
 	lock, _ := h.store.(state.ObjectBucketObjectLockStore)
-	return objectstorage.VersionProtectionService{Store: st, References: refs, BucketLock: lock, Provider: req.provider, BeforeRequest: objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)}
+	return objectstorage.VersionProtectionService{Store: st, References: refs, BucketLock: lock, Provider: req.provider, EventHolds: req.objectLockConfig.PublicCapabilities(req.provider).VersionEventHold, BeforeRequest: objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)}
 }
 func (h *Handler) objectVersionProtection(w http.ResponseWriter, r *http.Request, req requestContext, key, kind string) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPut {

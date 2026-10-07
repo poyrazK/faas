@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdWorkflows_NoArgs(t *testing.T) {
@@ -49,6 +53,59 @@ func TestCmdWorkflowsList_InvalidStatus(t *testing.T) {
 	}
 }
 
+func TestCmdWorkflowsList_FiltersByWorkflowAndCreationWindow(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	f := authedFakeAPI(t, `{"runs":[],"total":0}`, http.StatusOK)
+	args := []string{
+		"--app", "billing", "--limit", "20", "--offset", "3", "--status", "failed",
+		"--workflow-name", "paid + invoice", "--created-after", "2026-10-01T02:00:00+02:00",
+		"--created-before", "2026-10-05T23:59:59Z",
+	}
+	var output bytes.Buffer
+	if code := captureStdoutSwap(t, &output, func() int { return cmdWorkflowsList(args) }); code != 0 {
+		t.Fatalf("exit = %d, output=%s", code, output.String())
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps/billing/workflows/runs" {
+		t.Fatalf("request = %s %s", f.sawMethod, f.sawPath)
+	}
+	query, err := url.ParseQuery(f.sawQuery)
+	if err != nil {
+		t.Fatalf("parse query %q: %v", f.sawQuery, err)
+	}
+	for key, want := range map[string]string{
+		"limit": "20", "offset": "3", "status": "failed", "workflow_name": "paid + invoice",
+		"created_after": "2026-10-01T00:00:00Z", "created_before": "2026-10-05T23:59:59Z",
+	} {
+		if got := query.Get(key); got != want {
+			t.Errorf("query %s = %q, want %q; all=%v", key, got, want, query)
+		}
+	}
+}
+
+func TestCmdWorkflowsListRejectsInvalidFiltersBeforeRequest(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"runs":[],"total":0}`, http.StatusOK)
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"invalid start timestamp", []string{"--created-after", "yesterday"}},
+		{"invalid end timestamp", []string{"--created-before", "tomorrow"}},
+		{"reversed timestamps", []string{"--created-after", "2026-10-05T00:00:00Z", "--created-before", "2026-10-01T00:00:00Z"}},
+		{"overlong workflow name", []string{"--workflow-name", strings.Repeat("a", api.WorkflowWebhookNameMaxBytes+1)}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			args := append([]string{"--app", "billing"}, test.args...)
+			code, output := runWithStderr(t, func() int { return cmdWorkflowsList(args) })
+			if code != 1 || f.sawMethod != "" {
+				t.Fatalf("exit=%d stderr=%q request=%s %s", code, output, f.sawMethod, f.sawPath)
+			}
+		})
+	}
+}
+
 func TestCmdWorkflowsRun_MissingArgs(t *testing.T) {
 	code, captured := runWithStderr(t, func() int { return cmdWorkflowsRun([]string{}) })
 	if code != 1 {
@@ -83,6 +140,19 @@ func TestCmdWorkflowsStatus_InvalidUUID(t *testing.T) {
 	}
 }
 
+func TestCmdWorkflowsStatus_PrintsResumeCount(t *testing.T) {
+	resetJSONOut(t)
+	runID := "00000000-0000-4000-8000-000000000005"
+	authedFakeAPI(t, `{"id":"`+runID+`","workflow_name":"paid-invoice","status":"failed","resume_count":2}`, http.StatusOK)
+	var stdout bytes.Buffer
+	if code := captureStdoutSwap(t, &stdout, func() int { return cmdWorkflowsStatus([]string{runID}) }); code != 0 {
+		t.Fatalf("exit = %d, output=%s", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Resume Count: 2") {
+		t.Fatalf("status output = %q, want current resume count", stdout.String())
+	}
+}
+
 func TestCmdWorkflowsSteps_InvalidUUID(t *testing.T) {
 	code, captured := runWithStderr(t, func() int {
 		return cmdWorkflowsSteps([]string{"not-a-uuid"})
@@ -92,6 +162,59 @@ func TestCmdWorkflowsSteps_InvalidUUID(t *testing.T) {
 	}
 	if !strings.Contains(captured, "invalid run ID") {
 		t.Errorf("expected invalid run ID error, got: %s", captured)
+	}
+}
+
+func TestCmdWorkflowsResume_UsesExpectedCountAndIdempotencyKey(t *testing.T) {
+	resetJSONOut(t)
+	runID := "00000000-0000-4000-8000-000000000005"
+	f := authedFakeAPI(t, `{"id":"`+runID+`","status":"pending","resume_count":1}`, http.StatusOK)
+	if code := cmdWorkflows([]string{"resume", runID, "--expected-resume-count", "0", "--idempotency-key", "resume-after-outage-1"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/workflows/runs/"+runID+"/resume" {
+		t.Fatalf("request = %s %s", f.sawMethod, f.sawPath)
+	}
+	if got := f.sawHeader.Get("Idempotency-Key"); got != "resume-after-outage-1" {
+		t.Fatalf("Idempotency-Key = %q", got)
+	}
+	var body api.ResumeWorkflowRunRequest
+	if err := json.Unmarshal(f.sawBody, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ExpectedResumeCount == nil || *body.ExpectedResumeCount != 0 {
+		t.Fatalf("expected_resume_count = %v", body.ExpectedResumeCount)
+	}
+}
+
+func TestCmdWorkflowsResumeRequiresCurrentCount(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{}`, http.StatusOK)
+	runID := "00000000-0000-4000-8000-000000000005"
+	code, stderr := runWithStderr(t, func() int { return cmdWorkflowsResume([]string{runID}) })
+	if code != 1 || f.sawMethod != "" || !strings.Contains(stderr, "expected-resume-count") {
+		t.Fatalf("exit=%d stderr=%q request=%s %s", code, stderr, f.sawMethod, f.sawPath)
+	}
+}
+
+func TestCmdWorkflowsResumes_ListsContinuationHistory(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	runID := "00000000-0000-4000-8000-000000000005"
+	f := authedFakeAPI(t, `{"resumes":[{"run_id":"`+runID+`","resume_number":1,"account_id":"account","previous_status":"dead","resumed_steps":["send"],"created_at":"2026-10-05T12:00:00Z"}]}`, http.StatusOK)
+	var stdout bytes.Buffer
+	if code := captureStdoutSwap(t, &stdout, func() int { return cmdWorkflows([]string{"resumes", runID}) }); code != 0 {
+		t.Fatalf("exit = %d, output=%s", code, stdout.String())
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/workflows/runs/"+runID+"/resumes" {
+		t.Fatalf("request = %s %s", f.sawMethod, f.sawPath)
+	}
+	var got api.WorkflowResumeResponse
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &got); err != nil {
+		t.Fatalf("decode JSON output: %v; output=%s", err, stdout.String())
+	}
+	if got.ResumeNumber != 1 || got.PreviousStatus != "dead" {
+		t.Fatalf("resume history = %+v", got)
 	}
 }
 

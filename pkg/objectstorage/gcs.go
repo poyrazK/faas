@@ -664,7 +664,7 @@ func cloneMetadata(metadata map[string]string) map[string]string {
 }
 
 func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
-	if r.Encryption != nil {
+	if r.Encryption != nil || r.Protection != nil {
 		return SignedRequest{}, ErrUnsupported
 	}
 	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil {

@@ -20,6 +20,13 @@ type ObjectDeletion struct {
 	LeaseUntil, RetryAt                                        time.Time                       `json:"-"`
 	ReservedBytes                                              int64                           `json:"-"`
 	Lifecycle                                                  *ObjectLifecycleDeletionBinding `json:"-"`
+	ProtectionRequired, ProtectionVerified, DeletionVerified   bool                            `json:"-"`
+}
+
+// Protected lifecycle dispatch requires fresh native policy reads. A deletion
+// acknowledgment cannot complete these receipts without exact absence proof.
+type ObjectProtectedLifecycleDeletionStore interface {
+	DispatchObjectProtectedLifecycleDeletion(context.Context, string, string, string, []string) (ObjectDeletion, error)
 }
 
 type ObjectDeletionStore interface {
@@ -44,6 +51,9 @@ func newDeletionIntent(j ObjectDeletion) ObjectDeletion {
 
 func deletionActive(j ObjectDeletion) bool    { return j.State == "prepared" || j.State == "dispatched" }
 func immutableDeletion(j ObjectDeletion) bool { return j.Selector != "" && j.Selector != "null" }
+func lifecycleProtectionRequired(j ObjectDeletion, lock ObjectBucketObjectLock) bool {
+	return j.Lifecycle != nil && j.Selector != "" && (lock.EnabledRequired || lock.NativeEnabledObserved || lock.ObservedConfiguration != nil && lock.ObservedConfiguration.Enabled)
+}
 func cloneDeletion(j ObjectDeletion) ObjectDeletion {
 	j.Baseline = append([]string{}, j.Baseline...)
 	j.Lifecycle = cloneLifecycleDeletionBinding(j.Lifecycle)
@@ -75,11 +85,15 @@ func validDeletionBaseline(b []string) bool {
 	}
 	return true
 }
-func dispatchDeletion(j ObjectDeletion, token, status string, baseline []string, now time.Time) (ObjectDeletion, error) {
+func dispatchVerifiedDeletion(j ObjectDeletion, token, status string, baseline []string, verified bool, now time.Time) (ObjectDeletion, error) {
+	if j.ProtectionRequired && (!verified || j.Lifecycle == nil || j.Lifecycle.ExpectedDeleteMarker == nil) {
+		return j, ErrConflict
+	}
 	if !validDeletionLease(j, token, now) || j.State != "prepared" || status != "" && !ValidObjectBucketVersioningStatus(status) || !validDeletionBaseline(baseline) || status != "Enabled" && len(baseline) != 0 {
 		return j, ErrConflict
 	}
 	j.State = "dispatched"
+	j.ProtectionVerified = j.ProtectionRequired && verified
 	j.ProviderStatus = status
 	j.Baseline = append([]string{}, baseline...)
 	j.UpdatedAt = now
@@ -91,12 +105,15 @@ func finishDeletion(j, result ObjectDeletion, now time.Time) (ObjectDeletion, er
 	}
 	switch result.State {
 	case "failed":
-		prepared := j.State == "prepared" && (result.LastErrorCode == "preparation_failed" || result.LastErrorCode == "preparation_expired")
+		prepared := j.State == "prepared" && (result.LastErrorCode == "preparation_failed" || result.LastErrorCode == "preparation_expired" || j.ProtectionRequired && result.LastErrorCode == "object_protected")
 		rejected := j.State == "dispatched" && !j.RecoveryClaimed && result.LastErrorCode == "provider_rejected"
 		if !prepared && !rejected || result.ProviderVersionID != "" || result.VersionID != "" || result.DeleteMarker {
 			return j, ErrConflict
 		}
 	case "completed":
+		if j.ProtectionRequired && (!result.DeletionVerified || j.Lifecycle == nil || j.Lifecycle.ExpectedDeleteMarker == nil || result.DeleteMarker != *j.Lifecycle.ExpectedDeleteMarker) {
+			return j, ErrConflict
+		}
 		if j.State != "dispatched" || result.LastErrorCode != "" || result.VersionID != "" && !ValidObjectVersionID(result.VersionID) {
 			return j, ErrConflict
 		}
@@ -120,6 +137,7 @@ func finishDeletion(j, result ObjectDeletion, now time.Time) (ObjectDeletion, er
 	j.VersionID = result.VersionID
 	j.DeleteMarker = result.DeleteMarker
 	j.ProviderVersionID = result.ProviderVersionID
+	j.DeletionVerified = j.ProtectionRequired && result.State == "completed" && result.DeletionVerified
 	j.Token = ""
 	j.LeaseUntil = time.Time{}
 	j.UpdatedAt = now

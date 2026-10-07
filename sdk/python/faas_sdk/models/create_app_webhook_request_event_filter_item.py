@@ -28,6 +28,7 @@ CreateAppWebhookRequestEventFilterItem = Literal[
     "routes.requirements.recovered",
     "routes.requirements.violated",
     "usage_statement.finalized",
+    "workflow.finished",
 ]
 
 CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequestEventFilterItem] = {
@@ -58,6 +59,7 @@ CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequest
     "routes.requirements.recovered",
     "routes.requirements.violated",
     "usage_statement.finalized",
+    "workflow.finished",
 }
 
 

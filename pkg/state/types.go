@@ -2549,14 +2549,11 @@ type Deployment struct {
 	DeployedBy string `json:"deployed_by,omitempty"`
 	PRNumber   int    `json:"pr_number,omitempty"`
 
-	// RollbackOn5xx (Mega-C PR-2 / issue #961 leaf 8): when
-	// true, schedd subscribes to wake.response_5xx events on
-	// this deployment and fires the apid-internal
-	// /v1/internal/auto-rollback-on-5xx endpoint when the
-	// per-plan 5xx threshold is crossed inside the first-wake
-	// window. Pro+ only; Free/Hobby customers get a 403 on the
-	// create-deployment request (ErrPlanRollbackOn5xxNotAllowed).
-	// Default false; the column is BOOLEAN NOT NULL DEFAULT
+	// RollbackOn5xx (Mega-C PR-2 / issue #961 leaf 8): when true,
+	// apid's rollback-on-5xx worker (ADR-625) reverts this release to
+	// its predecessor once request telemetry shows the 5xx threshold
+	// crossed inside the first-wake window. Every plan may opt in
+	// (ADR-200). Default false; the column is BOOLEAN NOT NULL DEFAULT
 	// false (migration 00354).
 	RollbackOn5xx bool `json:"rollback_on_5xx,omitempty"`
 	// DisableStartupCPUBoost opts this deployment out of the bounded startup
@@ -2571,13 +2568,9 @@ type Deployment struct {
 	// the auto-rollback only fires inside this window.
 	FirstWakeAt          *time.Time `json:"first_wake_at,omitempty"`
 	First5xxWindowEndsAt *time.Time `json:"first_5xx_window_ends_at,omitempty"`
-	// First5xxCount is the running tally of wake.response_5xx
-	// events on this deployment. Incremented atomically by the
-	// BumpFirst5xxCount pgstore method on every wake.response_5xx
-	// event; schedd's AutoRollbackWatcher checks it against the
-	// per-plan threshold (plan.RollbackOn5xxThreshold()) inside the
-	// First5xxWindowEndsAt window. NOT NULL DEFAULT 0 (migration
-	// 00354); pre-feature rows backfill to 0.
+	// First5xxCount was meant to tally wake.response_5xx events; that
+	// event never shipped and ADR-625 reads request telemetry instead,
+	// so the column stays 0. NOT NULL DEFAULT 0 (migration 00354).
 	First5xxCount int `json:"first_5xx_count,omitempty"`
 	// LastAutoRollbackAt + LastAutoRollbackReason record the
 	// most-recent auto-rollback (Mega-C PR-2). Stamped by
@@ -3325,12 +3318,13 @@ func IsValidAlertAction(v string) bool {
 // ignore a FailureSource change, which is a footgun — the field
 // exists nowhere on this struct on purpose.
 type UpdateAlertRuleParams struct {
-	Name       *string
-	Enabled    *bool
-	Metric     *AlertMetric
-	Comparison *AlertComparison
-	Threshold  *float64
-	WindowSpec *AlertWindowSpec
+	PostDeployRollbackWindowSeconds *int
+	Name                            *string
+	Enabled                         *bool
+	Metric                          *AlertMetric
+	Comparison                      *AlertComparison
+	Threshold                       *float64
+	WindowSpec                      *AlertWindowSpec
 	// Action (issue #976 / ADR-122 / SAFE-RELEASES-B). Pointer
 	// PATCH shape so a missing body field leaves the row alone.
 	// Validated against pkg/api.AllowedAlertRuleActions at the
@@ -3349,25 +3343,26 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
-	ID                  string
-	AccountID           string
-	AppID               string // empty = account-wide
-	Name                string
-	Enabled             bool
-	Metric              AlertMetric
-	Comparison          AlertComparison
-	Threshold           float64
-	WindowSpec          AlertWindowSpec
-	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
-	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
-	WebhookURL          string
-	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
-	CooldownMinutes     int
-	State               AlertState
-	LastFiredAt         time.Time // zero until first fire
-	LastEvaluatedAt     time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	PostDeployRollbackWindowSeconds int
+	ID                              string
+	AccountID                       string
+	AppID                           string // empty = account-wide
+	Name                            string
+	Enabled                         bool
+	Metric                          AlertMetric
+	Comparison                      AlertComparison
+	Threshold                       float64
+	WindowSpec                      AlertWindowSpec
+	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
+	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	WebhookURL                      string
+	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged
+	CooldownMinutes                 int
+	State                           AlertState
+	LastFiredAt                     time.Time // zero until first fire
+	LastEvaluatedAt                 time.Time
+	CreatedAt                       time.Time
+	UpdatedAt                       time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
@@ -3496,6 +3491,7 @@ const (
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3537,6 +3533,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
+	AppWebhookEventWorkflowFinished,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -4023,6 +4020,11 @@ type Invocation struct {
 	// ReplayGeneration fences deliveries across an operator retry-budget reset.
 	// It is ledger-owned and never accepted from customer headers or metadata.
 	ReplayGeneration int64 `json:"-"`
+	// Replay lineage is ledger-owned. Admission derives the root from the
+	// immediate parent, never from customer payloads or invocation headers.
+	ReplayedFromInvocationID string     `json:"-"`
+	ReplayRootInvocationID   string     `json:"-"`
+	ReplayRootCreatedAt      *time.Time `json:"-"`
 	// QuotaReserved records whether ClaimInvocationWithCap acquired one
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.
@@ -4288,6 +4290,7 @@ const (
 // sites across pkg/sched and the test suites; only the two deadline
 // paths in the drain need to say anything beyond the default.
 type FailOptions struct {
+	Claim *InvocationClaim
 	// Outcome overrides the terminal classification on the permanent
 	// branch (retryAfter == 0). Ignored on the transient-requeue
 	// branch, which leaves the row non-terminal and therefore
@@ -4321,6 +4324,16 @@ func WithDispatchNotStarted() FailOption { return func(f *FailOptions) { f.Dispa
 
 func WithClaimAttempt(attempt int) FailOption {
 	return func(f *FailOptions) { f.ClaimAttempt = attempt }
+}
+
+// WithInvocationClaim fences dispatch results across retries and in-place replay.
+func WithInvocationClaim(inv Invocation) FailOption {
+	return func(f *FailOptions) {
+		f.ClaimAttempt = inv.Attempts
+		if inv.Source == InvocationAsyncInvoke || inv.Source == InvocationReplay {
+			f.Claim = &InvocationClaim{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration}
+		}
+	}
 }
 
 // WithWorkClassification persists the application result and policy decision
@@ -6096,7 +6109,9 @@ type Snapshot struct {
 	MemBytes         int64
 	DiskBytes        int64
 	// StoredBytes is the physical filesystem allocation of the published
-	// mem + vmstate + private-drive artifacts. Zero identifies legacy writers.
+	// mem + vmstate + private-drive artifacts. Private-drive blocks shared
+	// with the deployment's app layer count under the layer (ADR-633).
+	// Zero identifies legacy writers.
 	StoredBytes int64
 	// Tier (issue #470 / ADR-055) is which snapshot tier this row
 	// belongs to: "init" (taken right after guest-init signals

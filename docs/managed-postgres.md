@@ -122,13 +122,13 @@ attempts cleanup after an intermediate failure and emits a JSON report with
 only stable check codes and restore evidence (without provider IDs). The
 command also emits a versioned `approval`
 envelope, an `approval_env` block when all rollout checks pass, and a
-machine-readable `readiness` result. Version 4 requires SQL permission probes,
+machine-readable `readiness` result. Version 5 requires SQL permission probes,
 data recovery, rejection of inherited source logins on the restore target,
 and read-only credential evidence when the adapter advertises that access mode.
 Reader qualification exercises existing and future object access, write/DDL
 denials with client read-only settings disabled, RLS, password recovery on retry,
 data-preserving rotation, and rejection of retired sessions and fresh logins.
-Versions 1–3 must be replaced by a new qualification run.
+Versions 1–4 must be replaced by a new qualification run.
 The approval is bound to the report digest, exact backend fingerprint, expiry,
 and the current canary allowlist. A provider-only run remains useful evidence
 but is not rollout-ready until the lifecycle smoke has passed.
@@ -962,3 +962,37 @@ See [ADR-464](adr/464-managed-postgres-cutover-preparation.md) and
 
 The [October hardening audit](ops/managed-postgres-hardening-20261003.md)
 records reproduced bugs, current capability limits, and the next hardening work.
+
+## Compute resizing
+
+A qualified backend may advertise `class_resize` in capability contract version 2.
+Change compute on an ordinary, ready database with a pinned dataset:
+
+```sh
+gregale postgres resize DATABASE --class burstable --request-id REQUEST_UUID
+gregale postgres resize-status DATABASE REQUEST_UUID --json
+```
+
+Generate one canonical, nonzero UUID and keep it with the request. Repeating
+that UUID with the same database and class returns current progress, including
+after admission closes. Reusing it for a different target conflicts. The POST
+`/v1/postgres/databases/{id}/resize` accepts `request_id` and `service_class`;
+GET `/v1/postgres/databases/{id}/resizes/{resize_id}` reports `pending` or
+`succeeded`, target generation and safe diagnostics.
+
+Clients may disconnect during the change; reconnect with existing credentials.
+Region, PostgreSQL major, storage, retention, availability and scale-to-zero
+settings stay fixed. While `updating`, the catalogue retains the last confirmed
+class. The reconciler changes the recorded primary's compute configuration and
+commits the new class only after observing provider readiness on the same dataset.
+Timeouts preserve pending intent for recovery. Conflicting deletion, another
+resize, unfinished bindings/restores, clone snapshot/write holds and cutovers
+are blocked. Published environment-clone targets and legacy databases without
+a recorded dataset identity are currently unsupported. No automatic rollback or
+zero-downtime promise is made.
+
+Version 5 qualification requires a live compute resize, unchanged dataset and
+marker, reconnection with existing writer/reader credentials, stable request
+replay and restoration of the original class whenever resizing is advertised.
+Requalify Neon before reopening provisioning; prior approvals cannot prove this
+new capability. Local tests do not replace live Neon qualification.

@@ -41,6 +41,10 @@ func (s *server) reserveControlMultipart(ctx context.Context, b state.ObjectBuck
 	if err != nil {
 		return state.ObjectMultipartUpload{}, err
 	}
+	protection, err := s.resolveObjectWriteProtection(ctx, b, req.Protection)
+	if err != nil {
+		return state.ObjectMultipartUpload{}, err
+	}
 	encryption, err := s.resolveObjectURLEncryption(b, objectstorage.SignRequest{Encryption: req.Encryption})
 	if err != nil {
 		return state.ObjectMultipartUpload{}, err
@@ -51,5 +55,5 @@ func (s *server) reserveControlMultipart(ctx context.Context, b state.ObjectBuck
 	}
 	// Session, captured enrollment and declared object capacity commit together
 	// before a native initialization can be attempted.
-	return admitted.ReserveAdmittedObjectMultipartUpload(ctx, state.ObjectMultipartUpload{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, Key: req.Key, SizeBytes: req.SizeBytes, PartSizeBytes: partSize, PartCount: partCount, ContentType: req.ContentType, Encryption: encryption, ExpiresAt: time.Now().UTC().Add(api.ObjectMultipartUploadTTL)}, api.MaxActiveMultipartUploadsPerBucket, s.objectStorage.Accounting)
+	return admitted.ReserveAdmittedObjectMultipartUpload(ctx, state.ObjectMultipartUpload{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, Key: req.Key, SizeBytes: req.SizeBytes, PartSizeBytes: partSize, PartCount: partCount, ContentType: req.ContentType, Protection: protection, Encryption: encryption, ExpiresAt: time.Now().UTC().Add(api.ObjectMultipartUploadTTL)}, api.MaxActiveMultipartUploadsPerBucket, s.objectStorage.Accounting)
 }

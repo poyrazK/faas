@@ -31,6 +31,7 @@ type Client struct {
 	Token        string
 	HTTP         *http.Client
 	ExpectedAuth *AuthConfig
+	Capabilities ServerCapabilities
 	nextID       int
 }
 
@@ -162,6 +163,9 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	defer func() { _ = res.Body.Close() }()
 	x := Exchange{WakeTier: res.Header.Get(wire.WakeHeader), SessionID: res.Header.Get("Mcp-Session-Id"), StreamingStatus: api.StreamingStatus(res.Header.Get(api.StreamingStatusHeader)), HTTPStatus: res.StatusCode, AuthChallenge: res.Header.Get("WWW-Authenticate")}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
+		if rpcErr := jsonRPCErrorCode(res, id); rpcErr != nil {
+			return x, rpcErr
+		}
 		return x, httpResponseError(res)
 	}
 	if notification {
@@ -200,6 +204,38 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	return x, nil
 }
 
+// jsonRPCErrorCode recognises a JSON-RPC error answering this request in a
+// non-2xx response. Revision 2026-07-28 servers answer an unsupported method
+// with HTTP 404 plus {"error":{"code":-32601}}; reporting it as a bare HTTP
+// 404 sent operators looking for a wrong URL (production-us hunt #4). Only
+// the numeric code is kept; server-controlled text stays excluded.
+func jsonRPCErrorCode(res *http.Response, id int) *RPCError {
+	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+		return nil
+	}
+	// A body that is not JSON, or cannot be read, is simply not a
+	// JSON-RPC answer; the caller then reports the HTTP status.
+	mediaType, _, mediaErr := mime.ParseMediaType(res.Header.Get("Content-Type"))
+	if mediaErr != nil || mediaType != "application/json" {
+		return nil //nolint:nilerr // not a JSON-RPC body; the HTTP status is the error.
+	}
+	data, readErr := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	if readErr != nil {
+		return nil //nolint:nilerr // an unreadable body carries no JSON-RPC code.
+	}
+	var m struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      *int   `json:"id"`
+		Error   *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &m) != nil || m.JSONRPC != "2.0" || m.Error == nil || m.ID == nil || *m.ID != id {
+		return nil //nolint:nilerr // not a JSON-RPC error for this request.
+	}
+	return &RPCError{Code: m.Error.Code}
+}
+
 func consumeMessage(data []byte, id int, x *Exchange, start time.Time) (bool, error) {
 	var m struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -229,7 +265,7 @@ func consumeMessage(data []byte, id int, x *Exchange, start time.Time) (bool, er
 		return false, fmt.Errorf("MCP response ID does not match request")
 	}
 	if m.Error != nil {
-		return true, fmt.Errorf("MCP JSON-RPC error %d", m.Error.Code)
+		return true, &RPCError{Code: m.Error.Code}
 	}
 	if m.Result == nil || bytes.Equal(m.Result, []byte("null")) {
 		return true, fmt.Errorf("MCP response has no result")
@@ -280,7 +316,8 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return fmt.Errorf("stateful MCP session detected; use a stateless server for this hosting profile")
 	}
 	var result struct {
-		ProtocolVersion string `json:"protocolVersion"`
+		ProtocolVersion string             `json:"protocolVersion"`
+		Capabilities    ServerCapabilities `json:"capabilities"`
 	}
 	if err := json.Unmarshal(x.Result, &result); err != nil {
 		return fmt.Errorf("decode initialize: %w", err)
@@ -288,6 +325,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if result.ProtocolVersion != c.Version {
 		return fmt.Errorf("server negotiated unsupported protocol %q", result.ProtocolVersion)
 	}
+	c.Capabilities = result.Capabilities
 	_, err = c.request(ctx, "notifications/initialized", nil, nil, true)
 	return err
 }
@@ -488,7 +526,11 @@ func (c *Client) call(ctx context.Context, tool Tool, args map[string]any, progr
 }
 
 func (c *Client) RejectsUntrustedOrigin(ctx context.Context) error {
-	_, err := c.request(ctx, "tools/list", nil, http.Header{"Origin": []string{"https://gregale-mcp-origin-check.invalid"}}, false)
+	method := "server/discover"
+	if c.Version == LegacyProtocolVersion {
+		method = "tools/list"
+	}
+	_, err := c.request(ctx, method, nil, http.Header{"Origin": []string{"https://gregale-mcp-origin-check.invalid"}}, false)
 	var upstream *api.APIError
 	if !errors.As(err, &upstream) || upstream.Problem.Status != http.StatusForbidden {
 		return fmt.Errorf("untrusted Origin must return HTTP 403")

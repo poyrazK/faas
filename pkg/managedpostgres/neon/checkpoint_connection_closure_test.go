@@ -67,7 +67,9 @@ func newNativeConnectionClosureFixture(t *testing.T) *nativeConnectionClosureFix
 		ProviderResourceID: "project-source", DataResourceID: f.request.SourceResourceID}
 	createdDBs, createdRoles := []string{}, []string{}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// Dropping three databases forces separate native checkpoints. Bound the
+		// whole cleanup without making ordinary disk contention leak fixtures.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		for _, name := range createdDBs {
 			if _, err := root.Exec(ctx, "DROP DATABASE "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)"); err != nil {
@@ -138,7 +140,7 @@ func newNativeConnectionClosureFixture(t *testing.T) *nativeConnectionClosureFix
 			writeResponse(t, w, http.StatusOK, endpointsResponse{Endpoints: []endpoint{{ID: "ep-source", ProjectID: "project-source",
 				RegionID: "aws-eu-central-1", BranchID: "br-source", Host: host, Type: "read_write", CurrentState: "active", Disabled: &disabled}}})
 		case "/api/v2/projects/project-source/operations":
-			writeResponse(t, w, http.StatusOK, operationsResponse{})
+			writeResponse(t, w, http.StatusOK, operationsResponse{Operations: []operation{}})
 		case "/api/v2/projects/project-source/connection_uri":
 			q := r.URL.Query()
 			if q.Get("branch_id") != "br-source" || q.Get("database_name") != connectionfence.MaintenanceDatabase || q.Get("role_name") != maintenanceSourceRole || q.Get("pooled") != "false" {
@@ -208,7 +210,7 @@ func TestCheckpointConnectionClosureNativePipelineRecoversAndObservesDrain(t *te
 		t.Fatal(err)
 	}
 	closed, err := f.p.checkpointConnectionClosure(ctx, f.definition, f.maintenance, f.request, true, f.connectPool(t))
-	if err != nil || closed.Validate(f.request) != nil || closed.Drained || len(closed.Databases) != 2 {
+	if err != nil || closed.Validate(f.request) != nil || closed.Drained || len(closed.Databases) != 2 || closed.UnselectedDatabases < 3 {
 		t.Fatalf("admitted writer was reported drained: %+v %v", closed, err)
 	}
 	f.selectedFlags(t, false)

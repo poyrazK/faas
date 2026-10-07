@@ -66,6 +66,18 @@ func (c *Client) ApplyManagedPostgresAccountingReconciliation(ctx context.Contex
 	return out, err
 }
 
+func (c *Client) ResizeManagedPostgresDatabase(ctx context.Context, id string, request ResizeManagedPostgresDatabaseRequest) (ManagedPostgresResize, error) {
+	var out ManagedPostgresResize
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/databases/"+url.PathEscape(id)+"/resize", request, &out)
+	return out, err
+}
+
+func (c *Client) GetManagedPostgresResize(ctx context.Context, databaseID, resizeID string) (ManagedPostgresResize, error) {
+	var out ManagedPostgresResize
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases/"+url.PathEscape(databaseID)+"/resizes/"+url.PathEscape(resizeID), nil, &out)
+	return out, err
+}
+
 func (c *Client) ListManagedPostgresDatabases(ctx context.Context) (ManagedPostgresDatabaseList, error) {
 	var out ManagedPostgresDatabaseList
 	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases", nil, &out)

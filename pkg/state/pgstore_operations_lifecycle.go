@@ -72,11 +72,11 @@ func operationSaveTx(ctx context.Context, tx pgx.Tx, op Operation, event api.Ope
 		}
 	}
 	invocation, _ := operationUUID(op.CurrentInvocationID)
-	record, err := json.Marshal(op)
+	record, err := operationRecordJSON(op)
 	if err != nil {
 		return err
 	}
-	if err := q.UpdateCustomerOperation(ctx, tx, sqlc.UpdateCustomerOperationParams{ID: id, InvocationID: invocation, JobRunID: mustPgUUID(op.JobRunID), State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}}); err != nil {
+	if err := q.UpdateCustomerOperation(ctx, tx, sqlc.UpdateCustomerOperationParams{ID: id, InvocationID: invocation, WorkflowRunID: mustPgUUID(op.WorkflowRunID), JobRunID: mustPgUUID(op.JobRunID), State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}}); err != nil {
 		return fmt.Errorf("state: update operation: %w", err)
 	}
 	execution, _ := operationUUID(event.ExecutionID)

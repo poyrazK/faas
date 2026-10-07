@@ -46,6 +46,7 @@ func TestCmdBindingsSmokeRunsInCallerTaskAndReportsPinnedResponse(t *testing.T) 
 			}
 			_ = json.NewEncoder(w).Encode(api.AppTaskResponse{
 				ID: "task-1", AppID: "app-1", DeploymentID: callerDeployment,
+				DeploymentScope: "default", Command: created.Command, ExitCode: new(int),
 				Kind: api.AppTaskKindManual, Status: api.AppTaskStatusSucceeded, StdoutTail: string(reportJSON),
 			})
 		default:

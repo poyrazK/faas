@@ -241,6 +241,11 @@ jobs:
       - name: signed component hotfix controller contracts
         run: bash scripts/ops/request_evidence_hotfix_test.sh
 
+      # cd-compute and cd-controlplane reuse one cached Ansible toolchain per
+      # pin on the fleet runner; a stale or half-built cache must never run.
+      - name: CD Ansible toolchain cache
+        run: bash scripts/ci/ensure-ansible-toolchain_test.sh
+
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
       # enforcement and platform detection are gated on every PR, not just
@@ -541,6 +546,9 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # Concurrent template migrations and schema teardown share the
+          # cluster lock table; match the other parallel PostgreSQL shard.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
@@ -689,7 +697,7 @@ jobs:
       - name: state tests (shard ${{ matrix.shard }})
         run: |
           STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -shard=${{ matrix.shard }})
-          go test -race -count=1 -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+          go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
       - name: upload state coverage
         uses: actions/upload-artifact@v4
         with:
@@ -819,7 +827,10 @@ jobs:
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
           COVERARGS=()
+          TESTLOGARGS=()
           if [ '${{ matrix.state_coverage }}' = 'true' ]; then
+            # Keep named adapter outcomes alongside the complete coverage run.
+            TESTLOGARGS=(-v)
             python3 -m unittest discover -s scripts/ci -p 'test_normalize_go_cover_profile.py'
             # External GitOps and Operations tests exercise the state adapters.
             # Union those calls with both complete state test shards below.
@@ -828,7 +839,7 @@ jobs:
             COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | grep -v '/pkg/state/sqlc$' | sort -u | paste -sd, -)
             COVERARGS=(-coverpkg="$COVERPKGS")
           fi
-          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${TESTLOGARGS[@]}" "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
           if [ '${{ matrix.state_coverage }}' = 'true' ]; then
             # Credit the union of blocks covered by multiple test binaries.
             python3 scripts/ci/normalize_go_cover_profile.py "coverage/${{ matrix.coverage_file }}"
@@ -948,7 +959,9 @@ jobs:
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Race compilation plus the scheduler suite can consume ten minutes.
+    # Leave room for the coverage gate and upload after the tests pass.
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -1842,7 +1855,7 @@ jobs:
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -1987,9 +2000,13 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # A full-schema teardown locks thousands of relations. Without
+          # headroom failed cleanup leaks schemas into later migration tests.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
+          --shm-size 1g
           --health-cmd "pg_isready -U faas -d faas"
           --health-interval 5s
           --health-timeout 3s

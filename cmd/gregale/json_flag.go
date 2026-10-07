@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -112,7 +114,92 @@ func setFlagOutput(fs *flag.FlagSet, human io.Writer) {
 		fs.SetOutput(&jsonFlagErrorWriter{name: fs.Name(), dst: human})
 		return
 	}
-	fs.SetOutput(human)
+	fs.SetOutput(&humanFlagErrorWriter{name: fs.Name(), dst: human})
+}
+
+// invokedCommandPath is the public command path of the current run(), for
+// example "invocations list". FlagSet names are internal ("usage-list",
+// "jobs-list"), so flag errors must not print them as a command to run.
+var invokedCommandPath string
+
+// publicCommandPath resolves the manifest command and verb the user typed.
+func publicCommandPath(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	command, ok := lookupCliCommand(args[0])
+	if !ok {
+		return args[0]
+	}
+	path := command.Name
+	if command.SubcommandsAfterPositionals || len(args) < 2 {
+		return path
+	}
+	sub, ok := findCliSubcommand(command.Subcommands, args[1])
+	if !ok {
+		return path
+	}
+	path += " " + sub.Name
+	if len(args) > 2 {
+		if leaf, ok := findCliSubcommand(sub.Subcommands, args[2]); ok {
+			path += " " + leaf.Name
+		}
+	}
+	return path
+}
+
+// flagDiagnosticDash matches the single-dash flag names the flag package
+// prints ("-app"); the CLI documents and accepts double-dash flags.
+var flagDiagnosticDash = regexp.MustCompile(`(^|flag |for |defined: |argument: )-([A-Za-z0-9])`)
+
+// normalizeFlagDiagnostic rewrites a flag package parse error in the CLI's
+// own spelling, e.g. "flag provided but not defined: -app" becomes
+// "unknown flag --app".
+func normalizeFlagDiagnostic(message string) string {
+	message = flagDiagnosticDash.ReplaceAllString(message, "${1}--${2}")
+	if rest, ok := strings.CutPrefix(message, "flag provided but not defined: "); ok {
+		return "unknown flag " + rest
+	}
+	if rest, ok := strings.CutPrefix(message, "flag needs an argument: "); ok {
+		return "flag " + rest + " needs a value"
+	}
+	return message
+}
+
+// humanFlagErrorWriter turns a flag parse failure into one diagnostic plus
+// a pointer to the command's help. production-us hunt #4: 30 leaves dumped
+// the flag package's raw output instead, with single-dash flag names, every
+// default, and internal FlagSet names ("Usage of usage-list:"). Usage text a
+// leaf prints itself still passes through; only the generic "Usage of"
+// header and PrintDefaults lines are dropped.
+type humanFlagErrorWriter struct {
+	name  string
+	dst   io.Writer
+	wrote bool
+}
+
+func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
+	text := string(p)
+	if strings.TrimSpace(text) == "" {
+		return len(p), nil
+	}
+	if !w.wrote {
+		w.wrote = true
+		path := invokedCommandPath
+		if path == "" {
+			if fields := strings.Fields(w.name); len(fields) > 0 {
+				path = fields[0]
+			}
+		}
+		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
+			normalizeFlagDiagnostic(strings.TrimSpace(text)), path)
+		return len(p), err
+	}
+	if strings.HasPrefix(text, "Usage of ") || strings.HasPrefix(text, "  -") {
+		return len(p), nil
+	}
+	_, err := io.WriteString(w.dst, text)
+	return len(p), err
 }
 
 type jsonFlagErrorWriter struct {
@@ -131,13 +218,13 @@ func (w *jsonFlagErrorWriter) Write(p []byte) (int, error) {
 		Title:   "Invalid command flags",
 		Status:  400,
 		Code:    api.CodeValidation,
-		Detail:  strings.TrimSpace(string(p)),
+		Detail:  normalizeFlagDiagnostic(strings.TrimSpace(string(p))),
 		DocsURL: cliDocsURL,
 	})
 	return len(p), err
 }
 
-// applyJSONFlag consumes a leading --json (or -j / --json=BOOL) from
+// applyJSONFlag consumes --json (or -j / --json=BOOL) before "--" from
 // args and sets jsonOutput. Honors FAAS_JSON first, then the persistent
 // non-secret config preference, unless --json=false is explicit on the
 // command line. Returns the args with the flag
@@ -158,6 +245,9 @@ func applyJSONFlag(args []string) []string {
 		jsonOutput = configured
 	}
 	for i, a := range args {
+		if a == "--" {
+			break
+		}
 		switch {
 		case a == "--json" || a == "-j":
 			jsonOutput = true
@@ -172,6 +262,9 @@ func applyJSONFlag(args []string) []string {
 
 func invalidJSONFlagValue(args []string) string {
 	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
 		if !strings.HasPrefix(arg, "--json=") {
 			continue
 		}

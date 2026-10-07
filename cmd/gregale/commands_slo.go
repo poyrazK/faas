@@ -54,6 +54,7 @@ const sloAccountCmdDocsTopic = "account-slo"
 func cmdSLO(args []string) int {
 	fs := newFlagSet("slo", flag.ContinueOnError)
 	window := fs.String("window", "24h", "SLO window (1h, 24h, 7d)")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -63,8 +64,11 @@ func cmdSLO(args []string) int {
 		return 1
 	}
 	slug := ""
-	if len(pos) == 1 {
-		slug = pos[0]
+	if merged, mergeErr := mergeAppFlag(pos, *app, 1); mergeErr != nil {
+		PrintUsage(os.Stderr, "usage: gregale slo [<slug>|--app SLUG] [--window 24h]\nerror: "+mergeErr.Error(), "slo")
+		return 1
+	} else if len(merged) == 1 {
+		slug = merged[0]
 	} else {
 		var resolveErr error
 		slug, resolveErr = resolveRequiredAppSlug("")

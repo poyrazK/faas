@@ -59,6 +59,8 @@ func managedPostgresCapabilitiesView(d managedpostgres.CapabilityDiscovery, limi
 	sort.Strings(out.ServiceClasses)
 	sort.Strings(out.Availability)
 	sort.Strings(out.CredentialAccess)
+	out.ScaleToZeroUpdate = c.ScaleToZeroUpdate && c.ScaleToZero && len(out.ServiceClasses) > 0
+	out.ClassResize = c.ClassResize && len(out.ServiceClasses) > 1
 	out.ProvisioningEnabled = d.ProvisioningEnabled && len(out.ServiceClasses) > 0
 	out.ScaleToZero, out.AlwaysOn, out.PooledConnections = c.ScaleToZero, limits.AlwaysOnAllowed, c.PooledConnections
 	out.StorageLimitBytes = limits.StorageLimitBytes

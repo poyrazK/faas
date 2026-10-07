@@ -88,6 +88,7 @@ var AllowedAppWebhookEvents = []string{
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
 	"routes.monitor.violated", "routes.monitor.recovered",
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
+	"workflow.finished",
 }
 
 // Account receivers intentionally cannot use the app-level all-events
@@ -157,6 +158,18 @@ type JobFinishedWebhookPayload struct {
 	FinishedAt string `json:"finished_at,omitempty"`
 	AccountID  string `json:"account_id,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
+}
+
+// WorkflowFinishedWebhookPayload is the safe run metadata stored for a
+// workflow.finished delivery. Run input, output, and error text stay out of
+// the notification; consumers can use run_id to fetch authorized details.
+type WorkflowFinishedWebhookPayload struct {
+	AppID        string    `json:"app_id"`
+	RunID        string    `json:"run_id"`
+	WorkflowName string    `json:"workflow_name"`
+	Status       string    `json:"status"`
+	FinishedAt   time.Time `json:"finished_at"`
+	ResumeCount  int       `json:"resume_count"`
 }
 
 // PreviewCreatedWebhookPayload is the payload stored for a preview.created

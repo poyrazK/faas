@@ -141,6 +141,11 @@ func TestCmdMirrorCreate_HappyPath(t *testing.T) {
 	var hits int32
 	var gotMethod, gotPath, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/"+wantSlug {
+			// The post-create max_concurrency check (production-us hunt #4).
+			_, _ = w.Write([]byte(`{"slug":"` + wantSlug + `","max_concurrency":1}`))
+			return
+		}
 		atomic.AddInt32(&hits, 1)
 		gotMethod = r.Method
 		gotPath = r.URL.Path
@@ -152,6 +157,8 @@ func TestCmdMirrorCreate_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
+	out, restoreOut := captureStdout(t)
+	defer restoreOut()
 	if code := cmdMirrorCreate([]string{
 		"--app", wantSlug,
 		"--source", wantSource,
@@ -165,6 +172,10 @@ func TestCmdMirrorCreate_HappyPath(t *testing.T) {
 	}
 	if atomic.LoadInt32(&hits) != 1 {
 		t.Fatalf("hit count = %d, want 1", hits)
+	}
+	// With max_concurrency 1 the shadow VM has no slot: say so.
+	if !strings.Contains(out.String(), "--max-concurrency 2") {
+		t.Errorf("create with max_concurrency 1 did not warn about mirror admission:\n%s", out.String())
 	}
 	if gotMethod != "POST" {
 		t.Errorf("method = %q, want POST", gotMethod)

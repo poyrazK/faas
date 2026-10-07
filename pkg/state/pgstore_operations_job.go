@@ -127,7 +127,18 @@ func insertOperationJobExecutionTx(ctx context.Context, tx pgx.Tx, op Operation,
 	if err != nil {
 		return err
 	}
-	return sqlc.New().InsertCustomerOperationJobExecution(ctx, tx, sqlc.InsertCustomerOperationJobExecutionParams{OperationID: mustPgUUID(op.ID), Generation: int32(op.Generation), RunID: mustPgUUID(task.RunID), Record: raw})
+	q := sqlc.New()
+	if rows, err := q.SetCustomerOperationJobIdentity(ctx, tx, sqlc.SetCustomerOperationJobIdentityParams{RunID: mustPgUUID(task.RunID), OperationID: mustPgUUID(op.ID)}); err != nil {
+		return err
+	} else if rows != 1 {
+		return ErrConflict
+	}
+	if rows, err := q.InsertCustomerOperationJobExecution(ctx, tx, sqlc.InsertCustomerOperationJobExecutionParams{OperationID: mustPgUUID(op.ID), Generation: int32(op.Generation), RunID: mustPgUUID(task.RunID)}); err != nil {
+		return err
+	} else if rows != 1 {
+		return ErrConflict
+	}
+	return q.InsertCustomerOperationJobExecutionRecord(ctx, tx, sqlc.InsertCustomerOperationJobExecutionRecordParams{OperationID: mustPgUUID(op.ID), Generation: int32(op.Generation), RunID: mustPgUUID(task.RunID), Record: raw})
 }
 func syncOperationJobTx(ctx context.Context, tx pgx.Tx, runID string) error {
 	owned, err := sqlc.New().CustomerOperationJobOwned(ctx, tx, mustPgUUID(runID))

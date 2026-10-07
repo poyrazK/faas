@@ -168,6 +168,11 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 	if err != nil {
 		return 0, 0, err
 	}
+	if attempts, ok := r.store.(state.InvocationAttemptRetentionStore); ok {
+		if _, err := attempts.PruneInvocationAttemptHistory(ctx, r.now(), 500); err != nil {
+			return retentionDeleted, 0, err
+		}
+	}
 	deadlineForced, err := r.SweepDeadlineBreached(ctx, 500)
 	if err != nil {
 		return retentionDeleted, 0, err

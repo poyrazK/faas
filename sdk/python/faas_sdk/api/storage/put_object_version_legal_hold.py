@@ -87,9 +87,9 @@ def sync_detailed(
 ) -> Response[ObjectVersionProtection | Problem]:
     """Request a durable exact version legal hold change
 
-     Accept durable legal hold intent with storage manage scope, a bucket write grant and backend
-    enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward
-    to milliseconds. Event hold changes and governance bypass are unsupported.
+     Accept durable independent ON or OFF legal hold intent with storage manage scope, a bucket write
+    grant and backend enrollment. Recovery verifies exact-version readback without repeating a
+    dispatched PUT. Retention and event hold policies remain independent.
 
     Args:
         slug (str):
@@ -133,9 +133,9 @@ def sync(
 ) -> ObjectVersionProtection | Problem | None:
     """Request a durable exact version legal hold change
 
-     Accept durable legal hold intent with storage manage scope, a bucket write grant and backend
-    enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward
-    to milliseconds. Event hold changes and governance bypass are unsupported.
+     Accept durable independent ON or OFF legal hold intent with storage manage scope, a bucket write
+    grant and backend enrollment. Recovery verifies exact-version readback without repeating a
+    dispatched PUT. Retention and event hold policies remain independent.
 
     Args:
         slug (str):
@@ -174,9 +174,9 @@ async def asyncio_detailed(
 ) -> Response[ObjectVersionProtection | Problem]:
     """Request a durable exact version legal hold change
 
-     Accept durable legal hold intent with storage manage scope, a bucket write grant and backend
-    enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward
-    to milliseconds. Event hold changes and governance bypass are unsupported.
+     Accept durable independent ON or OFF legal hold intent with storage manage scope, a bucket write
+    grant and backend enrollment. Recovery verifies exact-version readback without repeating a
+    dispatched PUT. Retention and event hold policies remain independent.
 
     Args:
         slug (str):
@@ -218,9 +218,9 @@ async def asyncio(
 ) -> ObjectVersionProtection | Problem | None:
     """Request a durable exact version legal hold change
 
-     Accept durable legal hold intent with storage manage scope, a bucket write grant and backend
-    enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward
-    to milliseconds. Event hold changes and governance bypass are unsupported.
+     Accept durable independent ON or OFF legal hold intent with storage manage scope, a bucket write
+    grant and backend enrollment. Recovery verifies exact-version readback without repeating a
+    dispatched PUT. Retention and event hold policies remain independent.
 
     Args:
         slug (str):

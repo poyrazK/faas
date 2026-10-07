@@ -29,7 +29,7 @@ func TestReadyMaintenanceConnectionPinsDatabaseAndCapturedMajor(t *testing.T) {
 					writeResponse(t, w, http.StatusOK, endpointsResponse{Endpoints: []endpoint{{ID: "ep-source", ProjectID: "project-source",
 						RegionID: "aws-eu-central-1", BranchID: "br-source", Host: "ep-source.example.test", Type: "read_write", CurrentState: "active", Disabled: &disabled}}})
 				case "/api/v2/projects/project-source/operations":
-					writeResponse(t, w, http.StatusOK, operationsResponse{})
+					writeResponse(t, w, http.StatusOK, operationsResponse{Operations: []operation{}})
 				case "/api/v2/projects/project-source/connection_uri":
 					credentials.Add(1)
 					q := r.URL.Query()

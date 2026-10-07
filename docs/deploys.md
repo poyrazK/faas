@@ -131,8 +131,9 @@ gregale deploy --canary-preset balanced
 
 `balanced` sends 1% of traffic to the new revision for 2 minutes, then 10%,
 then 50%, then 100%. `slow` and `aggressive` trade speed against exposure, and
-`--canary-stages "5@1m,25@5m,100@0s"` defines your own ladder. Preview how a
-preset would behave against your app's recent traffic before deploying:
+`--canary-preset custom --canary-stages "5@1m,25@5m,100@0s"` defines your own
+ladder. Preview how a preset would behave against your app's recent traffic
+before deploying:
 
 ```bash
 gregale canary simulate my-api --canary-preset balanced
@@ -141,8 +142,15 @@ gregale canary simulate my-api --canary-preset balanced
 Promotion is health-gated. If an alert rule with a `rollback` or `demote`
 action is firing, the ladder holds at its current stage rather than advancing.
 `gregale deploy --safe` combines the balanced ladder with automatic rollback
-when the new revision returns 5xx responses in its first window. If a rollout
-wedges, `gregale rollouts recover my-api` is the manual escape hatch.
+when the new revision returns 5xx responses in its first window.
+`--rollback-on-5xx` adds the same rollback to any deploy.
+
+The first window opens when Gregale first sees traffic for the completed
+release and lasts 5 minutes. If at least 5 of the release's responses are 5xx,
+and those are at least half its requests, Gregale rolls back to the release it
+replaced. The check runs every 15 seconds, and the release keeps serving until
+the previous one is ready again. If a rollout wedges,
+`gregale rollouts recover my-api` is the manual escape hatch.
 
 ### Keep one user on one revision
 

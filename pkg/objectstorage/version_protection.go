@@ -18,6 +18,7 @@ type VersionProtectionService struct {
 	References    state.ObjectVersionReferenceStore
 	BucketLock    state.ObjectBucketObjectLockStore
 	Provider      Provider
+	EventHolds    bool
 	BeforeRequest func(context.Context) error
 }
 
@@ -115,9 +116,6 @@ func (s VersionProtectionService) Request(ctx context.Context, b state.ObjectBuc
 		if !r.ValidForWrite() {
 			return j, ErrInvalid
 		}
-		if r.EventHold != "" || r.EventHoldDuration != nil {
-			return j, ErrUnsupported
-		}
 		j.Retention = &r
 	} else if j.Kind != "legal_hold" || j.LegalHold == nil || j.Retention != nil || !j.LegalHold.Valid() {
 		return j, ErrInvalid
@@ -133,6 +131,11 @@ func (s VersionProtectionService) Request(ctx context.Context, b state.ObjectBuc
 		return old, nil
 	} else if !errors.Is(e, state.ErrNotFound) {
 		return j, e
+	}
+	if j.Retention != nil && j.Retention.EventHold != "" {
+		if _, ok := s.Store.(state.ObjectEventHoldProtectionStore); !s.EventHolds || !ok {
+			return j, ErrUnsupported
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, api.ObjectVersionProtectionTimeout)
 	defer cancel()
@@ -180,6 +183,19 @@ func (s VersionProtectionService) Reconcile(ctx context.Context, b state.ObjectB
 		}
 		return s.deferProtection(ctx, j, err)
 	}
+	if j.Retention != nil && j.Retention.EventHold != "" && j.EventHoldBaseline == nil && !j.Dispatched {
+		if err = validateRetentionChange(r, *j.Retention, time.Now()); err != nil {
+			return s.finishProtection(ctx, j, "failed", "preparation_failed", err)
+		}
+		st, ok := s.Store.(state.ObjectEventHoldProtectionStore)
+		if !ok {
+			return s.deferProtection(ctx, j, ErrUnsupported)
+		}
+		j, err = st.PrepareObjectEventHoldProtection(ctx, j.ID, j.Token, r)
+		if err != nil {
+			return s.deferProtection(ctx, j, err)
+		}
+	}
 	if protectionMatches(j, r, h) {
 		return s.finishProtection(ctx, j, "ready", "", nil)
 	}
@@ -224,9 +240,15 @@ func protectionMatches(j state.ObjectVersionProtection, r api.ObjectVersionReten
 	if j.Kind == "legal_hold" {
 		return j.LegalHold != nil && *j.LegalHold == h
 	}
+	if j.Retention != nil && j.Retention.EventHold != "" {
+		return eventHoldMatches(j, r)
+	}
 	return j.Retention != nil && j.Retention.Mode == r.Mode && j.Retention.EventHold == r.EventHold && reflect.DeepEqual(j.Retention.EventHoldDuration, r.EventHoldDuration) && ((j.Retention.RetainUntilDate == nil && r.RetainUntilDate == nil) || (j.Retention.RetainUntilDate != nil && r.RetainUntilDate != nil && j.Retention.RetainUntilDate.Equal(*r.RetainUntilDate)))
 }
 func validateRetentionChange(old, next api.ObjectVersionRetention, now time.Time) error {
+	if next.EventHold != "" {
+		return validateEventHoldChange(old, next, now)
+	}
 	if old.EventHold != "" || old.EventHoldDuration != nil {
 		return ErrUnsupported
 	}

@@ -35,13 +35,13 @@ func topLevelUsage(showAdvanced bool) string {
 		b.WriteString("  help                   Show this help message\n")
 	} else {
 		b.WriteString("Get started:\n")
-		for _, name := range []string{"login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
+		for _, name := range []string{"start", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
 			command, _ := lookupCliCommand(name)
 			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
 		}
 		b.WriteString("  help                   Show command help\n")
 		b.WriteString("\nExamples:\n")
-		b.WriteString("  gregale login\n  gregale deploy --plan\n  gregale deploy --path ./api\n")
+		b.WriteString("  gregale start\n  gregale deploy --plan\n  gregale deploy --path ./api\n")
 		b.WriteString("\nRun 'gregale help --all' for every command, or 'gregale help deploy' for a topic.\n")
 	}
 	b.WriteString("\nRun 'gregale <command> --help' for command details.\n\n")
@@ -78,6 +78,9 @@ func writeGroupedCommands(b *strings.Builder, commands []cliCommand) {
 
 func hasHelpFlag(args []string) bool {
 	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
 		if arg == "--help" || arg == "-h" {
 			return true
 		}
@@ -98,10 +101,11 @@ func init() {
 }
 
 func run(args []string) (status int) {
-	previousJSON, previousUsageHelp := jsonOutput, jsonUsageHelp
+	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
 	defer func() {
 		jsonOutput = previousJSON
 		jsonUsageHelp = previousUsageHelp
+		invokedCommandPath = previousPath
 	}()
 	if invalid := invalidJSONFlagValue(args); invalid != "" {
 		PrintUsage(os.Stderr, "invalid --json value "+invalid+"; use true or false", "cli")
@@ -112,6 +116,7 @@ func run(args []string) (status int) {
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
 	args = applyJSONFlag(args)
 	jsonUsageHelp = hasHelpFlag(args)
+	invokedCommandPath = publicCommandPath(args)
 	if len(args) == 0 {
 		fmt.Print(topLevelUsage(false))
 		return 0
@@ -133,6 +138,12 @@ func run(args []string) (status int) {
 		if len(args) > 1 && (args[1] == "--help" || args[1] == "-h") {
 			PrintUsage(os.Stderr, "usage: gregale version", "version")
 			return 0
+		}
+		if jsonOutput {
+			// production-us hunt #4: --json version printed "gregale dev".
+			return jsonOut(writeJSON(map[string]string{
+				"version": wire.Version, "git_sha": wire.GitSHA, "build_time": wire.BuildTime,
+			}))
 		}
 		fmt.Printf("gregale %s\n", wire.Version)
 		return 0
@@ -196,6 +207,8 @@ func run(args []string) (status int) {
 		return cmdBindings(args[1:])
 	case "deploy":
 		return cmdDeployTarball(args[1:])
+	case "start":
+		return cmdStart(args[1:])
 	case "diff":
 		return environmentDiff(args[1:])
 	case "dev":
@@ -452,7 +465,7 @@ func run(args []string) (status int) {
 		// PR-D / ADR-012 §7 amendment. Distinct top-level
 		// command; dispatches to a single verb (set) for the
 		// per-tenant webhook secret rotation.
-		return githubWebhookSecretSet(args[1:])
+		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
 	case "alerts":
@@ -504,8 +517,11 @@ func run(args []string) (status int) {
 		// lives in commands_jobs.go (cmdJobs).
 		return cmdJobs(args[1:])
 	case "workflows":
-		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
+		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
+	case "automations":
+		// Manage declarative automation definitions: validate, save a draft, publish.
+		return cmdAutomations(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "events":
@@ -653,7 +669,11 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 			return true
 		}
 		if helpPath == "rollouts recover" {
-			PrintUsage(w, rolloutsUsage, command.DocSlug)
+			PrintUsage(w, rolloutsRecoverUsage, command.DocSlug)
+			return true
+		}
+		if helpPath == "rollouts status" {
+			PrintUsage(w, rolloutsStatusUsage, command.DocSlug)
 			return true
 		}
 		if helpPath == "deploys retry" {
@@ -677,6 +697,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	switch command.Name {
 	case "rollback":
 		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
+		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackStatusUsage, "usage: "))
 		if len(command.Examples) > 0 {
 			_, _ = fmt.Fprintln(w, "\nExamples:")
 			printCLIExamples(w, command.Examples)

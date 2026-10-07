@@ -22,7 +22,7 @@ func envCreate(args []string) int {
 	shareResources := fs.Bool("share-resources", false, "explicitly share managed database and object-storage data with the source environment")
 	full := fs.Bool("full", false, "require a complete isolated copy of configuration, workloads, and data")
 	wait := fs.Bool("wait", false, "wait for the full clone to finish")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait")
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m)")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected] [--share-resources | --full [--wait] [--timeout SECONDS]]", "env")
 		return 1

@@ -2655,8 +2655,14 @@ func TestGregaleQueueTail_PrintsDequeuedRow(t *testing.T) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		// First call: 200 with a JSON payload.
-		if atomic.AddInt32(&calls, 1) == 1 {
+		// First call: an empty receive, which production answers on an idle
+		// poll (hunt #4: it printed a blank line). Second: a JSON payload.
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if n == 2 {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(api.QueueReceiveResponse{
 				ID:      "qrow-1",
@@ -2693,6 +2699,11 @@ func TestGregaleQueueTail_PrintsDequeuedRow(t *testing.T) {
 	}
 	if !strings.Contains(out, `"hello": "world"`) {
 		t.Fatalf("stdout missing pretty-printed payload; got %q", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" && line != "" {
+			t.Fatalf("an idle poll printed a blank line; stdout %q", out)
+		}
 	}
 
 	const maxSIGINTAttempts = 3

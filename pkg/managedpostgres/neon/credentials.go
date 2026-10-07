@@ -131,13 +131,15 @@ func validateCredentialRequest(request managedpostgres.CredentialRequest) error 
 }
 
 func (p *Provider) defaultBranch(ctx context.Context, projectID string) (string, error) {
-	path := "/projects/" + url.PathEscape(projectID) + "/branches"
-	var response branchesResponse
-	if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+	branches, err := p.listProjectBranches(ctx, projectID, "")
+	if err != nil {
+		if errors.Is(err, managedpostgres.ErrConflict) {
+			err = managedpostgres.ErrUnavailable
+		}
 		return "", err
 	}
 	branchID := ""
-	for _, candidate := range response.Branches {
+	for _, candidate := range branches {
 		if !candidate.Default {
 			continue
 		}

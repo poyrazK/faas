@@ -76,6 +76,21 @@ var Names = []string{
 	"customer-operation-workflow-export",
 }
 
+// generatedDotfiles are files a template needs whose names start with '.'.
+// //go:embed omits such names from a directory pattern, so Materialize
+// writes them instead.
+var generatedDotfiles = map[string]map[string]string{
+	// production-us hunt #4: tools/ holds owner-machine scripts that need an
+	// account-owner FAAS_TOKEN. Without this file `gregale doctor` scanned
+	// them and told users to store FAAS_TOKEN as an app secret.
+	"customer-platform": {
+		".gregaleignore": "# Owner-machine tools mint and rotate customer keys with an account-owner\n" +
+			"# credential. They never run in the app (the Dockerfile copies app/\n" +
+			"# only), so keep them out of the upload and out of doctor's env checks.\n" +
+			"/tools/\n",
+	},
+}
+
 // Exists reports whether name is a known template.
 func Exists(name string) bool {
 	if !NameIsValid(name) {
@@ -111,6 +126,14 @@ func Materialize(name, dest string) error {
 	}
 	if err := os.CopyFS(dest, subFS); err != nil {
 		return err
+	}
+	for file, content := range generatedDotfiles[name] {
+		target := filepath.Join(dest, file)
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+				return err
+			}
+		}
 	}
 	// hello-go is an HTTP app and needs its module marker. function-go stays
 	// marker-free so a later zero-config deploy detects handler.go as a

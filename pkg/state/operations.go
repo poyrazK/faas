@@ -58,6 +58,29 @@ type Operation struct {
 	JobArtifactReceipts       map[string]OperationJobArtifactReceipt      `json:"job_artifact_receipts,omitempty"`
 }
 
+// operationRecordJSON adds the normalized backend identity consumed by the
+// SQL ownership constraints. Keep it derived from the existing execution
+// fields so every projection update carries the same identity as admission.
+func operationRecordJSON(op Operation) ([]byte, error) {
+	var executionID, executionKind string
+	switch {
+	case op.CurrentInvocationID != "" && op.WorkflowRunID == "" && op.JobRunID == "":
+		executionID, executionKind = op.CurrentInvocationID, "http"
+	case op.CurrentInvocationID == "" && op.WorkflowRunID != "" && op.JobRunID == "":
+		executionID, executionKind = op.WorkflowRunID, "workflow"
+	case op.CurrentInvocationID == "" && op.WorkflowRunID == "" && op.JobRunID != "":
+		executionID, executionKind = op.JobRunID, "job"
+	default:
+		return nil, fmt.Errorf("state: operation %s has ambiguous backend identity", op.ID)
+	}
+	type operationRecord Operation
+	return json.Marshal(struct {
+		operationRecord
+		CurrentExecutionID string `json:"current_execution_id"`
+		ExecutionKind      string `json:"execution_kind"`
+	}{operationRecord: operationRecord(op), CurrentExecutionID: executionID, ExecutionKind: executionKind})
+}
+
 type OperationAdmission struct {
 	AccountID        string
 	DefinitionID     string

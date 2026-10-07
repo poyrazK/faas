@@ -183,9 +183,13 @@ func (h *Handler) ensureBaseExt4(
 	// daemon for nothing; the sidecar is the source of truth. A missing
 	// base would surface as Get returning ErrNotFound, which the next
 	// cold-boot would also surface — no silent corruption.
+	var haveSidecar string
 	if haveRC, err := be.Get(ctx, digestKey); err == nil {
 		haveBytes, rerr := io.ReadAll(haveRC)
 		_ = haveRC.Close()
+		if rerr == nil {
+			haveSidecar = string(haveBytes)
+		}
 		if rerr == nil && baseDigestSidecarMatches(string(haveBytes), wantDigest, guestInitDigest) {
 			if existingErr := h.validateExistingBaseArtifact(ctx, be, baseKey); existingErr == nil &&
 				!h.baseSkipDeclined(be, baseKey, outImage, "digest sidecar match") {
@@ -222,6 +226,12 @@ func (h *Handler) ensureBaseExt4(
 					"key", baseKey, "err", existingErr)
 			}
 		}
+	}
+
+	// Only guest-init changed (the common release): swap PID 1 in the
+	// staged artifact rather than rebuilding the userland around it.
+	if res, ok := h.tryPatchBaseGuestInit(ctx, be, ref, baseKey, digestKey, outImage, wantDigest, guestInitDigest, haveSidecar); ok {
+		return res, nil
 	}
 
 	// ADR-053: dispatch on parentRef. The parent-ref branch asks

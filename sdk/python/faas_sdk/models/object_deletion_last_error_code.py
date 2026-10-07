@@ -1,11 +1,17 @@
 from typing import Literal
 
 ObjectDeletionLastErrorCode = Literal[
-    "configuration", "preparation_expired", "preparation_failed", "provider_rejected", "provider_uncertain"
+    "configuration",
+    "object_protected",
+    "preparation_expired",
+    "preparation_failed",
+    "provider_rejected",
+    "provider_uncertain",
 ]
 
 OBJECT_DELETION_LAST_ERROR_CODE_VALUES: set[ObjectDeletionLastErrorCode] = {
     "configuration",
+    "object_protected",
     "preparation_expired",
     "preparation_failed",
     "provider_rejected",

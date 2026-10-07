@@ -18,6 +18,14 @@ export type ManagedPostgresCapabilities = {
   always_on: boolean;
   pooled_connections: boolean;
   point_in_time_restore: boolean;
+  /**
+   * Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires always_on plan entitlement; reservations require the pinned backend and admission.
+   */
+  scale_to_zero_update: boolean;
+  /**
+   * Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend.
+   */
+  class_resize: boolean;
   storage_limit_bytes: number;
   restore_window_seconds: number;
 };

@@ -43,26 +43,38 @@ const (
 )
 
 var (
-	ErrWorkflowRunNotFound       = errors.New("state: workflow run not found")
-	ErrWorkflowStepNotFound      = errors.New("state: workflow step not found")
-	ErrWorkflowAttemptNotFound   = errors.New("state: workflow step attempt not found")
-	ErrWorkflowEventNotFound     = errors.New("state: workflow event not found")
-	ErrWorkflowNotRunning        = errors.New("state: workflow run is not in running state")
-	ErrWorkflowInvalidStatus     = errors.New("state: invalid workflow status")
-	ErrWorkflowInvalidAttempt    = errors.New("state: workflow attempt cannot be negative")
-	ErrWorkflowInvalidPagination = errors.New("state: workflow pagination cannot be negative")
-	ErrWorkflowInvalidInput      = errors.New("state: workflow JSON payload is invalid")
-	ErrWorkflowInvalidRecord     = errors.New("state: workflow record is invalid")
-	ErrWorkflowRunQuotaExceeded  = errors.New("state: workflow active-run quota exceeded")
-	ErrWorkflowRetryNotAllowed   = errors.New("state: workflow step retry is not allowed")
-	ErrWorkflowCallbackClosed    = errors.New("state: workflow callback is closed")
-	ErrWorkflowCallbackExpired   = errors.New("state: workflow callback has expired")
+	ErrWorkflowRunNotFound            = errors.New("state: workflow run not found")
+	ErrWorkflowStepNotFound           = errors.New("state: workflow step not found")
+	ErrWorkflowAttemptNotFound        = errors.New("state: workflow step attempt not found")
+	ErrWorkflowEventNotFound          = errors.New("state: workflow event not found")
+	ErrWorkflowNotRunning             = errors.New("state: workflow run is not in running state")
+	ErrWorkflowInvalidStatus          = errors.New("state: invalid workflow status")
+	ErrWorkflowInvalidAttempt         = errors.New("state: workflow attempt cannot be negative")
+	ErrWorkflowInvalidPagination      = errors.New("state: workflow pagination cannot be negative")
+	ErrWorkflowInvalidCreatedRange    = errors.New("state: workflow created-after timestamp is after created-before timestamp")
+	ErrWorkflowInvalidInput           = errors.New("state: workflow JSON payload is invalid")
+	ErrWorkflowInvalidRecord          = errors.New("state: workflow record is invalid")
+	ErrWorkflowRunQuotaExceeded       = errors.New("state: workflow active-run quota exceeded")
+	ErrWorkflowActionConcurrencyLimit = errors.New("state: workflow action concurrency limit reached")
+	ErrWorkflowRunIdempotencyConflict = errors.New("state: workflow run idempotency key reused with different input")
+	ErrWorkflowRetryNotAllowed        = errors.New("state: workflow step retry is not allowed")
+	ErrWorkflowCallbackClosed         = errors.New("state: workflow callback is closed")
+	ErrWorkflowCallbackExpired        = errors.New("state: workflow callback has expired")
 )
 
 // WorkflowRunStaleAfter is the fallback for runs claimed before leases were
 // introduced. New claims get a five-minute lease, extended to the declared
 // step timeout plus five minutes before each executor call.
 const WorkflowRunStaleAfter = 2*time.Hour + 5*time.Minute
+
+const WorkflowRunIdempotencyKeyMaxBytes = 255
+
+func validateWorkflowRunCreateIdempotency(key string, requestFingerprint []byte) error {
+	if key == "" || len(key) > WorkflowRunIdempotencyKeyMaxBytes || len(requestFingerprint) != 32 {
+		return fmt.Errorf("%w: invalid workflow run idempotency metadata", ErrWorkflowInvalidRecord)
+	}
+	return nil
+}
 
 // WorkflowRunLeaseStore is implemented by production stores. It lets a
 // dispatcher bound crash recovery to the actual step timeout instead of the
@@ -402,9 +414,13 @@ type WorkflowEvent struct {
 
 // ListWorkflowRunsOpts controls pagination and filtering for workflow runs.
 type ListWorkflowRunsOpts struct {
-	Status string
-	Limit  int
-	Offset int
+	Status           string
+	WorkflowName     string
+	PlatformTenantID string
+	CreatedAfter     *time.Time
+	CreatedBefore    *time.Time
+	Limit            int
+	Offset           int
 }
 
 // WorkflowStore defines the storage operations for durable workflows.
@@ -414,6 +430,14 @@ type WorkflowStore interface {
 	// CreateWorkflowRunAdmitted serializes quota admission per app and returns
 	// the observed active count when the quota is already full.
 	CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun, maxActive int) (active int, err error)
+	// GetWorkflowRunByIdempotencyKey returns the original run for a matching
+	// request fingerprint. A missing key returns ErrWorkflowRunNotFound and a
+	// different fingerprint returns ErrWorkflowRunIdempotencyConflict.
+	GetWorkflowRunByIdempotencyKey(ctx context.Context, appID, workflowName, key string, requestFingerprint []byte) (*WorkflowRun, error)
+	// CreateWorkflowRunAdmittedWithIdempotencyKey atomically records a run and
+	// its request key with quota admission. A replay replaces r with the
+	// original run and returns replayed=true without consuming another slot.
+	CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Context, r *WorkflowRun, maxActive int, key string, requestFingerprint []byte) (active int, replayed bool, err error)
 	GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error)
 	ListWorkflowRuns(ctx context.Context, appID string, opts ListWorkflowRunsOpts) ([]*WorkflowRun, int, error)
 	MarkWorkflowRunStatus(ctx context.Context, id, status string, output json.RawMessage, lastErr *string) error
@@ -477,4 +501,13 @@ type WorkflowStore interface {
 	// Retention
 	SweepExpiredWorkflowRuns(ctx context.Context, olderThan time.Duration) (int, error)
 	SweepExpiredWorkflowEvents(ctx context.Context, olderThan time.Duration) (int, error)
+}
+
+// TenantWorkflowContinuationStore admits external event and callback
+// continuations only when the run still belongs to the authenticated tenant
+// and that tenant is still linked to the app. Implementations perform the
+// identity check in the same critical section as the durable write.
+type TenantWorkflowContinuationStore interface {
+	InsertTenantWorkflowEvent(ctx context.Context, tenantID string, event *WorkflowEvent) error
+	CompleteTenantWorkflowCallback(ctx context.Context, tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (duplicate bool, err error)
 }

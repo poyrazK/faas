@@ -206,9 +206,9 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, destinationProblem)
 		return
 	}
-	timeout := 30 * time.Second
+	timeout := time.Duration(api.SyncInvokeWaitSeconds) * time.Second
 	if acct.Plan == api.PlanFree {
-		timeout = 5 * time.Second
+		timeout = time.Duration(api.SyncInvokeWaitSecondsFree) * time.Second
 	}
 	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), req.Headers)
 	if err != nil {
@@ -260,7 +260,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		_ = payload // payload is the pg_notify JSON; we re-read by id below
 	}
 	if errors.Is(waitErr, db.ErrWaitTimeout) {
-		api.WriteProblem(w, api.ErrLongPollTimeout())
+		api.WriteProblem(w, s.syncInvokeTimeoutProblem(r.Context(), inv, timeout))
 		return
 	}
 	if waitErr != nil {
@@ -280,6 +280,26 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		Result: final.Result,
 		Error:  final.LastError,
 	})
+}
+
+// syncInvokeTimeoutProblem names the invocation that outlived the sync wait,
+// its current state and its last recorded error. production-us hunt #4: a
+// wake failing on a scan_critical base surfaced only as a generic 504 (and,
+// because the wait equalled the SDK timeout, usually as a client network
+// error). The invocation keeps running, so the detail says how to follow it.
+func (s *server) syncInvokeTimeoutProblem(ctx context.Context, inv state.Invocation, waited time.Duration) *api.Problem {
+	current := inv
+	if row, err := s.store.InvocationByID(ctx, inv.ID); err == nil {
+		current = row
+	}
+	p := api.ErrLongPollTimeout()
+	p.Detail = fmt.Sprintf("invocation %s is still %s after %s and keeps running; follow it with `gregale invocations get %s`",
+		current.ID, current.State, waited, current.ID)
+	if current.LastError != "" {
+		p.Detail = fmt.Sprintf("invocation %s is still %s after %s; last error: %s. Follow it with `gregale invocations get %s`",
+			current.ID, current.State, waited, current.LastError, current.ID)
+	}
+	return p
 }
 
 // invokeRequest is the shared body for sync + async invoke (uses
@@ -1067,75 +1087,11 @@ func (s *server) getInvocation(w http.ResponseWriter, r *http.Request, acct stat
 // invocation (no information leak about whether the app or the
 // invocation was the foreign object).
 func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	id := r.PathValue("id")
-	orig, err := s.store.InvocationByID(r.Context(), id)
-	if err != nil || orig.AccountID != acct.ID {
-		// Same 404 path as getInvocation — IDOR-safe. Don't
-		// surface 403 on a cross-tenant attempt; that would
-		// leak the existence of the row.
-		api.WriteProblem(w, api.ErrInvocationNotFound(id))
+	orig, app, problem := s.plainReplayTarget(r, acct)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	// Re-verify the original's app still belongs to the replayer's
-	// account. The original's AccountID may match the replayer's
-	// while the app has been transferred to a different account;
-	// without this check, the replay would land on a foreign app.
-	app, err := s.store.AppByID(r.Context(), orig.AppID)
-	if err != nil || app.AccountID != acct.ID {
-		// Same 404 surface as the invocation check — never 403.
-		api.WriteProblem(w, api.ErrInvocationNotFound(id))
-		return
-	}
-	if !app.AcceptsRequestInvocations() {
-		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
-		return
-	}
-	if orig.State != state.InvocationFailed && orig.State != state.InvocationDeadLetter {
-		api.WriteProblem(w, api.ErrInvocationNotReplayable(string(orig.State)))
-		return
-	}
-	// Generic replay creates a new HTTP invocation and cannot carry a queue
-	// binding's delivery namespace or keyed lane. Require the durable queue
-	// replay surface instead of silently moving its work out of that ledger.
-	if orig.QueueBindingID != "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "queue_replay_requires_binding", "Queue replay requires its binding",
-			"use the app queue dead-letter replay endpoint to retain the original binding and work policy"))
-		return
-	}
-	// Re-issue the original against the same app; DueAt is "now"
-	// (the customer is replaying interactively, not on a schedule).
-	// Attempts is reset to 0 — the drain increments it on the new
-	// lifecycle. LeaseExpiresAt / ReceivedAt / CompletedAt / Result /
-	// LastError / AckURL are nil on a fresh INSERT; the drain
-	// populates them as the row flows through dispatch.
-	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), orig.Headers)
-	if err != nil {
-		api.WriteProblem(w, api.ErrValidation("original invocation headers must be a JSON object of string values"))
-		return
-	}
-	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), nil, state.Invocation{
-		AppID:                orig.AppID,
-		AccountID:            acct.ID,
-		DeploymentScope:      orig.DeploymentScope,
-		EnvironmentID:        orig.EnvironmentID,
-		PlatformTenantID:     orig.PlatformTenantID,
-		Source:               state.InvocationReplay,
-		Method:               orig.Method,
-		Path:                 orig.Path,
-		Payload:              orig.Payload,
-		Headers:              invocationHeaders,
-		DueAt:                time.Now().UTC(),
-		RetryPolicyJSON:      effectiveInvocationRetryPolicy(app, nil, api.MustLimitsFor(acct.Plan).MaxQueueAttempts),
-		DeadlineAt:           deadlineForRequest(nil, acct),
-		ResultRetentionUntil: retentionForRequest(nil, acct),
-	}, "enqueue replay invocation")
-	if versionProblem != nil {
-		api.WriteProblem(w, versionProblem)
-		return
-	}
-	setInvocationVersionResponseHeaders(w, inv)
-	writeJSON(w, http.StatusAccepted, api.AsyncInvokeResponse{
-		ID:        inv.ID,
-		StatusURL: "/v1/invocations/" + inv.ID,
-	})
+	s.servePlainReplay(w, r, acct, orig,
+		effectiveInvocationRetryPolicy(app, nil, api.MustLimitsFor(acct.Plan).MaxQueueAttempts), "/v1/invocations/")
 }
