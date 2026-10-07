@@ -12,22 +12,23 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/routeimpact"
 	"github.com/onebox-faas/faas/pkg/routemonitor"
 )
 
 type routeMonitorCLIOptions struct {
-	action, slug, mode, routes, incident, before, out string
-	customerGroupBy                                   string
-	revision                                          int64
-	limit                                             int
-	fail                                              bool
-	customerDetails                                   bool
+	action, slug, mode, routes, incident, before, out, sourceImpact string
+	customerGroupBy                                                 string
+	revision                                                        int64
+	limit                                                           int
+	fail                                                            bool
+	customerDetails                                                 bool
 }
 
 func parseRouteMonitorCLI(args []string) (routeMonitorCLIOptions, error) {
 	o := routeMonitorCLIOptions{}
 	if len(args) == 0 {
-		return o, errors.New("usage: gregale routes monitor <get|set|report|incidents|explain> APP [flags]")
+		return o, errors.New("usage: gregale routes monitor <get|set|preview|report|incidents|explain> APP [flags]")
 	}
 	o.action = args[0]
 	flags, pos := splitArgsForFlags(args[1:], "fail-on-unhealthy", "customer-details")
@@ -39,6 +40,11 @@ func parseRouteMonitorCLI(args []string) (routeMonitorCLIOptions, error) {
 		fs.StringVar(&o.routes, "routes", "", "JSON array of production route budgets")
 		fs.StringVar(&o.customerGroupBy, "customer-group-by", "", "optionally evaluate budgets by tenant or consumer")
 		fs.Int64Var(&o.revision, "expected-revision", -1, "current revision; 0 initially")
+	case "preview":
+		fs.StringVar(&o.routes, "routes", "", "JSON array of proposed production route budgets")
+		fs.StringVar(&o.customerGroupBy, "customer-group-by", "", "optionally evaluate budgets by tenant or consumer")
+		fs.BoolVar(&o.customerDetails, "customer-details", false, "include observed tenant or consumer IDs (when enabled)")
+		fs.BoolVar(&o.fail, "fail-on-unhealthy", false, "exit nonzero unless the proposed budgets are healthy")
 	case "report":
 		fs.BoolVar(&o.fail, "fail-on-unhealthy", false, "exit nonzero unless observed route budgets are healthy")
 		fs.BoolVar(&o.customerDetails, "customer-details", false, "include observed tenant or consumer IDs (when enabled)")
@@ -48,6 +54,7 @@ func parseRouteMonitorCLI(args []string) (routeMonitorCLIOptions, error) {
 	case "explain":
 		fs.StringVar(&o.incident, "incident", "", "saved incident UUID")
 		fs.StringVar(&o.out, "out", "", "save incident JSON to a new file")
+		fs.StringVar(&o.sourceImpact, "source-impact", "", "correlate with a source impact report path or analyze the local checkout with auto")
 		fs.BoolVar(&o.customerDetails, "customer-details", false, "include observed tenant or consumer IDs (when enabled)")
 	default:
 		return o, errors.New("unknown route monitor command")
@@ -61,6 +68,9 @@ func parseRouteMonitorCLI(args []string) (routeMonitorCLIOptions, error) {
 	o.slug = pos[0]
 	if o.action == "set" && o.mode != "enabled" && o.mode != "disabled" {
 		return o, errors.New("supply --mode enabled or disabled")
+	}
+	if o.action == "preview" && o.routes == "" {
+		return o, errors.New("supply --routes")
 	}
 	if o.action == "incidents" && (o.limit < 1 || o.limit > api.RouteMonitorMaxPage) {
 		return o, errors.New("invalid incident page limit")
@@ -111,21 +121,41 @@ func cmdRoutesMonitor(args []string) int {
 		return printErr("Invalid route monitor command", err)
 	}
 	var request api.SetRouteMonitorRequest
-	if o.action == "set" {
+	var previewRequest api.PreviewRouteMonitorRequest
+	if o.action == "set" || o.action == "preview" {
 		routes, err := readRouteMonitorRoutes(o.routes)
 		if err != nil {
 			return printErr("Invalid route budgets", err)
 		}
-		request = api.SetRouteMonitorRequest{CustomerGroupBy: o.customerGroupBy, Enabled: o.mode == "enabled", ExpectedRevision: &o.revision, Routes: routes}
-		if err := routemonitor.Validate(request); err != nil {
-			return printErr("Invalid route monitor configuration", err)
+		if o.action == "set" {
+			request = api.SetRouteMonitorRequest{CustomerGroupBy: o.customerGroupBy, Enabled: o.mode == "enabled", ExpectedRevision: &o.revision, Routes: routes}
+			if err := routemonitor.Validate(request); err != nil {
+				return printErr("Invalid route monitor configuration", err)
+			}
+		} else {
+			previewRequest = api.PreviewRouteMonitorRequest{CustomerGroupBy: o.customerGroupBy, Routes: routes}
+			if err := routemonitor.ValidatePreviewRequest(previewRequest, 0); err != nil {
+				return printErr("Invalid route monitor preview", err)
+			}
+		}
+	}
+	var source routeimpact.Report
+	var sourceDigest string
+	if o.sourceImpact != "" && o.sourceImpact != "auto" {
+		source, sourceDigest, err = readPreviewSourceImpact(o.sourceImpact)
+		if err != nil {
+			return printErr("Invalid source impact report", err)
 		}
 	}
 	c, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), api.RouteCheckTimeout)
+	timeout := api.RouteCheckTimeout
+	if o.action == "explain" && o.sourceImpact == "auto" {
+		timeout = api.RouteImpactTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	switch o.action {
 	case "get", "set":
@@ -175,6 +205,29 @@ func cmdRoutesMonitor(args []string) int {
 			return 1
 		}
 		return 0
+	case "preview":
+		preview, err := c.PreviewRouteMonitorWithOptions(ctx, o.slug, previewRequest, api.RouteMonitorReadOptions{CustomerDetails: o.customerDetails})
+		if err != nil {
+			return printErr("Could not preview production route budgets", err)
+		}
+		if err := routemonitor.ValidatePreviewForRequest(preview, previewRequest); err != nil {
+			return printErr("Invalid route monitor preview response", err)
+		}
+		if jsonOutput {
+			if code := jsonOut(writeJSON(preview)); code != 0 {
+				return code
+			}
+		} else {
+			_, _ = fmt.Fprintf(osStdout, "Read-only preview against monitor revision %d; no configuration was changed.\n", preview.CurrentRevision)
+			if preview.ConfigChangeResetsObservationAnchor {
+				_, _ = fmt.Fprintln(osStdout, "Saving these changed budgets starts a fresh observation window; treat this as current production evidence, not the first post-save report.")
+			}
+			renderRouteMonitorReport(preview.Report)
+		}
+		if o.fail && preview.Report.Status != "healthy" {
+			return 1
+		}
+		return 0
 	case "explain":
 		i, err := c.GetRouteMonitorIncidentWithOptions(ctx, o.slug, o.incident, api.RouteMonitorReadOptions{CustomerDetails: o.customerDetails})
 		if err != nil {
@@ -186,15 +239,32 @@ func cmdRoutesMonitor(args []string) int {
 		if err := routemonitor.ValidateIncident(i, o.slug); err != nil {
 			return printErr("Invalid route incident", err)
 		}
+		var sourceCorrelation *routeMonitorSourceCorrelation
+		if o.sourceImpact != "" {
+			var correlation routeMonitorSourceCorrelation
+			if o.sourceImpact == "auto" {
+				correlation = correlateRouteMonitorIncidentSourceAuto(ctx, c, i, o.slug, ".")
+			} else {
+				correlation = correlateRouteMonitorIncidentSource(ctx, c, i, source, sourceDigest)
+			}
+			addRouteMonitorSourceOwners(ctx, ".", &correlation)
+			sourceCorrelation = &correlation
+		}
 		if o.out != "" {
-			if err := writeRouteMonitorIncidentFile(o.out, i); err != nil {
+			if err := writeRouteMonitorIncidentFileWithSource(o.out, i, sourceCorrelation); err != nil {
 				return printErr("Could not save route incident", err)
 			}
 		}
 		if jsonOutput {
+			if sourceCorrelation != nil {
+				return jsonOut(writeJSON(routeMonitorIncidentWithSource{RouteMonitorIncident: i, SourceCorrelation: sourceCorrelation}))
+			}
 			return jsonOut(writeJSON(i))
 		}
 		renderRouteMonitorIncident(i, o.slug)
+		if sourceCorrelation != nil {
+			renderRouteMonitorIncidentSource(*sourceCorrelation)
+		}
 		return 0
 	case "incidents":
 		page, err := c.ListRouteMonitorIncidents(ctx, o.slug, o.limit, o.before)
@@ -246,7 +316,15 @@ func validateRouteMonitorPage(p api.RouteMonitorIncidentPage, o routeMonitorCLIO
 
 // Reuse the existing owner-only, create-new evidence export path.
 func writeRouteMonitorIncidentFile(path string, i api.RouteMonitorIncident) error {
-	body, err := json.MarshalIndent(i, "", "  ")
+	return writeRouteMonitorIncidentFileWithSource(path, i, nil)
+}
+
+func writeRouteMonitorIncidentFileWithSource(path string, i api.RouteMonitorIncident, source *routeMonitorSourceCorrelation) error {
+	var value any = i
+	if source != nil {
+		value = routeMonitorIncidentWithSource{RouteMonitorIncident: i, SourceCorrelation: source}
+	}
+	body, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -305,39 +383,23 @@ func renderRouteMonitorCustomers(customers *api.RouteMonitorCustomerReport) {
 }
 func renderRouteMonitorIncident(i api.RouteMonitorIncident, slug string) {
 	_, _ = fmt.Fprintf(osStdout, "Incident %s: %s; opened %s\n", i.ID, i.Status, i.OpenedAt.Format("2006-01-02 15:04:05Z"))
+	if i.Baseline == nil {
+		_, _ = fmt.Fprintln(osStdout, "Last healthy deployment baseline: unavailable")
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "Last healthy deployment baseline: %s", i.Baseline.DeploymentID)
+		if i.Baseline.CommitSHA != "" {
+			_, _ = fmt.Fprintf(osStdout, " (%s", i.Baseline.CommitSHA)
+			if i.Baseline.Repository != "" {
+				_, _ = fmt.Fprintf(osStdout, "; %s", i.Baseline.Repository)
+			}
+			_, _ = fmt.Fprint(osStdout, ")")
+		}
+		_, _ = fmt.Fprintln(osStdout)
+	}
+	renderRouteMonitorIncidentTimeline(i)
 	renderRouteMonitorReport(i.OpeningReport)
 	for _, e := range i.Evidence {
-		if e.CustomerID != "" {
-			_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence for %s %s\n", e.Method, previewReportText(e.Path), e.Signal, e.CustomerGroupBy, e.CustomerID)
-		} else if e.CustomerGroupBy != "" {
-			_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence for an undisclosed %s\n", e.Method, previewReportText(e.Path), e.Signal, e.CustomerGroupBy)
-		} else {
-			_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence\n", e.Method, previewReportText(e.Path), e.Signal)
-		}
-		for _, w := range e.Windows {
-			_, _ = fmt.Fprintf(osStdout, "  %d matching requests in %d retained rows; examples capped=%t\n", w.Requests.MatchingRequests, w.Requests.ObservedRows, w.Requests.ExamplesTruncated)
-			for _, x := range w.Requests.Examples {
-				_, _ = fmt.Fprintf(osStdout, "  gregale debug requests inspect %s %s (status %d, %dms, weight %d)\n", slug, x.TelemetryID, x.Status, x.LatencyMS, x.RepresentedRequests)
-			}
-			if w.Diagnostics != nil {
-				d := w.Diagnostics
-				_, _ = fmt.Fprintf(osStdout, "  Diagnostic rows %d; missing spans %d; capped=%t\n", d.Candidate.SampledRows, d.Candidate.MissingSpanRows, d.Candidate.SamplesTruncated)
-				if d.Candidate.GuestP95MS != nil {
-					_, _ = fmt.Fprintf(osStdout, "  Measured guest p95 %dms (%d represented requests)\n", *d.Candidate.GuestP95MS, d.Candidate.GuestRequests)
-				}
-				if d.Candidate.WakeBootP95MS != nil {
-					_, _ = fmt.Fprintf(osStdout, "  Wake boot p95 %dms (%d distinct wakes)\n", *d.Candidate.WakeBootP95MS, d.Candidate.WakeSamples)
-				}
-				if d.DependenciesTruncated || d.Candidate.SpansTruncated || d.Candidate.TimingIncomplete {
-					_, _ = fmt.Fprintln(osStdout, "  Dependency evidence is capped or timing is incomplete.")
-				}
-				for _, dep := range d.Dependencies {
-					if dep.Candidate.P95MS != nil {
-						_, _ = fmt.Fprintf(osStdout, "  %s/%s span p95 %dms (%d represented calls)\n", dep.Type, previewReportText(dep.Kind), *dep.Candidate.P95MS, dep.Candidate.RepresentedCalls)
-					}
-				}
-			}
-		}
+		renderRouteMonitorEvidence(e, slug)
 	}
 	if i.EvidenceTruncated {
 		_, _ = fmt.Fprintln(osStdout, "Additional violated route/signal diagnostics omitted by the saved-evidence cap.")
@@ -349,4 +411,127 @@ func renderRouteMonitorIncident(i api.RouteMonitorIncident, slug string) {
 		_, _ = fmt.Fprintln(osStdout, "Recovery evidence:")
 		renderRouteMonitorReport(*i.RecoveryReport)
 	}
+	if len(i.Escalations) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "\nEscalations: %d retained transition(s)", len(i.Escalations))
+		if i.EscalationsTruncated {
+			_, _ = fmt.Fprint(osStdout, "; older transitions omitted")
+		}
+		_, _ = fmt.Fprintln(osStdout)
+		for _, escalation := range i.Escalations {
+			_, _ = fmt.Fprintf(osStdout, "Transition %s at %s: +%d route(s), +%d signal(s) since %s\n", escalation.TransitionID, escalation.CheckedAt.Format("2006-01-02 15:04:05Z"), escalation.NewlyViolatedRoutes, escalation.NewlyViolatedSignals, escalation.PreviousCheckedAt.Format("2006-01-02 15:04:05Z"))
+			for _, signal := range escalation.Signals {
+				_, _ = fmt.Fprintf(osStdout, "  Newly violated: %s %s — %s\n", signal.Finding.Route.Method, previewReportText(signal.Finding.Route.Path), signal.Signal)
+			}
+			for _, evidence := range escalation.Evidence {
+				renderRouteMonitorEvidence(evidence, slug)
+			}
+			if escalation.EvidenceTruncated {
+				_, _ = fmt.Fprintln(osStdout, "  Additional transition diagnostics omitted by the saved-evidence cap.")
+			}
+		}
+	}
+}
+
+func renderRouteMonitorEvidence(e api.RouteMonitorEvidence, slug string) {
+	if e.CustomerID != "" {
+		_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence for %s %s\n", e.Method, previewReportText(e.Path), e.Signal, e.CustomerGroupBy, e.CustomerID)
+	} else if e.CustomerGroupBy != "" {
+		_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence for an undisclosed %s\n", e.Method, previewReportText(e.Path), e.Signal, e.CustomerGroupBy)
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence\n", e.Method, previewReportText(e.Path), e.Signal)
+	}
+	for _, w := range e.Windows {
+		_, _ = fmt.Fprintf(osStdout, "  %d matching requests in %d retained rows; examples capped=%t\n", w.Requests.MatchingRequests, w.Requests.ObservedRows, w.Requests.ExamplesTruncated)
+		for _, x := range w.Requests.Examples {
+			_, _ = fmt.Fprintf(osStdout, "  gregale debug requests inspect %s %s (status %d, %dms, weight %d)\n", slug, x.TelemetryID, x.Status, x.LatencyMS, x.RepresentedRequests)
+		}
+		if w.Diagnostics != nil {
+			d := w.Diagnostics
+			_, _ = fmt.Fprintf(osStdout, "  Diagnostic rows %d; missing spans %d; capped=%t\n", d.Candidate.SampledRows, d.Candidate.MissingSpanRows, d.Candidate.SamplesTruncated)
+			if d.Candidate.GuestP95MS != nil {
+				_, _ = fmt.Fprintf(osStdout, "  Measured guest p95 %dms (%d represented requests)\n", *d.Candidate.GuestP95MS, d.Candidate.GuestRequests)
+			}
+			if d.Candidate.WakeBootP95MS != nil {
+				_, _ = fmt.Fprintf(osStdout, "  Wake boot p95 %dms (%d distinct wakes)\n", *d.Candidate.WakeBootP95MS, d.Candidate.WakeSamples)
+			}
+			if d.DependenciesTruncated || d.Candidate.SpansTruncated || d.Candidate.TimingIncomplete {
+				_, _ = fmt.Fprintln(osStdout, "  Dependency evidence is capped or timing is incomplete.")
+			}
+			for _, dep := range d.Dependencies {
+				if dep.Candidate.P95MS != nil {
+					_, _ = fmt.Fprintf(osStdout, "  %s/%s span p95 %dms (%d represented calls)\n", dep.Type, previewReportText(dep.Kind), *dep.Candidate.P95MS, dep.Candidate.RepresentedCalls)
+				}
+			}
+		}
+	}
+}
+
+func renderRouteMonitorIncidentTimeline(i api.RouteMonitorIncident) {
+	if len(i.Timeline) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "Impact timeline: no follow-up evaluations are available for this incident.")
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "Impact timeline: %d observations", len(i.Timeline))
+	if i.TimelineTruncated {
+		_, _ = fmt.Fprint(osStdout, "; older evaluations omitted")
+	}
+	_, _ = fmt.Fprintln(osStdout)
+	var previous *api.RouteMonitorIncidentTimelineEntry
+	for index := range i.Timeline {
+		entry := &i.Timeline[index]
+		affectedRoutes, unknownRoutes := 0, 0
+		for _, route := range entry.Routes {
+			if route.Status == "violated" || route.CustomerImpact != nil && route.CustomerImpact.ViolatedCustomers > 0 {
+				affectedRoutes++
+			}
+			if route.Status == "unknown" || route.CustomerImpact != nil && route.CustomerImpact.UnknownCustomers > 0 {
+				unknownRoutes++
+			}
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %s  %s: %d affected routes, %d unknown routes (%s)", entry.CheckedAt.Format("2006-01-02 15:04:05Z"), entry.Status, affectedRoutes, unknownRoutes, previewReportText(entry.Reason))
+		if impact := entry.CustomerImpact; impact != nil {
+			_, _ = fmt.Fprintf(osStdout, "; %d/%d %s cohorts violated, %d unknown", impact.ViolatedCustomers, impact.ObservedCustomers, impact.GroupBy, impact.UnknownCustomers)
+		}
+		_, _ = fmt.Fprintln(osStdout)
+		for _, route := range entry.Routes {
+			var prior *api.RouteMonitorIncidentTimelineRoute
+			if previous != nil && route.RouteIndex < len(previous.Routes) {
+				prior = &previous.Routes[route.RouteIndex]
+			}
+			changed := prior == nil || prior.ErrorStatus != route.ErrorStatus || prior.LatencyStatus != route.LatencyStatus || timelineCustomerImpactChanged(prior, &route)
+			if !changed {
+				continue
+			}
+			if route.RouteIndex < 0 || route.RouteIndex >= len(i.OpeningReport.Routes) {
+				continue // ValidateIncident rejects this before rendering.
+			}
+			selector := i.OpeningReport.Routes[route.RouteIndex].Route
+			_, _ = fmt.Fprintf(osStdout, "    %s %s: errors %s", selector.Method, previewReportText(selector.Path), route.ErrorStatus)
+			if prior != nil {
+				_, _ = fmt.Fprintf(osStdout, " (was %s)", prior.ErrorStatus)
+			}
+			_, _ = fmt.Fprintf(osStdout, "; latency %s", route.LatencyStatus)
+			if prior != nil {
+				_, _ = fmt.Fprintf(osStdout, " (was %s)", prior.LatencyStatus)
+			}
+			if impact := route.CustomerImpact; impact != nil {
+				_, _ = fmt.Fprintf(osStdout, "; %d/%d %s cohorts violated, %d unknown", impact.ViolatedCustomers, impact.ObservedCustomers, impact.GroupBy, impact.UnknownCustomers)
+				if prior != nil && prior.CustomerImpact != nil && (prior.CustomerImpact.ViolatedCustomers != impact.ViolatedCustomers || prior.CustomerImpact.UnknownCustomers != impact.UnknownCustomers) {
+					_, _ = fmt.Fprintf(osStdout, " (was %d violated, %d unknown)", prior.CustomerImpact.ViolatedCustomers, prior.CustomerImpact.UnknownCustomers)
+				}
+			}
+			_, _ = fmt.Fprintln(osStdout)
+		}
+		previous = entry
+	}
+}
+
+func timelineCustomerImpactChanged(previous *api.RouteMonitorIncidentTimelineRoute, current *api.RouteMonitorIncidentTimelineRoute) bool {
+	if previous == nil || current == nil {
+		return previous != current
+	}
+	if previous.CustomerImpact == nil || current.CustomerImpact == nil {
+		return previous.CustomerImpact != current.CustomerImpact
+	}
+	return previous.CustomerImpact.ObservedCustomers != current.CustomerImpact.ObservedCustomers || previous.CustomerImpact.ViolatedCustomers != current.CustomerImpact.ViolatedCustomers || previous.CustomerImpact.UnknownCustomers != current.CustomerImpact.UnknownCustomers
 }

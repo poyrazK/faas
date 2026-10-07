@@ -8826,20 +8826,25 @@ const RouteHealthTransitionVersion = 1
 
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (
-	RouteMonitorVersion                         = 1
-	RouteMonitorMaxRateBPS                int64 = 10_000
-	RouteMonitorPollInterval                    = 30 * time.Second
-	RouteMonitorEvaluationInterval              = time.Minute
-	RouteMonitorBatchSize                       = 20
-	RouteMonitorEvidenceRoutesLimit             = 3
-	RouteMonitorIncidentMaxBytes                = 512 << 10
-	RouteMonitorHistoryMaxEntries               = 100
-	RouteMonitorHistoryMaxBytes                 = 8 << 20
-	RouteMonitorPageSize                        = 5
-	RouteMonitorMaxPage                         = 10
-	RouteMonitorCustomersPerRoute               = 5
-	RouteMonitorRecoveryCustomersPerRoute       = 100
-	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
+	RouteMonitorVersion                               = 1
+	RouteMonitorMaxRateBPS                      int64 = 10_000
+	RouteMonitorPollInterval                          = 30 * time.Second
+	RouteMonitorEvaluationInterval                    = time.Minute
+	RouteMonitorBatchSize                             = 20
+	RouteMonitorEvidenceRoutesLimit                   = 3
+	RouteMonitorHealthyBaselineMaxBytes               = 2048
+	RouteMonitorIncidentMaxBytes                      = 512 << 10
+	RouteMonitorIncidentTimelineMaxEntries            = 60
+	RouteMonitorIncidentEscalationMaxEntries          = 20
+	RouteMonitorIncidentEscalationEvidenceLimit       = 3
+	RouteMonitorIncidentEscalationSignalsMax          = 40
+	RouteMonitorHistoryMaxEntries                     = 100
+	RouteMonitorHistoryMaxBytes                       = 8 << 20
+	RouteMonitorPageSize                              = 5
+	RouteMonitorMaxPage                               = 10
+	RouteMonitorCustomersPerRoute                     = 5
+	RouteMonitorRecoveryCustomersPerRoute             = 100
+	RouteMonitorRecoveryStateMaxBytes                 = 256 << 10
 )
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
