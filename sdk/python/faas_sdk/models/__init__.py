@@ -1382,6 +1382,10 @@ from .managed_realtime_publish_response import ManagedRealtimePublishResponse
 from .managed_realtime_retained_history_response import ManagedRealtimeRetainedHistoryResponse
 from .managed_realtime_retained_message_request import ManagedRealtimeRetainedMessageRequest
 from .managed_realtime_retained_message_response import ManagedRealtimeRetainedMessageResponse
+from .mcp_resource_policy import MCPResourcePolicy
+from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
+from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
+from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -4077,6 +4081,10 @@ __all__ = (
     "ManagedRealtimeRetainedHistoryResponse",
     "ManagedRealtimeRetainedMessageRequest",
     "ManagedRealtimeRetainedMessageResponse",
+    "MCPResourcePolicy",
+    "MCPResourcePolicyPromptScopesType0",
+    "MCPResourcePolicyResourceScopesType0",
+    "MCPResourcePolicyToolScopesType0",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
