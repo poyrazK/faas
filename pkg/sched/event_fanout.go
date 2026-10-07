@@ -433,10 +433,16 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 					l.log.Warn("sched: prune delivered event identities failed", "error_class", dispatchErrorClass(err))
 				}
 			} else {
+				if backfills, ok := l.engine.store.(state.EventReplayBackfillStore); ok {
+					if _, err := backfills.PruneEventReplayBackfills(ctx, now, api.EventReplayBackfillPruneBatch); err != nil && l.log != nil {
+						l.log.Warn("sched: prune completed event replay backfills failed", "err", err)
+					}
+				}
 				l.eventFanoutLastPrune = now
 			}
 		}
 	}
+	l.runEventReplayBackfillSweep(ctx, now)
 	for i := 0; i < eventFanoutRecoveryBatch; i++ {
 		now := time.Now().UTC()
 		if l.now != nil {
@@ -475,6 +481,25 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		}
 		if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
 			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "error_class", dispatchErrorClass(err))
+		}
+	}
+}
+
+func (l *Loop) runEventReplayBackfillSweep(ctx context.Context, now time.Time) {
+	store, ok := l.engine.store.(state.EventReplayBackfillStore)
+	if !ok {
+		return
+	}
+	for i := 0; i < eventFanoutRecoveryBatch; i++ {
+		worked, err := store.ProcessNextEventReplayBackfill(ctx, now)
+		if err != nil {
+			if l.log != nil {
+				l.log.Warn("sched: process event replay backfill page failed", "err", err)
+			}
+			return
+		}
+		if !worked {
+			return
 		}
 	}
 }
@@ -520,7 +545,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 			if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && work.Recipient.ObjectNotification == nil {
 				result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
 					OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
-					ClaimToken: work.ClaimToken, Generation: work.Generation,
+					ClaimToken: work.ClaimToken, Generation: work.Generation, BackfillJobID: work.BackfillJobID,
 				})
 				if err == nil {
 					continue

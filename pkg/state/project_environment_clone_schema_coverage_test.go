@@ -72,6 +72,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"event_delivery_slots":                      CloneSchemaOperational,
 		"event_fanout_history_summaries":            CloneSchemaOperational,
 		"event_fanout_recipients":                   CloneSchemaOperational,
+		"event_replay_job_items":                    CloneSchemaOperational,
+		"event_replay_jobs":                         CloneSchemaOperational,
 		"event_routing_backlog":                     CloneSchemaOperational,
 		"event_routing_fairness":                    CloneSchemaOperational,
 		"event_storage_admission":                   CloneSchemaOperational,
