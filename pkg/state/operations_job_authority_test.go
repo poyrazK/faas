@@ -16,7 +16,8 @@ func TestValidateOperationJobAuthorityRejectsInt32Overflow(t *testing.T) {
 		{name: "attempt", generation: 1, attempt: 1 << 31},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			op := Operation{Generation: tc.generation}
+			op := Operation{}
+			op.Generation = tc.generation
 			authority := JobOperationAuthority{Generation: tc.generation, Attempt: tc.attempt}
 			if err := validateOperationJobAuthority(op, JobTask{}, authority, time.Now()); !errors.Is(err, ErrOperationStaleAttempt) {
 				t.Fatalf("out-of-range authority error = %v", err)
