@@ -1062,7 +1062,9 @@ jobs:
   unit-tests-pure-2:
     name: unit tests (pure Go shard 2 — light packages)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Cold builds and property tests finished at the old ten-minute limit;
+    # retain time for coverage upload and runner cleanup as well.
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -1137,7 +1139,9 @@ jobs:
   container-contract:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Both strict suites passed before the old deadline, but cache save and
+    # artifact upload consumed the remaining budget and canceled the job.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:

@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"path/filepath"
 	"time"
@@ -43,17 +42,5 @@ func vmmdRuntimeSourceSweep(store state.Store, root string, log *slog.Logger) fu
 }
 
 func vmmdRuntimeSourceLiveness(store state.Store) fcvm.LiveInstanceFunc {
-	return func(ctx context.Context, id string) (bool, error) {
-		instance, err := store.InstanceByID(ctx, id)
-		if errors.Is(err, state.ErrNotFound) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		if !state.State(instance.State).Valid() {
-			return false, errors.New("vmmd: unknown durable instance state")
-		}
-		return state.IsLive(instance.State), nil
-	}
+	return durableInstanceLive(store)
 }
