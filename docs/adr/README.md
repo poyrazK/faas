@@ -606,5 +606,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-615: Customer event storage admission](615-customer-event-storage-admission.md)
 - [ADR-616: Bounded event routing history](616-bounded-event-routing-history.md)
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
-- [ADR-624: Subscription-scoped retained-event replay preview](624-subscription-retained-event-replay-preview.md)
-- [ADR-625: Durable subscription event backfill](625-durable-subscription-event-backfill.md)
+- [ADR-638: Subscription-scoped retained-event replay preview](638-subscription-retained-event-replay-preview.md)
+- [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)

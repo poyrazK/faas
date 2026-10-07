@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-// Historical replay preview bounds retained-envelope reads (ADR-624).
+// Historical replay preview bounds retained-envelope reads (ADR-638).
 const (
 	EventReplayPreviewPageDefault    = 50
 	EventReplayPreviewPageMax        = 100

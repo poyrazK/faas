@@ -1065,9 +1065,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/invocations":                                                    "ListInvocations",
 	"GET /v1/invocations/{id}":                                               "GetInvocation",
 
-	// ADR-624: historical subscription replay is a metadata-only preview.
+	// ADR-638: historical subscription replay is a metadata-only preview.
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview": "PreviewEventReplay",
-	// ADR-625: historical subscription replay is a bounded durable backfill.
+	// ADR-639: historical subscription replay is a bounded durable backfill.
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays": "CreateEventReplayBackfill",
 	"GET /v1/event-replays/{jobID}":                                     "GetEventReplayBackfill",
 	"GET /v1/event-replays/{jobID}/items":                               "ListEventReplayBackfillItems",

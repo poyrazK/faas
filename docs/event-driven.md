@@ -971,7 +971,7 @@ receipts can survive longer. `earliest_retained_at` is account-wide and does not
 prove gap-free history. `history_complete` is always false. Retention can remove
 rows between pages, and delayed commits of older acceptances can change visible
 membership. This preview does not pin events or provide a frozen export. See
-[ADR-624](adr/624-subscription-retained-event-replay-preview.md) for the contract.
+[ADR-638](adr/638-subscription-retained-event-replay-preview.md) for the contract.
 
 To create actual independent deliveries for eligible historical events, start
 a durable backfill for the same ordinary subscription:
@@ -1012,7 +1012,7 @@ eligible routing failures with
 `gregale events backfill-retry JOB_UUID --limit 100 --yes`; handler failures,
 retries and dead letters continue through their existing lifecycle. Completed
 job metadata and per-envelope outcomes are retained for 30 days. See
-[ADR-625](adr/625-durable-subscription-event-backfill.md) for the full contract.
+[ADR-639](adr/639-durable-subscription-event-backfill.md) for the full contract.
 
 Inspect outcomes when you need to locate a failed or skipped event:
 
