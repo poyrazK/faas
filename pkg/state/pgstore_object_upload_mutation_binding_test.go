@@ -85,6 +85,14 @@ func TestPgObjectUploadMutationBindingGuardsAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	latestParts := strings.Split(string(latest), "-- +goose Down")
+	initiation, err := migrations.FS.ReadFile("20261007074655000_object_multipart_initiation_dispatch.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	initiationParts := strings.SplitN(string(initiation), "-- +goose Down", 2)
+	if _, err := tx.Exec(ctx, initiationParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(ctx, latestParts[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +103,9 @@ func TestPgObjectUploadMutationBindingGuardsAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, latestParts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, initiationParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(ctx, shape).Scan(&after); err != nil || before != after {

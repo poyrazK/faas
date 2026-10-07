@@ -91,6 +91,10 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 	}
 	m.objectMutations[upload.ID] = ObjectBucketMutation{ID: upload.ID, MultipartUploadID: upload.ID, Bucket: bucket, Kind: ObjectBucketMutationRequest, CreatedAt: now}
 	m.objectMultipartUploads[upload.ID] = cloneObjectMultipartUpload(upload)
+	if m.objectMultipartInitiations == nil {
+		m.objectMultipartInitiations = map[string]ObjectMultipartInitiation{}
+	}
+	m.objectMultipartInitiations[upload.ID] = ObjectMultipartInitiation{}
 	return cloneObjectMultipartUpload(upload), nil
 }
 
@@ -198,6 +202,9 @@ func (m *MemStore) ActivateObjectMultipartUpload(_ context.Context, id, token, p
 	defer m.mu.Unlock()
 	upload, ok := m.objectMultipartUploads[id]
 	if !ok || upload.State != ObjectMultipartInitiating || token == "" || upload.LeaseToken != token || providerID == "" {
+		return ErrConflict
+	}
+	if d := m.objectMultipartInitiations[id]; d.Dispatched && d.DispatchToken != "" && (d.ProviderUploadID != providerID || !upload.LeaseUntil.After(m.clock())) {
 		return ErrConflict
 	}
 	upload.State, upload.ProviderUploadID = ObjectMultipartActive, providerID

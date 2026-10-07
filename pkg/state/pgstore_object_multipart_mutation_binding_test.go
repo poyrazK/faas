@@ -93,10 +93,21 @@ func TestPgObjectMultipartMutationBindingGuardsAndRollback(t *testing.T) {
 	if err := tx.QueryRow(ctx, shape).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	initiation, err := migrations.FS.ReadFile("20261007074655000_object_multipart_initiation_dispatch.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	initiationParts := strings.SplitN(string(initiation), "-- +goose Down", 2)
+	if _, err := tx.Exec(ctx, initiationParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(ctx, parts[1]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, parts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, initiationParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(ctx, shape).Scan(&after); err != nil || before != after {

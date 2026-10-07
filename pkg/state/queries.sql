@@ -14493,3 +14493,14 @@ SELECT * FROM object_bucket_mutations WHERE upload_id=sqlc.arg(upload_id);
 
 -- name: ObjectMultipartMutationRead :one
 SELECT * FROM object_bucket_mutations WHERE multipart_upload_id=sqlc.arg(multipart_upload_id);
+
+-- name: ObjectMultipartInitiationRead :one
+SELECT * FROM object_multipart_initiation_dispatches WHERE multipart_upload_id=sqlc.arg(multipart_upload_id);
+
+-- name: ObjectMultipartInitiationDispatch :execrows
+UPDATE object_multipart_initiation_dispatches SET dispatched=true,dispatch_token=sqlc.arg(dispatch_token)
+WHERE multipart_upload_id=sqlc.arg(multipart_upload_id) AND NOT dispatched;
+
+-- name: ObjectMultipartInitiationObserve :execrows
+UPDATE object_multipart_initiation_dispatches SET provider_upload_id=sqlc.arg(provider_upload_id)
+WHERE multipart_upload_id=sqlc.arg(multipart_upload_id) AND dispatched AND dispatch_token=sqlc.arg(dispatch_token) AND provider_upload_id='';

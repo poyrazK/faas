@@ -18,7 +18,13 @@ func validMultipartMutationScope(u ObjectMultipartUpload) bool {
 }
 
 func originalMultipartMutationAuthority(old, u ObjectMultipartUpload, now time.Time) bool {
-	if old.ID != u.ID || old.AccountID != u.AccountID || old.AppID != u.AppID || old.BucketID != u.BucketID || old.Key != u.Key || old.ProviderUploadID == "" || old.ProviderUploadID != u.ProviderUploadID || old.State != u.State || u.LeaseToken == "" || old.LeaseToken != u.LeaseToken || !old.LeaseUntil.After(now) || !old.Protection.Equal(u.Protection) || !old.Encryption.Equal(u.Encryption) || old.EncryptionDefaultRevision != u.EncryptionDefaultRevision || old.ContentType != u.ContentType || !equalObjectMultipartMetadata(old.Metadata, u.Metadata) {
+	if old.ID != u.ID || old.AccountID != u.AccountID || old.AppID != u.AppID || old.BucketID != u.BucketID || old.Key != u.Key || old.ProviderUploadID != u.ProviderUploadID || old.State != u.State || u.LeaseToken == "" || old.LeaseToken != u.LeaseToken || !old.LeaseUntil.After(now) || !old.Protection.Equal(u.Protection) || !old.Encryption.Equal(u.Encryption) || old.EncryptionDefaultRevision != u.EncryptionDefaultRevision || old.ContentType != u.ContentType || !equalObjectMultipartMetadata(old.Metadata, u.Metadata) {
+		return false
+	}
+	if old.State == ObjectMultipartInitiating {
+		return old.ProviderUploadID == "" && old.SizeBytes == u.SizeBytes && old.PartSizeBytes == u.PartSizeBytes && old.PartCount == u.PartCount && old.FixedAdmission == u.FixedAdmission
+	}
+	if old.ProviderUploadID == "" {
 		return false
 	}
 	if ObjectMultipartIsCompleting(old.State) {

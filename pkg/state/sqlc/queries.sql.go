@@ -36887,6 +36887,59 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 	return i, err
 }
 
+const objectMultipartInitiationDispatch = `-- name: ObjectMultipartInitiationDispatch :execrows
+UPDATE object_multipart_initiation_dispatches SET dispatched=true,dispatch_token=$1
+WHERE multipart_upload_id=$2 AND NOT dispatched
+`
+
+type ObjectMultipartInitiationDispatchParams struct {
+	DispatchToken     string
+	MultipartUploadID pgtype.UUID
+}
+
+func (q *Queries) ObjectMultipartInitiationDispatch(ctx context.Context, db DBTX, arg ObjectMultipartInitiationDispatchParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartInitiationDispatch, arg.DispatchToken, arg.MultipartUploadID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectMultipartInitiationObserve = `-- name: ObjectMultipartInitiationObserve :execrows
+UPDATE object_multipart_initiation_dispatches SET provider_upload_id=$1
+WHERE multipart_upload_id=$2 AND dispatched AND dispatch_token=$3 AND provider_upload_id=''
+`
+
+type ObjectMultipartInitiationObserveParams struct {
+	ProviderUploadID  string
+	MultipartUploadID pgtype.UUID
+	DispatchToken     string
+}
+
+func (q *Queries) ObjectMultipartInitiationObserve(ctx context.Context, db DBTX, arg ObjectMultipartInitiationObserveParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartInitiationObserve, arg.ProviderUploadID, arg.MultipartUploadID, arg.DispatchToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectMultipartInitiationRead = `-- name: ObjectMultipartInitiationRead :one
+SELECT multipart_upload_id, dispatched, dispatch_token, provider_upload_id FROM object_multipart_initiation_dispatches WHERE multipart_upload_id=$1
+`
+
+func (q *Queries) ObjectMultipartInitiationRead(ctx context.Context, db DBTX, multipartUploadID pgtype.UUID) (ObjectMultipartInitiationDispatch, error) {
+	row := db.QueryRow(ctx, objectMultipartInitiationRead, multipartUploadID)
+	var i ObjectMultipartInitiationDispatch
+	err := row.Scan(
+		&i.MultipartUploadID,
+		&i.Dispatched,
+		&i.DispatchToken,
+		&i.ProviderUploadID,
+	)
+	return i, err
+}
+
 const objectMultipartInsert = `-- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
 (id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision)

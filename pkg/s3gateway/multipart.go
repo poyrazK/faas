@@ -500,9 +500,16 @@ func (h *Handler) activatePublicMultipart(w http.ResponseWriter, r *http.Request
 		h.writeMultipartError(w, r, req, claimErr, "OperationAborted")
 		return state.ObjectMultipartUpload{}, false
 	}
-	providerID, providerErr := objectstorageactivity.Execute(r.Context(), h.store, req.bucket, func(mutationCtx context.Context) (string, error) {
-		return h.ensureCapturedMultipart(mutationCtx, req, claimed)
-	})
+	call := func(mutationCtx context.Context, dispatch func(context.Context) error) (string, error) {
+		return h.ensureCapturedMultipart(mutationCtx, req, claimed, dispatch)
+	}
+	var providerID string
+	var providerErr error
+	if _, capable := req.provider.(objectstorage.MultipartInitiationProvider); capable {
+		providerID, providerErr = objectstorageactivity.ExecuteMultipartInitiation(r.Context(), h.store, store, req.bucket, claimed, call)
+	} else {
+		providerID, providerErr = objectstorageactivity.Execute(r.Context(), h.store, req.bucket, func(callCtx context.Context) (string, error) { return call(callCtx, nil) })
+	}
 	if providerErr != nil {
 		h.providerError(w, r, req, providerErr, upload.Key)
 		return state.ObjectMultipartUpload{}, false

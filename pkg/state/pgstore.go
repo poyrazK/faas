@@ -25100,6 +25100,8 @@ func mapErr(err error) error {
 				return ErrBindingReleasePolicyRevision
 			case "object_version_protection_fenced":
 				return ErrConflict
+			case "object_multipart_initiation_original", "object_multipart_initiation_immutable", "object_multipart_initiation_positive_result", "object_multipart_initiation_intent", "object_multipart_initiation_uncertain":
+				return ErrConflict
 			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
 				return ErrQueueBindingEnvironmentUnavailable

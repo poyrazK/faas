@@ -4046,6 +4046,13 @@ type ObjectLifecycleScan struct {
 	ScannedUploads int64
 }
 
+type ObjectMultipartInitiationDispatch struct {
+	MultipartUploadID pgtype.UUID
+	Dispatched        bool
+	DispatchToken     string
+	ProviderUploadID  string
+}
+
 type ObjectS3CopySourceEpoch struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

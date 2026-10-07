@@ -7358,3 +7358,53 @@ invalid requests/identities, and refusal to fall back to a legacy adapter's
 creation method. Pinned golangci-lint v2.4.0 reports zero issues for object
 storage; text encoding, shell quoting and ADR-number checks pass. These are
 local adapter and regression checks, not live R2/OVH qualification.
+
+### Bind once-only S3 initiation dispatch and positive replies (2026-10-07)
+
+New bound multipart sessions now have a separate durable initiation record.
+The control API and S3 gateway reuse their original pinned session receipt for
+S3 initiation, including while a source capture hold is retained. The S3
+adapter creates a fresh native upload without adopting listing candidates,
+claims dispatch immediately before the non-idempotent request, and disables
+SDK retries. Validation, encryption-key checks and configured usage callbacks
+run before the claim. A denied claim sends no creation request.
+
+A positive native reply is recorded with a bounded context that survives caller
+cancellation before activation. If activation is interrupted, a replacement
+lease can resume that exact recorded native ID without another provider call.
+The receipt remains outstanding through activation and drains only at the
+existing completed or verified-abort settlement. An unknown reply, including
+a crash after claiming dispatch but before sending the request, stays fenced:
+neither a new lease, an empty listing, session expiry nor a candidate upload ID
+authorizes another create or proves terminal settlement. Provider-specific
+proof or a future reconciliation mechanism is required to resolve that state.
+
+The append-only migration conservatively marks pre-existing bound journals as
+already dispatched; it never backfills a claim that they were safe to create.
+Database guards make dispatch sticky, prohibit deleting live evidence, require
+the live original dispatch owner to record a reply, preserve initiation layout,
+and require the recorded result for managed activation. Busy downgrades are
+rejected. Memory and PostgreSQL stores preserve the same authority and
+placement checks. The new table is operational and excluded from stage copies.
+
+Adapters without the optional dispatch capability and genuinely unbound legacy
+journals retain ordinary admission. They cannot resume through a capture hold,
+and no existing unknown request receipt is adopted or erased. This increment
+qualifies the local S3 path rather than native credentials used outside Gregale
+or every provider. Independent part writers, live R2/OVH qualification and a
+qualified cross-store common checkpoint remain outstanding. Public fully
+copyable capture remains gated.
+
+Validation: memory/PostgreSQL initiation, multipart, upload-capture and schema
+registry contracts pass under `-race`, including stale/expired authority,
+dispatch rollback, rejected evidence/layout rewrites, conservative migration
+backfill, busy downgrade refusal and migration round trips. Adapter, activity
+and gateway multipart/encryption/capture regressions pass under `-race`. The
+AWS SDK gateway test proves held recovery after interrupted activation with
+one native create, and retained writer evidence after a lost native reply, while
+preserving an unrelated receipt. Control API multipart, encryption, capture,
+broker-grant and recovery checks pass, including replacement-lease initiation
+recovery on memory and PostgreSQL. SQLC v1.31.1 parity, migration-ID and repository
+policy checks pass; pinned golangci-lint v2.4.0 reports zero issues across state,
+object storage, activity wrappers, S3 gateway and APID. Optional Packer/live nft
+checks remain skipped. No live provider or common-point qualification is claimed.

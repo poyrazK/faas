@@ -4643,6 +4643,16 @@
     "kind": "operational"
   },
   {
+    "table": "object_multipart_initiation_dispatches",
+    "columns": [
+      "dispatch_token",
+      "dispatched",
+      "multipart_upload_id",
+      "provider_upload_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_s3_copy_source_epochs",
     "columns": [
       "account_id",
