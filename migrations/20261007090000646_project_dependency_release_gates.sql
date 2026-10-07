@@ -1,6 +1,7 @@
 -- ADR-685: admission-owned dependency pins and restart-safe readiness waits.
+-- Preserve existing gate journals when schema effects precede the goose ledger.
 -- +goose Up
-CREATE TABLE deployment_dependency_gates (
+CREATE TABLE IF NOT EXISTS deployment_dependency_gates (
     deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
     pins jsonb NOT NULL CHECK (jsonb_typeof(pins) = 'array' AND jsonb_array_length(pins) BETWEEN 1 AND 100),
     started_at timestamptz,
@@ -12,7 +13,7 @@ CREATE TABLE deployment_dependency_gates (
 );
 
 -- +goose StatementBegin
-CREATE FUNCTION check_project_dependency_release() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION check_project_dependency_release() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE gate deployment_dependency_gates; pin jsonb; target_status text; target_traffic integer; parked text;
 BEGIN
     IF NEW.status <> 'live' OR OLD.status = 'live' OR OLD.serving_ended_at IS NOT NULL THEN
@@ -41,6 +42,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS deployment_dependency_release_check ON deployments;
 CREATE TRIGGER deployment_dependency_release_check BEFORE UPDATE OF status ON deployments
 FOR EACH ROW EXECUTE FUNCTION check_project_dependency_release();
 -- +goose StatementEnd
