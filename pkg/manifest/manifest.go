@@ -436,8 +436,12 @@ type Daemons struct {
 // the daemon uses to talk to remote daemons (e.g. schedd → vmmd on
 // a split-box fleet).
 type DaemonConfig struct {
-	GlobalAppDirectoryEnabled *bool `yaml:"global_app_directory_enabled,omitempty"`
-	RegionalComputeEnabled    *bool `yaml:"regional_compute_enabled,omitempty"`
+	GlobalAppDirectoryEnabled    *bool  `yaml:"global_app_directory_enabled,omitempty"`
+	GlobalIngressDirectoryID     string `yaml:"global_ingress_directory_id,omitempty"`
+	GlobalIngressAppsDomain      string `yaml:"global_ingress_apps_domain,omitempty"`
+	GlobalIngressManifestPath    string `yaml:"global_ingress_manifest_path,omitempty"`
+	GlobalIngressTrustBundlePath string `yaml:"global_ingress_trust_bundle_path,omitempty"`
+	RegionalComputeEnabled       *bool  `yaml:"regional_compute_enabled,omitempty"`
 	// Bind is the local listen address (e.g. `unix:///run/faas/schedd.sock`
 	// or `tcp://0.0.0.0:7100`). The renderer writes this into the
 	// daemon's TOML `socket_path` / `listen_addr` field.
@@ -906,6 +910,7 @@ func (m *Manifest) Validate() Errors {
 	}
 	errs = append(errs, m.Fleet.validate()...)
 	errs = append(errs, m.validateControlPlaneCell()...)
+	errs = append(errs, m.validateGlobalIngress()...)
 	errs = append(errs, m.validateDynamicCompute()...)
 	errs = append(errs, m.validateFleetEndpoints()...)
 	errs = append(errs, m.Daemons.validate()...)
@@ -1246,6 +1251,9 @@ func (d *Daemons) validate() Errors {
 			continue
 		}
 		path := fmt.Sprintf("daemons.%s", name)
+		if name != "gatewayd_internal" && dc.globalIngressConfig().Enabled() {
+			errs = append(errs, Error{path + ".global_ingress_directory_id", "global ingress is only valid for gatewayd_internal"})
+		}
 		if dc.Bind == "" {
 			errs = append(errs, Error{path + ".bind", "is required"})
 		}

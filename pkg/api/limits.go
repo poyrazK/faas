@@ -58,6 +58,22 @@ const (
 	GlobalDirectorySlugMaxBytes                 = 40
 )
 
+// ADR-656: bounded signed route projections; these never grant runtime capacity.
+const (
+	GlobalRoutingPolicyAllSelected     = "all_selected_regions"
+	GlobalIngressRoutesMax             = 10000
+	GlobalIngressPayloadMaxBytes       = 16 << 20
+	GlobalIngressEnvelopeMaxBytes      = 24 << 20
+	GlobalIngressLeaseDuration         = 30 * time.Second
+	GlobalIngressRefreshInterval       = time.Second
+	GlobalIngressFailureCooldown       = 5 * time.Second
+	GlobalIngressResponseHeaderTimeout = 45 * time.Second
+	GlobalIngressConnectTimeout        = 10 * time.Second
+	GlobalIngressKeepAlive             = 30 * time.Second
+	GlobalIngressMaxIdleConnections    = 100
+	GlobalIngressMaxIdlePerOrigin      = 32
+)
+
 // ADR-604 bounds immutable image-release input and receipt projections.
 const (
 	CellImageReleaseRequestMaxBytes = 4096

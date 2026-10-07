@@ -3,7 +3,8 @@
 ADR-602 introduces a gated directory identity API. A global app has one UUID
 and `all_selected_regions` as its serving policy. This slice attaches existing
 regional apps and resolves their identities. It does not provision deployments
-or publish ingress routes. Regional provisioning, shared runtime admission, global
+or publish live ingress routes. ADR-656 adds an opt-in signed route consumer;
+the directory-owned live publisher is still pending. Regional provisioning, shared runtime admission, global
 runtime quota allocation, ingress health, data/secret replication, and independent native KVM
 recovery acceptance remain required for the complete multi-region feature.
 
@@ -464,3 +465,48 @@ A directory app retains at most 1024 live, unexpired delegations, including
 revocation work. `global_delegation_limit` (409) includes `limit`, `observed`, and
 `docs_url`. This history survives owner deletion so unreachable regions cannot
 silently discard outstanding revocation.
+
+## Cached global ingress consumer (ADR-656)
+
+This consumer is available for integration and diagnostics. A live APID publisher
+with proven regional health, serving eligibility, admission and billing gates is
+still required. Do not enable it by treating attached directory bindings as
+healthy eligible runtimes. No production routes or admission were activated.
+
+Configure a separate unbound frontend's `gatewayd-internal` with all four fields:
+
+```toml
+global_ingress_directory_id = "DIRECTORY_UUID"
+global_ingress_apps_domain = "global.example.com"
+global_ingress_manifest_path = "/run/faas/global-ingress/routes.json"
+global_ingress_trust_bundle_path = "/etc/faas/global-ingress/trust.json"
+```
+
+These same flat keys are supported under `daemons.gatewayd_internal` in a fleet
+manifest. Empty fields disable the consumer; partial configurations, regional
+database scopes and overlap with `apps_domain` are refused. The frontend keeps
+the existing public/internal gateway pair and its normal private listeners.
+
+Use persistent directory Ed25519 public anchors in the existing runtime-quota
+trust-bundle format. The reader needs no private signing key. The producer signs
+`runtimequota.IngressSnapshot` with the distinct `global-ingress` kind. App URLs
+are `<global-app-uuid>.global.example.com`; each target names an exact regional
+app HTTPS origin as well as its regional binding. Management `api_base` is not
+an app origin. Publish the complete canonical signed envelope by atomic rename
+to a regular file readable by the gateway, with no group/other write permission
+and no symlink/hardlink. Refresh the generation and at most 30-second lease.
+
+Startup requires a verified current snapshot. A failed refresh quarantines routes
+immediately; expired projections or zero usable selected targets return 503. All
+selected healthy eligible targets participate in round-robin routing. A connection
+failure cools down its exact target for five seconds for subsequent requests;
+the failed request is not replayed in another region. HTTP application failures
+do not by themselves declare the whole regional fleet unhealthy.
+
+A snapshot is a routing observation, not native runtime authorization or capacity
+release evidence. Shared global authentication/billing, regional sessions, redirects
+and cookie domains, trusted original client-IP forwarding, regional provisioning
+and replicated data/secrets remain separate integration work. The current proxy
+uses the regional host and credentials and derives forwarding from its direct
+connection. Validate those application contracts before advertising transparent
+global app URLs. Dedicated native KVM recovery acceptance remains mandatory.

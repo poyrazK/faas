@@ -32,8 +32,12 @@ type Envelope struct {
 // Decode bounds and strictly validates the transport object before verifying
 // its signed payload. Canonical spelling rejects duplicate envelope fields.
 func Decode(raw []byte) (Envelope, error) {
+	return decodeBounded(raw, api.RegionalRuntimeQuotaEnvelopeMaxBytes)
+}
+
+func decodeBounded(raw []byte, maximum int) (Envelope, error) {
 	var e Envelope
-	if len(raw) > api.RegionalRuntimeQuotaEnvelopeMaxBytes {
+	if len(raw) > maximum {
 		return e, ErrInvalid
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -83,11 +87,15 @@ func signedBytes(kind, keyID string, payload []byte) []byte {
 }
 
 func sign[T any](s Signer, kind string, claims T) (Envelope, error) {
+	return signBounded(s, kind, claims, api.RegionalRuntimeQuotaPayloadMaxBytes)
+}
+
+func signBounded[T any](s Signer, kind string, claims T, maximum int) (Envelope, error) {
 	if !s.Available() {
 		return Envelope{}, ErrTrust
 	}
 	payload, err := json.Marshal(message[T]{Version: 1, Kind: kind, IssuerID: s.issuerID, Claims: claims})
-	if err != nil || len(payload) > api.RegionalRuntimeQuotaPayloadMaxBytes {
+	if err != nil || len(payload) > maximum {
 		return Envelope{}, ErrInvalid
 	}
 	return Envelope{KeyID: s.keyID, Payload: base64.RawURLEncoding.EncodeToString(payload), Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(s.private, signedBytes(kind, s.keyID, payload)))}, nil
@@ -156,9 +164,13 @@ func NewTrust(anchors []Anchor) (Trust, error) {
 }
 
 func verify[T any](t Trust, envelope Envelope, kind, role string) (message[T], error) {
+	return verifyBounded[T](t, envelope, kind, role, api.RegionalRuntimeQuotaPayloadMaxBytes, api.RegionalRuntimeQuotaEnvelopeMaxBytes)
+}
+
+func verifyBounded[T any](t Trust, envelope Envelope, kind, role string, payloadMax, envelopeMax int) (message[T], error) {
 	var out message[T]
 	// Bound transport spelling before base64 decoding or allocating the payload.
-	if len(envelope.KeyID)+len(envelope.Payload)+len(envelope.Signature) > api.RegionalRuntimeQuotaEnvelopeMaxBytes {
+	if len(envelope.KeyID)+len(envelope.Payload)+len(envelope.Signature) > envelopeMax {
 		return out, ErrInvalid
 	}
 	a, ok := t.keys[envelope.KeyID]
@@ -166,7 +178,7 @@ func verify[T any](t Trust, envelope Envelope, kind, role string) (message[T], e
 		return out, ErrTrust
 	}
 	payload, err := base64.RawURLEncoding.Strict().DecodeString(envelope.Payload)
-	if err != nil || len(payload) > api.RegionalRuntimeQuotaPayloadMaxBytes || base64.RawURLEncoding.EncodeToString(payload) != envelope.Payload {
+	if err != nil || len(payload) > payloadMax || base64.RawURLEncoding.EncodeToString(payload) != envelope.Payload {
 		return out, ErrInvalid
 	}
 	signature, err := base64.RawURLEncoding.Strict().DecodeString(envelope.Signature)

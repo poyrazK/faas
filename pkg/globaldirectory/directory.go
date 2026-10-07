@@ -20,7 +20,7 @@ var (
 	ErrBoundCell = errors.New("regional databases cannot own the global directory")
 )
 
-const AllSelectedRegions = "all_selected_regions"
+const AllSelectedRegions = api.GlobalRoutingPolicyAllSelected
 
 type Cell struct {
 	ID         string

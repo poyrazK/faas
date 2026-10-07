@@ -223,6 +223,14 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		return boolConfigValue(dc.RegionalComputeEnabled, false), nil
 	case "global_app_directory_enabled":
 		return boolConfigValue(dc.GlobalAppDirectoryEnabled, false), nil
+	case "global_ingress_directory_id":
+		return dc.GlobalIngressDirectoryID, nil
+	case "global_ingress_apps_domain":
+		return dc.GlobalIngressAppsDomain, nil
+	case "global_ingress_manifest_path":
+		return dc.GlobalIngressManifestPath, nil
+	case "global_ingress_trust_bundle_path":
+		return dc.GlobalIngressTrustBundlePath, nil
 	case "streaming_enabled":
 		return boolConfigValue(dc.StreamingEnabled, true), nil
 	case "service_proxy_https_listen":

@@ -71,6 +71,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
 	"github.com/onebox-faas/faas/pkg/geoip"
+	"github.com/onebox-faas/faas/pkg/globaldirectory"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -3717,6 +3718,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		mux.Handle("/", publicHandler)
 		mux.Handle("/v1/internal/realtime/", realtimeControlProxy)
 		publicListenerHandler = mux
+	}
+	var globalIngressScope func(context.Context) error
+	if deps.pool != nil {
+		globalIngressScope = globaldirectory.NewPgStore(deps.pool).CheckScope
+	}
+	regionalAppsDomain := deps.appsDomain
+	if regionalAppsDomain == "" {
+		regionalAppsDomain = cfg.AppsDomain
+	}
+	publicListenerHandler, stopGlobalIngress, err := configureGlobalIngress(ctx, cfg, regionalAppsDomain, globalIngressScope, publicListenerHandler)
+	if err != nil {
+		return err
+	}
+	defer stopGlobalIngress()
+	if deps.synth != nil {
+		deps.synth.SetHandler(publicListenerHandler)
 	}
 	// addSrv is the closure for the public :8080 + control listeners
 	// below; declared above so the unified-mux block above can run

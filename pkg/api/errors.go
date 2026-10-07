@@ -413,6 +413,8 @@ const (
 	CodeRegionalReleaseGrantLimit             = "regional_release_grant_limit"
 	CodeRegionalImageReleaseOrder             = "regional_image_release_order_conflict"
 	CodeGlobalAppDirectoryUnavailable         = "global_app_directory_unavailable"
+	CodeGlobalIngressUnavailable              = "global_ingress_unavailable"
+	CodeGlobalIngressLoop                     = "global_ingress_loop"
 	CodeGlobalAppTargetReverificationRequired = "global_app_target_reverification_required"
 	CodeGlobalAppTargetVerificationFailed     = "global_app_target_verification_failed"
 	CodePlanLimitApps                         = "plan_limit_apps"
@@ -1881,8 +1883,10 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeRegionalImageReleaseExpired:
 		return http.StatusGone
-	case CodeGlobalAppDirectoryUnavailable, CodeGlobalAppTargetReverificationRequired:
+	case CodeGlobalAppDirectoryUnavailable, CodeGlobalAppTargetReverificationRequired, CodeGlobalIngressUnavailable:
 		return http.StatusServiceUnavailable
+	case CodeGlobalIngressLoop:
+		return http.StatusLoopDetected
 	case CodeGlobalAppTargetVerificationFailed:
 		return http.StatusBadGateway
 	case CodeComputeRegionUnknown, CodeComputeRegionOutsideCell, CodeAutomationInvalid:

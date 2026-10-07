@@ -67,7 +67,11 @@ type Config struct {
 	// gatewayd routes <slug>.<apps_domain> to the customer's app and
 	// applies the apps-suffix host guard. Empty disables wildcard routing
 	// (custom-domain-only deployments).
-	AppsDomain string `toml:"apps_domain"`
+	AppsDomain                   string `toml:"apps_domain"`
+	GlobalIngressDirectoryID     string `toml:"global_ingress_directory_id"`
+	GlobalIngressAppsDomain      string `toml:"global_ingress_apps_domain"`
+	GlobalIngressManifestPath    string `toml:"global_ingress_manifest_path"`
+	GlobalIngressTrustBundlePath string `toml:"global_ingress_trust_bundle_path"`
 
 	// APIDLoopback is the in-box URL gatewayd reverse-proxies the apid
 	// public surface (/v1/*, /dashboard/*, /oauth/*, /login*,
@@ -300,6 +304,9 @@ func LoadConfig(path string) (*Config, error) {
 	// box dev).
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
+	}
+	if err := c.globalIngressConfig().Validate(c.AppsDomain); err != nil {
+		return nil, err
 	}
 	return c, nil
 }
