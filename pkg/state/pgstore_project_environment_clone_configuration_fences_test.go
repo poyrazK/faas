@@ -544,7 +544,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	}
 	// ADR-590's protection successor refines this function. Exercise the
 	// actual ordered downgrade/upgrade chain and compare the final schema.
-	successorRaw, err := migrations.FS.ReadFile("20261006170801000_object_protection_capture_admission.sql")
+	successorRaw, err := migrations.FS.ReadFile("20261007125239060_object_protection_capture_admission.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +552,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(successor) != 2 {
 		t.Fatal("missing protection successor downgrade")
 	}
-	purgeRaw, err := migrations.FS.ReadFile("20261007121912000_clone_configuration_parent_purge.sql")
+	purgeRaw, err := migrations.FS.ReadFile("20261007125239084_clone_configuration_parent_purge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

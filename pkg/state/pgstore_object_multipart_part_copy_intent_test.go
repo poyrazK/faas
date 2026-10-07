@@ -57,7 +57,7 @@ func TestPgObjectMultipartPartCopyIntentRollbackRestartGuards(t *testing.T) {
 			t.Fatal("raw intent rewrite", q, err)
 		}
 	}
-	raw, err := migrations.FS.ReadFile("20261007100924000_object_multipart_part_copy_intent.sql")
+	raw, err := migrations.FS.ReadFile("20261007125239079_object_multipart_part_copy_intent.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

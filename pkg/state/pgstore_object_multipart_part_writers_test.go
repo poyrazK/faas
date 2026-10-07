@@ -99,12 +99,12 @@ func TestPgObjectMultipartPartWriterGuardsRollbackRestart(t *testing.T) {
 
 func TestPgObjectMultipartPartWriterMigrationRoundTripLegacyAndBusyDown(t *testing.T) {
 	st, pool, ctx := pgStoreWithPool(t)
-	raw, err := migrations.FS.ReadFile("20261007085254000_object_multipart_part_writers.sql")
+	raw, err := migrations.FS.ReadFile("20261007125239076_object_multipart_part_writers.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	parts := strings.SplitN(string(raw), "-- +goose Down", 2)
-	copyIntent, err := migrations.FS.ReadFile("20261007100924000_object_multipart_part_copy_intent.sql")
+	copyIntent, err := migrations.FS.ReadFile("20261007125239079_object_multipart_part_copy_intent.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,7 +33,7 @@ func TestPgObjectUploadMutationBindingGuardsAndRollback(t *testing.T) {
 			t.Fatalf("unsettled receipt guard: %v", err)
 		}
 	}
-	raw, err := migrations.FS.ReadFile("20261006181423000_object_upload_mutation_binding.sql")
+	raw, err := migrations.FS.ReadFile("20261007125239066_object_upload_mutation_binding.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,22 +80,22 @@ func TestPgObjectUploadMutationBindingGuardsAndRollback(t *testing.T) {
 	if err := tx.QueryRow(ctx, shape).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	latest, err := migrations.FS.ReadFile("20261006221829000_object_multipart_mutation_binding.sql")
+	latest, err := migrations.FS.ReadFile("20261007125239070_object_multipart_mutation_binding.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	latestParts := strings.Split(string(latest), "-- +goose Down")
-	initiation, err := migrations.FS.ReadFile("20261007074655000_object_multipart_initiation_dispatch.sql")
+	initiation, err := migrations.FS.ReadFile("20261007125239073_object_multipart_initiation_dispatch.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	initiationParts := strings.SplitN(string(initiation), "-- +goose Down", 2)
-	partWriters, err := migrations.FS.ReadFile("20261007085254000_object_multipart_part_writers.sql")
+	partWriters, err := migrations.FS.ReadFile("20261007125239076_object_multipart_part_writers.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	partWriterParts := strings.SplitN(string(partWriters), "-- +goose Down", 2)
-	copyIntent, err := migrations.FS.ReadFile("20261007100924000_object_multipart_part_copy_intent.sql")
+	copyIntent, err := migrations.FS.ReadFile("20261007125239079_object_multipart_part_copy_intent.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

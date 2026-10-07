@@ -99,7 +99,7 @@ func TestPgObjectMultipartInitiationMigrationClassifiesExistingAsUncertain(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261007074655000_object_multipart_initiation_dispatch.sql")
+	raw, err := migrations.FS.ReadFile("20261007125239073_object_multipart_initiation_dispatch.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestPgObjectMultipartInitiationMigrationClassifiesExistingAsUncertain(t *te
 
 func TestPgObjectMultipartInitiationMigrationRoundTrip(t *testing.T) {
 	_, pool, ctx := pgStoreWithPool(t)
-	raw, err := migrations.FS.ReadFile("20261007074655000_object_multipart_initiation_dispatch.sql")
+	raw, err := migrations.FS.ReadFile("20261007125239073_object_multipart_initiation_dispatch.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,7 +18,7 @@ import (
 func TestPgObjectUploadCaptureMigrationRoundTripAndHeldDownRefusal(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	b, _ := seedAccounting(t, s)
-	raw, err := migrations.FS.ReadFile("20261006174259000_object_upload_capture_admission.sql")
+	raw, err := migrations.FS.ReadFile("20261007125239063_object_upload_capture_admission.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

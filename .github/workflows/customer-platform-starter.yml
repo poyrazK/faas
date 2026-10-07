@@ -26,7 +26,8 @@ permissions:
 jobs:
   acceptance:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # APID test compilation needs headroom on a cold Go cache.
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -63,6 +64,14 @@ jobs:
             -c "GRANT USAGE ON SCHEMA public TO customer_app;" \
             -c "ALTER DEFAULT PRIVILEGES FOR ROLE customer_migration IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO customer_app;"
       - name: Test two-customer lifecycle and PostgreSQL isolation
+        # Serial package builds alone do not bound a large compiler heap.
+        # Bound GC pressure, omit APID test debug metadata and serialize its
+        # compiler backend. Production build jobs retain their debug metadata.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make test-customer-platform
 
   mcp-task-postgres:

@@ -19,7 +19,7 @@ import (
 func TestPgObjectProtectionCaptureMigrationRoundTripAndHeldDownRefusal(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	b, _ := seedAccounting(t, s)
-	raw, err := migrations.FS.ReadFile("20261006170801000_object_protection_capture_admission.sql")
+	raw, err := migrations.FS.ReadFile("20261007125239060_object_protection_capture_admission.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

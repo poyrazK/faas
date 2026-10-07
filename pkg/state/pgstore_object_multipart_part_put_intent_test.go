@@ -15,7 +15,7 @@ import (
 
 func partPutMigrationParts(t *testing.T) []string {
 	t.Helper()
-	raw, err := migrations.FS.ReadFile("20261007103845000_object_multipart_part_put_intent.sql")
+	raw, err := migrations.FS.ReadFile("20261007125239082_object_multipart_part_put_intent.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
