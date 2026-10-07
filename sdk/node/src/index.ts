@@ -162,12 +162,14 @@ export {
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
 
-export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './customer-operations.js';
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions } from './customer-operations.js';
 export { GregaleOperations, type GregaleOperationsOptions, type OperationExecutionContext } from './operations-runtime.js';
 
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
 
-export { operationReceiptSchema } from "./operation-contract.js";
+export { operationReceiptSchema, customerOperationReceiptSchema } from "./operation-contract.js";
+export { customerOperationRequestFromHeaders, customerOperationRequestDigest, withCustomerOperationTransaction,
+  type CustomerOperationHTTPRequest, type CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 export {
   operationRequestFromHeaders,
   operationRequestDigest,
@@ -181,3 +183,6 @@ export {
   type OperationPool,
   type OperationTransactionResult,
 } from "./operations.js";
+
+export { OperationMilestonePublicationError, type CustomerOperationTransaction } from './customer-operation-milestones.js';
+export { OperationWorkflowStatePublicationError, type OperationWorkflowStateReport, type OperationWorkflowStateReceipt } from './customer-operation-workflow-states.js';

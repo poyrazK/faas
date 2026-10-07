@@ -1524,6 +1524,17 @@ type CustomerOperationIdempotency struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
+type CustomerOperationMilestone struct {
+	OperationID   pgtype.UUID
+	ID            pgtype.UUID
+	EventSequence int64
+	Name          string
+	Payload       []byte
+	OccurredAt    pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	Fingerprint   string
+}
+
 type CustomerOperationRecovery struct {
 	OperationID pgtype.UUID
 	RecoveryID  string
@@ -1595,6 +1606,35 @@ type CustomerOperationWorkflowGuestClaim struct {
 	CapabilityDigest   string
 	DeadlineAt         pgtype.Timestamptz
 	BoundAt            pgtype.Timestamptz
+}
+
+type CustomerOperationWorkflowState struct {
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	Scope            string
+	SubjectType      string
+	SubjectID        string
+	Workflow         string
+	InstanceID       string
+	State            string
+	Revision         int64
+	OperationID      pgtype.UUID
+	ReportID         pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type CustomerOperationWorkflowStateReport struct {
+	OperationID pgtype.UUID
+	ID          pgtype.UUID
+	Workflow    string
+	InstanceID  string
+	FromState   string
+	State       string
+	Revision    int64
+	OccurredAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	Fingerprint string
 }
 
 type DataUpstream struct {

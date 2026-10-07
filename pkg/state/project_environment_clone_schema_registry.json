@@ -1709,6 +1709,20 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_milestones",
+    "columns": [
+      "created_at",
+      "event_sequence",
+      "fingerprint",
+      "id",
+      "name",
+      "occurred_at",
+      "operation_id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_recoveries",
     "columns": [
       "created_at",

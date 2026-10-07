@@ -220,3 +220,68 @@ def test_operation_completion_retry_receipt_contract() -> None:
         }
     )
     assert report.business_state == "succeeded" and report.state == "dead" and report.replay_generation == 0
+
+
+# ADR-639: public references are independent of caller identity and stay opaque.
+def test_operation_business_reference_wire_contract() -> None:
+    from faas_sdk.api.operations import list_account_operations, list_platform_tenant_self_operations
+    from faas_sdk.models.operation_subject import OperationSubject
+    from faas_sdk.models.operation_subject_spec import OperationSubjectSpec
+
+    app = UUID("11111111-1111-1111-1111-111111111111")
+    subject = {"type": "order", "id": "ord/42&é"}
+    assert OperationSubject.from_dict(subject).to_dict() == subject
+    spec = {"type": "order", "id_from": "/order_id"}
+    assert OperationSubjectSpec.from_dict(spec).to_dict() == spec
+    customer = list_platform_tenant_self_operations._get_kwargs(
+        app_id=app, scope="default", subject_type=subject["type"], subject_id=subject["id"]
+    )
+    operator = list_account_operations._get_kwargs(
+        slug="orders", scope="default", subject_type=subject["type"], subject_id=subject["id"]
+    )
+    for request in (customer, operator):
+        assert request["params"]["subject_type"] == subject["type"]
+        assert request["params"]["subject_id"] == subject["id"]
+        assert request["params"]["scope"] == "default"
+        assert "tenant_id" not in request["params"]
+
+
+def test_operation_milestone_wire_and_scoped_feed() -> None:
+    from faas_sdk.api.operations import list_platform_tenant_self_business_milestones
+    from faas_sdk.models.operation_definition_spec_milestones import OperationDefinitionSpecMilestones
+    from faas_sdk.models.operation_milestone import OperationMilestone
+
+    app = UUID("11111111-1111-4111-8111-111111111111")
+    request = list_platform_tenant_self_business_milestones._get_kwargs(
+        app_id=app, scope="staging", subject_type="order", subject_id="ord/42&é", cursor="next+/=", limit=2
+    )
+    assert request["params"] == {
+        "app_id": str(app),
+        "scope": "staging",
+        "subject_type": "order",
+        "subject_id": "ord/42&é",
+        "cursor": "next+/=",
+        "limit": 2,
+    }
+    fact = {
+        "id": str(app),
+        "operation_id": str(app),
+        "name": "paid",
+        "payload": {"total": 9007199254740993},
+        "occurred_at": "2026-10-07T12:00:00+00:00",
+        "created_at": "2026-10-07T12:05:00+00:00",
+        "sequence": 3,
+        "workflow_steps": [
+            {
+                "workflow": "order-lifecycle",
+                "title": "Order lifecycle",
+                "step": "paid",
+                "label": "Payment authorized",
+                "milestone": "paid",
+                "position": 2,
+            }
+        ],
+    }
+    assert OperationMilestone.from_dict(fact).to_dict() == fact
+    schemas = {"paid": {"type": "object"}}
+    assert OperationDefinitionSpecMilestones.from_dict(schemas).to_dict() == schemas

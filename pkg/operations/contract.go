@@ -17,10 +17,11 @@ var operationName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // Contract is compiled once per immutable definition revision. Compiled JSON
 // schemas are safe for concurrent input/output validation.
 type Contract struct {
-	Spec     api.OperationDefinitionSpec
-	Revision string
-	Input    *jsonschema.Schema
-	Output   *jsonschema.Schema
+	Spec       api.OperationDefinitionSpec
+	Revision   string
+	Input      *jsonschema.Schema
+	Output     *jsonschema.Schema
+	Milestones map[string]*jsonschema.Schema
 }
 
 func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (*Contract, error) {
@@ -39,6 +40,16 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 	}
 	if spec.Owner != api.OperationOwnerPlatformTenant {
 		return nil, fmt.Errorf("operation owner must be platform_tenant")
+	}
+	if spec.Subject != nil {
+		if err := validateSubjectSpec(*spec.Subject); err != nil {
+			return nil, err
+		}
+		subject := *spec.Subject
+		spec.Subject = &subject
+	}
+	if spec.HTTPTransactionVersion != 0 && spec.HTTPTransactionVersion != api.OperationHTTPTransactionVersion {
+		return nil, fmt.Errorf("unsupported HTTP operation transaction version")
 	}
 	if spec.Recovery == "" {
 		spec.Recovery = api.OperationRecoveryReconcile
@@ -65,6 +76,13 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 		return nil, fmt.Errorf("operation output schema: %w", err)
 	}
 	spec.InputSchema, spec.OutputSchema = canonicalInput, canonicalOutput
+	milestones, err := compileMilestones(&spec, limits)
+	if err != nil {
+		return nil, err
+	}
+	if err := compileWorkflowSteps(&spec); err != nil {
+		return nil, err
+	}
 	spec.ProgressStages = append([]string(nil), spec.ProgressStages...)
 	raw, err := json.Marshal(spec)
 	if err != nil {
@@ -74,7 +92,7 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 	if err != nil {
 		return nil, err
 	}
-	return &Contract{Spec: spec, Revision: revision, Input: input, Output: output}, nil
+	return &Contract{Spec: spec, Revision: revision, Input: input, Output: output, Milestones: milestones}, nil
 }
 
 type closedSchemaLoader struct{}
