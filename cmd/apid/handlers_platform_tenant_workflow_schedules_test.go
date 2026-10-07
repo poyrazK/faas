@@ -20,7 +20,7 @@ func TestPlatformTenantSelfWorkflowScheduleOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	definitions, err := json.Marshal([]api.WorkflowSpec{
-		{Name: "nightly", Trigger: &api.WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", Timezone: "UTC", TenantConfigurable: true},
+		{Name: "nightly", Trigger: &api.WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", Timezone: "UTC", TenantConfigurable: true, CatchUp: "latest", CatchUpWindow: "2h"},
 			Steps: []api.WorkflowStepSpec{{Name: "report", Run: "report"}}},
 		{Name: "owner-only", Trigger: &api.WorkflowTriggerSpec{Type: "schedule", Schedule: "0 8 * * *", Timezone: "UTC"},
 			Steps: []api.WorkflowStepSpec{{Name: "report", Run: "report"}}},
@@ -66,7 +66,7 @@ func TestPlatformTenantSelfWorkflowScheduleOverrides(t *testing.T) {
 		t.Fatalf("list tenant schedules: %d %s", listed.Code, listed.Body)
 	}
 	initial := schedules.Schedules[0]
-	if initial.WorkflowName != "nightly" || initial.Version != 0 || initial.Customized || initial.Schedule != "0 7 * * *" || !initial.TenantConfigurable {
+	if initial.WorkflowName != "nightly" || initial.Version != 0 || initial.Customized || initial.Schedule != "0 7 * * *" || !initial.TenantConfigurable || initial.CatchUp != "latest" || initial.CatchUpWindow != "2h0m0s" {
 		t.Fatalf("initial tenant schedule=%+v", initial)
 	}
 	namePath := listPath + "/nightly"
@@ -75,12 +75,18 @@ func TestPlatformTenantSelfWorkflowScheduleOverrides(t *testing.T) {
 	updated := e.do(t, http.MethodPut, namePath, update, manageHeaders)
 	var response api.TenantWorkflowScheduleResponse
 	if updated.Code != http.StatusOK || json.Unmarshal(updated.Body.Bytes(), &response) != nil || response.Version != 1 ||
-		!response.Enabled || !response.Customized || response.Timezone != "Europe/Istanbul" || response.Overlap != "allow" {
+		!response.Enabled || !response.Customized || response.Timezone != "Europe/Istanbul" || response.Overlap != "allow" || response.CatchUp != "latest" || response.CatchUpWindow != "2h0m0s" {
 		t.Fatalf("update tenant schedule: %d %s", updated.Code, updated.Body)
 	}
 	stale := e.do(t, http.MethodPut, namePath, update, manageHeaders)
 	if stale.Code != http.StatusConflict {
 		t.Fatalf("stale tenant schedule update=%d %s", stale.Code, stale.Body)
+	}
+	for _, option := range []string{"catch_up", "catch_up_window"} {
+		body := map[string]any{"expected_version": 1, "schedule": "0 9 * * *", option: "skip"}
+		if denied := e.do(t, http.MethodPut, namePath, body, manageHeaders); denied.Code != http.StatusBadRequest {
+			t.Fatalf("tenant changed owner recovery option %s: %d %s", option, denied.Code, denied.Body)
+		}
 	}
 	ownerOnly := e.do(t, http.MethodPut, listPath+"/owner-only", update, manageHeaders)
 	if ownerOnly.Code != http.StatusNotFound {

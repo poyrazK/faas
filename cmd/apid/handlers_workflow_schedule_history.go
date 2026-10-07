@@ -66,6 +66,7 @@ func workflowScheduleHistoryResponse(rows []state.WorkflowScheduleOccurrence, li
 		response.Occurrences = append(response.Occurrences, api.WorkflowScheduleOccurrenceResponse{
 			ID: row.ID, AppID: row.AppID, PlatformTenantID: row.PlatformTenantID, WorkflowName: row.WorkflowName, DeploymentID: row.DeploymentID,
 			ScheduledFor: row.ScheduledFor, EvaluatedAt: row.EvaluatedAt, Status: row.Status, RunID: row.RunID,
+			ReplayRunID: row.ReplayRunID, ReplayedAt: row.ReplayedAt,
 		})
 	}
 	return response

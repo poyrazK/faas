@@ -112,7 +112,7 @@ var workSpecs = map[workKind]workSpec{
 	workJobCancel:            {slots: 8, overflow: overflowDrop},
 	workJobDispatch:          {slots: 1, overflow: overflowDrop},
 	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
-	workWorkflowDispatch:     {slots: 4, overflow: overflowDrop},
+	workWorkflowDispatch:     {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
 	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
 	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
 	workEventFanout:          {slots: 1, overflow: overflowDrop},

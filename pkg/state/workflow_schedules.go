@@ -46,9 +46,13 @@ type TenantWorkflowSchedule struct {
 	Schedule         string
 	Timezone         string
 	Overlap          string
+	CatchUp          string
+	CatchUpWindow    string
 	Enabled          bool
 	Customized       bool
 	Version          int64
+	EffectiveTrigger api.WorkflowTriggerSpec `json:"-"`
+	Cursor           *WorkflowScheduleCursor `json:"-"`
 }
 
 // TenantWorkflowScheduleStore admits schedule-triggered workflows once per
@@ -167,6 +171,7 @@ func tenantWorkflowScheduleFromDefinition(appID, tenantID, deploymentID string, 
 	if customized {
 		trigger = applyTenantWorkflowScheduleTrigger(trigger, configured)
 	}
+	effectiveTrigger := trigger
 	if trigger.Timezone == "" {
 		trigger.Timezone = cronexpr.DefaultTimezone
 	}
@@ -174,9 +179,34 @@ func tenantWorkflowScheduleFromDefinition(appID, tenantID, deploymentID string, 
 		trigger.Overlap = "skip"
 	}
 	enabled := trigger.Enabled == nil || *trigger.Enabled
+	window, _ := trigger.ScheduleCatchUpWindow() // The definition was validated before listing/updating.
+	windowText := ""
+	if window > 0 {
+		windowText = window.String()
+	}
 	return TenantWorkflowSchedule{AppID: appID, PlatformTenantID: tenantID, WorkflowName: definition.Name,
 		DeploymentID: deploymentID, Schedule: trigger.Schedule, Timezone: trigger.Timezone,
-		Overlap: trigger.Overlap, Enabled: enabled, Customized: customized, Version: version}
+		Overlap: trigger.Overlap, CatchUp: trigger.ScheduleCatchUpPolicy(), CatchUpWindow: windowText,
+		Enabled: enabled, Customized: customized, Version: version, EffectiveTrigger: effectiveTrigger}
+}
+
+// WorkflowScheduleCursorMatches reports whether a durable cursor belongs to
+// the selected deployment and effective schedule definition, including a
+// tenant override snapshot when present.
+func WorkflowScheduleCursorMatches(cursor WorkflowScheduleCursor, deploymentID string, trigger api.WorkflowTriggerSpec) bool {
+	if cursor.DeploymentID != deploymentID {
+		return false
+	}
+	stored := cursor.TriggerSnapshot
+	if configured, _, ok := tenantWorkflowScheduleConfigFromSnapshot(stored); ok {
+		var err error
+		stored, err = json.Marshal(configured)
+		if err != nil {
+			return false
+		}
+	}
+	current, err := json.Marshal(trigger)
+	return err == nil && equalWorkflowJSON(stored, current)
 }
 
 func scheduledWorkflowDefinition(raw json.RawMessage, name string, plan api.Plan) (*api.WorkflowSpec, error) {
@@ -200,9 +230,8 @@ func scheduledWorkflowDefinition(raw json.RawMessage, name string, plan api.Plan
 	return nil, nil
 }
 
-// evaluateWorkflowSchedule is shared by both stores. New/redeployed schedules
-// arm before their first fire. Only the current nominal minute is eligible:
-// downtime never becomes an unbounded catch-up queue.
+// evaluateWorkflowSchedule is shared by both stores. New/changed schedules arm
+// before their first fire. Recovery selects at most one eligible occurrence.
 func evaluateWorkflowSchedule(appID, tenantID, deploymentID string, spec api.WorkflowSpec, previous *WorkflowScheduleCursor, now time.Time, active, namedActive, maxActive int) (*WorkflowScheduleCursor, *WorkflowRun, error) {
 	trigger, err := json.Marshal(spec.Trigger)
 	if err != nil {
@@ -224,17 +253,14 @@ func evaluateWorkflowSchedule(appID, tenantID, deploymentID string, spec api.Wor
 	if !nominal.After(previous.LastEvaluatedAt) {
 		return nil, nil, nil
 	}
-	schedule, err := cronexpr.Parse(spec.Trigger.Schedule, spec.Trigger.Timezone)
+	nominal, err = workflowScheduleNominal(*spec.Trigger, previous.LastEvaluatedAt, now)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !schedule.Next(nominal.Add(-time.Minute)).Equal(nominal) {
-		if tenantID != "" {
-			value := *previous
-			value.LastEvaluatedAt = now.UTC()
-			return &value, nil, nil
-		}
-		return nil, nil, nil
+	if nominal.IsZero() {
+		value := *previous
+		value.LastEvaluatedAt = now.UTC()
+		return &value, nil, nil
 	}
 	cursor.ScheduledFor = &nominal
 	if spec.Trigger.Overlap != "allow" && namedActive > 0 {
@@ -249,13 +275,14 @@ func evaluateWorkflowSchedule(appID, tenantID, deploymentID string, spec api.Wor
 	if err != nil {
 		return nil, nil, err
 	}
-	run := &WorkflowRun{AppID: appID, PlatformTenantID: tenantID, WorkflowName: spec.Name,
+	run := &WorkflowRun{AppID: appID, DeploymentID: deploymentID, PlatformTenantID: tenantID, WorkflowName: spec.Name,
 		DefinitionSnapshot: definition, Input: cloneWorkflowJSON(spec.Trigger.Input), ScheduledFor: nominal}
 	if err := prepareWorkflowRun(run); err != nil {
 		return nil, nil, err
 	}
 	cursor.Status, cursor.LastRunID = WorkflowScheduleStarted, run.ID
-	cursor.LastAdmittedAt = cloneTimePtr(&nominal)
+	admitted := now.UTC().Truncate(time.Minute)
+	cursor.LastAdmittedAt = &admitted
 	return cursor, run, nil
 }
 

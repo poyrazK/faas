@@ -11,8 +11,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func insertWorkflowScheduleOccurrence(ctx context.Context, tx pgx.Tx, cursor *WorkflowScheduleCursor, now time.Time) error {
-	row := workflowScheduleOccurrence(cursor, now)
+func insertWorkflowScheduleOccurrence(ctx context.Context, tx pgx.Tx, cursor, previous *WorkflowScheduleCursor, definition api.WorkflowSpec) error {
+	row := workflowScheduleOccurrence(cursor, previous, definition)
 	if row == nil {
 		return nil
 	}
@@ -21,6 +21,7 @@ func insertWorkflowScheduleOccurrence(ctx context.Context, tx pgx.Tx, cursor *Wo
 		WorkflowName: row.WorkflowName, DeploymentID: mustPgUUID(row.DeploymentID),
 		ScheduledFor: pgtype.Timestamptz{Time: row.ScheduledFor, Valid: true},
 		EvaluatedAt:  pgtype.Timestamptz{Time: row.EvaluatedAt, Valid: true}, Status: row.Status, RunID: mustPgUUID(row.RunID),
+		DefinitionHash: row.DefinitionHash,
 	})
 	if err != nil {
 		return fmt.Errorf("state: record workflow schedule occurrence: %w", err)
@@ -44,6 +45,7 @@ func (s *PgStore) ListWorkflowScheduleOccurrences(ctx context.Context, appID, te
 			ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), PlatformTenantID: pgUUIDString(row.PlatformTenantID),
 			WorkflowName: row.WorkflowName, DeploymentID: pgUUIDString(row.DeploymentID), ScheduledFor: timeFromPgtype(row.ScheduledFor),
 			EvaluatedAt: timeFromPgtype(row.EvaluatedAt), Status: row.Status, RunID: pgUUIDString(row.RunID),
+			DefinitionHash: row.DefinitionHash, ReplayRunID: pgUUIDString(row.ReplayRunID), ReplayedAt: timestamptzToTimePtr(row.ReplayedAt),
 		})
 	}
 	return result, nil

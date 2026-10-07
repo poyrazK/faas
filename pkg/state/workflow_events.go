@@ -70,7 +70,7 @@ func eventWorkflowRun(recipient PublishedEventRecipient, payload []byte, plan ap
 	if int64(len(payload)) > api.WorkflowRunInputMaxBytes {
 		return nil, fmt.Errorf("workflow: event envelope exceeds workflow input limit")
 	}
-	run := &WorkflowRun{AppID: recipient.AppID, PlatformTenantID: recipient.PlatformTenantID, WorkflowName: definition.Name,
+	run := &WorkflowRun{AppID: recipient.AppID, DeploymentID: recipient.DeploymentID, PlatformTenantID: recipient.PlatformTenantID, WorkflowName: definition.Name,
 		Input: cloneWorkflowJSON(payload), DefinitionSnapshot: cloneWorkflowJSON(recipient.Workflow)}
 	if err := prepareWorkflowRun(run); err != nil {
 		return nil, err

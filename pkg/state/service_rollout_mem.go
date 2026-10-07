@@ -289,7 +289,7 @@ func (m *MemStore) AbortServiceRollout(ctx context.Context, id, reason string) (
 	}
 	now := time.Now().UTC()
 	target.Status = DeploySuperseded
-	if m.operationRetainsDeploymentLocked(target.ID) {
+	if m.durableWorkRetainsDeploymentLocked(target.ID) {
 		target.Status = DeployLive
 	}
 	target.TrafficPercent = 0

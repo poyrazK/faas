@@ -24,11 +24,11 @@ func (s *workflowSignalStore) WorkflowAlertSnapshot(context.Context, string, str
 }
 
 func TestEvaluatorWorkflowMetricsUseDurableSignals(t *testing.T) {
-	for _, metric := range []state.AlertMetric{state.AlertMetricWorkflowFailures, state.AlertMetricWorkflowQuotaSkips, state.AlertMetricWorkflowPendingAge, state.AlertMetricWorkflowWaitingAge} {
+	for _, metric := range []state.AlertMetric{state.AlertMetricWorkflowFailures, state.AlertMetricWorkflowQuotaSkips, state.AlertMetricWorkflowPendingAge, state.AlertMetricWorkflowWaitingAge, state.AlertMetricWorkflowDueAge} {
 		t.Run(string(metric), func(t *testing.T) {
 			base := state.NewMemStore()
 			_, ident, _ := seedRule(t, base, metric, state.AlertGt, 10)
-			store := &workflowSignalStore{MemStore: base, snapshot: state.WorkflowAlertSnapshot{Failures: 11, QuotaSkips: 12, PendingAgeSeconds: 13, WaitingAgeSeconds: 14}}
+			store := &workflowSignalStore{MemStore: base, snapshot: state.WorkflowAlertSnapshot{Failures: 11, QuotaSkips: 12, PendingAgeSeconds: 13, WaitingAgeSeconds: 14, DueAgeSeconds: 15}}
 			dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}}
 			evaluator := alerts.NewEvaluator(alerts.EvaluatorOptions{Store: store, Audit: audit.New(base, discardLog(), nil, "meterd"), Identity: func() *age.X25519Identity { return ident }, Dispatcher: dispatch, Log: discardLog()})
 			stats, err := evaluator.RunOnce(context.Background())
@@ -41,7 +41,7 @@ func TestEvaluatorWorkflowMetricsUseDurableSignals(t *testing.T) {
 
 func TestEvaluatorWorkflowSignalFailureIsDegraded(t *testing.T) {
 	base := state.NewMemStore()
-	rule, ident, _ := seedRule(t, base, state.AlertMetricWorkflowQuotaSkips, state.AlertGt, 0)
+	rule, ident, _ := seedRule(t, base, state.AlertMetricWorkflowDueAge, state.AlertGt, 0)
 	store := &workflowSignalStore{MemStore: base, err: errors.New("database unavailable")}
 	dispatch := &recordingDispatcher{}
 	evaluator := alerts.NewEvaluator(alerts.EvaluatorOptions{Store: store, Audit: audit.New(base, discardLog(), nil, "meterd"), Identity: func() *age.X25519Identity { return ident }, Dispatcher: dispatch, Log: discardLog()})

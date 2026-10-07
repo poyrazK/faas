@@ -799,6 +799,8 @@ type Querier interface {
 	// form (PR-C).
 	GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTrustPolicyParams) (GetOIDCTrustPolicyRow, error)
 	GetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg GetOutboundBindingProbePolicyParams) (GetOutboundBindingProbePolicyRow, error)
+	// ADR-644: no row/advisory locks or state transitions in diagnostic snapshots.
+	GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, arg GetOwnedWorkflowDiagnosticsRunParams) (WorkflowRun, error)
 	// Read the row after a detector upsert so the notification reflects a
 	// preserved acknowledgement/dismissal rather than assuming active state.
 	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
@@ -837,8 +839,16 @@ type Querier interface {
 	GetWebhookAutomationBinding(ctx context.Context, db DBTX, endpointID pgtype.UUID) (WorkflowWebhookBinding, error)
 	GetWebhookAutomationReceipt(ctx context.Context, db DBTX, arg GetWebhookAutomationReceiptParams) (GetWebhookAutomationReceiptRow, error)
 	GetWorkflowAutomationHealthSummary(ctx context.Context, db DBTX, arg GetWorkflowAutomationHealthSummaryParams) (GetWorkflowAutomationHealthSummaryRow, error)
+	// ADR-642: live diagnostics share the health transaction's observation time.
+	// Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
+	GetWorkflowAutomationQueueHealth(ctx context.Context, db DBTX, arg GetWorkflowAutomationQueueHealthParams) (GetWorkflowAutomationQueueHealthRow, error)
 	GetWorkflowAutomationRevision(ctx context.Context, db DBTX, arg GetWorkflowAutomationRevisionParams) (WorkflowAutomationRevision, error)
+	GetWorkflowDiagnosticsSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]GetWorkflowDiagnosticsStepsRow, error)
+	GetWorkflowRecoveryTarget(ctx context.Context, db DBTX, arg GetWorkflowRecoveryTargetParams) (GetWorkflowRecoveryTargetRow, error)
 	GetWorkflowScheduleCursor(ctx context.Context, db DBTX, arg GetWorkflowScheduleCursorParams) (WorkflowScheduleCursor, error)
+	// Replay reads and locks one retained occurrence inside the app admission lock.
+	// The replay run identity is separate from the original skipped outcome.
+	GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg GetWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
 	HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
 	HasManagedPostgresIncompatibleUsageWindow(ctx context.Context, db DBTX, arg HasManagedPostgresIncompatibleUsageWindowParams) (bool, error)
@@ -1087,6 +1097,7 @@ type Querier interface {
 	InsertWorkflowAutomationRevision(ctx context.Context, db DBTX, arg InsertWorkflowAutomationRevisionParams) error
 	InsertWorkflowOperationEffect(ctx context.Context, db DBTX, arg InsertWorkflowOperationEffectParams) error
 	InsertWorkflowResume(ctx context.Context, db DBTX, arg InsertWorkflowResumeParams) (pgtype.Timestamptz, error)
+	InsertWorkflowRun(ctx context.Context, db DBTX, arg InsertWorkflowRunParams) (InsertWorkflowRunRow, error)
 	InsertWorkflowScheduleOccurrence(ctx context.Context, db DBTX, arg InsertWorkflowScheduleOccurrenceParams) error
 	InstanceByID(ctx context.Context, db DBTX, id pgtype.UUID) (InstanceByIDRow, error)
 	// Live instances on a specific node — input to the arbiter's
@@ -1528,6 +1539,7 @@ type Querier interface {
 	// Tenant schedule candidates are one row per active tenant/app binding. The
 	// composite cursor prevents large tenants from being starved by the page cap.
 	ListTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListTenantWorkflowScheduleCandidatesParams) ([]ListTenantWorkflowScheduleCandidatesRow, error)
+	ListTenantWorkflowScheduleCursors(ctx context.Context, db DBTX, arg ListTenantWorkflowScheduleCursorsParams) ([]PlatformTenantWorkflowScheduleCursor, error)
 	// A broker may redeliver after Gregale commits a terminal receipt but before
 	// the broker acknowledges it. The current delivery handle can be Acked
 	// without dispatching the application again.
@@ -1710,6 +1722,8 @@ type Querier interface {
 	LockUDPListenerAppOwner(ctx context.Context, db DBTX, appID string) (string, error)
 	LockWebhookAutomationEndpoint(ctx context.Context, db DBTX, arg LockWebhookAutomationEndpointParams) (InboundWebhookEndpoint, error)
 	LockWorkflowActionAdmission(ctx context.Context, db DBTX, workflowKey string) error
+	// ADR-641: serialize only the short claim transaction, never handler execution.
+	LockWorkflowDispatchFairness(ctx context.Context, db DBTX) error
 	LockWorkflowGuardRun(ctx context.Context, db DBTX, runID pgtype.UUID) (LockWorkflowGuardRunRow, error)
 	LockWorkflowGuardStep(ctx context.Context, db DBTX, arg LockWorkflowGuardStepParams) (LockWorkflowGuardStepRow, error)
 	LockWorkflowRecovery(ctx context.Context, db DBTX, runID pgtype.UUID) (string, error)
@@ -1719,7 +1733,10 @@ type Querier interface {
 	// Canonicalize UUID spelling. Take both historic forms in a fixed order so
 	// updated writers also coordinate with older callers during rolling updates.
 	LockWorkflowRunAdmission(ctx context.Context, db DBTX, appKey string) error
+	// Coordinate with the previous per-definition claimant during rolling upgrades.
+	LockWorkflowRunConcurrency(ctx context.Context, db DBTX, arg LockWorkflowRunConcurrencyParams) error
 	LockWorkflowRunForManualRetry(ctx context.Context, db DBTX, runID string) (WorkflowRun, error)
+	LockWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg LockWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
 	LockWorkflowScheduleTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (LockWorkflowScheduleTargetRow, error)
 	LockWorkflowStepsForManualRetry(ctx context.Context, db DBTX, runID string) ([]WorkflowStep, error)
 	ManagedPostgresAdmissionFenced(ctx context.Context, db DBTX, appID string) (bool, error)
@@ -1765,6 +1782,7 @@ type Querier interface {
 	NextCustomerOperationWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error)
 	NextDueLegacyWorkflowRun(ctx context.Context, db DBTX, staleMs int64) (NextDueLegacyWorkflowRunRow, error)
 	NextEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg NextEnvironmentQueueDeliveryInvocationParams) (Invocation, error)
+	NextFairDueWorkflowRun(ctx context.Context, db DBTX, arg NextFairDueWorkflowRunParams) (NextFairDueWorkflowRunRow, error)
 	// ----------------------------------------------------------------------
 	// NodeLifecycleStore (Workstream B, issue #1184)
 	//
@@ -2389,6 +2407,9 @@ type Querier interface {
 	// as a follow-up ADR rather than conflated into PR-1's
 	// migration slot 533.
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
+	// Preserve tenant cadence, version and admission priority, but invalidate the
+	// evaluated deployment so publish/pause/resume cannot replay the paused interval.
+	RearmTenantAutomationSchedules(ctx context.Context, db DBTX, arg RearmTenantAutomationSchedulesParams) error
 	ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error)
 	ReconcileManagedPostgresLegacyResource(ctx context.Context, db DBTX, arg ReconcileManagedPostgresLegacyResourceParams) (int64, error)
 	RecordAppSecretDeliveryFailure(ctx context.Context, db DBTX, arg RecordAppSecretDeliveryFailureParams) (int64, error)
@@ -2467,6 +2488,7 @@ type Querier interface {
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
 	RecordWorkflowCancellation(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	RecordWorkflowDispatchClaim(ctx context.Context, db DBTX, arg RecordWorkflowDispatchClaimParams) error
 	RecordWorkflowGuardDecision(ctx context.Context, db DBTX, arg RecordWorkflowGuardDecisionParams) error
 	// Only the retirement guard's current approved lease may release this hold.
 	RecoverEnvironmentGitOpsQueue(ctx context.Context, db DBTX, arg RecoverEnvironmentGitOpsQueueParams) (QueueBinding, error)
@@ -2725,6 +2747,7 @@ type Querier interface {
 	SetServiceCapacityProtection(ctx context.Context, db DBTX, enabled bool) ([]byte, error)
 	SetUDPListenerEnabled(ctx context.Context, db DBTX, arg SetUDPListenerEnabledParams) (AppUdpListener, error)
 	SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg SetWorkflowRunWakeFencedParams) (int64, error)
+	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)
 	SkipPendingWorkflowStep(ctx context.Context, db DBTX, arg SkipPendingWorkflowStepParams) error
 	SkipWorkflowForEachRemaining(ctx context.Context, db DBTX, arg SkipWorkflowForEachRemainingParams) error
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
@@ -2892,6 +2915,7 @@ type Querier interface {
 	// selectivity; the residual account_id check is a post-fetch
 	// row-level filter (one row, microseconds).
 	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) error
+	UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateTenantWorkflowScheduleLastAdmittedAtParams) (int64, error)
 	// Review finding MED-1 (PR #993): the inline SQL at
 	// pkg/state/pgstore.go::UpdateTrigger is the source of truth
 	// (sqlc-generated UpdateTrigger stub is bypassed because sqlc
@@ -2900,6 +2924,9 @@ type Querier interface {
 	// ListEnabledTriggers uses (filter_criteria is part of the
 	// Trigger struct since commit 6 of issue #757 mega-PR).
 	UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerParams) (UpdateTriggerRow, error)
+	// Replay admissions update fairness without rewriting the scheduler cursor's
+	// last outcome or nominal schedule time.
+	UpdateWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateWorkflowScheduleLastAdmittedAtParams) (int64, error)
 	// Accept only a routable target on this app. Using INSERT .. SELECT makes the
 	// ownership/status check atomic with writing the alias.
 	UpsertDeploymentAlias(ctx context.Context, db DBTX, arg UpsertDeploymentAliasParams) (UpsertDeploymentAliasRow, error)
@@ -2977,6 +3004,9 @@ type Querier interface {
 	WorkerPoolHistory(ctx context.Context, db DBTX, arg WorkerPoolHistoryParams) (WorkerPoolHistoryRow, error)
 	WorkflowAlertSnapshot(ctx context.Context, db DBTX, arg WorkflowAlertSnapshotParams) (WorkflowAlertSnapshotRow, error)
 	WorkflowControlSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowControlStepsRow, error)
+	// Recheck after acquiring the legacy concurrency lock. Earlier workers can
+	// consume the last definition slot while a new claimant waits for that lock.
+	WorkflowDispatchCapacityAvailable(ctx context.Context, db DBTX, arg WorkflowDispatchCapacityAvailableParams) (bool, error)
 	WorkflowForEachStartAllowed(ctx context.Context, db DBTX, arg WorkflowForEachStartAllowedParams) (bool, error)
 	WorkflowGenerationCurrent(ctx context.Context, db DBTX, arg WorkflowGenerationCurrentParams) (bool, error)
 	WorkflowGuardOutputs(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowGuardOutputsRow, error)

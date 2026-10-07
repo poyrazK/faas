@@ -3,14 +3,15 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func (m *MemStore) recordWorkflowScheduleOccurrenceLocked(cursor *WorkflowScheduleCursor, now time.Time) {
-	occurrence := workflowScheduleOccurrence(cursor, now)
+func (m *MemStore) recordWorkflowScheduleOccurrenceLocked(cursor, previous *WorkflowScheduleCursor, definition api.WorkflowSpec) {
+	occurrence := workflowScheduleOccurrence(cursor, previous, definition)
 	if occurrence == nil {
 		return
 	}
@@ -83,6 +84,162 @@ func (m *MemStore) PruneWorkflowScheduleOccurrences(_ context.Context, before ti
 		delete(m.workflowScheduleOccurrences, row.ID)
 	}
 	return len(rows), nil
+}
+
+func (m *MemStore) PreviewWorkflowScheduleReplays(_ context.Context, appID string, ids []string) ([]WorkflowScheduleReplayResult, error) {
+	return m.workflowScheduleReplayResults(appID, ids, false)
+}
+
+func (m *MemStore) ReplayWorkflowScheduleOccurrences(_ context.Context, appID string, ids []string) ([]WorkflowScheduleReplayResult, error) {
+	return m.workflowScheduleReplayResults(appID, ids, true)
+}
+
+func (m *MemStore) workflowScheduleReplayResults(appID string, ids []string, execute bool) ([]WorkflowScheduleReplayResult, error) {
+	if err := validateWorkflowScheduleReplaySelection(appID, ids); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rows := make([]WorkflowScheduleOccurrence, 0, len(ids))
+	for _, id := range ids {
+		row, exists := m.workflowScheduleOccurrences[id]
+		if !exists || row.AppID != appID {
+			rows = append(rows, WorkflowScheduleOccurrence{ID: id})
+			continue
+		}
+		rows = append(rows, row)
+	}
+	workflowScheduleReplayOrder(rows)
+
+	active := 0
+	for _, run := range m.workflowRuns {
+		if run.AppID == appID && workflowRunIsActive(run.Status) {
+			active++
+		}
+	}
+	reserved := 0
+	reservedNamed := make(map[string]int)
+	results := make([]WorkflowScheduleReplayResult, 0, len(rows))
+	for _, row := range rows {
+		if row.AppID == "" {
+			results = append(results, WorkflowScheduleReplayResult{OccurrenceID: row.ID, Outcome: WorkflowScheduleReplayOccurrenceNotFound})
+			continue
+		}
+		initial := workflowScheduleReplayInitialOutcome(row)
+		result := workflowScheduleReplayResult(row, initial)
+		if initial != WorkflowScheduleReplayEligible {
+			results = append(results, result)
+			continue
+		}
+
+		var deployment Deployment
+		var account Account
+		var eligible bool
+		var scheduleCursor *WorkflowScheduleCursor
+		if row.PlatformTenantID != "" {
+			deployment, account, eligible = m.tenantWorkflowScheduleTargetLocked(appID, row.PlatformTenantID)
+			if !eligible {
+				result.Outcome = WorkflowScheduleReplayTenantUnavailable
+				results = append(results, result)
+				continue
+			}
+			if cursor, exists := m.workflowTenantSchedules[appID+"/"+row.PlatformTenantID+"/"+row.WorkflowName]; exists {
+				copy := cursor
+				scheduleCursor = &copy
+			}
+		} else {
+			deployment, account, eligible = m.workflowScheduleTargetLocked(appID)
+			if !eligible {
+				result.Outcome = WorkflowScheduleReplayTargetUnavailable
+				results = append(results, result)
+				continue
+			}
+		}
+		if deployment.ID != row.DeploymentID {
+			result.Outcome = WorkflowScheduleReplayDeploymentChanged
+			results = append(results, result)
+			continue
+		}
+		if !account.Plan.WorkflowsAllowed() {
+			result.Outcome = WorkflowScheduleReplayPlanUnavailable
+			results = append(results, result)
+			continue
+		}
+		definition, outcome, err := workflowScheduleReplayDefinition(row, deployment.Workflows, account.Plan, scheduleCursor)
+		if err != nil {
+			return nil, err
+		}
+		if outcome != WorkflowScheduleReplayEligible {
+			result.Outcome = outcome
+			results = append(results, result)
+			continue
+		}
+		named := 0
+		for _, run := range m.workflowRuns {
+			if run.AppID != appID || !workflowRunIsActive(run.Status) || run.WorkflowName != row.WorkflowName ||
+				!sameMemUUID(run.PlatformTenantID, row.PlatformTenantID) {
+				continue
+			}
+			named++
+		}
+		admissionKey := row.PlatformTenantID + "/" + row.WorkflowName
+		named += reservedNamed[admissionKey]
+		if definition.Trigger.Overlap != "allow" && named > 0 {
+			result.Outcome = WorkflowScheduleReplayOverlapActive
+			results = append(results, result)
+			continue
+		}
+		if active+reserved >= account.Plan.WorkflowMaxConcurrentRuns() {
+			result.Outcome = WorkflowScheduleReplayQuotaFull
+			results = append(results, result)
+			continue
+		}
+		if !execute {
+			reserved++
+			reservedNamed[admissionKey]++
+			results = append(results, result)
+			continue
+		}
+
+		definitionSnapshot, err := json.Marshal(definition)
+		if err != nil {
+			return nil, fmt.Errorf("state: encode replay workflow definition: %w", err)
+		}
+		run := &WorkflowRun{AppID: appID, DeploymentID: deployment.ID, PlatformTenantID: row.PlatformTenantID,
+			WorkflowName: row.WorkflowName, DefinitionSnapshot: definitionSnapshot, Input: cloneWorkflowJSON(definition.Trigger.Input),
+			ScheduledFor: row.ScheduledFor}
+		if err := prepareWorkflowRun(run); err != nil {
+			return nil, err
+		}
+		if err := m.insertWorkflowRunLocked(run); err != nil {
+			return nil, err
+		}
+		now := time.Now().UTC()
+		row.ReplayRunID, row.ReplayedAt = run.ID, &now
+		m.workflowScheduleOccurrences[row.ID] = row
+		admitted := now.Truncate(time.Minute)
+		if row.PlatformTenantID != "" {
+			key := appID + "/" + row.PlatformTenantID + "/" + row.WorkflowName
+			if cursor, exists := m.workflowTenantSchedules[key]; exists {
+				cursor.LastAdmittedAt = &admitted
+				m.workflowTenantSchedules[key] = cursor
+			}
+		} else {
+			key := appID + "/" + row.WorkflowName
+			if cursor, exists := m.workflowSchedules[key]; exists {
+				cursor.LastAdmittedAt = &admitted
+				m.workflowSchedules[key] = cursor
+			}
+		}
+		result.Outcome, result.ReplayRunID = WorkflowScheduleReplayReplayed, run.ID
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func workflowRunIsActive(status string) bool {
+	return status == WorkflowRunStatusPending || status == WorkflowRunStatusRunning || status == WorkflowRunStatusAwaitingEvent
 }
 
 func (m *MemStore) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, owner string, minute time.Time, limit int) ([]WorkflowScheduleCandidate, error) {

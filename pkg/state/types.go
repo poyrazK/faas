@@ -3157,6 +3157,7 @@ const (
 	AlertMetricWorkflowQuotaSkips        AlertMetric = "workflow_schedule_quota_skips"
 	AlertMetricWorkflowPendingAge        AlertMetric = "workflow_pending_age_seconds"
 	AlertMetricWorkflowWaitingAge        AlertMetric = "workflow_waiting_age_seconds"
+	AlertMetricWorkflowDueAge            AlertMetric = "workflow_due_age_seconds"
 	AlertMetricAPIUp                     AlertMetric = "api_up"
 	AlertMetricAccountSpendEUR           AlertMetric = "account_spend_eur"
 	AlertMetricFailedDeployments         AlertMetric = "deployment_failed"
@@ -3975,6 +3976,9 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
+	// WorkflowRunID is set only after authenticated durable workflow admission.
+	// It authorizes private code routing and is never guest-authored or persisted.
+	WorkflowRunID string `json:"-"`
 	// ResponseRetryAfter is transient gateway response metadata, never persisted
 	// or accepted from the customer invocation envelope.
 	ResponseRetryAfter string `json:"-"`

@@ -5,9 +5,12 @@ import (
 	"time"
 )
 
-func (m *MemStore) WorkflowAlertSnapshot(_ context.Context, accountID, appID string, since, now time.Time) (WorkflowAlertSnapshot, error) {
+func (m *MemStore) WorkflowAlertSnapshot(ctx context.Context, accountID, appID string, since, now time.Time) (WorkflowAlertSnapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return WorkflowAlertSnapshot{}, err
+	}
 	result := WorkflowAlertSnapshot{}
 	owned := func(id string) bool {
 		app, ok := m.apps[id]
@@ -16,6 +19,9 @@ func (m *MemStore) WorkflowAlertSnapshot(_ context.Context, accountID, appID str
 	for _, run := range m.workflowRuns {
 		if !owned(run.AppID) {
 			continue
+		}
+		if at, due := m.workflowQueueDueAtLocked(run, now); due {
+			result.DueAgeSeconds = max(result.DueAgeSeconds, now.Sub(at).Seconds())
 		}
 		if run.FinishedAt != nil && !run.FinishedAt.Before(since) && run.CancelledAt == nil && (run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead) {
 			result.Failures++

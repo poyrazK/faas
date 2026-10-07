@@ -10,6 +10,29 @@ waits, and failure handlers as needed. Validate reports errors without executing
 or saving steps; publishing makes the saved draft available to future runs.
 This change contains backend APIs only; no dashboard editor is included.
 
+New runs capture the app's live default deployment as `deployment_id`. A run
+that starts on deployment A continues using A's handler code after deployment B
+becomes live, including after a timer, event/callback wait, retry, or manual
+resume. Condition checks, failure handlers, and `for_each` items use the same
+pin. Internal events and verified webhooks capture and retain code when accepted,
+even if run admission waits for capacity. Publishing an automation changes future
+definition snapshots; it does not change an existing run's code or definition.
+
+The run API and generated SDKs expose `deployment_id`; CLI run lists and
+inspection show the deployment. Historical runs without a recorded pin omit this
+field and display `legacy (unpinned)`. Those runs keep best-effort routing.
+Pinned code stays retained while its run/event history exists, including the
+existing 30-day terminal run retention for resumptions. Unreferenced code becomes
+eligible for ordinary cleanup. Retention does not extend public revision access
+or keep a VM resident. If pinned code is unavailable, execution fails instead of
+switching deployments. Start a new run to use newly deployed handlers.
+
+Pins guarantee this app's deployed handler code. Runtime configuration and
+credential revocation follow existing deployment and integration rules. External
+provider behavior and downstream project service releases are not pinned. Side
+effects still require idempotency.
+
+
 For example, save an event automation through the API:
 
 ```http
@@ -179,6 +202,39 @@ The filtered `total` and page use the same criteria. Results remain ordered newe
 first; `limit` and `offset` keep their existing behavior. Go, Node, and Python
 clients expose these filters. No dashboard editor is included.
 
+## Cancel queued workflow runs
+
+Pending runs can include a retry or a previously parked run, so use
+`started_at` to identify work that has never begun. Preview only the run IDs you
+intend to cancel, then repeat that exact selection with the explicit action:
+
+```sh
+gregale workflows list --app billing --workflow-name paid-invoice --status pending
+gregale workflows cancel-queued-preview --app billing --workflow-name paid-invoice \
+  --run-id <run-id>
+gregale workflows cancel-queued --app billing --workflow-name paid-invoice \
+  --run-id <run-id> --yes
+```
+
+You can select up to 20 runs per request by repeating `--run-id`. The optional
+`--workflow-name` guards the selection against a name mismatch. Only pending
+runs with no `started_at` value are eligible. The preview is advisory; the
+action rechecks each run while holding the dispatcher claim lock. If dispatch
+claims a run after preview, that run is reported as `already_started` or
+`not_queued` and is left alone. A previously cancelled run is reported as
+`already_cancelled`. Started runs, including retries and parked
+waits, continue to use the single-run `workflows cancel` command.
+
+The action commits eligible cancellations as one bounded batch. Outcomes are
+returned for every selected ID; an eligible run becomes `failed` and receives
+`cancelled_at`. Missing IDs and runs outside the selected app share the
+`not_found` outcome.
+
+The API exposes the same flow through
+`POST /v1/apps/{slug}/workflows/runs:cancel-preview` and
+`POST /v1/apps/{slug}/workflows/runs:cancel-queued` with a JSON body containing
+`run_ids` and optional `workflow_name`.
+
 ## Inspect automation health
 
 Get a bounded operational summary for one saved automation from the CLI, or use
@@ -210,6 +266,38 @@ the latest run/success/failure, and up to ten frequently failed logical steps.
 Failures from individual loop items are grouped under their parent step. Run
 inputs, outputs, and error messages are never included. Go, Node, and Python
 clients expose this endpoint.
+
+The optional `queue` object reports current waiting reasons, independently of
+the historical window. The CLI prints its observation time, app dispatch
+occupancy and limits, waiting/due/stale counts, oldest due age, and nonzero
+reason counts. App occupancy includes all automations and tenants in the app;
+waiting counts belong to the selected automation. Live running claims consume
+dispatch capacity; parked waits and pending retries can still consume a
+workflow's `max_concurrent_runs` budget.
+
+| Queue reason | Meaning at observation |
+| --- | --- |
+| `ready` | Due and passes the app, tenant and workflow run limits |
+| `scheduled` | Its next scheduling deadline is in the future |
+| `retry_backoff` | Waiting for a pending step's retry deadline |
+| `parked_wait` | An intentional wait has a future wake or timeout |
+| `app_capacity` | The app's live dispatch claims fill its budget |
+| `tenant_capacity` | That tenant's live claims within the app fill its budget |
+| `workflow_capacity` | The run's captured workflow concurrency limit is full |
+
+Each waiting run contributes to one reason. Future deadlines take precedence,
+followed by app, tenant and workflow limits. Due timers, event/callback timeouts
+and stale leases are included in admission checks; expired leases do not occupy
+capacity. Oldest due age includes blocked work and starts at eligibility rather
+than an intentional wait's start. The reason counts sum to `waiting_run_count`,
+which includes started pending retries and parked waits as well as fresh runs.
+
+`ready` describes dispatch admission. Fair turns, runtime gates, action budgets
+and handler invocation limits can still delay execution. `parked_wait` groups
+timers, conditions, events and callbacks; inspect the run's steps for details.
+The snapshot does not estimate queue position, completion time or global worker
+saturation. Older servers may omit `queue`; the CLI reports diagnostics as
+unavailable. No customer payloads, errors or tenant identities are returned.
 
 The preview runtime requires `FAAS_WORKFLOWS_ENABLED=1` on apid and schedd and the
 existing gateway executor configuration. The list response reports when runtime,
@@ -754,7 +842,90 @@ Apply migration `20261006062359228_generic_inbound_webhook.sql` before creating
 generic endpoints. The down migration is forward-only; remove generic endpoints
 before rolling back application binaries.
 
+## Preview scheduled fire times
+
+Inspect a deployed schedule before relying on its cadence or catch-up behavior:
+
+```sh
+gregale workflows schedules preview --app billing --workflow nightly
+gregale --json workflows schedules preview --app billing --workflow nightly --count 8
+gregale workflows schedules preview --app billing --workflow nightly \
+  --at 2027-03-28T00:00:00Z --since 2027-03-27T00:00:00Z
+```
+
+The preview uses the effective schedule and durable evaluation cursor. `--at`
+simulates an evaluator time; `--since` simulates the prior evaluation time so
+you can see how a delayed scheduler would handle missed fires. Both accept
+RFC3339 timestamps. The preview reports upcoming fires in the schedule's IANA
+timezone with numeric UTC offsets. Fixed wall times shifted into a spring DST
+gap run at the first valid minute; repeated fall-fold wall times run once at
+their first occurrence. Interval expressions follow cron interval behavior as
+the local clock changes, so their fall-fold intervals can repeat.
+
+The catch-up result distinguishes a current fire, coalescing to the latest
+eligible fire, skipped missed fires, and fires outside the configured recovery
+window. A new or changed schedule arms its durable cursor on the next evaluator
+pass before admitting a later occurrence. The preview changes no cursor and
+starts no workflow; it does not reserve quota or promise worker availability.
+Its result is an observation, so live schedule edits or cursor advancement can
+change the next decision.
+
+The account route is
+`GET /v1/apps/{slug}/workflows/schedules/{name}/preview`; tenant-bound callers
+use `GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}/preview`
+to preview only their own configurable schedule. Go clients expose
+`GetWorkflowSchedulePreview` and `GetPlatformTenantSelfWorkflowSchedulePreview`;
+Node and Python SDKs expose the same two operations. No migration is needed.
+See [ADR-645](adr/645-workflow-schedule-preview.md).
+
 ## Resume after a terminal failure
+
+Inspect a run and preview its continuation before changing it:
+
+```sh
+gregale workflows diagnose 00000000-0000-4000-8000-000000000001
+gregale --json workflows diagnose 00000000-0000-4000-8000-000000000001
+```
+
+`GET /v1/workflows/runs/{id}/diagnostics` returns the same read-only snapshot.
+It shows the durable queue reason, future wake, due age, expired worker lease,
+original code pin and step status/kind. Step kinds distinguish timer, event,
+callback and condition waits. `ready` means dispatch admission is open; it does
+not guarantee an available worker or immediate execution.
+
+The `resume` object reports `eligible`, the observed `expected_resume_count`,
+sorted `reopened_steps` and `preserved_steps`, and `blockers` with a stable `code`,
+fixed `message` and optional `step_name`. Preserved names include successful
+actions and branches whose persisted state remains unchanged. A structurally
+valid plan can have temporary admission blockers, such as maintenance or a full
+active-run quota; its proposed reopened names remain visible.
+
+| Code | Meaning |
+| --- | --- |
+| `run_not_failed` | The run is still active or has succeeded |
+| `handler_executed` | A failure/timeout handler or its continuation already executed |
+| `unsafe_mutation` | An attempted external mutation lacks declared provider idempotency |
+| `failed_control_step` | A failed wait or join cannot be reopened |
+| `failure_before_dispatch` | No executor attempt exists for the failure |
+| `active_step` / `active_attempt` | A call or wait is still active |
+| `tenant_unavailable` | The tenant is inactive or its app link was removed |
+| `pinned_deployment_unavailable` | The original handler code cannot be served |
+| `integration_unavailable` | A current credential or permitted integration binding is unavailable |
+| `active_run_quota` | Other active runs fill the app's admission quota |
+| `runtime_disabled` | Execution is disabled on the responding API server |
+
+The planner reports its first deterministic blocker plus independent admission
+blockers. The snapshot omits inputs, outputs, error text, credentials and tenant
+identity; use authorized run/step inspection for payloads and error details.
+Reads do not execute actions or reserve capacity. Resume rechecks the gates and
+generation, so an eligible preview can become stale before submission. Read-only
+API keys can preview; resume still requires write permission. Tenant-bound read
+tokens use `GET /v1/platform-tenant-self/workflows/runs/{id}/diagnostics`, restricted
+to their own runs and current app links. Both routes use `Cache-Control: no-store`.
+Go `GetWorkflowRunDiagnostics`, Node `WorkflowsService.getWorkflowRunDiagnostics`
+and Python `workflows.get_workflow_run_diagnostics` expose the account route,
+with corresponding tenant-self methods. No new migration is needed.
+See [ADR-644](adr/644-workflow-run-diagnostics-and-resume-preview.md).
 
 After resolving a provider outage or integration configuration issue, inspect
 `GET /v1/workflows/runs/{id}` and send its current `resume_count`:
@@ -790,7 +961,9 @@ a fresh configured retry budget; attempt numbers continue increasing. A failed
 batch resumes at its failed item and processes the remaining snapshotted items
 in order. The original workflow definition, inputs and guard decisions remain
 unchanged. Publishing a new definition does not change this run. App actions
-continue to use the current default deployment, as they do during retries.
+retain the original handler deployment across retries and resumptions. Legacy
+unpinned runs retain their existing best-effort routing; diagnostics label them
+explicitly. Start a new run to use newly deployed code.
 
 The same logical action Idempotency-Key is reused. App handlers must deduplicate
 it across the full retry/resume period. Managed mutations must declare actual
@@ -825,13 +998,72 @@ customer and `--cursor` with the returned next cursor for another page.
 History starts when this version is deployed; earlier outcomes are not backfilled.
 An expired history cursor returns an empty page.
 
+Recover a selected skipped occurrence with a preview followed by an explicit
+replay:
+
+```sh
+gregale workflows schedule-history replay-preview --app reports \
+  --occurrence-id 00000000-0000-4000-8000-000000000001
+gregale workflows schedule-history replay --app reports \
+  --occurrence-id 00000000-0000-4000-8000-000000000001
+```
+
+Repeat `--occurrence-id` to select up to 20 occurrences; the service processes
+them in scheduled order. Preview reports eligibility against the current live
+deployment, definition, tenant settings, overlap state, and quota. It reserves
+nothing, so replay rechecks all conditions. A replay uses the original nominal
+`scheduled_for` time and current trigger input. It is blocked if the deployment
+or definition changed, the schedule is disabled, a tenant link is no longer
+active, overlap is active, or the app quota is full. History displays the
+resulting replay run ID, and retries of the same occurrence return that ID
+without creating another run. Legacy history without a definition fingerprint
+cannot be replayed. See [ADR-646](adr/646-controlled-workflow-schedule-replay.md).
+
 Tenant/workflow pairs share the app's active-run quota and are evaluated in
 least-recently-admitted order. Admission priority persists through scheduler
 restarts, skipped minutes, deployment changes, and run retention. Paused
 schedules are excluded. This distributes scarce admissions across customers;
-quota skips and downtime still do not produce catch-up runs.
+quota skips consume the selected occurrence and are not retried automatically.
 
-Existing alert rules accept four notification-only workflow metrics:
+### Recovering missed scheduled starts
+
+Schedules skip missed fires by default. For reports or reconciliation jobs that
+should recover after downtime, opt into the latest eligible missed fire:
+
+```yaml
+trigger:
+  type: schedule
+  schedule: '0 7 * * *'
+  timezone: Europe/Istanbul
+  catch_up: latest
+  catch_up_window: 2h
+```
+
+`catch_up` accepts `skip` (the default) or `latest`. The recovery window defaults
+to one hour and accepts duration strings between one minute and 24 hours. A
+7:00 job observed again at 7:20 starts once with a nominal fire time of 7:00.
+If several fires were missed, only the latest one inside the window is selected;
+if the current minute is due, it takes precedence. Older missed fires are
+discarded. No historical runs start on the first observation or after re-arming
+for a deployment, trigger change, tenant cadence update, or automation resume.
+
+Recovery still observes overlap and the shared run quota. A rejected occurrence
+is recorded as skipped and consumed, including the older coalesced interval;
+freeing a slot does not replay it. History exposes `scheduled_for` and
+`evaluated_at` so the original fire and recovery time remain visible. Coalesced
+and expired fires are not backfilled into history.
+
+The policy also applies to gaps caused by maintenance, runtime gates, or an
+unavailable tenant link. Tenant schedules inherit the owner's recovery policy
+while applying their own saved cadence and timezone. Tenants cannot change the
+policy or window. `gregale workflows schedules --app reports` and the schedule
+inspection APIs show the effective policy and window.
+
+Update validators and scheduler workers before publishing catch-up options.
+Remove the options and drain or cancel affected snapshot runs before downgrading
+to a runtime that does not understand them.
+
+Existing alert rules accept five notification-only workflow metrics:
 
 | Metric | Observation |
 | --- | --- |
@@ -839,11 +1071,37 @@ Existing alert rules accept four notification-only workflow metrics:
 | `workflow_schedule_quota_skips` | Due schedule occurrences skipped for app quota in the selected window |
 | `workflow_pending_age_seconds` | Age of the oldest eligible pending run since it became eligible; excludes future retries; zero if none |
 | `workflow_waiting_age_seconds` | Age of the oldest currently awaiting step, zero if none |
+| `workflow_due_age_seconds` | Age since the oldest pending run, elapsed parked wake or expired lease became due; excludes future waits and live running claims; zero if none |
 
 Scope an alert to one app or the authenticated account. Age signals describe
 current state rather than a window average. Waiting age includes intentional
 timers, callbacks, conditions, and event waits, so choose thresholds suitable
 for the workflow. These metrics support webhook notifications only.
+
+For sustained backlog, enable the opt-in `automation_backlog` preset for an
+app on Hobby or higher. It sends a signed webhook when an automation has been
+due for at least five minutes, with a 30-minute default cooldown:
+
+```sh
+printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable automation_backlog \
+  --app billing --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+The preset covers all automations in the selected app. Its age signal matches
+queue health, including work blocked by concurrency limits, overdue timers and
+event/callback timeouts, and expired worker leases. Intentional future waits and
+retry backoff do not count. `window_spec` does not average or restrict this
+current-state age. The next evaluator tick observes a threshold breach; a
+sustained breach can notify again after cooldown. A cleared backlog returns
+the rule to `ok` without a separate recovery webhook.
+
+To choose a different threshold, create a custom alert using
+`workflow_due_age_seconds`, comparison `gte`, and a threshold in seconds.
+After a notification, inspect `gregale automations health --app billing --name
+AUTOMATION` for waiting reasons and `gregale workflows list --app billing` for
+the runs. Notifications contain aggregate values rather than run payloads or
+tenant identities. Apply the backlog-alert migration and update all evaluators
+before enabling this preset. Remove its rules before downgrading.
 
 App-handler steps retry HTTP 408, 425, and 429 using the configured attempt
 budget. A downstream `Retry-After` (seconds or HTTP date) extends ordinary
@@ -851,3 +1109,24 @@ backoff, capped at one hour, and survives scheduler restarts. Ordinary 4xx
 validation/authorization errors remain terminal. All attempts retain the
 same step idempotency key; app handlers must deduplicate their side effects.
 Unsafe outbound actions keep their existing no-retry policy.
+
+Workflow dispatch uses four execution slots per scheduler. Every tick fills
+available slots, and each slot drains at most eight runs. Eligible applications
+and tenant scopes within an application take turns according to their persisted
+last claim; older due work wins within a scope. A large backlog cannot keep an
+eligible scope behind all its older runs.
+
+At most two unexpired running automation claims belong to one app, and at most
+one belongs to one tenant within that app, across upgraded scheduler workers.
+An app may queue runs while dispatch slots are idle, because these caps reserve
+capacity for other apps.
+Timers, callbacks, condition waits and pending retries release dispatch capacity
+while parked. These dispatch caps are separate from the plan's active-run quota,
+`max_concurrent_runs`, handler invocation limits and foreach parallelism. A wait
+may still consume the workflow definition's concurrency budget.
+
+Fair selection survives worker restarts and history pruning. Executing handlers
+finish or time out before their slots become available; dispatch does not
+preempt them or guarantee latency when all slots are busy. Apply the database
+migration before upgrading workers; all workers must be upgraded for the new
+dispatch caps and fairness to apply consistently.

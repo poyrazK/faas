@@ -122,6 +122,7 @@ var AllowedAlertRuleMetrics = []string{
 	"workflow_schedule_quota_skips",
 	"workflow_pending_age_seconds",
 	"workflow_waiting_age_seconds",
+	"workflow_due_age_seconds",
 
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",
@@ -181,7 +182,7 @@ func AllowedAlertRuleAction(v string) bool {
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
-		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" {
+		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" {
 		return action == "" || action == "webhook"
 	}
 	return true

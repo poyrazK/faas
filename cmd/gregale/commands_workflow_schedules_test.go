@@ -12,7 +12,7 @@ import (
 
 func TestWorkflowSchedulesCLIJSONPreservesAvailability(t *testing.T) {
 	resetJSONOut(t)
-	fake := authedFakeAPI(t, `{"runtime_enabled":false,"unavailable_reason":"runtime_disabled","schedules":[{"workflow_name":"nightly","deployment_id":"00000000-0000-4000-8000-000000000001","schedule":"0 7 * * *","timezone":"UTC","overlap":"skip","enabled":true,"last_status":"skipped_quota"}]}`, http.StatusOK)
+	fake := authedFakeAPI(t, `{"runtime_enabled":false,"unavailable_reason":"runtime_disabled","schedules":[{"workflow_name":"nightly","deployment_id":"00000000-0000-4000-8000-000000000001","schedule":"0 7 * * *","timezone":"UTC","overlap":"skip","catch_up":"latest","catch_up_window":"2h0m0s","enabled":true,"last_status":"skipped_quota"}]}`, http.StatusOK)
 	var output bytes.Buffer
 	previous := osStdout
 	osStdout = &output
@@ -28,7 +28,7 @@ func TestWorkflowSchedulesCLIJSONPreservesAvailability(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.RuntimeEnabled || response.UnavailableReason != "runtime_disabled" || len(response.Schedules) != 1 || response.Schedules[0].LastStatus != "skipped_quota" {
+	if response.RuntimeEnabled || response.UnavailableReason != "runtime_disabled" || len(response.Schedules) != 1 || response.Schedules[0].LastStatus != "skipped_quota" || response.Schedules[0].CatchUp != "latest" || response.Schedules[0].CatchUpWindow != "2h0m0s" {
 		t.Fatalf("response=%+v", response)
 	}
 }

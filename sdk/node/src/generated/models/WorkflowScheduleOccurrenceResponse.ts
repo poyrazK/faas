@@ -18,5 +18,10 @@ export type WorkflowScheduleOccurrenceResponse = {
    * Present for started outcomes; retained after run expiry.
    */
   run_id?: string;
+  /**
+   * Present after a skipped occurrence has been replayed.
+   */
+  replay_run_id?: string;
+  replayed_at?: string;
 };
 

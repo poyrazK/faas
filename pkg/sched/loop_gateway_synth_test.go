@@ -93,6 +93,7 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 }
 
 func TestHTTPGatewaySynthWorkflowStepCarriesPersistedTenantIdentity(t *testing.T) {
+	deploymentID := "22222222-2222-4222-8222-222222222222"
 	runID := "11111111-1111-4111-8111-111111111111"
 	operationID, err := api.ManagedWorkflowStepOperationID(runID, "process")
 	if err != nil {
@@ -111,7 +112,7 @@ func TestHTTPGatewaySynthWorkflowStepCarriesPersistedTenantIdentity(t *testing.T
 			t.Fatal(err)
 		}
 		if got.PlatformTenantID != "tenant-1" || got.Source != "workflow" || got.Headers["X-Faas-Workflow-Run-Id"] != runID ||
-			got.OperationResultVersion != api.ManagedOperationResultVersion || got.ManagedWorkflowOperationID != operationID || got.ManagedWorkflowOperationGeneration != 1 {
+			got.Headers[api.RevisionHeader] != deploymentID || got.OperationResultVersion != api.ManagedOperationResultVersion || got.ManagedWorkflowOperationID != operationID || got.ManagedWorkflowOperationGeneration != 1 {
 			t.Fatalf("workflow identity envelope=%+v", got)
 		}
 		_, _ = w.Write([]byte(`{"state":"dispatching","status_code":200,"result":{"ok":true}}`))
@@ -119,7 +120,7 @@ func TestHTTPGatewaySynthWorkflowStepCarriesPersistedTenantIdentity(t *testing.T
 	defer srv.Close()
 	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL, mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
 	status, body, err := h.ExecuteWorkflowStep(context.Background(), "app-1", WorkflowStepIdentity{
-		RunID: runID, PlatformTenantID: "tenant-1",
+		RunID: runID, PlatformTenantID: "tenant-1", DeploymentID: deploymentID,
 	}, "/process", http.MethodPost, map[string]string{
 		"X-Faas-Internal-Wake": "workflow", "X-Faas-Workflow-Run-Id": runID,
 		"X-Faas-Workflow-Step": "process", "X-Faas-Workflow-Attempt": "1",

@@ -18,7 +18,7 @@ var workflowUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 
 func cmdWorkflows(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|schedule-history|run|status|steps|attempts|retry|resume|resumes|cancel|events>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|schedule-history|run|status|diagnose|steps|attempts|retry|resume|resumes|cancel|cancel-queued-preview|cancel-queued|events>", "workflows")
 		return 1
 	}
 	switch args[0] {
@@ -30,6 +30,8 @@ func cmdWorkflows(args []string) int {
 		return cmdWorkflowScheduleHistory(args[1:])
 	case "run":
 		return cmdWorkflowsRun(args[1:])
+	case "diagnose":
+		return cmdWorkflowsDiagnose(args[1:])
 	case "status":
 		return cmdWorkflowsStatus(args[1:])
 	case "steps":
@@ -44,6 +46,10 @@ func cmdWorkflows(args []string) int {
 		return cmdWorkflowsResumes(args[1:])
 	case "cancel":
 		return cmdWorkflowsCancel(args[1:])
+	case "cancel-queued-preview":
+		return cmdWorkflowsQueuedCancel(args[1:], false)
+	case "cancel-queued":
+		return cmdWorkflowsQueuedCancel(args[1:], true)
 	case "events":
 		return cmdWorkflowsEvents(args[1:])
 	default:
@@ -211,6 +217,7 @@ func cmdWorkflowsStatus(args []string) int {
 
 	_, _ = fmt.Fprintf(osStdout, "Run ID:       %s\n", run.ID)
 	_, _ = fmt.Fprintf(osStdout, "Workflow:     %s\n", run.WorkflowName)
+	_, _ = fmt.Fprintf(osStdout, "Deployment:   %s\n", workflowRunDeploymentLabel(run))
 	_, _ = fmt.Fprintf(osStdout, "Status:       %s\n", run.Status)
 	_, _ = fmt.Fprintf(osStdout, "Resume Count: %d\n", run.ResumeCount)
 	if run.CurrentStep != nil {
@@ -467,9 +474,9 @@ func renderWorkflowRunsTable(w io.Writer, runs []api.WorkflowRunResponse) {
 		_, _ = fmt.Fprintln(w, "No workflow runs found.")
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-20s\n", "RUN ID", "WORKFLOW", "STATUS", "CREATED AT")
+	_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-36s  %-20s\n", "RUN ID", "WORKFLOW", "STATUS", "DEPLOYMENT", "CREATED AT")
 	for _, r := range runs {
-		_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-20s\n", r.ID, r.WorkflowName, r.Status, r.CreatedAt)
+		_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-36s  %-20s\n", r.ID, r.WorkflowName, r.Status, workflowRunDeploymentLabel(r), r.CreatedAt)
 	}
 }
 
@@ -523,4 +530,11 @@ func renderWorkflowResumesTable(w io.Writer, resumes []api.WorkflowResumeRespons
 	for _, resume := range resumes {
 		_, _ = fmt.Fprintf(w, "%-8d  %-15s  %-32s  %-25s\n", resume.ResumeNumber, resume.PreviousStatus, strings.Join(resume.ResumedSteps, ","), resume.CreatedAt)
 	}
+}
+
+func workflowRunDeploymentLabel(r api.WorkflowRunResponse) string {
+	if r.DeploymentID == "" {
+		return "legacy (unpinned)"
+	}
+	return r.DeploymentID
 }

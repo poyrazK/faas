@@ -721,7 +721,7 @@ const (
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
 	switch rule.Metric {
-	case state.AlertMetricWorkflowFailures, state.AlertMetricWorkflowQuotaSkips, state.AlertMetricWorkflowPendingAge, state.AlertMetricWorkflowWaitingAge:
+	case state.AlertMetricWorkflowFailures, state.AlertMetricWorkflowQuotaSkips, state.AlertMetricWorkflowPendingAge, state.AlertMetricWorkflowWaitingAge, state.AlertMetricWorkflowDueAge:
 		store, ok := e.store.(state.WorkflowAlertStore)
 		if !ok {
 			return 0, false, skipDegraded
@@ -742,6 +742,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			value = snapshot.PendingAgeSeconds
 		case state.AlertMetricWorkflowWaitingAge:
 			value = snapshot.WaitingAgeSeconds
+		case state.AlertMetricWorkflowDueAge:
+			value = snapshot.DueAgeSeconds
 		}
 		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricFailedInvocs:

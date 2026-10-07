@@ -108,7 +108,7 @@ func (s *PgStore) AdmitScheduledWorkflow(ctx context.Context, appID, deploymentI
 	}
 	if run != nil {
 		_, err = queries.InsertScheduledWorkflowRun(ctx, tx, sqlc.InsertScheduledWorkflowRunParams{
-			ID: mustPgUUID(run.ID), AppID: mustPgUUID(appID), WorkflowName: name, Input: run.Input,
+			DeploymentID: mustPgUUID(run.DeploymentID), ID: mustPgUUID(run.ID), AppID: mustPgUUID(appID), WorkflowName: name, Input: run.Input,
 			DefinitionSnapshot: run.DefinitionSnapshot, ScheduledFor: pgtype.Timestamptz{Time: run.ScheduledFor, Valid: true},
 		})
 		if err != nil {
@@ -123,11 +123,11 @@ func (s *PgStore) AdmitScheduledWorkflow(ctx context.Context, appID, deploymentI
 	if err != nil {
 		return WorkflowScheduleCursor{}, false, fmt.Errorf("state: record scheduled workflow outcome: %w", err)
 	}
-	if err := insertWorkflowScheduleOccurrence(ctx, tx, next, now); err != nil {
+	if err := insertWorkflowScheduleOccurrence(ctx, tx, next, cursor, *definition); err != nil {
 		return WorkflowScheduleCursor{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return WorkflowScheduleCursor{}, false, fmt.Errorf("state: commit scheduled workflow: %w", err)
 	}
-	return *next, true, nil
+	return *next, workflowScheduleOutcomeChanged(next, cursor), nil
 }

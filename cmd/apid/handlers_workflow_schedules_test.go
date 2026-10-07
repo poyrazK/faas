@@ -31,7 +31,7 @@ func TestWorkflowScheduleInspectionAndAccountIsolation(t *testing.T) {
 	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &response) != nil {
 		t.Fatalf("response=%d %s", recorder.Code, recorder.Body.String())
 	}
-	if len(response.Schedules) != 1 || response.Schedules[0].LastStatus != state.WorkflowScheduleStarted || response.Schedules[0].LastRunID == "" || response.Schedules[0].Timezone != "UTC" {
+	if len(response.Schedules) != 1 || response.Schedules[0].LastStatus != state.WorkflowScheduleStarted || response.Schedules[0].LastRunID == "" || response.Schedules[0].Timezone != "UTC" || response.Schedules[0].CatchUp != "skip" || response.Schedules[0].CatchUpWindow != "" {
 		t.Fatalf("schedules=%+v", response)
 	}
 	e.s.WithWorkflowRuntimeEnabled(false)
@@ -51,6 +51,18 @@ func TestWorkflowScheduleInspectionAndAccountIsolation(t *testing.T) {
 	recorder = e.do(t, "GET", "/v1/apps/"+otherApp.Slug+"/workflows/schedules", nil, nil)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("cross-account read = %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWorkflowScheduleInspectionShowsRecoveryPolicy(t *testing.T) {
+	deployment := state.Deployment{ID: "deployment", Workflows: json.RawMessage(`[{"name":"report","trigger":{"type":"schedule","schedule":"0 7 * * *","catch_up":"latest","catch_up_window":"2h"},"steps":[{"name":"main","run":"report"}]}]`)}
+	schedules, err := workflowScheduleResponses(deployment, nil, time.Now().UTC())
+	if err != nil || len(schedules) != 1 || schedules[0].CatchUp != "latest" || schedules[0].CatchUpWindow != "2h0m0s" {
+		t.Fatalf("schedules=%+v err=%v", schedules, err)
+	}
+	response := tenantWorkflowScheduleResponse(state.TenantWorkflowSchedule{CatchUp: "latest", CatchUpWindow: "2h0m0s"})
+	if response.CatchUp != "latest" || response.CatchUpWindow != "2h0m0s" {
+		t.Fatalf("tenant response=%+v", response)
 	}
 }
 

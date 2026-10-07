@@ -31,6 +31,9 @@ class WorkflowScheduleOccurrenceResponse:
     platform_tenant_id: UUID | Unset = UNSET
     run_id: UUID | Unset = UNSET
     """Present for started outcomes; retained after run expiry."""
+    replay_run_id: UUID | Unset = UNSET
+    """Present after a skipped occurrence has been replayed."""
+    replayed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +59,14 @@ class WorkflowScheduleOccurrenceResponse:
         if not isinstance(self.run_id, Unset):
             run_id = str(self.run_id)
 
+        replay_run_id: str | Unset = UNSET
+        if not isinstance(self.replay_run_id, Unset):
+            replay_run_id = str(self.replay_run_id)
+
+        replayed_at: str | Unset = UNSET
+        if not isinstance(self.replayed_at, Unset):
+            replayed_at = self.replayed_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -73,6 +84,10 @@ class WorkflowScheduleOccurrenceResponse:
             field_dict["platform_tenant_id"] = platform_tenant_id
         if run_id is not UNSET:
             field_dict["run_id"] = run_id
+        if replay_run_id is not UNSET:
+            field_dict["replay_run_id"] = replay_run_id
+        if replayed_at is not UNSET:
+            field_dict["replayed_at"] = replayed_at
 
         return field_dict
 
@@ -107,6 +122,20 @@ class WorkflowScheduleOccurrenceResponse:
         else:
             run_id = UUID(_run_id)
 
+        _replay_run_id = d.pop("replay_run_id", UNSET)
+        replay_run_id: UUID | Unset
+        if isinstance(_replay_run_id, Unset):
+            replay_run_id = UNSET
+        else:
+            replay_run_id = UUID(_replay_run_id)
+
+        _replayed_at = d.pop("replayed_at", UNSET)
+        replayed_at: datetime.datetime | Unset
+        if isinstance(_replayed_at, Unset):
+            replayed_at = UNSET
+        else:
+            replayed_at = datetime.datetime.fromisoformat(_replayed_at)
+
         workflow_schedule_occurrence_response = cls(
             id=id,
             app_id=app_id,
@@ -117,6 +146,8 @@ class WorkflowScheduleOccurrenceResponse:
             status=status,
             platform_tenant_id=platform_tenant_id,
             run_id=run_id,
+            replay_run_id=replay_run_id,
+            replayed_at=replayed_at,
         )
 
         workflow_schedule_occurrence_response.additional_properties = d

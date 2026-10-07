@@ -15,11 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -118,7 +118,6 @@ type Loop struct {
 	// without Run (tests) still dispatches.
 	work                        *workPool
 	workOnce                    sync.Once
-	workflowDispatchCursor      atomic.Uint32
 	eventFanoutLastPrune        time.Time
 	eventFanoutHistoryLastPrune time.Time
 	eventRecipientClaims        bool
@@ -3506,6 +3505,15 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	if identity.DeploymentID != "" {
+		// An older gateway understands exact revision selection and either
+		// executes that code or rejects it. It cannot silently select latest.
+		headers = maps.Clone(headers)
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[api.RevisionHeader] = identity.DeploymentID
+	}
 	headerBytes, err := json.Marshal(headers)
 	if err != nil {
 		return 0, nil, time.Time{}, fmt.Errorf("sched: workflow headers: %w", err)
@@ -3951,16 +3959,17 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			l.log.Warn("schedd: workflow schedule tick failed", "error_type", fmt.Sprintf("%T", err))
 		}
 	})
-	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)
-	l.submitWork(workWorkflowDispatch, key, func() {
-		orch := l.workflowOrch
-		if orch == nil {
-			orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
-		}
-		if err := orch.DispatchTick(ctx); err != nil && l.log != nil {
-			l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
-		}
-	})
+	for slot := range api.WorkflowDispatchSlots {
+		l.submitWork(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
+			orch := l.workflowOrch
+			if orch == nil {
+				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
+			}
+			if err := orch.DispatchBatch(ctx); err != nil && l.log != nil {
+				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
+			}
+		})
+	}
 }
 
 func (l *Loop) dispatchTriggerTick(ctx context.Context) {

@@ -2521,7 +2521,7 @@ UPDATE workflow_runs SET status='running',started_at=coalesce(started_at,now()),
 WHERE id=$1::uuid AND operation_id IS NULL AND
  ((status IN ('pending','awaiting_event') AND scheduled_for<=now())
  OR (status='running' AND coalesce(lease_until,updated_at+($2::bigint*interval '1 millisecond'))<=now()))
-RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint
+RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint, deployment_id
 `
 
 type ClaimDueLegacyWorkflowRunParams struct {
@@ -2554,6 +2554,7 @@ func (q *Queries) ClaimDueLegacyWorkflowRun(ctx context.Context, db DBTX, arg Cl
 		&i.PlatformTenantID,
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
 	)
 	return i, err
 }
@@ -2865,7 +2866,7 @@ func (q *Queries) ClaimLayerArtifactDeletion(ctx context.Context, db DBTX, arg C
 const claimLegacyPendingWorkflowRun = `-- name: ClaimLegacyPendingWorkflowRun :one
 UPDATE workflow_runs SET status='running',started_at=coalesce(started_at,now()),updated_at=now(),lease_until=now()+interval '5 minutes'
 WHERE id=(SELECT id FROM workflow_runs WHERE operation_id IS NULL AND status='pending' AND scheduled_for<=now()
- ORDER BY scheduled_for,id FOR UPDATE SKIP LOCKED LIMIT 1) AND operation_id IS NULL RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint
+ ORDER BY scheduled_for,id FOR UPDATE SKIP LOCKED LIMIT 1) AND operation_id IS NULL RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint, deployment_id
 `
 
 func (q *Queries) ClaimLegacyPendingWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error) {
@@ -2893,6 +2894,7 @@ func (q *Queries) ClaimLegacyPendingWorkflowRun(ctx context.Context, db DBTX) (W
 		&i.PlatformTenantID,
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
 	)
 	return i, err
 }
@@ -12294,10 +12296,11 @@ const expireRetainedDeploymentRevisionPins = `-- name: ExpireRetainedDeploymentR
 WITH locked_deployments AS MATERIALIZED (
     SELECT d.id,
         EXISTS(SELECT 1 FROM deployment_revision_pins public_pin WHERE public_pin.deployment_id=d.id) AS has_public,
-        EXISTS(SELECT 1 FROM customer_operation_code_pins private_pin WHERE private_pin.deployment_id=d.id) AS has_private
+        EXISTS(SELECT 1 FROM customer_operation_code_pins private_pin WHERE private_pin.deployment_id=d.id) AS has_private,
+        EXISTS(SELECT 1 FROM workflow_code_pins workflow_pin WHERE workflow_pin.deployment_id=d.id) AS has_workflow
     FROM deployments d JOIN deployment_code_pin_deadlines p ON p.deployment_id=d.id AND p.app_id=d.app_id
     WHERE d.app_id=ANY($1::uuid[]) AND p.expires_at<=now()
-    AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    AND NOT EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     ORDER BY d.app_id,d.id LIMIT $2::integer FOR UPDATE OF d
@@ -12307,10 +12310,14 @@ WITH locked_deployments AS MATERIALIZED (
 ), expired_private AS (
     DELETE FROM customer_operation_code_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
     RETURNING p.deployment_id
+), expired_workflow AS (
+    DELETE FROM workflow_code_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
 ), expired AS (
     SELECT d.id AS deployment_id FROM locked_deployments d
     WHERE (NOT d.has_public OR EXISTS(SELECT 1 FROM expired_public p WHERE p.deployment_id=d.id))
     AND (NOT d.has_private OR EXISTS(SELECT 1 FROM expired_private p WHERE p.deployment_id=d.id))
+    AND (NOT d.has_workflow OR EXISTS(SELECT 1 FROM expired_workflow p WHERE p.deployment_id=d.id))
 )
 UPDATE deployments d SET status='superseded',traffic_percent=0 FROM expired e
 WHERE d.id=e.deployment_id AND d.status='live' AND d.traffic_percent=0
@@ -12648,7 +12655,7 @@ func (q *Queries) FenceManagedPostgresCutoverAdmission(ctx context.Context, db D
 
 const finalizeRetainedServiceRolloutAbortTarget = `-- name: FinalizeRetainedServiceRolloutAbortTarget :one
 UPDATE deployments d SET status=CASE WHEN
-    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     THEN 'live' ELSE 'superseded' END,
     traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
     rollout_aborted_at=$1::timestamptz,
@@ -15164,7 +15171,7 @@ func (q *Queries) GetManagedPostgresUsageProgress(ctx context.Context, db DBTX, 
 }
 
 const getNativeWorkflowRun = `-- name: GetNativeWorkflowRun :one
-SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint FROM workflow_runs WHERE id=$1::uuid
+SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint, deployment_id FROM workflow_runs WHERE id=$1::uuid
 `
 
 func (q *Queries) GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) (WorkflowRun, error) {
@@ -15192,6 +15199,7 @@ func (q *Queries) GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.U
 		&i.PlatformTenantID,
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
 	)
 	return i, err
 }
@@ -15315,6 +15323,50 @@ func (q *Queries) GetOutboundBindingProbePolicy(ctx context.Context, db DBTX, ar
 	row := db.QueryRow(ctx, getOutboundBindingProbePolicy, arg.IntegrationID, arg.AccountID)
 	var i GetOutboundBindingProbePolicyRow
 	err := row.Scan(&i.Method, &i.Path, &i.ExpectedStatus)
+	return i, err
+}
+
+const getOwnedWorkflowDiagnosticsRun = `-- name: GetOwnedWorkflowDiagnosticsRun :one
+SELECT r.id, r.app_id, r.workflow_name, r.status, r.current_step, r.input, r.output, r.definition_snapshot, r.scheduled_for, r.started_at, r.finished_at, r.last_error, r.created_at, r.updated_at, r.lease_until, r.operation_id, r.resume_count, r.cancelled_at, r.platform_tenant_id, r.create_idempotency_key, r.create_request_fingerprint, r.deployment_id FROM workflow_runs r JOIN apps a ON a.id=r.app_id
+WHERE r.id=$1::uuid AND a.account_id=$2::uuid
+ AND ($3::uuid IS NULL OR r.platform_tenant_id=$3::uuid)
+ AND r.operation_id IS NULL
+`
+
+type GetOwnedWorkflowDiagnosticsRunParams struct {
+	RunID     pgtype.UUID
+	AccountID pgtype.UUID
+	TenantID  pgtype.UUID
+}
+
+// ADR-644: no row/advisory locks or state transitions in diagnostic snapshots.
+func (q *Queries) GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, arg GetOwnedWorkflowDiagnosticsRunParams) (WorkflowRun, error) {
+	row := db.QueryRow(ctx, getOwnedWorkflowDiagnosticsRun, arg.RunID, arg.AccountID, arg.TenantID)
+	var i WorkflowRun
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.WorkflowName,
+		&i.Status,
+		&i.CurrentStep,
+		&i.Input,
+		&i.Output,
+		&i.DefinitionSnapshot,
+		&i.ScheduledFor,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LeaseUntil,
+		&i.OperationID,
+		&i.ResumeCount,
+		&i.CancelledAt,
+		&i.PlatformTenantID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
+	)
 	return i, err
 }
 
@@ -15763,6 +15815,124 @@ func (q *Queries) GetWorkflowAutomationHealthSummary(ctx context.Context, db DBT
 	return i, err
 }
 
+const getWorkflowAutomationQueueHealth = `-- name: GetWorkflowAutomationQueueHealth :one
+WITH clock AS MATERIALIZED (SELECT now() AS at),
+app_runs AS MATERIALIZED (
+ SELECT r.id,r.workflow_name,r.platform_tenant_id,r.operation_id,r.status,r.started_at,r.scheduled_for,r.created_at,
+ coalesce((r.definition_snapshot->>'max_concurrent_runs')::integer,0) AS run_limit,
+ (r.status='running' AND coalesce(r.lease_until,r.updated_at+($2::bigint*interval '1 millisecond'))>clock.at) AS live,
+ coalesce(r.lease_until,r.updated_at+($2::bigint*interval '1 millisecond')) AS recovery_at
+ FROM workflow_runs r CROSS JOIN clock
+ WHERE r.app_id=$3::uuid AND r.status IN ('pending','running','awaiting_event')
+),
+app_claims AS (
+ SELECT count(*)::bigint AS running FROM app_runs WHERE live AND operation_id IS NULL
+),
+tenant_claims AS (
+ SELECT platform_tenant_id,count(*)::bigint AS running FROM app_runs
+ WHERE live AND operation_id IS NULL GROUP BY platform_tenant_id
+),
+workflow_claims AS (
+ SELECT workflow_name,count(*)::bigint AS active FROM app_runs
+ WHERE live OR status='awaiting_event' OR (status='pending' AND started_at IS NOT NULL)
+ GROUP BY workflow_name
+),
+classified AS MATERIALIZED (
+ SELECT r.id,r.status,r.created_at,
+ CASE WHEN r.status='running' THEN r.recovery_at ELSE r.scheduled_for END AS due_at,
+ (r.status='running' OR r.scheduled_for<=clock.at) AS due,
+ CASE
+ WHEN r.status='awaiting_event' AND r.scheduled_for>clock.at THEN 'parked_wait'
+ WHEN r.status='pending' AND r.scheduled_for>clock.at THEN
+  CASE WHEN EXISTS(SELECT 1 FROM workflow_steps step WHERE step.run_id=r.id AND step.status='pending'
+   AND step.next_retry_at=r.scheduled_for) THEN 'retry_backoff' ELSE 'scheduled' END
+ WHEN app_claims.running>=$4::integer THEN 'app_capacity'
+ WHEN r.platform_tenant_id IS NOT NULL AND coalesce(tenant_claims.running,0)>=$5::integer THEN 'tenant_capacity'
+ WHEN r.run_limit>0 AND
+  coalesce(workflow_claims.active,0)-CASE WHEN r.status='awaiting_event' OR (r.status='pending' AND r.started_at IS NOT NULL) THEN 1 ELSE 0 END
+  >=r.run_limit THEN 'workflow_capacity'
+ ELSE 'ready' END::text AS reason
+ FROM app_runs r CROSS JOIN clock CROSS JOIN app_claims
+ LEFT JOIN tenant_claims ON tenant_claims.platform_tenant_id=r.platform_tenant_id
+ LEFT JOIN workflow_claims ON workflow_claims.workflow_name=r.workflow_name
+ WHERE r.workflow_name=$1::text AND r.operation_id IS NULL
+ AND (r.status IN ('pending','awaiting_event') OR (r.status='running' AND NOT r.live))
+)
+SELECT clock.at::timestamptz AS observed_at,app_claims.running AS app_running_count,
+ (SELECT count(*) FROM app_runs WHERE workflow_name=$1::text AND
+  (status IN ('running','awaiting_event') OR (status='pending' AND started_at IS NOT NULL)))::bigint AS active_run_count,
+ (SELECT count(*) FROM app_runs WHERE workflow_name=$1::text AND status='pending' AND started_at IS NULL)::bigint AS queued_run_count,
+ (SELECT count(*) FROM classified)::bigint AS waiting_run_count,
+ (SELECT count(*) FROM classified WHERE due)::bigint AS due_run_count,
+ (SELECT count(*) FROM classified WHERE status='running')::bigint AS stale_run_count,
+ greatest(0,coalesce((SELECT max(extract(epoch FROM(clock.at-greatest(created_at,due_at)))) FROM classified WHERE due),0))::float8 AS oldest_due_age_seconds,
+ (SELECT count(*) FROM classified WHERE reason='ready')::bigint AS ready,
+ (SELECT count(*) FROM classified WHERE reason='scheduled')::bigint AS scheduled,
+ (SELECT count(*) FROM classified WHERE reason='retry_backoff')::bigint AS retry_backoff,
+ (SELECT count(*) FROM classified WHERE reason='parked_wait')::bigint AS parked_wait,
+ (SELECT count(*) FROM classified WHERE reason='app_capacity')::bigint AS app_capacity,
+ (SELECT count(*) FROM classified WHERE reason='tenant_capacity')::bigint AS tenant_capacity,
+ (SELECT count(*) FROM classified WHERE reason='workflow_capacity')::bigint AS workflow_capacity
+FROM clock CROSS JOIN app_claims
+`
+
+type GetWorkflowAutomationQueueHealthParams struct {
+	WorkflowName string
+	StaleMs      int64
+	AppID        pgtype.UUID
+	AppLimit     int32
+	TenantLimit  int32
+}
+
+type GetWorkflowAutomationQueueHealthRow struct {
+	ObservedAt          pgtype.Timestamptz
+	AppRunningCount     int64
+	ActiveRunCount      int64
+	QueuedRunCount      int64
+	WaitingRunCount     int64
+	DueRunCount         int64
+	StaleRunCount       int64
+	OldestDueAgeSeconds float64
+	Ready               int64
+	Scheduled           int64
+	RetryBackoff        int64
+	ParkedWait          int64
+	AppCapacity         int64
+	TenantCapacity      int64
+	WorkflowCapacity    int64
+}
+
+// ADR-642: live diagnostics share the health transaction's observation time.
+// Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
+func (q *Queries) GetWorkflowAutomationQueueHealth(ctx context.Context, db DBTX, arg GetWorkflowAutomationQueueHealthParams) (GetWorkflowAutomationQueueHealthRow, error) {
+	row := db.QueryRow(ctx, getWorkflowAutomationQueueHealth,
+		arg.WorkflowName,
+		arg.StaleMs,
+		arg.AppID,
+		arg.AppLimit,
+		arg.TenantLimit,
+	)
+	var i GetWorkflowAutomationQueueHealthRow
+	err := row.Scan(
+		&i.ObservedAt,
+		&i.AppRunningCount,
+		&i.ActiveRunCount,
+		&i.QueuedRunCount,
+		&i.WaitingRunCount,
+		&i.DueRunCount,
+		&i.StaleRunCount,
+		&i.OldestDueAgeSeconds,
+		&i.Ready,
+		&i.Scheduled,
+		&i.RetryBackoff,
+		&i.ParkedWait,
+		&i.AppCapacity,
+		&i.TenantCapacity,
+		&i.WorkflowCapacity,
+	)
+	return i, err
+}
+
 const getWorkflowAutomationRevision = `-- name: GetWorkflowAutomationRevision :one
 SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2 AND version=$3
 `
@@ -15785,6 +15955,122 @@ func (q *Queries) GetWorkflowAutomationRevision(ctx context.Context, db DBTX, ar
 		&i.LegacySnapshot,
 		&i.PublishedByAccountID,
 		&i.PublishedByApiKeyID,
+	)
+	return i, err
+}
+
+const getWorkflowDiagnosticsSteps = `-- name: GetWorkflowDiagnosticsSteps :many
+SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at
+FROM workflow_steps WHERE run_id=$1::uuid ORDER BY step_name
+`
+
+type GetWorkflowDiagnosticsStepsRow struct {
+	StepName      string
+	Status        string
+	Attempt       int32
+	RetryBase     int32
+	SkipReason    pgtype.Text
+	ForeachParent pgtype.Text
+	ForeachIndex  pgtype.Int4
+	ForeachCount  pgtype.Int4
+	NextRetryAt   pgtype.Timestamptz
+	NextCheckAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetWorkflowDiagnosticsSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]GetWorkflowDiagnosticsStepsRow, error) {
+	rows, err := db.Query(ctx, getWorkflowDiagnosticsSteps, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetWorkflowDiagnosticsStepsRow{}
+	for rows.Next() {
+		var i GetWorkflowDiagnosticsStepsRow
+		if err := rows.Scan(
+			&i.StepName,
+			&i.Status,
+			&i.Attempt,
+			&i.RetryBase,
+			&i.SkipReason,
+			&i.ForeachParent,
+			&i.ForeachIndex,
+			&i.ForeachCount,
+			&i.NextRetryAt,
+			&i.NextCheckAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getWorkflowRecoveryTarget = `-- name: GetWorkflowRecoveryTarget :one
+WITH current_run AS (SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint, deployment_id FROM workflow_runs WHERE id=$1::uuid),
+app_runs AS MATERIALIZED (
+ SELECT r.workflow_name,r.platform_tenant_id,r.operation_id,r.status,r.started_at,
+ (r.status='running' AND coalesce(r.lease_until,r.updated_at+($2::bigint*interval '1 millisecond'))>now()) AS live
+ FROM workflow_runs r JOIN current_run selected ON selected.app_id=r.app_id
+ WHERE r.status IN ('pending','running','awaiting_event')
+)
+SELECT now()::timestamptz AS observed_at,ac.plan,
+ (ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL)::boolean AS account_active,
+ (a.status='deleted')::boolean AS app_deleted,a.maintenance_mode,a.platform_tenant_required,
+ EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.status='live' AND d.scope='default') AS live_deployment,
+ (selected.deployment_id IS NULL OR EXISTS(SELECT 1 FROM deployments d WHERE d.id=selected.deployment_id AND d.app_id=a.id AND d.status='live' AND d.deleted_at IS NULL))::boolean AS pinned_deployment,
+ (selected.platform_tenant_id IS NULL OR EXISTS(SELECT 1 FROM platform_tenants t
+  WHERE t.id=selected.platform_tenant_id AND t.account_id=a.account_id AND t.status='active' AND
+  (EXISTS(SELECT 1 FROM api_consumers c WHERE c.platform_tenant_id=t.id AND c.account_id=a.account_id AND c.app_id=a.id AND c.status='active' AND c.revoked_at IS NULL)
+  OR EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.platform_tenant_id=t.id AND s.account_id=a.account_id AND s.app_id=a.id AND s.status='active'))))::boolean AS tenant_active,
+ (SELECT count(*) FROM app_runs)::bigint AS active_runs,
+ (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL)::bigint AS app_running,
+ (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL AND platform_tenant_id=selected.platform_tenant_id)::bigint AS tenant_running,
+ (SELECT count(*) FROM app_runs WHERE workflow_name=selected.workflow_name AND
+  (live OR status='awaiting_event' OR (status='pending' AND started_at IS NOT NULL)))::bigint AS workflow_active
+FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN accounts ac ON ac.id=a.account_id
+`
+
+type GetWorkflowRecoveryTargetParams struct {
+	RunID   pgtype.UUID
+	StaleMs int64
+}
+
+type GetWorkflowRecoveryTargetRow struct {
+	ObservedAt             pgtype.Timestamptz
+	Plan                   string
+	AccountActive          bool
+	AppDeleted             bool
+	MaintenanceMode        bool
+	PlatformTenantRequired bool
+	LiveDeployment         bool
+	PinnedDeployment       bool
+	TenantActive           bool
+	ActiveRuns             int64
+	AppRunning             int64
+	TenantRunning          int64
+	WorkflowActive         int64
+}
+
+func (q *Queries) GetWorkflowRecoveryTarget(ctx context.Context, db DBTX, arg GetWorkflowRecoveryTargetParams) (GetWorkflowRecoveryTargetRow, error) {
+	row := db.QueryRow(ctx, getWorkflowRecoveryTarget, arg.RunID, arg.StaleMs)
+	var i GetWorkflowRecoveryTargetRow
+	err := row.Scan(
+		&i.ObservedAt,
+		&i.Plan,
+		&i.AccountActive,
+		&i.AppDeleted,
+		&i.MaintenanceMode,
+		&i.PlatformTenantRequired,
+		&i.LiveDeployment,
+		&i.PinnedDeployment,
+		&i.TenantActive,
+		&i.ActiveRuns,
+		&i.AppRunning,
+		&i.TenantRunning,
+		&i.WorkflowActive,
 	)
 	return i, err
 }
@@ -15812,6 +16098,38 @@ func (q *Queries) GetWorkflowScheduleCursor(ctx context.Context, db DBTX, arg Ge
 		&i.LastRunID,
 		&i.UpdatedAt,
 		&i.LastAdmittedAt,
+	)
+	return i, err
+}
+
+const getWorkflowScheduleOccurrenceForReplay = `-- name: GetWorkflowScheduleOccurrenceForReplay :one
+SELECT id, app_id, platform_tenant_id, workflow_name, deployment_id, scheduled_for, evaluated_at, status, run_id, definition_hash, replay_run_id, replayed_at FROM workflow_schedule_occurrences
+WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type GetWorkflowScheduleOccurrenceForReplayParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+// Replay reads and locks one retained occurrence inside the app admission lock.
+// The replay run identity is separate from the original skipped outcome.
+func (q *Queries) GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg GetWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error) {
+	row := db.QueryRow(ctx, getWorkflowScheduleOccurrenceForReplay, arg.AppID, arg.ID)
+	var i WorkflowScheduleOccurrence
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.PlatformTenantID,
+		&i.WorkflowName,
+		&i.DeploymentID,
+		&i.ScheduledFor,
+		&i.EvaluatedAt,
+		&i.Status,
+		&i.RunID,
+		&i.DefinitionHash,
+		&i.ReplayRunID,
+		&i.ReplayedAt,
 	)
 	return i, err
 }
@@ -17283,27 +17601,29 @@ func (q *Queries) InsertEventWorkflowReceipt(ctx context.Context, db DBTX, arg I
 }
 
 const insertEventWorkflowRun = `-- name: InsertEventWorkflowRun :exec
-INSERT INTO workflow_runs(id, app_id, platform_tenant_id, workflow_name, status, input, definition_snapshot)
-VALUES($1, $2, nullif($6::text, '')::uuid, $3, 'pending', $4, $5)
+INSERT INTO workflow_runs(id, app_id, platform_tenant_id, deployment_id, workflow_name, status, input, definition_snapshot)
+VALUES($1::uuid, $2::uuid, nullif($3::text, '')::uuid, $4::uuid, $5::text, 'pending', $6::jsonb, $7::jsonb)
 `
 
 type InsertEventWorkflowRunParams struct {
 	ID                 pgtype.UUID
 	AppID              pgtype.UUID
+	PlatformTenantID   string
+	DeploymentID       pgtype.UUID
 	WorkflowName       string
 	Input              []byte
 	DefinitionSnapshot []byte
-	PlatformTenantID   string
 }
 
 func (q *Queries) InsertEventWorkflowRun(ctx context.Context, db DBTX, arg InsertEventWorkflowRunParams) error {
 	_, err := db.Exec(ctx, insertEventWorkflowRun,
 		arg.ID,
 		arg.AppID,
+		arg.PlatformTenantID,
+		arg.DeploymentID,
 		arg.WorkflowName,
 		arg.Input,
 		arg.DefinitionSnapshot,
-		arg.PlatformTenantID,
 	)
 	return err
 }
@@ -19994,14 +20314,15 @@ func (q *Queries) InsertRoutePolicyReceipt(ctx context.Context, db DBTX, arg Ins
 }
 
 const insertScheduledWorkflowRun = `-- name: InsertScheduledWorkflowRun :one
-INSERT INTO workflow_runs (id, app_id, workflow_name, status, input, definition_snapshot, scheduled_for)
-VALUES ($1, $2, $3, 'pending', $4, $5, $6)
+INSERT INTO workflow_runs (id, app_id, deployment_id, workflow_name, status, input, definition_snapshot, scheduled_for)
+VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7)
 RETURNING created_at, updated_at
 `
 
 type InsertScheduledWorkflowRunParams struct {
 	ID                 pgtype.UUID
 	AppID              pgtype.UUID
+	DeploymentID       pgtype.UUID
 	WorkflowName       string
 	Input              []byte
 	DefinitionSnapshot []byte
@@ -20017,6 +20338,7 @@ func (q *Queries) InsertScheduledWorkflowRun(ctx context.Context, db DBTX, arg I
 	row := db.QueryRow(ctx, insertScheduledWorkflowRun,
 		arg.ID,
 		arg.AppID,
+		arg.DeploymentID,
 		arg.WorkflowName,
 		arg.Input,
 		arg.DefinitionSnapshot,
@@ -20059,9 +20381,9 @@ func (q *Queries) InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBT
 }
 
 const insertTenantScheduledWorkflowRun = `-- name: InsertTenantScheduledWorkflowRun :one
-INSERT INTO workflow_runs (id, app_id, platform_tenant_id, workflow_name, status, input, definition_snapshot, scheduled_for)
-VALUES ($1::uuid, $2::uuid, $3::uuid, $4::text,
-    'pending', $5::jsonb, $6::jsonb, $7::timestamptz)
+INSERT INTO workflow_runs (id, app_id, platform_tenant_id, deployment_id, workflow_name, status, input, definition_snapshot, scheduled_for)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text,
+    'pending', $6::jsonb, $7::jsonb, $8::timestamptz)
 RETURNING created_at, updated_at
 `
 
@@ -20069,6 +20391,7 @@ type InsertTenantScheduledWorkflowRunParams struct {
 	ID                 pgtype.UUID
 	AppID              pgtype.UUID
 	TenantID           pgtype.UUID
+	DeploymentID       pgtype.UUID
 	WorkflowName       string
 	Input              []byte
 	DefinitionSnapshot []byte
@@ -20085,6 +20408,7 @@ func (q *Queries) InsertTenantScheduledWorkflowRun(ctx context.Context, db DBTX,
 		arg.ID,
 		arg.AppID,
 		arg.TenantID,
+		arg.DeploymentID,
 		arg.WorkflowName,
 		arg.Input,
 		arg.DefinitionSnapshot,
@@ -20334,24 +20658,67 @@ func (q *Queries) InsertWorkflowResume(ctx context.Context, db DBTX, arg InsertW
 	return created_at, err
 }
 
+const insertWorkflowRun = `-- name: InsertWorkflowRun :one
+INSERT INTO workflow_runs(id,app_id,platform_tenant_id,deployment_id,workflow_name,status,input,definition_snapshot,scheduled_for)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::text,$6::text,$7::jsonb,$8::jsonb,$9::timestamptz)
+RETURNING created_at,updated_at
+`
+
+type InsertWorkflowRunParams struct {
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	PlatformTenantID   pgtype.UUID
+	DeploymentID       pgtype.UUID
+	WorkflowName       string
+	Status             string
+	Input              []byte
+	DefinitionSnapshot []byte
+	ScheduledFor       pgtype.Timestamptz
+}
+
+type InsertWorkflowRunRow struct {
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertWorkflowRun(ctx context.Context, db DBTX, arg InsertWorkflowRunParams) (InsertWorkflowRunRow, error) {
+	row := db.QueryRow(ctx, insertWorkflowRun,
+		arg.ID,
+		arg.AppID,
+		arg.PlatformTenantID,
+		arg.DeploymentID,
+		arg.WorkflowName,
+		arg.Status,
+		arg.Input,
+		arg.DefinitionSnapshot,
+		arg.ScheduledFor,
+	)
+	var i InsertWorkflowRunRow
+	err := row.Scan(&i.CreatedAt, &i.UpdatedAt)
+	return i, err
+}
+
 const insertWorkflowScheduleOccurrence = `-- name: InsertWorkflowScheduleOccurrence :exec
 INSERT INTO workflow_schedule_occurrences (id, app_id, platform_tenant_id, workflow_name,
- deployment_id, scheduled_for, evaluated_at, status, run_id)
+ deployment_id, scheduled_for, evaluated_at, status, run_id, definition_hash)
 VALUES ($1::uuid, $2::uuid, $3::uuid,
  $4::text, $5::uuid, $6::timestamptz,
- $7::timestamptz, $8::text, $9::uuid)
+ $7::timestamptz, $8::text, $9::uuid,
+ $10::text)
 `
 
 type InsertWorkflowScheduleOccurrenceParams struct {
-	ID           pgtype.UUID
-	AppID        pgtype.UUID
-	TenantID     pgtype.UUID
-	WorkflowName string
-	DeploymentID pgtype.UUID
-	ScheduledFor pgtype.Timestamptz
-	EvaluatedAt  pgtype.Timestamptz
-	Status       string
-	RunID        pgtype.UUID
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	TenantID       pgtype.UUID
+	WorkflowName   string
+	DeploymentID   pgtype.UUID
+	ScheduledFor   pgtype.Timestamptz
+	EvaluatedAt    pgtype.Timestamptz
+	Status         string
+	RunID          pgtype.UUID
+	DefinitionHash string
 }
 
 func (q *Queries) InsertWorkflowScheduleOccurrence(ctx context.Context, db DBTX, arg InsertWorkflowScheduleOccurrenceParams) error {
@@ -20365,6 +20732,7 @@ func (q *Queries) InsertWorkflowScheduleOccurrence(ctx context.Context, db DBTX,
 		arg.EvaluatedAt,
 		arg.Status,
 		arg.RunID,
+		arg.DefinitionHash,
 	)
 	return err
 }
@@ -22393,6 +22761,7 @@ SELECT EXISTS (
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
                       WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
       AND (d.rootfs_key = $1::text
@@ -28714,6 +29083,49 @@ func (q *Queries) ListTenantWorkflowScheduleCandidates(ctx context.Context, db D
 	return items, nil
 }
 
+const listTenantWorkflowScheduleCursors = `-- name: ListTenantWorkflowScheduleCursors :many
+SELECT app_id, platform_tenant_id, workflow_name, deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id, updated_at, last_admitted_at FROM platform_tenant_workflow_schedule_cursors
+WHERE app_id = $1::uuid AND platform_tenant_id = $2::uuid
+ORDER BY workflow_name
+`
+
+type ListTenantWorkflowScheduleCursorsParams struct {
+	AppID    pgtype.UUID
+	TenantID pgtype.UUID
+}
+
+func (q *Queries) ListTenantWorkflowScheduleCursors(ctx context.Context, db DBTX, arg ListTenantWorkflowScheduleCursorsParams) ([]PlatformTenantWorkflowScheduleCursor, error) {
+	rows, err := db.Query(ctx, listTenantWorkflowScheduleCursors, arg.AppID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PlatformTenantWorkflowScheduleCursor{}
+	for rows.Next() {
+		var i PlatformTenantWorkflowScheduleCursor
+		if err := rows.Scan(
+			&i.AppID,
+			&i.PlatformTenantID,
+			&i.WorkflowName,
+			&i.DeploymentID,
+			&i.TriggerSnapshot,
+			&i.LastEvaluatedAt,
+			&i.ScheduledFor,
+			&i.Status,
+			&i.LastRunID,
+			&i.UpdatedAt,
+			&i.LastAdmittedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTerminalTriggerRecordItems = `-- name: ListTerminalTriggerRecordItems :many
 SELECT item_identifier FROM trigger_records
 WHERE trigger_id = $1
@@ -29354,7 +29766,7 @@ func (q *Queries) ListWorkflowScheduleCursors(ctx context.Context, db DBTX, appI
 }
 
 const listWorkflowScheduleOccurrences = `-- name: ListWorkflowScheduleOccurrences :many
-SELECT o.id, o.app_id, o.platform_tenant_id, o.workflow_name, o.deployment_id, o.scheduled_for, o.evaluated_at, o.status, o.run_id FROM workflow_schedule_occurrences o
+SELECT o.id, o.app_id, o.platform_tenant_id, o.workflow_name, o.deployment_id, o.scheduled_for, o.evaluated_at, o.status, o.run_id, o.definition_hash, o.replay_run_id, o.replayed_at FROM workflow_schedule_occurrences o
 WHERE o.app_id = $1::uuid
  AND ($2::uuid IS NULL OR o.platform_tenant_id = $2::uuid)
  AND ($3::uuid IS NULL OR (o.scheduled_for, o.id) <
@@ -29395,6 +29807,9 @@ func (q *Queries) ListWorkflowScheduleOccurrences(ctx context.Context, db DBTX, 
 			&i.EvaluatedAt,
 			&i.Status,
 			&i.RunID,
+			&i.DefinitionHash,
+			&i.ReplayRunID,
+			&i.ReplayedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -29999,7 +30414,7 @@ func (q *Queries) LockCustomerOperationTenant(ctx context.Context, db DBTX, arg 
 }
 
 const lockCustomerOperationWorkflowRun = `-- name: LockCustomerOperationWorkflowRun :one
-SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint FROM workflow_runs WHERE id=$1::uuid AND operation_id IS NOT NULL FOR UPDATE
+SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint, deployment_id FROM workflow_runs WHERE id=$1::uuid AND operation_id IS NOT NULL FOR UPDATE
 `
 
 func (q *Queries) LockCustomerOperationWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) (WorkflowRun, error) {
@@ -30027,6 +30442,7 @@ func (q *Queries) LockCustomerOperationWorkflowRun(ctx context.Context, db DBTX,
 		&i.PlatformTenantID,
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
 	)
 	return i, err
 }
@@ -30706,7 +31122,7 @@ func (q *Queries) LockExclusiveWorkAccount(ctx context.Context, db DBTX, account
 
 const lockExpiredRevisionPinApps = `-- name: LockExpiredRevisionPinApps :many
 SELECT a.id FROM apps a WHERE EXISTS(SELECT 1 FROM deployment_code_pin_deadlines p WHERE p.app_id=a.id AND p.expires_at<=now()
-        AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
+        AND NOT EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
         AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
             WHERE rm.deployment_id=p.deployment_id AND (rs.active OR rs.expires_at>now())))
 ORDER BY a.id LIMIT $1::integer FOR UPDATE OF a
@@ -32959,6 +33375,16 @@ func (q *Queries) LockWorkflowActionAdmission(ctx context.Context, db DBTX, work
 	return err
 }
 
+const lockWorkflowDispatchFairness = `-- name: LockWorkflowDispatchFairness :exec
+SELECT pg_advisory_xact_lock(hashtextextended('workflow-dispatch-fairness',0))
+`
+
+// ADR-641: serialize only the short claim transaction, never handler execution.
+func (q *Queries) LockWorkflowDispatchFairness(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockWorkflowDispatchFairness)
+	return err
+}
+
 const lockWorkflowGuardRun = `-- name: LockWorkflowGuardRun :one
 SELECT status, input, definition_snapshot FROM workflow_runs
 WHERE id=$1 FOR UPDATE
@@ -33013,7 +33439,7 @@ func (q *Queries) LockWorkflowRecovery(ctx context.Context, db DBTX, runID pgtyp
 
 const lockWorkflowResumeRun = `-- name: LockWorkflowResumeRun :one
 SELECT id,app_id,workflow_name,status,current_step,input,output,definition_snapshot,
- scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at,platform_tenant_id
+ scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at,platform_tenant_id,deployment_id
 FROM workflow_runs WHERE id=$1 AND app_id=$2 FOR UPDATE
 `
 
@@ -33040,6 +33466,7 @@ type LockWorkflowResumeRunRow struct {
 	ResumeCount        int32
 	CancelledAt        pgtype.Timestamptz
 	PlatformTenantID   pgtype.UUID
+	DeploymentID       pgtype.UUID
 }
 
 func (q *Queries) LockWorkflowResumeRun(ctx context.Context, db DBTX, arg LockWorkflowResumeRunParams) (LockWorkflowResumeRunRow, error) {
@@ -33063,6 +33490,7 @@ func (q *Queries) LockWorkflowResumeRun(ctx context.Context, db DBTX, arg LockWo
 		&i.ResumeCount,
 		&i.CancelledAt,
 		&i.PlatformTenantID,
+		&i.DeploymentID,
 	)
 	return i, err
 }
@@ -33118,8 +33546,23 @@ func (q *Queries) LockWorkflowRunAdmission(ctx context.Context, db DBTX, appKey 
 	return err
 }
 
+const lockWorkflowRunConcurrency = `-- name: LockWorkflowRunConcurrency :exec
+SELECT pg_advisory_xact_lock(hashtextextended('workflow-run-concurrency:' || $1::uuid::text || ':' || $2::text,0))
+`
+
+type LockWorkflowRunConcurrencyParams struct {
+	AppID        pgtype.UUID
+	WorkflowName string
+}
+
+// Coordinate with the previous per-definition claimant during rolling upgrades.
+func (q *Queries) LockWorkflowRunConcurrency(ctx context.Context, db DBTX, arg LockWorkflowRunConcurrencyParams) error {
+	_, err := db.Exec(ctx, lockWorkflowRunConcurrency, arg.AppID, arg.WorkflowName)
+	return err
+}
+
 const lockWorkflowRunForManualRetry = `-- name: LockWorkflowRunForManualRetry :one
-SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint FROM workflow_runs
+SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint, deployment_id FROM workflow_runs
 WHERE id=$1::text::uuid
 FOR UPDATE
 `
@@ -33149,12 +33592,44 @@ func (q *Queries) LockWorkflowRunForManualRetry(ctx context.Context, db DBTX, ru
 		&i.PlatformTenantID,
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
+	)
+	return i, err
+}
+
+const lockWorkflowScheduleOccurrenceForReplay = `-- name: LockWorkflowScheduleOccurrenceForReplay :one
+SELECT id, app_id, platform_tenant_id, workflow_name, deployment_id, scheduled_for, evaluated_at, status, run_id, definition_hash, replay_run_id, replayed_at FROM workflow_schedule_occurrences
+WHERE app_id = $1::uuid AND id = $2::uuid
+FOR UPDATE
+`
+
+type LockWorkflowScheduleOccurrenceForReplayParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) LockWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg LockWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error) {
+	row := db.QueryRow(ctx, lockWorkflowScheduleOccurrenceForReplay, arg.AppID, arg.ID)
+	var i WorkflowScheduleOccurrence
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.PlatformTenantID,
+		&i.WorkflowName,
+		&i.DeploymentID,
+		&i.ScheduledFor,
+		&i.EvaluatedAt,
+		&i.Status,
+		&i.RunID,
+		&i.DefinitionHash,
+		&i.ReplayRunID,
+		&i.ReplayedAt,
 	)
 	return i, err
 }
 
 const lockWorkflowScheduleTarget = `-- name: LockWorkflowScheduleTarget :one
-SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
+SELECT a.account_id, d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
 FROM apps a JOIN accounts ac ON ac.id = a.account_id
 JOIN deployments d ON d.app_id = a.id
 WHERE a.id = $1 AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
@@ -33168,6 +33643,7 @@ FOR SHARE OF a, ac, d
 `
 
 type LockWorkflowScheduleTargetRow struct {
+	AccountID    pgtype.UUID
 	DeploymentID pgtype.UUID
 	Workflows    []byte
 	Plan         string
@@ -33176,7 +33652,12 @@ type LockWorkflowScheduleTargetRow struct {
 func (q *Queries) LockWorkflowScheduleTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (LockWorkflowScheduleTargetRow, error) {
 	row := db.QueryRow(ctx, lockWorkflowScheduleTarget, appID)
 	var i LockWorkflowScheduleTargetRow
-	err := row.Scan(&i.DeploymentID, &i.Workflows, &i.Plan)
+	err := row.Scan(
+		&i.AccountID,
+		&i.DeploymentID,
+		&i.Workflows,
+		&i.Plan,
+	)
 	return i, err
 }
 
@@ -33843,7 +34324,7 @@ func (q *Queries) NextAutomationVersion(ctx context.Context, db DBTX) (int64, er
 }
 
 const nextCustomerOperationWorkflowRun = `-- name: NextCustomerOperationWorkflowRun :one
-SELECT w.id, w.app_id, w.workflow_name, w.status, w.current_step, w.input, w.output, w.definition_snapshot, w.scheduled_for, w.started_at, w.finished_at, w.last_error, w.created_at, w.updated_at, w.lease_until, w.operation_id, w.resume_count, w.cancelled_at, w.platform_tenant_id, w.create_idempotency_key, w.create_request_fingerprint FROM workflow_runs w
+SELECT w.id, w.app_id, w.workflow_name, w.status, w.current_step, w.input, w.output, w.definition_snapshot, w.scheduled_for, w.started_at, w.finished_at, w.last_error, w.created_at, w.updated_at, w.lease_until, w.operation_id, w.resume_count, w.cancelled_at, w.platform_tenant_id, w.create_idempotency_key, w.create_request_fingerprint, w.deployment_id FROM workflow_runs w
 JOIN customer_operations o ON o.id=w.operation_id AND o.current_execution_id=w.id AND o.execution_kind='workflow' AND o.app_id=w.app_id AND o.platform_tenant_id=w.platform_tenant_id
 JOIN customer_operation_executions e ON e.operation_id=o.id AND e.workflow_run_id=w.id AND e.generation=o.execution_generation
 JOIN apps a ON a.id=w.app_id AND a.account_id=o.account_id AND a.status<>'deleted'
@@ -33882,6 +34363,7 @@ func (q *Queries) NextCustomerOperationWorkflowRun(ctx context.Context, db DBTX)
 		&i.PlatformTenantID,
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
 	)
 	return i, err
 }
@@ -33974,6 +34456,58 @@ func (q *Queries) NextEnvironmentQueueDeliveryInvocation(ctx context.Context, db
 		&i.EnvironmentID,
 		&i.ReplayRootInvocationID,
 		&i.ReplayRootCreatedAt,
+	)
+	return i, err
+}
+
+const nextFairDueWorkflowRun = `-- name: NextFairDueWorkflowRun :one
+SELECT candidate.id,candidate.status,candidate.app_id,candidate.platform_tenant_id,candidate.workflow_name
+FROM workflow_runs candidate
+LEFT JOIN workflow_dispatch_cursors app_cursor ON app_cursor.app_id=candidate.app_id AND app_cursor.scope_key='app'
+LEFT JOIN workflow_dispatch_cursors scope_cursor ON scope_cursor.app_id=candidate.app_id
+ AND scope_cursor.scope_key=coalesce(candidate.platform_tenant_id::text,'unscoped')
+WHERE candidate.operation_id IS NULL AND
+ ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
+ OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+($1::bigint*interval '1 millisecond'))<=now()))
+AND (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.id<>candidate.id AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+($1::bigint*interval '1 millisecond'))>now())<$2::integer
+AND (candidate.platform_tenant_id IS NULL OR
+ (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.platform_tenant_id=candidate.platform_tenant_id AND active.id<>candidate.id
+ AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+($1::bigint*interval '1 millisecond'))>now())<$3::integer)
+AND (coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)<=0 OR
+ (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.workflow_name=candidate.workflow_name AND active.id<>candidate.id
+ AND (active.status='awaiting_event' OR (active.status='pending' AND active.started_at IS NOT NULL)
+ OR (active.status='running' AND coalesce(active.lease_until,active.updated_at+($1::bigint*interval '1 millisecond'))>now())))<coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0))
+ORDER BY app_cursor.last_claimed_at ASC NULLS FIRST,scope_cursor.last_claimed_at ASC NULLS FIRST,
+ CASE WHEN candidate.status='running' THEN coalesce(candidate.lease_until,candidate.updated_at+($1::bigint*interval '1 millisecond')) ELSE candidate.scheduled_for END,candidate.id
+FOR UPDATE OF candidate SKIP LOCKED LIMIT 1
+`
+
+type NextFairDueWorkflowRunParams struct {
+	StaleMs     int64
+	AppLimit    int32
+	TenantLimit int32
+}
+
+type NextFairDueWorkflowRunRow struct {
+	ID               pgtype.UUID
+	Status           string
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	WorkflowName     string
+}
+
+func (q *Queries) NextFairDueWorkflowRun(ctx context.Context, db DBTX, arg NextFairDueWorkflowRunParams) (NextFairDueWorkflowRunRow, error) {
+	row := db.QueryRow(ctx, nextFairDueWorkflowRun, arg.StaleMs, arg.AppLimit, arg.TenantLimit)
+	var i NextFairDueWorkflowRunRow
+	err := row.Scan(
+		&i.ID,
+		&i.Status,
+		&i.AppID,
+		&i.PlatformTenantID,
+		&i.WorkflowName,
 	)
 	return i, err
 }
@@ -50365,6 +50899,24 @@ func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]Reap
 	return items, nil
 }
 
+const rearmTenantAutomationSchedules = `-- name: RearmTenantAutomationSchedules :exec
+UPDATE platform_tenant_workflow_schedule_cursors
+SET deployment_id=NULL,scheduled_for=NULL,status='armed',last_run_id=NULL
+WHERE app_id=$1::uuid AND workflow_name=$2::text
+`
+
+type RearmTenantAutomationSchedulesParams struct {
+	AppID        pgtype.UUID
+	WorkflowName string
+}
+
+// Preserve tenant cadence, version and admission priority, but invalidate the
+// evaluated deployment so publish/pause/resume cannot replay the paused interval.
+func (q *Queries) RearmTenantAutomationSchedules(ctx context.Context, db DBTX, arg RearmTenantAutomationSchedulesParams) error {
+	_, err := db.Exec(ctx, rearmTenantAutomationSchedules, arg.AppID, arg.WorkflowName)
+	return err
+}
+
 const reassignOrphanedAppOwner = `-- name: ReassignOrphanedAppOwner :execrows
 UPDATE apps SET node_id=$1::uuid, reassigned_at=now()
 WHERE id=$2::uuid AND node_id=$3::uuid
@@ -52253,6 +52805,24 @@ UPDATE workflow_runs SET cancelled_at=clock_timestamp() WHERE id=$1 AND status='
 
 func (q *Queries) RecordWorkflowCancellation(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, recordWorkflowCancellation, runID)
+	return err
+}
+
+const recordWorkflowDispatchClaim = `-- name: RecordWorkflowDispatchClaim :exec
+WITH claimed_at AS MATERIALIZED (SELECT clock_timestamp() AS at)
+INSERT INTO workflow_dispatch_cursors(app_id,platform_tenant_id,scope_key,last_claimed_at)
+SELECT $1::uuid,NULL::uuid,'app',at FROM claimed_at
+UNION ALL SELECT $1::uuid,$2::uuid,coalesce($2::uuid::text,'unscoped'),at FROM claimed_at
+ON CONFLICT(app_id,scope_key) DO UPDATE SET last_claimed_at=excluded.last_claimed_at
+`
+
+type RecordWorkflowDispatchClaimParams struct {
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+}
+
+func (q *Queries) RecordWorkflowDispatchClaim(ctx context.Context, db DBTX, arg RecordWorkflowDispatchClaimParams) error {
+	_, err := db.Exec(ctx, recordWorkflowDispatchClaim, arg.AppID, arg.PlatformTenantID)
 	return err
 }
 
@@ -54613,7 +55183,7 @@ SET status='pending',current_step=$1::text,
     lease_until=NULL,updated_at=clock_timestamp()
 WHERE id=$2::text::uuid
   AND status IN ('failed','dead')
-RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint
+RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint, deployment_id
 `
 
 type RequeueWorkflowRunForRetryParams struct {
@@ -54646,6 +55216,7 @@ func (q *Queries) RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg R
 		&i.PlatformTenantID,
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
 	)
 	return i, err
 }
@@ -55063,6 +55634,7 @@ WITH retained_deployments AS (
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
                       WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
 )
@@ -55137,7 +55709,7 @@ func (q *Queries) RetainedReleaseTargetUsable(ctx context.Context, db DBTX, arg 
 
 const retireAutoRollbackDeploymentSiblings = `-- name: RetireAutoRollbackDeploymentSiblings :exec
 UPDATE deployments d SET status=CASE WHEN
-    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     THEN 'live' ELSE 'superseded' END,
     traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
     rollout_aborted_at=coalesce(rollout_aborted_at,now()),
@@ -55162,6 +55734,7 @@ const retireCheckedRollbackSiblings = `-- name: RetireCheckedRollbackSiblings :e
 UPDATE deployments d SET traffic_percent=0,status=CASE WHEN EXISTS(SELECT 1 FROM deployment_revision_pins p
  WHERE p.deployment_id=d.id AND p.expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM project_release_members rm
  JOIN project_release_sets rs ON rs.id=rm.release_id WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>clock_timestamp()))
+ OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
  THEN 'live' ELSE 'superseded' END
  WHERE d.app_id=$1 AND d.scope=$2 AND d.status='live' AND d.id<>$3
 `
@@ -55200,7 +55773,7 @@ UPDATE deployments d SET status = CASE WHEN
     EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
-    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     THEN 'live' ELSE 'superseded' END, traffic_percent=0
 WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.status='live' AND d.id<>$3::uuid
@@ -57892,7 +58465,7 @@ UPDATE deployments d SET status = CASE WHEN $1::integer>0
     OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
-    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     THEN 'live' ELSE 'superseded' END, traffic_percent=$1::integer
 WHERE d.id=$2::uuid
 `
@@ -57968,6 +58541,33 @@ func (q *Queries) SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg Set
 		arg.ScheduledFor,
 		arg.RunID,
 		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setWorkflowScheduleOccurrenceReplay = `-- name: SetWorkflowScheduleOccurrenceReplay :execrows
+UPDATE workflow_schedule_occurrences
+SET replay_run_id = $1::uuid, replayed_at = $2::timestamptz
+WHERE app_id = $3::uuid AND id = $4::uuid
+  AND status IN ('skipped_overlap', 'skipped_quota') AND replay_run_id IS NULL
+`
+
+type SetWorkflowScheduleOccurrenceReplayParams struct {
+	ReplayRunID pgtype.UUID
+	ReplayedAt  pgtype.Timestamptz
+	AppID       pgtype.UUID
+	ID          pgtype.UUID
+}
+
+func (q *Queries) SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error) {
+	result, err := db.Exec(ctx, setWorkflowScheduleOccurrenceReplay,
+		arg.ReplayRunID,
+		arg.ReplayedAt,
+		arg.AppID,
+		arg.ID,
 	)
 	if err != nil {
 		return 0, err
@@ -59578,6 +60178,33 @@ func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpa
 	return err
 }
 
+const updateTenantWorkflowScheduleLastAdmittedAt = `-- name: UpdateTenantWorkflowScheduleLastAdmittedAt :execrows
+UPDATE platform_tenant_workflow_schedule_cursors
+SET last_admitted_at = $1::timestamptz, updated_at = now()
+WHERE app_id = $2::uuid AND platform_tenant_id = $3::uuid
+  AND workflow_name = $4::text
+`
+
+type UpdateTenantWorkflowScheduleLastAdmittedAtParams struct {
+	LastAdmittedAt pgtype.Timestamptz
+	AppID          pgtype.UUID
+	TenantID       pgtype.UUID
+	WorkflowName   string
+}
+
+func (q *Queries) UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateTenantWorkflowScheduleLastAdmittedAtParams) (int64, error) {
+	result, err := db.Exec(ctx, updateTenantWorkflowScheduleLastAdmittedAt,
+		arg.LastAdmittedAt,
+		arg.AppID,
+		arg.TenantID,
+		arg.WorkflowName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateTrigger = `-- name: UpdateTrigger :one
 update triggers set
   enabled = coalesce($2, enabled),
@@ -59668,6 +60295,28 @@ func (q *Queries) UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerP
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const updateWorkflowScheduleLastAdmittedAt = `-- name: UpdateWorkflowScheduleLastAdmittedAt :execrows
+UPDATE workflow_schedule_cursors
+SET last_admitted_at = $1::timestamptz, updated_at = now()
+WHERE app_id = $2::uuid AND workflow_name = $3::text
+`
+
+type UpdateWorkflowScheduleLastAdmittedAtParams struct {
+	LastAdmittedAt pgtype.Timestamptz
+	AppID          pgtype.UUID
+	WorkflowName   string
+}
+
+// Replay admissions update fairness without rewriting the scheduler cursor's
+// last outcome or nominal schedule time.
+func (q *Queries) UpdateWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateWorkflowScheduleLastAdmittedAtParams) (int64, error) {
+	result, err := db.Exec(ctx, updateWorkflowScheduleLastAdmittedAt, arg.LastAdmittedAt, arg.AppID, arg.WorkflowName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertDeploymentAlias = `-- name: UpsertDeploymentAlias :one
@@ -60632,6 +61281,13 @@ const workflowAlertSnapshot = `-- name: WorkflowAlertSnapshot :one
 WITH owned_apps AS (
  SELECT id FROM apps WHERE account_id = $3::uuid
  AND ($4::uuid IS NULL OR id = $4::uuid)
+), due_runs AS (
+ -- Same wake/lease eligibility as automation queue health (ADR-642/643).
+ SELECT r.created_at,CASE WHEN r.status='running'
+  THEN coalesce(r.lease_until,r.updated_at+($5::bigint*interval '1 millisecond'))
+  ELSE r.scheduled_for END AS due_at
+ FROM workflow_runs r JOIN owned_apps a ON a.id=r.app_id
+ WHERE r.operation_id IS NULL AND r.status IN ('pending','awaiting_event','running')
 )
 SELECT
  (SELECT count(*) FROM workflow_runs r JOIN owned_apps a ON a.id = r.app_id
@@ -60643,7 +61299,9 @@ SELECT
    AND coalesce(r.scheduled_for, r.created_at) <= $2::timestamptz),0))::float8 AS pending_age_seconds,
  greatest(0, coalesce((SELECT extract(epoch FROM ($2::timestamptz - min(s.started_at)))
   FROM workflow_steps s JOIN workflow_runs r ON r.id = s.run_id JOIN owned_apps a ON a.id = r.app_id
-  WHERE s.status = 'awaiting_event' AND r.status IN ('pending','running','awaiting_event')),0))::float8 AS waiting_age_seconds
+  WHERE s.status = 'awaiting_event' AND r.status IN ('pending','running','awaiting_event')),0))::float8 AS waiting_age_seconds,
+ greatest(0,coalesce((SELECT max(extract(epoch FROM($2::timestamptz-greatest(created_at,due_at))))
+  FROM due_runs WHERE due_at<=$2::timestamptz),0))::float8 AS due_age_seconds
 `
 
 type WorkflowAlertSnapshotParams struct {
@@ -60651,6 +61309,7 @@ type WorkflowAlertSnapshotParams struct {
 	NowAt     pgtype.Timestamptz
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
+	StaleMs   int64
 }
 
 type WorkflowAlertSnapshotRow struct {
@@ -60658,6 +61317,7 @@ type WorkflowAlertSnapshotRow struct {
 	QuotaSkips        int64
 	PendingAgeSeconds float64
 	WaitingAgeSeconds float64
+	DueAgeSeconds     float64
 }
 
 func (q *Queries) WorkflowAlertSnapshot(ctx context.Context, db DBTX, arg WorkflowAlertSnapshotParams) (WorkflowAlertSnapshotRow, error) {
@@ -60666,6 +61326,7 @@ func (q *Queries) WorkflowAlertSnapshot(ctx context.Context, db DBTX, arg Workfl
 		arg.NowAt,
 		arg.AccountID,
 		arg.AppID,
+		arg.StaleMs,
 	)
 	var i WorkflowAlertSnapshotRow
 	err := row.Scan(
@@ -60673,6 +61334,7 @@ func (q *Queries) WorkflowAlertSnapshot(ctx context.Context, db DBTX, arg Workfl
 		&i.QuotaSkips,
 		&i.PendingAgeSeconds,
 		&i.WaitingAgeSeconds,
+		&i.DueAgeSeconds,
 	)
 	return i, err
 }
@@ -60726,6 +61388,45 @@ func (q *Queries) WorkflowControlSteps(ctx context.Context, db DBTX, runID pgtyp
 		return nil, err
 	}
 	return items, nil
+}
+
+const workflowDispatchCapacityAvailable = `-- name: WorkflowDispatchCapacityAvailable :one
+SELECT EXISTS(SELECT 1 FROM workflow_runs candidate WHERE candidate.id=$1::uuid
+ AND candidate.operation_id IS NULL AND
+ ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
+ OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+($2::bigint*interval '1 millisecond'))<=now()))
+ AND (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.id<>candidate.id AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+($2::bigint*interval '1 millisecond'))>now())<$3::integer
+AND (candidate.platform_tenant_id IS NULL OR
+ (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.platform_tenant_id=candidate.platform_tenant_id AND active.id<>candidate.id
+ AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+($2::bigint*interval '1 millisecond'))>now())<$4::integer)
+AND (coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)<=0 OR
+ (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.workflow_name=candidate.workflow_name AND active.id<>candidate.id
+ AND (active.status='awaiting_event' OR (active.status='pending' AND active.started_at IS NOT NULL)
+ OR (active.status='running' AND coalesce(active.lease_until,active.updated_at+($2::bigint*interval '1 millisecond'))>now())))<coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)))::boolean
+`
+
+type WorkflowDispatchCapacityAvailableParams struct {
+	ID          pgtype.UUID
+	StaleMs     int64
+	AppLimit    int32
+	TenantLimit int32
+}
+
+// Recheck after acquiring the legacy concurrency lock. Earlier workers can
+// consume the last definition slot while a new claimant waits for that lock.
+func (q *Queries) WorkflowDispatchCapacityAvailable(ctx context.Context, db DBTX, arg WorkflowDispatchCapacityAvailableParams) (bool, error) {
+	row := db.QueryRow(ctx, workflowDispatchCapacityAvailable,
+		arg.ID,
+		arg.StaleMs,
+		arg.AppLimit,
+		arg.TenantLimit,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const workflowForEachStartAllowed = `-- name: WorkflowForEachStartAllowed :one

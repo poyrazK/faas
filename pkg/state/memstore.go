@@ -147,6 +147,7 @@ type MemStore struct {
 	bindingReleasePolicyHistory []api.BindingReleasePolicy
 	operationData               *operationMemory
 	operationCodePins           map[string]time.Time
+	workflowCodePins            map[string]time.Time
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
 	environmentExternalOwners   map[string]environmentExternalFieldOwner
 	environmentGitOps           map[string]*environmentGitOpsMemory
@@ -718,6 +719,7 @@ type MemStore struct {
 	eventFanoutAttemptNextID    int64
 	eventSchemas                map[string]EventSchema
 	workflowRunLeases           map[string]time.Time
+	workflowDispatchCursors     map[workflowDispatchScope]time.Time
 	eventWorkflowReceipts       map[string]string
 	// auditOutbox mirrors audit_event_outbox. It is separate from the
 	// events slice because delivery claims need leases and retry state,
@@ -6392,6 +6394,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.deployments, key)
 			delete(m.deploymentRuntimeEnvironmentOwners, key)
 			delete(m.operationCodePins, key)
+			delete(m.workflowCodePins, key)
 		}
 	}
 	for key, layer := range m.deploymentSidecarLayers {
@@ -6476,6 +6479,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	delete(m.serviceRecovery, id)
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
+	m.deleteWorkflowDispatchCursorsLocked(id)
 	delete(m.apps, id)
 	return nil
 }
@@ -9290,7 +9294,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		}
 		before := d
 		d.Status = DeploySuperseded
-		if m.operationRetainsDeploymentLocked(id) {
+		if m.durableWorkRetainsDeploymentLocked(id) {
 			d.Status = DeployLive
 		}
 		d.TrafficPercent = 0
@@ -21362,6 +21366,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.deployments, did)
 			delete(m.deploymentRuntimeEnvironmentOwners, did)
 			delete(m.operationCodePins, did)
+			delete(m.workflowCodePins, did)
 		}
 	}
 	for i := len(m.snapshots) - 1; i >= 0; i-- {
@@ -21380,6 +21385,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.serviceRecovery, aid)
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
+			m.deleteWorkflowDispatchCursorsLocked(aid)
 			delete(m.apps, aid)
 			delete(m.savedRouteRequirements, aid)
 			delete(m.canaryRouteGates, aid)
