@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
 	"io"
 	"net/url"
 	"os"
@@ -51,13 +52,15 @@ type Config struct {
 // TasksConfig describes optional starter-owned durable task processing. The
 // CLI validates the contract but the starter owns the worker implementation.
 type TasksConfig struct {
-	Enabled           *bool  `json:"enabled"`
-	DatabaseURLEnv    string `json:"database_url_env,omitempty"`
-	OwnerKeyEnv       string `json:"owner_key_env,omitempty"`
-	NamespaceEnv      string `json:"namespace_env,omitempty"`
-	TTLSeconds        int    `json:"ttl_seconds,omitempty"`
-	PollIntervalMS    int    `json:"poll_interval_ms,omitempty"`
-	WorkerConcurrency int    `json:"worker_concurrency,omitempty"`
+	Enabled                *bool  `json:"enabled"`
+	DatabaseURLEnv         string `json:"database_url_env,omitempty"`
+	OwnerKeyEnv            string `json:"owner_key_env,omitempty"`
+	NamespaceEnv           string `json:"namespace_env,omitempty"`
+	TTLSeconds             int    `json:"ttl_seconds,omitempty"`
+	PollIntervalMS         int    `json:"poll_interval_ms,omitempty"`
+	WorkerConcurrency      int    `json:"worker_concurrency,omitempty"`
+	MaxOutstanding         int    `json:"max_outstanding,omitempty"`
+	MaxOutstandingPerOwner int    `json:"max_outstanding_per_owner,omitempty"`
 }
 
 type AuthConfig struct {
@@ -269,6 +272,19 @@ func (c *TasksConfig) validate() error {
 	}
 	if c.WorkerConcurrency != 0 && (c.WorkerConcurrency < 1 || c.WorkerConcurrency > 16) {
 		return fmt.Errorf("tasks.worker_concurrency must be between 1 and 16")
+	}
+	if c.MaxOutstanding < 0 || c.MaxOutstandingPerOwner < 0 {
+		return fmt.Errorf("task admission limits must be positive integers when specified")
+	}
+	total, owner := c.MaxOutstanding, c.MaxOutstandingPerOwner
+	if total == 0 {
+		total = api.MCPTaskDefaultMaxOutstanding
+	}
+	if owner == 0 {
+		owner = api.MCPTaskDefaultMaxOutstandingPerOwner
+	}
+	if owner > total {
+		return fmt.Errorf("tasks.max_outstanding_per_owner must not exceed tasks.max_outstanding")
 	}
 	return nil
 }

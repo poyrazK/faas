@@ -664,6 +664,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		RequestRateLimitRPS:          requestRateLimitRPS,
 		RequestRateLimitBurst:        requestRateLimitBurst,
 		Slug:                         app.Slug,
+		CanonicalHost:                app.Slug + r.appsSuffix,
 		IsPreview:                    app.PreviewOfSlug != "",
 		StreamingEnabled:             app.StreamingEnabled,
 		SessionAffinity:              app.Manifest.SessionAffinity,

@@ -177,6 +177,9 @@ type App struct {
 	// identify which app is in maintenance. Default-empty in
 	// fakeBackend unit tests; production path always populates.
 	Slug string
+	// CanonicalHost is router-authored, so app-wide MCP policies also cover
+	// deployment previews, environment aliases and custom domains.
+	CanonicalHost string
 	// IsPreview identifies preview applications. Fixed response rules are
 	// deliberately limited to these apps and the gateway rechecks this flag
 	// even when a rule was written through a non-HTTP path.
@@ -2807,7 +2810,14 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	if h.edgeRules == nil {
 		return false
 	}
+	if h.applyMCPAliasPolicy(w, r, app) {
+		return true
+	}
 	rule := h.edgeRules.MatchJWT(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	if rule != nil && rule.Unavailable {
+		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_policy_unavailable")
+		return true
+	}
 	if rule == nil {
 		// Clean miss: no rule for this host. The match counter
 		// surfaces this on the §12 dashboard chip; an audit row
@@ -2827,6 +2837,9 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 			"app_account_id":  app.AccountID,
 		})
 		return false
+	}
+	if rule.MCP != nil {
+		return h.applyMCPResourcePolicy(w, r, app, rule)
 	}
 	if h.jwtVerifier == nil {
 		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_verifier_not_configured")

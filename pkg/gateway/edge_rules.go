@@ -282,6 +282,8 @@ type EdgeRuleJWTResolved struct {
 	// handler when the matching throttle keys by jwt_claim. It is never
 	// stored in the edge-rule cache.
 	ExtractClaims []string
+	MCP           *api.MCPResourcePolicy
+	Unavailable   bool
 }
 
 // EdgeRuleIPResolved is the kind=ip subset (ADR-091). PR 5 calls

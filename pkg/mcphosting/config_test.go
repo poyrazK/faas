@@ -173,7 +173,10 @@ func TestConfigOptionalDurableTasks(t *testing.T) {
 		"short task ttl":        base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","ttl_seconds":59}}`,
 		"long poll interval":    base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","poll_interval_ms":30001}}`,
 		"excessive concurrency": base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","worker_concurrency":17}}`,
-		"unknown task field":    base + `,"tasks":{"enabled":false,"mystery":true}}`,
+		"negative admission":    base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","max_outstanding":-1}}`,
+		"owner exceeds queue":   base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","max_outstanding":10,"max_outstanding_per_owner":11}}`,
+
+		"unknown task field": base + `,"tasks":{"enabled":false,"mystery":true}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Decode(strings.NewReader(body)); err == nil {

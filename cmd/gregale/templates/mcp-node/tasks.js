@@ -71,6 +71,17 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
   if (!Number.isSafeInteger(workerConcurrency) || workerConcurrency < 1 || workerConcurrency > 16) throw new Error('MCP task worker concurrency must be between 1 and 16');
   if (typeof workerEnabled !== 'boolean' || typeof keepAlive !== 'boolean') throw new Error('MCP task worker options must be boolean');
 
+  const supportedHandlers = [];
+  const executionHandlers = new Map();
+  for (const [name, handler] of Object.entries(handlers)) {
+    if (!handler || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version)) throw new Error('Invalid MCP task handler version');
+    for (const [version, execute] of Object.entries({ ...handler.previousVersions, [handler.version]: handler.execute })) {
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
+      supportedHandlers.push({ name, version });
+      executionHandlers.set(JSON.stringify([name, version]), execute);
+    }
+  }
+
   const active = new Set();
   const taskSubscriptions = new Set();
   let timer;
@@ -205,8 +216,8 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
   }
 
   async function runTask(task) {
-    const handler = handlers[task.tool_name];
-    if (!handler || handler.version !== task.handler_version || typeof handler.execute !== 'function') {
+    const execute = executionHandlers.get(JSON.stringify([task.tool_name, task.handler_version]));
+    if (!execute) {
       await store.fail(task.task_id, task.lease_token, { code: -32603, message: 'Task handler is unavailable' });
       return;
     }
@@ -254,7 +265,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         }
         return state.responses;
       };
-      const result = await handler.execute(task.arguments, {
+      const result = await execute(task.arguments, {
         taskId: task.task_id,
         signal: controller.signal,
         requestInputs,
@@ -286,7 +297,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         await store.cleanupExpired();
       }
       while (!closed && active.size < workerConcurrency) {
-        const task = await store.claim(MAX_ATTEMPTS, LEASE_MS);
+        const task = await store.claim(MAX_ATTEMPTS, LEASE_MS, supportedHandlers);
         if (!task) break;
         let work;
         work = runTask(task).catch(reportError).finally(() => {
