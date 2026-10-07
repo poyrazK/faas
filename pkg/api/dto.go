@@ -3336,7 +3336,8 @@ type DeploymentAliasListResponse struct {
 // its own "min_instances required" presence rule. Splitting the
 // DTOs keeps each handler's contract crisp.
 type UpdateDeploymentTrafficRequest struct {
-	TrafficPercent              int     `json:"traffic_percent"`
+	TrafficPercent int `json:"traffic_percent"`
+	// An explicit empty id requires no live sibling with positive traffic.
 	ExpectedServingDeploymentID *string `json:"expected_serving_deployment_id,omitempty"`
 }
 
