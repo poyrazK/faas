@@ -1802,6 +1802,23 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_workflow_guest_claims",
+    "columns": [
+      "bound_at",
+      "capability_digest",
+      "coordinator_attempt",
+      "deadline_at",
+      "execution_kind",
+      "generation",
+      "instance_id",
+      "operation_id",
+      "step_attempt",
+      "step_name",
+      "workflow_run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operations",
     "columns": [
       "account_id",

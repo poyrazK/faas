@@ -25,8 +25,8 @@ revision is not part of key scope: a deploy cannot turn a retry into new work.
 Deduplication tombstones outlive results for the documented replay window.
 
 Progress is durable, ordered, bounded, and fenced to the active execution
-attempt. Guest report authority binds operation, invocation, instance, attempt,
-and expiry, in addition to existing workload identity. Client retries carry
+attempt. Guest report authority binds operation, the real execution, instance,
+attempt and expiry, in addition to existing workload identity. Client retries carry
 report IDs. SSE authorization uses operation ownership; reconnects replay a
 durable cursor or explicitly require snapshot resynchronization. PostgreSQL
 notifications are wake hints, never the authoritative event log.
@@ -310,3 +310,34 @@ instance-bound guest authority unavailable pending their qualified adapter.
 ## Fenced native workflow step writes — 2026-10-06
 
 The scheduler step mutation seam requires current custody and exact consecutive native attempts. Resolved input is frozen on the first dispatch and reused for an already persisted retry. Attempt history and compact step results commit together; identical terminal receipts preserve their first finished time, while conflicting receipts are rejected. A released or expired coordinator cannot change step history. Suspension denies fresh step starts while allowing a still-owned in-flight step to record its confirmed result. Resolved inputs and outputs obey the admitted operation value bound; step attempt counters use `OperationWorkflowStepAttemptsMax` (2,147,483,647), and retained error text uses `OperationWorkflowStepErrorMaxBytes` (4 KiB), both in `pkg/api/limits.go`. The coordinator remains responsible for native DAG readiness and recovery classification. This internal write seam does not itself dispatch handlers, grant guest authority, settle business outcomes or enable workflow admission.
+
+## Native workflow guest binding ledger — 2026-10-06
+
+Controlled workflow reporting uses a separate instance capability for each
+native step attempt. The scheduler binds it once under current custody, after
+the native attempt is running, to a running instance of the pinned app and
+deployment. A consumed binding survives instance deletion with a null instance
+reference; deletion cannot authorize another dispatch of an unresolved attempt.
+Only its digest is durable. Raw guest and coordinator capabilities are omitted
+from JSON, and neither capability substitutes for the other.
+
+Guest authority names the real workflow run, native step and native attempt;
+it does not fabricate an HTTP invocation. Its hard deadline derives from the
+native attempt's start time and handler timeout. The centralized
+`OperationWorkflowHandlerDefaultTimeout` preserves the native 30-second default
+and per-call condition checker timeout. Every report also requires the current
+unexpired coordinator custody, original operation generation, running native
+attempt and actual bound running instance. Renewal cannot extend the guest's
+hard deadline. Tenant suspension denies new bindings while still-owned work
+may preserve reported progress and immutable files.
+
+HTTP and workflow reporters share the same progress and verified artifact
+storage contracts through backend-specific authority checks. Workflow receipt
+IDs scope the caller's bounded report ID by native step and attempt, so distinct
+steps or retries cannot collide under one coordinator claim. Events and blob
+receipts retain the real backend identity. API artifact preflight checks this
+authority before reading or copying source bytes; attachment checks it again.
+The Node runtime keeps typed execution context isolated to the delivered
+request and forwards workflow fields without an invocation header. These
+reporting seams remain internal; dispatch, aggregate progress, business
+settlement and explicit confirmed-step recovery still gate public admission.
