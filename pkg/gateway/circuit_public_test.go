@@ -106,7 +106,19 @@ func TestCircuitConfigsTuneFromTheAppsFirstRule(t *testing.T) {
 		t.Fatal("tuned before the first load finished; lookups must not block")
 	}
 	<-loaded
-	cfg, ok := c.ForKey("tuned\x00i1")
+	// The source signals before CircuitConfigs.load stores its result. Wait
+	// until the public lookup observes that store instead of racing that last
+	// few instructions.
+	var cfg circuit.Config
+	var ok bool
+	deadline := time.Now().Add(time.Second)
+	for {
+		cfg, ok = c.ForKey("tuned\x00i1")
+		if ok || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if !ok || cfg.FailureThreshold != 0.25 || cfg.MinRequests != 3 || cfg.OpenDuration != 15*time.Second {
 		t.Fatalf("config = %+v ok=%v, want the priority-10 rule", cfg, ok)
 	}
