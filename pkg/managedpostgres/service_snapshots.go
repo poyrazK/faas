@@ -22,6 +22,9 @@ func (s *Service) CaptureSnapshot(ctx context.Context, accountID string, definit
 	}
 	providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
+	if receipts, ok := provider.(SnapshotCreationProvider); ok {
+		return s.captureSnapshotCreation(providerCtx, accountID, definition, request, receipts)
+	}
 	return provider.CaptureSnapshot(providerCtx, request)
 }
 
@@ -35,6 +38,17 @@ func (s *Service) FindSnapshot(ctx context.Context, definition RestoreSourceDefi
 	}
 	providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
+	accepted, err := s.SnapshotCreationAcknowledgement(providerCtx, definition, request)
+	if err != nil {
+		return DatabaseSnapshot{}, err
+	}
+	if accepted != nil {
+		receipts, ok := provider.(SnapshotCreationProvider)
+		if !ok {
+			return DatabaseSnapshot{}, ErrUnsupported
+		}
+		return receipts.ObserveSnapshotCreation(providerCtx, request, *accepted)
+	}
 	return provider.FindSnapshot(providerCtx, request)
 }
 
@@ -63,6 +77,24 @@ func (s *Service) DeleteSnapshot(ctx context.Context, definition RestoreSourceDe
 	}
 	providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
+	accepted, err := s.SnapshotCreationAcknowledgement(providerCtx, definition, request)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+	if accepted != nil {
+		if expectedID != "" && expectedID != accepted.ProviderResourceID {
+			return DeleteResult{}, ErrConflict
+		}
+		receipts, ok := provider.(SnapshotCreationProvider)
+		if !ok {
+			return DeleteResult{}, ErrUnsupported
+		}
+		cleanup, err := s.creationCleanup(providerCtx, "snapshot", definition.BackendID, request.ResourceID, "")
+		if err != nil {
+			return DeleteResult{}, err
+		}
+		return receipts.DeleteSnapshotCreation(providerCtx, request, *accepted, cleanup)
+	}
 	if expectedID == "" {
 		actual, err := provider.FindSnapshot(providerCtx, request)
 		if errors.Is(err, ErrNotFound) {

@@ -146,6 +146,26 @@ func (s *server) cleanupProjectEnvironmentClonePostgresSnapshots(ctx context.Con
 			cancel()
 			return lease, false, err
 		}
+		accepted, err := s.managedPostgres.SnapshotCreationAcknowledgement(cleanupCtx, clonePostgresSnapshotDefinition(plan), clonePostgresSnapshotRequest(receipt))
+		if err != nil {
+			cancel()
+			return lease, false, err
+		}
+		// The independent creation journal survives missing correctness metadata.
+		// It does not replace the verified snapshot receipt used for publication.
+		if accepted != nil {
+			result, cleanupErr := s.managedPostgres.DeleteSnapshot(cleanupCtx, clonePostgresSnapshotDefinition(plan), clonePostgresSnapshotRequest(receipt), receipt.ProviderSnapshotID)
+			if cleanupErr == nil && result.Done {
+				_, cleanupErr = snapshots.FinishProjectEnvironmentClonePostgresSnapshotCleanup(cleanupCtx, lease, plan.source.ID)
+			} else if cleanupErr == nil {
+				complete = false
+			}
+			cancel()
+			if cleanupErr != nil {
+				return lease, false, cleanupErr
+			}
+			continue
+		}
 		// Persist discovered identity before deletion. If deletion or its
 		// checkpoint loses acknowledgement, the next worker observes that ID.
 		if receipt.ProviderSnapshotID == "" && !receipt.RequestStartedAt.IsZero() {

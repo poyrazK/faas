@@ -25904,6 +25904,11 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	if err := purgeOperationOwnerTx(ctx, tx, id, ""); err != nil {
 		return fmt.Errorf("state: purge customer operation owner: %w", err)
 	}
+	// Custody outlives provider cleanup until final account erasure. Refuse to
+	// purge any acknowledgement whose lifecycle has not confirmed deletion.
+	if err := sqlc.New().PurgeAccountManagedPostgresCreationReceipts(ctx, tx, mustPgUUID(id)); err != nil {
+		return fmt.Errorf("state: purge deleted managed PostgreSQL custody: %w", err)
+	}
 
 	steps := []struct {
 		name string

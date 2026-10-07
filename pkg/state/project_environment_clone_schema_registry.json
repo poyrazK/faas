@@ -4442,6 +4442,25 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_creation_receipts",
+    "columns": [
+      "account_id",
+      "backend_fingerprint",
+      "backend_id",
+      "cleanup_started_at",
+      "database_id",
+      "generation",
+      "kind",
+      "point_in_time",
+      "provider_created_at",
+      "provider_resource_id",
+      "recorded_at",
+      "resource_id",
+      "source_resource_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_cutover_credentials",
     "columns": [
       "access",

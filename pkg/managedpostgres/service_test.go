@@ -44,12 +44,17 @@ func (p *fakeProvider) Restore(_ context.Context, request RestoreRequest) (Obser
 	if p.provisionErr != nil {
 		return ObservedDatabase{}, p.provisionErr
 	}
-	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, Status: p.provisionStatus, Spec: request.Spec}, nil
+	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, Status: p.provisionStatus, Spec: request.Spec,
+		RestoreLineage: &RestoreLineage{SourceResourceID: request.SourceResourceID, PointInTime: request.PointInTime}}, nil
 }
 
 func (p *fakeProvider) Inspect(_ context.Context, providerResourceID string) (ObservedDatabase, error) {
 	p.inspectCalls++
-	return ObservedDatabase{ProviderResourceID: providerResourceID, Status: p.inspectStatus, Spec: testSpec()}, nil
+	observed := ObservedDatabase{ProviderResourceID: providerResourceID, Status: p.inspectStatus, Spec: testSpec()}
+	if p.lastRestore.ResourceID != "" && providerResourceID == "restored-"+p.lastRestore.ResourceID {
+		observed.RestoreLineage = &RestoreLineage{SourceResourceID: p.lastRestore.SourceResourceID, PointInTime: p.lastRestore.PointInTime}
+	}
+	return observed, nil
 }
 
 func (*fakeProvider) Discover(_ context.Context, request ResourceDiscoveryRequest) (string, error) {

@@ -232,6 +232,13 @@ func (p *Provider) Provision(ctx context.Context, request managedpostgres.Provis
 }
 
 func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	return p.RestoreWithCreationReceipt(ctx, request, nil, nil)
+}
+
+func (p *Provider) RestoreWithCreationReceipt(ctx context.Context, request managedpostgres.RestoreRequest, accepted *managedpostgres.CreationAcknowledgement, record managedpostgres.CreationRecorder) (managedpostgres.ObservedDatabase, error) {
+	if p == nil {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+	}
 	if request.ResourceID == "" || len(request.ResourceID) > 255 || request.SourceResourceID == "" || len(request.SourceResourceID) > 255 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 || request.PointInTime.IsZero() {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
 	}
@@ -244,12 +251,25 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 	}
 	parentID := source.branchID
 	if parentID == "" {
+		record = nil
+	} // legacy project selectors cannot establish exact-source custody
+	if parentID == "" {
 		parentID, err = p.defaultBranch(ctx, source.projectID)
 		if err != nil {
 			return managedpostgres.ObservedDatabase{}, err
 		}
 	}
 	branchName := p.restoreBranchName(request.ResourceID)
+	if accepted != nil {
+		target, err := p.readRestoreCreation(ctx, request, *accepted)
+		if errors.Is(err, managedpostgres.ErrNotFound) {
+			err = managedpostgres.ErrUnavailable
+		}
+		if err != nil {
+			return managedpostgres.ObservedDatabase{}, err
+		}
+		return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, target, request)
+	}
 	existing, err := p.findBranch(ctx, source.projectID, branchName)
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
@@ -279,7 +299,7 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 		}
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	return p.awaitRestoredBranch(ctx, source.projectID, parentID, branchName, created.Branch, request)
+	return p.awaitRestoredBranchWithCreation(ctx, source.projectID, parentID, branchName, created.Branch, request, record)
 }
 
 func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
