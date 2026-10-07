@@ -1,10 +1,11 @@
 -- +goose Up
-ALTER TABLE object_deletions DROP CONSTRAINT object_deletions_provider_status_check;
+ALTER TABLE object_deletions DROP CONSTRAINT IF EXISTS object_deletions_provider_status_check;
 ALTER TABLE object_deletions ADD CONSTRAINT object_deletions_provider_status_check
  CHECK(provider_status IN ('','Enabled','Suspended','GCS_Enabled','GCS_Suspended'));
-ALTER TABLE object_deletions DROP CONSTRAINT object_deletions_check7;
+ALTER TABLE object_deletions DROP CONSTRAINT IF EXISTS object_deletions_check7;
 ALTER TABLE object_deletions ADD CONSTRAINT object_deletions_check7
  CHECK(provider_status IN ('Enabled','GCS_Enabled','GCS_Suspended') OR baseline='[]');
+ALTER TABLE object_deletions DROP CONSTRAINT IF EXISTS object_deletions_gcs_generation_fence;
 ALTER TABLE object_deletions ADD CONSTRAINT object_deletions_gcs_generation_fence CHECK(
  provider_status NOT IN ('GCS_Enabled','GCS_Suspended') OR (
   selector='' AND target_provider_version_id='' AND reserved_bytes=0
