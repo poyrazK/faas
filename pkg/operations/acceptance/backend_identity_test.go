@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	operationcontract "github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/pressly/goose/v3"
@@ -216,23 +217,6 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
-	// The current operation fixture writes these later additions while the
-	// migration under test is specifically the execution-identity change.
-	if _, err := pool.Exec(t.Context(), `ALTER TABLE customer_operation_definitions ADD COLUMN IF NOT EXISTS workflow_snapshot jsonb`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `CREATE UNIQUE INDEX IF NOT EXISTS deployments_operation_code_pin_owner_idx ON deployments(id,app_id)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS customer_operation_code_pins (
-		deployment_id uuid PRIMARY KEY,
-		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-		expires_at timestamptz NOT NULL CHECK (isfinite(expires_at)),
-		CONSTRAINT customer_operation_code_pins_owner_fk FOREIGN KEY(deployment_id,app_id)
-			REFERENCES deployments(id,app_id) ON DELETE CASCADE
-	)`); err != nil {
-		t.Fatal(err)
-	}
 	s := state.NewPgStore(pool)
 	ctx := context.Background()
 	account, err := s.CreateAccount(ctx, "operations@example.com", api.PlanPro)
@@ -247,26 +231,77 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This test covers the identity migration, not the later deployment-live
-	// transition. Seed only the status needed by admission so that transition's
-	// newer retention views do not become part of the pre-identity schema.
-	if _, err := pool.Exec(ctx, `UPDATE deployments SET status='live' WHERE id=$1`, deployment.ID); err != nil {
-		t.Fatal(err)
-	}
-	definition, err := s.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: account.ID,
-		OperationDefinitionResponse: api.OperationDefinitionResponse{AppID: app.ID, Scope: deployment.Scope,
-			DeploymentID: deployment.ID, Spec: operationSpec()}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	tenant, _, err := s.CreatePlatformTenant(ctx, account.ID, "alice", "Alice", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	admission := state.OperationAdmission{AccountID: account.ID, DefinitionID: definition.ID,
-		PlatformTenantID: tenant.ID, IdempotencyKey: "populated-main-upgrade", Input: []byte(`{"count":1}`)}
-	op, _, err := s.AdmitOperation(ctx, admission)
+	limits := api.MustLimitsFor(api.PlanPro)
+	contract, err := operationcontract.Compile(operationSpec(), limits.Operations)
 	if err != nil {
+		t.Fatal(err)
+	}
+	definitionID := uuid.NewString()
+	spec, err := json.Marshal(contract.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO customer_operation_definitions(id,account_id,app_id,scope,name,revision,deployment_id,release_id,spec)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'',$8::jsonb)`, definitionID, account.ID, app.ID, deployment.Scope,
+		contract.Spec.Name, contract.Revision, deployment.ID, spec); err != nil {
+		t.Fatalf("seed legacy operation definition: %v", err)
+	}
+	admission := state.OperationAdmission{AccountID: account.ID, DefinitionID: definitionID,
+		PlatformTenantID: tenant.ID, IdempotencyKey: "populated-main-upgrade", Input: []byte(`{"count":1}`)}
+	canonicalInput, err := operationcontract.CanonicalJSON(admission.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := operationcontract.InputFingerprint(canonicalInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeDigest := operationcontract.IdentityScope(account.ID, app.ID, deployment.Scope, tenant.ID,
+		contract.Spec.Name, admission.IdempotencyKey)
+	operationID, invocationID := uuid.NewString(), uuid.NewString()
+	now := time.Now().UTC()
+	operationExpiry := now.Add(time.Hour)
+	op := state.Operation{OperationResponse: api.OperationResponse{ID: operationID, Name: contract.Spec.Name,
+		Generation: 1, State: api.OperationAccepted, CompletionDelivery: api.OperationDeliveryResponse{State: "not_requested"},
+		LatestSequence: 1, CreatedAt: now, UpdatedAt: now, ExpiresAt: operationExpiry},
+		AccountID: account.ID, AppID: app.ID, Scope: deployment.Scope, PlatformTenantID: tenant.ID,
+		DefinitionID: definitionID, DefinitionRevision: contract.Revision, DeploymentID: deployment.ID,
+		CurrentInvocationID: invocationID, PlanLimits: limits.Operations, ValueMaxBytes: limits.MaxSourceBytesPerInvocation,
+		EventExpiresAt: operationExpiry}
+	record, err := json.Marshal(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = legacyTx.Rollback(ctx) }()
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO invocations(id,app_id,account_id,source,operation_id)
+		VALUES($1,$2,$3,'async_invoke',$4)`, invocationID, app.ID, account.ID, operationID); err != nil {
+		t.Fatalf("seed legacy HTTP invocation: %v", err)
+	}
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,state,record,expires_at,created_at)
+		VALUES($1,$2,$3,$4,$5,$6,'accepted',$7::jsonb,$8,$9)`, operationID, account.ID, app.ID, tenant.ID,
+		definitionID, invocationID, record, operationExpiry, now); err != nil {
+		t.Fatalf("seed legacy HTTP operation: %v", err)
+	}
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO customer_operation_executions(operation_id,generation,invocation_id) VALUES($1,1,$2)`, operationID, invocationID); err != nil {
+		t.Fatalf("seed legacy HTTP execution: %v", err)
+	}
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO customer_operation_events(operation_id,sequence,event_type,execution_id,data,created_at)
+		VALUES($1,1,'accepted',$2,'{"state":"accepted"}'::jsonb,$3)`, operationID, invocationID, now); err != nil {
+		t.Fatalf("seed legacy HTTP event: %v", err)
+	}
+	if _, err := legacyTx.Exec(ctx, `INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
+		VALUES($1,$2,$3,$4,$5,$6)`, scopeDigest, account.ID, app.ID, operationID, fingerprint, operationExpiry); err != nil {
+		t.Fatalf("seed legacy operation idempotency receipt: %v", err)
+	}
+	if err := legacyTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(ctx, pool); err != nil {
