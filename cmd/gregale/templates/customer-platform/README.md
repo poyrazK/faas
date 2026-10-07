@@ -128,7 +128,18 @@ Manual workflow runs can use the authenticated tenant's identity through
 `POST /v1/platform-tenant-self/apps/{slug}/workflows/{name}/runs`. Gregale
 persists that tenant ID and checks it again before dispatching each step. Tenants
 can inspect, cancel, and safely resume their own runs through the
-`/v1/platform-tenant-self/workflows/runs/{id}` endpoints.
+`/v1/platform-tenant-self/workflows/runs/{id}` endpoints. They can also list
+callback handles, complete callback waits, and inject events through the
+tenant-self continuation endpoints, which verify the token's tenant identity
+and the active tenant-to-app link when recording each continuation.
+
+Use `platform_tenant:invocations:read` to list callback handles and
+`platform_tenant:invocations:manage` to complete a callback or send an event:
+
+- `GET /v1/platform-tenant-self/workflows/runs/{id}/callbacks`
+- `POST /v1/platform-tenant-self/workflows/runs/{id}/callbacks/{callback_id}`
+- `POST /v1/platform-tenant-self/workflows/runs/{id}/events` with an
+  `event_name` and optional JSON `payload` (retries can reuse `Idempotency-Key`)
 
 Tenant-bound workflows support managed-operation steps with effects delivered
 to a receiver owned by that same tenant. They can also call an existing
@@ -136,9 +147,55 @@ customer-managed outbound integration explicitly bound to the app. The run's
 tenant identity is included in private authorization and rechecked against the
 active tenant-to-app link before dispatch and by outboundd. Integration
 credentials and route permissions remain app-owned and shared across tenants;
-per-tenant credentials are not part of this workflow interface. Event waits,
-callbacks, and scheduled workflow starts remain unavailable for tenant-required
-apps.
+per-tenant credentials are not part of this workflow interface. A published
+schedule trigger starts one run per active tenant link with independent overlap
+and duplicate-minute state. By default, the app owner controls the cadence,
+timezone, overlap behavior, and input. A schedule trigger may opt in to
+tenant-specific cadence controls with `tenant_configurable: true`; the app owner
+still controls the workflow definition and input, and the app-wide concurrency
+limit is shared across tenants. Grant a tenant token
+`platform_tenant:automations:read` to list opted-in schedules and
+`platform_tenant:automations:manage` to change that tenant's schedule:
+
+```http
+GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules
+Authorization: Bearer <tenant-token>
+```
+
+Use the returned `version` as `expected_version`. Zero creates the tenant's
+first override; subsequent updates must send the latest version or receive a
+409 conflict. Omitted `timezone` and `overlap` use the published defaults, and
+`enabled: false` pauses only this tenant's future runs. Runs already admitted
+continue with their captured workflow definition:
+
+```http
+PUT /v1/platform-tenant-self/apps/{slug}/workflows/schedules/nightly
+Authorization: Bearer <tenant-token>
+Content-Type: application/json
+
+{"expected_version":0,"schedule":"0 6 * * 1-5","timezone":"Europe/Istanbul","overlap":"skip"}
+```
+
+Published workflows with an `event` trigger can also start automatically from
+events published by the authenticated tenant. Grant the tenant token
+`platform_tenant:events:manage` to publish and `platform_tenant:events:read` to
+inspect receipts:
+
+```http
+POST /v1/platform-tenant-self/apps/{slug}/events:publish
+Authorization: Bearer <tenant-token>
+Content-Type: application/json
+
+{"id":"invoice-42","source":"billing.stripe","type":"invoice.paid","data":{"amount":125}}
+```
+
+The response includes a platform event `id`, the original `client_event_id`,
+and a tenant-authenticated `receipt_url`. Repeating the same caller id, source,
+and content is safe. The platform derives tenant identity from the bearer token,
+routes only to that tenant's linked app workflows, and rechecks the active link
+before accepting the event and admitting each workflow run. The receipt reports
+captured workflows and their run IDs without exposing account-operator recovery
+actions.
 
 Account-scoped apps can use managed workflow transactions and app-owned effects.
 The [transaction guide](https://github.com/poyrazK/faas/blob/main/docs/operation-transactions.md)

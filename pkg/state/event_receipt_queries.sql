@@ -1,6 +1,9 @@
 -- name: EventReceiptMetadata :one
 SELECT o.id, o.account_id, o.source, o.event_id, o.event_type,
        coalesce(o.payload->>'accountid', o.payload->>'account_id', o.account_id::text)::text AS invocation_account_id,
+       coalesce(o.payload->>'appid','')::text AS app_id,
+       coalesce(o.payload->>'platformtenantid','')::text AS platform_tenant_id,
+       coalesce(o.payload->>'tenanteventid','')::text AS client_event_id,
        coalesce(o.schema_version, '')::text AS schema_version, o.created_at, o.delivered_at,
        o.state, o.recipient_claims, (o.recipient_snapshot IS NOT NULL)::boolean AS snapshot_captured,
        jsonb_array_length(coalesce(o.recipient_snapshot, '[]'::jsonb))::integer AS recipient_count,
@@ -15,6 +18,9 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source
 
 -- name: EventReceiptRecipients :many
 SELECT s.position::bigint, s.recipient::jsonb,
+       coalesce(s.recipient->'workflow'->>'name','')::text AS workflow_name,
+       coalesce(wer.run_id::text,'')::text AS workflow_run_id,
+       coalesce(wr.status,'')::text AS workflow_run_status,
        coalesce(a.slug, '')::text AS app_slug, (a.id IS NOT NULL AND a.status <> 'deleted')::boolean AS target_available,
        coalesce(o.recipient_progress -> (s.recipient->>'id'), '{}'::jsonb)::jsonb AS progress,
        coalesce(r.state, o.recipient_progress -> (s.recipient->>'id') ->>'state', 'pending')::text AS routing_state,
@@ -30,6 +36,8 @@ FROM event_fanout_outbox o
 CROSS JOIN LATERAL jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) WITH ORDINALITY s(recipient, position)
 LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=s.recipient->>'id'
 LEFT JOIN apps a ON a.id=(s.recipient->>'app_id')::uuid AND a.account_id=o.account_id
+LEFT JOIN workflow_event_receipts wer ON wer.outbox_id=o.id AND wer.recipient_id::text=s.recipient->>'id'
+LEFT JOIN workflow_runs wr ON wr.id=wer.run_id
 WHERE o.id=sqlc.arg(outbox_id)::bigint AND o.account_id=sqlc.arg(account_id)::uuid AND s.position > sqlc.arg(after_position)::bigint
 ORDER BY s.position LIMIT sqlc.arg(page_limit)::integer;
 
