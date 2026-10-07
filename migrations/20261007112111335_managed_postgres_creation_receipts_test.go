@@ -1,4 +1,4 @@
-// adr: 638
+// adr: 644
 package migrations_test
 
 import (

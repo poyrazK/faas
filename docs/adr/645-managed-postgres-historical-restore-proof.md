@@ -1,4 +1,4 @@
-# ADR-639: Independently mapped historical positions for PostgreSQL restore
+# ADR-645: Independently mapped historical positions for PostgreSQL restore
 
 - **Status:** accepted
 - **Date:** 2026-10-07
@@ -10,7 +10,7 @@ Neon's public branch metadata may report `parent_lsn` while leaving
 tests observed a requested `15:43:08Z` returning `15:43:07Z` after initialization.
 The existing timestamp-only lineage contract then blocks a legitimate recovery.
 Its accepted creation ID establishes custody
-(ADR-638), not the point restored. Returning the request timestamp as observed
+(ADR-644), not the point restored. Returning the request timestamp as observed
 metadata would defeat the publication gate.
 
 The earlier qualification experiment sent `neon_timestamp` to an ordinary
