@@ -31,6 +31,20 @@ func (m *Manager) qualificationJournal(frame state.EnvironmentQualificationExecu
 	return v.nativeRecoveryRuntime().journal.qualifications(m.nativeQualificationNodeID), nil
 }
 
+func (m *Manager) qualificationRestoreJournal(frame state.EnvironmentQualificationExecution) (*nativeQualificationRestoreJournal, error) {
+	if m.nativeQualificationNodeID == "" || !nativeQualificationUUID(m.nativeQualificationNodeID) {
+		return nil, fmt.Errorf("native qualification restore: local node is not configured: %w", state.ErrConflict)
+	}
+	if err := validateNativeQualificationRestoreFrame(frame, m.nativeQualificationNodeID); err != nil {
+		return nil, errors.Join(state.ErrInvalidArgument, err)
+	}
+	v := m.nativeVMM()
+	if v == nil {
+		return nil, fmt.Errorf("native qualification restore: journal-backed lifecycle is unavailable: %w", state.ErrConflict)
+	}
+	return v.nativeRecoveryRuntime().journal.qualifications(m.nativeQualificationNodeID).restores(), nil
+}
+
 func validateNativeQualificationWake(ctx context.Context, frame state.EnvironmentQualificationExecution, req WakeRequest) error {
 	fields, ok := wire.FromContext(ctx)
 	if !ok || fields.WakeID != frame.WakeID || req.Instance != frame.InstanceID || req.AppID != frame.AppID ||
@@ -88,12 +102,32 @@ func (m *Manager) WakeEnvironmentQualification(ctx context.Context, frame state.
 // tombstone, absent parent, or generic destroy result cannot supply a receipt.
 // Unbound attempts remain charged until native exclusion proof is implemented.
 func (m *Manager) RetireEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution) (state.EnvironmentQualificationRetirement, error) {
-	j, err := m.qualificationJournal(frame)
+	var j *nativeQualificationJournal
+	var restore *nativeQualificationRestoreJournal
+	var err error
+	if frame.CaptureInstanceID != "" {
+		restore, err = m.qualificationRestoreJournal(frame)
+	} else {
+		j, err = m.qualificationJournal(frame)
+	}
 	if err != nil {
 		return state.EnvironmentQualificationRetirement{}, err
 	}
 	if err := m.RecoverNativeProcesses(ctx); err != nil {
 		return state.EnvironmentQualificationRetirement{}, err
+	}
+	if restore != nil {
+		record, err := restore.revoke(ctx, frame)
+		if err != nil {
+			return state.EnvironmentQualificationRetirement{}, err
+		}
+		if record.NativeGeneration == "" {
+			return state.EnvironmentQualificationRetirement{}, fmt.Errorf("native qualification restore: no bound physical retirement evidence: %w", state.ErrConflict)
+		}
+		if err := m.Destroy(ctx, frame.InstanceID); err != nil {
+			return state.EnvironmentQualificationRetirement{}, err
+		}
+		return restore.retirement(ctx, frame)
 	}
 	record, err := j.revoke(ctx, frame)
 	if err != nil {

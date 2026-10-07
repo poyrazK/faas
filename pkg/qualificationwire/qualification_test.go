@@ -55,6 +55,29 @@ func TestCaptureExecutionWireCannotEraseRestoreAuthority(t *testing.T) {
 	}
 }
 
+func TestRestoreExecutionWireRequiresAndPreservesSeparateCapture(t *testing.T) {
+	frame := wireFrame()
+	frame.CaptureInstanceID = uuid.NewString()
+	encoded, err := RestoreExecutionToProto(frame)
+	if err != nil || encoded.GetCaptureInstanceId() != frame.CaptureInstanceID {
+		t.Fatal("restore profile lost the capture identity", err)
+	}
+	actual, err := RestoreExecutionFromProto(encoded)
+	if err != nil || actual != frame {
+		t.Fatal("restore frame changed across wire", err)
+	}
+	if _, err := ExecutionFromProto(encoded); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("ordinary capture decoder accepted restore authority", err)
+	}
+	if _, err := ExecutionToProto(frame); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("ordinary capture encoder accepted restore authority", err)
+	}
+	frame.CaptureInstanceID = frame.InstanceID
+	if _, err := RestoreExecutionToProto(frame); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("restore accepted the target as its own capture", err)
+	}
+}
+
 func TestExecutionWireRejectsIncompleteOrUnknownAuthority(t *testing.T) {
 	for _, failure := range []string{"nil", "version", "artifact", "frame_unknown", "artifact_unknown", "cleanup", "negative_memory", "hash", "generation", "kind"} {
 		t.Run(failure, func(t *testing.T) {

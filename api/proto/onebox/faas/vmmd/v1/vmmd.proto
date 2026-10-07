@@ -30,6 +30,7 @@ service Vmmd {
   // Generic boot/destroy never substitutes for either operation. Host journal
   // ownership must be configured before creation or retirement is available.
   rpc CreateEnvironmentQualification(CreateEnvironmentQualificationRequest) returns (CreateEnvironmentQualificationResponse);
+  rpc RestoreEnvironmentQualification(RestoreEnvironmentQualificationRequest) returns (RestoreEnvironmentQualificationResponse);
   rpc RetireEnvironmentQualification(RetireEnvironmentQualificationRequest) returns (RetireEnvironmentQualificationResponse);
   // Captures the original VM in a vmmd-chosen immutable namespace. This
   // acknowledges capture only, never smoke/restore or graph qualification.
@@ -988,6 +989,10 @@ message EnvironmentQualificationExecution {
   int32 ram_mb = 18;
   EnvironmentQualificationArtifact artifact = 19;
   string cleanup_token = 20;
+  // Present only on the distinct restore RPC. It binds this target to the
+  // original, separately retired capture attempt; ordinary create/capture
+  // must reject it rather than silently discarding restore authority.
+  string capture_instance_id = 21;
 }
 
 message EnvironmentQualificationArtifact {
@@ -2446,4 +2451,19 @@ message ForwardUDPResponse {
     ForwardUDPResponseInit init = 1;
     bytes datagram = 2;
   }
+}
+
+// Restore consumes the exact native capture identified by execution and may
+// never fall back to cold boot. vmmd must fail closed when its dedicated
+// qualification restore producer is unavailable.
+message RestoreEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+  AppSpec app = 2;
+  string plan = 3;
+  string account_id = 4;
+}
+
+message RestoreEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  WakeResponse wake = 2;
 }

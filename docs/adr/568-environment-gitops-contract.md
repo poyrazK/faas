@@ -3567,3 +3567,24 @@ wired into production polling and supports neither HTTPS nor worker/job graphs. 
 successful visitor still grants no guest acknowledgement, isolated smoke,
 restore evidence, readiness or activation. Production qualification and
 serving convergence remain gated.
+
+### Dedicated qualification restore RPC boundary (2026-10-07)
+
+The restore path now has its own additive vmmd RPC, scheduler client capability
+and wire encoder/decoder. The restore-only execution profile carries the
+separate capture instance ID; ordinary create/capture encoding and decoding
+continue to reject that authority. Retirement accepts either the original
+capture frame or its distinct restore target, and the native Manager routes a
+target cleanup through the restore journal. The RPC server and client both
+require an exact `WAKE_RESTORE` result, so ordinary Wake's cold-boot fallback
+cannot satisfy restore. Older vmmd implementations remain unsupported for this
+optional capability.
+
+Wire, scheduler, vmmd gRPC and focused native journal tests pass, as does
+`make proto-check`. This establishes the protocol and cleanup boundary only:
+the production native Manager still lacks the restore producer, and the
+scheduler does not yet reserve, dispatch, publish and validate restored graph
+runtimes. Guest configuration and binding delivery, application
+acknowledgement, isolated graph smoke and serving convergence therefore remain
+gated. The combined PR remains deferred until the agreed implementation pieces
+are ready.

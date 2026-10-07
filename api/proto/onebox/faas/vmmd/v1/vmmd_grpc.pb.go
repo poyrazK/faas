@@ -25,6 +25,7 @@ const (
 	Vmmd_CreateFromSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
 	Vmmd_CreateColdBoot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
 	Vmmd_CreateEnvironmentQualification_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/CreateEnvironmentQualification"
+	Vmmd_RestoreEnvironmentQualification_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/RestoreEnvironmentQualification"
 	Vmmd_RetireEnvironmentQualification_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/RetireEnvironmentQualification"
 	Vmmd_CaptureEnvironmentQualification_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/CaptureEnvironmentQualification"
 	Vmmd_JobColdBoot_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
@@ -91,6 +92,7 @@ type VmmdClient interface {
 	// Generic boot/destroy never substitutes for either operation. Host journal
 	// ownership must be configured before creation or retirement is available.
 	CreateEnvironmentQualification(ctx context.Context, in *CreateEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CreateEnvironmentQualificationResponse, error)
+	RestoreEnvironmentQualification(ctx context.Context, in *RestoreEnvironmentQualificationRequest, opts ...grpc.CallOption) (*RestoreEnvironmentQualificationResponse, error)
 	RetireEnvironmentQualification(ctx context.Context, in *RetireEnvironmentQualificationRequest, opts ...grpc.CallOption) (*RetireEnvironmentQualificationResponse, error)
 	// Captures the original VM in a vmmd-chosen immutable namespace. This
 	// acknowledges capture only, never smoke/restore or graph qualification.
@@ -540,6 +542,16 @@ func (c *vmmdClient) CreateEnvironmentQualification(ctx context.Context, in *Cre
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateEnvironmentQualificationResponse)
 	err := c.cc.Invoke(ctx, Vmmd_CreateEnvironmentQualification_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) RestoreEnvironmentQualification(ctx context.Context, in *RestoreEnvironmentQualificationRequest, opts ...grpc.CallOption) (*RestoreEnvironmentQualificationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreEnvironmentQualificationResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RestoreEnvironmentQualification_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1057,6 +1069,7 @@ type VmmdServer interface {
 	// Generic boot/destroy never substitutes for either operation. Host journal
 	// ownership must be configured before creation or retirement is available.
 	CreateEnvironmentQualification(context.Context, *CreateEnvironmentQualificationRequest) (*CreateEnvironmentQualificationResponse, error)
+	RestoreEnvironmentQualification(context.Context, *RestoreEnvironmentQualificationRequest) (*RestoreEnvironmentQualificationResponse, error)
 	RetireEnvironmentQualification(context.Context, *RetireEnvironmentQualificationRequest) (*RetireEnvironmentQualificationResponse, error)
 	// Captures the original VM in a vmmd-chosen immutable namespace. This
 	// acknowledges capture only, never smoke/restore or graph qualification.
@@ -1491,6 +1504,9 @@ func (UnimplementedVmmdServer) CreateColdBoot(context.Context, *CreateColdBootRe
 func (UnimplementedVmmdServer) CreateEnvironmentQualification(context.Context, *CreateEnvironmentQualificationRequest) (*CreateEnvironmentQualificationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateEnvironmentQualification not implemented")
 }
+func (UnimplementedVmmdServer) RestoreEnvironmentQualification(context.Context, *RestoreEnvironmentQualificationRequest) (*RestoreEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreEnvironmentQualification not implemented")
+}
 func (UnimplementedVmmdServer) RetireEnvironmentQualification(context.Context, *RetireEnvironmentQualificationRequest) (*RetireEnvironmentQualificationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetireEnvironmentQualification not implemented")
 }
@@ -1697,6 +1713,24 @@ func _Vmmd_CreateEnvironmentQualification_Handler(srv interface{}, ctx context.C
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).CreateEnvironmentQualification(ctx, req.(*CreateEnvironmentQualificationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RestoreEnvironmentQualification_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreEnvironmentQualificationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RestoreEnvironmentQualification(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RestoreEnvironmentQualification_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RestoreEnvironmentQualification(ctx, req.(*RestoreEnvironmentQualificationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2453,6 +2487,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateEnvironmentQualification",
 			Handler:    _Vmmd_CreateEnvironmentQualification_Handler,
+		},
+		{
+			MethodName: "RestoreEnvironmentQualification",
+			Handler:    _Vmmd_RestoreEnvironmentQualification_Handler,
 		},
 		{
 			MethodName: "RetireEnvironmentQualification",

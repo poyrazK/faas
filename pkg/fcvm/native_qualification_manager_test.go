@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -119,6 +120,75 @@ func TestNativeQualificationManagerRetirementRequiresCompleteOriginalProof(t *te
 	}
 	if _, err := m.WakeEnvironmentQualification(ctx, frame, req); err == nil {
 		t.Fatal("late delivery recreated a retired attempt")
+	}
+}
+
+func TestNativeQualificationManagerRetiresRestoreTargetFromRestoreJournal(t *testing.T) {
+	m, v, source, _, ctx := nativeQualificationManagerFixture(t)
+	q := v.nativeRecovery.journal.qualifications(source.NodeID)
+	incoming, err := q.claim(ctx, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.owner.prepare(nativeQualificationContext(ctx, incoming), qualificationLease(source.InstanceID)); err != nil {
+		t.Fatal(err)
+	}
+	incoming, err = q.read(source.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := nativeQualificationCaptureRecord{Version: 1, InstanceID: source.InstanceID, CaptureID: incoming.Generation,
+		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, StartedAt: incoming.AcceptedAt.Add(time.Millisecond),
+		CompletedAt: incoming.AcceptedAt.Add(2 * time.Millisecond), Info: SnapshotInfo{MemBytes: 100, VMStateBytes: 50, StoredBytes: 200},
+		Backing: BackingIdentity{Version: 1, Kernel: "sha256:modeled-kernel", Base: "sha256:modeled-base"}}
+	if err := q.writeCapture(incoming, capture); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.revoke(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	sourceOwner, err := q.owner.read(source.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceOwner.ExitConfirmed, sourceOwner.ResourcesRemoved = true, true
+	if err := q.owner.write(sourceOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	target := source
+	target.InstanceID, target.WakeID, target.CleanupToken, target.CaptureInstanceID = uuid.NewString(), uuid.NewString(), uuid.NewString(), source.InstanceID
+	restores := q.restores()
+	accepted, err := restores.claim(ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetCtx := nativeQualificationRestoreContext(ctx, accepted)
+	targetLease := leaseForSlot(target.InstanceID, 4)
+	targetLease.Plan, targetLease.MemoryMaxMiB, targetLease.CPUMillicores = api.PlanHobby, target.RAMMB, 1000
+	if err := q.owner.prepare(targetCtx, targetLease); err != nil {
+		t.Fatal(err)
+	}
+	targetOwner, err := q.owner.read(target.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetOwner.Revoked, targetOwner.ExitConfirmed, targetOwner.ResourcesRemoved = true, true, true
+	if err := q.owner.write(targetOwner); err != nil {
+		t.Fatal(err)
+	}
+	targetBound, err := restores.read(target.InstanceID)
+	if err != nil || targetBound.NativeGeneration == "" || targetBound.NativeGeneration == incoming.NativeGeneration {
+		t.Fatal("restore target did not receive a distinct native owner", err)
+	}
+
+	proof, err := m.RetireEnvironmentQualification(ctx, target)
+	if err != nil || proof.Kind != state.QualificationNativeRetired || proof.ReceiptID != accepted.Generation ||
+		proof.NativeGeneration != targetBound.NativeGeneration || proof.NativeGeneration == incoming.NativeGeneration || !proof.ProcessesExited || !proof.ResourcesRemoved {
+		t.Fatalf("restore target did not retire under its own journal: %+v %v", proof, err)
+	}
+	if m.LiveCount() != 0 || len(m.cidToID) != 0 {
+		t.Fatal("private restore retirement published serving identity")
 	}
 }
 

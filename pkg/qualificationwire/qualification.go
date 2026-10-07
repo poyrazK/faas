@@ -25,6 +25,18 @@ func validateExecution(frame state.EnvironmentQualificationExecution) error {
 	if frame.CaptureInstanceID != "" {
 		return fmt.Errorf("qualification capture protocol cannot carry restore authority: %w", state.ErrInvalidArgument)
 	}
+	return validateExecutionIdentity(frame)
+}
+
+func validateRestoreExecution(frame state.EnvironmentQualificationExecution) error {
+	if !validUUID(frame.CaptureInstanceID) || frame.CaptureInstanceID == frame.InstanceID {
+		return fmt.Errorf("qualification restore requires a separate captured instance: %w", state.ErrInvalidArgument)
+	}
+	frame.CaptureInstanceID = ""
+	return validateExecutionIdentity(frame)
+}
+
+func validateExecutionIdentity(frame state.EnvironmentQualificationExecution) error {
 	for _, value := range []string{frame.InstanceID, frame.RequestID, frame.GraphID, frame.AppID, frame.DeploymentID, frame.NodeID,
 		frame.WakeID, frame.SourceID, frame.EnvironmentID, frame.RevisionID, frame.CleanupToken} {
 		if !validUUID(value) {
@@ -52,20 +64,73 @@ func ExecutionToProto(frame state.EnvironmentQualificationExecution) (*vmmdpb.En
 	if err := validateExecution(frame); err != nil {
 		return nil, err
 	}
+	return executionToProto(frame), nil
+}
+
+// RestoreExecutionToProto is the only encoder that carries capture identity.
+// This prevents create/capture RPCs from accidentally inheriting restore
+// authority as the message evolves.
+func RestoreExecutionToProto(frame state.EnvironmentQualificationExecution) (*vmmdpb.EnvironmentQualificationExecution, error) {
+	if err := validateRestoreExecution(frame); err != nil {
+		return nil, err
+	}
+	return executionToProto(frame), nil
+}
+
+// RetirementExecutionToProto accepts the original capture frame or its
+// separately identified restore target. Lifecycle/restore dispatch continues
+// to use their narrower encoders.
+func RetirementExecutionToProto(frame state.EnvironmentQualificationExecution) (*vmmdpb.EnvironmentQualificationExecution, error) {
+	if frame.CaptureInstanceID != "" {
+		return RestoreExecutionToProto(frame)
+	}
+	return ExecutionToProto(frame)
+}
+
+func executionToProto(frame state.EnvironmentQualificationExecution) *vmmdpb.EnvironmentQualificationExecution {
 	a := frame.Artifact
 	return &vmmdpb.EnvironmentQualificationExecution{
 		ContractVersion: contractVersion, InstanceId: frame.InstanceID, RequestId: frame.RequestID, GraphId: frame.GraphID, AppId: frame.AppID,
 		DeploymentId: frame.DeploymentID, NodeId: frame.NodeID, WakeId: frame.WakeID, SourceId: frame.SourceID, EnvironmentId: frame.EnvironmentID,
 		RevisionId: frame.RevisionID, Resource: frame.Resource, Scope: frame.Scope, PlanHash: frame.PlanHash, Generation: frame.Generation,
 		IntentVersion: frame.IntentVersion, Attempt: frame.Attempt, RamMb: int32(frame.RAMMB), CleanupToken: frame.CleanupToken,
+		CaptureInstanceId: frame.CaptureInstanceID,
 		Artifact: &vmmdpb.EnvironmentQualificationArtifact{RootfsPath: a.RootfsPath, RootfsKey: a.RootfsKey, RootfsBytes: a.RootfsBytes,
 			ImageDigest: a.ImageDigest, BuildId: a.BuildID, Kind: string(a.Kind), CommitSha: a.CommitSHA},
-	}, nil
+	}
 }
 
 // ExecutionFromProto rejects unknown capability fields rather than dropping
 // authority that this version cannot fence. Missing/version-zero is not legacy.
 func ExecutionFromProto(p *vmmdpb.EnvironmentQualificationExecution) (state.EnvironmentQualificationExecution, error) {
+	frame, err := executionFromProto(p)
+	if err != nil {
+		return frame, err
+	}
+	return frame, validateExecution(frame)
+}
+
+// RestoreExecutionFromProto decodes only the dedicated restore profile. The
+// ordinary decoder keeps rejecting capture_instance_id, even when it is a
+// valid UUID, so capture and restore capabilities cannot be confused.
+func RestoreExecutionFromProto(p *vmmdpb.EnvironmentQualificationExecution) (state.EnvironmentQualificationExecution, error) {
+	frame, err := executionFromProto(p)
+	if err != nil {
+		return frame, err
+	}
+	return frame, validateRestoreExecution(frame)
+}
+
+// RetirementExecutionFromProto is the matching cleanup decoder. A target
+// frame is accepted only when it contains valid, distinct capture authority.
+func RetirementExecutionFromProto(p *vmmdpb.EnvironmentQualificationExecution) (state.EnvironmentQualificationExecution, error) {
+	if p != nil && p.GetCaptureInstanceId() != "" {
+		return RestoreExecutionFromProto(p)
+	}
+	return ExecutionFromProto(p)
+}
+
+func executionFromProto(p *vmmdpb.EnvironmentQualificationExecution) (state.EnvironmentQualificationExecution, error) {
 	var frame state.EnvironmentQualificationExecution
 	if p == nil || p.GetContractVersion() != contractVersion || p.GetArtifact() == nil || len(p.ProtoReflect().GetUnknown()) != 0 ||
 		len(p.GetArtifact().ProtoReflect().GetUnknown()) != 0 {
@@ -75,10 +140,10 @@ func ExecutionFromProto(p *vmmdpb.EnvironmentQualificationExecution) (state.Envi
 	frame = state.EnvironmentQualificationExecution{InstanceID: p.GetInstanceId(), RequestID: p.GetRequestId(), GraphID: p.GetGraphId(), AppID: p.GetAppId(),
 		DeploymentID: p.GetDeploymentId(), NodeID: p.GetNodeId(), WakeID: p.GetWakeId(), SourceID: p.GetSourceId(), EnvironmentID: p.GetEnvironmentId(),
 		RevisionID: p.GetRevisionId(), Resource: p.GetResource(), Scope: p.GetScope(), PlanHash: p.GetPlanHash(), Generation: p.GetGeneration(),
-		IntentVersion: p.GetIntentVersion(), Attempt: p.GetAttempt(), RAMMB: int(p.GetRamMb()), CleanupToken: p.GetCleanupToken(),
+		IntentVersion: p.GetIntentVersion(), Attempt: p.GetAttempt(), RAMMB: int(p.GetRamMb()), CleanupToken: p.GetCleanupToken(), CaptureInstanceID: p.GetCaptureInstanceId(),
 		Artifact: state.EnvironmentWorkloadArtifact{RootfsPath: a.GetRootfsPath(), RootfsKey: a.GetRootfsKey(), RootfsBytes: a.GetRootfsBytes(),
 			ImageDigest: a.GetImageDigest(), BuildID: a.GetBuildId(), Kind: state.DeploymentKind(a.GetKind()), CommitSHA: a.GetCommitSha()}}
-	return frame, validateExecution(frame)
+	return frame, nil
 }
 
 func validateNativeRetirement(proof state.EnvironmentQualificationRetirement) error {
