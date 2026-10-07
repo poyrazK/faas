@@ -28,6 +28,11 @@
   - **Scope:** 3 of 6 restores of park captures of cold-booted VMs that had
     run for 1.5–5 minutes stalled. 12 of 12 restores of the deploy's prime
     capture (taken at 8.8 s uptime) were clean.
+  - **Fleet signature:** in the 3 days to 2026-10-07, all 19
+    `liveness_timeout` kills followed a restore (19 of 1,583 restores, 1.2%)
+    and none followed a cold boot (0 of 115). They hit Node, Go and Python
+    apps on both compute nodes, mostly 20–150 s after a healthy restore. A
+    15-app wake burst lost 4 of 12 restored instances this way.
   - **Guest:** 4 vCPUs, `clocksource=tsc`, `clockevent=lapic-deadline`.
   - **Cause:** this matches firecracker#4099. After a restore, KVM evaluated
     `MSR_IA32_TSC_DEADLINE` against a TSC that Firecracker 1.7 wrote
@@ -61,7 +66,9 @@
     - The run therefore shows the profile boots and restores correctly. That
       it cures the stall rests on removing the TSC-deadline clockevent, which
       is the restore path firecracker#4099 broke. Re-check the stall rate on
-      production after the rollout.
+      production after the rollout: `instances.liveness_failed` events with
+      reason `liveness_timeout` per `wake.boot_started` restore should fall
+      from the 1.2% baseline above.
   - Native x86_64 acceptance (`make test-metal`, `leakcheck`) is still
     required by spec §14.
 - **Rejected alternatives:**
