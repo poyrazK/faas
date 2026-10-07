@@ -52,3 +52,15 @@ func TestMultipartPartActivityUsesActualJournalAndBoundedSettlement(t *testing.T
 		t.Fatal("legacy admission bypassed hold", err)
 	}
 }
+
+func TestMultipartPartCopyCannotDowngradeBoundJournal(t *testing.T) {
+	ordinary := &mutationStore{}
+	journal := &partMutationJournal{}
+	if _, err := objectstorageactivity.DispatchMultipartPartCopy(t.Context(), ordinary, journal, state.ObjectBucket{}, "session", 1, "token", state.ObjectMultipartPartCopyIntent{}); !errors.Is(err, state.ErrConflict) || ordinary.active != 0 {
+		t.Fatal("bound copy silently downgraded", err)
+	}
+	ordinary.beginErr = state.ErrObjectBucketWriteFenced
+	if _, err := objectstorageactivity.DispatchMultipartPartCopy(t.Context(), ordinary, struct{}{}, state.ObjectBucket{}, "session", 1, "token", state.ObjectMultipartPartCopyIntent{}); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
+		t.Fatal("legacy copy bypassed hold", err)
+	}
+}

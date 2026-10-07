@@ -7502,3 +7502,46 @@ encryption, capture, broker-grant and recovery checks pass. SQLC v1.31.1 parity,
 migration-ID and repository policy checks pass; pinned golangci-lint v2.4.0
 reports zero issues across state, object storage, activity, gateway and APID.
 Optional Packer/live nft checks remain skipped.
+
+### Preserve exact independent part-copy intent (2026-10-07)
+
+Managed multipart copies now record a versioned private intent in the same
+transaction that claims the original part dispatch and creates its request
+receipt. The record preserves source bucket identity and physical placement,
+requested and observed native version selectors (including empty and `null`),
+source ETag and measured size, destination key and native upload ID, inclusive
+byte range, exact expected part size and customer source conditions. Capacity
+reservations may exceed the copied size; the intent retains the actual request.
+The gateway passes the same inspected source and range to the provider after
+this transaction commits. Memory and PostgreSQL journal readers authenticate
+the original destination scope and placement.
+
+Intent is immutable through dispatch and settlement. Database guards bind it to
+the admitted source authority, measured range, capacity grant and original
+parent, reject late insertion or rewriting, and refuse downgrade while an
+unsettled copy intent or capture hold exists. Settlement retains the intent in
+writer history. The additive migration leaves existing dispatched attempts
+without intent; neither migration nor a later read invents their source.
+A bound journal lacking the copy-intent capability fails closed rather than
+claiming a copy through its ordinary part-dispatch method. Legacy journals
+retain ordinary admission, which capture holds block.
+
+This is durable intended IO, not provider ownership or drain proof. An existing
+part with matching ETag and size may predate the uncertain attempt, and a late
+request may still overwrite it. No listing, timeout, intent read or restart
+retires an uncertain receipt. Streamed part PUT content intent, qualified
+provider reconciliation, live R2/OVH writer coverage and a common
+PostgreSQL/object checkpoint remain further work. Public fully copyable capture
+stays gated.
+
+Validation: the selected memory/PostgreSQL multipart, capture, binding and schema
+registry contracts pass under the race detector, including exact intent,
+wrong placement and scope, replay, rollback, restart, immutable raw writes,
+retained history and busy downgrade. The full gateway race suite verifies the
+saved range and expected size before native copy IO and retains unknown receipts
+on lost or malformed acknowledgments. Object storage and activity race suites
+and control-API multipart, encryption and recovery checks pass.
+SQLC v1.31.1 parity, migration-ID and repository policy checks pass. These are
+local tests; no live provider or common-checkpoint qualification is claimed.
+Pinned golangci-lint v2.4.0 reports zero issues across state, object storage,
+activity, gateway and APID. Optional Packer/live nft checks remain skipped.

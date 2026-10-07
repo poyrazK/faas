@@ -5,6 +5,8 @@ import (
 	"github.com/google/uuid"
 )
 
+var _ ObjectMultipartPartCopyMutationStore = (*MemStore)(nil)
+
 var _ ObjectMultipartPartMutationStore = (*MemStore)(nil)
 
 func (m *MemStore) multipartPartWriterPendingLocked(id string, part int32) bool {
@@ -31,6 +33,17 @@ func (m *MemStore) reserveMultipartPartWriterLocked(id string, part int32, token
 }
 
 func (m *MemStore) DispatchObjectMultipartPartMutation(ctx context.Context, b ObjectBucket, id string, part int32, token string) (ObjectBucketMutation, error) {
+	return m.dispatchMultipartPart(ctx, b, id, part, token, nil)
+}
+
+func (m *MemStore) DispatchObjectMultipartPartCopyMutation(ctx context.Context, b ObjectBucket, id string, part int32, token string, intent ObjectMultipartPartCopyIntent) (ObjectBucketMutation, error) {
+	if !validMultipartPartCopyIntent(intent) {
+		return ObjectBucketMutation{}, ErrConflict
+	}
+	return m.dispatchMultipartPart(ctx, b, id, part, token, &intent)
+}
+
+func (m *MemStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id string, part int32, token string, intent *ObjectMultipartPartCopyIntent) (ObjectBucketMutation, error) {
 	if err := ctx.Err(); err != nil {
 		return ObjectBucketMutation{}, err
 	}
@@ -42,6 +55,14 @@ func (m *MemStore) DispatchObjectMultipartPartMutation(ctx context.Context, b Ob
 	t := m.objectMultipartTransfers[id][part]
 	if !ok || d.dispatched || d.settled || !sameObjectMutationBucket(b, d.receipt.Bucket) || !sameObjectMutationBucket(b, m.objectBuckets[b.ID]) || u.AccountID != b.AccountID || u.AppID != b.AppID || u.BucketID != b.ID || u.State != ObjectMultipartActive || !u.ExpiresAt.After(m.clock()) || t.token != token || !t.unsafeUntil.After(m.clock()) {
 		return ObjectBucketMutation{}, ErrConflict
+	}
+	if intent != nil {
+		source := m.objectBuckets[intent.SourceBucketID]
+		if source.AccountID != b.AccountID || source.State != "ready" || source.BackendID != intent.SourceBackendID || source.BackendFingerprint != intent.SourceBackendFingerprint || source.PhysicalName != intent.SourcePhysicalName || u.Key != intent.DestinationKey || u.ProviderUploadID != intent.ProviderUploadID || intent.ExpectedSize > m.objectMultipartPartGrants[id][part] || (t.copySource.BucketID == "" && intent.SourceBucketID != b.ID) || (t.copySource.BucketID != "" && (intent.SourceBucketID != t.copySource.BucketID || intent.SourceKey != t.copySource.Key)) {
+			return ObjectBucketMutation{}, ErrConflict
+		}
+		value := *intent
+		d.copyIntent = &value
 	}
 	d.dispatched = true
 	m.objectMultipartPartWriters[key] = d
@@ -77,4 +98,21 @@ func (m *MemStore) FinishObjectMultipartPartMutation(ctx context.Context, r Obje
 		return nil
 	}
 	return ErrConflict
+}
+
+func (m *MemStore) ReadObjectMultipartPartCopyIntent(ctx context.Context, r ObjectBucketMutation) (ObjectMultipartPartCopyIntent, error) {
+	if err := ctx.Err(); err != nil {
+		return ObjectMultipartPartCopyIntent{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r.ID == "" || r.ID != r.MultipartPartWriterID || r.Kind != ObjectBucketMutationRequest || r.UploadID != "" || r.MultipartUploadID != "" || !sameObjectMutationBucket(r.Bucket, m.objectBuckets[r.Bucket.ID]) {
+		return ObjectMultipartPartCopyIntent{}, ErrConflict
+	}
+	for _, d := range m.objectMultipartPartWriters {
+		if d.receipt.ID == r.ID && sameObjectMutationBucket(r.Bucket, d.receipt.Bucket) && d.dispatched && d.copyIntent != nil {
+			return *d.copyIntent, nil
+		}
+	}
+	return ObjectMultipartPartCopyIntent{}, ErrConflict
 }

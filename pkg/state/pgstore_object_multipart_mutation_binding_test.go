@@ -103,6 +103,15 @@ func TestPgObjectMultipartMutationBindingGuardsAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	partWriterParts := strings.SplitN(string(partWriters), "-- +goose Down", 2)
+	copyIntent, err := migrations.FS.ReadFile("20261007100924000_object_multipart_part_copy_intent.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyIntentParts := strings.SplitN(string(copyIntent), "-- +goose Down", 2)
+	if _, err = tx.Exec(ctx, copyIntentParts[1]); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := tx.Exec(ctx, partWriterParts[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +128,9 @@ func TestPgObjectMultipartMutationBindingGuardsAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, partWriterParts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, copyIntentParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(ctx, shape).Scan(&after); err != nil || before != after {

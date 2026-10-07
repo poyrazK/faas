@@ -29,3 +29,16 @@ func FinishMultipartPart(ctx context.Context, store, journal any, r state.Object
 	defer cancel()
 	return st.FinishObjectMultipartPartMutation(finishCtx, r)
 }
+
+// DispatchMultipartPartCopy records exact copy intent in the same transaction
+// that claims dispatch. A bound journal lacking this capability cannot downgrade
+// a copy into an ordinary part write.
+func DispatchMultipartPartCopy(ctx context.Context, store, journal any, b state.ObjectBucket, id string, part int32, token string, intent state.ObjectMultipartPartCopyIntent) (state.ObjectBucketMutation, error) {
+	if st, ok := journal.(state.ObjectMultipartPartCopyMutationStore); ok {
+		return st.DispatchObjectMultipartPartCopyMutation(ctx, b, id, part, token, intent)
+	}
+	if _, ok := journal.(state.ObjectMultipartPartMutationStore); ok {
+		return state.ObjectBucketMutation{}, state.ErrConflict
+	}
+	return Begin(ctx, store, b, state.ObjectBucketMutationRequest)
+}

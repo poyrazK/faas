@@ -14511,7 +14511,7 @@ UPDATE object_multipart_initiation_dispatches SET provider_upload_id=sqlc.arg(pr
 WHERE multipart_upload_id=sqlc.arg(multipart_upload_id) AND dispatched AND dispatch_token=sqlc.arg(dispatch_token) AND provider_upload_id='';
 
 -- name: ObjectMultipartPartWriterDispatch :one
-UPDATE object_multipart_part_writers d SET dispatched=true
+UPDATE object_multipart_part_writers d SET dispatched=true,copy_intent=sqlc.narg(copy_intent)
 FROM object_storage_multipart_uploads u
 WHERE d.upload_id=u.id AND d.upload_id=sqlc.arg(upload_id) AND d.part_number=sqlc.arg(part_number) AND d.transfer_token=sqlc.arg(transfer_token)
 AND u.account_id=sqlc.arg(account_id) AND u.app_id=sqlc.arg(app_id) AND d.bucket_id=sqlc.arg(bucket_id)
@@ -14525,3 +14525,13 @@ FROM object_storage_multipart_uploads u
 WHERE d.id=sqlc.arg(id) AND d.upload_id=u.id AND u.account_id=sqlc.arg(account_id) AND u.app_id=sqlc.arg(app_id)
 AND d.bucket_id=sqlc.arg(bucket_id) AND d.backend_id=sqlc.arg(backend_id) AND d.backend_fingerprint=sqlc.arg(backend_fingerprint) AND d.physical_name=sqlc.arg(physical_name)
 AND d.managed AND d.dispatched AND NOT d.settled;
+
+-- name: ObjectMultipartPartCopyIntentRead :one
+SELECT d.copy_intent FROM object_multipart_part_writers d
+JOIN object_storage_multipart_uploads u ON u.id=d.upload_id
+JOIN object_buckets b ON b.id=d.bucket_id
+WHERE d.id=sqlc.arg(id) AND u.account_id=sqlc.arg(account_id) AND u.app_id=sqlc.arg(app_id)
+AND d.bucket_id=sqlc.arg(bucket_id) AND d.backend_id=sqlc.arg(backend_id)
+AND d.backend_fingerprint=sqlc.arg(backend_fingerprint) AND d.physical_name=sqlc.arg(physical_name)
+AND b.state='ready' AND b.backend_id=d.backend_id AND b.backend_fingerprint=d.backend_fingerprint AND b.physical_name=d.physical_name
+AND d.dispatched AND d.copy_intent IS NOT NULL;

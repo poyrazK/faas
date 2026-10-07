@@ -4066,6 +4066,7 @@ type ObjectMultipartPartWriter struct {
 	BackendID          string
 	BackendFingerprint string
 	PhysicalName       string
+	CopyIntent         []byte
 }
 
 type ObjectS3CopySourceEpoch struct {

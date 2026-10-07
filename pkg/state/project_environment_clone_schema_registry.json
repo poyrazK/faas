@@ -4659,6 +4659,7 @@
       "backend_fingerprint",
       "backend_id",
       "bucket_id",
+      "copy_intent",
       "dispatched",
       "id",
       "managed",

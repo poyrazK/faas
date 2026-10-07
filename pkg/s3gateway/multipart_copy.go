@@ -147,7 +147,7 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 	if req.copySource == nil && !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	receipt, err := objectstorageactivity.DispatchMultipartPart(ctx, h.store, transfers, req.bucket, upload.ID, c.PartNumber, token)
+	receipt, err := objectstorageactivity.DispatchMultipartPartCopy(ctx, h.store, transfers, req.bucket, upload.ID, c.PartNumber, token, multipartPartCopyIntent(sourceReq.bucket, c, source, size))
 	if err != nil {
 		h.providerError(w, r, req, err, upload.Key)
 		return
@@ -203,4 +203,20 @@ type copyMultipartPartResult struct {
 	XMLNS        string   `xml:"xmlns,attr"`
 	ETag         string   `xml:"ETag"`
 	LastModified string   `xml:"LastModified,omitempty"`
+}
+
+func multipartPartCopyIntent(b state.ObjectBucket, c objectstorage.MultipartPartCopyRequest, s objectstorage.CopySourceSnapshot, size int64) state.ObjectMultipartPartCopyIntent {
+	i := state.ObjectMultipartPartCopyIntent{Schema: 1, SourceBucketID: b.ID, SourceBackendID: b.BackendID, SourceBackendFingerprint: b.BackendFingerprint, SourcePhysicalName: b.PhysicalName, SourceKey: c.SourceKey, SourceVersionID: s.ProviderVersionID, SourceRequestedVersionID: c.SourceProviderVersionID, SourceETag: s.ETag, SourceSize: s.SizeBytes, DestinationKey: c.Key, ProviderUploadID: c.ProviderUploadID, ExpectedSize: size, IfMatch: c.Conditions.IfMatch, IfNoneMatch: c.Conditions.IfNoneMatch}
+	if c.Range != nil {
+		i.HasRange = true
+		i.RangeFirst = c.Range.First
+		i.RangeLast = c.Range.Last
+	}
+	if c.Conditions.IfModifiedSince != nil {
+		i.IfModifiedSince = c.Conditions.IfModifiedSince.UTC().Format(time.RFC3339Nano)
+	}
+	if c.Conditions.IfUnmodifiedSince != nil {
+		i.IfUnmodifiedSince = c.Conditions.IfUnmodifiedSince.UTC().Format(time.RFC3339Nano)
+	}
+	return i
 }
