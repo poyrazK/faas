@@ -301,7 +301,7 @@ deduplicated; inspect work and preserve their original decision ID.
 Receipt replay expires at the operation retention deadline observed before the
 decision. Later recovery does not extend that receipt. An expired unconfirmed
 request is never automatically replaced with another decision. Preview remains
-read-only and rejects `--receipt-file`. See [ADR-643](../adr/643-operation-recovery-decision-receipts.md).
+read-only and rejects `--receipt-file`. See [ADR-662](../adr/662-operation-recovery-decision-receipts.md).
 
 ## Browser submission lookup
 
@@ -326,4 +326,4 @@ Go exposes `LookupPlatformTenantSelfOperationSubmission`, Node exposes
 `faas_sdk.api.operations.lookup_platform_tenant_self_operation_submission`.
 Optional principal and feature fences on the start request reject credential
 or feature changes; they never authorize another owner. See
-[ADR-644](../adr/644-browser-operation-submission-receipts.md).
+[ADR-663](../adr/663-browser-operation-submission-receipts.md).

@@ -1,10 +1,10 @@
-# ADR-650: Direct private artifact uploads for HTTP Operations
+# ADR-669: Direct private artifact uploads for HTTP Operations
 
 Status: implemented locally in closed admission; native qualification pending.
 
 ## Context
 
-ADR-649 removes the bucket writer from Job exports. Ordinary HTTP Operations
+ADR-668 removes the bucket writer from Job exports. Ordinary HTTP Operations
 still require an application-managed source object or return CSV inline. Their
 existing artifact ledger, dispatch authority, retention and private downloads
 can support the same developer contract without changing HTTP settlement.

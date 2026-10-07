@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-639: both execution families retain write intents through owner deletion.
+-- ADR-658: both execution families retain write intents through owner deletion.
 ALTER TABLE customer_operation_result_blobs
     ALTER COLUMN execution_id DROP NOT NULL,
     ADD COLUMN IF NOT EXISTS workflow_run_id uuid,

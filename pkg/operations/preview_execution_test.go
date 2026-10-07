@@ -1,4 +1,4 @@
-// adr: 647 — native admission requires an explicit execution allowlist.
+// adr: 666 — native admission requires an explicit execution allowlist.
 package operations
 
 import (

@@ -1,4 +1,4 @@
-# ADR-641: Operation recovery inspection and preview
+# ADR-660: Operation recovery inspection and preview
 
 ## Status
 

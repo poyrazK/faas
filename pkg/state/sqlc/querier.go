@@ -356,10 +356,10 @@ type Querier interface {
 	CustomerOperationDefinitionNameExists(ctx context.Context, db DBTX, arg CustomerOperationDefinitionNameExistsParams) (bool, error)
 	CustomerOperationDeploymentDefinition(ctx context.Context, db DBTX, arg CustomerOperationDeploymentDefinitionParams) (CustomerOperationDeploymentDefinitionRow, error)
 	CustomerOperationDeploymentScope(ctx context.Context, db DBTX, arg CustomerOperationDeploymentScopeParams) (string, error)
-	// ADR-657 workflow customer Operations adapter.
+	// ADR-676 workflow customer Operations adapter.
 	CustomerOperationDeploymentWorkflows(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	CustomerOperationIDForInvocation(ctx context.Context, db DBTX, invocationID pgtype.UUID) (string, error)
-	// ADR-645 native Job customer Operations.
+	// ADR-664 native Job customer Operations.
 	CustomerOperationJobByName(ctx context.Context, db DBTX, arg CustomerOperationJobByNameParams) (Job, error)
 	CustomerOperationJobHasOrdinaryActiveTasks(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error)
 	CustomerOperationJobOwned(ctx context.Context, db DBTX, runID pgtype.UUID) (bool, error)

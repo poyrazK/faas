@@ -1,4 +1,4 @@
-# ADR-644: Browser operation submission receipts and scoped lookup
+# ADR-663: Browser operation submission receipts and scoped lookup
 
 ## Status
 

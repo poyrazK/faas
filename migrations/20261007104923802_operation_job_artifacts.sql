@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-646: native Job file receipts survive owner/run deletion for cleanup.
+-- ADR-665: native Job file receipts survive owner/run deletion for cleanup.
 ALTER TABLE customer_operation_result_blobs
     ADD COLUMN IF NOT EXISTS job_run_id uuid,
     DROP CONSTRAINT IF EXISTS operation_blob_execution_family;

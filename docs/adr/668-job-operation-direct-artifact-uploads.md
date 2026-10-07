@@ -1,10 +1,10 @@
-# ADR-649: Direct private artifact uploads for Job Operations
+# ADR-668: Direct private artifact uploads for Job Operations
 
 Status: implemented and locally qualified in closed admission; native qualification pending.
 
 ## Context
 
-ADR-646 retains verified copies of customer-managed objects. The Job export
+ADR-665 retains verified copies of customer-managed objects. The Job export
 starter still needs an app upload endpoint, private bucket and storage credential
 to produce that source. Ordinary Job handlers should be able to return a private
 file using their existing scheduler capability.

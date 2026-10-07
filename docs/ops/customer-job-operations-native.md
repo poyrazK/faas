@@ -2,8 +2,8 @@
 
 The code and dedicated lane are implemented. Native execution and leak
 qualification are **pending**: the implementation workspace has no `/dev/kvm`.
-This guide does not authorize a production cohort. ADR-645, ADR-646 and
-ADR-647 retain closed admission until the required evidence is available.
+This guide does not authorize a production cohort. ADR-664, ADR-665 and
+ADR-666 retain closed admission until the required evidence is available.
 
 Run the manual `e2e-native` workflow with
 `lane: customer-job-operations-only` on the designated native x86_64 Linux KVM

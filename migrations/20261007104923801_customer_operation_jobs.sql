@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-645: a Job Operation owns one immutable, single-task run per generation.
+-- ADR-664: a Job Operation owns one immutable, single-task run per generation.
 ALTER TABLE customer_operations ADD COLUMN IF NOT EXISTS job_run_id uuid;
 DO $$
 BEGIN

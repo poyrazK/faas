@@ -1,4 +1,4 @@
-# ADR-642: Customer Operations PostgreSQL transaction receipts
+# ADR-661: Customer Operations PostgreSQL transaction receipts
 
 ## Status
 

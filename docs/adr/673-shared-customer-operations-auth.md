@@ -1,4 +1,4 @@
-# ADR-654: Shared customer Operations browser auth
+# ADR-673: Shared customer Operations browser auth
 
 ## Status
 

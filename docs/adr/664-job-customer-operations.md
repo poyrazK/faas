@@ -1,4 +1,4 @@
-# ADR-645: Single-task batch Jobs as Customer Operations
+# ADR-664: Single-task batch Jobs as Customer Operations
 
 Status: implemented in closed-admission preview; native qualification pending.
 
@@ -16,10 +16,10 @@ Account recovery requires evidence, the generation/inspection fence and an immut
 
 Canonical Job input is capped at 32 KiB by the existing guest environment value protocol. Customer environment is capped at 240 entries to leave room for trusted scheduler fields. The fixed control deadline is claim start plus the captured task timeout and the existing 90-second boot/cleanup envelope; the current lease can shorten this budget. Control reads never renew it.
 
-Typed result references and the verified private file receipts in ADR-646 use the Operation download contract. Native output-manifest artifacts remain separate Job artifacts. Native KVM execution, process cancellation and leakage acceptance must pass before admitting production Job Operations.
+Typed result references and the verified private file receipts in ADR-665 use the Operation download contract. Native output-manifest artifacts remain separate Job artifacts. Native KVM execution, process cancellation and leakage acceptance must pass before admitting production Job Operations.
 
 The native harness and blocking `customer-job-operations-only` lane are defined
-in [ADR-648](648-customer-job-operations-native-qualification.md) and the
+in [ADR-667](667-customer-job-operations-native-qualification.md) and the
 [qualification guide](../ops/customer-job-operations-native.md). Their dedicated
 KVM execution receipts remain pending; implementing the lane does not enable
 production admission.

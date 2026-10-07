@@ -526,7 +526,7 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	resumeCount := 0
 	check(do("POST", "/v1/workflows/runs/"+runID+"/resume", key, api.ResumeWorkflowRunRequest{ExpectedResumeCount: &resumeCount}, nil), http.StatusConflict)
 
-	// ADR-645: a batch Job also uses the existing customer receipt and read
+	// ADR-664: a batch Job also uses the existing customer receipt and read
 	// contract, with one native run and no HTTP/workflow execution identity.
 	job, err := store.JobCreate(ctx, acct.ID, "export-job", "batch", "registry.example/export:v1", []string{"export"}, 128, 60, 1, 3, nil)
 	if err != nil {

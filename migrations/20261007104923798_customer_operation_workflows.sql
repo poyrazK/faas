@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-657. An operation owns exactly one execution family. The workflow ledger
+-- ADR-676. An operation owns exactly one execution family. The workflow ledger
 -- remains authoritative and cannot be pruned while its operation retains it.
 ALTER TABLE customer_operations ALTER COLUMN current_invocation_id DROP NOT NULL;
 ALTER TABLE customer_operations ADD COLUMN IF NOT EXISTS workflow_run_id uuid;

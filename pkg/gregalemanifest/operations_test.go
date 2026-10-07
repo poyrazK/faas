@@ -71,7 +71,7 @@ func TestOperationManifestPerAppContracts(t *testing.T) {
 	}
 }
 
-// ADR-645: native targets are named strings; malformed targets and stale
+// ADR-664: native targets are named strings; malformed targets and stale
 // source bundles must fail without partially replacing the resolved contract.
 func TestOperationManifestMalformedNativeTargetAndAtomicResolution(t *testing.T) {
 	for _, source := range []string{

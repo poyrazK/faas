@@ -42,7 +42,7 @@ execution contract:
 - Completion notification and named business effects can share webhook
   transport while retaining their independent authorization and delivery
   policies. Retrying delivery does not regenerate a business result.
-- The explicit `transaction_receipt: postgres_v1` HTTP adapter (ADR-642) binds
+- The explicit `transaction_receipt: postgres_v1` HTTP adapter (ADR-661) binds
   customer-owned transaction receipts to the captured operation contract and
   negotiates separate customer receipt headers. Its SDK helpers return ordinary
   typed result bytes and support evidenced recovery without repeating committed
@@ -655,13 +655,13 @@ checks, not full repository CI or native qualification.
 
 The dedicated native lane now requires a fifth direct-upload scenario. The metal
 package compiles and portable lane/guest checks pass; actual KVM/provider/fleet
-qualification remains pending. Admission stays closed. See ADR-649 and the native
+qualification remains pending. Admission stays closed. See ADR-668 and the native
 qualification guide for activation requirements.
 
 
 ## Direct HTTP result uploads — 2026-10-06
 
-[ADR-650](adr/650-http-operation-direct-artifact-uploads.md) adds direct private
+[ADR-669](adr/669-http-operation-direct-artifact-uploads.md) adds direct private
 HTTP uploads and durable receipt lookup under the existing workload JWT and
 invocation proof. Uploads share retained blobs, quotas, transfer budgets and
 cleanup with other execution adapters. Cancellation fences new attachments;
@@ -681,7 +681,7 @@ fleet activation remain pending; production admission was not activated.
 
 ## Direct workflow result uploads — 2026-10-06
 
-[ADR-651](adr/651-workflow-operation-direct-artifact-uploads.md) adds direct private
+[ADR-670](adr/670-workflow-operation-direct-artifact-uploads.md) adds direct private
 uploads and receipt lookup for the final workflow action. Both routes require
 current workload/native proof. The file keeps its operation/run/step/report identity
 across approved resumes, while fresh generation/attempt authority rebinds the
@@ -705,7 +705,7 @@ native KVM and fleet activation remain separate gates; admission stays closed.
 
 ## Native Customer Workflow Operations lane — 2026-10-06
 
-[ADR-652](adr/652-native-customer-workflow-operation-qualification.md) adds five
+[ADR-671](adr/671-native-customer-workflow-operation-qualification.md) adds five
 real-guest scenarios and a blocking `customer-workflow-operations-only` CI lane.
 The app fixture uses migrated PostgreSQL, real daemon owners, vmmd workload
 identity and native linear workflow dispatch. It covers customer-scoped typed
@@ -726,7 +726,7 @@ See [the qualification guide](ops/customer-workflow-operations-native.md).
 
 ## Complete customer workflow export starter — 2026-10-07
 
-[ADR-653](adr/653-customer-workflow-operation-starter.md) adds
+[ADR-672](adr/672-customer-workflow-operation-starter.md) adds
 `customer-operation-workflow-export` to the CLI's embedded template catalog.
 The generated source and synchronized example combine three cancellable native
 actions with customer login integration, history, durable submission lookup after
@@ -758,7 +758,7 @@ Production admission remains closed.
 
 ## Shared customer Operations login adapter — 2026-10-07
 
-[ADR-654](adr/654-shared-customer-operations-auth.md) adds
+[ADR-673](adr/673-shared-customer-operations-auth.md) adds
 `CustomerOperationAuth` to the browser-safe SDK entry point. The HTTP, Job and
 workflow starters share the same async credential and identity-change adapter.
 The SDK resolves credentials on demand and makes provider unsubscribe
@@ -768,7 +768,7 @@ storage or admission behavior changes.
 
 ## Shared customer Operations feature controller — 2026-10-07
 
-[ADR-655](adr/655-customer-operation-feature-controller.md) adds
+[ADR-674](adr/674-customer-operation-feature-controller.md) adds
 `CustomerOperationFeature` to the browser-safe SDK. The HTTP, Job and Workflow
 starters now delegate credential preflight, client/session construction,
 history loading, receipt resumption, stale-connect fencing, identity-change
@@ -793,4 +793,4 @@ without writing, reports missing or stale output and exits nonzero so CI can
 keep committed types synchronized with schemas. Each starter now provides
 `npm run typecheck`, which checks its browser feature and workflow progress code
 against the generated declarations and packed SDK types with no emitted files.
-See [ADR-656](adr/656-customer-operation-typescript-generation.md).
+See [ADR-675](adr/675-customer-operation-typescript-generation.md).

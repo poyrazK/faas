@@ -1,4 +1,4 @@
-# ADR-648: Native qualification for Customer Job Operations
+# ADR-667: Native qualification for Customer Job Operations
 
 ## Status
 
@@ -7,7 +7,7 @@ execution and leak receipts are pending.
 
 ## Context
 
-ADR-645 and ADR-646 have portable state/API coverage. They require evidence
+ADR-664 and ADR-665 have portable state/API coverage. They require evidence
 that a real guest receives the scheduler's proof, prepares private results,
 and completes through the native task exit channel. Passing portable tests or
 compiling a metal package cannot establish that evidence.

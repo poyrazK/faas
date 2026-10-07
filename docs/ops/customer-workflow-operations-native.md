@@ -2,8 +2,8 @@
 
 The fixture and blocking CI lane are implemented. Native execution and leak
 qualification are **pending**: this implementation workspace has no `/dev/kvm`.
-Production workflow admission remains closed under ADR-647. See
-[ADR-652](../adr/652-native-customer-workflow-operation-qualification.md).
+Production workflow admission remains closed under ADR-666. See
+[ADR-671](../adr/671-native-customer-workflow-operation-qualification.md).
 
 Run the manual `e2e-native` workflow with
 `lane: customer-workflow-operations-only` on the designated native x86_64 Linux
