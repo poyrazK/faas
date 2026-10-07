@@ -373,6 +373,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update -qq
           sudo apt-get install -y -qq nftables logrotate rsyslog
       - name: egress check (Go renderer ↔ Jinja2 + nft syntax + bridge-name guard)
@@ -625,6 +626,7 @@ jobs:
           npm run build
       - name: install PostgreSQL 16 recovery runtime
         run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-16
       - name: unit tests (pg shard 1)
@@ -725,6 +727,7 @@ jobs:
           go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -check -list-file=coverage/state-inventory.txt
       - name: install PostgreSQL 16 recovery runtime
         run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-16
       - name: state tests (shard ${{ matrix.shard }})
@@ -2175,6 +2178,7 @@ jobs:
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
         run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-16
           scripts/ci/check-migration-replay.sh
@@ -2380,6 +2384,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -2474,6 +2479,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -2553,6 +2559,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
@@ -2632,6 +2639,7 @@ jobs:
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          scripts/ci/use-https-ubuntu-mirrors.sh
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
