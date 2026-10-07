@@ -544,7 +544,8 @@ jobs:
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Include cold APID race compilation and the full PostgreSQL API suite.
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -631,7 +632,7 @@ jobs:
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
-          go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -race -count=1 -p 4 -timeout=30m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
 
       - name: sdk-check
         run: make sdk-check
@@ -1183,7 +1184,9 @@ jobs:
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
+    # retain time for the remaining SQLC, vulnerability and Ansible gates.
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
