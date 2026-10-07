@@ -351,3 +351,55 @@ func TestPGCloneCheckpointReleaseLateFailureRollsBackAllHolds(t *testing.T) {
 		t.Fatal("original native release did not recover after rollback", err)
 	}
 }
+
+func TestPGCloneCheckpointTargetsUseReleasedOriginals(t *testing.T) {
+	f, store, driver, buckets := checkpointReleaseFixture(t)
+	var err error
+	f.lease, err = f.srv.releaseProjectEnvironmentCloneCheckpoint(t.Context(), f.lease, driver, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(t.Context(), "update object_buckets set public_read=true where id=$1", buckets[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	before := f.lease.Operation
+	reads := driver.reads
+	var targets []state.ObjectBucket
+	f.lease, targets, err = f.srv.checkpointObjectTargetsForLease(t.Context(), f.lease, driver)
+	if err != nil || len(targets) != len(buckets) || !reflect.DeepEqual(before, f.lease.Operation) {
+		t.Fatal("original target preflight", targets, err)
+	}
+	if driver.reads != reads || driver.releases != 1 || driver.captures != 1 {
+		t.Fatal("target preflight recaptured or released sources")
+	}
+	for _, target := range targets {
+		if target.State != "provisioning" || target.PublicRead || target.EnvironmentCloneOperationID != before.ID {
+			t.Fatal("target no longer private", target.ID)
+		}
+		if _, err := store.GetObjectBucket(t.Context(), target.AccountID, target.AppID, target.ID); !errors.Is(err, state.ErrNotFound) {
+			t.Fatal("target exposed", err)
+		}
+	}
+	driver.editRelease = func(o *state.ProjectEnvironmentCloneCheckpointReleaseObservation) {
+		o.RetainedUntil = time.Now().Add(time.Minute)
+	}
+	if _, targets, err = f.srv.checkpointObjectTargetsForLease(t.Context(), f.lease, driver); !errors.Is(err, state.ErrConflict) || targets != nil {
+		t.Fatal("retention does not cover renewed lease", err)
+	}
+}
+
+func TestPGCloneCheckpointTargetsRejectPendingRelease(t *testing.T) {
+	f, _, driver, _ := checkpointReleaseFixture(t)
+	driver.loseRelease = true
+	var err error
+	f.lease, err = f.srv.releaseProjectEnvironmentCloneCheckpoint(t.Context(), f.lease, driver, 10)
+	if !errors.Is(err, objectstorage.ErrUnavailable) {
+		t.Fatal(err)
+	}
+	if _, targets, err := f.srv.checkpointObjectTargetsForLease(t.Context(), f.lease, driver); !errors.Is(err, state.ErrConflict) || targets != nil {
+		t.Fatal("uncertain release authorized targets", err)
+	}
+	if driver.releases != 1 || driver.captures != 1 {
+		t.Fatal("preflight dispatched native work")
+	}
+}

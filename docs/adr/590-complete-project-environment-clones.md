@@ -7819,3 +7819,24 @@ reservation regressions pass, including the complete guard successor migration
 round trip. SQLC parity and text encoding, shell quoting and ADR numbering
 checks pass. These tests use a test driver, not native-provider qualification.
 Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Released-checkpoint target preflight
+
+Private object target preparation now has a read-only preflight that renews the
+worker lease before independently observing original release and capture
+retention. It requires a completed durable release, validates its immutable
+journals against the renewed deadline, and reads the exact reserved targets and
+manifests from frozen bindings. Source configuration changes do not select new
+versions or targets. Failed or incomplete retention evidence returns no targets.
+The operation and resource inventory remain unchanged, and targets stay private.
+
+This is the prerequisite for native target preparation. The generic bucket
+provisioner currently retries creation after uncertain native replies; connecting
+it requires an operation-owned creation recovery protocol first. PostgreSQL
+restore, copying and publication remain gated. Live provider qualification is
+still deferred.
+
+Validation: PostgreSQL preflight tests pass after source configuration mutation,
+confirm target reservations remain unpublished and unprovisioned, and reject
+pending release or retention shorter than the renewed lease. The existing
+checkpoint release recovery tests also pass. No live provider test was run.
