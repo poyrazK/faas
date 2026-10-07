@@ -4448,10 +4448,15 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		// The policy names the authoritative bucket family: `route` for a
 		// shared rule bucket and `per-consumer` for every dimensional rule,
 		// whether the identity owns a dedicated bucket or shares __other__.
-		h.writeRouteRateLimitHeadersFromLimiter(w, deniedLimiter, deniedBucketKey,
+		bucket := h.writeRouteRateLimitHeadersFromLimiter(w, deniedLimiter, deniedBucketKey,
 			rule.RequestsPerSecond, rule.Burst, policy)
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
-			"Rate limit exceeded", "slow down and retry"))
+		if !bucket.ok {
+			// The central counter decided; the local bucket has no view.
+			bucket = rateLimitBucket{limit: rule.Burst, ok: rule.Burst > 0}
+		}
+		writeRateLimited(w, bucket, fmt.Sprintf(
+			"this route allows %s requests per second with bursts of %d; slow down and retry",
+			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.throttle_rejected", nil, map[string]any{
 				"rule_id": rule.ID,
@@ -6470,9 +6475,8 @@ haveApp:
 		// tripped. Distinct X-AccountRateLimit-* header family so
 		// generic tooling that auto-parses X-RateLimit-* doesn't
 		// conflate per-app and per-account values (Finding 6).
-		h.writeAccountRateLimitHeaders(w, app.AccountID, app.Plan)
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
-			"Rate limit exceeded", "slow down and retry"))
+		writeRateLimited(w, h.writeAccountRateLimitHeaders(w, app.AccountID, app.Plan),
+			"this account's apps together exceeded the plan's request rate; slow down and retry")
 		if h.metrics != nil {
 			h.metrics.ObserveAccountRateLimit(app.AccountID, string(app.Plan))
 		}
@@ -6488,9 +6492,8 @@ haveApp:
 		// clients can compute Retry-After locally without parsing the
 		// problem+json body. The header set runs before the
 		// api.WriteProblem below so the body has time to read them.
-		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
-			"Rate limit exceeded", "slow down and retry"))
+		writeRateLimited(w, h.writeAppRateLimitHeaders(w, app.ID, app.Plan),
+			"this app exceeded its request rate; slow down and retry")
 		if h.metrics != nil {
 			h.metrics.ObserveRateLimit(app.ID, string(app.Plan))
 		}
@@ -7952,17 +7955,18 @@ func (h *Handler) recordUsageRequest(target Target, coldBoot bool) {
 // than to remove the limitation. When a shared-bucket design ships
 // this method moves behind a shared-state seam with the same call
 // signature.
-func (h *Handler) writeAppRateLimitHeaders(w http.ResponseWriter, appID string, plan api.Plan) {
+func (h *Handler) writeAppRateLimitHeaders(w http.ResponseWriter, appID string, plan api.Plan) rateLimitBucket {
 	if h == nil || h.limiter == nil {
-		return
+		return rateLimitBucket{}
 	}
 	limit, remaining, reset, ok := h.limiter.Peek(appID, plan)
 	if !ok {
-		return
+		return rateLimitBucket{}
 	}
 	w.Header().Set("X-RateLimit-Limit", intToString(limit))
 	w.Header().Set("X-RateLimit-Remaining", intToString(remaining))
 	w.Header().Set("X-RateLimit-Reset", intToString(reset))
+	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
 // writeAccountRateLimitHeaders writes the X-AccountRateLimit-*
@@ -7972,17 +7976,18 @@ func (h *Handler) writeAppRateLimitHeaders(w http.ResponseWriter, appID string, 
 // two scopes. Set only on the per-account 429 path today; the
 // per-account value is rarely useful to a customer on the 2xx path
 // (they care about their app's bucket, not their account-wide one).
-func (h *Handler) writeAccountRateLimitHeaders(w http.ResponseWriter, accountID string, plan api.Plan) {
+func (h *Handler) writeAccountRateLimitHeaders(w http.ResponseWriter, accountID string, plan api.Plan) rateLimitBucket {
 	if h == nil || h.accountLimiter == nil || accountID == "" {
-		return
+		return rateLimitBucket{}
 	}
 	limit, remaining, reset, ok := h.accountLimiter.PeekAccount(accountID, plan)
 	if !ok {
-		return
+		return rateLimitBucket{}
 	}
 	w.Header().Set("X-AccountRateLimit-Limit", intToString(limit))
 	w.Header().Set("X-AccountRateLimit-Remaining", intToString(remaining))
 	w.Header().Set("X-AccountRateLimit-Reset", intToString(reset))
+	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
 // writeRouteRateLimitHeaders writes the X-RouteRateLimit-* header
@@ -8015,13 +8020,13 @@ func (h *Handler) writeRouteRateLimitHeaders(w http.ResponseWriter, bucketKey st
 	h.writeRouteRateLimitHeadersFromLimiter(w, h.routeLimiter, bucketKey, rps, burst, policy)
 }
 
-func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, limiter *Limiter, bucketKey string, rps float64, burst int, policy string) {
+func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, limiter *Limiter, bucketKey string, rps float64, burst int, policy string) rateLimitBucket {
 	if limiter == nil || bucketKey == "" {
-		return
+		return rateLimitBucket{}
 	}
 	limit, remaining, reset, ok := limiter.PeekWithParams(bucketKey, rps, float64(burst))
 	if !ok {
-		return
+		return rateLimitBucket{}
 	}
 	w.Header().Set("X-RouteRateLimit-Limit", intToString(limit))
 	w.Header().Set("X-RouteRateLimit-Remaining", intToString(remaining))
@@ -8035,6 +8040,7 @@ func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, l
 		policy = rateLimitScopeRoute
 	}
 	w.Header().Set("X-RouteRateLimit-Policy", policy)
+	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
 // intToString is a tiny strconv.Itoa shim so handler.go doesn't grow
