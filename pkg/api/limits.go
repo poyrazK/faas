@@ -8800,6 +8800,24 @@ const (
 	RuntimeUpgradeServedDNSTotalTimeout  = 30 * time.Second
 )
 
+// Private selected native origin/service reconciliation bounds (ADR-620).
+const (
+	RuntimeUpgradeNativeServiceLimit          = 16
+	RuntimeUpgradeNativeListenerLimit         = 256
+	RuntimeUpgradeNativeOriginLimit           = 256
+	RuntimeUpgradeNativeFDLimit               = 16384
+	RuntimeUpgradeNativeTCPRowLimit           = 32768
+	RuntimeUpgradeNativeProcMaxBytes          = 8 << 20
+	RuntimeUpgradeNativeMetadataMaxBytes      = 64 << 10
+	RuntimeUpgradeNativeUnitMaxBytes          = 16 << 10
+	RuntimeUpgradeNativeExecutableMaxBytes    = 256 << 20
+	RuntimeUpgradeNativeInterfaceNameMaxBytes = 15
+	RuntimeUpgradeNativeScopeTimeout          = 30 * time.Second
+	RuntimeUpgradeNativeOriginTimeout         = 90 * time.Second
+	RuntimeUpgradeNativeUnitTimeout           = 2 * time.Second
+	RuntimeUpgradeNativeCommandWaitDelay      = time.Second
+)
+
 // Private runtime qualification collector budgets (ADR-601).
 const (
 	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)

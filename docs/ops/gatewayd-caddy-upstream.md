@@ -51,6 +51,17 @@ Proxied origins, wildcard expansion, DNSSEC/root-chain trust, external aliases,
 recursive caches and native origin/listener/service identities still need separate
 reconciliation. These selected observations grant no retirement or future lease.
 
+[ADR-620](../adr/620-selected-native-origin-and-service-reconciliation.md) adds
+private selected native Linux reconciliation. It pins local systemd invocations,
+process start times, executable hashes, cgroup identities, assigned origin IPs
+and held TCP socket inodes around fresh DNS/Caddy/backend identity observations.
+Every selected A/AAAA value needs an explicit same-family native Caddy listener;
+each selected backend needs a reviewed main-process service holding its socket.
+Socket activation can retain other holders. This reports selected inventory links,
+not effective Host/TLS routing, UDP/QUIC, all services, external reachability or a
+future exclusion/fencing lease. Unrelated S3 paths remain visible and unverified.
+No daemon starts this adapter; native acceptance is pending and flags stay off.
+
 Caddy must reduce the validated proxy chain to one address because the internal
 gateway deliberately rejects ambiguous `X-Forwarded-For` values. For a
 Cloudflare-fronted origin, configure Caddy with Cloudflare's current published

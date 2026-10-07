@@ -1,6 +1,7 @@
 // Package edgetopology performs private read-only Caddy configuration inventory
 // and backend identity observations (ADR-616/617), plus private Cloudflare DNS
 // configuration inventory and selected served-DNS observations (ADR-618/619).
+// Selected native Linux origin/service reconciliation is defined by ADR-620.
 // It grants no native topology completeness, drain or retirement authority.
 package edgetopology
 
