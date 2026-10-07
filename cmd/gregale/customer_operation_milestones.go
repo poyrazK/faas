@@ -38,7 +38,7 @@ func parseCustomerMilestoneCommand(args []string) (customerMilestoneCommand, err
 	fs.StringVar(&c.options.WorkflowStateCursor, "workflow-state-cursor", "", "next workflow state history page cursor")
 	fs.BoolVar(&c.options.WorkflowStaleOnly, "stale-only", false, "show only workflow runs past an app-declared state age threshold")
 	fs.IntVar(&c.options.Limit, "limit", api.OperationHistoryPageDefault, "milestone page size")
-	flags, ids := splitArgsForFlags(args, "self")
+	flags, ids := splitArgsForFlags(args, "self", "stale-only")
 	if err := fs.Parse(flags); err != nil {
 		return c, err
 	}
