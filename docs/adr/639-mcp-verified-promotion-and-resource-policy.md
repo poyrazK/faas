@@ -1,4 +1,4 @@
-# ADR-638: Verified MCP promotion and resource policy
+# ADR-639: Verified MCP promotion and resource policy
 
 - **Status:** accepted
 - **Date:** 2026-10-07

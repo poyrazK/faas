@@ -1069,7 +1069,10 @@ func validateMCPRuleSelectors(kind, host, path string, methods []string, headers
 		return nil
 	}
 	var action api.EdgeRuleJWTAction
-	if json.Unmarshal(raw, &action) != nil || action.MCP == nil {
+	if err := json.Unmarshal(raw, &action); err != nil {
+		return api.ErrValidation(fmt.Sprintf("jwt action: %v", err))
+	}
+	if action.MCP == nil {
 		return nil
 	}
 	resource, err := url.Parse(action.MCP.Resource)

@@ -1,6 +1,6 @@
 package api
 
-// adr: 638 — verified promotion and gateway resource-policy acceptance.
+// adr: 639 — verified promotion and gateway resource-policy acceptance.
 
 import (
 	"encoding/json"

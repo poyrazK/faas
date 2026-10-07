@@ -3,7 +3,7 @@
 Status: Proposed (implementation and qualification in progress)
 
 The deployment and gateway-policy decisions below are refined by
-[ADR-638](638-mcp-verified-promotion-and-resource-policy.md).
+[ADR-639](639-mcp-verified-promotion-and-resource-policy.md).
 
 Date: 2026-10-01
 

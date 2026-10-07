@@ -31,7 +31,7 @@ func loadMCPReleasePolicy(path string) ([]mcpReleaseRole, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var policy struct {
 		Version int              `json:"version"`
 		Roles   []mcpReleaseRole `json:"roles"`
@@ -58,7 +58,7 @@ func loadMCPReleasePolicy(path string) ([]mcpReleaseRole, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	seen := map[string]bool{}
 	for i := range policy.Roles {
 		r := &policy.Roles[i]
@@ -75,7 +75,7 @@ func loadMCPReleasePolicy(path string) ([]mcpReleaseRole, error) {
 			return nil, err
 		}
 		r.contract, err = mcphosting.ReadContract(baseline)
-		baseline.Close()
+		err = errors.Join(err, baseline.Close())
 		if err != nil {
 			return nil, fmt.Errorf("role %s baseline: %w", r.Name, err)
 		}

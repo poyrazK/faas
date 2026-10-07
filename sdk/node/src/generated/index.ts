@@ -705,6 +705,7 @@ export type { ManagedRealtimePublishResponse } from './models/ManagedRealtimePub
 export type { ManagedRealtimeRetainedHistoryResponse } from './models/ManagedRealtimeRetainedHistoryResponse.js';
 export type { ManagedRealtimeRetainedMessageRequest } from './models/ManagedRealtimeRetainedMessageRequest.js';
 export type { ManagedRealtimeRetainedMessageResponse } from './models/ManagedRealtimeRetainedMessageResponse.js';
+export type { MCPResourcePolicy } from './models/MCPResourcePolicy.js';
 export type { MemberListResponse } from './models/MemberListResponse.js';
 export type { MFAConfirmRequest } from './models/MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './models/MFAConfirmResponse.js';
