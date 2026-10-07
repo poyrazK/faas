@@ -19,11 +19,12 @@ gregale test --suite resilience --max-workload-minutes 60 \
   --report results.json --html results.html --junit results.xml
 ```
 
-Each scenario installs an eight-second, 100-percent fault: 250 ms downstream
-latency, 16 KiB/s downstream bandwidth, stalled downstream bytes until the
-application's two-second deadline, or an immediate connection reset. The
-assertion command verifies the observed outcome and recovery. The runner cleans
-up both workloads and their test namespace, including after failed assertions.
+The bandwidth, timeout, and reset scenarios install an eight-second,
+100-percent fault. The timeout waits for the application's two-second deadline;
+the other two verify their observed socket behavior and recovery. The staged
+scenario applies 250 ms downstream latency, checks that the application sees
+the delay, then clears the fault and measures recovery. The runner cleans up
+both workloads and their test namespace, including after failed assertions.
 JSON and HTML reports include installed rules and expiry. Warm TCP lifecycle
 evidence records absence of a new wake; socket behavior is asserted by the app.
 

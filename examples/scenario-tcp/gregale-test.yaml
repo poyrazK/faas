@@ -2,33 +2,11 @@ version: 1
 suites:
   resilience:
     scenarios:
-      - {scenario: tcp-latency, engine: real-vm, profile: warm}
       - {scenario: tcp-bandwidth, engine: real-vm, profile: warm}
       - {scenario: tcp-timeout, engine: real-vm, profile: warm}
       - {scenario: tcp-reset, engine: real-vm, profile: warm}
       - {scenario: tcp-staged-recovery, engine: real-vm, profile: warm}
 scenarios:
-  tcp-latency:
-    project: tcp-latency-example
-    source: ./app
-    timeout: 5m
-    secrets:
-      TCP_HOST: ${service.cache.host}
-      TCP_PORT: ${service.cache.port}
-    services:
-      cache:
-        fixture: tcp-echo
-        tcp_ports: [6379]
-    chaos:
-      duration: 8s
-      rules:
-        - to: cache
-          kind: tcp_latency
-          port: 6379
-          direction: downstream
-          percent: 100
-          latency: 250ms
-    command: [node, test/resilience.mjs, latency]
   tcp-bandwidth:
     project: tcp-bandwidth-example
     source: ./app
@@ -120,6 +98,7 @@ scenarios:
               percent: 100
               latency: 250ms
               min_matches: 1
+        command: [node, test/staged-resilience.mjs, slow-dependency]
         requests:
           - {name: fault-probe, method: GET, path: /pool/probe, expect: {status: 200}}
         load:
