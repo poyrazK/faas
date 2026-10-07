@@ -257,7 +257,7 @@ func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLau
 		return err
 	}
 	helpers := nativeHostHelperJournal{owner: j.owner, groups: j.helperGroups}
-	if err := helpers.requireRemoved(owner); err != nil {
+	if err := helpers.requireRemoved(ctx, owner); err != nil {
 		return err
 	}
 	images := nativeImageSourceJournal{owner: j.owner, backend: j.owner.imageSources}

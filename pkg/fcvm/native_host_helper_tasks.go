@@ -12,14 +12,18 @@ import (
 	"strconv"
 )
 
-// These are retained original helper leaders, even after exec or cgroup escape.
-// They are observations, never producer authority or proof of all descendants.
+// These are retained original helper leaders and observed family candidates,
+// even after exec or cgroup escape. They never grant producer authority or prove
+// complete descendant absence.
 type NativeRuntimeHelperTask struct {
-	Instance, OwnerGeneration, HelperGeneration string
-	PID, ObservedUID                            int
-	StartTime                                   uint64
-	ExpectedCgroup, ObservedCgroup              string
-	RetirementClaimed                           bool
+	Instance, OwnerGeneration, HelperGeneration     string
+	PID, ObservedUID                                int
+	StartTime                                       uint64
+	ExpectedCgroup, ObservedCgroup                  string
+	RetirementClaimed                               bool
+	LeaderPID, ParentPID, ProcessGroupID, SessionID int    `json:",omitempty"`
+	LeaderStartTime                                 uint64 `json:",omitempty"`
+	Relation                                        string `json:",omitempty"` // Observed family membership, never signal authority.
 }
 
 func (p nativeProcessProbe) helperTasks(ctx context.Context, records []nativeHostHelperRecord) ([]NativeRuntimeHelperTask, error) {
@@ -71,6 +75,10 @@ func (p nativeProcessProbe) readHelperTasks(ctx context.Context, records []nativ
 			seen[task.PID] = true
 			result = append(result, task)
 		}
+	}
+	result, err := p.appendHelperDescendants(ctx, records, result)
+	if err != nil {
+		return nil, err
 	}
 	slices.SortFunc(result, func(a, b NativeRuntimeHelperTask) int { return cmp.Compare(a.PID, b.PID) })
 	return result, ctx.Err()
@@ -128,7 +136,7 @@ func nativeHelperTaskScope(read func(string) ([]byte, error), dir string) (int, 
 	if err != nil {
 		return 0, "", err
 	}
-	group, err := nativeHostHelperParent(string(raw))
+	group, err := nativeObservedHelperCgroup(string(raw))
 	return uid, group, err
 }
 
@@ -136,6 +144,9 @@ func unresolvedNativeHelperTasks(tasks []NativeRuntimeHelperTask) []string {
 	var unresolved []string
 	for _, task := range tasks {
 		reason := "original helper producer has not retired"
+		if task.Relation != "" {
+			reason = "helper family task remains unretired"
+		}
 		if task.RetirementClaimed {
 			reason = "acknowledged helper retains its original kernel task"
 		} else if task.ObservedCgroup != task.ExpectedCgroup || task.ObservedUID != 0 {
@@ -144,6 +155,23 @@ func unresolvedNativeHelperTasks(tasks []NativeRuntimeHelperTask) []string {
 		unresolved = append(unresolved, fmt.Sprintf("native helper task %d: %s", task.PID, reason))
 	}
 	return unresolved
+}
+
+func (j *nativeHostHelperJournal) requireHelperFamilyAbsent(ctx context.Context, record nativeHostHelperRecord) error {
+	if !record.Launch.Authorized {
+		return ctx.Err()
+	}
+	if record.SessionID == 0 {
+		return errors.New("native helper: original private session provenance is unavailable")
+	}
+	if j.owner.helperProbe == nil {
+		return errors.New("native helper: independent family observation is unavailable")
+	}
+	tasks, err := j.owner.helperProbe.helperTasks(ctx, []nativeHostHelperRecord{record})
+	if err != nil || len(tasks) != 0 {
+		return errors.Join(err, errors.New("native helper: original task family absence remains unproven"))
+	}
+	return ctx.Err()
 }
 
 // Caller retains the original owner lock through the resource publication.
@@ -156,6 +184,11 @@ func (j *nativeHostHelperJournal) requireOriginalTasksAbsent(ctx context.Context
 	authorized := slices.ContainsFunc(frames, func(frame nativeHostHelperRecord) bool { return frame.Launch.Authorized })
 	if !authorized {
 		return ctx.Err()
+	}
+	for _, frame := range frames {
+		if frame.Launch.Authorized && frame.SessionID == 0 {
+			return errors.New("native helper: original private session provenance is unavailable")
+		}
 	}
 	if j.owner.helperProbe == nil {
 		return errors.New("native helper: independent original task observation is unavailable")

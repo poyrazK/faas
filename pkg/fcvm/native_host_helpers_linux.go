@@ -130,8 +130,21 @@ func (nativeLinuxHostHelperGroups) Attach(cmd *exec.Cmd, group nativeHostHelperG
 		return nil, err
 	}
 	file := os.NewFile(uintptr(fd), "native-helper-cgroup")
-	cmd.SysProcAttr = &syscall.SysProcAttr{UseCgroupFD: true, CgroupFD: fd}
+	cmd.SysProcAttr = &syscall.SysProcAttr{UseCgroupFD: true, CgroupFD: fd, Setsid: true}
 	return file, nil
+}
+
+// adr: 654 — cgroup attachment and the private session precede the execution gate.
+func (nativeLinuxHostHelperGroups) OriginalSession(pid int, start uint64) (int, error) {
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0, err
+	}
+	process, err := nativeHelperProcessStat(string(raw), pid)
+	if err != nil || process.StartTime != start || process.SessionID != pid || process.ProcessGroupID != pid {
+		return 0, errors.Join(err, errors.New("native helper: private session incarnation changed"))
+	}
+	return process.SessionID, nil
 }
 
 func nativeHelperCgroupControl(fd int, name string, flags int) (*os.File, error) {

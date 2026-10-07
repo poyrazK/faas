@@ -226,7 +226,7 @@ func TestNativeJailDevicePublicationFailuresRetainRecoverableOriginalScope(t *te
 				if err := restarted.retireAll(t.Context(), owner); err != nil {
 					t.Fatal(err)
 				}
-				if err := restarted.requireRemoved(owner); err != nil {
+				if err := restarted.requireRemoved(t.Context(), owner); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -267,7 +267,7 @@ func TestNativeJailDeviceRecoveryCannotAcknowledgeOpenProducerInputs(t *testing.
 	if err := restarted.retireAll(t.Context(), owner); err == nil || !strings.Contains(err.Error(), "input remains open") {
 		t.Fatalf("producer input closure was assumed: %v", err)
 	}
-	if err := restarted.requireRemoved(owner); err == nil {
+	if err := restarted.requireRemoved(t.Context(), owner); err == nil {
 		t.Fatal("helper cgroup absence substituted for producer descriptor closure")
 	}
 	if err := inputs.Close(); err != nil {

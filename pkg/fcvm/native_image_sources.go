@@ -342,7 +342,7 @@ func (j *nativeImageSourceJournal) stageOwned(ctx context.Context, expected nati
 		}
 	}
 	helpers := nativeHostHelperJournal{owner: j.owner, groups: j.helperGroups}
-	if err := helpers.requireRemoved(owner); err != nil {
+	if err := helpers.requireRemoved(ctx, owner); err != nil {
 		return "", err
 	}
 	tun := nativeTunBindJournal{owner: j.owner, backend: j.owner.tunBinds}

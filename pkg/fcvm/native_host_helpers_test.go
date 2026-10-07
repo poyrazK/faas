@@ -56,6 +56,12 @@ func (g *nativeHelperGroupsFixture) Attach(cmd *exec.Cmd, group nativeHostHelper
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
+// The portable cgroup model also models a private launch session. Real kernel
+// session creation/observation is covered separately by Linux diagnostics.
+func (g *nativeHelperGroupsFixture) OriginalSession(pid int, _ uint64) (int, error) {
+	return pid, nil
+}
+
 func (g *nativeHelperGroupsFixture) Retire(ctx context.Context, group nativeHostHelperGroup) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -272,10 +278,11 @@ func TestNativeHostHelperUncertainRetirementFencesAcknowledgementAndReplacement(
 	}
 	groups.retireErr = nil
 	restarted := &nativeHostHelperJournal{owner: nativeJournalFixture(j.owner.root), groups: groups}
+	restarted.owner.helperProbe = j.owner.helperProbe // Model the independent observer required by production recovery.
 	if err := restarted.retireAll(t.Context(), retiredOwner); err != nil {
 		t.Fatal(err)
 	}
-	if err := restarted.requireRemoved(retiredOwner); err != nil {
+	if err := restarted.requireRemoved(t.Context(), retiredOwner); err != nil {
 		t.Fatal(err)
 	}
 	if err := j.owner.confirmResourcesRemoved(t.Context(), retiredOwner); err != nil {
@@ -388,7 +395,7 @@ func TestNativeHostHelperWrapperRequiresLocalProducerAndNeverBypassesGate(t *tes
 		t.Fatal(err)
 	}
 	j := nativeHostHelperJournal{owner: v.nativeRecovery.journal, groups: v.nativeRecovery.helperGroups}
-	if err := j.requireRemoved(owner); err != nil {
+	if err := j.requireRemoved(t.Context(), owner); err != nil {
 		t.Fatal(err)
 	}
 	v.nativeRecovery.mu.Lock()

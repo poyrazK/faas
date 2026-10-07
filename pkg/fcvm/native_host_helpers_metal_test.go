@@ -98,7 +98,7 @@ func TestMetalNativeHostHelperRetiresOrphanDescendant(t *testing.T) {
 	if err := handle.Wait(ctx); err != nil {
 		t.Fatal("orphan descendant survived helper retirement:", err)
 	}
-	if err := j.requireRemoved(owner); err != nil {
+	if err := j.requireRemoved(t.Context(), owner); err != nil {
 		t.Fatal(err)
 	}
 }

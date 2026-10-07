@@ -126,7 +126,7 @@ func TestMetalNativeNetworkHelperProtocol(t *testing.T) {
 			t.Fatalf("network command has no physical retirement proof: %+v", frame)
 		}
 	}
-	if err := helpers.requireRemoved(owner); err != nil {
+	if err := helpers.requireRemoved(t.Context(), owner); err != nil {
 		t.Fatal(err)
 	}
 	if err := nativeMetalNetworkCleanup(ctx, m, v, l); err != nil {

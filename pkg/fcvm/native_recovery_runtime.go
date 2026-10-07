@@ -416,7 +416,7 @@ func (v *JailerVMM) nativeResourcesRemoved(lease Lease, nc netns.Config) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
 	helpers := nativeHostHelperJournal{owner: v.nativeRecovery.journal, groups: v.nativeRecovery.helperGroups}
-	if err := helpers.requireRemoved(owner); err != nil {
+	if err := helpers.requireRemoved(ctx, owner); err != nil {
 		return err
 	}
 	if err := helpers.requireDeviceNamespacesRemoved(ctx, owner); err != nil {

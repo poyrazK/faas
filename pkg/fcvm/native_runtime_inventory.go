@@ -132,7 +132,18 @@ func (v *JailerVMM) withNativeRuntimeInventory(ctx context.Context, consume func
 			inventory.Unresolved = unresolvedNativeCgroups(groups, inventory.Owners)
 			inventory.Unresolved = append(inventory.Unresolved, unresolvedNativeLaunchTasks(launchTasks, inventory.Owners)...)
 			inventory.Unresolved = append(inventory.Unresolved, unresolvedNativeHelperTasks(helperTasks)...)
+			// adr: 654 — a disappeared historical leader cannot supply missing family provenance.
+			for _, helper := range helpers {
+				if helper.Launch.Authorized && helper.SessionID == 0 {
+					inventory.Unresolved = append(inventory.Unresolved, "original helper private session provenance is unavailable")
+				}
+			}
 			for i := range inventory.Owners {
+				for _, helper := range helpers {
+					if helper.Launch.Authorized && helper.SessionID == 0 && (helper.OwnerGeneration == inventory.Owners[i].Generation || helper.Launch.Lease.Instance == inventory.Owners[i].Instance) && inventory.Owners[i].Unresolved == "" {
+						inventory.Owners[i].Unresolved = "original helper family provenance is unavailable"
+					}
+				}
 				for _, task := range helperTasks {
 					if task.OwnerGeneration == inventory.Owners[i].Generation && inventory.Owners[i].Unresolved == "" {
 						inventory.Owners[i].Unresolved = "original helper producer remains unresolved"

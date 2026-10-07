@@ -42,20 +42,13 @@ type nativeHostHelperRecord struct {
 	Group           nativeHostHelperGroup   `json:"group"`
 	Purpose         nativeHostHelperPurpose `json:"purpose,omitempty"`
 	JailDevice      *nativeJailDeviceFrame  `json:"jail_device,omitempty"`
+	SessionID       int                     `json:"session_id,omitempty"` // Captured before the launch gate; never backfilled.
 }
 
 func (r *nativeHostHelperRecord) UnmarshalJSON(data []byte) error {
-	fields, err := nativeJournalObjectFields(data, []string{"owner_generation", "launch", "group"})
+	fields, err := nativeHostHelperRecordFields(data)
 	if err != nil {
-		// Version-one helper frames omitted purpose and grant only ordinary
-		// effect authority. Both shapes still require exact, non-null fields.
-		fields, err = nativeJournalObjectFields(data, []string{"owner_generation", "launch", "group", "purpose"})
-		if err != nil {
-			fields, err = nativeJournalObjectFields(data, []string{"owner_generation", "launch", "group", "purpose", "jail_device"})
-			if err != nil {
-				return err
-			}
-		}
+		return err
 	}
 	if _, err := nativeJournalObjectFields(fields["group"], []string{"path", "device", "inode"}); err != nil {
 		return err
@@ -68,7 +61,29 @@ func (r *nativeHostHelperRecord) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*r = nativeHostHelperRecord(decoded)
+	if _, present := fields["session_id"]; present && r.SessionID <= 0 {
+		return errors.New("native helper: original private session is invalid")
+	}
 	return nil
+}
+
+// adr: 654 — exact historical shapes remain readable without inventing a session.
+func nativeHostHelperRecordFields(data []byte) (map[string]json.RawMessage, error) {
+	var result error
+	for _, session := range []bool{false, true} {
+		for _, extra := range [][]string{nil, {"purpose"}, {"purpose", "jail_device"}} {
+			required := append([]string{"owner_generation", "launch", "group"}, extra...)
+			if session {
+				required = append(required, "session_id")
+			}
+			fields, err := nativeJournalObjectFields(data, required)
+			if err == nil {
+				return fields, nil
+			}
+			result = err
+		}
+	}
+	return nil, result
 }
 
 func (r nativeHostHelperRecord) validate(owner nativeLaunchRecord) error {
@@ -80,6 +95,9 @@ func (r nativeHostHelperRecord) validate(owner nativeLaunchRecord) error {
 	}
 	if !canonicalNativeHelperID(r.Launch.Generation) || !validNativeHelperGroupPath(r.Group.Path, r.Launch.Generation) || (r.Group.Inode == 0) != (r.Group.Device == 0) || r.Launch.Authorized && r.Group.Inode == 0 {
 		return errors.New("native helper: invalid cgroup ownership")
+	}
+	if r.SessionID != 0 && (!r.Launch.Authorized || r.SessionID != r.Launch.PID) {
+		return errors.New("native helper: original private session differs from launch identity")
 	}
 	if r.Purpose != "" && r.Purpose != nativeHostHelperEffect && r.Purpose != nativeHostHelperNetworkCleanup && r.Purpose != nativeHostHelperJailDevices {
 		return errors.New("native helper: unsupported command purpose")
@@ -137,6 +155,7 @@ type nativeHostHelperGroups interface {
 	Retire(context.Context, nativeHostHelperGroup) error
 	Removed(nativeHostHelperGroup) error
 	Inventory([]nativeHostHelperRecord) error
+	OriginalSession(int, uint64) (int, error)
 }
 
 type nativeHostHelperJournal struct {
@@ -268,7 +287,7 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	}
 	// An unfinished command may still produce effects. Do not layer another
 	// policy or cleanup operation over uncertain retirement.
-	if err := j.requireRemoved(owner); err != nil {
+	if err := j.requireRemoved(ctx, owner); err != nil {
 		return record, false, err
 	}
 	loops := nativeLoopMountJournal{owner: j.owner, backend: j.owner.loopMounts}
@@ -396,6 +415,10 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 		return record, true, err
 	}
 	record.Launch.Authorized, record.Launch.PID, record.Launch.StartTime = true, cmd.Process.Pid, start
+	record.SessionID, err = j.groups.OriginalSession(record.Launch.PID, start)
+	if err != nil || record.SessionID != record.Launch.PID {
+		return record, true, errors.Join(err, errors.New("native helper: original private session was not observed"))
+	}
 	if err := j.write(owner, record); err != nil {
 		return record, true, err
 	}
@@ -432,7 +455,10 @@ func (j *nativeHostHelperJournal) retire(ctx context.Context, expected nativeLau
 			return errors.New("native helper: kernel retirement is unavailable")
 		}
 		if record.Launch.ResourcesRemoved {
-			return j.groups.Removed(record.Group)
+			if err := j.groups.Removed(record.Group); err != nil {
+				return err
+			}
+			return j.requireHelperFamilyAbsent(ctx, record)
 		}
 		if !record.Launch.Revoked {
 			record.Launch.Revoked = true
@@ -441,6 +467,10 @@ func (j *nativeHostHelperJournal) retire(ctx context.Context, expected nativeLau
 			}
 		}
 		if err := j.groups.Retire(ctx, record.Group); err != nil {
+			return err
+		}
+		// adr: 654 — an empty original cgroup cannot acknowledge a surviving family.
+		if err := j.requireHelperFamilyAbsent(ctx, record); err != nil {
 			return err
 		}
 		if record.JailDevice != nil && !record.JailDevice.InputsClosed {
@@ -486,7 +516,7 @@ func (j *nativeHostHelperJournal) requireRetired(owner nativeLaunchRecord) error
 	return nil
 }
 
-func (j *nativeHostHelperJournal) requireRemoved(owner nativeLaunchRecord) error {
+func (j *nativeHostHelperJournal) requireRemoved(ctx context.Context, owner nativeLaunchRecord) error {
 	if err := j.requireRetired(owner); err != nil {
 		return err
 	}
@@ -502,7 +532,7 @@ func (j *nativeHostHelperJournal) requireRemoved(owner nativeLaunchRecord) error
 			return err
 		}
 	}
-	return nil
+	return j.requireOriginalTasksAbsent(ctx, owner)
 }
 
 // Inspect current and immutable archived generations. Unknown helper owners,

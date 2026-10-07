@@ -190,7 +190,7 @@ func (j *nativeTunBindJournal) stage(ctx context.Context, expected nativeLaunchR
 		}
 	}
 	helpers := nativeHostHelperJournal{owner: j.owner, groups: j.helperGroups}
-	if err := helpers.requireRemoved(owner); err != nil {
+	if err := helpers.requireRemoved(ctx, owner); err != nil {
 		return err
 	}
 	images := nativeImageSourceJournal{owner: j.owner, backend: j.owner.imageSources}
@@ -283,7 +283,7 @@ func (j *nativeTunBindJournal) retire(ctx context.Context, expected nativeLaunch
 		return errors.New("native TUN bind: retirement lacks original VM exit authority")
 	}
 	helpers := nativeHostHelperJournal{owner: j.owner, groups: j.helperGroups}
-	if err := helpers.requireRemoved(owner); err != nil {
+	if err := helpers.requireRemoved(ctx, owner); err != nil {
 		return err
 	}
 	records, err := j.records()

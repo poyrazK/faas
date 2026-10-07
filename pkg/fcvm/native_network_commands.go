@@ -167,7 +167,7 @@ func (m *Manager) removeScopedStaleNetnsMarker(ctx context.Context, name string)
 		return err
 	}
 	helpers := nativeHostHelperJournal{owner: r.journal, groups: r.helperGroups}
-	if err := helpers.requireRemoved(owner); err != nil {
+	if err := helpers.requireRemoved(ctx, owner); err != nil {
 		return err
 	}
 	removeStaleNetnsMarker(name)
