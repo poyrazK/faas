@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE event_replay_jobs (
+CREATE TABLE IF NOT EXISTS event_replay_jobs (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL,
@@ -29,11 +29,11 @@ CREATE TABLE event_replay_jobs (
     CHECK (from_at < cutoff_at AND cutoff_at <= until_at),
     CHECK ((state = 'running' AND completed_at IS NULL) OR (state <> 'running' AND completed_at IS NOT NULL))
 );
-CREATE INDEX event_replay_jobs_running_idx ON event_replay_jobs (created_at, id) WHERE state = 'running';
-CREATE INDEX event_replay_jobs_account_idx ON event_replay_jobs (account_id, created_at DESC, id DESC);
-CREATE UNIQUE INDEX event_replay_jobs_active_target_idx ON event_replay_jobs (account_id, subscription_id) WHERE state = 'running';
+CREATE INDEX IF NOT EXISTS event_replay_jobs_running_idx ON event_replay_jobs (created_at, id) WHERE state = 'running';
+CREATE INDEX IF NOT EXISTS event_replay_jobs_account_idx ON event_replay_jobs (account_id, created_at DESC, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS event_replay_jobs_active_target_idx ON event_replay_jobs (account_id, subscription_id) WHERE state = 'running';
 
-CREATE TABLE event_replay_job_items (
+CREATE TABLE IF NOT EXISTS event_replay_job_items (
     job_id uuid NOT NULL REFERENCES event_replay_jobs(id) ON DELETE CASCADE,
     outbox_id bigint NOT NULL,
     accepted_at timestamptz NOT NULL,
@@ -50,15 +50,15 @@ CREATE TABLE event_replay_job_items (
     updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (job_id, outbox_id)
 );
-CREATE INDEX event_replay_job_items_due_idx ON event_replay_job_items (job_id, accepted_at, outbox_id) WHERE state = 'pending';
-CREATE INDEX event_replay_job_items_state_idx ON event_replay_job_items (job_id, state, accepted_at, outbox_id);
-CREATE INDEX event_replay_job_items_page_idx ON event_replay_job_items (job_id, accepted_at, outbox_id);
+CREATE INDEX IF NOT EXISTS event_replay_job_items_due_idx ON event_replay_job_items (job_id, accepted_at, outbox_id) WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS event_replay_job_items_state_idx ON event_replay_job_items (job_id, state, accepted_at, outbox_id);
+CREATE INDEX IF NOT EXISTS event_replay_job_items_page_idx ON event_replay_job_items (job_id, accepted_at, outbox_id);
 
 ALTER TABLE event_fanout_recipients
-    ADD COLUMN backfill_job_id uuid REFERENCES event_replay_jobs(id) ON DELETE SET NULL;
-CREATE INDEX event_fanout_recipients_backfill_idx ON event_fanout_recipients (backfill_job_id, outbox_id) WHERE backfill_job_id IS NOT NULL;
+    ADD COLUMN IF NOT EXISTS backfill_job_id uuid REFERENCES event_replay_jobs(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS event_fanout_recipients_backfill_idx ON event_fanout_recipients (backfill_job_id, outbox_id) WHERE backfill_job_id IS NOT NULL;
 
-ALTER TABLE event_fanout_attempt_history DROP CONSTRAINT event_fanout_attempt_history_action_check;
+ALTER TABLE event_fanout_attempt_history DROP CONSTRAINT IF EXISTS event_fanout_attempt_history_action_check;
 ALTER TABLE event_fanout_attempt_history ADD CONSTRAINT event_fanout_attempt_history_action_check
     CHECK (action IN ('fanout_attempt', 'operator_replay', 'backfill_attempt'));
 -- +goose StatementEnd
