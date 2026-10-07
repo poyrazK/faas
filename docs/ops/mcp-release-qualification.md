@@ -25,7 +25,28 @@ Use explicit harmless probe tools; deployment/catalog gates never execute tools.
 Schema migrations, sealed binding changes and gateway policy updates are
 separate app-wide operations and need their own reviewed rollout.
 
-Store receipts in an evidence directory with a manifest:
+Create a private workspace for the reviewed commit with the qualification runner:
+
+```sh
+python3 scripts/ops/mcp-qualification.py init --dir <evidence> --commit <reviewed-sha>
+```
+
+This writes a manifest with all eight rows pending. After each real observation,
+save a redacted receipt under that directory and record its exact hash:
+
+```sh
+python3 scripts/ops/mcp-qualification.py record --dir <evidence> \
+  --name untouched_lockfile_deploy --target '<test app and deployment>' \
+  --artifact untouched-lockfile-deploy.json --status passed
+python3 scripts/ops/mcp-qualification.py status --dir <evidence>
+```
+
+Repeat `record` for each required row. Use `--status failed` to preserve a failed
+observation; the gate remains closed. The runner records operator-supplied
+receipts and does not deploy apps or contact OAuth providers, clients or hosts.
+Do not commit credentials or unredacted customer data.
+
+The manifest has this shape:
 
 ```json
 {
@@ -43,7 +64,14 @@ Store receipts in an evidence directory with a manifest:
 }
 ```
 
-Include all eight rows, using relative artifact paths. Run:
+Include all eight rows, using relative artifact paths. Run the local release
+check:
+
+```sh
+python3 scripts/ops/mcp-qualification.py check --dir <evidence> --commit <reviewed-sha>
+```
+
+The underlying checker is also callable directly:
 
 ```sh
 python3 scripts/ci/mcp-qualification-check.py <evidence>/manifest.json --commit <reviewed-sha>

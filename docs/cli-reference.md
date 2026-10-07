@@ -492,6 +492,47 @@ Examples:
 gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
 ```
 
+### mcp tasks
+
+Configure and inspect durable task worker scaling
+
+#### mcp tasks setup
+
+Preview or apply the task-backlog scaling policy
+
+`gregale mcp tasks setup [--app <SLUG>] [--min <N>] [--max <N>] [--target <N>] [--apply]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | worker app slug (defaults to the linked project app) |  |
+| `--min <N>` | minimum replicas (default 1; use 0 with an always-on observer) |  |
+| `--max <N>` | maximum replicas (default 10) |  |
+| `--target <N>` | outstanding tasks per worker (default 4) |  |
+| `--apply` | apply the proposed worker scaling policy |  |
+
+Examples:
+
+```sh
+gregale mcp tasks setup --app mcp-worker
+gregale mcp tasks setup --app mcp-worker --min 0 --apply
+```
+
+#### mcp tasks status
+
+Show task scaling policy and custom metric freshness
+
+`gregale mcp tasks status [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | worker app slug (defaults to the linked project app) |  |
+
+Examples:
+
+```sh
+gregale mcp tasks status --app mcp-worker --json
+```
+
 ### mcp watch
 
 Watch caller-visible MCP catalog definitions for drift
