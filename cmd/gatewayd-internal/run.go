@@ -1742,19 +1742,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			var identity api.PlatformIdentity
-			var instanceID, nodeID, deploymentID, wakeID string
-			var port int
-			if rich, ok := cli.(interface {
-				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
-			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, version.Scope)
-			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, version.Scope)
-			}
+			woke, err := wakeForSynth(ctx, synthScheddWake(cli, appID, version.DeploymentID, version.Scope), synthWakeSleep)
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
+			identity := woke.identity
+			instanceID, nodeID, deploymentID, wakeID, port := woke.instanceID, woke.nodeID, woke.deploymentID, woke.wakeID, woke.port
 			target := gateway.Target{
 				AppID:               appID,
 				InstanceID:          instanceID,
@@ -1792,20 +1785,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			var identity api.PlatformIdentity
-			var instanceID, nodeID, deploymentID, wakeID string
-			var port int
 			wakeScope := version.Scope
-			if rich, ok := cli.(interface {
-				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
-			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, wakeScope)
-			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, wakeScope)
-			}
+			woke, err := wakeForSynth(ctx, synthScheddWake(cli, appID, version.DeploymentID, wakeScope), synthWakeSleep)
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
+			identity := woke.identity
+			instanceID, nodeID, deploymentID, wakeID, port := woke.instanceID, woke.nodeID, woke.deploymentID, woke.wakeID, woke.port
 			if version.DeploymentID != "" && deploymentID != version.DeploymentID {
 				return inv, 0, fmt.Errorf("synth invoke woke deployment %s instead of pinned %s", deploymentID, version.DeploymentID)
 			}
