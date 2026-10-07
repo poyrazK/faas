@@ -10,10 +10,11 @@ DO $dataapi$
 DECLARE definition text;
 BEGIN
  SELECT pg_get_functiondef('environment_runtime_inputs_fresh(uuid,text,timestamptz,jsonb,jsonb,boolean,jsonb,jsonb)'::regprocedure) INTO definition;
- IF position($$b.access IN ('read_write','read_only')$$ IN definition)=0 THEN
+ IF position($$b.access IN ('read_write','read_only')$$ IN definition)>0 THEN
+  EXECUTE replace(definition, $$b.access IN ('read_write','read_only')$$, $$b.access IN ('read_write','read_only','data_api')$$);
+ ELSIF position($$b.access IN ('read_write','read_only','data_api')$$ IN definition)=0 THEN
   RAISE EXCEPTION 'runtime input credential policy differs from the expected migration contract';
  END IF;
- EXECUTE replace(definition, $$b.access IN ('read_write','read_only')$$, $$b.access IN ('read_write','read_only','data_api')$$);
 END;
 $dataapi$;
 -- +goose StatementEnd
@@ -31,10 +32,11 @@ DO $dataapi$
 DECLARE definition text;
 BEGIN
  SELECT pg_get_functiondef('environment_runtime_inputs_fresh(uuid,text,timestamptz,jsonb,jsonb,boolean,jsonb,jsonb)'::regprocedure) INTO definition;
- IF position($$b.access IN ('read_write','read_only','data_api')$$ IN definition)=0 THEN
+ IF position($$b.access IN ('read_write','read_only','data_api')$$ IN definition)>0 THEN
+  EXECUTE replace(definition, $$b.access IN ('read_write','read_only','data_api')$$, $$b.access IN ('read_write','read_only')$$);
+ ELSIF position($$b.access IN ('read_write','read_only')$$ IN definition)=0 THEN
   RAISE EXCEPTION 'runtime input credential policy differs from the expected migration contract';
  END IF;
- EXECUTE replace(definition, $$b.access IN ('read_write','read_only','data_api')$$, $$b.access IN ('read_write','read_only')$$);
 END;
 $dataapi$;
 -- +goose StatementEnd
