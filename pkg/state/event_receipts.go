@@ -27,6 +27,7 @@ type EventReceipt struct {
 	invocationAccountID                            string
 	OutboxID                                       int64
 	EventID, EventSource, EventType, SchemaVersion string
+	AppID, PlatformTenantID, ClientEventID         string
 	AcceptedAt                                     time.Time
 	RoutingSettledAt, RetainUntil                  *time.Time
 	SnapshotCaptured, RecipientClaims              bool
@@ -79,18 +80,19 @@ type EventReceiptCancellation struct {
 }
 
 type EventReceiptRecipient struct {
-	Position                       int64
-	SubscriptionID, AppID, AppSlug string
-	Routing                        EventReceiptRouting
-	Execution                      *EventReceiptExecution
-	Recovery                       *EventReceiptRecovery
-	Cancellation                   *EventReceiptCancellation
-	ExecutionUnavailable           string
-	TargetAvailable                bool
-	RoutingReplayEligible          bool
-	HandlerReplayMode              string
-	HandlerReplayInvocationID      string
-	HandlerReplayDeadLetterID      string
+	Position                                       int64
+	SubscriptionID, AppID, AppSlug                 string
+	WorkflowName, WorkflowRunID, WorkflowRunStatus string
+	Routing                                        EventReceiptRouting
+	Execution                                      *EventReceiptExecution
+	Recovery                                       *EventReceiptRecovery
+	Cancellation                                   *EventReceiptCancellation
+	ExecutionUnavailable                           string
+	TargetAvailable                                bool
+	RoutingReplayEligible                          bool
+	HandlerReplayMode                              string
+	HandlerReplayInvocationID                      string
+	HandlerReplayDeadLetterID                      string
 }
 
 func receiptLimit(limit int) int {
@@ -126,6 +128,7 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 	}
 	accountID = uuidFromPgtype(meta.AccountID).String()
 	receipt := EventReceipt{invocationAccountID: meta.InvocationAccountID, OutboxID: meta.ID, EventID: meta.EventID, EventSource: meta.Source, EventType: meta.EventType,
+		AppID: meta.AppID, PlatformTenantID: meta.PlatformTenantID, ClientEventID: meta.ClientEventID,
 		SchemaVersion: meta.SchemaVersion, AcceptedAt: timeFromPgtype(meta.CreatedAt), RoutingSettledAt: timestamptzToTimePtr(meta.DeliveredAt),
 		SnapshotCaptured: meta.SnapshotCaptured, RecipientClaims: meta.RecipientClaims, RecipientCount: int(meta.RecipientCount),
 		Recipients: make([]EventReceiptRecipient, 0)}
@@ -152,7 +155,8 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 		if err := json.Unmarshal(row.Progress, &progress); err != nil {
 			return EventReceipt{}, fmt.Errorf("decode receipt progress: %w", err)
 		}
-		entry := EventReceiptRecipient{Position: row.SPosition, SubscriptionID: recipient.ID, AppID: recipient.AppID, AppSlug: row.AppSlug, TargetAvailable: row.TargetAvailable,
+		entry := EventReceiptRecipient{Position: row.SPosition, SubscriptionID: recipient.ID, AppID: recipient.AppID, AppSlug: row.AppSlug,
+			WorkflowName: row.WorkflowName, WorkflowRunID: row.WorkflowRunID, WorkflowRunStatus: row.WorkflowRunStatus, TargetAvailable: row.TargetAvailable,
 			Routing:               receiptRouting(progress, row.RoutingState, int(row.RoutingAttempts)),
 			RoutingReplayEligible: row.TargetAvailable && row.RoutingState == PublishedEventRecipientFailed && (meta.RecipientClaims || meta.State == "delivered")}
 		setEventReceiptPendingAge(&entry.Routing, receipt.AcceptedAt)
@@ -208,6 +212,9 @@ func enrichPgEventReceipt(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, recei
 	}
 	for i := range receipt.Recipients {
 		entry := &receipt.Recipients[i]
+		if entry.WorkflowName != "" {
+			continue
+		}
 		id := PublishedEventInvocationID(receipt.invocationAccountID, receipt.EventSource, receipt.EventID, entry.SubscriptionID)
 		if invocation, ok := byID[id]; ok && uuidFromPgtype(invocation.AppID).String() == entry.AppID {
 			entry.Execution = receiptExecution(id, invocation.State, int(invocation.Attempts), invocation.ReplayGeneration, timeFromPgtype(invocation.DueAt), timeFromPgtype(invocation.CreatedAt), timestamptzToTimePtr(invocation.CompletedAt), invocation.LastError)
@@ -296,6 +303,7 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 		invocationAccountID = canonicalMemUUID(accountID)
 	}
 	receipt := EventReceipt{invocationAccountID: invocationAccountID, OutboxID: work.ID, EventID: eventID, EventSource: source, EventType: envelope.Type, SchemaVersion: envelope.SchemaVersion,
+		AppID: envelope.AppID, PlatformTenantID: envelope.PlatformTenantID, ClientEventID: envelope.TenantEventID,
 		AcceptedAt: work.CreatedAt, SnapshotCaptured: work.SnapshotCaptured, RecipientClaims: work.RecipientClaims,
 		RecipientCount: len(work.RecipientSnapshot), RoutingSummary: map[string]int{}, Recipients: make([]EventReceiptRecipient, 0)}
 	if work.Delivered {
@@ -323,7 +331,24 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			receipt.NextPosition = receipt.Recipients[len(receipt.Recipients)-1].Position
 			continue
 		}
-		entry := EventReceiptRecipient{Position: position, SubscriptionID: recipient.ID, AppID: recipient.AppID, Routing: receiptRouting(progress, status, attempts)}
+		entry := EventReceiptRecipient{Position: position, SubscriptionID: recipient.ID, AppID: recipient.AppID,
+			WorkflowName: func() string {
+				if len(recipient.Workflow) == 0 {
+					return ""
+				}
+				var workflow struct {
+					Name string `json:"name"`
+				}
+				_ = json.Unmarshal(recipient.Workflow, &workflow)
+				return workflow.Name
+			}(),
+			Routing: receiptRouting(progress, status, attempts)}
+		if runID := m.eventWorkflowReceipts[eventWorkflowReceiptKey(work.ID, recipient.ID)]; runID != "" {
+			entry.WorkflowRunID = runID
+			if run, ok := m.workflowRuns[runID]; ok {
+				entry.WorkflowRunStatus = string(run.Status)
+			}
+		}
 		setEventReceiptPendingAge(&entry.Routing, receipt.AcceptedAt)
 		app, exists := m.eventSubscriptionAppLocked(recipient.AppID)
 		owned := exists && sameMemUUID(app.AccountID, accountID)
@@ -360,6 +385,10 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 					entry.Routing.LastReplayedAt = &at
 				}
 			}
+		}
+		if entry.WorkflowName != "" {
+			receipt.Recipients = append(receipt.Recipients, entry)
+			continue
 		}
 		id := PublishedEventInvocationID(invocationAccountID, source, eventID, recipient.ID)
 		if invocation, ok := m.invocations[id]; ok && owned && sameMemUUID(invocation.AccountID, accountID) && sameMemUUID(invocation.AppID, recipient.AppID) && !invocation.CreatedAt.Before(work.CreatedAt) {

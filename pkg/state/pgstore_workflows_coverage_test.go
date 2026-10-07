@@ -115,12 +115,20 @@ func TestPgStore_ListWorkflowRunsFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tenantA, _, err := s.CreatePlatformTenant(ctx, acct.ID, "wf-run-filter-tenant-a", "Tenant A", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantB, _, err := s.CreatePlatformTenant(ctx, acct.ID, "wf-run-filter-tenant-b", "Tenant B", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	runs := []*state.WorkflowRun{
-		{AppID: app.ID, WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)},
-		{AppID: app.ID, WorkflowName: "refund", DefinitionSnapshot: json.RawMessage(`{"name":"refund"}`)},
-		{AppID: app.ID, WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)},
+		{AppID: app.ID, PlatformTenantID: tenantA.ID, WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)},
+		{AppID: app.ID, PlatformTenantID: tenantB.ID, WorkflowName: "refund", DefinitionSnapshot: json.RawMessage(`{"name":"refund"}`)},
+		{AppID: app.ID, PlatformTenantID: tenantA.ID, WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)},
 	}
 	for i, run := range runs {
 		if err := s.CreateWorkflowRun(ctx, run); err != nil {
@@ -138,6 +146,12 @@ func TestPgStore_ListWorkflowRunsFilters(t *testing.T) {
 	})
 	if err != nil || total != 2 || len(filtered) != 1 || filtered[0].ID != runs[0].ID {
 		t.Fatalf("filtered runs = %#v, total=%d, err=%v; want oldest charge run on page 2 of 2", filtered, total, err)
+	}
+	tenantFiltered, tenantTotal, err := s.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{
+		PlatformTenantID: tenantA.ID, Limit: 1, Offset: 1,
+	})
+	if err != nil || tenantTotal != 2 || len(tenantFiltered) != 1 || tenantFiltered[0].ID != runs[0].ID || tenantFiltered[0].PlatformTenantID != tenantA.ID {
+		t.Fatalf("tenant-filtered runs = %#v, total=%d, err=%v; want only tenant A's second page", tenantFiltered, tenantTotal, err)
 	}
 
 	if _, _, err := s.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{

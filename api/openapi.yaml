@@ -8,7 +8,7 @@ info:
     Public REST surface exposed by `apid` on `127.0.0.1:8081` (proxied by
     `gatewayd` at the public listener). Protected routes accept an account
     Bearer API key (`fp_live_…`) or the tenant-bound `fp_tenant_…` credential
-    only on the explicitly documented tenant-self read routes. Authentication
+    only on the explicitly documented tenant-self routes. Authentication
     is rate-limited per-IP (10 failed-auth / min), except the provider-signed
     durable inbound webhook ingress.
     Successful POSTs generally accept an `Idempotency-Key` header (24h TTL)
@@ -3454,6 +3454,155 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/apps/{slug}/events:publish:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [events]
+      operationId: publishPlatformTenantSelfEvent
+      summary: Publish an event for an automation linked to this tenant.
+      description: |
+        Requires platform_tenant:events:manage. The tenant identity comes from
+        the bearer token, and the app must be actively linked to that tenant.
+        The platform scopes the event to that app's published event-triggered
+        workflows; it does not fan out to other apps' subscriptions. The caller's
+        id is scoped by tenant, app, and source, so repeating the same identity
+        and content returns the original durable receipt. The response exposes
+        both the canonical platform id and the caller's client_event_id.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishEventRequest' }
+      responses:
+        '202':
+          description: Event accepted for tenant-scoped workflow routing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPublishEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/apps/{slug}/events/receipts/{event_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: event_id
+        in: path
+        required: true
+        description: Canonical event id returned by tenant event publication.
+        schema: { type: string, minLength: 1, maxLength: 256 }
+    get:
+      tags: [events]
+      operationId: getPlatformTenantSelfEventReceipt
+      summary: Read routing and workflow-start evidence for a tenant event.
+      description: Requires platform_tenant:events:read. Receipts are visible only to the authenticated tenant that published the event for this linked app. Account-operator recovery actions are omitted.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: source
+          in: query
+          required: true
+          description: Event source used with event_id to identify the receipt.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: limit
+          in: query
+          required: false
+          description: Maximum captured workflow recipients to return in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: after
+          in: query
+          required: false
+          description: Opaque continuation cursor returned in next_after.
+          schema: { type: string, maxLength: 8192 }
+      responses:
+        '200':
+          description: Tenant-scoped event receipt and captured workflow recipients.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/apps/{slug}/workflows/schedules:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [workflows]
+      operationId: listPlatformTenantSelfWorkflowSchedules
+      summary: List schedules this tenant may customize for a linked app.
+      description: Requires platform_tenant:automations:read. Results include only live published schedule triggers that the app owner marked tenant_configurable. Version zero means the tenant still uses the published defaults.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Tenant-visible schedules and their current versions.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListTenantWorkflowSchedulesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: Name of an opted-in schedule workflow from the live deployment.
+        schema: { type: string, minLength: 1, maxLength: 128 }
+    put:
+      tags: [workflows]
+      operationId: updatePlatformTenantSelfWorkflowSchedule
+      summary: Set this tenant's cadence for an opted-in workflow.
+      description: |
+        Requires platform_tenant:automations:manage. expected_version is zero
+        to create a tenant override and otherwise must match the current version.
+        A stale version returns 409. Omitting timezone or overlap keeps the
+        published defaults; enabled defaults to true. The tenant controls only
+        its own cadence, timezone, overlap behavior, and enabled state. Input,
+        workflow steps, credentials, and app concurrency remain app-owned.
+        Existing runs keep their admitted definition.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: The tenant's complete schedule settings and the version currently observed by the caller.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTenantWorkflowScheduleRequest' }
+      responses:
+        '200':
+          description: The updated tenant schedule and its new version.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantWorkflowScheduleResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -17533,8 +17682,10 @@ paths:
         app-bound customer-managed integration; the signed run identity and
         active tenant-to-app link are checked at dispatch and outbound
         authorization. Integration credentials and route policies remain
-        app-scoped and shared across tenants. Event waits and callbacks remain
-        unsupported for tenant-bound workflows.
+        app-scoped and shared across tenants. Tenant-bound runs can wait for
+        externally supplied events and callbacks through the authenticated
+        tenant-self continuation routes. Schedule-triggered workflows on tenant-required apps
+        are admitted once per active linked tenant from the live default publication.
       requestBody:
         required: false
         content:
@@ -17583,8 +17734,12 @@ paths:
         tenant. Outbound steps can use an existing app-bound customer-managed
         integration; the signed run identity and active tenant-to-app link are
         checked at dispatch and outbound authorization. Integration credentials
-        and route policies remain app-scoped and shared across tenants. Event
-        waits and callbacks remain unsupported.
+        and route policies remain app-scoped and shared across tenants. This
+        tenant-self API also supports authenticated event waits and callbacks.
+        Schedule-triggered workflows are admitted independently for each active
+        tenant link. The published cadence is the default; triggers marked
+        tenant_configurable can be overridden through the tenant-self schedule
+        API without changing workflow input or steps.
       requestBody:
         required: false
         content:
@@ -17605,6 +17760,65 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/apps/{slug}/workflows/runs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [workflows]
+      operationId: listPlatformTenantSelfWorkflowRuns
+      summary: List durable workflow runs for the authenticated tenant in an app.
+      description: |
+        Requires platform_tenant:invocations:read. The tenant must be actively
+        linked to the app. Results are filtered by the authenticated tenant in
+        storage, include only that tenant's runs, and use the same filters and
+        offset pagination as the account-owned app run history endpoint.
+        Foreign or unbound apps return 404.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, running, awaiting_event, succeeded, failed, dead]
+          description: Return only runs in this lifecycle state.
+        - name: workflow_name
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 128 }
+          description: Restrict results to one workflow name.
+        - name: created_after
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Keep runs created at or after this RFC3339 timestamp.
+        - name: created_before
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Keep runs created at or before this RFC3339 timestamp.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Maximum tenant-owned runs to include in this response.
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of matching tenant-owned runs to skip.
+      responses:
+        '200':
+          description: A page of workflow runs owned by the authenticated tenant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowRunsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
@@ -17629,6 +17843,123 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/workflows/runs/{id}/callbacks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Run whose callback waits are visible to the authenticated tenant.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [workflows]
+      operationId: listPlatformTenantSelfWorkflowCallbacks
+      summary: List callback handles for this tenant's workflow run.
+      description: Requires platform_tenant:invocations:read. Callback IDs identify waits but are not bearer credentials. Foreign, unbound, inactive-link, and missing runs return the same 404.
+      responses:
+        '200':
+          description: The run's declared callback waits and their handles.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowCallbacksResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/workflows/runs/{id}/callbacks/{callback_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant-owned run receiving this callback.
+        schema: { type: string, format: uuid }
+      - name: callback_id
+        in: path
+        required: true
+        description: UUID handle for the declared callback wait in this run.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [workflows]
+      operationId: completePlatformTenantSelfWorkflowCallback
+      summary: Complete a callback wait for this tenant's workflow run.
+      description: |
+        Requires platform_tenant:invocations:manage. The callback ID is not a
+        credential; the authenticated tenant identity and active tenant-to-app
+        link are checked at the durable write. An identical retry returns
+        duplicate=true, including after the run finishes; a different payload
+        conflicts. Completion may arrive before the step parks and will be
+        consumed when the step becomes runnable. Foreign, unbound, inactive-link,
+        and missing runs return the same 404.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '200':
+          description: Receipt for a new callback value or an identical retry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompleteWorkflowCallbackResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: "code: workflow_run_not_found | workflow_step_not_found — the tenant cannot access the run or its callback handle is not declared."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The wait is closed or this handle already contains a different JSON value.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: The configured callback wait timeout has elapsed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/workflows/runs/{id}/events:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant-owned run receiving the event.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [workflows]
+      operationId: injectPlatformTenantSelfWorkflowEvent
+      summary: Deliver an external event to this tenant's waiting workflow run.
+      description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InjectWorkflowEventRequest' }
+      responses:
+        '200':
+          description: The run accepted the event for processing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InjectWorkflowEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '409':
+          description: "code: workflow_not_running — only active runs accept events."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
@@ -17889,7 +18220,7 @@ paths:
       tags: [workflows]
       operationId: listWorkflowCallbacks
       summary: List callback handles for a workflow run.
-      description: Callback IDs identify waits but are not bearer credentials; completion requires account authorization.
+      description: Callback IDs identify waits but are not bearer credentials; completion requires authorization for the run owner.
       responses:
         '200':
           description: Callback handles from the run's snapshotted definition.
@@ -17935,7 +18266,11 @@ paths:
               schema: { $ref: '#/components/schemas/CompleteWorkflowCallbackResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '404':
+          description: "code: workflow_run_not_found | workflow_step_not_found — the caller does not own the run or its callback handle is not declared."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: Callback is closed or the ID was completed with different JSON.
           content:
@@ -38107,7 +38442,7 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage, platform_tenant:events:read, platform_tenant:events:manage, platform_tenant:automations:read, platform_tenant:automations:manage] }
         expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
 
     PlatformTenantAccessTokenResponse:
@@ -38121,7 +38456,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage, platform_tenant:events:read, platform_tenant:events:manage, platform_tenant:automations:read, platform_tenant:automations:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -38138,7 +38473,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage, platform_tenant:events:read, platform_tenant:events:manage, platform_tenant:automations:read, platform_tenant:automations:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -41862,7 +42197,7 @@ components:
     # Workflow declarations are validated and persisted at the deployment
     # boundary; runs snapshot the selected definition from the live deploy.
     WorkflowTriggerSpec:
-      description: "Manual start, a five-field recurring schedule, or an internal event start. Event triggers use source/event_type patterns and a JSON content filter; matching runs receive the full CloudEvents envelope as input. Event recipients and workflow definitions are captured when an event is accepted. Scheduled starts skip missed minutes and default to skipping overlapping runs. Scheduling is active only on the live default deployment and requires the workflow runtime. New deployments arm schedules before their next eligible minute."
+      description: "Manual start, a five-field recurring schedule, or an internal event start. Event triggers use source/event_type patterns and a JSON content filter; matching runs receive the full CloudEvents envelope as input. Event recipients and workflow definitions are captured when an event is accepted. Scheduled starts skip missed minutes and default to skipping overlapping runs. Scheduling is active only on the live default deployment and requires the workflow runtime. New deployments arm schedules before their next eligible minute. An app owner may mark a schedule tenant_configurable to let each linked customer manage only its own cadence, timezone, overlap behavior, and enabled state."
       type: object
       additionalProperties: false
       required: [type]
@@ -41885,6 +42220,9 @@ components:
         enabled:
           type: boolean
           description: Whether the automatic trigger is enabled; defaults to true. Already accepted events and existing runs continue after disabling.
+        tenant_configurable:
+          type: boolean
+          description: For schedule triggers, allow each linked platform tenant to manage its own schedule, timezone, overlap behavior, and enabled state. Workflow input and definition remain app-owned.
         source:
           type: string
           description: Required for event triggers; exact source or edge wildcard pattern.
@@ -42311,6 +42649,44 @@ components:
         schedules:
           type: array
           items: { $ref: '#/components/schemas/WorkflowScheduleResponse' }
+
+    TenantWorkflowScheduleResponse:
+      description: A tenant's effective cadence for an opted-in published schedule workflow.
+      type: object
+      additionalProperties: false
+      required: [workflow_name, deployment_id, schedule, timezone, overlap, enabled, tenant_configurable, customized, version]
+      properties:
+        workflow_name: { type: string }
+        deployment_id: { type: string, format: uuid }
+        schedule: { type: string, description: Five-field cron expression. }
+        timezone: { type: string, description: Effective IANA timezone. }
+        overlap: { type: string, enum: [skip, allow] }
+        enabled: { type: boolean }
+        tenant_configurable: { type: boolean, const: true }
+        customized: { type: boolean, description: Whether this tenant has saved an override. }
+        version: { type: integer, format: int64, minimum: 0, description: Zero uses the published defaults; use this value as expected_version when updating. }
+
+    ListTenantWorkflowSchedulesResponse:
+      description: Schedule triggers that the app owner opted in to tenant-specific configuration.
+      type: object
+      additionalProperties: false
+      required: [schedules]
+      properties:
+        schedules:
+          type: array
+          items: { $ref: '#/components/schemas/TenantWorkflowScheduleResponse' }
+
+    UpdateTenantWorkflowScheduleRequest:
+      description: Tenant-owned schedule settings. Workflow input and workflow steps cannot be changed here.
+      type: object
+      additionalProperties: false
+      required: [expected_version, schedule]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0, description: Zero creates the first override; otherwise use the latest version returned by list or update. }
+        schedule: { type: string, description: Cron expression evaluated with the platform's five-field grammar. }
+        timezone: { type: string, description: IANA timezone; omitted uses the published timezone or UTC. }
+        overlap: { type: string, enum: [skip, allow], description: Omitted uses the published overlap behavior or skip. }
+        enabled: { type: boolean, default: true, description: Whether this tenant's schedule is active. }
 
     WorkflowRetrySpec:
       description: "Retry policy for one workflow step."
@@ -42757,9 +43133,21 @@ components:
       required: [id, accepted_at, account_id, receipt_url]
       properties:
         id: { type: string }
+        client_event_id: { type: string, description: Original caller-chosen event identifier when tenant-scoped publication is used. }
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
         receipt_url: { type: string, format: uri-reference, description: Account-authenticated relative URL for this event receipt. }
+
+    PlatformTenantPublishEventResponse:
+      description: Durable acceptance receipt for a tenant-scoped published event.
+      type: object
+      additionalProperties: false
+      required: [id, client_event_id, accepted_at, receipt_url]
+      properties:
+        id: { type: string, format: uuid, description: Canonical event id scoped by tenant, app, and source. }
+        client_event_id: { type: string, description: Caller-chosen event identifier. }
+        accepted_at: { type: string, format: date-time }
+        receipt_url: { type: string, format: uri-reference, description: Tenant-authenticated relative URL for this event receipt. }
 
     EventBacklogResponse:
       example: { observed_at: "2026-10-05T12:00:00Z", window_at: "2026-10-05T12:00:00Z", coverage: captured_application_recipients, recipients: [], consumers: [], unattributed_receipts: 0 }
@@ -43070,6 +43458,7 @@ components:
       required: [event_id, event_source, event_type, accepted_at, snapshot_captured, routing_mode, recipient_count, routing_summary, recipients]
       properties:
         event_id: { type: string }
+        client_event_id: { type: string, description: Original caller-chosen identifier for tenant-scoped events. }
         event_source: { type: string }
         event_type: { type: string }
         schema_version: { type: string }
@@ -43096,6 +43485,9 @@ components:
       required: [subscription_id, app_id, routing, recovery_actions]
       properties:
         subscription_id: { type: string, description: Immutable captured subscription or notification identifier. }
+        workflow_name: { type: string, description: Published workflow captured as an event recipient. }
+        workflow_run_id: { type: string, format: uuid, description: Durable run id after event-trigger admission. }
+        workflow_run_status: { type: string, description: Current workflow run status when retained. }
         app_id: { type: string, format: uuid }
         app_slug: { type: string, description: Current slug when the target still belongs to the authenticated account. }
         routing: { $ref: '#/components/schemas/EventReceiptRoutingResponse' }
@@ -57582,7 +57974,7 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
     WorkflowRunNotFound:
-      description: "code: workflow_run_not_found — the run is absent or belongs to another account."
+      description: "code: workflow_run_not_found — the run is absent or outside the caller's workflow access."
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

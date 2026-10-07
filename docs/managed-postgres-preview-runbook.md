@@ -78,6 +78,10 @@ creating a target or declaring it absent. Discovery pins creation-time ordering
 and rejects missing lists, overlapping identities, duplicate owner names and
 cursor cycles. An incomplete provider listing cannot authorize another create
 or report cleanup complete.
+Live local Neon tests on 2026-10-07 observed `sort_order: "ASC"` in responses
+to the lowercase `asc` query. Inventory validation accepts ascending ordering
+regardless of casing; descending ordering on any page still stops discovery,
+replay and cleanup before mutation.
 Lifecycle inspection, read-only health observation and default-source selection
 use the same complete branch inventory, so a later-page branch is not reported
 missing. A missing or null branch list is unknown; an explicit empty list can

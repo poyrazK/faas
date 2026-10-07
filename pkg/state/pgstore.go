@@ -19566,7 +19566,7 @@ func (s *PgStore) AppendEvent(ctx context.Context, actor, kind string, subject *
 // the best-effort events worker reaches Postgres later.
 func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject *string, data []byte, at time.Time) error {
 	if subject != nil && customerPublishedEvent(kind, data) && !at.IsZero() {
-		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, nil, &at)
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, "", "", data, nil, &at)
 	}
 	if at.IsZero() {
 		return s.AppendEvent(ctx, actor, kind, subject, data)
@@ -19592,7 +19592,7 @@ func (s *PgStore) AppendEventAt(ctx context.Context, actor, kind string, subject
 // value surfaces as SQLSTATE 23514 to the caller.
 func (s *PgStore) AppendEventWithTrace(ctx context.Context, actor, kind string, subject *string, data []byte, traceID *string) error {
 	if subject != nil && customerPublishedEvent(kind, data) {
-		return s.appendCustomerPublishedEvent(ctx, actor, *subject, data, traceID, nil)
+		return s.appendCustomerPublishedEvent(ctx, actor, *subject, "", "", data, traceID, nil)
 	}
 	var subj *uuid.UUID
 	if subject != nil {
