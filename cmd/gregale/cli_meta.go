@@ -133,7 +133,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
+	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -3126,6 +3126,43 @@ var cliCommands = []cliCommand{
 				Short:       "Show live deployment traffic weights for an app",
 				Positionals: []string{"<slug>"},
 			},
+		},
+	},
+	{
+		Name:    "log-drains",
+		DocSlug: "log-drains",
+		Short:   "Ship app runtime logs to an HTTP JSON or OTLP endpoint",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List an app's log drains", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+			}, Examples: []string{"gregale log-drains list --app my-app"}},
+			{Name: "add", Short: "Add a log drain; the credential is read from an environment variable", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "url", Short: "destination URL", Value: "URL", Req: true},
+				{Name: "kind", Short: "destination format (default http_json)", Value: "KIND", ClosedSet: []string{"http_json", "otlp"}},
+				{Name: "auth-header-env", Short: "environment variable holding the Authorization header value", Value: "ENV"},
+				{Name: "disabled", Short: "create the drain disabled"},
+			}, Examples: []string{"LOG_TOKEN='Bearer …' gregale log-drains add --app my-app --url https://logs.example.com/ingest --auth-header-env LOG_TOKEN"}},
+			{Name: "get", Short: "Show one log drain (credential masked)", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
+			}},
+			{Name: "health", Short: "Show delivery health: queue, delivered, failed and last error", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
+			}, Examples: []string{"gregale log-drains health --app my-app --id <drain-id>"}},
+			{Name: "update", Short: "Change a drain's URL or credential, or pause and resume it", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
+				{Name: "url", Short: "new destination URL", Value: "URL"},
+				{Name: "auth-header-env", Short: "environment variable holding the new Authorization header value", Value: "ENV"},
+				{Name: "enable", Short: "resume delivery"},
+				{Name: "disable", Short: "pause delivery"},
+			}},
+			{Name: "rm", Short: "Delete a log drain", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
+			}},
 		},
 	},
 	{
