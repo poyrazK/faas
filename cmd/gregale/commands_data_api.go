@@ -98,7 +98,7 @@ func cmdDataAPICreate(args []string) int {
 		return printErr("Could not create Data API app", err)
 	}
 	if app.Type != "" && app.Type != "app" {
-		return printErr("Invalid Data API app", errors.New("Data APIs require an app workload"))
+		return printErr("Invalid Data API app", errors.New("data APIs require an app workload"))
 	}
 	// Retain partially configured intent on failure: the ordinary app and
 	// binding recovery paths own cleanup and retries, never an ad-hoc rollback.
