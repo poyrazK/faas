@@ -161,14 +161,24 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 
 	startPending := func() {
+		if ctx.Err() != nil {
+			return
+		}
 		config, err := ops.resolve(sourceDir)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			if ops.onResolveFailed != nil {
 				ops.onResolveFailed(err)
 			}
 			return
 		}
-		if err := ops.refresh(config); err != nil {
+		err = ops.refresh(config)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
 			if ops.onRefreshFailed != nil {
 				ops.onRefreshFailed(err)
 			}
@@ -176,6 +186,9 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 		}
 		if ops.onChange != nil {
 			ops.onChange()
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		current = startDevDeploy(ctx, config, ops.deploy)
 		queued = current.queued
@@ -188,10 +201,10 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 			return 0
 
 		case change := <-changes:
+			if ctx.Err() != nil {
+				return 0
+			}
 			if change.err != nil {
-				if ctx.Err() != nil {
-					return 0
-				}
 				if ops.onWatchFailed != nil {
 					return ops.onWatchFailed(change.err)
 				}
@@ -253,10 +266,10 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 			for {
 				select {
 				case change := <-changes:
+					if ctx.Err() != nil {
+						return 0
+					}
 					if change.err != nil {
-						if ctx.Err() != nil {
-							return 0
-						}
 						if ops.onWatchFailed != nil {
 							return ops.onWatchFailed(change.err)
 						}

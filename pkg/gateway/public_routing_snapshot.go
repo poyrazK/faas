@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
+
+	"github.com/onebox-faas/faas/pkg/lruutil"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -221,13 +224,55 @@ func (h *Handler) selectPublicRoutingDeployment(r *http.Request, app App, inputs
 				}
 			}
 		}
-		key, reason := inputs.VersionKey, "version"
-		if key == "" {
-			key, reason = uuid.NewString(), "weighted"
+		if inputs.VersionKey != "" {
+			snapshot.SelectedDeploymentID, _ = AffinityDeploymentFromWeights(app.ID, inputs.VersionKey, snapshot.Weights)
+			snapshot.SelectionReason = "version"
+			return
 		}
-		snapshot.SelectedDeploymentID, _ = AffinityDeploymentFromWeights(app.ID, key, snapshot.Weights)
-		snapshot.SelectionReason = reason
+		snapshot.SelectedDeploymentID, _ = h.publicRoutingStride.pick(app, inputs.Scope, snapshot.Weights)
+		snapshot.SelectionReason = "weighted"
 	}
+}
+
+// Only the bounded per-app cursor is retained. Every choice uses the frozen
+// request roster, so refreshes, retries and cold admission cannot substitute
+// the mutable backend's weights or select an unverified sibling.
+type publicRoutingStride struct {
+	mu      sync.Mutex
+	cursors *lruutil.LRU[string, uint64]
+}
+
+func (s *publicRoutingStride) pick(app App, scope string, rows []DeploymentWeightsRow) (string, bool) {
+	weights := buildDeploymentWeights(rows)
+	if app.ID == "" || len(weights) == 0 {
+		return "", false
+	}
+	if len(weights) == 1 {
+		return weights[0].DeploymentID, true
+	}
+	cumulative := buildCumulativeWeights(weights)
+	total := cumulative[len(cumulative)-1]
+	if total <= 0 {
+		return "", false
+	}
+	key := app.AccountID + "\x00" + app.ID + "\x00" + scope
+	s.mu.Lock()
+	if s.cursors == nil {
+		s.cursors = lruutil.New[string, uint64](RouteCacheCap)
+	}
+	cursor, _ := s.cursors.Get(key)
+	s.cursors.Put(key, cursor+1)
+	s.mu.Unlock()
+	slot := int(cursor % uint64(total))
+	if sequence := smoothWeightSequence(weights); len(sequence) == 100 {
+		return weights[sequence[slot]].DeploymentID, true
+	}
+	for i, upper := range cumulative {
+		if slot < upper {
+			return weights[i].DeploymentID, true
+		}
+	}
+	return "", false
 }
 
 func publicRoutingSnapshot(ctx context.Context) (PublicRoutingSnapshot, bool) {

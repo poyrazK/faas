@@ -935,6 +935,7 @@ type warmEnsurer interface {
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
 	publicRoutingPolicy PublicRoutingPinner
+	publicRoutingStride publicRoutingStride
 	devBridgeAuthorize  func(*http.Request) *api.Problem
 	devBridgeForward    func(http.ResponseWriter, *http.Request, App) bool
 	backend             Backend

@@ -260,11 +260,11 @@ Before public HTTP cache lookup or dispatch, release resolution, revision-pin
 eligibility, host-pinned deployment availability and scoped positive weights
 join one bounded read-only repeatable-read view. Owner identity is verified in
 that view. Selection uses exact host/smoke pins, then release/revision pins,
-followed by the effective version key or local weighted entropy. The selected deployment is
+followed by the effective version key or a bounded per-app weighted stride over the frozen roster. The selected deployment is
 held through wake, capacity waiting and retries. Session affinity and instance
 rotation operate only within that deployment. A cold cohort is woken exactly;
 there is no warm sibling fallback. Cache partitions follow the selected
-deployment. Routing verdicts and weights join the request fingerprint; entropy
+deployment. Routing verdicts and weights join the request fingerprint; the cursor
 and the individual weighted choice remain separate decision evidence. Pure
 edge responses do not acquire unused dispatch policy. Async queueing retains
 its separate dispatch owner and still needs complete synthetic-path evidence.
