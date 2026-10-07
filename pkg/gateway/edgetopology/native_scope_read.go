@@ -15,14 +15,18 @@ import (
 // The only production implementation uses fixed local Linux paths and retained
 // pidfds. The unexported interface also permits portable synthetic contracts.
 type nativeScopeReader interface {
-	Read(context.Context, string, int) ([]byte, error)
-	Link(string) (string, error)
+	nativeHostReader
 	Entries(string, int) ([]string, error)
 	Executable(context.Context, string) (NativeFileIdentity, error)
 	Cgroup(string) (NativeFileIdentity, error)
 	Unit(context.Context, string) ([]byte, error)
-	Addresses(context.Context) ([]NativeHostAddress, error)
 	Alive() error
+}
+
+type nativeHostReader interface {
+	Read(context.Context, string, int) ([]byte, error)
+	Link(string) (string, error)
+	Addresses(context.Context) ([]NativeHostAddress, error)
 }
 
 func captureNativeScope(ctx context.Context, reader nativeScopeReader, review NativeScopeReview) (NativeScopeObservation, error) {
@@ -59,7 +63,7 @@ func captureNativeScope(ctx context.Context, reader nativeScopeReader, review Na
 	return observation, nil
 }
 
-func checkNativeHost(ctx context.Context, reader nativeScopeReader, host NativeHostReview) error {
+func checkNativeHost(ctx context.Context, reader nativeHostReader, host NativeHostReview) error {
 	for _, item := range []struct{ file, value string }{{"machine-id", host.MachineID}, {"sys/kernel/random/boot_id", host.BootID}} {
 		raw, err := reader.Read(ctx, item.file, api.RuntimeUpgradeNativeMetadataMaxBytes)
 		if err != nil || strings.TrimSuffix(string(raw), "\n") != item.value {

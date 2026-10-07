@@ -8818,6 +8818,12 @@ const (
 	RuntimeUpgradeNativeCommandWaitDelay      = time.Second
 )
 
+// Private selected systemd activation audit bounds (ADR-621).
+const (
+	RuntimeUpgradeNativeActivationSocketLimit = 16
+	RuntimeUpgradeNativeActivationTimeout     = 60 * time.Second
+)
+
 // Private runtime qualification collector budgets (ADR-601).
 const (
 	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)

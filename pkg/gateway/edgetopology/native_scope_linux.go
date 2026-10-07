@@ -30,6 +30,38 @@ type linuxNativeScope struct {
 }
 
 func newNativeScopeSession(ctx context.Context, review NativeScopeReview) (nativeScopeSession, error) {
+	s, err := newLinuxNativeHost(ctx)
+	if err != nil {
+		return nil, err
+	}
+	failed := true
+	defer func() {
+		if failed {
+			_ = s.Close()
+		}
+	}()
+	for _, service := range review.Services {
+		s.groups[service.Cgroup] = true
+		fd, err := unix.PidfdOpen(service.PID, 0)
+		if err != nil {
+			return nil, nativeReadError("retained process handle")
+		}
+		s.pidfds = append(s.pidfds, fd)
+		pid := strconv.Itoa(service.PID)
+		root, err := os.OpenRoot("/proc/" + pid)
+		if err != nil {
+			return nil, nativeReadError("retained process procfs directory")
+		}
+		s.processes[pid] = root
+	}
+	if s.Alive() != nil {
+		return nil, nativeReadError("retained process liveness")
+	}
+	failed = false
+	return s, nil
+}
+
+func newLinuxNativeHost(ctx context.Context) (*linuxNativeScope, error) {
 	if ctx.Err() != nil {
 		return nil, nativeReadError("context")
 	}
@@ -58,23 +90,6 @@ func newNativeScopeSession(ctx context.Context, review NativeScopeReview) (nativ
 	}
 	if s.cgroups, err = os.OpenRoot("/sys/fs/cgroup"); err != nil {
 		return nil, nativeReadError("cgroup root")
-	}
-	for _, service := range review.Services {
-		s.groups[service.Cgroup] = true
-		fd, err := unix.PidfdOpen(service.PID, 0)
-		if err != nil {
-			return nil, nativeReadError("retained process handle")
-		}
-		s.pidfds = append(s.pidfds, fd)
-		pid := strconv.Itoa(service.PID)
-		root, err := os.OpenRoot("/proc/" + pid)
-		if err != nil {
-			return nil, nativeReadError("retained process procfs directory")
-		}
-		s.processes[pid] = root
-	}
-	if s.Alive() != nil {
-		return nil, nativeReadError("retained process liveness")
 	}
 	failed = false
 	return s, nil
@@ -248,10 +263,15 @@ func (s *linuxNativeScope) Unit(ctx context.Context, unit string) ([]byte, error
 	if !nativeUnit(unit) {
 		return nil, nativeReadError("canonical service unit")
 	}
+	return showNativeUnit(ctx, s.systemctl, unit, "Id,LoadState,ActiveState,SubState,MainPID,ControlGroup,InvocationID,NeedDaemonReload")
+}
+
+// Callers validate the unit and supply fixed property lists only.
+func showNativeUnit(ctx context.Context, tool, unit, properties string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, api.RuntimeUpgradeNativeUnitTimeout)
 	defer cancel()
 	//nolint:gosec // Constructor pins root-owned systemctl/protected ancestors; fixed read-only show arguments and canonical unit, no shell.
-	command := exec.CommandContext(ctx, s.systemctl, "--system", "--no-pager", "--no-ask-password", "show", "--property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup,InvocationID,NeedDaemonReload", "--", unit)
+	command := exec.CommandContext(ctx, tool, "--system", "--no-pager", "--no-ask-password", "show", "--all", "--property="+properties, "--", unit)
 	command.Env = []string{"LANG=C", "LC_ALL=C", "SYSTEMD_COLORS=0", "SYSTEMD_LOG_LEVEL=err"}
 	command.WaitDelay = api.RuntimeUpgradeNativeCommandWaitDelay
 	output := nativeBoundedOutput{limit: api.RuntimeUpgradeNativeUnitMaxBytes}

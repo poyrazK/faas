@@ -144,7 +144,11 @@ func nativeDecimal(value string) (uint64, bool) {
 }
 
 func nativeUnit(value string) bool {
-	return strings.HasSuffix(value, ".service") && len(value) <= api.RuntimeUpgradePublicEdgeCaddyNameMaxBytes && len(value) > len(".service") && value[0] != '-' && strings.IndexFunc(value, func(r rune) bool {
+	return nativeUnitSuffix(value, ".service")
+}
+
+func nativeUnitSuffix(value, suffix string) bool {
+	return strings.HasSuffix(value, suffix) && len(value) <= api.RuntimeUpgradePublicEdgeCaddyNameMaxBytes && len(value) > len(suffix) && value[0] != '-' && strings.IndexFunc(value, func(r rune) bool {
 		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '_' && r != '-' && r != '@'
 	}) == -1
 }
