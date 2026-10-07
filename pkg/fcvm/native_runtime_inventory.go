@@ -37,6 +37,7 @@ type NativeRuntimeObservation struct {
 	VMState                                              string
 	Machine                                              *Machine
 	Cgroup                                               *NativeRuntimeCgroup
+	Executable                                           *NativeRuntimeExecutable `json:",omitempty"`
 	Authorized, Revoked, ExitConfirmed, ResourcesRemoved bool
 	// Unresolved remains charged/quarantined. An observation mismatch does not
 	// replace original provenance, acknowledge absence or authorize a launch.
@@ -193,6 +194,12 @@ func fillNativeRuntimeObservation(ctx context.Context, s *nativeMachineAPI, grou
 		}
 	}
 	result.Unresolved = nativeRuntimeCompatibility(s.owner, machine, result.Cgroup)
+	if s.executable != nil {
+		executable := *s.executable
+		result.Executable = &executable
+	} else if result.Unresolved == "" {
+		result.Unresolved = "original executable provenance is unavailable"
+	}
 	return s.check(ctx, true)
 }
 
@@ -265,6 +272,10 @@ func cloneNativeRuntimeInventory(source NativeRuntimeInventory) NativeRuntimeInv
 		if owner.Machine != nil {
 			machine := *owner.Machine
 			owner.Machine = &machine
+		}
+		if owner.Executable != nil {
+			executable := *owner.Executable
+			owner.Executable = &executable
 		}
 		if owner.Cgroup != nil {
 			group := cloneNativeRuntimeCgroup(*owner.Cgroup)

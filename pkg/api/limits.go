@@ -39,6 +39,7 @@ const (
 	RegionalRuntimeTrustBundleMaxBytes          = 65536
 	RegionalRuntimeTrustAnchorsMax              = 128
 	NativeRuntimeInventoryMaxBytes              = 64 << 20 // ADR-649: whole observation; oversize refuses, never truncates.
+	NativeExecutableRecordMaxBytes              = 64 << 10 // ADR-651: original prepared owner and selected binary digest.
 	NativeRuntimeInventoryChunkMaxBytes         = 64 << 10
 	NativeRuntimeInventoryFrameMaxBytes         = NativeRuntimeInventoryChunkMaxBytes + 1024
 	NativeRuntimeInventoryTimeout               = 30 * time.Second

@@ -48,7 +48,7 @@ func (j *nativeLaunchJournal) ownerRecords(ctx context.Context, readOwner func(s
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || entry.Name() == "tun-binds" || entry.Name() == "qualifications" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
+		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || entry.Name() == "tun-binds" || entry.Name() == "qualifications" || entry.Name() == "executables" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
 			continue
 		}
 		instance, ok := strings.CutSuffix(entry.Name(), ".json")

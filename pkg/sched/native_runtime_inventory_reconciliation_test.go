@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,11 +25,18 @@ func nativeReconciliationFixture(t *testing.T) (state.RegionalRuntimeInventoryEn
 	mem, cpu := uint64(api.BillableRAMMB(resources.RAMMB))<<20, uint64(100000)
 	group := fcvm.NativeRuntimeCgroup{Path: fcvm.ParentCgroupFor(source.Permit.Grant.Policy.Plan) + "/" + source.InstanceKey, Device: 1, Inode: 2, MountID: 3, MemoryMaxBytes: &mem, CPUQuotaUS: &cpu, CPUPeriodUS: 100000, PIDs: []int{321}, Populated: true}
 	owner := fcvm.NativeRuntimeObservation{Instance: source.InstanceKey, Generation: uuid.NewString(), KernelBootID: boot, Lease: fcvm.Lease{Instance: source.InstanceKey, Plan: source.Permit.Grant.Policy.Plan, UID: 20000}, Placement: &runtimequota.Placement{Permit: source.Permit}, OriginalResources: &resources, PID: 321, StartTime: 99, VMState: "Running", Machine: &fcvm.Machine{MemSizeMib: resources.RAMMB, VcpuCount: resources.VCPU}, Cgroup: &group, Authorized: true}
+	owner.Executable = &fcvm.NativeRuntimeExecutable{Device: 1, Inode: 7, Bytes: 32, SHA256: strings.Repeat("ab", 32)}
 	return entry, fcvm.NativeRuntimeInventorySample{Version: 1, Host: runtimequota.HostEpoch{NodeID: source.Permit.NodeID, HostEpochID: source.Permit.HostEpochID}, Challenge: uuid.NewString(), Inventory: fcvm.NativeRuntimeInventory{KernelBootID: boot, Owners: []fcvm.NativeRuntimeObservation{owner}, Cgroups: []fcvm.NativeRuntimeCgroup{group}, ManagedUIDTasks: []fcvm.NativeRuntimeTask{{PID: 321, UID: 20000, StartTime: 99}}}}
 }
 
 func TestNativeRegionalInventoryMatchesOnlyOriginalObservedHold(t *testing.T) {
 	cases := map[string]func(*state.RegionalRuntimeInventoryEntry, *fcvm.NativeRuntimeInventorySample){
+		"historical-executable": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
+			s.Inventory.Owners[0].Executable = nil
+		},
+		"invalid-executable": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
+			s.Inventory.Owners[0].Executable.SHA256 = "unknown"
+		},
 		"host-epoch": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
 			s.Host.HostEpochID = uuid.NewString()
 		},

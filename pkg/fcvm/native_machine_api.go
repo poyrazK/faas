@@ -26,12 +26,16 @@ type nativeLiveProcessHandle interface {
 // A session retains one original task. Read-only inventory does not inherit
 // its producer authority. Cached sockets/shapes cannot authorize later resume.
 type nativeMachineAPI struct {
-	v         *JailerVMM
-	owner     nativeLaunchRecord
-	handle    nativeLiveProcessHandle
-	client    *http.Client
-	closed    bool
-	inventory *nativeEffectPermit // read-only; never original producer authority
+	v                *JailerVMM
+	owner            nativeLaunchRecord
+	handle           nativeLiveProcessHandle
+	client           *http.Client
+	closed           bool
+	inventory        *nativeEffectPermit // read-only; never original producer authority
+	executableSource *nativeExecutableRecord
+	executableFile   *os.File
+	executableStamp  snapshotInputFileStamp
+	executable       *NativeRuntimeExecutable
 }
 
 func (v *JailerVMM) withNativeMachineAPI(ctx context.Context, lease Lease, consume func(*nativeMachineAPI) error) (err error) {
@@ -96,6 +100,19 @@ func (v *JailerVMM) withNativeMachineSession(ctx context.Context, lease Lease, e
 		return errors.New("native machine: pinned task lacks independent liveness observation")
 	}
 	session := &nativeMachineAPI{v: v, owner: owner, handle: live, inventory: inventory}
+	defer func() {
+		session.closed = true
+		if session.executableFile != nil {
+			err = errors.Join(err, session.executableFile.Close())
+		}
+	}()
+	session.executableSource, err = r.journal.readExecutable(owner)
+	if err != nil {
+		return err
+	}
+	if session.executableSource == nil && inventory == nil {
+		return errors.New("native machine: original executable provenance is unavailable")
+	}
 	if err := session.check(ctx, false); err != nil {
 		return err
 	}
@@ -152,6 +169,9 @@ func (s *nativeMachineAPI) check(ctx context.Context, requireFirecracker bool) e
 	}
 	if requireFirecracker && (process.Jailer || process.ObservedUID != l.UID) {
 		return errNativeMachineStarting
+	}
+	if !process.Jailer && process.ObservedUID == l.UID {
+		return s.checkExecutable(ctx)
 	}
 	return ctx.Err()
 }

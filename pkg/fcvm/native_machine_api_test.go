@@ -108,6 +108,10 @@ func (f *nativeMachineFixture) ServeHTTP(w http.ResponseWriter, req *http.Reques
 func nativeMachineAPIFixture(t *testing.T) (*JailerVMM, Lease, *nativeMachineFixture, *nativeMachineHandleFixture) {
 	t.Helper()
 	j, lease, _, resources := preparedNativeRegionalResources(t)
+	source := nativeExecutableFixtureFile(t, "selected", []byte("\x7fELF-original-firecracker-fixture"))
+	if err := j.captureExecutable(t.Context(), lease, source); err != nil {
+		t.Fatal(err)
+	}
 	ticket, err := j.beginLaunch(t.Context(), lease)
 	if err != nil {
 		t.Fatal(err)
@@ -121,6 +125,10 @@ func nativeMachineAPIFixture(t *testing.T) (*JailerVMM, Lease, *nativeMachineFix
 	}
 	root := t.TempDir()
 	dir := writeNativeRecoveryProcess(t, root, owner.PID, lease.Instance, lease.UID, owner.StartTime)
+	target := nativeExecutableFixtureFile(t, "copied", []byte("\x7fELF-original-firecracker-fixture"))
+	if err := os.Symlink(target, filepath.Join(dir, "exe")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "cgroup"), []byte("0::/"+ParentCgroupFor(lease.Plan)+"/"+lease.Instance+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

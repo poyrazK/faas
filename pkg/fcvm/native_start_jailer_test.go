@@ -15,8 +15,15 @@ import (
 
 func TestNativeStartJailerFailedPublicationStillInstallsAndJoinsWatchdog(t *testing.T) {
 	bin := t.TempDir()
+	if err := os.Chmod(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range []string{"firecracker-v1.7.0", "jailer"} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o750); err != nil {
+		body := []byte("#!/bin/sh\nexit 0\n")
+		if name == "firecracker-v1.7.0" {
+			body = []byte("\x7fELF-original-firecracker-fixture")
+		}
+		if err := os.WriteFile(filepath.Join(bin, name), body, 0o750); err != nil {
 			t.Fatal(err)
 		}
 	}

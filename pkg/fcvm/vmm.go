@@ -4953,6 +4953,9 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	// tears it down, otherwise a successful builder boot is killed immediately.
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if r := v.nativeRecovery; r != nil {
+		if err := r.journal.captureExecutable(ctx, l, execFile); err != nil {
+			return err
+		}
 		jailerPath, err := exec.LookPath(argv[0])
 		if err != nil {
 			return fmt.Errorf("vmm: locate jailer: %w", err)

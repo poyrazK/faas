@@ -65,6 +65,9 @@ func DecodeNativeRuntimeInventorySample(raw []byte) (NativeRuntimeInventorySampl
 // RegionalRuntimeCompatibility repeats the native comparison at the receiver.
 // It compares observations only; current run/task authority is still separate.
 func (o NativeRuntimeObservation) RegionalRuntimeCompatibility() string {
+	if o.Executable == nil || !o.Executable.valid() {
+		return "original executable observation is unavailable"
+	}
 	if o.Machine == nil || o.OriginalResources == nil || !o.OriginalResources.Valid() {
 		return "original resources or actual machine are unavailable"
 	}

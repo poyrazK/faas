@@ -69,6 +69,9 @@ func TestNativeRuntimeObservationReadsRecoveredFencedAndHistoricalOwners(t *test
 				owner.Revoked = true
 			}
 			if scenario == "historical" {
+				if err := os.Remove(r.journal.executablePath(owner)); err != nil {
+					t.Fatal(err)
+				}
 				owner.Version, owner.RegionalResources = 2, nil
 			}
 			if err := r.journal.write(owner); err != nil {
@@ -312,6 +315,9 @@ func TestNativeRuntimeInventoryUnknownOwnersRemainUnresolved(t *testing.T) {
 			case "historical":
 				owner, err := v.nativeRecovery.journal.read(lease.Instance)
 				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(v.nativeRecovery.journal.executablePath(owner)); err != nil {
 					t.Fatal(err)
 				}
 				owner.Version, owner.RegionalResources = 2, nil
