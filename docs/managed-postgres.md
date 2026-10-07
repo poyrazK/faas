@@ -37,7 +37,7 @@ Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=4`,
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=7`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` must be a future RFC3339 timestamp,
 and the exact qualified backend ID and fingerprint must be supplied through
 `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` and
@@ -122,13 +122,19 @@ attempts cleanup after an intermediate failure and emits a JSON report with
 only stable check codes and restore evidence (without provider IDs). The
 command also emits a versioned `approval`
 envelope, an `approval_env` block when all rollout checks pass, and a
-machine-readable `readiness` result. Version 5 requires SQL permission probes,
+machine-readable `readiness` result. Version 7 requires SQL permission probes,
 data recovery, rejection of inherited source logins on the restore target,
 and read-only credential evidence when the adapter advertises that access mode.
 Reader qualification exercises existing and future object access, write/DDL
 denials with client read-only settings disabled, RLS, password recovery on retry,
 data-preserving rotation, and rejection of retired sessions and fresh logins.
-Versions 1–4 must be replaced by a new qualification run.
+Version 7 also requires independent proof of the exact source and requested
+restore point, and replay of the same physical target. Versions 1–6 must be
+replaced by a new qualification run.
+The [2026-10-07 live acceptance](ops/evidence/20261007-managed-postgres-qualification/REPORT.md)
+passed the version-7 PostgreSQL 18 provider and lifecycle contract. Snapshot
+capture and native copy remain unqualified; the evidence does not enable
+production provisioning or qualify every placement and PostgreSQL major.
 The approval is bound to the report digest, exact backend fingerprint, expiry,
 and the current canary allowlist. A provider-only run remains useful evidence
 but is not rollout-ready until the lifecycle smoke has passed.
@@ -991,7 +997,7 @@ are blocked. Published environment-clone targets and legacy databases without
 a recorded dataset identity are currently unsupported. No automatic rollback or
 zero-downtime promise is made.
 
-Version 5 qualification requires a live compute resize, unchanged dataset and
+Version 7 qualification requires a live compute resize, unchanged dataset and
 marker, reconnection with existing writer/reader credentials, stable request
 replay and restoration of the original class whenever resizing is advertised.
 Requalify Neon before reopening provisioning; prior approvals cannot prove this
