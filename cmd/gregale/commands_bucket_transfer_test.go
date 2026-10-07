@@ -19,6 +19,7 @@ import (
 
 type transferFixture struct {
 	url       string
+	apiBase   string
 	calls     int
 	multipart bool
 	session   api.ObjectMultipartUpload
@@ -26,7 +27,12 @@ type transferFixture struct {
 	request   api.ObjectSignRequest
 }
 
-func (c *transferFixture) BaseURL() string { return "https://transfer.example.test" }
+func (c *transferFixture) BaseURL() string {
+	if c.apiBase != "" {
+		return c.apiBase
+	}
+	return "https://transfer.example.test"
+}
 func (c *transferFixture) GetObjectMultipartUpload(context.Context, string, string, string) (api.ObjectMultipartUpload, error) {
 	return c.session, nil
 }

@@ -155,3 +155,19 @@ func TestBucketUploadCheckpointRejectsCorruptionAndSymlinks(t *testing.T) {
 		})
 	}
 }
+
+// adr: 639
+func TestBucketUploadCheckpointRefusesCredentialBearingAPIURLs(t *testing.T) {
+	for _, base := range []string{"https://user:private-secret@example.test", "https://example.test?token=private-secret", "https://example.test#private-secret"} {
+		t.Run(base, func(t *testing.T) {
+			c, o := newBucketResumeFixture(t)
+			c.apiBase = base
+			if result, err := runBucketTransfer(t.Context(), c, o); err == nil || c.creates != 0 || result.UploadID != "" || strings.Contains(err.Error(), "private-secret") {
+				t.Fatal("credential-bearing endpoint reached admission or leaked", result, err)
+			}
+			if _, err := bucketUploadCheckpointPath(base, c.session.ID); err == nil || strings.Contains(err.Error(), "private-secret") {
+				t.Fatal("credential-bearing endpoint reached checkpoint path", err)
+			}
+		})
+	}
+}

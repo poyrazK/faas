@@ -52,6 +52,9 @@ func bucketUploadCheckpointPath(base, id string) (string, error) {
 	if !validBucketUploadID(id) || base == "" {
 		return "", errors.New("invalid upload checkpoint identity")
 	}
+	if _, err := validateConfigAPIBase(base); err != nil {
+		return "", errors.New("upload checkpoint API endpoint cannot contain credentials, query parameters or fragments")
+	}
 	dir, err := uploadStateDir()
 	if err != nil {
 		return "", err

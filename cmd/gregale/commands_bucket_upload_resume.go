@@ -14,6 +14,9 @@ import (
 )
 
 func uploadBucketMultipart(ctx context.Context, c bucketTransferClient, o bucketTransferOptions, file *os.File, size int64) (bucketTransferResult, error) {
+	if _, err := validateConfigAPIBase(c.BaseURL()); err != nil {
+		return bucketTransferResult{}, errors.New("upload checkpoint API endpoint cannot contain credentials, query parameters or fragments")
+	}
 	hash, _, err := bucketFileFingerprint(ctx, file, size, 0)
 	if err != nil {
 		return bucketTransferResult{}, err
