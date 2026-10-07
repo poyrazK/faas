@@ -26,7 +26,7 @@ func workflowDefinitionFixture(t *testing.T, def state.OperationDefinition, name
 	return sqlc.InsertCustomerOperationDefinitionParams{
 		ID: backendUUID(uuid.NewString()), AccountID: backendUUID(def.AccountID), AppID: backendUUID(def.AppID),
 		Scope: def.Scope, Name: name, Revision: strings.Repeat("a", 64), DeploymentID: backendUUID(def.DeploymentID),
-		Spec:             []byte(fmt.Sprintf(`{"name":%q,"workflow":"export-flow","method":"POST","path":"/exports","owner":"platform_tenant"}`, name)),
+		Spec:             []byte(fmt.Sprintf(`{"name":%q,"workflow":"export-flow","method":"POST","path":"/workflow-exports","owner":"platform_tenant"}`, name)),
 		WorkflowSnapshot: []byte(retainedWorkflowSnapshot),
 	}
 }
