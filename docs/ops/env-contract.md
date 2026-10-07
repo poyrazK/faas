@@ -137,6 +137,14 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DOMAIN_DOCTOR_TTL_SECONDS` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_DPA_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_DUNNING_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_DURABLE_ENTITIES_ENABLED` | apid | `default` |  | 0 | `` | ADR-678 operator invocation preview; explicit 1 requires an app allowlist and private conditional-state backend; off pending native and live-provider qualification |
+| `FAAS_DURABLE_ENTITY_ALARMS_ENABLED` | apid | `default` |  | 0 | `` | ADR-678 opt-in alarm delivery; requires the invocation preview and private delimiter listing |
+| `FAAS_DURABLE_ENTITY_APPS` | apid | `default` |  |  | `` | ADR-678 comma-separated app UUID allowlist; required only when the invocation preview is enabled |
+| `FAAS_DURABLE_ENTITY_BACKEND` | apid | `default` |  |  | `` | ADR-678 configured private conditional-state backend ID; required only when the invocation preview is enabled; currently S3 only |
+| `FAAS_DURABLE_ENTITY_BACKEND_FINGERPRINT` | apid | `default` |  |  | `` | ADR-678 immutable placement fingerprint for the selected backend; required only when the invocation preview is enabled |
+| `FAAS_DURABLE_ENTITY_BUCKET` | apid | `default` |  |  | `` | ADR-678 dedicated private platform bucket; required only when the invocation preview is enabled; never a customer-managed bucket |
+| `FAAS_DURABLE_ENTITY_MAINTENANCE_ENABLED` | apid | `default` |  | 0 | `` | ADR-678 opt-in checkpointed cleanup and inventory; requires the invocation preview and private listing/deletion |
+| `FAAS_DURABLE_ENTITY_MAX_RETAINED_BYTES` | apid | `default` |  |  | `int` | ADR-678 optional positive per-entity committed-byte cap; unset leaves new entities uncapped and preserves existing persisted caps; not a billing quota |
 | `FAAS_E2E_API_HOSTING_SMOKE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_E2E_BIN_DIR` | shared | `dev-only` |  |  | `` | test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host |
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
