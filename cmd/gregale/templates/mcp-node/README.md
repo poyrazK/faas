@@ -290,3 +290,28 @@ JWT edge rule. The provider retains login and token issuance; keep application
 catalog filtering and owner checks. Gateway resource policies accept simple
 `{variable}` templates. Native deployment, restore and real provider/client login
 qualification must be completed before claiming production support.
+
+
+### Running Task capacity
+
+`tasks.max_running` (default 16) limits live execution leases across all worker
+replicas in a namespace. `tasks.max_running_per_owner` (default 4) limits each
+owner within that namespace and must not exceed the namespace limit. These are
+separate from `worker_concurrency`, which limits each worker process, and from
+outstanding Task admission limits. PostgreSQL serializes capacity checks and
+claims, while owner rotation skips owners whose execution capacity is full.
+
+Use the same limits on every worker and metrics observer in a namespace, and
+upgrade every worker before relying on enforcement. Completion, failure, and
+input pauses release execution capacity. Running cancellation releases capacity
+when acknowledged or when its lease expires. Expired Task TTLs and leases stop
+counting automatically; expired leases cannot be renewed. Lease expiration does
+not guarantee that an old handler has physically stopped, so handlers must still
+make external side effects idempotent.
+
+The `mcp_tasks_running` gauge counts unexpired live leases.
+`mcp_tasks_capacity_waiting` counts unexpired queued Tasks and expired-lease
+running Tasks blocked by namespace or owner capacity, regardless of handler
+availability or retry eligibility. A capacity limit can explain backlog even
+when more replicas would not help. Both gauges use the configured observer limits
+and contain no customer identifiers.

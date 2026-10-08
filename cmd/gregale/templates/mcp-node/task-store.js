@@ -113,6 +113,16 @@ const CLAIMABLE_TASK_FILTER = `
   ))
   AND (task.status = 'queued' OR (task.status = 'running' AND task.lease_expires_at <= clock_timestamp()))`;
 
+// Claims serialize per namespace; this statement runs after acquiring the lock,
+// so its snapshot includes every preceding committed lease.
+const RUNNING_CAPACITY_FILTER = `
+  (SELECT COUNT(*) FROM ${TABLE} AS live
+    WHERE live.namespace = $1 AND live.status = 'running'
+      AND live.expires_at > clock_timestamp() AND live.lease_expires_at > clock_timestamp()) < $6
+  AND (SELECT COUNT(*) FROM ${TABLE} AS live
+    WHERE live.namespace = $1 AND live.owner_hash = fairness.owner_hash AND live.status = 'running'
+      AND live.expires_at > clock_timestamp() AND live.lease_expires_at > clock_timestamp()) < $7`;
+
 const CREATE_TASK_NOTIFY_FUNCTION = `
   CREATE OR REPLACE FUNCTION gregale_mcp_task_notify_change() RETURNS trigger
   LANGUAGE plpgsql AS $$
@@ -248,7 +258,7 @@ function principalFor(authInfo, authMode) {
   return JSON.stringify([resource, subject, clientId]);
 }
 
-export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, maxOutstanding = defaults.maxOutstanding, maxOutstandingPerOwner = defaults.maxOutstandingPerOwner }) {
+export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, maxOutstanding = defaults.maxOutstanding, maxOutstandingPerOwner = defaults.maxOutstandingPerOwner, maxRunning = defaults.maxRunning, maxRunningPerOwner = defaults.maxRunningPerOwner }) {
   if (!pool || typeof pool.query !== 'function') throw new Error('MCP Tasks require a PostgreSQL connection pool');
   if (typeof namespace !== 'string' || !namespace || namespace.length > 255) throw new Error('MCP Tasks require a stable app namespace');
   if (typeof ownerKey !== 'string' || Buffer.byteLength(ownerKey) < 32) throw new Error('MCP task owner key must contain at least 32 bytes');
@@ -257,6 +267,8 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
     if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('MCP task admission limits must be positive integers');
   }
   if (maxOutstandingPerOwner > maxOutstanding) throw new Error('MCP task owner limit must not exceed the namespace limit');
+
+  validateRunningLimits(maxRunning, maxRunningPerOwner);
 
   const masterKey = Buffer.from(ownerKey);
   const ownerKeyBytes = createHmac('sha256', masterKey).update('gregale-mcp-task-owner:v1').digest();
@@ -370,6 +382,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         await client.query(MIGRATE_SCHEMA);
         await client.query(CREATE_QUEUE_INDEX);
         await client.query(CREATE_ADMISSION_INDEX);
+        await client.query(`CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_live_leases ON ${TABLE} (namespace, owner_hash, lease_expires_at) WHERE status = 'running'`);
         await client.query(CREATE_FAIRNESS_SCHEMA);
         await client.query(CREATE_FAIRNESS_SEQUENCE);
         await client.query(CREATE_FAIRNESS_INDEX);
@@ -390,7 +403,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         await client.query(CREATE_TASK_NOTIFY_TRIGGER);
       });
     },
-    queueMetrics: createMcpTaskQueueObserver({ pool, namespace }).queueMetrics,
+    queueMetrics: createMcpTaskQueueObserver({ pool, namespace, maxRunning, maxRunningPerOwner }).queueMetrics,
     async create({ toolName, handlerVersion, args, authInfo, authMode, inputMethods = [] }) {
       if (typeof toolName !== 'string' || !/^[a-z][a-z0-9_.-]{0,127}$/.test(toolName)) throw new Error('Invalid MCP task tool name');
       if (typeof handlerVersion !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handlerVersion)) throw new Error('Invalid MCP task handler version');
@@ -568,15 +581,17 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
            AND lease_expires_at <= clock_timestamp() AND attempt_count >= $2
       `, [namespace, maxAttempts]);
       const leaseToken = randomUUID();
-      // The owner cursor lock and task lease update share one statement so
-      // replicas can rotate owners without adding transaction round trips.
+      // Capacity checks and lease creation share a namespace transaction lock.
       let result;
       for (let attempt = 0; attempt < FAIRNESS_CLAIM_RETRIES; attempt++) {
-        result = await pool.query(`
+        result = await withTransaction(pool, async client => {
+          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${TABLE}:execution:${namespace}`]);
+          return client.query(`
         WITH chosen_owner AS MATERIALIZED (
           SELECT fairness.namespace, fairness.owner_hash
             FROM ${FAIRNESS_TABLE} AS fairness
            WHERE fairness.namespace = $1
+             AND ${RUNNING_CAPACITY_FILTER}
              AND EXISTS (
                SELECT 1 FROM ${TABLE} AS task
                 WHERE task.owner_hash = fairness.owner_hash
@@ -638,13 +653,15 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
            AND EXISTS (
              SELECT 1 FROM ${FAIRNESS_TABLE} AS fairness
               WHERE fairness.namespace = $1
+                AND ${RUNNING_CAPACITY_FILTER}
                 AND EXISTS (
                   SELECT 1 FROM ${TABLE} AS task
                    WHERE task.owner_hash = fairness.owner_hash
                      AND ${CLAIMABLE_TASK_FILTER}
                 )
            )
-        `, [namespace, maxAttempts, leaseToken, leaseMs, supportedHandlers == null ? null : JSON.stringify(supportedHandlers)]);
+        `, [namespace, maxAttempts, leaseToken, leaseMs, supportedHandlers == null ? null : JSON.stringify(supportedHandlers), maxRunning, maxRunningPerOwner]);
+        });
         const row = result.rows?.[0];
         if (!row?.busy || attempt === FAIRNESS_CLAIM_RETRIES - 1) break;
         // An empty result with eligible work means every matching owner cursor
@@ -660,6 +677,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         UPDATE ${TABLE}
            SET lease_expires_at = clock_timestamp() + ($4::bigint * interval '1 millisecond')
          WHERE namespace = $1 AND task_id = $2::uuid AND lease_token = $3::uuid AND status = 'running'
+           AND lease_expires_at > clock_timestamp() AND expires_at > clock_timestamp()
          RETURNING cancel_requested_at
       `, [namespace, taskID, leaseToken, leaseMs]);
       if (!result.rows?.[0]) return { owned: false, cancelRequested: false };
@@ -732,25 +750,35 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
   };
 }
 
+function validateRunningLimits(total, owner) {
+  if (![total, owner].every(value => Number.isSafeInteger(value) && value > 0)) throw new Error('MCP task running limits must be positive integers');
+  if (owner > total) throw new Error('MCP task running owner limit must not exceed the namespace limit');
+}
+
 // Read-only observers never initialize schema, decrypt payloads, or claim work.
-export function createMcpTaskQueueObserver({ pool, namespace }) {
+export function createMcpTaskQueueObserver({ pool, namespace, maxRunning = defaults.maxRunning, maxRunningPerOwner = defaults.maxRunningPerOwner }) {
+  validateRunningLimits(maxRunning, maxRunningPerOwner);
   async function queueMetrics() {
-      const result = await pool.query(`
-        SELECT LEAST(COUNT(*), 1000000000000::bigint)::text AS outstanding_tasks,
-               LEAST(GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(created_at))), 0), 1000000000000)::text AS oldest_age_seconds
-          FROM ${TABLE}
-         WHERE namespace = $1
-           AND expires_at > clock_timestamp()
-           AND status IN ('queued', 'running')
-      `, [namespace]);
-      const row = result.rows?.[0];
-      if (!row) throw new Error('Could not read MCP task queue metrics');
-      const outstandingTasks = Number(row.outstanding_tasks);
-      const oldestAgeSeconds = Number(row.oldest_age_seconds);
-      if (!Number.isSafeInteger(outstandingTasks) || outstandingTasks < 0 || !Number.isFinite(oldestAgeSeconds) || oldestAgeSeconds < 0) {
-        throw new Error('MCP task queue metrics returned invalid values');
-      }
-      return { outstandingTasks, oldestAgeSeconds };
+    const result = await pool.query(`
+      WITH instant AS MATERIALIZED (SELECT clock_timestamp() AS now),
+      pending AS MATERIALIZED (
+        SELECT task.*, status = 'running' AND lease_expires_at > instant.now AS live
+          FROM ${TABLE} AS task CROSS JOIN instant
+         WHERE namespace = $1 AND expires_at > instant.now AND status IN ('queued', 'running')
+      ), owners AS (
+        SELECT owner_hash, COUNT(*) FILTER (WHERE live) AS running FROM pending GROUP BY owner_hash
+      ), totals AS (SELECT COUNT(*) FILTER (WHERE live) AS running FROM pending)
+      SELECT COUNT(*)::text AS outstanding_tasks,
+             COALESCE(GREATEST(EXTRACT(EPOCH FROM ((SELECT now FROM instant) - MIN(created_at))), 0), 0)::text AS oldest_age_seconds,
+             COUNT(*) FILTER (WHERE live)::text AS running_tasks,
+             COUNT(*) FILTER (WHERE NOT live AND (totals.running >= $2 OR owners.running >= $3))::text AS capacity_waiting_tasks
+        FROM pending JOIN owners USING (owner_hash) CROSS JOIN totals
+    `, [namespace, maxRunning, maxRunningPerOwner]);
+    const row = result.rows?.[0];
+    if (!row) throw new Error('Could not read MCP task queue metrics');
+    const metrics = { outstandingTasks: Number(row.outstanding_tasks), oldestAgeSeconds: Number(row.oldest_age_seconds), runningTasks: Number(row.running_tasks), capacityWaitingTasks: Number(row.capacity_waiting_tasks) };
+    if (!['outstandingTasks', 'runningTasks', 'capacityWaitingTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) || !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0) throw new Error('MCP task queue metrics returned invalid values');
+    return metrics;
   }
   return { queueMetrics };
 }

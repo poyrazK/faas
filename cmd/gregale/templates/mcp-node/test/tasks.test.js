@@ -382,13 +382,13 @@ test('queue metrics count only unexpired queued and running rows in the task nam
   let captured;
   const pool = { async query(sql, params) {
     captured = { sql, params };
-    return { rows: [{ outstanding_tasks: '4', oldest_age_seconds: '18.25' }] };
+    return { rows: [{ outstanding_tasks: '4', oldest_age_seconds: '18.25', running_tasks: '2', capacity_waiting_tasks: '1' }] };
   } };
   const store = createPostgresMcpTaskStore({ pool, namespace: 'mcp-worker-prod', ownerKey: 'x'.repeat(48), ttlMs: 60_000 });
-  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25 });
-  assert.deepEqual(captured.params, ['mcp-worker-prod']);
+  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25, runningTasks: 2, capacityWaitingTasks: 1 });
+  assert.deepEqual(captured.params, ['mcp-worker-prod', 16, 4]);
   assert.match(captured.sql, /status IN \('queued', 'running'\)/);
-  assert.match(captured.sql, /expires_at > clock_timestamp\(\)/);
+  assert.match(captured.sql, /expires_at > instant.now/);
   assert.match(captured.sql, /MIN\(created_at\)/);
 });
 

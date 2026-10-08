@@ -59,6 +59,8 @@ type TasksConfig struct {
 	TTLSeconds             int    `json:"ttl_seconds,omitempty"`
 	PollIntervalMS         int    `json:"poll_interval_ms,omitempty"`
 	WorkerConcurrency      int    `json:"worker_concurrency,omitempty"`
+	MaxRunning             int    `json:"max_running,omitempty"`
+	MaxRunningPerOwner     int    `json:"max_running_per_owner,omitempty"`
 	MaxOutstanding         int    `json:"max_outstanding,omitempty"`
 	MaxOutstandingPerOwner int    `json:"max_outstanding_per_owner,omitempty"`
 }
@@ -272,6 +274,19 @@ func (c *TasksConfig) validate() error {
 	}
 	if c.WorkerConcurrency != 0 && (c.WorkerConcurrency < 1 || c.WorkerConcurrency > 16) {
 		return fmt.Errorf("tasks.worker_concurrency must be between 1 and 16")
+	}
+	if c.MaxRunning < 0 || c.MaxRunningPerOwner < 0 {
+		return fmt.Errorf("task running limits must be positive integers when specified")
+	}
+	running, runningOwner := c.MaxRunning, c.MaxRunningPerOwner
+	if running == 0 {
+		running = api.MCPTaskDefaultMaxRunning
+	}
+	if runningOwner == 0 {
+		runningOwner = api.MCPTaskDefaultMaxRunningPerOwner
+	}
+	if runningOwner > running {
+		return fmt.Errorf("tasks.max_running_per_owner must not exceed tasks.max_running")
 	}
 	if c.MaxOutstanding < 0 || c.MaxOutstandingPerOwner < 0 {
 		return fmt.Errorf("task admission limits must be positive integers when specified")

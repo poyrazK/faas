@@ -40,6 +40,8 @@ export function resolveMcpTaskSettings(config, { env = process.env, role = 'comb
     ttlMs: (settings.ttl_seconds ?? 86400) * 1000,
     pollIntervalMs: settings.poll_interval_ms ?? 2000,
     workerConcurrency: settings.worker_concurrency ?? 1,
+    maxRunning: settings.max_running || defaults.maxRunning,
+    maxRunningPerOwner: settings.max_running_per_owner || defaults.maxRunningPerOwner,
     maxOutstanding: settings.max_outstanding || defaults.maxOutstanding,
     maxOutstandingPerOwner: settings.max_outstanding_per_owner || defaults.maxOutstandingPerOwner,
   };
@@ -64,7 +66,7 @@ export async function startMcpTaskRuntime(config, {
   let taskRuntime;
   let metricsPublisher;
   try {
-    const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, ttlMs: settings.ttlMs, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner });
+    const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, ttlMs: settings.ttlMs, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner });
     if (role === 'observer') await store.queueMetrics();
     else taskRuntime = createRuntime({
       store,

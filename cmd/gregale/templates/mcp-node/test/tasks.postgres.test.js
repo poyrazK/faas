@@ -25,7 +25,7 @@ function principal(subject) {
   };
 }
 
-async function harness(t, { legacySchema = false } = {}) {
+async function harness(t, { legacySchema = false, maxRunning = 64, maxRunningPerOwner = 64 } = {}) {
   const adminPool = new Pool({ connectionString: databaseURL, max: 1, connectionTimeoutMillis: 5_000, statement_timeout: 10_000 });
   const schema = `gregale_mcp_test_${randomUUID().replaceAll('-', '')}`;
   let schemaCreated = false;
@@ -86,6 +86,7 @@ async function harness(t, { legacySchema = false } = {}) {
     namespace,
     ownerKey,
     ttlMs: 60_000,
+    maxRunning, maxRunningPerOwner,
   });
   await store.initialize();
   return { adminPool, namespace, ownerKey, pool, schema, store };
@@ -293,7 +294,15 @@ test('PostgreSQL retries a briefly locked owner cursor instead of idling a worke
       if (String(sql).includes('WITH chosen_owner') && result.rows?.[0]?.busy) signalBusy();
       return result;
     },
-    connect: (...args) => pool.connect(...args),
+    async connect(...args) {
+      const client = await pool.connect(...args);
+      const originalQuery = client.query.bind(client);
+      return { async query(sql, params) {
+        const result = await originalQuery(sql, params);
+        if (String(sql).includes('WITH chosen_owner') && result.rows?.[0]?.busy) signalBusy();
+        return result;
+      }, release: (...args) => client.release(...args) };
+    },
   };
   const retryingStore = createPostgresMcpTaskStore({ pool: observedPool, namespace, ownerKey, ttlMs: 60_000 });
   await retryingStore.initialize();
@@ -706,4 +715,50 @@ test('PostgreSQL leaves unsupported handler versions queued for compatible worke
   assert.equal((await get(store, old.task_id, 'alice')).attempt_count, 0);
   assert.equal(await store.claim(3, 30_000, [{ name: 'build_report', version: '2' }]), null);
   assert.equal((await store.claim(3, 30_000, [{ name: 'build_report', version: '1' }])).task_id, old.task_id);
+});
+
+
+test('running limits are atomic across replicas and recover from completion and lease expiry', postgresOnly, async t => {
+  const { pool, namespace, ownerKey } = await harness(t);
+  const options = { pool, namespace, ownerKey, ttlMs: 60_000, maxRunning: 3, maxRunningPerOwner: 1 };
+  const replicas = Array.from({ length: 12 }, () => createPostgresMcpTaskStore(options));
+  for (let owner = 0; owner < 4; owner++) {
+    await create(replicas[0], `owner-${owner}`);
+    await create(replicas[0], `owner-${owner}`);
+  }
+  const claims = (await Promise.all(replicas.map(store => store.claim(3, 60_000)))).filter(Boolean);
+  assert.equal(claims.length, 3);
+  assert.equal(new Set(claims.map(task => task.task_id)).size, 3);
+  const owners = await pool.query("SELECT owner_hash, COUNT(*)::int AS count FROM gregale_mcp_tasks WHERE status = 'running' GROUP BY owner_hash");
+  assert.ok(owners.rows.every(row => row.count === 1));
+  const metrics = await replicas[0].queueMetrics();
+  assert.equal(metrics.runningTasks, 3);
+  assert.equal(metrics.capacityWaitingTasks, 5);
+  await replicas[0].complete(claims[0].task_id, claims[0].lease_token, { ok: true });
+  assert.ok(await replicas[1].claim(3, 60_000));
+  await pool.query("UPDATE gregale_mcp_tasks SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE task_id = $1", [claims[1].task_id]);
+  assert.deepEqual(await replicas[0].heartbeat(claims[1].task_id, claims[1].lease_token, 60_000), { owned: false, cancelRequested: false });
+  assert.ok(await replicas[2].claim(3, 60_000));
+  assert.equal((await replicas[0].queueMetrics()).runningTasks, 3);
+});
+
+
+test('owner saturation leaves capacity for other owners and cancellation releases it', postgresOnly, async t => {
+  const { pool, namespace, ownerKey } = await harness(t);
+  const store = createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000, maxRunning: 3, maxRunningPerOwner: 1 });
+  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 0, oldestAgeSeconds: 0, runningTasks: 0, capacityWaitingTasks: 0 });
+  await create(store, 'alice');
+  await create(store, 'alice');
+  const alice = await store.claim(3, 60_000);
+  assert.equal(await store.claim(3, 60_000), null);
+  assert.equal((await store.queueMetrics()).capacityWaitingTasks, 1);
+  const bob = await create(store, 'bob');
+  const bobLease = await store.claim(3, 60_000);
+  assert.equal(bobLease.task_id, bob.task_id);
+  await store.requestCancel({ taskID: alice.task_id, authInfo: principal('alice'), authMode: 'external-oauth' });
+  assert.equal(await store.claim(3, 60_000), null, 'cooperative cancellation keeps its live slot');
+  await store.finishCancelled(alice.task_id, alice.lease_token);
+  assert.ok(await store.claim(3, 60_000));
+  await store.requestInputs({ taskID: bob.task_id, leaseToken: bobLease.lease_token, requests: { approval: { method: 'elicitation/create', params: { mode: 'form', message: 'Approve?' } } } });
+  assert.equal((await store.queueMetrics()).runningTasks, 1, 'input pauses release their running slot');
 });

@@ -21,14 +21,14 @@ test('worker publisher pushes bounded task backlog and oldest age without identi
   let finish;
   const completed = new Promise(resolve => { finish = resolve; });
   const publisher = startMcpTaskMetricsPublisher({
-    store: { async queueMetrics() { return { outstandingTasks: 7, oldestAgeSeconds: 123.5 }; } },
+    store: { async queueMetrics() { return { outstandingTasks: 7, oldestAgeSeconds: 123.5, runningTasks: 2, capacityWaitingTasks: 3 }; } },
     appSlug: 'mcp-worker',
     token: 'metrics-write-secret',
     apiURL: 'https://api.example.test',
     intervalMs: 300_000,
     async fetchImpl(url, options) {
       requests.push({ url, options });
-      if (requests.length === 2) finish();
+      if (requests.length === 4) finish();
       return { status: 204 };
     },
   });
@@ -36,15 +36,17 @@ test('worker publisher pushes bounded task backlog and oldest age without identi
   await Promise.race([completed, new Promise((_, reject) => setTimeout(() => reject(new Error('metric pushes timed out')), 1000))]);
   await publisher.close();
   assert.deepEqual(requests.map(request => request.url).sort(), [
+    'https://api.example.test/v1/apps/mcp-worker/custom-metrics/mcp_tasks_capacity_waiting',
     'https://api.example.test/v1/apps/mcp-worker/custom-metrics/mcp_tasks_oldest_age_seconds',
     'https://api.example.test/v1/apps/mcp-worker/custom-metrics/mcp_tasks_outstanding',
+    'https://api.example.test/v1/apps/mcp-worker/custom-metrics/mcp_tasks_running',
   ]);
   for (const request of requests) {
     assert.equal(request.options.method, 'PUT');
     assert.equal(request.options.redirect, 'error');
     assert.equal(request.options.headers.authorization, 'Bearer metrics-write-secret');
     assert.deepEqual(JSON.parse(request.options.body), {
-      value: request.url.endsWith('mcp_tasks_outstanding') ? 7 : 123.5,
+      value: ({ mcp_tasks_outstanding: 7, mcp_tasks_oldest_age_seconds: 123.5, mcp_tasks_running: 2, mcp_tasks_capacity_waiting: 3 })[request.url.split('/').at(-1)],
     });
     assert.ok(!request.options.body.includes('task_id'));
   }
@@ -54,7 +56,7 @@ test('publisher reports API failures without stopping its caller', async () => {
   let errors = 0;
   let completed = 0;
   const publisher = startMcpTaskMetricsPublisher({
-    store: { async queueMetrics() { return { outstandingTasks: 1, oldestAgeSeconds: 1 }; } },
+    store: { async queueMetrics() { return { outstandingTasks: 1, oldestAgeSeconds: 1, runningTasks: 1, capacityWaitingTasks: 0 }; } },
     appSlug: 'mcp-worker', token: 'secret', intervalMs: 300_000,
     async fetchImpl() { return { status: 503 }; },
     onError() { errors++; },
