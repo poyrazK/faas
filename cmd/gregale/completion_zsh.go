@@ -380,17 +380,17 @@ func renderZshEnvironmentValueCompletion(w io.Writer, flags []cliFlag, indent st
 		}
 		staticValues := strings.Join(f.ClosedSet, " ")
 		for _, spelling := range cliFlagSpellings(f) {
-			fmt.Fprintf(w, "%sif [[ \"${words[CURRENT-1]}\" == %q ]]; then\n", indent, spelling)
-			fmt.Fprintf(w, "%s  _values 'environment or scope' %s $(_gregale_cache_slugs environments)\n", indent, staticValues)
-			fmt.Fprintf(w, "%s  return 0\n", indent)
-			fmt.Fprintf(w, "%sfi\n", indent)
-			fmt.Fprintf(w, "%sif [[ \"$PREFIX\" == %s=* ]]; then\n", indent, spelling)
-			fmt.Fprintf(w, "%s  local value_prefix=\"${PREFIX%%%%=*}=\"\n", indent)
-			fmt.Fprintf(w, "%s  IPREFIX=\"${IPREFIX}${value_prefix}\"\n", indent)
-			fmt.Fprintf(w, "%s  PREFIX=\"${PREFIX#*=}\"\n", indent)
-			fmt.Fprintf(w, "%s  _values 'environment or scope' %s $(_gregale_cache_slugs environments)\n", indent, staticValues)
-			fmt.Fprintf(w, "%s  return 0\n", indent)
-			fmt.Fprintf(w, "%sfi\n", indent)
+			_, _ = fmt.Fprintf(w, "%sif [[ \"${words[CURRENT-1]}\" == %q ]]; then\n", indent, spelling)
+			_, _ = fmt.Fprintf(w, "%s  _values 'environment or scope' %s $(_gregale_cache_slugs environments)\n", indent, staticValues)
+			_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+			_, _ = fmt.Fprintf(w, "%sfi\n", indent)
+			_, _ = fmt.Fprintf(w, "%sif [[ \"$PREFIX\" == %s=* ]]; then\n", indent, spelling)
+			_, _ = fmt.Fprintf(w, "%s  local value_prefix=\"${PREFIX%%%%=*}=\"\n", indent)
+			_, _ = fmt.Fprintf(w, "%s  IPREFIX=\"${IPREFIX}${value_prefix}\"\n", indent)
+			_, _ = fmt.Fprintf(w, "%s  PREFIX=\"${PREFIX#*=}\"\n", indent)
+			_, _ = fmt.Fprintf(w, "%s  _values 'environment or scope' %s $(_gregale_cache_slugs environments)\n", indent, staticValues)
+			_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+			_, _ = fmt.Fprintf(w, "%sfi\n", indent)
 		}
 	}
 }
@@ -401,17 +401,17 @@ func renderZshFilePathCompletion(w io.Writer, flags []cliFlag, indent string) {
 			continue
 		}
 		for _, spelling := range cliFlagSpellings(f) {
-			fmt.Fprintf(w, "%sif [[ \"${words[CURRENT-1]}\" == %q ]]; then\n", indent, spelling)
-			fmt.Fprintf(w, "%s  _files\n", indent)
-			fmt.Fprintf(w, "%s  return 0\n", indent)
-			fmt.Fprintf(w, "%sfi\n", indent)
-			fmt.Fprintf(w, "%sif [[ \"$PREFIX\" == %s=* ]]; then\n", indent, spelling)
-			fmt.Fprintf(w, "%s  local file_prefix=\"${PREFIX%%%%=*}=\"\n", indent)
-			fmt.Fprintf(w, "%s  IPREFIX=\"${IPREFIX}${file_prefix}\"\n", indent)
-			fmt.Fprintf(w, "%s  PREFIX=\"${PREFIX#*=}\"\n", indent)
-			fmt.Fprintf(w, "%s  _files\n", indent)
-			fmt.Fprintf(w, "%s  return 0\n", indent)
-			fmt.Fprintf(w, "%sfi\n", indent)
+			_, _ = fmt.Fprintf(w, "%sif [[ \"${words[CURRENT-1]}\" == %q ]]; then\n", indent, spelling)
+			_, _ = fmt.Fprintf(w, "%s  _files\n", indent)
+			_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+			_, _ = fmt.Fprintf(w, "%sfi\n", indent)
+			_, _ = fmt.Fprintf(w, "%sif [[ \"$PREFIX\" == %s=* ]]; then\n", indent, spelling)
+			_, _ = fmt.Fprintf(w, "%s  local file_prefix=\"${PREFIX%%%%=*}=\"\n", indent)
+			_, _ = fmt.Fprintf(w, "%s  IPREFIX=\"${IPREFIX}${file_prefix}\"\n", indent)
+			_, _ = fmt.Fprintf(w, "%s  PREFIX=\"${PREFIX#*=}\"\n", indent)
+			_, _ = fmt.Fprintf(w, "%s  _files\n", indent)
+			_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+			_, _ = fmt.Fprintf(w, "%sfi\n", indent)
 		}
 	}
 }
