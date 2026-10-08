@@ -111,7 +111,7 @@ func ValidateConfig(c Config) error {
 		return err
 	case "webpush":
 		u, err := url.Parse(c.Subject)
-		if err != nil || len(c.Subject) > 256 || strings.ContainsAny(c.Subject, "\r\n\x00") || !(u.Scheme == "mailto" && u.Opaque != "" || u.Scheme == "https" && u.Host != "") {
+		if err != nil || len(c.Subject) > 256 || strings.ContainsAny(c.Subject, "\r\n\x00") || (u.Scheme != "mailto" || u.Opaque == "") && (u.Scheme != "https" || u.Host == "") {
 			return errors.New("invalid VAPID subject")
 		}
 		_, err = vapidKey(c.PrivateKey)
