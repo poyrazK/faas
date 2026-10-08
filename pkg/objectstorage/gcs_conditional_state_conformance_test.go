@@ -13,6 +13,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,8 @@ type gcsEntityWire struct {
 	manifestWrites      int
 	loseNextManifestAck bool
 	ignorePreconditions bool
+	lists               int
+	deletes             int
 }
 
 type gcsEntityWireObject struct {
@@ -73,9 +76,76 @@ func (s *gcsEntityWire) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(object.body)
 	case r.Method == http.MethodPost && r.URL.Query().Get("uploadType") == "multipart":
 		s.write(w, r)
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/b/private/o"):
+		s.list(w, r)
+	case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/b/private/o/"):
+		key := strings.SplitN(r.URL.Path, "/b/private/o/", 2)[1]
+		s.mu.Lock()
+		delete(s.objects, key)
+		s.deletes++
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(http.StatusBadRequest)
 	}
+}
+
+func (s *gcsEntityWire) list(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	limit, err := strconv.Atoi(query.Get("maxResults"))
+	if err != nil || limit < 1 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	// Short native pages exercise continuation through inventory and collection.
+	limit = min(limit, 3)
+	prefix, delimiter, after := query.Get("prefix"), query.Get("delimiter"), query.Get("pageToken")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lists++
+	entries := s.listEntries(prefix, delimiter, query.Get("startOffset"))
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		if key > after {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var items []map[string]string
+	var prefixes []string
+	next := ""
+	for index, key := range keys {
+		if index == limit {
+			next = keys[index-1]
+			break
+		}
+		if entries[key] {
+			prefixes = append(prefixes, key)
+		} else {
+			object := s.objects[key]
+			items = append(items, map[string]string{"name": key, "size": strconv.Itoa(len(object.body)), "generation": strconv.FormatInt(object.generation, 10)})
+		}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "prefixes": prefixes, "nextPageToken": next})
+}
+
+// listEntries is called with the fixture mutex held.
+func (s *gcsEntityWire) listEntries(prefix, delimiter, start string) map[string]bool {
+	entries := make(map[string]bool)
+	for key := range s.objects {
+		if !strings.HasPrefix(key, prefix) || key < start {
+			continue
+		}
+		if delimiter != "" {
+			if index := strings.Index(strings.TrimPrefix(key, prefix), delimiter); index >= 0 {
+				key = key[:len(prefix)+index+len(delimiter)]
+				entries[key] = true
+				continue
+			}
+		}
+		entries[key] = false
+	}
+	return entries
 }
 
 func (s *gcsEntityWire) write(w http.ResponseWriter, r *http.Request) {
