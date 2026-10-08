@@ -262,6 +262,7 @@ def test_operation_milestone_wire_and_scoped_feed() -> None:
         "subject_id": "ord/42&é",
         "cursor": "next+/=",
         "limit": 2,
+        "stale_only": False,
     }
     fact = {
         "id": str(app),
