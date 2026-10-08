@@ -25,9 +25,10 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// RealtimeHistory is private to trusted daemons. Realtime clients are
-// authorized by realtimed before history reads; route reports are node-local
-// routing hints and must never be forwarded to a public HTTP route.
+// RealtimeHistory is private to trusted daemons. Endpoint authentication and
+// channel authorization are enforced by realtimed before a client can cause a
+// history read or route update; these RPCs must never be forwarded to a public
+// HTTP route.
 type RealtimeHistoryClient interface {
 	ReadChannelHistory(ctx context.Context, in *ReadChannelHistoryRequest, opts ...grpc.CallOption) (*ReadChannelHistoryResponse, error)
 	ReportChannelRoute(ctx context.Context, in *ReportChannelRouteRequest, opts ...grpc.CallOption) (*ReportChannelRouteResponse, error)
@@ -65,9 +66,10 @@ func (c *realtimeHistoryClient) ReportChannelRoute(ctx context.Context, in *Repo
 // All implementations must embed UnimplementedRealtimeHistoryServer
 // for forward compatibility.
 //
-// RealtimeHistory is private to trusted daemons. Realtime clients are
-// authorized by realtimed before history reads; route reports are node-local
-// routing hints and must never be forwarded to a public HTTP route.
+// RealtimeHistory is private to trusted daemons. Endpoint authentication and
+// channel authorization are enforced by realtimed before a client can cause a
+// history read or route update; these RPCs must never be forwarded to a public
+// HTTP route.
 type RealtimeHistoryServer interface {
 	ReadChannelHistory(context.Context, *ReadChannelHistoryRequest) (*ReadChannelHistoryResponse, error)
 	ReportChannelRoute(context.Context, *ReportChannelRouteRequest) (*ReportChannelRouteResponse, error)
