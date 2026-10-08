@@ -2,7 +2,7 @@
 
 package fcvm
 
-// adr: 655
+// adr: 783
 import (
 	"context"
 	"encoding/json"
@@ -80,7 +80,7 @@ func TestNativeHelperSessionPolicyKernelCheckPrecedesExecution(t *testing.T) {
 func TestNativeHelperLegacySessionCannotSupplyRestrictionAfterExit(t *testing.T) {
 	j, owner, _ := nativeHelperJournalFixture(t)
 	frame := nativeHelperTaskRecord(owner, 42, 100)
-	frame.SessionPolicy = 0 // ADR-654 retained sessions did not enforce affiliation.
+	frame.SessionPolicy = 0 // ADR-782 retained sessions did not enforce affiliation.
 	frame.Launch.Revoked, frame.Launch.ExitConfirmed, frame.Launch.ResourcesRemoved = true, true, true
 	writeNativeHelperTaskFrame(t, j, owner, frame)
 	if err := j.retire(t.Context(), owner, frame.Launch.Generation); err == nil {

@@ -1,6 +1,6 @@
 package runtimequota
 
-// adr: 633
+// adr: 761
 import "strings"
 
 // LaunchSource retains the spelling actually sent to the native runtime owner.
@@ -28,7 +28,7 @@ func (s LaunchSource) Validate() error {
 
 // ValidateTask requires the relationship retained at dispatch. Historical task
 // sources without this provenance remain readable, but cannot prove a task row.
-// adr: 653
+// adr: 781
 func (s LaunchSource) ValidateTask() error {
 	instance, err := AppTaskInstanceID(s.TaskID, s.Permit.RunID)
 	if err != nil || s.Permit.Kind != CapacityAppTask || s.Permit.InstanceID != instance {

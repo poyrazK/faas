@@ -87,7 +87,7 @@ type Manifest struct {
 	SchemaVersion string `yaml:"schema_version"`
 
 	// ControlPlaneCell binds this fleet to a fresh independent regional DB.
-	// Omission retains the shared-fleet contract (ADR-601).
+	// Omission retains the shared-fleet contract (ADR-729).
 	ControlPlaneCell *ControlPlaneCell `yaml:"control_plane_cell,omitempty"`
 
 	// Fleet is the list of hosts in the deployment. Each host has a

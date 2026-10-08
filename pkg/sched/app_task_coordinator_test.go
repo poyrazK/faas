@@ -146,7 +146,7 @@ func TestAppTaskCoordinatorDispatchFenceRenewsLeaseAndDestroysBeforeCompletion(t
 	destroyed := &atomic.Bool{}
 	checkingStore := &teardownCheckingAppTaskStore{AppTaskStore: store, destroyed: destroyed}
 	backend := appTaskBackendFunc(func(ctx context.Context, request AppTaskRestoreRequest) (AppTaskSession, error) {
-		// adr: 653 — preparation receives the captured original claim.
+		// adr: 781 — preparation receives the captured original claim.
 		row, err := store.AppTaskByID(ctx, account.ID, app.ID, tasks[0].ID)
 		if err != nil || row.LeaseToken == nil || request.LeaseToken != *row.LeaseToken {
 			t.Fatal("restore lost original lease", err)

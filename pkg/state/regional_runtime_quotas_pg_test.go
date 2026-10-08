@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 614
+// adr: 742
 import (
 	"errors"
 	"strings"
@@ -144,7 +144,7 @@ func TestPGRegionalRuntimeQuotaRetainedDependenciesPreventDowngrade(t *testing.T
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
-	// ADR-633 retains launch sources on rollback. Their capacity/quota foreign
+	// ADR-761 retains launch sources on rollback. Their capacity/quota foreign
 	// keys must survive too, even when the receipt tables are currently empty.
 	_, err = tx.Exec(t.Context(), down)
 	var dependency *pgconn.PgError

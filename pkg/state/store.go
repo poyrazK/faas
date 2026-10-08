@@ -990,7 +990,7 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
-	// ADR-616: admission authority must survive Store decorators and scheduler
+	// ADR-744: admission authority must survive Store decorators and scheduler
 	// restarts. Missing authority is never an optional-capability fallback.
 	RegionalRuntimeQuotaAdmissionReader
 	RegionalRuntimeIssuedPlacementReader

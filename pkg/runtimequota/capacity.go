@@ -1,7 +1,7 @@
 package runtimequota
 
-// adr: 618
-// adr: 642
+// adr: 746
+// adr: 770
 
 // CapacityPermit binds one physical runtime attempt to its original allowance
 // and host incarnation. An issued marker is retained bookkeeping, not permission

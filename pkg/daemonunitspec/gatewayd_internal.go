@@ -73,7 +73,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "512M",
-		// ADR-600: artifact ownership and uploads survive service restarts.
+		// ADR-728: artifact ownership and uploads survive service restarts.
 		StateDirectory:     "faas/gatewayd-internal-artifacts",
 		StateDirectoryMode: "0750",
 

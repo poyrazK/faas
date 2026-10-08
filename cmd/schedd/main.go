@@ -2177,7 +2177,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 	if regionalRetirement != nil {
-		// ADR-633: recovery uses immutable original sources, independently of
+		// ADR-761: recovery uses immutable original sources, independently of
 		// scheduler app locks and current instance/app collection.
 		regionalRecoveryDone := make(chan struct{})
 		go func() {

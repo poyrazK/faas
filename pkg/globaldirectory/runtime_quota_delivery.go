@@ -1,7 +1,7 @@
 package globaldirectory
 
-// adr: 644
-// adr: 646
+// adr: 772
+// adr: 774
 import (
 	"bytes"
 	"context"

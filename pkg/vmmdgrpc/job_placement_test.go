@@ -1,4 +1,4 @@
-// ADR-594: boot admission must be corroborated by the receiving vmmd's
+// ADR-722: boot admission must be corroborated by the receiving vmmd's
 // registered identity and current durable job/task claim before VM allocation.
 package vmmdgrpc_test
 

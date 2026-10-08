@@ -1,8 +1,8 @@
 package sched
 
-// adr: 649
-// adr: 659
-// adr: 660
+// adr: 777
+// adr: 787
+// adr: 788
 import (
 	"context"
 	"errors"
@@ -44,7 +44,7 @@ func TestNativeRegionalInventoryMatchesOnlyOriginalObservedHold(t *testing.T) {
 		"substituted-native-task": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
 			s.Inventory.Owners[0].OriginalSource.TaskID = uuid.NewString()
 		},
-		// adr: 654 — even a valid native VM cannot absorb an orphan helper family.
+		// adr: 782 — even a valid native VM cannot absorb an orphan helper family.
 		"orphan-helper-family": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
 			s.Inventory.HelperTasks = []fcvm.NativeRuntimeHelperTask{{OwnerGeneration: s.Inventory.Owners[0].Generation, PID: 999, StartTime: 100, LeaderPID: 998, LeaderStartTime: 99, ParentPID: 1, SessionID: 998, Relation: "original_session_candidate"}}
 		},

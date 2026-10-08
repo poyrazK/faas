@@ -10817,7 +10817,7 @@ CREATE FUNCTION public.valid_regional_apps_domain(domain text) RETURNS boolean
     AS $_$
 DECLARE label text;
 BEGIN
-    -- ADR-657, pkg/api/limits.go: 253 - 40 - 1 bytes for the DNS suffix.
+    -- ADR-785, pkg/api/limits.go: 253 - 40 - 1 bytes for the DNS suffix.
     IF octet_length(domain) > 212 OR position('.' in domain) = 0 OR
        domain !~ '^[a-z0-9.-]+$' COLLATE "C" OR domain ~ '^[0-9.]+$' COLLATE "C" THEN
         RETURN false;

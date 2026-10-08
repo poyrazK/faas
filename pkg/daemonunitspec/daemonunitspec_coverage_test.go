@@ -293,7 +293,7 @@ func TestUnitGatewaydInternal_Shape(t *testing.T) {
 	}
 }
 
-// adr: 600
+// adr: 728
 func TestGatewayArtifactStorageSurvivesUnitGeneration(t *testing.T) {
 	unit := UnitGatewaydInternal()
 	rendered := unit.Render()

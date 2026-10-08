@@ -1,6 +1,6 @@
 package state
 
-// adr: 618
+// adr: 746
 import (
 	"crypto/ed25519"
 	"crypto/rand"

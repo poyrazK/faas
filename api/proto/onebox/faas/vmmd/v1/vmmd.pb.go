@@ -1450,7 +1450,7 @@ type CreateFromSnapshotRequest struct {
 	// resuming guest execution. The scheduler later resumes this VM in place
 	// when it promotes the warm reservation to serving capacity.
 	KeepPaused bool `protobuf:"varint,8,opt,name=keep_paused,json=keepPaused,proto3" json:"keep_paused,omitempty"`
-	// ADR-619: canonical internal Placement JSON. Bookkeeping only; vmmd
+	// ADR-747: canonical internal Placement JSON. Bookkeeping only; vmmd
 	// separately checks cell authority and its durable local host fence.
 	RegionalRuntime []byte `protobuf:"bytes,9,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"`
 	unknownFields   protoimpl.UnknownFields
@@ -2384,8 +2384,8 @@ type CreateColdBootRequest struct {
 	// WakeID (issue #517 / ADR-061) — same semantics as
 	// CreateFromSnapshotRequest.wake_id.
 	WakeId          string `protobuf:"bytes,6,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
-	RegionalRuntime []byte `protobuf:"bytes,7,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"` // ADR-619, same semantics as snapshot restore.
-	// ADR-621: initialization for snapshot capture only; never routed serving.
+	RegionalRuntime []byte `protobuf:"bytes,7,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"` // ADR-747, same semantics as snapshot restore.
+	// ADR-749: initialization for snapshot capture only; never routed serving.
 	PrimeOnly     bool `protobuf:"varint,8,opt,name=prime_only,json=primeOnly,proto3" json:"prime_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3516,7 +3516,7 @@ type StatsResponse struct {
 	// Optional so unset != 0 (Int64Value = 0 vs absent differs in prom metrics).
 	TotalResidentBytes *wrapperspb.Int64Value `protobuf:"bytes,3,opt,name=total_resident_bytes,json=totalResidentBytes,proto3" json:"total_resident_bytes,omitempty"`
 	Instances          []*InstanceStats       `protobuf:"bytes,4,rep,name=instances,proto3" json:"instances,omitempty"`
-	// ADR-620: current healthy host journal incarnation. Absent on older,
+	// ADR-748: current healthy host journal incarnation. Absent on older,
 	// independent or unhealthy hosts. Bookkeeping, never execution authority.
 	RegionalRuntimeHostEpoch *RegionalRuntimeHostEpoch `protobuf:"bytes,5,opt,name=regional_runtime_host_epoch,json=regionalRuntimeHostEpoch,proto3" json:"regional_runtime_host_epoch,omitempty"`
 	unknownFields            protoimpl.UnknownFields
@@ -6051,7 +6051,7 @@ type PrepareLiveMigrationRequest struct {
 	// can pull the snapshot via the same Storage.Get call a wake
 	// would use.
 	SnapshotStorageKey string `protobuf:"bytes,2,opt,name=snapshot_storage_key,json=snapshotStorageKey,proto3" json:"snapshot_storage_key,omitempty"`
-	// ADR-628: exact serving source, retained with the minted lease before capture.
+	// ADR-756: exact serving source, retained with the minted lease before capture.
 	RegionalRuntime []byte `protobuf:"bytes,3,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -9139,8 +9139,8 @@ type RestoreAppTaskRequest struct {
 	Plan            string                 `protobuf:"bytes,3,opt,name=plan,proto3" json:"plan,omitempty"`
 	AccountId       string                 `protobuf:"bytes,4,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
 	DeploymentId    string                 `protobuf:"bytes,5,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	RegionalRuntime []byte                 `protobuf:"bytes,6,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"` // ADR-619, physical app-task permit, no serving seat.
-	TaskId          string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                            // ADR-653: durable task identity, distinct from native instance.
+	RegionalRuntime []byte                 `protobuf:"bytes,6,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"` // ADR-747, physical app-task permit, no serving seat.
+	TaskId          string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                            // ADR-781: durable task identity, distinct from native instance.
 	LeaseToken      string                 `protobuf:"bytes,8,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`                // Original scheduler claim; UUID, never a replacement lease.
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -10023,7 +10023,7 @@ func (*ForwardUDPResponse_Init) isForwardUDPResponse_Frame() {}
 
 func (*ForwardUDPResponse_Datagram) isForwardUDPResponse_Frame() {}
 
-// ADR-620: journal identity only; kernel boot identity stays host-private.
+// ADR-748: journal identity only; kernel boot identity stays host-private.
 type RegionalRuntimeHostEpoch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`

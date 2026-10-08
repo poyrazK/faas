@@ -201,10 +201,10 @@ type VmmdClient interface {
 	FrameworkReady(ctx context.Context, in *FrameworkReadyRequest, opts ...grpc.CallOption) (*FrameworkReadyResponse, error)
 	// Destroy tears down a running instance. Idempotent on unknown instances.
 	Destroy(ctx context.Context, in *DestroyRequest, opts ...grpc.CallOption) (*DestroyResponse, error)
-	// ADR-631: exact original physical ownership, authenticated schedd only.
+	// ADR-759: exact original physical ownership, authenticated schedd only.
 	// A response is unsigned native stop evidence, never cell capacity release.
 	RetireRegionalRuntime(ctx context.Context, in *RetireRegionalRuntimeRequest, opts ...grpc.CallOption) (*RetireRegionalRuntimeResponse, error)
-	// ADR-649: fresh advisory observation, authenticated schedd only. Completion
+	// ADR-777: fresh advisory observation, authenticated schedd only. Completion
 	// follows the native consumer's final rechecks. This grants no authority.
 	ObserveNativeRuntimeInventory(ctx context.Context, in *ObserveNativeRuntimeInventoryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NativeRuntimeInventoryFrame], error)
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send
@@ -1202,10 +1202,10 @@ type VmmdServer interface {
 	FrameworkReady(context.Context, *FrameworkReadyRequest) (*FrameworkReadyResponse, error)
 	// Destroy tears down a running instance. Idempotent on unknown instances.
 	Destroy(context.Context, *DestroyRequest) (*DestroyResponse, error)
-	// ADR-631: exact original physical ownership, authenticated schedd only.
+	// ADR-759: exact original physical ownership, authenticated schedd only.
 	// A response is unsigned native stop evidence, never cell capacity release.
 	RetireRegionalRuntime(context.Context, *RetireRegionalRuntimeRequest) (*RetireRegionalRuntimeResponse, error)
-	// ADR-649: fresh advisory observation, authenticated schedd only. Completion
+	// ADR-777: fresh advisory observation, authenticated schedd only. Completion
 	// follows the native consumer's final rechecks. This grants no authority.
 	ObserveNativeRuntimeInventory(*ObserveNativeRuntimeInventoryRequest, grpc.ServerStreamingServer[NativeRuntimeInventoryFrame]) error
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send

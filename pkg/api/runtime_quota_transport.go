@@ -1,6 +1,6 @@
 package api
 
-// adr: 657
+// adr: 785
 import (
 	"context"
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// These types preserve the original ADR-644 capitalized binding wire spelling.
+// These types preserve the original ADR-772 capitalized binding wire spelling.
 // Signed receipt storage is independent of native execution authority.
 type RegionalRuntimeQuotaBinding struct {
 	CellID            string `json:"CellID"`

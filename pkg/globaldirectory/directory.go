@@ -1,5 +1,5 @@
 // Package globaldirectory owns the durable global-to-regional app directory
-// contract (ADR-602). Only apid mutates intent; ADR-608 retains scoped ciphertext.
+// contract (ADR-730). Only apid mutates intent; ADR-736 retains scoped ciphertext.
 package globaldirectory
 
 import (
@@ -46,7 +46,7 @@ type Binding struct {
 	Region            string
 	CellGeneration    int64
 	RegionalAccountID string
-	RegionalOrgID     string `json:",omitempty"` // Preserve ADR-608 personal ciphertext spelling.
+	RegionalOrgID     string `json:",omitempty"` // Preserve ADR-736 personal ciphertext spelling.
 	RegionalAppID     string
 	RegionalAppSlug   string
 }
@@ -79,7 +79,7 @@ type Store interface {
 }
 
 // CellRegistryWriter preserves the traffic suffix atomically when appsDomain is
-// nil. A pointer to an empty string explicitly clears it (ADR-657).
+// nil. A pointer to an empty string explicitly clears it (ADR-785).
 type CellRegistryWriter interface {
 	PutCellRegistry(context.Context, Cell, *string) (Cell, error)
 }

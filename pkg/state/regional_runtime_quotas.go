@@ -1,6 +1,6 @@
 package state
 
-// adr: 614
+// adr: 742
 import (
 	"context"
 	"errors"
@@ -16,7 +16,7 @@ var ErrRegionalRuntimeQuotaOrder = errors.New("regional runtime quota generation
 // Receipt storage does not establish an operational scheduler fence or drain.
 type RegionalRuntimeQuotaReceipt struct {
 	Grant              runtimequota.Grant
-	ConsentID          string // ADR-645: immutable original delegated receipt source, if any.
+	ConsentID          string // ADR-773: immutable original delegated receipt source, if any.
 	GrantEnvelope      *runtimequota.Envelope
 	Retirement         *runtimequota.Retirement
 	RetirementEnvelope *runtimequota.Envelope

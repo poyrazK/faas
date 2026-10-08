@@ -1,7 +1,7 @@
 //go:build linux
 
 // adr: 568 — environment intent and runtime ownership contracts.
-// adr: 640
+// adr: 768
 package fcvm
 
 import (

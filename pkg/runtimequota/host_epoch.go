@@ -1,6 +1,6 @@
 package runtimequota
 
-// adr: 620
+// adr: 748
 
 // HostEpoch identifies a host journal incarnation for physical permit binding.
 // Discovery is bookkeeping, never authority to execute or evidence of drain.

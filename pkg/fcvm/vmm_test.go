@@ -1,5 +1,5 @@
 // adr: 022
-// adr: 639
+// adr: 767
 
 package fcvm
 
@@ -958,7 +958,7 @@ func TestWaitReady_SucceedsOnListener(t *testing.T) {
 
 // TestWaitReady_TimesOut verifies the readiness budget fires when the probe
 // never connects. Host routing and transparent proxies cannot make it ready.
-// adr: 643
+// adr: 771
 func TestWaitReady_TimesOut(t *testing.T) {
 	v := NewJailerVMM(t.TempDir(), 150*time.Millisecond)
 	v.tcpReadinessDial = func(string, string, time.Duration) (net.Conn, error) {
@@ -2218,7 +2218,7 @@ func TestHealthcheckNotReadyProblemDistinguishesGuestAndHandler(t *testing.T) {
 // 422 status — the typed problem the schedd engine surfaces
 // unchanged.
 func TestWaitReady_AllConnRefusedReturnsAppNotListening(t *testing.T) {
-	// adr: 653 — an unrelated listener on :8080 cannot supply test readiness.
+	// adr: 781 — an unrelated listener on :8080 cannot supply test readiness.
 	v := &JailerVMM{
 		readyTimeout: 250 * time.Millisecond,
 		tcpReadinessDial: func(string, string, time.Duration) (net.Conn, error) {

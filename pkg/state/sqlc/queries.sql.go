@@ -1646,7 +1646,7 @@ AND (task.occurrence_id IS NULL OR NOT EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=task.occurrence_id AND occurrence.started_at IS NOT NULL))
 `
 
-// ADR-617: frozen quota streams remain queued; independent tasks can still
+// ADR-745: frozen quota streams remain queued; independent tasks can still
 // claim in the same sweep. The row trigger rechecks after the journal lock.
 func (q *Queries) CancelExpiredQueuedAppTasks(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error {
 	_, err := db.Exec(ctx, cancelExpiredQueuedAppTasks, sampledAt)
@@ -12193,7 +12193,7 @@ const globalDirectoryUnbound = `-- name: GlobalDirectoryUnbound :one
 SELECT (NOT EXISTS (SELECT 1 FROM control_plane_cells))::boolean AS unbound
 `
 
-// ADR-602: global app directory. Writes are apid-owned; all credentials stay
+// ADR-730: global app directory. Writes are apid-owned; all credentials stay
 // outside these tables. Scope and generation locks precede intent changes.
 func (q *Queries) GlobalDirectoryUnbound(ctx context.Context, db DBTX) (bool, error) {
 	row := db.QueryRow(ctx, globalDirectoryUnbound)
@@ -13383,7 +13383,7 @@ type InsertGlobalDelegationParams struct {
 	ExpiresAt         pgtype.Timestamptz
 }
 
-// ADR-608: immutable sealed authority and restart-safe recovery claims.
+// ADR-736: immutable sealed authority and restart-safe recovery claims.
 func (q *Queries) InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error) {
 	row := db.QueryRow(ctx, insertGlobalDelegation,
 		arg.GrantID,
@@ -13559,7 +13559,7 @@ const insertGlobalRuntimeQuotaIssuer = `-- name: InsertGlobalRuntimeQuotaIssuer 
 INSERT INTO global_runtime_quota_issuer(issuer_id) VALUES ($1::uuid) ON CONFLICT DO NOTHING
 `
 
-// ADR-644: durable directory issuer, independent of regional cell identity.
+// ADR-772: durable directory issuer, independent of regional cell identity.
 func (q *Queries) InsertGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) error {
 	_, err := db.Exec(ctx, insertGlobalRuntimeQuotaIssuer, dollar_1)
 	return err
@@ -13963,7 +13963,7 @@ type InsertRegionalRuntimeCapacityParams struct {
 	PermitClaims []byte
 }
 
-// ADR-618: issuance is retained bookkeeping; no quota activation is implied.
+// ADR-746: issuance is retained bookkeeping; no quota activation is implied.
 func (q *Queries) InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg InsertRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error) {
 	row := db.QueryRow(ctx, insertRegionalRuntimeCapacity,
 		arg.AppID,
@@ -14020,7 +14020,7 @@ type InsertRegionalRuntimeConsentParams struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
-// ADR-645: original runtime delivery consent and atomic revocation.
+// ADR-773: original runtime delivery consent and atomic revocation.
 func (q *Queries) InsertRegionalRuntimeConsent(ctx context.Context, db DBTX, arg InsertRegionalRuntimeConsentParams) (RegionalRuntimeConsent, error) {
 	row := db.QueryRow(ctx, insertRegionalRuntimeConsent,
 		arg.ID,
@@ -21513,7 +21513,7 @@ type ListRegionalRuntimeInventoryRow struct {
 	ServingSeatsHeld   int64
 }
 
-// ADR-635: issued capacity survives app/instance collection and grant replacement.
+// ADR-763: issued capacity survives app/instance collection and grant replacement.
 func (q *Queries) ListRegionalRuntimeInventory(ctx context.Context, db DBTX, arg ListRegionalRuntimeInventoryParams) ([]ListRegionalRuntimeInventoryRow, error) {
 	rows, err := db.Query(ctx, listRegionalRuntimeInventory,
 		arg.CellID,
@@ -24008,7 +24008,7 @@ LOCK TABLE accounts, global_directory_owners, global_apps, global_app_targets,
  global_runtime_quota_targets, global_runtime_consents IN SHARE MODE
 `
 
-// ADR-658: one coherent bounded catalog and a fenced final publication. SHARE
+// ADR-786: one coherent bounded catalog and a fenced final publication. SHARE
 // table locks cover inserts/removals as well as row changes; no network I/O is
 // performed while holding them. Owner entitlement is included in the catalog.
 func (q *Queries) LockGlobalIngressIntent(ctx context.Context, db DBTX) error {
@@ -24034,7 +24034,7 @@ type LockGlobalOrgTargetOwnerParams struct {
 	ActorID pgtype.UUID
 }
 
-// ADR-611: current organization consent is held through binding commit.
+// ADR-739: current organization consent is held through binding commit.
 func (q *Queries) LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg LockGlobalOrgTargetOwnerParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockGlobalOrgTargetOwner, arg.OwnerID, arg.ActorID)
 	var owner_id pgtype.UUID
@@ -24086,7 +24086,7 @@ const lockGlobalRuntimeConsentJournal = `-- name: LockGlobalRuntimeConsentJourna
 SELECT pg_advisory_xact_lock(hashtextextended('gregale-global-runtime-consent:'||$1::uuid::text,0))
 `
 
-// ADR-646: public runtime consent retained independently of image delegation.
+// ADR-774: public runtime consent retained independently of image delegation.
 func (q *Queries) LockGlobalRuntimeConsentJournal(ctx context.Context, db DBTX, globalAppID pgtype.UUID) error {
 	_, err := db.Exec(ctx, lockGlobalRuntimeConsentJournal, globalAppID)
 	return err
@@ -24720,7 +24720,7 @@ type LockRegionalImageReleaseAppParams struct {
 	OrgID     pgtype.UUID
 }
 
-// ADR-604: a durable image-release receipt is committed with deployment intent.
+// ADR-732: a durable image-release receipt is committed with deployment intent.
 func (q *Queries) LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg LockRegionalImageReleaseAppParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockRegionalImageReleaseApp,
 		arg.CellID,
@@ -24745,7 +24745,7 @@ type LockRegionalReleaseGrantAppParams struct {
 	ActorID   pgtype.UUID
 }
 
-// ADR-610: consent actor is separate from the pinned regional owner.
+// ADR-738: consent actor is separate from the pinned regional owner.
 func (q *Queries) LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg LockRegionalReleaseGrantAppParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockRegionalReleaseGrantApp,
 		arg.AppID,
@@ -24772,8 +24772,8 @@ type LockRegionalRuntimeAttemptParams struct {
 	InstanceID   pgtype.UUID
 }
 
-// ADR-633: immutable original launch identity, independent of current rows.
-// ADR-634: a terminal row does not release physical capacity or host ports.
+// ADR-761: immutable original launch identity, independent of current rows.
+// ADR-762: a terminal row does not release physical capacity or host ports.
 func (q *Queries) LockRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg LockRegionalRuntimeAttemptParams) (bool, error) {
 	row := db.QueryRow(ctx, lockRegionalRuntimeAttempt,
 		arg.AppID,
@@ -24819,7 +24819,7 @@ type LockRegionalRuntimeQuotaAppRow struct {
 	OrgID pgtype.UUID
 }
 
-// ADR-644: blank wire org scope means the creator's personal tenant, including
+// ADR-772: blank wire org scope means the creator's personal tenant, including
 // legacy null-org apps. Return the actual tenant so it is locked and rechecked.
 func (q *Queries) LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (LockRegionalRuntimeQuotaAppRow, error) {
 	row := db.QueryRow(ctx, lockRegionalRuntimeQuotaApp,
@@ -24837,7 +24837,7 @@ const lockRegionalRuntimeQuotaJournal = `-- name: LockRegionalRuntimeQuotaJourna
 SELECT pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:' || $1::uuid::text, 0))
 `
 
-// ADR-614: operator-authenticated regional quota receipt journal.
+// ADR-742: operator-authenticated regional quota receipt journal.
 func (q *Queries) LockRegionalRuntimeQuotaJournal(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, lockRegionalRuntimeQuotaJournal, appID)
 	return err
@@ -33768,7 +33768,7 @@ type PlanGlobalImageReleaseParams struct {
 	ImageRef  string
 }
 
-// ADR-606: global image release journal, only directory apid writes intent.
+// ADR-734: global image release journal, only directory apid writes intent.
 func (q *Queries) PlanGlobalImageRelease(ctx context.Context, db DBTX, arg PlanGlobalImageReleaseParams) (string, error) {
 	row := db.QueryRow(ctx, planGlobalImageRelease,
 		arg.OwnerID,
@@ -36444,7 +36444,7 @@ type ReadGlobalDirectoryOwnerRow struct {
 	OrgID     string
 }
 
-// ADR-609: directory tenant roots, separate from authentication actors.
+// ADR-737: directory tenant roots, separate from authentication actors.
 func (q *Queries) ReadGlobalDirectoryOwner(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ReadGlobalDirectoryOwnerRow, error) {
 	row := db.QueryRow(ctx, readGlobalDirectoryOwner, ownerID)
 	var i ReadGlobalDirectoryOwnerRow
@@ -36540,7 +36540,7 @@ type ReadGlobalQuotaDeliveryParams struct {
 	Slug       string
 }
 
-// ADR-647: original signed quota delivery and leased recovery.
+// ADR-775: original signed quota delivery and leased recovery.
 func (q *Queries) ReadGlobalQuotaDelivery(ctx context.Context, db DBTX, arg ReadGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error) {
 	row := db.QueryRow(ctx, readGlobalQuotaDelivery, arg.DeliveryID, arg.OwnerID, arg.Slug)
 	var i GlobalRuntimeQuotaDelivery
@@ -38242,7 +38242,7 @@ type RegionalRuntimeServingResumeParams struct {
 	ResumeID pgtype.UUID
 }
 
-// ADR-626: immutable serving resume identities; mutations hold the quota journal lock.
+// ADR-754: immutable serving resume identities; mutations hold the quota journal lock.
 func (q *Queries) RegionalRuntimeServingResume(ctx context.Context, db DBTX, arg RegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error) {
 	row := db.QueryRow(ctx, regionalRuntimeServingResume, arg.AppID, arg.ResumeID)
 	var i RegionalRuntimeServingResume
@@ -38361,7 +38361,7 @@ type RegisterGlobalRuntimeQuotaPolicyParams struct {
 	MaxPeakConcurrency int32
 }
 
-// ADR-612: durable global capacity reservations.
+// ADR-740: durable global capacity reservations.
 func (q *Queries) RegisterGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg RegisterGlobalRuntimeQuotaPolicyParams) error {
 	_, err := db.Exec(ctx, registerGlobalRuntimeQuotaPolicy,
 		arg.PolicyID,

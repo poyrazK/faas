@@ -155,11 +155,11 @@ service Vmmd {
   // Destroy tears down a running instance. Idempotent on unknown instances.
   rpc Destroy(DestroyRequest) returns (DestroyResponse);
 
-  // ADR-631: exact original physical ownership, authenticated schedd only.
+  // ADR-759: exact original physical ownership, authenticated schedd only.
   // A response is unsigned native stop evidence, never cell capacity release.
   rpc RetireRegionalRuntime(RetireRegionalRuntimeRequest) returns (RetireRegionalRuntimeResponse);
 
-  // ADR-649: fresh advisory observation, authenticated schedd only. Completion
+  // ADR-777: fresh advisory observation, authenticated schedd only. Completion
   // follows the native consumer's final rechecks. This grants no authority.
   rpc ObserveNativeRuntimeInventory(ObserveNativeRuntimeInventoryRequest) returns (stream NativeRuntimeInventoryFrame);
 
@@ -970,7 +970,7 @@ message CreateFromSnapshotRequest {
   // resuming guest execution. The scheduler later resumes this VM in place
   // when it promotes the warm reservation to serving capacity.
   bool keep_paused = 8;
-  // ADR-619: canonical internal Placement JSON. Bookkeeping only; vmmd
+  // ADR-747: canonical internal Placement JSON. Bookkeeping only; vmmd
   // separately checks cell authority and its durable local host fence.
   bytes regional_runtime = 9;
 }
@@ -1086,8 +1086,8 @@ message CreateColdBootRequest {
   // WakeID (issue #517 / ADR-061) — same semantics as
   // CreateFromSnapshotRequest.wake_id.
   string wake_id = 6;
-  bytes regional_runtime = 7; // ADR-619, same semantics as snapshot restore.
-  // ADR-621: initialization for snapshot capture only; never routed serving.
+  bytes regional_runtime = 7; // ADR-747, same semantics as snapshot restore.
+  // ADR-749: initialization for snapshot capture only; never routed serving.
   bool prime_only = 8;
 }
 
@@ -1289,7 +1289,7 @@ message StatsResponse {
   // Optional so unset != 0 (Int64Value = 0 vs absent differs in prom metrics).
   google.protobuf.Int64Value total_resident_bytes = 3;
   repeated InstanceStats instances = 4;
-  // ADR-620: current healthy host journal incarnation. Absent on older,
+  // ADR-748: current healthy host journal incarnation. Absent on older,
   // independent or unhealthy hosts. Bookkeeping, never execution authority.
   RegionalRuntimeHostEpoch regional_runtime_host_epoch = 5;
 }
@@ -1916,7 +1916,7 @@ message PrepareLiveMigrationRequest {
   // can pull the snapshot via the same Storage.Get call a wake
   // would use.
   string snapshot_storage_key = 2;
-  // ADR-628: exact serving source, retained with the minted lease before capture.
+  // ADR-756: exact serving source, retained with the minted lease before capture.
   bytes regional_runtime = 3;
 }
 
@@ -2391,8 +2391,8 @@ message RestoreAppTaskRequest {
   string plan = 3;
   string account_id = 4;
   string deployment_id = 5;
-  bytes regional_runtime = 6; // ADR-619, physical app-task permit, no serving seat.
-  string task_id = 7; // ADR-653: durable task identity, distinct from native instance.
+  bytes regional_runtime = 6; // ADR-747, physical app-task permit, no serving seat.
+  string task_id = 7; // ADR-781: durable task identity, distinct from native instance.
   string lease_token = 8; // Original scheduler claim; UUID, never a replacement lease.
 }
 
@@ -2481,7 +2481,7 @@ message ForwardUDPResponse {
   }
 }
 
-// ADR-620: journal identity only; kernel boot identity stays host-private.
+// ADR-748: journal identity only; kernel boot identity stays host-private.
 message RegionalRuntimeHostEpoch {
   string node_id = 1;
   string host_epoch_id = 2;

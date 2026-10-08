@@ -20,7 +20,7 @@ import (
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
-	// Optional stable cell signing material (ADR-632). Empty disables explicit
+	// Optional stable cell signing material (ADR-760). Empty disables explicit
 	// regional retirement; partial or mismatched configuration aborts startup.
 	RegionalRuntimeSigning runtimequota.KeyConfig `toml:"regional_runtime_signing"`
 	// SocketPath is the unix-domain socket schedd's gRPC server binds when

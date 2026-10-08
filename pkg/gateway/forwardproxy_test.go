@@ -12,7 +12,7 @@
 // streaming RPC is the only bridge today; every test uses the
 // fakeBidiStream scaffold.
 
-// adr: 657
+// adr: 785
 package gateway_test
 
 import (

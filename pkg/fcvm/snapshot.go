@@ -252,7 +252,7 @@ type WakePrepareTimings struct {
 // is left unused (logged as metadata only). When empty, the VMM keeps
 // the legacy moveOut(VMStatePath) behaviour bit-for-bit.
 type SnapshotSpec struct {
-	// ADR-628: regional migration capture must retain this lease/source binding
+	// ADR-756: regional migration capture must retain this lease/source binding
 	// before native work. These are internal protocol metadata, not snapshot data.
 	MigrationLeaseToken     string                  `json:"-"`
 	RegionalMigrationSource *runtimequota.Placement `json:"-"`

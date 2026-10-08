@@ -100,8 +100,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMPUTE_VCPUS` | vmmd | `dropin` |  |  | `` | host vCPU count reported by node_join |
 | `FAAS_CONSUMER_USAGE_OUTBOX_ROOT` | gatewayd-internal | `default` |  |  | `` | optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage |
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
-| `FAAS_CONTROL_PLANE_CELL_ID` | shared | `default` |  |  | `` | ADR-601; manifest-rendered expected database cell UUID; must be paired with FAAS_CONTROL_PLANE_CELL_REGION; unset retains unbound fleet mode |
-| `FAAS_CONTROL_PLANE_CELL_REGION` | shared | `default` |  |  | `` | ADR-601; manifest-rendered canonical cell region; ordinary and direct database pools verify the immutable identity before use |
+| `FAAS_CONTROL_PLANE_CELL_ID` | shared | `default` |  |  | `` | ADR-729; manifest-rendered expected database cell UUID; must be paired with FAAS_CONTROL_PLANE_CELL_REGION; unset retains unbound fleet mode |
+| `FAAS_CONTROL_PLANE_CELL_REGION` | shared | `default` |  |  | `` | ADR-729; manifest-rendered canonical cell region; ordinary and direct database pools verify the immutable identity before use |
 | `FAAS_CUSTOM_DOMAIN_ADDRESSES` | apid, shared | `dropin` |  |  | `` | ADR-520; comma-separated public edge addresses offered for apex A/AAAA records and accepted by the routing probe; invalid entries fail apid at boot |
 | `FAAS_CUSTOM_DOMAIN_TARGET` | apid, shared | `dropin` |  |  | `` | ADR-520; hostname customers CNAME a custom domain to; must resolve straight to the public edge. Unset = the apps-domain apex |
 | `FAAS_CUSTOM_DOMAIN_TLS` | apid, gatewayd-public, shared | `dropin` |  |  | `` | ADR-520; on_demand = the public edge issues customer certificates after asking gatewayd-public, apid owns custom-domain certificate status. Unset = no self-hosted customer certificates |
@@ -431,7 +431,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_CACHE_SERVE_STALE` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_FALLBACK_BACKEND` | imaged, vmmd, shared | `envfile` |  |  | `` | optional `oci` read/delete fallback during GCS migration; writes remain GCS-only |
 | `FAAS_STORAGE_LOCAL_PREFIXES` | shared | `envfile` |  |  | `` |  |
-| `FAAS_STORAGE_REGIONS_FILE` | builderd, shared | `default` |  |  | `` | optional JSON routing file for regional tenant artifacts; provision consistently on apid, builderd, imaged, schedd, and vmmd (ADR-596) |
+| `FAAS_STORAGE_REGIONS_FILE` | builderd, shared | `default` |  |  | `` | optional JSON routing file for regional tenant artifacts; provision consistently on apid, builderd, imaged, schedd, and vmmd (ADR-724) |
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_SNAPSHOT_COMPRESSION` | shared | `envfile` |  |  | `` | remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165) |

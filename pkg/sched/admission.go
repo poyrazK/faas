@@ -70,7 +70,7 @@ type reservation struct {
 	deploymentID    string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
 	deploymentScope string
 	nodeID          string // empty = legacy box-wide accounting (test seams)
-	runtimeRunID    string // ADR-634: physical origin; unchanged across warm serving seats.
+	runtimeRunID    string // ADR-762: physical origin; unchanged across warm serving seats.
 	admissionMB     int    // ram_mb + PerVMOverheadMB
 	vcpu            int
 	cpuMillicores   int

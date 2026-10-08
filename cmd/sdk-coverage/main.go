@@ -49,10 +49,10 @@ const (
 const delegatedQuotaDaemonRoute = "PUT /v1/cells/{cell_id}/apps/{app_id}/runtime-quotas/{allocation_id}/delegated"
 
 var routeExclude = map[string]bool{
-	delegatedQuotaDaemonRoute:                             true, // ADR-645 signed directory daemon protocol.
-	"POST /internal/v1/ingress-status":                    true, // ADR-658 signed read-only directory daemon protocol.
-	"PUT /v1/global-cells/{id}":                           true, // ADR-602: operator cookie session and step-up required.
-	"PUT /v1/regions/{id}":                                true, // ADR-592: operator session, step-up and allowlist required.
+	delegatedQuotaDaemonRoute:                             true, // ADR-773 signed directory daemon protocol.
+	"POST /internal/v1/ingress-status":                    true, // ADR-786 signed read-only directory daemon protocol.
+	"PUT /v1/global-cells/{id}":                           true, // ADR-730: operator cookie session and step-up required.
+	"PUT /v1/regions/{id}":                                true, // ADR-720: operator session, step-up and allowlist required.
 	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
@@ -269,7 +269,7 @@ var sdkMethodExclude = map[string]bool{
 	"ListDeploymentsAll":      true, // cursor walker; not a route
 	"ListAppErrorRequestsAll": true, // cursor walker; not a route (ADR-096 / PR-B)
 	"DeployMultipart":         true, // open-ended reader-based upload; CLI's DeployTarball is the wired route
-	"DeployCellAppMultipart":  true, // ADR-603: source-form wrapper for the DeployCellApp route
+	"DeployCellAppMultipart":  true, // ADR-731: source-form wrapper for the DeployCellApp route
 	"MintCliAuthCode":         true, // anonymous device-code mint; route excluded above
 	"ExchangeCliAuthCode":     true, // anonymous device-code poll; route excluded above
 	"GetStatusSLO":            true, // public status; route excluded above

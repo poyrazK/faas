@@ -47,7 +47,7 @@ const sweepLoopName = "sweep"
 // runParentMountSweep is the orphan-sweep goroutine main.go starts.
 // beat is called once per iteration (nil is allowed) so the sweep
 // doubles as vmmd's liveness signal.
-// adr: 639
+// adr: 767
 func runParentMountSweep(ctx context.Context, reg *vmmdmount.Registry, interval time.Duration, log *slog.Logger, beat func(), maintain func(context.Context, func(context.Context) error) error) {
 	if interval <= 0 {
 		interval = 30 * time.Second

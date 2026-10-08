@@ -1,6 +1,6 @@
 package runtimequota
 
-// adr: 645
+// adr: 773
 import "github.com/onebox-faas/faas/pkg/api"
 
 // Consent authorizes quota delivery for one original directory/app binding.

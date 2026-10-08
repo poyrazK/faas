@@ -1,6 +1,6 @@
 package runtimequota
 
-// adr: 644
+// adr: 772
 import (
 	"bytes"
 	"encoding/json"
@@ -13,7 +13,7 @@ import (
 type Delivery struct {
 	Binding   Binding  `json:"binding"`
 	Authority Envelope `json:"authority"`
-	ConsentID string   `json:"consent_id,omitempty"` // ADR-645; omission preserves ADR-644 wire spelling.
+	ConsentID string   `json:"consent_id,omitempty"` // ADR-773; omission preserves ADR-772 wire spelling.
 }
 
 // DeliveryReceipt carries retained directory evidence. It asserts receipt

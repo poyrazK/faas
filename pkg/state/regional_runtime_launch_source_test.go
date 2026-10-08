@@ -1,6 +1,6 @@
 package state
 
-// adr: 633
+// adr: 761
 import (
 	"context"
 	"errors"
@@ -16,7 +16,7 @@ import (
 
 func runRegionalLaunchSourceContract(t *testing.T, fixture func(*testing.T) regionalCapacityFixture) {
 	t.Helper()
-	// adr: 653 — original task identity survives issuance, inventory and retirement.
+	// adr: 781 — original task identity survives issuance, inventory and retirement.
 	t.Run("original-task-source", func(t *testing.T) {
 		f := fixture(t)
 		p := initialRegionalPlacement(f, runtimequota.CapacityAppTask)

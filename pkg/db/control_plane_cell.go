@@ -21,7 +21,7 @@ const (
 // ErrControlPlaneCell marks a database identity/configuration rejection.
 var ErrControlPlaneCell = errors.New("control plane cell identity rejected")
 
-// CellIdentity is platform identity, independent of database addresses (ADR-601).
+// CellIdentity is platform identity, independent of database addresses (ADR-729).
 type CellIdentity struct {
 	ID     string `json:"id"`
 	Region string `json:"region"`

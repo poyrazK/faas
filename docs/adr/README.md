@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+Regional ADRs 585–662 were renumbered to 713–790 for the 2026-10-08 upstream integration. [The reference history](REGIONAL_RENUMBERING_20261008.md) maps each decision; append-only migrations retain historical citations.
+
 Regional ADRs 459–498 from the unmerged multi-region branch were renumbered
 to 585–624 when integrating upstream on 2026-10-05. Existing append-only
 migration comments retain their historical numbers; use the regional decision

@@ -134,7 +134,7 @@ func (nativeLinuxHostHelperGroups) Attach(cmd *exec.Cmd, group nativeHostHelperG
 	return file, nil
 }
 
-// adr: 654 — cgroup attachment and the private session precede the execution gate.
+// adr: 782 — cgroup attachment and the private session precede the execution gate.
 func (nativeLinuxHostHelperGroups) OriginalSession(pid int, start uint64) (int, error) {
 	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
 	if err != nil {

@@ -1,6 +1,6 @@
 package globaldirectory
 
-// ADR-608: the directory retains only sealed purpose-scoped authority.
+// ADR-736: the directory retains only sealed purpose-scoped authority.
 import (
 	"context"
 	"errors"

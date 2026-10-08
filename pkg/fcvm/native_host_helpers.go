@@ -73,7 +73,7 @@ func (r *nativeHostHelperRecord) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// adr: 654 — exact historical shapes remain readable without inventing a session.
+// adr: 782 — exact historical shapes remain readable without inventing a session.
 func nativeHostHelperRecordFields(data []byte) (map[string]json.RawMessage, error) {
 	var result error
 	for _, provenance := range [][]string{nil, {"session_id"}, {"session_id", "session_policy"}} {
@@ -513,7 +513,7 @@ func (j *nativeHostHelperJournal) retire(ctx context.Context, expected nativeLau
 		if err := j.groups.Retire(ctx, record.Group); err != nil {
 			return err
 		}
-		// adr: 654 — an empty original cgroup cannot acknowledge a surviving family.
+		// adr: 782 — an empty original cgroup cannot acknowledge a surviving family.
 		if err := j.requireHelperFamilyAbsent(ctx, record); err != nil {
 			return err
 		}

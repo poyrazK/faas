@@ -2,7 +2,7 @@
 // Verification authenticates authority; it does not establish scheduler drain.
 package runtimequota
 
-// adr: 613
+// adr: 741
 import (
 	"errors"
 

@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 638
+// adr: 766
 // Placement and the reservation read the same captured deployment as the
 // eventual workload projection. No image/secret lookup is needed to charge RAM.
 func deploymentSidecarRAM(dep state.Deployment) ([]int, error) {

@@ -31,7 +31,7 @@ func (p *nativePIDFD) Signal(signal syscall.Signal) error {
 	return unix.PidfdSendSignal(p.fd, unix.Signal(signal), nil, 0)
 }
 
-// adr: 640
+// adr: 768
 func (p *nativePIDFD) CheckLive() error {
 	if p.fd < 0 {
 		return unix.EBADF

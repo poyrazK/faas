@@ -9175,7 +9175,7 @@ SELECT id::text AS cell_id, compute_region FROM control_plane_cells WHERE single
 
 -- name: InitializeControlPlaneCell :one
 SELECT initialize_control_plane_cell(sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text)::text AS cell_id;
--- ADR-602: global app directory. Writes are apid-owned; all credentials stay
+-- ADR-730: global app directory. Writes are apid-owned; all credentials stay
 -- outside these tables. Scope and generation locks precede intent changes.
 -- name: GlobalDirectoryUnbound :one
 SELECT (NOT EXISTS (SELECT 1 FROM control_plane_cells))::boolean AS unbound;
@@ -9183,7 +9183,7 @@ SELECT (NOT EXISTS (SELECT 1 FROM control_plane_cells))::boolean AS unbound;
 -- name: AssertGlobalDirectoryScope :exec
 SELECT assert_global_directory_scope();
 
--- ADR-646: public runtime consent retained independently of image delegation.
+-- ADR-774: public runtime consent retained independently of image delegation.
 -- name: LockGlobalRuntimeConsentJournal :exec
 SELECT pg_advisory_xact_lock(hashtextextended('gregale-global-runtime-consent:'||sqlc.arg(global_app_id)::uuid::text,0));
 
@@ -9205,7 +9205,7 @@ WHERE id=sqlc.arg(consent_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND gl
 UPDATE global_runtime_consents SET status=CASE WHEN status='revoked' THEN status ELSE 'revoking' END
 WHERE id=sqlc.arg(consent_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text RETURNING *;
 
--- ADR-647: original signed quota delivery and leased recovery.
+-- ADR-775: original signed quota delivery and leased recovery.
 -- name: ReadGlobalQuotaDelivery :one
 SELECT * FROM global_runtime_quota_deliveries WHERE id=sqlc.arg(delivery_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_slug=sqlc.arg(slug)::text;
 
@@ -9299,7 +9299,7 @@ WHERE a.owner_id = sqlc.arg(owner_id)::uuid AND a.slug = sqlc.arg(slug)::text OR
 DELETE FROM global_app_targets t USING global_apps a WHERE a.id = t.global_app_id
 AND a.owner_id = sqlc.arg(owner_id)::uuid AND a.slug = sqlc.arg(slug)::text AND t.region = sqlc.arg(region)::text;
 
--- ADR-604: a durable image-release receipt is committed with deployment intent.
+-- ADR-732: a durable image-release receipt is committed with deployment intent.
 -- name: LockRegionalImageReleaseApp :one
 SELECT a.id
 FROM apps a
@@ -9346,7 +9346,7 @@ VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(release_id)::uuid, sqlc.arg(cell_id)::u
 SELECT cell_id, account_id, global_app_id, generation FROM regional_image_release_heads
 WHERE app_id = sqlc.arg(app_id)::uuid;
 
--- ADR-606: global image release journal, only directory apid writes intent.
+-- ADR-734: global image release journal, only directory apid writes intent.
 -- name: PlanGlobalImageRelease :one
 SELECT plan_global_image_release(sqlc.arg(owner_id)::uuid, sqlc.arg(slug)::text,
     sqlc.arg(release_id)::uuid, sqlc.arg(image_ref)::text)::text AS global_app_id;
@@ -9377,7 +9377,7 @@ SELECT cell_id::text AS cell_id,cell_generation,regional_account_id::text AS reg
     regional_app_id::text AS regional_app_id,regional_app_slug
 FROM global_app_targets WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND region=sqlc.arg(region)::text;
 
--- ADR-610: consent actor is separate from the pinned regional owner.
+-- ADR-738: consent actor is separate from the pinned regional owner.
 -- name: LockRegionalReleaseGrantApp :one
 SELECT lock_regional_release_grant_app(sqlc.arg(app_id)::uuid,sqlc.arg(cell_id)::uuid,
     sqlc.arg(account_id)::uuid,sqlc.arg(actor_id)::uuid)::uuid AS org_id;
@@ -9404,7 +9404,7 @@ UPDATE regional_release_grants SET status='revoked',revoked_at=COALESCE(revoked_
 WHERE id=sqlc.arg(grant_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND cell_id=sqlc.arg(cell_id)::uuid
 AND regional_release_actor_allowed(app_id,account_id,org_id,sqlc.arg(actor_id)::uuid) RETURNING *;
 
--- ADR-608: immutable sealed authority and restart-safe recovery claims.
+-- ADR-736: immutable sealed authority and restart-safe recovery claims.
 -- name: InsertGlobalDelegation :one
 INSERT INTO global_release_delegations(id,global_app_id,owner_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_org_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
 VALUES(sqlc.arg(grant_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(owner_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(cell_id)::uuid,sqlc.arg(region)::text,sqlc.arg(cell_generation)::bigint,sqlc.arg(api_base)::text,sqlc.arg(regional_account_id)::uuid,sqlc.narg(regional_org_id)::uuid,sqlc.arg(regional_app_id)::uuid,sqlc.arg(regional_app_slug)::text,sqlc.arg(token_sha256)::bytea,sqlc.arg(sealed_credential)::bytea,sqlc.arg(expires_at)::timestamptz) RETURNING *;
@@ -9444,7 +9444,7 @@ UPDATE global_release_recovery_work SET claim_id=NULL,claim_until=NULL,cursor_id
  next_attempt_at=CASE WHEN wake_id=sqlc.arg(wake_id)::uuid THEN clock_timestamp()+make_interval(secs=>sqlc.arg(retry_seconds)::integer) ELSE next_attempt_at END
 WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND claim_id=sqlc.arg(claim_id)::uuid;
 
--- ADR-609: directory tenant roots, separate from authentication actors.
+-- ADR-737: directory tenant roots, separate from authentication actors.
 -- name: ReadGlobalDirectoryOwner :one
 SELECT id::text AS owner_id,coalesce(account_id::text,'')::text AS account_id,coalesce(org_id::text,'')::text AS org_id
 FROM global_directory_owners WHERE id=sqlc.arg(owner_id)::uuid;
@@ -9455,11 +9455,11 @@ SELECT resolve_global_org_owner(sqlc.arg(org_id)::uuid)::text AS owner_id;
 -- name: CreateGlobalOrgApp :one
 SELECT create_global_org_app(sqlc.arg(owner_id)::uuid,sqlc.arg(actor_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(expected_plan)::text,sqlc.arg(app_limit)::integer)::text AS global_app_id;
 
--- ADR-611: current organization consent is held through binding commit.
+-- ADR-739: current organization consent is held through binding commit.
 -- name: LockGlobalOrgTargetOwner :one
 SELECT lock_global_org_target_owner(sqlc.arg(owner_id)::uuid,sqlc.arg(actor_id)::uuid)::uuid AS owner_id;
 
--- ADR-612: durable global capacity reservations.
+-- ADR-740: durable global capacity reservations.
 -- name: RegisterGlobalRuntimeQuotaPolicy :exec
 INSERT INTO global_runtime_quota_policies(policy_id,plan,max_concurrency,max_peak_concurrency)
 VALUES(sqlc.arg(policy_id)::text,sqlc.arg(plan)::text,sqlc.arg(max_concurrency)::integer,sqlc.arg(max_peak_concurrency)::integer)
@@ -9502,12 +9502,12 @@ WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(all
 UPDATE global_runtime_quota_targets SET released_at=clock_timestamp(),drain_confirmation=sqlc.arg(confirmation)::jsonb
 WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(allocation_id)::uuid AND region=sqlc.arg(region)::text AND released_at IS NULL AND issued_at IS NOT NULL;
 
--- ADR-614: operator-authenticated regional quota receipt journal.
+-- ADR-742: operator-authenticated regional quota receipt journal.
 -- name: LockRegionalRuntimeQuotaJournal :exec
 SELECT pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:' || sqlc.arg(app_id)::uuid::text, 0));
 
 -- name: LockRegionalRuntimeQuotaApp :one
--- ADR-644: blank wire org scope means the creator's personal tenant, including
+-- ADR-772: blank wire org scope means the creator's personal tenant, including
 -- legacy null-org apps. Return the actual tenant so it is locked and rechecked.
 SELECT a.id, a.org_id FROM apps a
 WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid
@@ -9543,7 +9543,7 @@ SELECT id FROM orgs WHERE id = sqlc.arg(org_id)::uuid AND status = 'active' AND 
 AND (NOT sqlc.arg(personal_only)::boolean OR (personal_org AND personal_owner_account_id = sqlc.arg(account_id)::uuid))
 FOR SHARE;
 
--- ADR-617: frozen quota streams remain queued; independent tasks can still
+-- ADR-745: frozen quota streams remain queued; independent tasks can still
 -- claim in the same sweep. The row trigger rechecks after the journal lock.
 -- name: CancelExpiredQueuedAppTasks :exec
 UPDATE app_tasks task SET status='cancelled', retry_at=NULL, finished_at=sqlc.arg(sampled_at), updated_at=sqlc.arg(sampled_at)
@@ -9575,7 +9575,7 @@ lease_expires_at=sqlc.arg(expires_at)::timestamptz,retry_at=NULL,stdout_tail='',
 exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=sqlc.arg(claimed_at)
 FROM candidate WHERE task.id=candidate.id RETURNING task.*;
 
--- ADR-618: issuance is retained bookkeeping; no quota activation is implied.
+-- ADR-746: issuance is retained bookkeeping; no quota activation is implied.
 -- name: InsertRegionalRuntimeCapacity :one
 INSERT INTO regional_runtime_capacity_receipts(app_id,allocation_id,permit_id,generation,instance_id,run_id,deployment_id,node_id,host_epoch_id,kind,permit_claims)
 VALUES(sqlc.arg(app_id),sqlc.arg(allocation_id),sqlc.arg(permit_id),sqlc.arg(generation),sqlc.arg(instance_id),sqlc.arg(run_id),sqlc.arg(deployment_id),sqlc.arg(node_id),sqlc.arg(host_epoch_id),sqlc.arg(kind),sqlc.arg(permit_claims)) RETURNING *;
@@ -9666,8 +9666,8 @@ UPDATE deployment_image_preparations p
 SET phase = 'layer_published', updated_at = now()
 FROM publication WHERE p.deployment_id = publication.id;
 
--- ADR-633: immutable original launch identity, independent of current rows.
--- ADR-634: a terminal row does not release physical capacity or host ports.
+-- ADR-761: immutable original launch identity, independent of current rows.
+-- ADR-762: a terminal row does not release physical capacity or host ports.
 -- name: LockRegionalRuntimeAttempt :one
 SELECT coalesce(app_id=sqlc.arg(app_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid
   AND node_id=sqlc.arg(node_id)::uuid AND wake_id=sqlc.arg(run_id)::uuid,false)::boolean AS matches
@@ -11231,7 +11231,7 @@ UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interva
 WHERE id=sqlc.arg(run_id) AND status='running'
  AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);
 
--- ADR-626: immutable serving resume identities; mutations hold the quota journal lock.
+-- ADR-754: immutable serving resume identities; mutations hold the quota journal lock.
 -- name: RegionalRuntimeServingResume :one
 SELECT * FROM regional_runtime_serving_resumes WHERE app_id=sqlc.arg(app_id) AND resume_id=sqlc.arg(resume_id);
 
@@ -11254,7 +11254,7 @@ WHERE r.app_id=sqlc.arg(app_id) AND p.instance_id=sqlc.arg(instance_id)
  AND s.issued_at IS NOT NULL AND s.released_at IS NULL
 ORDER BY r.resume_id LIMIT 2;
 
--- ADR-635: issued capacity survives app/instance collection and grant replacement.
+-- ADR-763: issued capacity survives app/instance collection and grant replacement.
 -- name: ListRegionalRuntimeInventory :many
 SELECT c.*, s.instance_key AS source_instance_key, s.permit_claims AS source_permit_claims,
   s.resource_claims, s.task_id AS source_task_id,
@@ -11268,14 +11268,14 @@ WHERE c.issued_at IS NOT NULL AND c.released_at IS NULL
   AND (sqlc.arg(first_page)::boolean OR (c.app_id,c.permit_id)>(sqlc.arg(after_app)::uuid,sqlc.arg(after_permit)::uuid))
 ORDER BY c.app_id,c.permit_id LIMIT sqlc.arg(batch_limit)::int;
 
--- ADR-644: durable directory issuer, independent of regional cell identity.
+-- ADR-772: durable directory issuer, independent of regional cell identity.
 -- name: InsertGlobalRuntimeQuotaIssuer :exec
 INSERT INTO global_runtime_quota_issuer(issuer_id) VALUES ($1::uuid) ON CONFLICT DO NOTHING;
 
 -- name: ReadGlobalRuntimeQuotaIssuer :one
 SELECT issuer_id::text FROM global_runtime_quota_issuer WHERE singleton;
 
--- ADR-645: original runtime delivery consent and atomic revocation.
+-- ADR-773: original runtime delivery consent and atomic revocation.
 -- name: InsertRegionalRuntimeConsent :one
 INSERT INTO regional_runtime_consents(id,app_id,account_id,cell_id,issuer_id,global_app_id,owner_id,binding,expires_at)
 VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(cell_id)::uuid,
@@ -11293,7 +11293,7 @@ WHERE id=sqlc.arg(id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND cell_id=sqlc.a
 -- name: LockRegionalRuntimeConsentOwner :exec
 SELECT lock_regional_runtime_consent_owner(sqlc.arg(binding)::jsonb);
 
--- ADR-658: one coherent bounded catalog and a fenced final publication. SHARE
+-- ADR-786: one coherent bounded catalog and a fenced final publication. SHARE
 -- table locks cover inserts/removals as well as row changes; no network I/O is
 -- performed while holding them. Owner entitlement is included in the catalog.
 -- name: LockGlobalIngressIntent :exec

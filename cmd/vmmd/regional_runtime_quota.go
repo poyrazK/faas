@@ -1,6 +1,6 @@
 package main
 
-// adr: 615
+// adr: 743
 import (
 	"context"
 	"errors"
@@ -45,7 +45,7 @@ func regionalRuntimeQuotaAuthorizer(store state.Store) (fcvm.RuntimeAuthorizer, 
 	}, nil
 }
 
-// adr: 653 — a surviving original VM cannot borrow a replacement task lease.
+// adr: 781 — a surviving original VM cannot borrow a replacement task lease.
 func authorizeOriginalAppTask(ctx context.Context, store state.Store, operation fcvm.RuntimeAdmission) error {
 	instance, err := runtimequota.AppTaskInstanceID(operation.AppTaskID, operation.AppTaskLeaseToken)
 	if err != nil || instance != operation.Instance {

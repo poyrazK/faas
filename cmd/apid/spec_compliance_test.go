@@ -1,8 +1,8 @@
 package main
 
-// adr: 658
+// adr: 786
 
-// adr: 657
+// adr: 785
 
 // spec_compliance_test.go is the CI gate that keeps api/openapi.yaml honest.
 // It walks the Go AST of cmd/apid/server.go (routes), the pkg/api/* DTO files
@@ -92,10 +92,10 @@ const (
 const delegatedQuotaDaemonRoute = "PUT /v1/cells/{cell_id}/apps/{app_id}/runtime-quotas/{allocation_id}/delegated"
 
 var routeExclude = map[string]bool{
-	delegatedQuotaDaemonRoute:                               true, // ADR-645: original signed directory/consent daemon protocol.
-	"POST /internal/v1/ingress-status":                      true, // ADR-658: signed read-only daemon protocol; no customer SDK.
-	"PUT /v1/global-cells/{id}":                             true, // ADR-602: verified operator session and step-up required.
-	"PUT /v1/regions/{id}":                                  true, // ADR-592: operator session, step-up and allowlist required.
+	delegatedQuotaDaemonRoute:                               true, // ADR-773: original signed directory/consent daemon protocol.
+	"POST /internal/v1/ingress-status":                      true, // ADR-786: signed read-only daemon protocol; no customer SDK.
+	"PUT /v1/global-cells/{id}":                             true, // ADR-730: verified operator session and step-up required.
+	"PUT /v1/regions/{id}":                                  true, // ADR-720: operator session, step-up and allowlist required.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions": true, // scoped HTML/CSRF adapter for the public issue action API
 
 	"POST /dashboard/apps/{slug}/issues/impact-alert-policy": true, // scoped HTML/CSRF adapter for issue impact alert policy updates

@@ -20,33 +20,33 @@ import (
 	"time"
 )
 
-// ADR-602 directory/proof protocol bounds. These do not grant runtime capacity.
+// ADR-730 directory/proof protocol bounds. These do not grant runtime capacity.
 const (
-	// ADR-612: protocol bounds; plan concurrency comes from the plan table below.
+	// ADR-740: protocol bounds; plan concurrency comes from the plan table below.
 	GlobalRuntimeQuotaTargetsMax                = 32
 	GlobalRuntimeQuotaGenerationMax       int64 = 9007199254740991
 	RegionalRuntimeQuotaEnvelopeMaxBytes        = 8192
 	RegionalRuntimeQuotaPayloadMaxBytes         = 4096
 	RegionalRuntimeCapacityPageMax              = 1000
-	RegionalRuntimeRetirementBatch              = 64 // ADR-633: bounded cell recovery, not execution admission.
+	RegionalRuntimeRetirementBatch              = 64 // ADR-761: bounded cell recovery, not execution admission.
 	RegionalRuntimeRetirementInterval           = 30 * time.Second
 	RegionalRuntimeRetirementTimeout            = 30 * time.Second
-	RegionalRuntimeFailureCleanupTimeout        = 2 * RegionalRuntimeRetirementTimeout // ADR-634: native proof plus bounded row completion.
-	RegionalRuntimeResourceClaimsMaxBytes       = 512                                  // ADR-635: three immutable native resource dimensions.
+	RegionalRuntimeFailureCleanupTimeout        = 2 * RegionalRuntimeRetirementTimeout // ADR-762: native proof plus bounded row completion.
+	RegionalRuntimeResourceClaimsMaxBytes       = 512                                  // ADR-763: three immutable native resource dimensions.
 	RegionalRuntimeResourceValueMax             = 1<<31 - 1                            // Native AppSpec resource fields are positive int32 values.
 	RegionalRuntimeHostRecordMaxBytes           = 16384
-	RegionalRuntimeSigningKeyMaxBytes           = 4096 // ADR-632: one PKCS#8 Ed25519 key.
+	RegionalRuntimeSigningKeyMaxBytes           = 4096 // ADR-760: one PKCS#8 Ed25519 key.
 	RegionalRuntimeTrustBundleMaxBytes          = 65536
 	RegionalRuntimeTrustAnchorsMax              = 128
-	NativeRuntimeInventoryMaxBytes              = 64 << 20 // ADR-649: whole observation; oversize refuses, never truncates.
-	NativeExecutableRecordMaxBytes              = 64 << 10 // ADR-651: original prepared owner and selected binary digest.
+	NativeRuntimeInventoryMaxBytes              = 64 << 20 // ADR-777: whole observation; oversize refuses, never truncates.
+	NativeExecutableRecordMaxBytes              = 64 << 10 // ADR-779: original prepared owner and selected binary digest.
 	NativeRuntimeInventoryChunkMaxBytes         = 64 << 10
 	NativeRuntimeInventoryFrameMaxBytes         = NativeRuntimeInventoryChunkMaxBytes + 1024
 	NativeRuntimeInventoryTimeout               = 30 * time.Second
-	NativeHostHelperPolicyTimeout               = 5 * time.Second // ADR-655: bounded pre-execution policy acknowledgement.
-	SnapshotBackingMaxBytes                     = 16 << 10        // ADR-650: complete per-capture identity and input shape.
+	NativeHostHelperPolicyTimeout               = 5 * time.Second // ADR-783: bounded pre-execution policy acknowledgement.
+	SnapshotBackingMaxBytes                     = 16 << 10        // ADR-778: complete per-capture identity and input shape.
 	SnapshotMachineResponseMaxBytes             = 8192
-	RegionalMigrationLeaseTokenBytes            = 32 // ADR-628: existing 128-bit lowercase hex lease.
+	RegionalMigrationLeaseTokenBytes            = 32 // ADR-756: existing 128-bit lowercase hex lease.
 	GlobalDirectoryRequestMaxBytes              = 4096
 	GlobalDirectoryProofMaxBytes                = 4096
 	GlobalDirectoryAPIOriginMaxBytes            = 2048
@@ -56,11 +56,11 @@ const (
 	GlobalDirectoryProofTimeoutSeconds          = 10
 	GlobalDirectorySlugMinBytes                 = 3
 	GlobalDirectorySlugMaxBytes                 = 40
-	// ADR-657: leave room for the longest regional app label and its separator.
+	// ADR-785: leave room for the longest regional app label and its separator.
 	RegionalAppsDomainMaxBytes = GlobalDirectoryOriginHostMaxBytes - GlobalDirectorySlugMaxBytes - 1
 )
 
-// ADR-656: bounded signed route projections; these never grant runtime capacity.
+// ADR-784: bounded signed route projections; these never grant runtime capacity.
 const (
 	GlobalRoutingPolicyAllSelected     = "all_selected_regions"
 	GlobalIngressRoutesMax             = 10000
@@ -74,7 +74,7 @@ const (
 	GlobalIngressKeepAlive             = 30 * time.Second
 	GlobalIngressMaxIdleConnections    = 100
 	GlobalIngressMaxIdlePerOrigin      = 32
-	// ADR-658 bounds off-path publication and read-only regional status probes.
+	// ADR-786 bounds off-path publication and read-only regional status probes.
 	GlobalIngressPublishInterval  = 5 * time.Second
 	GlobalIngressPublishTimeout   = 20 * time.Second
 	GlobalIngressProbeConcurrency = 16
@@ -82,15 +82,15 @@ const (
 	GlobalIngressProbeMaxBytes    = 32 << 10
 )
 
-// ADR-604 bounds immutable image-release input and receipt projections.
+// ADR-732 bounds immutable image-release input and receipt projections.
 const (
 	CellImageReleaseRequestMaxBytes = 4096
 	CellImageReleaseImageMaxBytes   = 2048
-	// ADR-605: generations must round-trip exactly through every JSON SDK.
+	// ADR-733: generations must round-trip exactly through every JSON SDK.
 	GlobalImageReleaseGenerationMax int64 = 9007199254740991
 )
 
-// ADR-606 bounds the request-driven global release coordinator.
+// ADR-734 bounds the request-driven global release coordinator.
 const (
 	GlobalImageReleaseTargetsMax        = 32
 	GlobalImageReleaseRequestMaxBytes   = 16 << 10
@@ -100,7 +100,7 @@ const (
 	GlobalImageReleaseConcurrentTargets = 4
 )
 
-// ADR-608: sealed regional delegation and bounded apid recovery.
+// ADR-736: sealed regional delegation and bounded apid recovery.
 const (
 	GlobalDelegationConsentAttempts     = 2
 	GlobalDelegationLifetime            = 6 * 24 * time.Hour
@@ -8681,7 +8681,7 @@ const (
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
 
-// ADR-607: purpose-specific regional delegation protocol bounds.
+// ADR-735: purpose-specific regional delegation protocol bounds.
 const (
 	RegionalReleaseTokenRandomBytes     = 32
 	RegionalReleaseGrantMaxLifetime     = 7 * 24 * time.Hour
@@ -8711,18 +8711,18 @@ const (
 const EnvironmentFieldOwnershipMaxPaths = 1024
 
 // RegionalRuntimeQuotaDeliveryMaxBytes bounds a binding and up to two signed
-// envelopes (grant and retirement) in the quota delivery transport (ADR-644).
+// envelopes (grant and retirement) in the quota delivery transport (ADR-772).
 const RegionalRuntimeQuotaDeliveryMaxBytes = 2*RegionalRuntimeQuotaEnvelopeMaxBytes + GlobalDirectoryProofMaxBytes
 
-// ADR-645 bounds separate, revocable consent for credential-free quota delivery.
+// ADR-773 bounds separate, revocable consent for credential-free quota delivery.
 const (
 	RegionalRuntimeConsentMaxBytes    = GlobalDirectoryProofMaxBytes
 	RegionalRuntimeConsentsPerAppMax  = 32
-	GlobalRuntimeConsentsPerAppMax    = 32 // ADR-646: pending/active/revoking unexpired directory records.
+	GlobalRuntimeConsentsPerAppMax    = 32 // ADR-774: pending/active/revoking unexpired directory records.
 	RegionalRuntimeConsentMaxLifetime = 6 * 24 * time.Hour
 )
 
-// ADR-647: bounded durable quota delivery; leases exceed a complete request.
+// ADR-775: bounded durable quota delivery; leases exceed a complete request.
 const (
 	GlobalQuotaDeliveryJobsPerAppMax = 1024
 	GlobalQuotaDeliveryBatch         = 2

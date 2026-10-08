@@ -1,6 +1,6 @@
 package runtimequota
 
-// adr: 656
+// adr: 784
 import "github.com/onebox-faas/faas/pkg/api"
 
 const ingressKind = "global-ingress"

@@ -1,7 +1,7 @@
 package sched_test
 
-// adr: 631
-// adr: 642
+// adr: 759
+// adr: 770
 import (
 	"context"
 	"crypto/ed25519"

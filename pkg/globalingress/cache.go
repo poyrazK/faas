@@ -2,7 +2,7 @@
 // gateway. Regional gateways remain the runtime and app authorization owners.
 package globalingress
 
-// adr: 656
+// adr: 784
 import (
 	"bytes"
 	"encoding/json"

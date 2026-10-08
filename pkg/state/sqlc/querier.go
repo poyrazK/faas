@@ -121,7 +121,7 @@ type Querier interface {
 	CancelCustomerOperationExecution(ctx context.Context, db DBTX, arg CancelCustomerOperationExecutionParams) error
 	CancelDeletedOwnerManagedPostgresCutovers(ctx context.Context, db DBTX, now pgtype.Timestamptz) error
 	CancelExpiredAppTasksForClaim(ctx context.Context, db DBTX, claimedAt pgtype.Timestamptz) error
-	// ADR-617: frozen quota streams remain queued; independent tasks can still
+	// ADR-745: frozen quota streams remain queued; independent tasks can still
 	// claim in the same sweep. The row trigger rechecks after the journal lock.
 	CancelExpiredQueuedAppTasks(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
 	CancelManagedPostgresCutover(ctx context.Context, db DBTX, arg CancelManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
@@ -645,7 +645,7 @@ type Querier interface {
 	GetWorkflowScheduleCursor(ctx context.Context, db DBTX, arg GetWorkflowScheduleCursorParams) (WorkflowScheduleCursor, error)
 	GlobalAppIdentity(ctx context.Context, db DBTX, arg GlobalAppIdentityParams) (GlobalAppIdentityRow, error)
 	GlobalDirectoryCellByRegion(ctx context.Context, db DBTX, region string) (GlobalDirectoryCellByRegionRow, error)
-	// ADR-602: global app directory. Writes are apid-owned; all credentials stay
+	// ADR-730: global app directory. Writes are apid-owned; all credentials stay
 	// outside these tables. Scope and generation locks precede intent changes.
 	GlobalDirectoryUnbound(ctx context.Context, db DBTX) (bool, error)
 	HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
@@ -755,12 +755,12 @@ type Querier interface {
 	InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error
 	InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg InsertExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
-	// ADR-608: immutable sealed authority and restart-safe recovery claims.
+	// ADR-736: immutable sealed authority and restart-safe recovery claims.
 	InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error)
 	InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg InsertGlobalOwnerCellBindingParams) error
 	InsertGlobalQuotaDelivery(ctx context.Context, db DBTX, arg InsertGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
 	InsertGlobalRuntimeConsent(ctx context.Context, db DBTX, arg InsertGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error)
-	// ADR-644: durable directory issuer, independent of regional cell identity.
+	// ADR-772: durable directory issuer, independent of regional cell identity.
 	InsertGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
@@ -772,9 +772,9 @@ type Querier interface {
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
 	InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg InsertRegionalImageReleaseReceiptParams) error
 	InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg InsertRegionalReleaseGrantParams) (RegionalReleaseGrant, error)
-	// ADR-618: issuance is retained bookkeeping; no quota activation is implied.
+	// ADR-746: issuance is retained bookkeeping; no quota activation is implied.
 	InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg InsertRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
-	// ADR-645: original runtime delivery consent and atomic revocation.
+	// ADR-773: original runtime delivery consent and atomic revocation.
 	InsertRegionalRuntimeConsent(ctx context.Context, db DBTX, arg InsertRegionalRuntimeConsentParams) (RegionalRuntimeConsent, error)
 	InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg InsertRegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error)
 	InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
@@ -1225,7 +1225,7 @@ type Querier interface {
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
 	ListRecoveryDelegations(ctx context.Context, db DBTX, arg ListRecoveryDelegationsParams) ([]GlobalReleaseDelegation, error)
 	ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg ListRegionalRuntimeCapacityParams) ([]RegionalRuntimeCapacityReceipt, error)
-	// ADR-635: issued capacity survives app/instance collection and grant replacement.
+	// ADR-763: issued capacity survives app/instance collection and grant replacement.
 	ListRegionalRuntimeInventory(ctx context.Context, db DBTX, arg ListRegionalRuntimeInventoryParams) ([]ListRegionalRuntimeInventoryRow, error)
 	ListRegionalRuntimeRetirements(ctx context.Context, db DBTX, arg ListRegionalRuntimeRetirementsParams) ([]ListRegionalRuntimeRetirementsRow, error)
 	ListRegionalRuntimeServingSeats(ctx context.Context, db DBTX, arg ListRegionalRuntimeServingSeatsParams) ([]RegionalRuntimeServingSeat, error)
@@ -1320,15 +1320,15 @@ type Querier interface {
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockGlobalAppIdentity(ctx context.Context, db DBTX, arg LockGlobalAppIdentityParams) (LockGlobalAppIdentityRow, error)
 	LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg LockGlobalDirectoryCellParams) (LockGlobalDirectoryCellRow, error)
-	// ADR-658: one coherent bounded catalog and a fenced final publication. SHARE
+	// ADR-786: one coherent bounded catalog and a fenced final publication. SHARE
 	// table locks cover inserts/removals as well as row changes; no network I/O is
 	// performed while holding them. Owner entitlement is included in the catalog.
 	LockGlobalIngressIntent(ctx context.Context, db DBTX) error
 	LockGlobalIngressPublisher(ctx context.Context, db DBTX) error
-	// ADR-611: current organization consent is held through binding commit.
+	// ADR-739: current organization consent is held through binding commit.
 	LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg LockGlobalOrgTargetOwnerParams) (pgtype.UUID, error)
 	LockGlobalQuotaDelivery(ctx context.Context, db DBTX, arg LockGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
-	// ADR-646: public runtime consent retained independently of image delegation.
+	// ADR-774: public runtime consent retained independently of image delegation.
 	LockGlobalRuntimeConsentJournal(ctx context.Context, db DBTX, globalAppID pgtype.UUID) error
 	LockGlobalRuntimeQuotaOwner(ctx context.Context, db DBTX, arg LockGlobalRuntimeQuotaOwnerParams) (string, error)
 	LockGlobalRuntimeQuotaTenant(ctx context.Context, db DBTX, ownerID pgtype.UUID) (string, error)
@@ -1352,18 +1352,18 @@ type Querier interface {
 	LockProjectEnvironmentCloneApps(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneAppsParams) ([]pgtype.UUID, error)
 	// Clone locking follows source -> app -> catalog, matching reference writes.
 	LockProjectEnvironmentCloneGitSources(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneGitSourcesParams) ([]pgtype.UUID, error)
-	// ADR-604: a durable image-release receipt is committed with deployment intent.
+	// ADR-732: a durable image-release receipt is committed with deployment intent.
 	LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg LockRegionalImageReleaseAppParams) (pgtype.UUID, error)
-	// ADR-610: consent actor is separate from the pinned regional owner.
+	// ADR-738: consent actor is separate from the pinned regional owner.
 	LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg LockRegionalReleaseGrantAppParams) (pgtype.UUID, error)
-	// ADR-633: immutable original launch identity, independent of current rows.
-	// ADR-634: a terminal row does not release physical capacity or host ports.
+	// ADR-761: immutable original launch identity, independent of current rows.
+	// ADR-762: a terminal row does not release physical capacity or host ports.
 	LockRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg LockRegionalRuntimeAttemptParams) (bool, error)
 	LockRegionalRuntimeConsentOwner(ctx context.Context, db DBTX, binding []byte) error
-	// ADR-644: blank wire org scope means the creator's personal tenant, including
+	// ADR-772: blank wire org scope means the creator's personal tenant, including
 	// legacy null-org apps. Return the actual tenant so it is locked and rechecked.
 	LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (LockRegionalRuntimeQuotaAppRow, error)
-	// ADR-614: operator-authenticated regional quota receipt journal.
+	// ADR-742: operator-authenticated regional quota receipt journal.
 	LockRegionalRuntimeQuotaJournal(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	LockRegionalRuntimeQuotaTenant(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaTenantParams) (pgtype.UUID, error)
 	LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error)
@@ -1722,7 +1722,7 @@ type Querier interface {
 	PinCustomerOperationDeployment(ctx context.Context, db DBTX, arg PinCustomerOperationDeploymentParams) (int64, error)
 	PinCustomerOperationReleaseMembers(ctx context.Context, db DBTX, arg PinCustomerOperationReleaseMembersParams) (int64, error)
 	PinManagedPostgresCutoverDatabases(ctx context.Context, db DBTX, arg PinManagedPostgresCutoverDatabasesParams) (int64, error)
-	// ADR-606: global image release journal, only directory apid writes intent.
+	// ADR-734: global image release journal, only directory apid writes intent.
 	PlanGlobalImageRelease(ctx context.Context, db DBTX, arg PlanGlobalImageReleaseParams) (string, error)
 	ProbeManagedPostgresCredential(ctx context.Context, db DBTX, access string) (ProbeManagedPostgresCredentialRow, error)
 	// Counts include reference intent in the shared environment-key quota.
@@ -1818,12 +1818,12 @@ type Querier interface {
 	ReadExclusiveWorkPolicy(ctx context.Context, db DBTX, arg ReadExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
 	ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg ReadExclusiveWorkReplayParams) (ExclusiveWorkOperation, error)
 	ReadGlobalDelegation(ctx context.Context, db DBTX, arg ReadGlobalDelegationParams) (GlobalReleaseDelegation, error)
-	// ADR-609: directory tenant roots, separate from authentication actors.
+	// ADR-737: directory tenant roots, separate from authentication actors.
 	ReadGlobalDirectoryOwner(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ReadGlobalDirectoryOwnerRow, error)
 	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
 	ReadGlobalIngressPublication(ctx context.Context, db DBTX) (ReadGlobalIngressPublicationRow, error)
 	ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (ReadGlobalOwnerCellBindingRow, error)
-	// ADR-647: original signed quota delivery and leased recovery.
+	// ADR-775: original signed quota delivery and leased recovery.
 	ReadGlobalQuotaDelivery(ctx context.Context, db DBTX, arg ReadGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
 	ReadGlobalQuotaDeliveryIdentity(ctx context.Context, db DBTX, arg ReadGlobalQuotaDeliveryIdentityParams) (GlobalRuntimeQuotaDelivery, error)
 	ReadGlobalRuntimeConsent(ctx context.Context, db DBTX, arg ReadGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error)
@@ -1960,12 +1960,12 @@ type Querier interface {
 	RegionalRuntimeLaunchWasResumed(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchWasResumedParams) (bool, error)
 	RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalRuntimeQuotaHeadRow, error)
 	RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg RegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
-	// ADR-626: immutable serving resume identities; mutations hold the quota journal lock.
+	// ADR-754: immutable serving resume identities; mutations hold the quota journal lock.
 	RegionalRuntimeServingResume(ctx context.Context, db DBTX, arg RegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
 	RegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
 	RegionalRuntimeServingSeatUsage(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatUsageParams) (RegionalRuntimeServingSeatUsageRow, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
-	// ADR-612: durable global capacity reservations.
+	// ADR-740: durable global capacity reservations.
 	RegisterGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg RegisterGlobalRuntimeQuotaPolicyParams) error
 	ReleaseEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	ReleaseEnvironmentGitOpsField(ctx context.Context, db DBTX, arg ReleaseEnvironmentGitOpsFieldParams) error

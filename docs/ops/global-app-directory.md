@@ -1,9 +1,9 @@
 # Global app directory and verified regional bindings
 
-ADR-602 introduces a gated directory identity API. A global app has one UUID
+ADR-730 introduces a gated directory identity API. A global app has one UUID
 and `all_selected_regions` as its serving policy. This slice attaches existing
 regional apps and resolves their identities. It does not provision deployments
-or publish live ingress routes. ADR-656 adds an opt-in signed route consumer;
+or publish live ingress routes. ADR-784 adds an opt-in signed route consumer;
 the directory-owned live publisher is still pending. Regional provisioning, shared runtime admission, global
 runtime quota allocation, ingress health, data/secret replication, and independent native KVM
 recovery acceptance remain required for the complete multi-region feature.
@@ -24,10 +24,10 @@ membership and plan checks during allocation. This limit counts directory
 identities; it does not allocate runtime capacity or change billing.
 
 Shared organizations can attach existing regional organization apps with current
-owner/admin consent (ADR-611). Image releases remain unavailable until global
+owner/admin consent (ADR-739). Image releases remain unavailable until global
 runtime quotas and regional organization billing admission are integrated.
 PostgreSQL also refuses shared image release allocation. Personal regional operation remains
-available. Rollback of ADR-609 refuses retained shared directory roots.
+available. Rollback of ADR-737 refuses retained shared directory roots.
 
 ## Configure the directory and regional cells
 
@@ -41,7 +41,7 @@ reject directory writes in regional databases and prevent a populated directory
 database from becoming a regional cell. Unbound identity does not by itself
 prove physical host independence; the operator provisions the separate database.
 
-Each regional fleet uses ADR-601's immutable cell UUID and region. Follow
+Each regional fleet uses ADR-729's immutable cell UUID and region. Follow
 [regional cell initialization](regional-control-plane-cells.md) before exposing
 the proof endpoint. Regional APIs keep their independent credentials and quotas.
 
@@ -64,7 +64,7 @@ management origin. `--apps-domain` accepts a lowercase DNS suffix of at most
 212 bytes, without a scheme, port, literal IP or trailing dot. Omitting this flag
 preserves the current suffix; `--apps-domain=` explicitly clears it. An
 unconfigured suffix supports ownership attachment but supplies no traffic origin.
-Regional binaries must support ADR-657's `traffic_origin=1` binding proof before
+Regional binaries must support ADR-785's `traffic_origin=1` binding proof before
 registering a suffix. Attachment then verifies the exact HTTPS app origin
 against the regional API's effective configuration. This proves configuration;
 health, runtime admission and billing eligibility require separate evidence.
@@ -155,7 +155,7 @@ pending, and the shared image release gate remains in place.
 
 ## Runtime delivery consent
 
-ADR-646 retains purpose-specific personal consent for quota delivery. Configure
+ADR-774 retains purpose-specific personal consent for quota delivery. Configure
 the directory's runtime quota signing identity and the regional receiver's trusted
 directory keys and canonical HTTPS origin first. Consent does not enable regional
 runtime admission; the heads remain frozen pending the remaining native gates.
@@ -188,7 +188,7 @@ signed retirement remains independent of consent.
 
 ## Durable quota delivery
 
-ADR-647 adds a retained delivery journal and an optional directory apid worker.
+ADR-775 adds a retained delivery journal and an optional directory apid worker.
 Enable it only on the unbound directory with its existing configured runtime quota
 signing identity and trust bundle:
 
@@ -274,7 +274,7 @@ recovery or end-to-end ingress failover.
 
 ## Deployment intent for a resolved target
 
-ADR-603 adds `POST /v1/cells/{cell_id}/apps/{app_id}/deployments` to regional
+ADR-731 adds `POST /v1/cells/{cell_id}/apps/{app_id}/deployments` to regional
 apid. Use the immutable `cell_id` and `regional_app_id` from resolution, plus
 a personal-account API key issued by that cell with admin or deploy-write scope.
 The endpoint accepts the existing digest-pinned image JSON and source multipart
@@ -312,7 +312,7 @@ publish a global route.
 
 ## Durable image release acceptance
 
-Use ADR-604's receipt endpoint for coordinator submissions of a prebuilt image:
+Use ADR-732's receipt endpoint for coordinator submissions of a prebuilt image:
 
 ```go
 receipt, err := regional.PutCellImageRelease(ctx, resolved.CellID, resolved.RegionalAppID,
@@ -351,7 +351,7 @@ policy remains `all_selected_regions`.
 
 ## Ordered global image intent
 
-ADR-605 adds an optional generation fence to the regional receipt PUT:
+ADR-733 adds an optional generation fence to the regional receipt PUT:
 
 ```go
 request := api.PutCellImageReleaseRequest{
@@ -387,7 +387,7 @@ the `all_selected_regions` default policy.
 
 <a id="global-image-releases"></a>
 
-## Global image releases (ADR-606, ADR-608)
+## Global image releases (ADR-734, ADR-736)
 
 Submit `PUT /v1/global-apps/{slug}/image-releases/{release_id}` with a digest-pinned
 `image` and optional `regional_api_keys` object indexed by region. The directory
@@ -418,7 +418,7 @@ next requested generation. A rejected allocation writes no release or target.
 
 <a id="regional-delegation"></a>
 
-## Regional release delegation (ADR-607, ADR-608, ADR-610)
+## Regional release delegation (ADR-735, ADR-736, ADR-738)
 
 A caller mints a `fp_release_` token and fixed grant UUID before contacting the
 cell. It must seal the token and bound identity before registering its SHA-256
@@ -478,7 +478,7 @@ revocation work. `global_delegation_limit` (409) includes `limit`, `observed`, a
 `docs_url`. This history survives owner deletion so unreachable regions cannot
 silently discard outstanding revocation.
 
-## Cached global ingress consumer (ADR-656)
+## Cached global ingress consumer (ADR-784)
 
 This consumer is available for integration and diagnostics. A live APID publisher
 with proven regional health, serving eligibility, admission and billing gates is
@@ -523,7 +523,7 @@ uses the regional host and credentials and derives forwarding from its direct
 connection. Validate those application contracts before advertising transparent
 global app URLs. Dedicated native KVM recovery acceptance remains mandatory.
 
-### Durable ingress publisher (ADR-658)
+### Durable ingress publisher (ADR-786)
 
 On the **unbound directory APID**, configure its existing immutable directory
 issuer and directory authority keys first. Create a dedicated APID-owned
@@ -536,7 +536,7 @@ create system users, groups or permissions. Configure APID explicitly:
 manifest_path = "/run/faas/global-ingress/routes.json"
 ```
 
-Use the same path for the ADR-656 global gateway's
+Use the same path for the ADR-784 global gateway's
 `global_ingress_manifest_path`, with matching directory UUID and directory trust
 bundle. Start APID and allow its first committed projection to be exported before
 starting the global gateway; the gateway validates its initial file before
@@ -567,7 +567,7 @@ expires within its bounded lease. No failure releases quota holds or confirms
 native absence. Global UUID app hosts continue to use all selected healthy
 eligible regions.
 
-### Original native launch source (ADR-659)
+### Original native launch source (ADR-787)
 
 New regional native frames retain the exact cell launch source before host
 effects, including the task and captured claim for task-only execution. Native

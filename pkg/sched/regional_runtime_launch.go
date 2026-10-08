@@ -1,6 +1,6 @@
 package sched
 
-// adr: 623
+// adr: 751
 import (
 	"context"
 	"errors"
@@ -19,7 +19,7 @@ func (e *Engine) prepareRegionalRuntimeLaunch(ctx context.Context, node, instanc
 	return e.prepareRegionalRuntimeLaunchSource(ctx, node, instance, run, purpose, "", spec)
 }
 
-// adr: 653
+// adr: 781
 func (e *Engine) prepareRegionalRuntimeLaunchSource(ctx context.Context, node, instance, run, purpose, taskID string, spec AppSpec) (AppSpec, error) {
 	if err := checkRegionalRuntimeQuota(ctx, e.store, spec.AppID); err != nil {
 		return AppSpec{}, err
@@ -55,7 +55,7 @@ func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance,
 	return e.issueRegionalRuntimeLaunchSource(ctx, node, instance, run, purpose, "", spec, grant)
 }
 
-// adr: 653
+// adr: 781
 func (e *Engine) issueRegionalRuntimeLaunchSource(ctx context.Context, node, instance, run, purpose, taskID string, spec AppSpec, grant runtimequota.Grant) (AppSpec, error) {
 	actualInstanceKey := instance
 	if (purpose == runtimequota.CapacityPrime) != spec.PrimeOnly {
@@ -116,7 +116,7 @@ func (e *Engine) issueRegionalRuntimeLaunchSource(ctx context.Context, node, ins
 	return spec, nil
 }
 
-// adr: 637
+// adr: 765
 // Match the guest RAM and conservative CPU peak vmmd will actually launch.
 // VM overhead is charged separately by the ledger, once per physical runtime.
 func regionalRuntimeLaunchResources(spec AppSpec) (state.RegionalRuntimeResources, bool) {

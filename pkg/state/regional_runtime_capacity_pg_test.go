@@ -2,8 +2,8 @@
 
 package state
 
-// adr: 618
-// adr: 642
+// adr: 746
+// adr: 770
 import (
 	"encoding/json"
 	"errors"
@@ -168,7 +168,7 @@ func TestPGRegionalRuntimeCapacityRetainedSourcePreventsDowngrade(t *testing.T) 
 	if _, err = tx.Exec(t.Context(), resumeDown); err != nil {
 		t.Fatal(err)
 	}
-	// Launch provenance is retained even on rollback (ADR-633). Removing the
+	// Launch provenance is retained even on rollback (ADR-761). Removing the
 	// older capacity table must refuse its surviving foreign-key dependency.
 	_, err = tx.Exec(t.Context(), down)
 	var dependency *pgconn.PgError

@@ -1,6 +1,6 @@
 package runtimequota
 
-// adr: 626
+// adr: 754
 import "github.com/google/uuid"
 
 // ServingResumeIntent identifies one immutable serving authorization on an

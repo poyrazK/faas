@@ -1015,7 +1015,7 @@ def _protect_global_directory_request(package: Path) -> None:
             )
         )
 
-    # ADR-657: newly documented original consent and quota delivery transports.
+    # ADR-785: newly documented original consent and quota delivery transports.
     for name in (
         "put_global_runtime_consent",
         "get_global_runtime_consent",

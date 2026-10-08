@@ -1,7 +1,7 @@
 package vmmdgrpc
 
-// adr: 631
-// adr: 642
+// adr: 759
+// adr: 770
 import (
 	"context"
 	"encoding/json"

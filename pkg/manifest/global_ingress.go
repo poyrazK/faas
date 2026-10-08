@@ -1,6 +1,6 @@
 package manifest
 
-// adr: 656
+// adr: 784
 import "github.com/onebox-faas/faas/pkg/globalingress"
 
 func (dc *DaemonConfig) globalIngressConfig() globalingress.Config {

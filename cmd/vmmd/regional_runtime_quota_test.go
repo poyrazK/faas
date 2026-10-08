@@ -207,7 +207,7 @@ func TestRegionalRuntimeQuotaTaskAuthorizerPinsLease(t *testing.T) {
 	if err = authorize(t.Context(), op); err != nil {
 		t.Fatal("valid independent task refused", err)
 	}
-	// adr: 653 — a current live lease cannot authorize the previous VM.
+	// adr: 781 — a current live lease cannot authorize the previous VM.
 	replacement := uuid.NewString()
 	reader.task.LeaseToken = &replacement
 	replacementAuthorizer, _ := regionalRuntimeQuotaAuthorizer(reader)
