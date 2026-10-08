@@ -19,7 +19,7 @@ test('public bootstrap and browser assets expose selectors without workload or a
   assert.deepEqual(await response.json(), config);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
-  for (const path of ['/', '/app.mjs', '/progress.mjs', '/style.css', '/sdk/operations.js', '/sdk/customer-operations.js', '/sdk/operation-session.js', '/sdk/operation-submission.js', '/sdk/sse.js']) {
+  for (const path of ['/', '/app.mjs', '/progress.mjs', '/style.css', '/sdk/operations.js', '/sdk/customer-operations.js', '/sdk/operation-session.js', '/sdk/operation-submission.js', '/sdk/operation-contract.js', '/sdk/sse.js']) {
     const response = await fetch(base+path); assert.equal(response.status, 200, path);
     if (path.startsWith('/sdk/')) assert.doesNotMatch(await response.text(), /from ['"]node:/);
   }

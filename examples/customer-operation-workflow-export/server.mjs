@@ -11,7 +11,7 @@ const files = new Map([
   ...['app.mjs', 'customer-auth.mjs', 'progress.mjs'].map(name => [`/${name}`, [new URL(name, publicRoot), 'text/javascript']]),
   ['/style.css', [new URL('style.css', publicRoot), 'text/css']],
   ['/sdk/operations.js', [new URL('operations-browser.js', sdkRoot), 'text/javascript']],
-  ...['customer-operations', 'operation-auth', 'operation-feature', 'operation-session', 'operation-submission', 'sse'].map(name => [`/sdk/${name}.js`, [new URL(`${name}.js`, sdkRoot), 'text/javascript']]),
+  ...['customer-operations', 'operation-auth', 'operation-feature', 'operation-session', 'operation-submission', 'operation-contract', 'sse'].map(name => [`/sdk/${name}.js`, [new URL(`${name}.js`, sdkRoot), 'text/javascript']]),
 ]);
 
 export function validateExportConfig(config) {
