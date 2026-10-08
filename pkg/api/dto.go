@@ -9716,6 +9716,24 @@ type UpdateEdgeRuleRequest struct {
 	ClearExpiresAt bool       `json:"clear_expires_at,omitempty"`
 }
 
+// EdgeRuleSetVersionResponse (ADR-732) describes one recorded state of an
+// app's whole edge-rule set. Rules is populated only when a single version
+// is fetched. Current marks the app's latest version.
+type EdgeRuleSetVersionResponse struct {
+	Version     int                `json:"version"`
+	RuleCount   int                `json:"rule_count"`
+	RulesSHA256 string             `json:"rules_sha256"`
+	CreatedAt   time.Time          `json:"created_at"`
+	Current     bool               `json:"current"`
+	Rules       []EdgeRuleResponse `json:"rules,omitempty"`
+}
+
+// RollbackEdgeRulesRequest restores an app's edge rules to a recorded
+// version. The restore itself is recorded as a new version.
+type RollbackEdgeRulesRequest struct {
+	Version int `json:"version"`
+}
+
 const (
 	EdgeRuleMatchHeadersMaxCount     = 10
 	EdgeRuleMatchHeaderMaxValueBytes = 1024

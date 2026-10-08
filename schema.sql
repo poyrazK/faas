@@ -1687,6 +1687,25 @@ $$;
 
 
 --
+-- Name: edge_rule_set_snapshot(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edge_rule_set_snapshot(target uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY r.id), '[]'::jsonb)
+    FROM (
+        SELECT id, account_id, app_id, match_host, match_path, match_methods,
+               match_headers, priority, enabled, kind, action, validate_mode,
+               cors_preset_id, manifest_key, name, description, expires_at,
+               created_at
+        FROM edge_rules
+        WHERE app_id = target
+    ) r;
+$$;
+
+
+--
 -- Name: edge_rules_record_change(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1708,6 +1727,41 @@ BEGIN
         VALUES (OLD.app_id, OLD.id, 'deleted', ARRAY[OLD.match_host]);
         RETURN OLD;
     END IF;
+END;
+$$;
+
+
+--
+-- Name: edge_rules_record_set_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edge_rules_record_set_version() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    target   uuid := COALESCE(NEW.app_id, OLD.app_id);
+    snapshot jsonb;
+    digest   text;
+    latest   record;
+BEGIN
+    -- Serialize version numbering per app across concurrent commits.
+    PERFORM pg_advisory_xact_lock(hashtext('edge_rule_set_versions'), hashtext(target::text));
+    snapshot := edge_rule_set_snapshot(target);
+    digest := encode(sha256(convert_to(snapshot::text, 'UTF8')), 'hex');
+    SELECT version, rules_sha256 INTO latest
+    FROM edge_rule_set_versions
+    WHERE app_id = target
+    ORDER BY version DESC
+    LIMIT 1;
+    IF FOUND AND latest.rules_sha256 = digest THEN
+        RETURN NULL;
+    END IF;
+    INSERT INTO edge_rule_set_versions (app_id, version, rules, rules_sha256, rule_count)
+    VALUES (target, COALESCE(latest.version, 0) + 1, snapshot, digest, jsonb_array_length(snapshot));
+    DELETE FROM edge_rule_set_versions
+    WHERE app_id = target
+      AND version <= COALESCE(latest.version, 0) + 1 - 100;
+    RETURN NULL;
 END;
 $$;
 
@@ -14827,6 +14881,39 @@ CREATE SEQUENCE public.edge_rule_generation_seq
 
 
 --
+-- Name: edge_rule_set_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_set_versions (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    version integer NOT NULL,
+    rules jsonb NOT NULL,
+    rules_sha256 text NOT NULL,
+    rule_count integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_rule_set_versions_rule_count_check CHECK ((rule_count >= 0)),
+    CONSTRAINT edge_rule_set_versions_rules_check CHECK ((jsonb_typeof(rules) = 'array'::text)),
+    CONSTRAINT edge_rule_set_versions_rules_sha256_check CHECK ((rules_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT edge_rule_set_versions_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: edge_rule_set_versions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.edge_rule_set_versions ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.edge_rule_set_versions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: edge_rules; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25714,6 +25801,22 @@ ALTER TABLE ONLY public.domain_doctor_observations
 
 ALTER TABLE ONLY public.edge_rule_change_log
     ADD CONSTRAINT edge_rule_change_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edge_rule_set_versions edge_rule_set_versions_app_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_set_versions
+    ADD CONSTRAINT edge_rule_set_versions_app_version_key UNIQUE (app_id, version);
+
+
+--
+-- Name: edge_rule_set_versions edge_rule_set_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_set_versions
+    ADD CONSTRAINT edge_rule_set_versions_pkey PRIMARY KEY (id);
 
 
 --
@@ -37150,6 +37253,13 @@ CREATE TRIGGER deployments_runtime_upgrade_traffic_fence BEFORE INSERT OR UPDATE
 --
 
 CREATE TRIGGER edge_rules_record_change_trg AFTER INSERT OR DELETE OR UPDATE ON public.edge_rules FOR EACH ROW EXECUTE FUNCTION public.edge_rules_record_change();
+
+
+--
+-- Name: edge_rules edge_rules_record_set_version_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER edge_rules_record_set_version_trg AFTER INSERT OR DELETE OR UPDATE ON public.edge_rules DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.edge_rules_record_set_version();
 
 
 --

@@ -632,14 +632,17 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
-	CodeValidation                      = "validation_failed"
-	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
-	CodeAutomationVersionConflict       = "automation_version_conflict"
-	CodeAutomationOwnershipConflict     = "automation_ownership_conflict"
-	CodeAutomationInvalid               = "automation_invalid"
-	CodeConflict                        = "conflict"
+	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
+	CodeValidation                     = "validation_failed"
+	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
+	CodeAutomationVersionConflict      = "automation_version_conflict"
+	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
+	CodeAutomationInvalid              = "automation_invalid"
+	CodeConflict                       = "conflict"
+	// ADR-732: an edge-rule mutation's If-Match named a rule-set version
+	// that is no longer the app's latest.
+	CodeEdgeRulesVersionMismatch        = "edge_rules_version_mismatch"
 	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
 	// ownership or complete physical retirement. Keep its reservation charged.
@@ -1874,6 +1877,8 @@ func StatusForCode(code string) int {
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
+	case CodeEdgeRulesVersionMismatch:
+		return http.StatusPreconditionFailed
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
@@ -5724,6 +5729,19 @@ func ErrInvalidPublicAuthIPAllowlist(entry string, reason error) *Problem {
 func ErrValidation(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeValidation,
 		"Validation failed", detail)
+}
+
+// ErrEdgeRulesVersionMismatch (ADR-732) is the 412 for an edge-rule mutation
+// whose If-Match no longer names the app's latest rule-set version.
+func ErrEdgeRulesVersionMismatch(expected string, current int) *Problem {
+	return NewProblem(http.StatusPreconditionFailed, CodeEdgeRulesVersionMismatch,
+		"Edge rules changed",
+		fmt.Sprintf("If-Match %s does not match the current edge-rule set version %q; re-read the rules and retry", expected, EdgeRuleSetETag(current)))
+}
+
+// EdgeRuleSetETag renders an app's edge-rule set version as an ETag value.
+func EdgeRuleSetETag(version int) string {
+	return fmt.Sprintf("\"%d\"", version)
 }
 
 // ErrPlanQueueDepth is returned by the apid handlers on POST

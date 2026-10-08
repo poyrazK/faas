@@ -1,39 +1,42 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.edge_rule_set_version_response import EdgeRuleSetVersionResponse
 from ...models.problem import Problem
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
-    id: str,
-    *,
-    if_match: str | Unset = UNSET,
+    slug: str,
 ) -> dict[str, Any]:
-    headers: dict[str, Any] = {}
-    if not isinstance(if_match, Unset):
-        headers["If-Match"] = if_match
 
     _kwargs: dict[str, Any] = {
-        "method": "delete",
-        "url": "/v1/edge-rules/{id}".format(
-            id=quote(str(id), safe=""),
+        "method": "get",
+        "url": "/v1/apps/{slug}/edge-rules/versions".format(
+            slug=quote(str(slug), safe=""),
         ),
     }
 
-    _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | Problem | None:
-    if response.status_code == 204:
-        response_204 = cast(Any, None)
-        return response_204
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Problem | list[EdgeRuleSetVersionResponse] | None:
+    if response.status_code == 200:
+        response_200 = []
+        _response_200 = response.json()
+        for response_200_item_data in _response_200:
+            response_200_item = EdgeRuleSetVersionResponse.from_dict(response_200_item_data)
+
+            response_200.append(response_200_item)
+
+        return response_200
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -44,11 +47,6 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         response_404 = Problem.from_dict(response.json())
 
         return response_404
-
-    if response.status_code == 412:
-        response_412 = Problem.from_dict(response.json())
-
-        return response_412
 
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
@@ -61,7 +59,9 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any | Problem]:
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[Problem | list[EdgeRuleSetVersionResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,28 +71,29 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 
 def sync_detailed(
-    id: str,
+    slug: str,
     *,
     client: AuthenticatedClient | Client,
-    if_match: str | Unset = UNSET,
-) -> Response[Any | Problem]:
-    """Delete an edge rule.
+) -> Response[Problem | list[EdgeRuleSetVersionResponse]]:
+    """List recorded versions of an app's edge-rule set, newest first.
+
+     Every committed change to an app's edge rules records the whole rule
+    set as a new version (ADR-732). Up to the 50 newest versions are
+    returned, without rule bodies; the newest 100 are retained.
 
     Args:
-        id (str):
-        if_match (str | Unset):
+        slug (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[Problem | list[EdgeRuleSetVersionResponse]]
     """
 
     kwargs = _get_kwargs(
-        id=id,
-        if_match=if_match,
+        slug=slug,
     )
 
     response = client.get_httpx_client().request(
@@ -103,55 +104,57 @@ def sync_detailed(
 
 
 def sync(
-    id: str,
+    slug: str,
     *,
     client: AuthenticatedClient | Client,
-    if_match: str | Unset = UNSET,
-) -> Any | Problem | None:
-    """Delete an edge rule.
+) -> Problem | list[EdgeRuleSetVersionResponse] | None:
+    """List recorded versions of an app's edge-rule set, newest first.
+
+     Every committed change to an app's edge rules records the whole rule
+    set as a new version (ADR-732). Up to the 50 newest versions are
+    returned, without rule bodies; the newest 100 are retained.
 
     Args:
-        id (str):
-        if_match (str | Unset):
+        slug (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        Problem | list[EdgeRuleSetVersionResponse]
     """
 
     return sync_detailed(
-        id=id,
+        slug=slug,
         client=client,
-        if_match=if_match,
     ).parsed
 
 
 async def asyncio_detailed(
-    id: str,
+    slug: str,
     *,
     client: AuthenticatedClient | Client,
-    if_match: str | Unset = UNSET,
-) -> Response[Any | Problem]:
-    """Delete an edge rule.
+) -> Response[Problem | list[EdgeRuleSetVersionResponse]]:
+    """List recorded versions of an app's edge-rule set, newest first.
+
+     Every committed change to an app's edge rules records the whole rule
+    set as a new version (ADR-732). Up to the 50 newest versions are
+    returned, without rule bodies; the newest 100 are retained.
 
     Args:
-        id (str):
-        if_match (str | Unset):
+        slug (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[Problem | list[EdgeRuleSetVersionResponse]]
     """
 
     kwargs = _get_kwargs(
-        id=id,
-        if_match=if_match,
+        slug=slug,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -160,29 +163,30 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    id: str,
+    slug: str,
     *,
     client: AuthenticatedClient | Client,
-    if_match: str | Unset = UNSET,
-) -> Any | Problem | None:
-    """Delete an edge rule.
+) -> Problem | list[EdgeRuleSetVersionResponse] | None:
+    """List recorded versions of an app's edge-rule set, newest first.
+
+     Every committed change to an app's edge rules records the whole rule
+    set as a new version (ADR-732). Up to the 50 newest versions are
+    returned, without rule bodies; the newest 100 are retained.
 
     Args:
-        id (str):
-        if_match (str | Unset):
+        slug (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        Problem | list[EdgeRuleSetVersionResponse]
     """
 
     return (
         await asyncio_detailed(
-            id=id,
+            slug=slug,
             client=client,
-            if_match=if_match,
         )
     ).parsed

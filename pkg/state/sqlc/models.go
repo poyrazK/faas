@@ -2140,6 +2140,16 @@ type EdgeRuleChangeLog struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type EdgeRuleSetVersion struct {
+	ID          int64
+	AppID       pgtype.UUID
+	Version     int32
+	Rules       []byte
+	RulesSha256 string
+	RuleCount   int32
+	CreatedAt   pgtype.Timestamptz
+}
+
 type EgressFlowLog struct {
 	ID         int64
 	ObservedAt pgtype.Timestamptz
