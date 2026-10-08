@@ -122,3 +122,27 @@ test('RPC contract includes defaults and nullable scalars without confusing enum
   assert.match(output, /Returns: "unknown" \| "known" \| null/)
   assert.notEqual(output, generate(normalize([], types, [], ['api'], [{ ...functions[0], defaults: 0 }])))
 })
+
+test('serving contract requires application auth, readiness and an immutable startup fingerprint', async t => {
+  const config = runtimeConfig({ DATABASE_URL: 'postgres://restricted:p@localhost/db', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  config.fingerprint = 'a'.repeat(64)
+  let ready = true
+  const admin = http.createServer((req, res) => { assert.equal(req.url, '/ready'); res.writeHead(ready ? 200 : 503); res.end() })
+  await new Promise(resolve => admin.listen(0, '127.0.0.1', resolve))
+  const gateway = createServer(config, async token => { if (token !== 'valid') throw Error(); return { sub: 'alice', exp: 9999999999 } }, 1, admin.address().port)
+  await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
+  t.after(() => { gateway.closeAllConnections(); gateway.close(); admin.closeAllConnections(); admin.close() })
+  const address = `http://127.0.0.1:${gateway.address().port}/__gregale/schema`
+  assert.equal((await fetch(address)).status, 401)
+  assert.equal((await fetch(address, { headers: { Authorization: 'Bearer invalid' } })).status, 401)
+  assert.equal((await fetch(address, { method: 'POST', headers: { Authorization: 'Bearer valid' } })).status, 405)
+  const response = await fetch(address, { headers: { Authorization: 'Bearer valid' } })
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(await response.json(), { ready: true, version: 1, fingerprint: 'a'.repeat(64) })
+  config.fingerprint = 'b'.repeat(64)
+  assert.equal((await (await fetch(address, { headers: { Authorization: 'Bearer valid' } })).json()).fingerprint, 'a'.repeat(64))
+  ready = false
+  const unavailable = await fetch(address, { headers: { Authorization: 'Bearer valid' } })
+  assert.equal(unavailable.status, 503)
+  assert.deepEqual(await unavailable.json(), { ready: false })
+})

@@ -26,20 +26,23 @@ type dataAPISyncCommand struct {
 }
 
 type dataAPISyncConfig struct {
-	Output      string              `json:"output"`
-	Migrate     dataAPISyncCommand  `json:"migrate"`
-	Check       dataAPISyncCommand  `json:"check"`
-	Permissions *dataAPISyncCommand `json:"permissions,omitempty"`
+	Output         string              `json:"output"`
+	Migrate        dataAPISyncCommand  `json:"migrate"`
+	Check          dataAPISyncCommand  `json:"check"`
+	Permissions    *dataAPISyncCommand `json:"permissions,omitempty"`
+	AccessTokenEnv string              `json:"access_token_env,omitempty"`
+	accessToken    string
 }
 
 type dataAPISyncReceipt struct {
-	App          string `json:"app"`
-	WakeID       string `json:"wake_id"`
-	TaskID       string `json:"task_id"`
-	DeploymentID string `json:"deployment_id"`
-	Fingerprint  string `json:"fingerprint"`
-	Output       string `json:"output"`
-	Status       string `json:"status"`
+	App              string `json:"app"`
+	WakeID           string `json:"wake_id"`
+	TaskID           string `json:"task_id"`
+	DeploymentID     string `json:"deployment_id"`
+	Fingerprint      string `json:"fingerprint"`
+	Output           string `json:"output"`
+	Status           string `json:"status"`
+	ContractVerified bool   `json:"contract_verified"`
 }
 
 func cmdDataAPISync(args []string) int {
@@ -129,6 +132,16 @@ func loadDataAPISyncConfig(path string) (dataAPISyncConfig, error) {
 			return config, fmt.Errorf("permissions: %w", err)
 		}
 	}
+	if config.AccessTokenEnv == "" {
+		config.AccessTokenEnv = "GREGALE_DATA_API_ACCESS_TOKEN"
+	}
+	if !dataAPITokenEnvName.MatchString(config.AccessTokenEnv) {
+		return config, errors.New("access_token_env must be an environment variable name")
+	}
+	config.accessToken = os.Getenv(config.AccessTokenEnv)
+	if !validDataAPIAccessToken(config.accessToken) {
+		return config, errors.New("configure a nonempty application JWT in access_token_env (default GREGALE_DATA_API_ACCESS_TOKEN); do not use an account key")
+	}
 	return config, nil
 }
 
@@ -201,10 +214,15 @@ func runDataAPISync(ctx context.Context, client *api.Client, slug string, config
 	if err != nil {
 		return receipt, fmt.Errorf("generate types: %w", err)
 	}
+	receipt.Fingerprint = dataAPIFingerprint.FindStringSubmatch(task.StdoutTail)[1]
+	dataAPISyncProgress("Verifying the serving schema contract")
+	if err = verifyDataAPIServingContract(ctx, healthURL, config.accessToken, receipt.Fingerprint); err != nil {
+		return receipt, fmt.Errorf("verify serving contract (existing types retained): %w", err)
+	}
+	receipt.ContractVerified = true
 	if err = writeDataAPITypes(config.Output, false, task.StdoutTail); err != nil {
 		return receipt, fmt.Errorf("write types: %w", err)
 	}
-	receipt.Fingerprint = dataAPIFingerprint.FindStringSubmatch(task.StdoutTail)[1]
 	dataAPISyncProgress("Running client check")
 	if err = runDataAPISyncCommand(ctx, config.Check); err != nil {
 		return receipt, fmt.Errorf("client check (generated types retained): %w", err)

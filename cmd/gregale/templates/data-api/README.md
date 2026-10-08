@@ -25,3 +25,16 @@ the restricted database connection and authentication settings, and set
 
 See [the complete guide](https://gregale.dev/docs/data-api) for migration,
 authorization, client packaging, qualification requirements and bounds.
+
+### Serving-contract diagnostics
+
+`GET /__gregale/schema` requires a normal application JWT and PostgREST
+readiness. It returns `ready`, `version: 1` and the normalized catalog fingerprint
+captured at startup. Responses use `Cache-Control: no-store`. It does not expose
+types, connection strings or application data; `/healthz` remains public.
+
+`gregale data-api sync` compares this fingerprint with its private type export
+before writing the file or running client checks. Configure the application
+JWT through `GREGALE_DATA_API_ACCESS_TOKEN` (or the workflow's `access_token_env`).
+The fingerprint describes the generated type contract, not policy semantics,
+function bodies or an atomic view spanning engine cache loading and owner DDL.

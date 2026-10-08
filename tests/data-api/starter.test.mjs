@@ -24,7 +24,7 @@ const pg = runtimeRequire('pg')
 const { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } = await import(pathToFileURL(runtimeRequire.resolve('jose')))
 const { runtimeConfig, limits } = await import(new URL('config.mjs', runtime))
 const { createServer, tokenVerifier } = await import(new URL('server.mjs', runtime))
-const { inspect, generate } = await import(new URL('types.mjs', runtime))
+const { inspect, generate, fingerprint } = await import(new URL('types.mjs', runtime))
 
 async function port() {
   const server = net.createServer()
@@ -148,7 +148,9 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     origins = await browserOrigins(root)
   }
   const config = runtimeConfig({ DATA_API_ALLOWED_ORIGINS: origins?.allowed ?? '', DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
-  config.functions = (await inspect(loginURL.toString(), ['api'])).functions
+  const servingSnapshot = await inspect(loginURL.toString(), ['api'])
+  config.functions = servingSnapshot.functions
+  config.fingerprint = fingerprint(servingSnapshot)
   const upstream = await port(), ready = await port()
   child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
   let logs = ''
@@ -179,6 +181,16 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const sign = (subject, audience = 'notes') => new SignJWT({ sub: subject, role: 'postgres' }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(audience).setExpirationTime('5m').sign(privateKey)
   const userA = { subject: 'identity|alice', token: await sign('identity|alice') }
   const userB = { subject: 'identity|bob', token: await sign('identity|bob') }
+  const contractHeaders = { Authorization: `Bearer ${userA.token}` }
+  assert.equal((await fetch(url + '/__gregale/schema')).status, 401)
+  const serving = await (await fetch(url + '/__gregale/schema', { headers: contractHeaders })).json()
+  assert.equal(serving.fingerprint, fingerprint(servingSnapshot))
+  // Grants change the exported contract, but cannot update the captured runtime.
+  await owner.query(`REVOKE EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) FROM "${role}"`)
+  try {
+    assert.notEqual(fingerprint(await inspect(loginURL.toString(), ['api'])), serving.fingerprint)
+    assert.equal((await (await fetch(url + '/__gregale/schema', { headers: contractHeaders })).json()).fingerprint, serving.fingerprint)
+  } finally { await owner.query(`GRANT EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) TO "${role}"`) }
   const { verifyAuthorization } = await import(pathToFileURL(join(root, 'client/test/authorization.mjs')))
   const { notesClient, noteCursor } = await import(pathToFileURL(join(root, 'client/dist/notes.js')))
   const client = notesClient({ url, subject: userA.subject, accessToken: userA.token })

@@ -676,3 +676,20 @@ validation and cancellation handling. Omit it for this starter because its
 remote release already handles permissions. See the
 [workflow documentation](https://gregale.dev/docs/data-api#rpc-permissions-in-the-sync-workflow)
 for an example; keep credentials outside config files and command arguments.
+
+### Application token for serving-contract verification
+
+Before `gregale data-api sync`, configure an application JWT through
+`GREGALE_DATA_API_ACCESS_TOKEN` in your environment or CI secret injection. Use
+your configured identity provider; an account API key is not a valid substitute.
+The token must remain valid until sync finishes. To use a different variable,
+set `"access_token_env": "YOUR_APPLICATION_JWT"` in `data-api.json`; never put
+the token value in the config or command arguments.
+
+Sync compares the authenticated `/__gregale/schema` startup fingerprint with
+private type export before replacing `client/src/database.types.ts` or running
+type checks. A stale or unavailable serving contract stops the workflow and
+preserves existing types. It requires the current Data API runtime; older
+runtimes return 404. The fingerprint covers the generated contract, including
+RPC grant eligibility, and does not prove RLS semantics or function behavior.
+A successful JSON sync receipt includes `contract_verified: true`.

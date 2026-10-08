@@ -2,10 +2,11 @@ import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
-import { inspect } from './types.mjs'
+import { inspect, fingerprint } from './types.mjs'
 import { runtimeConfig, limits } from './config.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001) {
+  const servingFingerprint = config.fingerprint
   return http.createServer(async (req, res) => {
     const origin = req.headers.origin
     if (origin && config.origins.includes(origin)) {
@@ -19,7 +20,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       return res.end()
     }
     if (req.url === '/healthz' && req.method === 'GET') return readiness(res, readyPort)
-    if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json') return problem(res, 404, 'not_found')
+    if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
     if (req.url.startsWith('/rest/v1/')) {
       const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
       let path
@@ -32,11 +33,16 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       }
     }
     if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
+    if (req.url === '/__gregale/schema' && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
     if (!token) return problem(res, 401, 'token_required')
     let payload
     try { payload = await verify(token) } catch { return problem(res, 401, 'token_invalid') }
     if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
+    if (req.url === '/__gregale/schema') {
+      if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
+      return readiness(res, readyPort, { version: 1, fingerprint: servingFingerprint })
+    }
     try {
       // Only the binding login may become the SQL role. External role claims
       // cannot select an administrator, owner or another application's role.
@@ -53,11 +59,11 @@ function problem(res, status, code) {
   res.end(JSON.stringify({ type: 'about:blank', title: code, status, code }))
 }
 
-function readiness(res, port) {
+function readiness(res, port, contract = {}) {
   const request = http.get({ hostname: '127.0.0.1', port, path: '/ready', timeout: 2000 }, upstream => {
     upstream.resume()
     res.writeHead(upstream.statusCode === 200 ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-    res.end(JSON.stringify({ ready: upstream.statusCode === 200 }))
+    res.end(JSON.stringify({ ready: upstream.statusCode === 200, ...(upstream.statusCode === 200 ? contract : {}) }))
   })
   request.on('timeout', () => request.destroy())
   request.on('error', () => problem(res, 503, 'data_api_unavailable'))
@@ -122,7 +128,9 @@ function openAPISpec(response, res, config) {
 
 export async function main(env = process.env) {
   const config = runtimeConfig(env)
-  config.functions = (await inspect(config.connection, config.schemas)).functions
+  const snapshot = await inspect(config.connection, config.schemas)
+  config.functions = snapshot.functions
+  config.fingerprint = fingerprint(snapshot)
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.

@@ -211,10 +211,18 @@ dependencies and create the output directory before running the workflow.
 gregale data-api sync notes-data --config data-api.json --timeout 20m
 ```
 
+Configure an application JWT in `GREGALE_DATA_API_ACCESS_TOKEN` through your
+local environment or CI secret injection before sync. Its issuer, audience and
+subject must match the Data API's normal application authentication. An account
+API key is not an application JWT. The token must remain valid through the
+workflow; sync does not mint or renew it. The optional `access_token_env` config
+property selects a different environment variable name. Keep token values out
+of command arguments and workflow JSON.
+
 Sync validates the complete configuration and resolves the Data API's HTTPS
 health URL, then runs the migration command, an optional permission command, a fresh restart
 with completion and readiness checks, private type generation with an atomic
-file write, and the client check. A failed permission command prevents refresh,
+file write after serving-contract verification, and the client check. A failed permission command prevents refresh,
 type export and the client check. A failed step exits nonzero and prevents later
 steps. Invalid or truncated type output leaves the existing file intact. A
 failed client check retains the new types so you can fix the application.
@@ -241,7 +249,7 @@ to continue, or rerun a replay-safe workflow.
 
 Command output goes to stderr. `--json` writes a single success receipt to
 stdout only after the client check passes, including the app, wake ID, type
-task/deployment IDs, schema fingerprint and output path. Use sync in migration
+task/deployment IDs, schema fingerprint, `contract_verified: true` and output path. Use sync in migration
 jobs. Keep `data-api types --check` in application CI as the read-only drift
 check; it never runs the migration or refresh steps.
 
@@ -756,3 +764,35 @@ include permission setup in the migration release as the starter does. Omit the
 property when the release task already handles it. Existing configs without
 `permissions` retain their previous behavior. A permission preview exits nonzero
 when grants are missing; use `--apply` to complete grant setup.
+
+### Verify the serving contract
+
+The runtime's authenticated `GET /__gregale/schema` returns only
+`{"ready":true,"version":1,"fingerprint":"<64 lowercase hex characters>"}`.
+It uses the same application JWT verification as data requests and requires
+PostgREST readiness. Responses are not cached. `/healthz` remains an
+unauthenticated readiness probe and exposes no fingerprint or schema details.
+
+The fingerprint uses the same normalized catalog as type generation and is
+captured once at runtime startup, alongside the RPC allowlist. It is never
+recomputed from the database on a diagnostic request. Column/type, relationship
+and supported RPC metadata changes (including binding EXECUTE grants that change
+RPC eligibility) can therefore reveal a stale runtime. Function bodies, RLS
+policy semantics and default values that preserve the type contract are not
+covered by this fingerprint.
+
+After refresh and private type export, `data-api sync` requests this endpoint
+at the app's canonical HTTPS origin, falling back to its platform URL. It sends
+only the application token, never the account key, and refuses redirects. A
+missing, unauthorized, unready, malformed or mismatched response fails sync
+before writing types or running the client check. Existing types are retained;
+committed migrations and accepted remote operations remain. Deploy the current
+runtime when an older version returns 404, or coordinate schema changes and
+rerun a fresh refresh when fingerprints differ. Configs now require the
+application JWT environment input even when they omit a `permissions` step.
+
+This verifies equality of the captured startup catalog and exported type
+contract while the SQL engine is ready. Coordinate owner DDL with deployment;
+it is not a transaction spanning the catalog inspection, engine cache load and
+export, nor proof of two-user policy correctness or every serving replica.
+Live staging qualification remains required.
