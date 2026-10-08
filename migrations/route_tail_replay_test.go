@@ -92,7 +92,7 @@ func routeTailVersions(t *testing.T) []int64 {
 		"route_health_notifications": true, "route_health_automatic_abort": true,
 		"route_production_monitoring": true, "route_monitor_customers": true,
 		"route_monitor_escalation_webhook": true,
-		"route_monitor_release_baseline": true,
+		"route_monitor_release_baseline":   true,
 	}
 	var versions []int64
 	for _, migration := range migrations.LoadMigrations(t) {
