@@ -45,6 +45,13 @@ func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string,
 		return zero, ErrAppTaskInstanceNotFound
 	}
 	admission := admissionForInstance(inst)
+	if admission.RegionalRuntime != nil {
+		if err := m.checkNativeRegionalInstance(inst, *admission.RegionalRuntime); err != nil {
+			// Uncertain original ownership cannot authorize a command or generic
+			// teardown. The captured regional retirement owner retains its hold.
+			return zero, err
+		}
+	}
 	admission.Command = true
 	finish, admissionErr := m.beginRuntimeOperation(requestCtx, admission)
 	if admissionErr != nil {

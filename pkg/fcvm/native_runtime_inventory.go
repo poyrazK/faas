@@ -34,6 +34,7 @@ type NativeRuntimeObservation struct {
 	Lease                                                Lease
 	Placement                                            *runtimequota.Placement
 	OriginalResources                                    *state.RegionalRuntimeResources
+	OriginalSource                                       *runtimequota.LaunchSource `json:",omitempty"`
 	PID                                                  int
 	StartTime                                            uint64
 	VMState                                              string
@@ -201,7 +202,7 @@ func (v *JailerVMM) withNativeRuntimeOwners(ctx context.Context, records []nativ
 
 func newNativeRuntimeObservation(owner nativeLaunchRecord) NativeRuntimeObservation {
 	return NativeRuntimeObservation{Instance: owner.Lease.Instance, Generation: owner.Generation, KernelBootID: owner.KernelBootID, Lease: owner.Lease,
-		Placement: cloneRuntimePlacement(owner.RegionalRuntime), OriginalResources: cloneNativeRegionalResources(owner.RegionalResources), PID: owner.PID, StartTime: owner.StartTime,
+		Placement: cloneRuntimePlacement(owner.RegionalRuntime), OriginalResources: cloneNativeRegionalResources(owner.RegionalResources), OriginalSource: cloneNativeRegionalSource(owner.RegionalSource), PID: owner.PID, StartTime: owner.StartTime,
 		Authorized: owner.Authorized, Revoked: owner.Revoked, ExitConfirmed: owner.ExitConfirmed, ResourcesRemoved: owner.ResourcesRemoved}
 }
 
@@ -323,6 +324,7 @@ func cloneNativeRuntimeInventory(source NativeRuntimeInventory) NativeRuntimeInv
 	for i := range copy.Owners {
 		owner := &copy.Owners[i]
 		owner.Placement, owner.OriginalResources = cloneRuntimePlacement(owner.Placement), cloneNativeRegionalResources(owner.OriginalResources)
+		owner.OriginalSource = cloneNativeRegionalSource(owner.OriginalSource)
 		if owner.Machine != nil {
 			machine := *owner.Machine
 			owner.Machine = &machine

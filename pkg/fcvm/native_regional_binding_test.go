@@ -3,6 +3,7 @@
 package fcvm
 
 // adr: 629
+// adr: 659
 import (
 	"context"
 	"encoding/json"
@@ -85,7 +86,7 @@ func TestNativeRegionalRecordRejectsAmbiguousOrUnboundPlacement(t *testing.T) {
 			case "unbound-version":
 				r.Version = 1
 			case "future-version":
-				r.Version = 4
+				r.Version = 5
 			case "legacy":
 				r.Version, r.RegionalRuntime = 1, nil
 			}
@@ -234,12 +235,17 @@ func TestNativeRegionalLaunchGateOpensOnlyAfterBoundIncarnationWrite(t *testing.
 }
 
 func TestNativeRegionalLiveBoundaryKeepsPhysicalPermitAcrossFreshSeats(t *testing.T) {
-	for _, scenario := range []string{"fresh-seat", "generation", "permit", "lease", "prepared", "revoked", "unbound", "missing-local-producer"} {
+	for _, scenario := range []string{"fresh-seat", "generation", "permit", "lease", "prepared", "revoked", "unbound", "historical-source", "missing-local-producer"} {
 		t.Run(scenario, func(t *testing.T) {
 			m, v, _, req := nativeRegionalManagerFixture(t)
 			lease := leaseForSlot(req.Instance, 3)
-			lease.Plan = req.Plan
-			if err := v.prepareNativeRegionalLease(t.Context(), lease, *req.RegionalRuntime); err != nil {
+			lease.Plan, lease.MemoryMaxMiB = req.Plan, req.MemSizeMiB
+			resources, err := nativeRegionalResources(lease, req.VcpuCount)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := runtimequota.LaunchSource{Permit: req.RegionalRuntime.Permit, InstanceKey: req.Instance}
+			if err := v.prepareNativeRegionalSource(t.Context(), lease, *req.RegionalRuntime, resources, source); err != nil {
 				t.Fatal(err)
 			}
 			owner, err := v.nativeRecovery.journal.read(req.Instance)
@@ -264,6 +270,9 @@ func TestNativeRegionalLiveBoundaryKeepsPhysicalPermitAcrossFreshSeats(t *testin
 				owner.Revoked = true
 			case "unbound":
 				owner.Version, owner.RegionalRuntime = 1, nil
+				owner.RegionalResources, owner.RegionalSource = nil, nil
+			case "historical-source":
+				owner.Version, owner.RegionalSource = 3, nil
 			case "missing-local-producer":
 				v.nativeRecovery.owned = map[string]string{}
 			}
@@ -369,13 +378,17 @@ func TestNativeRegionalManagerPersistsSourceBeforeNetworkForEveryPurpose(t *test
 				req.PrimeOnly, req.RegionalRuntime.Seat = true, nil
 			case runtimequota.CapacityAppTask:
 				req.AppTaskOnly, req.RegionalRuntime.Seat = true, nil
+				req.AppTaskID, req.AppTaskLeaseToken = uuid.NewString(), req.RegionalRuntime.Permit.RunID
+				req.Instance, _ = runtimequota.AppTaskInstanceID(req.AppTaskID, req.AppTaskLeaseToken)
+				req.RegionalRuntime.Permit.InstanceID = req.Instance
 			}
 			runner := &nativeRegionalInspectionRunner{journal: v.nativeRecovery.journal, instance: req.Instance, cause: errors.New("network rejected after inspection")}
 			m.run = runner
 			if _, err := m.Wake(t.Context(), req); !errors.Is(err, runner.cause) {
 				t.Fatal("network fixture did not observe owned preparation", err)
 			}
-			if !runner.checked || runner.record.Authorized || runner.record.Version != 3 || !sameOptionalRuntimePlacement(runner.record.RegionalRuntime, req.RegionalRuntime) || runner.record.RegionalResources == nil || *runner.record.RegionalResources != (state.RegionalRuntimeResources{RAMMB: req.MemSizeMiB + 96, VCPU: req.VcpuCount, CPUMillicores: api.DefaultAppCPUMillicores}) {
+			source := runtimequota.LaunchSource{Permit: req.RegionalRuntime.Permit, InstanceKey: req.Instance, TaskID: req.AppTaskID}
+			if !runner.checked || runner.record.Authorized || runner.record.Version != 4 || !sameNativeRegionalSource(runner.record.RegionalSource, &source) || !sameOptionalRuntimePlacement(runner.record.RegionalRuntime, req.RegionalRuntime) || runner.record.RegionalResources == nil || *runner.record.RegionalResources != (state.RegionalRuntimeResources{RAMMB: req.MemSizeMiB + 96, VCPU: req.VcpuCount, CPUMillicores: api.DefaultAppCPUMillicores}) {
 				t.Fatal("network effects lacked original regional binding")
 			}
 			rows, err := host.PermitInventory()
@@ -393,7 +406,7 @@ func TestNativeRegionalWriteFailureRetainsUnattestedOwnership(t *testing.T) {
 	m, v, host, req := nativeRegionalManagerFixture(t)
 	cause := errors.New("regional prepared frame fsync uncertain")
 	v.nativeRecovery.journal.writeRecord = func(_ string, r nativeLaunchRecord) error {
-		if r.Version != 3 || !sameOptionalRuntimePlacement(r.RegionalRuntime, req.RegionalRuntime) || r.RegionalResources == nil {
+		if r.Version != 4 || r.RegionalSource == nil || !sameOptionalRuntimePlacement(r.RegionalRuntime, req.RegionalRuntime) || r.RegionalResources == nil {
 			t.Fatal("prepared write omitted original placement")
 		}
 		return cause

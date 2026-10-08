@@ -4026,6 +4026,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := validateRuntimePlacement(admissionForWake(req)); err != nil {
 		return nil, err
 	}
+	if req.RegionalRuntime != nil && m.nativeVMM() != nil {
+		if _, err := nativeRegionalWakeSource(Lease{Instance: req.Instance}, req); err != nil {
+			return nil, fmt.Errorf("manager: original native regional source: %w", err)
+		}
+	}
 	if err := m.preflightNativeRegionalRuntime(ctx, req.RegionalRuntime); err != nil {
 		return nil, fmt.Errorf("manager: preflight native regional wake: %w", err)
 	}
@@ -4155,7 +4160,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			err = errors.Join(err, m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil))
 		}
 	}()
-	if err := m.prepareNativeRuntime(ctx, lease, req.RegionalRuntime, req.VcpuCount); err != nil {
+	if err := m.prepareNativeRuntime(ctx, lease, req); err != nil {
 		return nil, fmt.Errorf("manager: prepare native wake ownership: %w", err)
 	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)

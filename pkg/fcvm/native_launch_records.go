@@ -157,8 +157,16 @@ func (j *nativeLaunchJournal) replaceWithPlacement(ctx context.Context, lease Le
 }
 
 func (j *nativeLaunchJournal) replaceWithRegionalResources(ctx context.Context, lease Lease, expectedGeneration string, requireResourcesRemoved bool, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources) (record nativeLaunchRecord, err error) {
+	return j.replaceWithRegionalSource(ctx, lease, expectedGeneration, requireResourcesRemoved, placement, resources, nil)
+}
+
+func (j *nativeLaunchJournal) replaceWithRegionalSource(ctx context.Context, lease Lease, expectedGeneration string, requireResourcesRemoved bool, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources, source *runtimequota.LaunchSource) (record nativeLaunchRecord, err error) {
 	placement = cloneRuntimePlacement(placement)
 	resources = cloneNativeRegionalResources(resources)
+	source = cloneNativeRegionalSource(source)
+	if err := validateNativeRegionalSource(lease, placement, resources, source); err != nil {
+		return record, err
+	}
 	if requireResourcesRemoved {
 		if err := validateNativeRegionalResources(lease, placement, resources); err != nil {
 			return record, err
@@ -200,12 +208,21 @@ func (j *nativeLaunchJournal) replaceWithRegionalResources(ctx context.Context, 
 			return record, errors.New("native journal: fallback cannot replace its original resources")
 		}
 		resources = cloneNativeRegionalResources(old.RegionalResources)
+		if source != nil && !sameNativeRegionalSource(source, old.RegionalSource) {
+			return record, errors.New("native journal: fallback cannot replace its original launch source")
+		}
+		source = cloneNativeRegionalSource(old.RegionalSource)
 	} else if old.RegionalRuntime != nil && placement == nil {
 		return record, errors.New("native journal: regional ownership cannot be downgraded to an unbound launch")
 	} else if old.RegionalResources != nil && resources == nil {
 		return record, errors.New("native journal: original resources cannot be downgraded to unknown")
+	} else if old.RegionalSource != nil && source == nil {
+		return record, errors.New("native journal: original launch source cannot be downgraded to unknown")
 	}
 	if err := validateNativeRegionalPlacement(lease, placement); err != nil {
+		return record, err
+	}
+	if err := validateNativeRegionalSource(lease, placement, resources, source); err != nil {
 		return record, err
 	}
 	// Replacement authorizes a new physical producer. Refuse a changed CPU
@@ -258,5 +275,8 @@ func (j *nativeLaunchJournal) replaceWithRegionalResources(ctx context.Context, 
 		}
 	}
 	record = newNativeLaunchRecord(lease, uuid.NewString(), old.KernelBootID, placement, resources)
+	if source != nil {
+		record.Version, record.RegionalSource = 4, cloneNativeRegionalSource(source)
+	}
 	return record, j.write(record)
 }

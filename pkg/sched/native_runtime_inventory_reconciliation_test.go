@@ -1,6 +1,7 @@
 package sched
 
 // adr: 649
+// adr: 659
 import (
 	"context"
 	"errors"
@@ -26,11 +27,22 @@ func nativeReconciliationFixture(t *testing.T) (state.RegionalRuntimeInventoryEn
 	group := fcvm.NativeRuntimeCgroup{Path: fcvm.ParentCgroupFor(source.Permit.Grant.Policy.Plan) + "/" + source.InstanceKey, Device: 1, Inode: 2, MountID: 3, MemoryMaxBytes: &mem, CPUQuotaUS: &cpu, CPUPeriodUS: 100000, PIDs: []int{321}, Populated: true}
 	owner := fcvm.NativeRuntimeObservation{Instance: source.InstanceKey, Generation: uuid.NewString(), KernelBootID: boot, Lease: fcvm.Lease{Instance: source.InstanceKey, Plan: source.Permit.Grant.Policy.Plan, UID: 20000}, Placement: &runtimequota.Placement{Permit: source.Permit}, OriginalResources: &resources, PID: 321, StartTime: 99, VMState: "Running", Machine: &fcvm.Machine{MemSizeMib: resources.RAMMB, VcpuCount: resources.VCPU}, Cgroup: &group, Authorized: true}
 	owner.Executable = &fcvm.NativeRuntimeExecutable{Device: 1, Inode: 7, Bytes: 32, SHA256: strings.Repeat("ab", 32)}
+	original := source
+	owner.OriginalSource = &original
 	return entry, fcvm.NativeRuntimeInventorySample{Version: 1, Host: runtimequota.HostEpoch{NodeID: source.Permit.NodeID, HostEpochID: source.Permit.HostEpochID}, Challenge: uuid.NewString(), Inventory: fcvm.NativeRuntimeInventory{KernelBootID: boot, Owners: []fcvm.NativeRuntimeObservation{owner}, Cgroups: []fcvm.NativeRuntimeCgroup{group}, ManagedUIDTasks: []fcvm.NativeRuntimeTask{{PID: 321, UID: 20000, StartTime: 99}}}}
 }
 
 func TestNativeRegionalInventoryMatchesOnlyOriginalObservedHold(t *testing.T) {
 	cases := map[string]func(*state.RegionalRuntimeInventoryEntry, *fcvm.NativeRuntimeInventorySample){
+		"historical-native-source": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
+			s.Inventory.Owners[0].OriginalSource = nil
+		},
+		"substituted-native-source": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
+			s.Inventory.Owners[0].OriginalSource.Permit.RunID = uuid.NewString()
+		},
+		"substituted-native-task": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
+			s.Inventory.Owners[0].OriginalSource.TaskID = uuid.NewString()
+		},
 		// adr: 654 — even a valid native VM cannot absorb an orphan helper family.
 		"orphan-helper-family": func(_ *state.RegionalRuntimeInventoryEntry, s *fcvm.NativeRuntimeInventorySample) {
 			s.Inventory.HelperTasks = []fcvm.NativeRuntimeHelperTask{{OwnerGeneration: s.Inventory.Owners[0].Generation, PID: 999, StartTime: 100, LeaderPID: 998, LeaderStartTime: 99, ParentPID: 1, SessionID: 998, Relation: "original_session_candidate"}}
@@ -126,6 +138,28 @@ func TestNativeRegionalInventoryMatchesOnlyOriginalObservedHold(t *testing.T) {
 	}
 }
 
+func TestNativeRegionalTaskInventoryRequiresSameCapturedSource(t *testing.T) {
+	entry, sample := nativeReconciliationFixture(t)
+	source := *entry.Source
+	source.TaskID, source.Permit.Kind = uuid.NewString(), runtimequota.CapacityAppTask
+	source.Permit.InstanceID, _ = runtimequota.AppTaskInstanceID(source.TaskID, source.Permit.RunID)
+	source.InstanceKey = source.Permit.InstanceID
+	entry.Source, entry.Receipt.Permit = &source, source.Permit
+	owner := &sample.Inventory.Owners[0]
+	original := source
+	owner.OriginalSource = &original
+	owner.Instance, owner.Lease.Instance, owner.Placement.Permit = source.InstanceKey, source.InstanceKey, source.Permit
+	owner.Cgroup.Path = fcvm.ParentCgroupFor(source.Permit.Grant.Policy.Plan) + "/" + source.InstanceKey
+	sample.Inventory.Cgroups[0].Path = owner.Cgroup.Path
+	if reason := regionalRuntimeObservationIssue(entry, sample); reason != "" {
+		t.Fatal("original native task did not match", reason)
+	}
+	owner.OriginalSource.TaskID = uuid.NewString()
+	if reason := regionalRuntimeObservationIssue(entry, sample); reason == "" {
+		t.Fatal("native inventory substituted the original task")
+	}
+}
+
 type inventoryReadingVMM struct {
 	*fakeVMM
 	sample fcvm.NativeRuntimeInventorySample
@@ -150,6 +184,8 @@ func TestNativeRegionalInventoryPageRetainsHoldsAndAdvancesOnUncertainty(t *test
 			o := &sample.Inventory.Owners[0]
 			o.Instance, o.Lease.Instance = source.InstanceKey, source.InstanceKey
 			o.Placement.Permit = source.Permit
+			original := source
+			o.OriginalSource = &original
 			o.Cgroup.Path = fcvm.ParentCgroupFor(source.Permit.Grant.Policy.Plan) + "/" + source.InstanceKey
 			sample.Inventory.Cgroups[0].Path = o.Cgroup.Path
 			sample.Host = runtimequota.HostEpoch{NodeID: source.Permit.NodeID, HostEpochID: source.Permit.HostEpochID}

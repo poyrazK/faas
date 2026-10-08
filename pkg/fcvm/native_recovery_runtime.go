@@ -238,6 +238,10 @@ func (v *JailerVMM) prepareNativeLeaseWithPlacement(ctx context.Context, lease L
 }
 
 func (v *JailerVMM) prepareNativeLeaseWithRegionalResources(ctx context.Context, lease Lease, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources) error {
+	return v.prepareNativeLeaseWithRegionalSource(ctx, lease, placement, resources, nil)
+}
+
+func (v *JailerVMM) prepareNativeLeaseWithRegionalSource(ctx context.Context, lease Lease, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources, source *runtimequota.LaunchSource) error {
 	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
 	if effectErr != nil {
 		return effectErr
@@ -245,6 +249,10 @@ func (v *JailerVMM) prepareNativeLeaseWithRegionalResources(ctx context.Context,
 	defer finishNativeEffects()
 	placement = cloneRuntimePlacement(placement)
 	resources = cloneNativeRegionalResources(resources)
+	source = cloneNativeRegionalSource(source)
+	if err := validateNativeRegionalSource(lease, placement, resources, source); err != nil {
+		return err
+	}
 	if err := validateNativeRegionalPlacement(lease, placement); err != nil {
 		return err
 	}
@@ -272,12 +280,12 @@ func (v *JailerVMM) prepareNativeLeaseWithRegionalResources(ctx context.Context,
 	}
 	record, err := r.journal.read(lease.Instance)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := r.journal.prepareWithRegionalResources(ctx, lease, placement, resources); err != nil {
+		if err := r.journal.prepareWithRegionalSource(ctx, lease, placement, resources, source); err != nil {
 			return err
 		}
 		record, err = r.journal.read(lease.Instance)
 	} else if err == nil {
-		record, err = r.journal.replaceWithRegionalResources(ctx, lease, record.Generation, true, placement, resources)
+		record, err = r.journal.replaceWithRegionalSource(ctx, lease, record.Generation, true, placement, resources, source)
 	}
 	if err != nil {
 		return err

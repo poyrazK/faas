@@ -128,6 +128,9 @@ func regionalRuntimeObservationIssue(row state.RegionalRuntimeInventoryEntry, sa
 	if owner == nil {
 		return "original owner was not observed; absence requires native retirement evidence"
 	}
+	if owner.OriginalSource == nil || *owner.OriginalSource != *row.Source {
+		return "original native launch source differs from the issued hold"
+	}
 	for _, helper := range sample.Inventory.HelperTasks {
 		if helper.Instance == owner.Instance || helper.OwnerGeneration == owner.Generation {
 			return "original helper producer remains unresolved"

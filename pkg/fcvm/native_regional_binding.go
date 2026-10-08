@@ -82,7 +82,7 @@ func sameOptionalRuntimePlacement(a, b *runtimequota.Placement) bool {
 }
 
 func sameNativeRegionalBinding(a, b nativeLaunchRecord) bool {
-	return a.Version == b.Version && sameOptionalRuntimePlacement(a.RegionalRuntime, b.RegionalRuntime) && sameNativeRegionalResources(a.RegionalResources, b.RegionalResources) && (a.RegionalRuntime == nil || sameNativePhysicalLease(a.Lease, b.Lease))
+	return a.Version == b.Version && sameOptionalRuntimePlacement(a.RegionalRuntime, b.RegionalRuntime) && sameNativeRegionalResources(a.RegionalResources, b.RegionalResources) && sameNativeRegionalSource(a.RegionalSource, b.RegionalSource) && (a.RegionalRuntime == nil || sameNativePhysicalLease(a.Lease, b.Lease))
 }
 
 func validateNativeRegionalPlacement(lease Lease, p *runtimequota.Placement) error {
@@ -99,7 +99,7 @@ func validateNativeRegionalPlacement(lease Lease, p *runtimequota.Placement) err
 }
 
 type nativeRegionalLeaseVMM interface {
-	prepareNativeRegionalResources(context.Context, Lease, runtimequota.Placement, state.RegionalRuntimeResources) error
+	prepareNativeRegionalSource(context.Context, Lease, runtimequota.Placement, state.RegionalRuntimeResources, runtimequota.LaunchSource) error
 }
 
 type nativeRegionalLaunchPreflighter interface {
@@ -140,27 +140,25 @@ func (v *JailerVMM) preflightNativeRegionalLaunch(ctx context.Context) error {
 
 // Production regional launches require native ownership even when the old
 // lifecycle is configured. Portable VMMs retain their separate test surface.
-func (m *Manager) prepareNativeRuntime(ctx context.Context, lease Lease, p *runtimequota.Placement, vcpus int) error {
+func (m *Manager) prepareNativeRuntime(ctx context.Context, lease Lease, req WakeRequest) error {
+	p := req.RegionalRuntime
 	if p != nil {
 		if v, ok := m.vmm.(nativeRegionalLeaseVMM); ok {
-			resources, err := nativeRegionalResources(lease, vcpus)
+			source, err := nativeRegionalWakeSource(lease, req)
 			if err != nil {
 				return err
 			}
-			return v.prepareNativeRegionalResources(ctx, lease, p.Clone(), resources)
+			resources, err := nativeRegionalResources(lease, req.VcpuCount)
+			if err != nil {
+				return err
+			}
+			return v.prepareNativeRegionalSource(ctx, lease, p.Clone(), resources, source)
 		}
 		if m.nativeVMM() != nil {
 			return runtimequotahost.ErrStorage
 		}
 	}
 	return m.prepareNativeLease(ctx, lease)
-}
-
-func (v *JailerVMM) prepareNativeRegionalResources(ctx context.Context, lease Lease, p runtimequota.Placement, resources state.RegionalRuntimeResources) error {
-	if v.nativeRecovery == nil {
-		return runtimequotahost.ErrStorage
-	}
-	return v.prepareNativeLeaseWithRegionalResources(ctx, lease, &p, &resources)
 }
 
 func (v *JailerVMM) prepareNativeRegionalLease(ctx context.Context, lease Lease, p runtimequota.Placement) error {
@@ -177,12 +175,16 @@ func (m *Manager) checkNativeRegionalInstance(inst *Instance, p runtimequota.Pla
 	if v == nil {
 		return nil
 	}
+	source, err := nativeRegionalWakeSource(inst.Lease, WakeRequest{Instance: inst.Lease.Instance, RegionalRuntime: &p, AppTaskID: inst.AppTaskID, AppTaskLeaseToken: inst.AppTaskLeaseToken, AppTaskOnly: inst.AppTaskOnly})
+	if err != nil {
+		return err
+	}
 	r := v.nativeRecoveryRuntime()
 	owner, err := r.journal.read(inst.Lease.Instance)
 	if err != nil {
 		return err
 	}
-	if inst.nativeGeneration == "" || owner.Generation != inst.nativeGeneration || r.generation(inst.Lease.Instance) != owner.Generation || owner.RegionalRuntime == nil || owner.RegionalRuntime.Permit != p.Permit || !sameNativePhysicalLease(owner.Lease, inst.Lease) || !liveNativeSnapshotOwner(owner) {
+	if inst.nativeGeneration == "" || owner.Generation != inst.nativeGeneration || r.generation(inst.Lease.Instance) != owner.Generation || owner.RegionalRuntime == nil || owner.RegionalRuntime.Permit != p.Permit || !sameNativeRegionalSource(owner.RegionalSource, &source) || !sameNativePhysicalLease(owner.Lease, inst.Lease) || !liveNativeSnapshotOwner(owner) {
 		return runtimequotahost.ErrBinding
 	}
 	return nil

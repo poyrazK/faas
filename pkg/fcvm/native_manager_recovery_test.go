@@ -2,6 +2,7 @@
 
 // adr: 568 — native ownership and uncertain retirement must remain fenced.
 // adr: 639
+// adr: 659
 package fcvm
 
 import (
@@ -107,8 +108,8 @@ func (v *recoveryVMMFixture) nativeRecoveryLeases(ctx context.Context) ([]Lease,
 func (v *recoveryVMMFixture) prepareNativeLease(ctx context.Context, l Lease) error {
 	return v.jailer.prepareNativeLease(ctx, l)
 }
-func (v *recoveryVMMFixture) prepareNativeRegionalResources(ctx context.Context, l Lease, p runtimequota.Placement, resources state.RegionalRuntimeResources) error {
-	return v.jailer.prepareNativeRegionalResources(ctx, l, p, resources)
+func (v *recoveryVMMFixture) prepareNativeRegionalSource(ctx context.Context, l Lease, p runtimequota.Placement, resources state.RegionalRuntimeResources, source runtimequota.LaunchSource) error {
+	return v.jailer.prepareNativeRegionalSource(ctx, l, p, resources, source)
 }
 func (v *recoveryVMMFixture) preflightNativeRegionalLaunch(ctx context.Context) error {
 	return v.jailer.preflightNativeRegionalLaunch(ctx)

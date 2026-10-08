@@ -3,6 +3,7 @@
 package fcvm
 
 // adr: 637
+// adr: 659
 import (
 	"encoding/json"
 	"errors"
@@ -230,7 +231,8 @@ func TestNativeRegionalResourceProducerRejectsMismatchBeforeMutation(t *testing.
 			case "placement":
 				req.RegionalRuntime.Permit.InstanceID = uuid.NewString()
 			}
-			if err := v.prepareNativeRegionalResources(t.Context(), lease, *req.RegionalRuntime, resources); !errors.Is(err, runtimequotahost.ErrBinding) {
+			source := runtimequota.LaunchSource{Permit: req.RegionalRuntime.Permit, InstanceKey: req.Instance}
+			if err := v.prepareNativeRegionalSource(t.Context(), lease, *req.RegionalRuntime, resources, source); !errors.Is(err, runtimequotahost.ErrBinding) {
 				t.Fatal("invalid resources reached producer", err)
 			}
 			if _, err := os.Stat(v.nativeRecovery.journal.path(lease.Instance)); !errors.Is(err, os.ErrNotExist) || v.nativeRecovery.generation(lease.Instance) != "" {

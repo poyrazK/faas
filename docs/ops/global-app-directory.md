@@ -566,3 +566,15 @@ specific target, changed directory intent aborts the projection, and old output
 expires within its bounded lease. No failure releases quota holds or confirms
 native absence. Global UUID app hosts continue to use all selected healthy
 eligible regions.
+
+### Original native launch source (ADR-659)
+
+New regional native frames retain the exact cell launch source before host
+effects, including the task and captured claim for task-only execution. Native
+inventory matches require the same original source on both sides. Earlier
+version-1..3 frames remain readable and charged; current rows cannot fill their
+missing provenance. Restore fallback keeps its original source and fully retired
+replacement generations cannot downgrade it. Older binaries reject version-4
+frames, so rollback requires a compatible release or a safely drained ownership
+journal. This binding does not activate regional admission, merge startup charges
+or establish native KVM acceptance.
