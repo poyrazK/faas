@@ -63,6 +63,13 @@ func TestForkMetal(t *testing.T) {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, "hello")
+	// Pro defaults to bearer public auth (ADR-079); the anonymous probes
+	// below exercise routing, not edge auth.
+	if body, code := doReq(t, h, key, http.MethodPatch, "/v1/apps/hello", map[string]any{
+		"require_authn": false, "public_auth": map[string]any{"mode": "open"},
+	}); code != http.StatusOK {
+		t.Fatalf("open public auth: %d %s", code, body)
+	}
 	raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/hello/deployments", api.CreateDeploymentRequest{Image: ref})
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)
