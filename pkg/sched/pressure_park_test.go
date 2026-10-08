@@ -163,3 +163,76 @@ func TestGatewayWakeParksAnIdleInstanceWhenTheNodeIsFull(t *testing.T) {
 		t.Fatalf("idle instance state = %q (%v), want parked", row.State, err)
 	}
 }
+
+// production-us hunt #6 (H5-59): a new rollout moved the previous deployment
+// of a traffic split to 0%, but its warm instance kept a slot. With the
+// serving instance it filled max_concurrency plus the rollout grant, so every
+// smoke wake of the candidate was refused and the deploy failed. The refused
+// admission now parks the idle zero-traffic instance and admits.
+func TestAdmissionAtCapParksAnIdleZeroTrafficSibling(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, serving := seedApp(t, store, api.PlanScale, 256, 1)
+	staged, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:def", Status: state.DeployLive,
+		TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staged, err = store.DeploymentByID(ctx, staged.ID); err != nil || staged.TrafficPercent != 0 {
+		t.Fatalf("staged deployment traffic = %d (%v), want 0", staged.TrafficPercent, err)
+	}
+	candidate, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:123", Status: state.DeploySnapshotting,
+		TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	servingIns, err := e.AdmitInstance(ctx, app.ID, serving.ID, "", TriggerGateway)
+	if err != nil || servingIns.InstanceID == "" {
+		t.Fatalf("admit serving: %+v %v", servingIns, err)
+	}
+	stagedIns, err := e.AdmitInstance(ctx, app.ID, staged.ID, "", TriggerGateway)
+	if err != nil || stagedIns.InstanceID == "" {
+		t.Fatalf("admit staged (rollout grant): %+v %v", stagedIns, err)
+	}
+	// Both instances are idle; the clock moves past the park guards.
+	e.now = func() time.Time { return time.Now().Add(10 * time.Minute) }
+
+	res, err := e.AdmitInstance(ctx, app.ID, candidate.ID, "", TriggerDeploymentSmoke)
+	if err != nil || res.AtCapacity || res.InstanceID == "" {
+		t.Fatalf("candidate admission = %+v, %v; want admitted after parking the zero-traffic instance", res, err)
+	}
+	if row, err := store.InstanceByID(ctx, stagedIns.InstanceID); err != nil || row.State != string(state.StateParked) {
+		t.Fatalf("zero-traffic instance state = %q (%v), want parked", row.State, err)
+	}
+	if row, err := store.InstanceByID(ctx, servingIns.InstanceID); err != nil || row.State != string(state.StateRunning) {
+		t.Fatalf("serving instance state = %q (%v), want running", row.State, err)
+	}
+}
+
+// The serving deployment, the requested deployment and busy instances keep
+// their slots: a refusal with nothing idle at 0% stays a refusal.
+func TestParkZeroTrafficSiblingKeepsServingAndBusyInstances(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, serving := seedApp(t, store, api.PlanScale, 256, 2)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	for range 2 {
+		if res, err := e.AdmitInstance(ctx, app.ID, serving.ID, "", TriggerGateway); err != nil || res.InstanceID == "" {
+			t.Fatalf("admit serving: %+v %v", res, err)
+		}
+	}
+	e.now = func() time.Time { return time.Now().Add(10 * time.Minute) }
+	if e.parkZeroTrafficSibling(ctx, app.ID, "") {
+		t.Fatal("parked an instance of the serving deployment")
+	}
+	if vmm.snapshots != 0 {
+		t.Fatalf("snapshots = %d, want none", vmm.snapshots)
+	}
+}
