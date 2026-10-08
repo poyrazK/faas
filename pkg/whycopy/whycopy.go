@@ -305,6 +305,8 @@ func startupFailureGuidance(detail string) (why, fix string) {
 			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", "• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• increase `startup_timeout_s` only after confirming healthy startup needs more time"
 		case "startup_phase=handler_healthcheck":
 			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", "• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• increase `startup_timeout_s` only when healthy initialization needs more time"
+		case "startup_phase=image_healthcheck":
+			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", "• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace; increase `startup_timeout_s` only when healthy initialization needs more time"
 
 		}
 	}

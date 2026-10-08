@@ -8,6 +8,7 @@ on:
       - 'pkg/api/mcp_policy*'
       - 'cmd/apid/handlers_mcp_policy*'
       - 'scripts/ci/mcp-qualification-check.py'
+      - 'scripts/ops/mcp-qualification.py'
       - 'pkg/secretscan/**'
       - 'cmd/apid/secretscan*.go'
       - 'cmd/apid/handlers_templates*.go'

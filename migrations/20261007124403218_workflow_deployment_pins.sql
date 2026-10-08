@@ -1,5 +1,5 @@
 -- +goose Up
--- ADR-648: workflow-private code retention never extends public revision TTLs.
+-- ADR-727: workflow-private code retention never extends public revision TTLs.
 ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS deployment_id uuid;
 -- +goose StatementBegin
 DO $$ BEGIN

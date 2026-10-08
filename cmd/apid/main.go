@@ -736,6 +736,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedRealtimeHistoryReaper(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
 		go srv.runManagedExecutionWorkflowWorker(ctx)
+		go srv.runDurableEntityAlarms(ctx)
+		go srv.runDurableEntityMaintenance(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -1447,6 +1449,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
+	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
+		return fmt.Errorf("apid durable entities configuration: %w", err)
+	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
@@ -2218,9 +2223,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance covers both IncrementRequestTelemetry and WriteSpansSummary
 	// paths so a customer's plan cap is enforced against one bucket pool.
 	sharedLimiter := peraccount.NewLimiter()
+	// H5-34: one gate across both telemetry listeners bounds their share of
+	// apid's database pool.
+	ingest := newIngestGate(api.TelemetryIngestDBConcurrency)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false")
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -2241,7 +2249,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true, ingest)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2327,7 +2335,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
 		}
 		var listenErr error
-		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false)
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false, ingest)
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
@@ -2835,7 +2843,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool, ingest ingestGate) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -2854,7 +2862,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 		wire.ServerCredsOrEmpty(tlsCfg),
 		wire.TraceServerOptions()...,
 	)...)
-	registerAppErrorsReceiver(srv, store, ops, appErrorsEnabled)
+	registerAppErrorsReceiver(srv, store, ops, appErrorsEnabled, ingest)
 	// The private history reader shares this authenticated listener for
 	// compute-only realtimed nodes in split-box deployments.
 	if !isUnixSocketPath(target) {
@@ -2865,7 +2873,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// request_telemetry.sock server below, preserving the separate DAC
 	// boundaries for the legacy Unix sockets.
 	if !isUnixSocketPath(target) {
-		registerRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false")
+		registerRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest)
 	}
 	// gatewayd-internal's platform-owned spans use the same private mTLS
 	// listener in split-box deployments. The dedicated Unix socket remains the
@@ -2888,13 +2896,13 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool, ingest ingestGate) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	registerRequestTelemetryReceiver(srv, store, ops, limiter, enabled)
+	registerRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest)
 	// Single-box realtimed reaches apid through this DAC-protected socket.
 	registerRealtimeHistoryReceiver(srv, store)
 	return srv, lis, nil

@@ -24,7 +24,14 @@ type startupDeploymentLister interface {
 // readiness gate behind remote storage. The verifier is already attached to
 // the engine before this starts, so every wake remains fail-closed while the
 // best-effort cache warm runs in the background.
-func startLayerAttestationWarm(ctx context.Context, lister startupDeploymentLister, verifier startupLayerVerifier, log *slog.Logger) <-chan struct{} {
+//
+// owns limits the warm to apps this schedd wakes. Verifying a layer reads and
+// hashes the whole multi-GB image: on production-us the owner-less
+// control-plane schedd verified all 46 live layers after every restart, held
+// both of the host's CPUs for 515 s and starved meterd's start past its
+// systemd timeout, which rolled the rc.246 release back (hunt #5, H5-52).
+// A nil owns warms every live layer (single-box).
+func startLayerAttestationWarm(ctx context.Context, lister startupDeploymentLister, verifier startupLayerVerifier, owns func(appID string) bool, log *slog.Logger) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -34,6 +41,15 @@ func startLayerAttestationWarm(ctx context.Context, lister startupDeploymentList
 				log.Warn("startup: list layer attestations for warm", "err", err)
 			}
 			return
+		}
+		if owns != nil {
+			kept := deployments[:0]
+			for _, dep := range deployments {
+				if owns(dep.AppID) {
+					kept = append(kept, dep)
+				}
+			}
+			deployments = kept
 		}
 		if err := prepareLayerAttestations(ctx, deployments, verifier, log); err != nil && ctx.Err() == nil {
 			log.Warn("startup: layer attestation warm failed", "err", err)

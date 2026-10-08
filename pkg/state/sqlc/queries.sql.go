@@ -5579,6 +5579,28 @@ func (q *Queries) CompleteWorkflowJoin(ctx context.Context, db DBTX, arg Complet
 	return err
 }
 
+const consumeCustomerOperationWorkflowGuest = `-- name: ConsumeCustomerOperationWorkflowGuest :execrows
+UPDATE customer_operation_workflow_guest_claims SET dispatch_started_at=now()
+WHERE workflow_run_id=$1::uuid AND step_name=$2::text
+ AND step_attempt=$3::integer AND dispatch_started_at IS NULL
+`
+
+type ConsumeCustomerOperationWorkflowGuestParams struct {
+	RunID       pgtype.UUID
+	StepName    string
+	StepAttempt int32
+}
+
+// The parent run lock serializes this consumption with guest reporting and
+// coordinator transitions. A missing HTTP response never releases delivery.
+func (q *Queries) ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg ConsumeCustomerOperationWorkflowGuestParams) (int64, error) {
+	result, err := db.Exec(ctx, consumeCustomerOperationWorkflowGuest, arg.RunID, arg.StepName, arg.StepAttempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const copyProjectEnvironmentSecretReferences = `-- name: CopyProjectEnvironmentSecretReferences :one
 WITH copied AS (
  INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
@@ -7988,8 +8010,39 @@ func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, no
 	return column_1, err
 }
 
+const customerOperationWorkflowDeliveryDeployment = `-- name: CustomerOperationWorkflowDeliveryDeployment :one
+SELECT d.id,d.app_id,coalesce(d.override_port,0)::integer AS port,
+ coalesce(d.commit_sha,'')::text AS commit_sha,coalesce(d.tag,'')::text AS tag,d.created_at,d.image_digest
+FROM deployments d WHERE d.id=$1::uuid
+`
+
+type CustomerOperationWorkflowDeliveryDeploymentRow struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	Port        int32
+	CommitSha   string
+	Tag         string
+	CreatedAt   pgtype.Timestamptz
+	ImageDigest string
+}
+
+func (q *Queries) CustomerOperationWorkflowDeliveryDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (CustomerOperationWorkflowDeliveryDeploymentRow, error) {
+	row := db.QueryRow(ctx, customerOperationWorkflowDeliveryDeployment, deploymentID)
+	var i CustomerOperationWorkflowDeliveryDeploymentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Port,
+		&i.CommitSha,
+		&i.Tag,
+		&i.CreatedAt,
+		&i.ImageDigest,
+	)
+	return i, err
+}
+
 const customerOperationWorkflowGuestInstance = `-- name: CustomerOperationWorkflowGuestInstance :one
-SELECT i.id,i.app_id,i.deployment_id,i.state FROM instances i
+SELECT i.id,i.app_id,i.deployment_id,i.state,i.node_id,i.wake_id FROM instances i
 JOIN apps a ON a.id=i.app_id AND a.status<>'deleted'
 JOIN accounts c ON c.id=a.account_id AND c.status IN ('active','past_due') AND c.abuse_hold_at IS NULL
 WHERE i.id=$1::uuid AND a.account_id=$2::uuid
@@ -8005,6 +8058,8 @@ type CustomerOperationWorkflowGuestInstanceRow struct {
 	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
 	State        string
+	NodeID       pgtype.UUID
+	WakeID       pgtype.UUID
 }
 
 func (q *Queries) CustomerOperationWorkflowGuestInstance(ctx context.Context, db DBTX, arg CustomerOperationWorkflowGuestInstanceParams) (CustomerOperationWorkflowGuestInstanceRow, error) {
@@ -8015,6 +8070,8 @@ func (q *Queries) CustomerOperationWorkflowGuestInstance(ctx context.Context, db
 		&i.AppID,
 		&i.DeploymentID,
 		&i.State,
+		&i.NodeID,
+		&i.WakeID,
 	)
 	return i, err
 }
@@ -8098,6 +8155,42 @@ type DecrementInstanceTailCountParams struct {
 func (q *Queries) DecrementInstanceTailCount(ctx context.Context, db DBTX, arg DecrementInstanceTailCountParams) error {
 	_, err := db.Exec(ctx, decrementInstanceTailCount, arg.ID, arg.TailCount)
 	return err
+}
+
+const deferNotificationClaim = `-- name: DeferNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = $3::bigint AND state = 'processing'
+      AND claimed_by = $4::text AND attempts > 0
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET state = 'pending', attempts = o.attempts - 1,
+    available_at = clock_timestamp() + $1::bigint * interval '1 millisecond',
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL,
+    last_error = $2::text
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp()
+`
+
+type DeferNotificationClaimParams struct {
+	DelayMilliseconds int64
+	Message           string
+	ID                int64
+	ClaimToken        string
+}
+
+func (q *Queries) DeferNotificationClaim(ctx context.Context, db DBTX, arg DeferNotificationClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, deferNotificationClaim,
+		arg.DelayMilliseconds,
+		arg.Message,
+		arg.ID,
+		arg.ClaimToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deferRouteMonitor = `-- name: DeferRouteMonitor :exec
@@ -14363,7 +14456,7 @@ func (q *Queries) GetCustomerOperationWorkflowCustody(ctx context.Context, db DB
 }
 
 const getCustomerOperationWorkflowGuest = `-- name: GetCustomerOperationWorkflowGuest :one
-SELECT workflow_run_id, step_name, step_attempt, operation_id, generation, execution_kind, coordinator_attempt, instance_id, capability_digest, deadline_at, bound_at FROM customer_operation_workflow_guest_claims
+SELECT workflow_run_id, step_name, step_attempt, operation_id, generation, execution_kind, coordinator_attempt, instance_id, capability_digest, deadline_at, bound_at, dispatch_started_at FROM customer_operation_workflow_guest_claims
 WHERE workflow_run_id=$1::uuid AND step_name=$2::text AND step_attempt=$3::integer
 `
 
@@ -14390,6 +14483,7 @@ func (q *Queries) GetCustomerOperationWorkflowGuest(ctx context.Context, db DBTX
 		&i.CapabilityDigest,
 		&i.DeadlineAt,
 		&i.BoundAt,
+		&i.DispatchStartedAt,
 	)
 	return i, err
 }
@@ -15902,7 +15996,7 @@ type GetWorkflowAutomationQueueHealthRow struct {
 	WorkflowCapacity    int64
 }
 
-// ADR-650: live diagnostics share the health transaction's observation time.
+// ADR-730: live diagnostics share the health transaction's observation time.
 // Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
 func (q *Queries) GetWorkflowAutomationQueueHealth(ctx context.Context, db DBTX, arg GetWorkflowAutomationQueueHealthParams) (GetWorkflowAutomationQueueHealthRow, error) {
 	row := db.QueryRow(ctx, getWorkflowAutomationQueueHealth,
@@ -16206,6 +16300,27 @@ func (q *Queries) HasManagedPostgresReconciliationIdentity(ctx context.Context, 
 	var claimed pgtype.Bool
 	err := row.Scan(&claimed)
 	return claimed, err
+}
+
+const hasNewerDeploymentRevision = `-- name: HasNewerDeploymentRevision :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments
+    WHERE app_id = $1::uuid AND scope = $2::text
+      AND revision > $3::bigint
+)
+`
+
+type HasNewerDeploymentRevisionParams struct {
+	AppID    pgtype.UUID
+	Scope    string
+	Revision int64
+}
+
+func (q *Queries) HasNewerDeploymentRevision(ctx context.Context, db DBTX, arg HasNewerDeploymentRevisionParams) (bool, error) {
+	row := db.QueryRow(ctx, hasNewerDeploymentRevision, arg.AppID, arg.Scope, arg.Revision)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const hasPendingEnvironmentGitOpsEffects = `-- name: HasPendingEnvironmentGitOpsEffects :one
@@ -58224,6 +58339,32 @@ func (q *Queries) SetDeploymentFailed(ctx context.Context, db DBTX, arg SetDeplo
 	return i, err
 }
 
+const setDeploymentRuntimeProfile = `-- name: SetDeploymentRuntimeProfile :execrows
+UPDATE deployments
+SET inferred_profile = ($1::jsonb - 'image_command' - 'image_healthcheck') ||
+    CASE WHEN inferred_profile ? 'image_command'
+         THEN jsonb_build_object('image_command', inferred_profile -> 'image_command')
+         ELSE '{}'::jsonb END ||
+    CASE WHEN inferred_profile ? 'image_healthcheck'
+         THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
+         ELSE '{}'::jsonb END
+WHERE id = $2::uuid AND kind = 'image'
+  AND status IN ('pending', 'building', 'imaging')
+`
+
+type SetDeploymentRuntimeProfileParams struct {
+	Profile      []byte
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) SetDeploymentRuntimeProfile(ctx context.Context, db DBTX, arg SetDeploymentRuntimeProfileParams) (int64, error) {
+	result, err := db.Exec(ctx, setDeploymentRuntimeProfile, arg.Profile, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setDeploymentSecretReloadSignal = `-- name: SetDeploymentSecretReloadSignal :execrows
 UPDATE deployments
    SET secret_reload_signal = $1::text
@@ -61282,7 +61423,7 @@ WITH owned_apps AS (
  SELECT id FROM apps WHERE account_id = $3::uuid
  AND ($4::uuid IS NULL OR id = $4::uuid)
 ), due_runs AS (
- -- Same wake/lease eligibility as automation queue health (ADR-650/643).
+ -- Same wake/lease eligibility as automation queue health (ADR-730/643).
  SELECT r.created_at,CASE WHEN r.status='running'
   THEN coalesce(r.lease_until,r.updated_at+($5::bigint*interval '1 millisecond'))
   ELSE r.scheduled_for END AS due_at

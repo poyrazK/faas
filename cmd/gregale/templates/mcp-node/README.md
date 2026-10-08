@@ -269,6 +269,19 @@ credentials. It needs no owner key and never migrates schema or claims tasks.
 Worker-only metrics still require at least one worker replica. Alert on the
 payload-free `mcp_task_metrics_publish_failed` log event.
 
+Configure the dedicated worker's task-backlog scaler after deploying the worker:
+
+```sh
+gregale mcp tasks setup --app mcp-worker
+gregale mcp tasks setup --app mcp-worker --min 0 --apply
+gregale mcp tasks status --app mcp-worker
+```
+
+The first command previews the policy. Apply `--min 0` only after the separate
+observer is running; the CLI does not create the observer or provision its
+database and metrics credentials. `status` shows whether the worker's task
+metrics are present and fresh.
+
 For an additional gateway JWT/scope gate, run `gregale mcp policy --path . --name
 my-mcp` after configuring external OAuth. This separately updates the app-wide
 JWT edge rule. The provider retains login and token issuance; keep application

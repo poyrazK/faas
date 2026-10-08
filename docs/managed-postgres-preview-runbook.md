@@ -55,11 +55,13 @@ branch identity, with exact source and timestamp validation before adoption
 or cleanup. Fractional timestamps that Neon cannot report exactly remain
 unqualified; timestamp tolerance is not a lineage proof.
 
-Live PostgreSQL 18 tests on 2026-10-06 also observed a whole-second restore
-request whose ready branch reported the earlier WAL commit's timestamp. This
-still blocks restore qualification: waiting for metadata or rounding the test
-point does not establish a verified timestamp-to-LSN mapping. Snapshot creation
-acknowledgements can omit both timestamp and expiry while work is pending; read
+Live PostgreSQL 18 tests on 2026-10-06 observed a whole-second restore
+request whose ready branch reported the earlier WAL commit's timestamp.
+ADR-677 adds independent historical-source WAL verification for that case;
+[the recovery evidence](ops/evidence/20261007-managed-postgres-recovery/REPORT.md)
+records normal, restarted, and lost-response recovery. Waiting for metadata or
+rounding the test point still cannot establish a timestamp-to-LSN mapping.
+Snapshot creation acknowledgements can omit both timestamp and expiry; read
 the accepted snapshot until its complete metadata is available before adopting
 it or changing retention. Missing or conflicting final metadata remains a
 blocker. These diagnostics do not authorize enabling the production service.
@@ -234,8 +236,11 @@ using `migration` bindings. Keep the staging provisioning gate closed until a
 fresh version 7 live Neon qualification passes. Local PostgreSQL tests establish
 SQL behavior; they do not establish Neon password recovery or branch isolation.
 
-Version 7 replaces prior approvals, including version 6; keep provisioning
-closed until the new disposable live run and lifecycle smoke pass. Inspect
+Version 7 replaces prior approvals, including version 6. The
+[2026-10-07 live acceptance](ops/evidence/20261007-managed-postgres-qualification/REPORT.md)
+passed the core provider and lifecycle contract for PostgreSQL 18. Snapshot
+capture and native copy remain unqualified. Keep production provisioning closed;
+review the exact artifact and staging canary before changing rollout gates. Inspect
 `gregale postgres capabilities --json` before adoption: `read_only` is configured
 support, while `provisioning_enabled` reflects the current rollout gate.
 After qualification, attach a distinct `READ_DATABASE_URL` binding with

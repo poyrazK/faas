@@ -13,7 +13,7 @@ export type ManagedPostgresCapabilities = {
   postgres_majors: Array<number>;
   service_classes: Array<'development' | 'burstable' | 'production'>;
   availability: Array<'single_zone' | 'high_availability'>;
-  credential_access: Array<'read_write' | 'read_only' | 'migration'>;
+  credential_access: Array<'read_write' | 'read_only' | 'migration' | 'data_api'>;
   scale_to_zero: boolean;
   always_on: boolean;
   pooled_connections: boolean;

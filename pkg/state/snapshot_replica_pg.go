@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -50,6 +51,22 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 	if !active || !pending {
 		return 0, nil
 	}
+	// A concurrent cursor or replica write aborts the repeatable-read
+	// snapshot with 40001; retry it whole rather than fail the tick
+	// (production-us hunt #5: "could not serialize access").
+	for attempt := 0; ; attempt++ {
+		added, err := s.enqueueSnapshotReplicasForNodeOnce(ctx, nodeID)
+		var pgErr *pgconn.PgError
+		if attempt >= 2 || !errors.As(err, &pgErr) || pgErr.Code != "40001" {
+			return added, err
+		}
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+	}
+}
+
+func (s *PgStore) enqueueSnapshotReplicasForNodeOnce(ctx context.Context, nodeID string) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("state: enqueue snapshot replicas begin: %w", err)

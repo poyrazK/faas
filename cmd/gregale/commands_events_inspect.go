@@ -16,7 +16,7 @@ func cmdEventsInspect(args []string) int {
 	fs := newFlagSet("events inspect", flag.ContinueOnError)
 	source := fs.String("source", "", "published event source")
 	id := fs.String("id", "", "published event id")
-	subscription := fs.String("subscription", "", "captured subscription id; list its handler replays")
+	subscription := fs.String("subscription", "", "subscription id; list its handler replays")
 	after := fs.String("after", "", "opaque next_after recipient cursor")
 	limit := fs.Int("limit", 100, "recipients per page (1..200)")
 	if err := fs.Parse(flags); err != nil {
@@ -52,6 +52,10 @@ func writeEventReceipt(receipt api.EventReceiptResponse) {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Recipients: %d | pending: %d | processing: %d | filtered: %d | enqueued: %d | failed: %d\n",
 		receipt.RecipientCount, receipt.RoutingSummary["pending"], receipt.RoutingSummary["processing"], receipt.RoutingSummary["filtered"], receipt.RoutingSummary["enqueued"], receipt.RoutingSummary["failed"])
+	if receipt.BackfillRecipientCount > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Backfill recipients: %d | pending: %d | processing: %d | filtered: %d | enqueued: %d | failed: %d\n",
+			receipt.BackfillRecipientCount, receipt.BackfillRoutingSummary["pending"], receipt.BackfillRoutingSummary["processing"], receipt.BackfillRoutingSummary["filtered"], receipt.BackfillRoutingSummary["enqueued"], receipt.BackfillRoutingSummary["failed"])
+	}
 	if receipt.RoutingSettledAt != nil {
 		_, _ = fmt.Fprintf(osStdout, "Routing settled: %s\n", receipt.RoutingSettledAt.Format(time.RFC3339))
 	}
@@ -89,6 +93,21 @@ func writeEventReceiptRecipient(entry api.EventReceiptRecipientResponse) {
 		app = entry.AppID
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\n", oneLine(app), oneLine(entry.SubscriptionID), oneLine(entry.Routing.State), entry.Routing.Attempts, oneLine(handler), attempts, nextRetry, oneLine(strings.Join(recovery, ",")), oneLine(lastError))
+	if entry.WorkflowName != "" {
+		_, _ = fmt.Fprintf(osStdout, "  Workflow: %s\n", oneLine(entry.WorkflowName))
+		if entry.WorkflowRunID != "" {
+			_, _ = fmt.Fprintf(osStdout, "  Workflow run: %s | status: %s\n", oneLine(entry.WorkflowRunID), oneLine(entry.WorkflowRunStatus))
+		}
+	}
+	if len(entry.RecoveryActions) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  Recover: gregale events recover --subscription %s (with this event's --source and --id; add --dry-run to preview)\n", oneLine(entry.SubscriptionID))
+	}
+	if entry.Origin == "backfill" {
+		_, _ = fmt.Fprintln(osStdout, "  Origin: backfill")
+		if entry.BackfillJobURL != "" {
+			_, _ = fmt.Fprintf(osStdout, "  Backfill job: gregale events backfill-status %s\n", oneLine(entry.BackfillJobID))
+		}
+	}
 	if entry.AttemptHistoryURL != "" {
 		_, _ = fmt.Fprintf(osStdout, "  Attempt history: gregale events attempts --subscription %s (with this event's --source and --id)\n", oneLine(entry.SubscriptionID))
 	}

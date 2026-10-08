@@ -116,6 +116,12 @@ func cmdEventsBackfillItems(args []string) int {
 			}
 		}
 		_, _ = fmt.Fprintln(osStdout)
+		if item.ReceiptURL != "" {
+			_, _ = fmt.Fprintf(osStdout, "  Delivery inspection: %s\n", oneLine(item.ReceiptURL))
+		}
+		if item.AttemptHistoryURL != "" {
+			_, _ = fmt.Fprintf(osStdout, "  Handler attempts: %s\n", oneLine(item.AttemptHistoryURL))
+		}
 	}
 	if page.NextAfter != "" {
 		_, _ = fmt.Fprintf(osStdout, "Next page: gregale events backfill-items %s --limit %d", page.JobID, *limit)

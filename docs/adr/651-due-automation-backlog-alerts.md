@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-07
-- **Extends:** ADR-646 workflow alert signals and ADR-650 queue health
+- **Extends:** ADR-725 workflow alert signals and ADR-730 queue health
 - **Decision:** Add `workflow_due_age_seconds` to the existing customer alert
   rule system, backed by current durable workflow state. Seed the opt-in
   `automation_backlog` reliability preset for Hobby and higher plans. It

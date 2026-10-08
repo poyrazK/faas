@@ -86,7 +86,7 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 	// from the concurrency counter but keeps RAM. Mirrors snapshotAndPark.
 	engine.Ledger().BeginSnapshot(snap.ID)
 
-	backdateInstance(t, store, waking.ID, 10*time.Second)
+	backdateInstance(t, store, waking.ID, WakingSweepBudget+ColdBootSweepBudget+5*time.Second)
 	backdateInstance(t, store, coldBoot.ID, 40*time.Second)
 	// For SNAPSHOTTING, age is anchored on ParkedAt. Set it directly.
 	// Must exceed SnapshotBudgetFor(512MB) = 30s, not just the flat
@@ -99,9 +99,11 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 	w := NewWatchdog(store, engine, slog.Default()).WithClock(func() time.Time { return time.Now() })
 	w.sweepRuns(context.Background())
 
-	// Each row must be in its terminal state.
-	if got := rowState(t, store, waking.ID); got != string(state.StateColdBooting) {
-		t.Errorf("WAKING row → %s, want COLD_BOOTING", got)
+	// Each row must be in its terminal state. A WAKING row past the
+	// restore + cold-boot budget is also past the cold-boot budget, so the
+	// same sweep fails its COLD_BOOTING fallback row (ADR-640).
+	if got := rowState(t, store, waking.ID); got != string(state.StateFailed) {
+		t.Errorf("WAKING row → %s, want FAILED via COLD_BOOTING", got)
 	}
 	if got := rowState(t, store, coldBoot.ID); got != string(state.StateFailed) {
 		t.Errorf("COLD_BOOTING row → %s, want FAILED", got)
@@ -133,8 +135,8 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 	if got := testutil.ToFloat64(ops.WatchdogKills(string(StuckWakingTimeout), string(state.StateColdBooting))); got != 1 {
 		t.Errorf("watchdog_kills{waking_timeout,cold_booting} = %v, want 1", got)
 	}
-	if got := testutil.ToFloat64(ops.WatchdogKills(string(StuckColdBootTimeout), string(state.StateFailed))); got != 1 {
-		t.Errorf("watchdog_kills{cold_boot_timeout,failed} = %v, want 1", got)
+	if got := testutil.ToFloat64(ops.WatchdogKills(string(StuckColdBootTimeout), string(state.StateFailed))); got != 2 {
+		t.Errorf("watchdog_kills{cold_boot_timeout,failed} = %v, want 2", got)
 	}
 	if got := testutil.ToFloat64(ops.WatchdogKills(string(StuckSnapshotTimeout), string(state.StateStopped))); got != 1 {
 		t.Errorf("watchdog_kills{snapshot_timeout,stopped} = %v, want 1", got)
@@ -282,7 +284,7 @@ func TestLoopRunDrivesWatchdog(t *testing.T) {
 		Instance: waking.ID, AppID: app.ID, Plan: api.PlanPro,
 		RAMMB: 512, VCPU: 2, MaxConcurrency: 5,
 	})
-	backdateInstance(t, store, waking.ID, 10*time.Second) // past WakingSweepBudget (5s)
+	backdateInstance(t, store, waking.ID, WakingSweepBudget+ColdBootSweepBudget+5*time.Second)
 
 	w := NewWatchdog(store, engine, slog.Default()).WithClock(func() time.Time { return time.Now() })
 	loop := NewLoop(nil, engine, slog.Default()).WithWatchdog(w)
@@ -290,16 +292,16 @@ func TestLoopRunDrivesWatchdog(t *testing.T) {
 	// Drive the same code path Loop.Run's watchdog ticker would.
 	loop.runWatchdog(context.Background())
 
-	if got := rowState(t, store, waking.ID); got != string(state.StateColdBooting) {
-		t.Errorf("WAKING row → %s, want COLD_BOOTING (watchdog fallback)", got)
+	if got := rowState(t, store, waking.ID); got != string(state.StateFailed) {
+		t.Errorf("WAKING row → %s, want FAILED via the COLD_BOOTING fallback", got)
 	}
 	if got := engine.Ledger().ResidentRAM(); got != 0 {
 		t.Errorf("resident = %d, want 0 (reservation released)", got)
 	}
 	vmm.mu.Lock()
 	defer vmm.mu.Unlock()
-	if vmm.destroys != 1 {
-		t.Errorf("destroys = %d, want 1", vmm.destroys)
+	if vmm.destroys != 2 {
+		t.Errorf("destroys = %d, want 2 (WAKING claim, then COLD_BOOTING fallback)", vmm.destroys)
 	}
 	if got := testutil.ToFloat64(ops.WatchdogKills(string(StuckWakingTimeout), string(state.StateColdBooting))); got != 1 {
 		t.Errorf("watchdog_kills{waking_timeout,cold_booting} = %v, want 1", got)

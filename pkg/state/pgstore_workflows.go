@@ -600,6 +600,16 @@ func (s *PgStore) cancelWorkflowRunTx(ctx context.Context, tx pgx.Tx, id, reason
 	if err := sqlc.New().CancelWorkflowOutboundAttempts(ctx, tx, sqlc.CancelWorkflowOutboundAttemptsParams{RunID: mustPgUUID(id), Reason: reason}); err != nil {
 		return nil, err
 	}
+	// An ordinary HTTP step whose handler is still executing cannot record
+	// its result once the step is skipped, so close its attempt here too.
+	// Otherwise it stays "running" forever (production-us hunt #5, H5-45).
+	if _, err := tx.Exec(ctx, `
+		UPDATE workflow_step_attempts
+		SET status = 'failed', error = $2, finished_at = now()
+		WHERE run_id = $1 AND status = 'running'
+	`, id, reason); err != nil {
+		return nil, fmt.Errorf("pgstore: close workflow step attempts for cancellation: %w", err)
+	}
 	updateQuery := fmt.Sprintf(`
 		UPDATE workflow_runs
 		SET status = 'failed', last_error = $2, finished_at = now(), updated_at = now()

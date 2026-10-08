@@ -114,10 +114,6 @@ func githubAppInstallURL(stateToken string) (string, error) {
 	return u.String(), nil
 }
 
-func githubAppInstallationRequired(state InstallState) bool {
-	return state != InstallStateInstalled && state != InstallStateBound
-}
-
 func isGithubAppNotInstalled(err error) bool {
 	return err != nil && strings.Contains(err.Error(), githubNoAppInstallError)
 }
@@ -328,8 +324,7 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 }
 
 // redirectToGitHubAppInstall starts a fresh state-protected installation
-// round-trip. It is used both by the normal preflight path and by the callback
-// race where an OAuth code arrives before githubd observes the installation.
+// round-trip when the OAuth callback confirms that GitHub has no installation.
 func (s *server) redirectToGitHubAppInstall(w http.ResponseWriter, r *http.Request) bool {
 	stateToken, err := s.issueOAuthCodeState(w, r)
 	if err != nil {
@@ -350,9 +345,9 @@ func (s *server) redirectToGitHubAppInstall(w http.ResponseWriter, r *http.Reque
 // startConnectGitHub (POST /dashboard/install/connect) is the
 // dashboard "Connect GitHub" button click handler. It mints a
 // narrow CSRF state cookie scoped to /oauth/code-callback and
-// 302s the browser to GitHub's installation URL when the account has not
-// installed the App yet, or to the user authorization URL when it has. A
-// validated local dashboard return target is carried across both callbacks.
+// redirects the browser to GitHub's user authorization URL. The OAuth callback
+// discovers installations on GitHub and starts installation only if none exist.
+// A validated local dashboard return target is carried across both callbacks.
 //
 // POST-only (not GET) so an opportunistic <img src=…> cannot
 // mint a state cookie and trip a CSRF path. Same posture as
@@ -360,9 +355,11 @@ func (s *server) redirectToGitHubAppInstall(w http.ResponseWriter, r *http.Reque
 // shape, but the dashboard chrome triggers it on click; here we
 // POST because the click is rendered from a form).
 //
-// The preflight calls githubd.GetInstallState so a first-time user is guided
-// through GitHub's explicit App approval step. GitHub does not allow Gregale
-// to install an App silently on a user's account or organization.
+// GetInstallState only describes a completed Gregale connection, so a missing
+// local record cannot prove the App is absent on GitHub. Sending such accounts
+// straight to installation strands existing installations on GitHub's settings
+// page without an OAuth callback. GitHub's authorization and installation
+// approval steps remain explicit.
 func (s *server) startConnectGitHub(w http.ResponseWriter, r *http.Request) {
 	const op = "startConnectGitHub"
 	log := s.log.With("op", op)
@@ -383,25 +380,6 @@ func (s *server) startConnectGitHub(w http.ResponseWriter, r *http.Request) {
 	if clientID == "" {
 		log.Error("FAAS_GITHUB_APP_CLIENT_ID not configured")
 		api.WriteProblem(w, githubAppUnavailableProblem())
-		return
-	}
-
-	installState, _, _, err := s.githubd.GetInstallState(r.Context(), acct.ID)
-	if err != nil {
-		if problem := api.AsProblem(err); problem != nil {
-			api.WriteProblem(w, problem)
-			return
-		}
-		log.Error("get GitHub App installation state", "account_id", acct.ID, "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
-			"Could not reach GitHub", "retry the connect flow in a minute: https://docs/connect-github"))
-		return
-	}
-	if githubAppInstallationRequired(installState) {
-		log.Info("redirecting account to GitHub App installation",
-			"account_id", acct.ID,
-			"install_state", installState)
-		s.redirectToGitHubAppInstall(w, r)
 		return
 	}
 

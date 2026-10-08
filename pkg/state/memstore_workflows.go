@@ -511,7 +511,7 @@ func (m *MemStore) cancelWorkflowRunLocked(id, reason string) *WorkflowRun {
 	if run.Status != WorkflowRunStatusSucceeded && run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead {
 		now := time.Now().UTC()
 		for key, record := range m.workflowStepAttempts {
-			if key.runID == id && record.Status == WorkflowAttemptStatusRunning && (workflowOutboundSpec(run.DefinitionSnapshot, key.stepName) != nil || m.workflowSteps[id][key.stepName].ForEachParent != nil) {
+			if key.runID == id && record.Status == WorkflowAttemptStatusRunning {
 				record.Status = WorkflowAttemptStatusFailed
 				record.Error = &reason
 				record.FinishedAt = &now

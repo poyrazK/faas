@@ -55,7 +55,7 @@ const (
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
 )
 
-// Workflow reliability bounds (ADR-646, ADR-647, ADR-649).
+// Workflow reliability bounds (ADR-725, ADR-726, ADR-649).
 const (
 	WorkflowDispatchSlots                = 4
 	WorkflowDispatchBatchPerSlot         = 8
@@ -164,6 +164,15 @@ const EnvironmentGitProtectedBranchEvidenceMaxAge = time.Minute
 // acknowledge the alias contract after node capability discovery.
 const VMMSecretAliasCleanupTimeout = 5 * time.Second
 
+// VMMImageHealthcheckCleanupTimeout bounds teardown of an unverified wake.
+const VMMImageHealthcheckCleanupTimeout = 5 * time.Second
+
+// Image command timing remains image-owned; these bound only host transport
+// and monitor recovery when no fresh guest outcome can be obtained.
+const ImageHealthcheckTransportAllowance = time.Second
+const ImageHealthcheckTransportRetryInterval = time.Second
+const ImageHealthcheckTransportFailures = 3
+
 const EnvironmentGitReviewedMergeReadTimeout = 30 * time.Second
 const EnvironmentGitApprovalEvidenceMaxBytes = 64 << 10
 const EnvironmentGitApprovalMaxReviews = 1000
@@ -208,6 +217,13 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
+// TelemetryIngestDBConcurrency bounds how many gateway debug-telemetry
+// records (app errors, request telemetry) one apid writes at once. Those
+// writes share apid's database pool with the customer API; unbounded, one
+// app's error stream held every connection and secret updates failed at
+// their deadline (production-us hunt #5, H5-34).
+const TelemetryIngestDBConcurrency = 4
+
 const (
 	EnvironmentGitSourcePollLeaseDuration = 2 * time.Minute
 	EnvironmentGitSourcePollReadTimeout   = 45 * time.Second
@@ -668,6 +684,10 @@ const (
 	OperationExecutionRenewTimeout = 5 * time.Second
 	// Preserve the native workflow handler default for controlled dispatch.
 	OperationWorkflowHandlerDefaultTimeout = 30 * time.Second
+	// Typed workflow dispatch carries credentials only; the retained ledger
+	// supplies the handler body. Responses include base64 JSON envelope overhead.
+	OperationWorkflowDispatchBodyMaxBytes     int64 = 16 << 10
+	OperationWorkflowDispatchResponseMaxBytes int64 = 2*OperationSubmissionMaxBytes + OperationReportBodyMaxBytes
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -4546,6 +4566,12 @@ const (
 	// keeping the cap explicit limits malformed roster growth before graph
 	// validation.
 	WorkloadDependencyCapMax = SidecarCapMax + 1
+
+	// Project dependency release gates (ADR-685) are bounded independently
+	// of same-VM companion startup dependencies.
+	ProjectDependencyGateCapMax  = 100
+	ProjectDependencyGateTimeout = 15 * time.Minute
+	ProjectDependencyGatePoll    = 5 * time.Second
 
 	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps
 	// the wall-clock spent inside pkg/gateway.(*Handler).applyEdgeRuleJWT
@@ -8870,5 +8896,51 @@ const (
 	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
 )
 
+// Internal durable-entity prototype budgets, not plan availability.
+const (
+	MaxDurableEntitySnapshotBytes        = 1 << 20
+	MaxDurableEntityManifestBytes        = 16 << 10
+	MaxDurableEntityIdentityBytes        = 256
+	MaxDurableEntityReceipts             = 1024 // Legacy inline receipts only; journal receipts do not expire.
+	MaxDurableEntityReceiptBytes         = 1 << 20
+	MaxDurableEntityJournalBytes         = 16 << 10
+	DurableEntityCleanupPageSize         = 32
+	DurableEntityCleanupTimeout          = 20 * time.Second
+	DurableEntityInventoryPageSize       = 32
+	DurableEntityInventoryTimeout        = 20 * time.Second
+	MaxDurableEntityInventoryBytes       = 1 << 20
+	MaxDurableEntityInventoryPending     = 65 * 16
+	DurableEntityMaintenanceScanPageSize = 8
+	MaxDurableEntityMaintenanceBytes     = 128 << 10
+	DurableEntityMaintenanceTimeout      = 45 * time.Second
+	DurableEntityMaintenanceReadTimeout  = 2 * time.Second
+	DurableEntityMaintenancePollInterval = 30 * time.Second
+	DefaultDurableEntityLease            = 30 * time.Second
+	MaxDurableEntityLease                = 5 * time.Minute
+	MaxDurableEntityInvocationBytes      = 2 << 20
+	DurableEntityInvokeTimeout           = 25 * time.Second
+	DurableEntityReleaseTimeout          = 2 * time.Second
+	DurableEntityResultPollInterval      = 250 * time.Millisecond
+	DurableEntityHandlerPath             = "/__gregale/entities"
+	DurableEntityProtocolVersion         = 1
+	DurableEntityAlarmScanPageSize       = 8
+	DurableEntityAlarmReadTimeout        = 2 * time.Second
+	DurableEntityAlarmScanTimeout        = 20 * time.Second
+	DurableEntityAlarmPollInterval       = 5 * time.Second
+)
+
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
+
+// Data API workload bounds (ADR-650). Embedded config.mjs mirrors these
+// constants; the CLI tripwire tests keep the runtime and platform contract aligned.
+const (
+	DataAPIMaxPoolConnections = 2
+	DataAPIMaxRows            = 1000
+	DataAPIMaxRequestBytes    = 1 << 20
+	DataAPIMaxOutputBytes     = 1 << 20
+	DataAPIQueryTimeoutMS     = 15000
+	DataAPIMaxRelations       = 1000
+	DataAPIMaxColumns         = 10000
+	DataAPIMaxTypes           = 20000
+)

@@ -1017,7 +1017,7 @@ or definition changed, the schedule is disabled, a tenant link is no longer
 active, overlap is active, or the app quota is full. History displays the
 resulting replay run ID, and retries of the same occurrence return that ID
 without creating another run. Legacy history without a definition fingerprint
-cannot be replayed. See [ADR-646](adr/646-controlled-workflow-schedule-replay.md).
+cannot be replayed. See [ADR-654](adr/654-controlled-workflow-schedule-replay.md).
 
 Tenant/workflow pairs share the app's active-run quota and are evaluated in
 least-recently-admitted order. Admission priority persists through scheduler

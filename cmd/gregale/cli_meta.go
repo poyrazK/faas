@@ -133,7 +133,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "inspect", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
+	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -271,6 +271,7 @@ var templateNames13 = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"data-api",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -316,7 +317,7 @@ var cliCommands = []cliCommand{
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
 				{Name: "scale-to-zero", Short: "suspend compute when idle"},
 				{Name: "environment-key", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Flags: []cliFlag{
@@ -660,6 +661,12 @@ var cliCommands = []cliCommand{
 				{Name: "subscription", Short: "list retained handler replays for one captured recipient", Value: "SUB"},
 				{Name: "after", Short: "opaque next_after cursor for recipients or replays", Value: "CURSOR"},
 				{Name: "limit", Short: "max recipients or replays (1..200, default 100)", Value: "N"},
+			}},
+			{Name: "recover", Short: "Recover one event consumer using its current receipt action", Flags: []cliFlag{
+				{Name: "source", Short: "published event source", Req: true, Value: "SOURCE"},
+				{Name: "id", Short: "published event id", Req: true, Value: "ID"},
+				{Name: "subscription", Short: "captured recipient identifier", Req: true, Value: "SUB"},
+				{Name: "dry-run", Short: "show recovery availability and action without replaying", Bool: true},
 			}},
 			{Name: "attempts", Short: "Inspect retained handler attempts, including retries and replay", Flags: []cliFlag{
 				{Name: "source", Short: "published event source", Req: true, Value: "SOURCE"},
@@ -1275,7 +1282,7 @@ var cliCommands = []cliCommand{
 				{Name: "run-id", Short: "selected run UUID (repeat up to 20 times)", Req: true, Value: "UUID"},
 				{Name: "yes", Short: "confirm cancellation of eligible selected runs", Req: true, Bool: true},
 			}},
-			{Name: "events", Short: "Send external event to a workflow run", Positionals: []string{"<run_id>", "<event_name>"}},
+			{Name: "events", Short: "Send external event to a workflow run", Positionals: []string{"<run_id>", "<event_name>"}, Flags: []cliFlag{{Name: "payload", Short: "JSON event payload (default {})", Value: "JSON"}}},
 		},
 	},
 	{
@@ -2623,6 +2630,27 @@ var cliCommands = []cliCommand{
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
 	},
 	{
+		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Deploy a managed PostgREST Data API", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
+				{Name: "schema", Value: "SCHEMA", Short: "exposed schema (api)"},
+				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				{Name: "issuer", Value: "HTTPS_URL", Req: true, Short: "application JWT issuer"},
+				{Name: "jwks-url", Value: "HTTPS_URL", Req: true, Short: "application JWKS URL"},
+				{Name: "audience", Value: "AUDIENCE", Req: true, Short: "application JWT audience"},
+				{Name: "origins", Value: "ORIGINS", Short: "comma-separated browser origins"},
+				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
+			}},
+			{Name: "types", Short: "Generate types in an owner-authenticated app task", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "output", Value: "FILE", Short: "generated TypeScript output"},
+				{Name: "check", Short: "fail if the output file is stale"},
+				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
+			}},
+			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}},
+		},
+	},
+	{
 		Name:     "postgres",
 		DocSlug:  "postgres",
 		Short:    "Operator preview: manage PostgreSQL databases and bindings",
@@ -2683,7 +2711,7 @@ var cliCommands = []cliCommand{
 			{Name: "attach", Short: "Attach a database to an app", Flags: []cliFlag{
 				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise production)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 			}},
 		},
 	},
@@ -2771,8 +2799,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "registry",
 		DocSlug: "registry",
-		Short:   "Per-app private container registry credentials (registry list|set|rm --app <slug>)",
+		Short:   "Manage private registry credentials and deploy published images",
 		Subcommands: []cliSub{
+			{Name: "published", Short: "Deploy an image after CI publishes its immutable digest", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "image", Short: "published digest-pinned image reference", Req: true, Value: "REF"},
+				{Name: "scope", Short: "deployment scope", Value: "SLUG"},
+				{Name: "environment", Short: "registered project environment", Value: "SLUG"},
+				{Name: "wait", Short: "wait for the image deployment"},
+				{Name: "timeout", Short: "deployment wait timeout", Value: "DURATION"},
+			}},
 			{Name: "list", Short: "List registry credentials", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
 			{Name: "set", Short: "Set a registry credential", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -2821,7 +2857,13 @@ var cliCommands = []cliCommand{
 			{Name: "close", Short: "Close one live connection", Positionals: []string{"<app>", "<endpoint-id>", "<connection-id>"}, Flags: []cliFlag{{Name: "reason", Short: "close reason", Value: "TEXT"}}},
 			{Name: "subscribe", Short: "Subscribe one live connection to a channel", Positionals: []string{"<app>", "<endpoint-id>", "<connection-id>", "<channel>"}},
 			{Name: "unsubscribe", Short: "Remove one live connection from a channel", Positionals: []string{"<app>", "<endpoint-id>", "<connection-id>", "<channel>"}},
-			{Name: "publish", Short: "Publish a message to a channel", Positionals: []string{"<app>", "<endpoint-id>", "<channel>"}, Flags: []cliFlag{{Name: "data", Short: "message text (or --data-stdin)", Value: "DATA"}, {Name: "data-stdin", Short: "read the message from stdin"}, {Name: "binary", Short: "send as a binary frame"}}},
+			{Name: "publish", Short: "Publish a message to a channel", Positionals: []string{"<app>", "<endpoint-id>", "<channel>"}, Flags: []cliFlag{
+				{Name: "data", Short: "message text (or --data-stdin)", Value: "DATA"},
+				{Name: "data-stdin", Short: "read the message from stdin"},
+				{Name: "binary", Short: "send as a binary frame"},
+				{Name: "delivery", Short: "live by default or preview-only retained (up to 4 KiB)", Value: "MODE", ClosedSet: []string{"live", "retained"}},
+				{Name: "idempotency-key", Short: "stable retry key; required for retained delivery", Value: "KEY"},
+			}},
 			{Name: "auth", Short: "Rotate, finalize, or inspect static bearer auth", Subcommands: []cliSub{
 				{Name: "rotate", Short: "Stage a new bearer token; the old one stays valid for the grace period", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{
 					{Name: "token-stdin", Short: "read the new token from stdin"},
@@ -3065,7 +3107,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    statusLiteral,
 		DocSlug: "status",
-		Short:   "Personal SLO numbers (availability, wake p95, build success)",
+		Short:   "Platform status: API availability, wake p95 and deployment success (not account-specific)",
 	},
 	{
 		Name:    "tail",
@@ -3171,8 +3213,9 @@ var cliCommands = []cliCommand{
 		Short:   "Manage deployment traffic split (available on every plan)",
 		Subcommands: []cliSub{
 			{
-				Name:  "set",
-				Short: "Set the traffic split for a deployment",
+				Name:        "set",
+				Short:       "Set the traffic split for a deployment",
+				Positionals: []string{"[<slug>]"},
 				Flags: []cliFlag{
 					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 					{Name: "deployment", Short: "deployment id or vN revision to set the traffic split on", Req: true, Value: "ID"},
@@ -3180,8 +3223,9 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
-				Name:  "promote",
-				Short: "Promote a live deployment to 100% production traffic",
+				Name:        "promote",
+				Short:       "Promote a live deployment to 100% production traffic",
+				Positionals: []string{"[<slug>]"},
 				Flags: []cliFlag{
 					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 					{Name: "deployment", Short: "deployment id or vN revision to promote", Req: true, Value: "ID"},
@@ -3197,6 +3241,43 @@ var cliCommands = []cliCommand{
 				Short:       "Show live deployment traffic weights for an app",
 				Positionals: []string{"<slug>"},
 			},
+		},
+	},
+	{
+		Name:    "log-drains",
+		DocSlug: "log-drains",
+		Short:   "Ship app runtime logs to an HTTP JSON or OTLP endpoint",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List an app's log drains", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+			}, Examples: []string{"gregale log-drains list --app my-app"}},
+			{Name: "add", Short: "Add a log drain; the credential is read from an environment variable", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "url", Short: "destination URL", Value: "URL", Req: true},
+				{Name: "kind", Short: "destination format (default http_json)", Value: "KIND", ClosedSet: []string{"http_json", "otlp"}},
+				{Name: "auth-header-env", Short: "environment variable holding the Authorization header value", Value: "ENV"},
+				{Name: "disabled", Short: "create the drain disabled"},
+			}, Examples: []string{"LOG_TOKEN='Bearer …' gregale log-drains add --app my-app --url https://logs.example.com/ingest --auth-header-env LOG_TOKEN"}},
+			{Name: "get", Short: "Show one log drain (credential masked)", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
+			}},
+			{Name: "health", Short: "Show delivery health: queue, delivered, failed and last error", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
+			}, Examples: []string{"gregale log-drains health --app my-app --id <drain-id>"}},
+			{Name: "update", Short: "Change a drain's URL or credential, or pause and resume it", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
+				{Name: "url", Short: "new destination URL", Value: "URL"},
+				{Name: "auth-header-env", Short: "environment variable holding the new Authorization header value", Value: "ENV"},
+				{Name: "enable", Short: "resume delivery"},
+				{Name: "disable", Short: "pause delivery"},
+			}},
+			{Name: "rm", Short: "Delete a log drain", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG"},
+				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
+			}},
 		},
 	},
 	{

@@ -980,10 +980,11 @@ type Handler struct {
 	// headWakes is the process-wide opt-in for legacy HEAD wake behaviour;
 	// an App.HeadWakes value can enable it for one app.
 	headWakes bool
-	// healthState stores the last known wake outcome per app. It is deliberately
-	// process-local: a restarted gateway fails closed until it observes a live
-	// target or a successful wake.
-	healthState sync.Map
+	// healthState stores the last known wake outcome per app. It is
+	// process-local, so it is only the fallback when healthOutcomes (the
+	// app's last instance, ADR-641) is unwired or unavailable.
+	healthState    sync.Map
+	healthOutcomes *healthOutcomeCache
 	// mirrorRoundTripper (issue #72 / ADR-124 PR-A3) is the
 	// per-request HTTP forwarder the dispatch goroutine uses
 	// to reach the mirror VM. Defaults to
@@ -4461,10 +4462,15 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		// The policy names the authoritative bucket family: `route` for a
 		// shared rule bucket and `per-consumer` for every dimensional rule,
 		// whether the identity owns a dedicated bucket or shares __other__.
-		h.writeRouteRateLimitHeadersFromLimiter(w, deniedLimiter, deniedBucketKey,
+		bucket := h.writeRouteRateLimitHeadersFromLimiter(w, deniedLimiter, deniedBucketKey,
 			rule.RequestsPerSecond, rule.Burst, policy)
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
-			"Rate limit exceeded", "slow down and retry"))
+		if !bucket.ok {
+			// The central counter decided; the local bucket has no view.
+			bucket = rateLimitBucket{limit: rule.Burst, ok: rule.Burst > 0}
+		}
+		writeRateLimited(w, bucket, fmt.Sprintf(
+			"this route allows %s requests per second with bursts of %d; slow down and retry",
+			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.throttle_rejected", nil, map[string]any{
 				"rule_id": rule.ID,
@@ -6021,7 +6027,12 @@ haveApp:
 	// the geo gate at L4269. The two gates share the
 	// clientIPFromTrustedXFF trust chain so a forged XFF fails closed
 	// in both layers without double-charging the audit stream.
-	if h.applyIngressIPAllowlist(w, r, app) {
+	//
+	// Authorized deployment smoke skips this gate and internal_only below,
+	// as it skips bearer/basic in enforcePublicAuth: the platform verifier
+	// probes from its own address, so an allowlisted app could never deploy
+	// (production-us hunt #5, H5-48).
+	if !deploymentSmoke && h.applyIngressIPAllowlist(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6036,7 +6047,7 @@ haveApp:
 	// (SynthServer.handleSynthesize, pkg/gateway/synth.go) is the
 	// parallel cron-fired path — both gates share the same verifier
 	// (cmd/gatewayd-internal/internal_svc_verifier.go).
-	if h.applyIngressInternalSvc(w, r, app) {
+	if !deploymentSmoke && h.applyIngressInternalSvc(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6483,9 +6494,8 @@ haveApp:
 		// tripped. Distinct X-AccountRateLimit-* header family so
 		// generic tooling that auto-parses X-RateLimit-* doesn't
 		// conflate per-app and per-account values (Finding 6).
-		h.writeAccountRateLimitHeaders(w, app.AccountID, app.Plan)
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
-			"Rate limit exceeded", "slow down and retry"))
+		writeRateLimited(w, h.writeAccountRateLimitHeaders(w, app.AccountID, app.Plan),
+			"this account's apps together exceeded the plan's request rate; slow down and retry")
 		if h.metrics != nil {
 			h.metrics.ObserveAccountRateLimit(app.AccountID, string(app.Plan))
 		}
@@ -6501,9 +6511,8 @@ haveApp:
 		// clients can compute Retry-After locally without parsing the
 		// problem+json body. The header set runs before the
 		// api.WriteProblem below so the body has time to read them.
-		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
-			"Rate limit exceeded", "slow down and retry"))
+		writeRateLimited(w, h.writeAppRateLimitHeaders(w, app.ID, app.Plan),
+			"this app exceeded its request rate; slow down and retry")
 		if h.metrics != nil {
 			h.metrics.ObserveRateLimit(app.ID, string(app.Plan))
 		}
@@ -6649,6 +6658,7 @@ haveApp:
 				if admitErr == nil {
 					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
 				}
+				h.logFleetCapacityRefusal(app.ID, admitErr)
 				writeWakeError(w, admitErr)
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
@@ -6774,6 +6784,7 @@ haveApp:
 			// stays smooth, and the alternative (503) loses both
 			// the request AND the wake budget for nothing.
 			h.markHealthFailure(app.ID, err)
+			h.logFleetCapacityRefusal(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
 			}
@@ -7965,17 +7976,18 @@ func (h *Handler) recordUsageRequest(target Target, coldBoot bool) {
 // than to remove the limitation. When a shared-bucket design ships
 // this method moves behind a shared-state seam with the same call
 // signature.
-func (h *Handler) writeAppRateLimitHeaders(w http.ResponseWriter, appID string, plan api.Plan) {
+func (h *Handler) writeAppRateLimitHeaders(w http.ResponseWriter, appID string, plan api.Plan) rateLimitBucket {
 	if h == nil || h.limiter == nil {
-		return
+		return rateLimitBucket{}
 	}
 	limit, remaining, reset, ok := h.limiter.Peek(appID, plan)
 	if !ok {
-		return
+		return rateLimitBucket{}
 	}
 	w.Header().Set("X-RateLimit-Limit", intToString(limit))
 	w.Header().Set("X-RateLimit-Remaining", intToString(remaining))
 	w.Header().Set("X-RateLimit-Reset", intToString(reset))
+	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
 // writeAccountRateLimitHeaders writes the X-AccountRateLimit-*
@@ -7985,17 +7997,18 @@ func (h *Handler) writeAppRateLimitHeaders(w http.ResponseWriter, appID string, 
 // two scopes. Set only on the per-account 429 path today; the
 // per-account value is rarely useful to a customer on the 2xx path
 // (they care about their app's bucket, not their account-wide one).
-func (h *Handler) writeAccountRateLimitHeaders(w http.ResponseWriter, accountID string, plan api.Plan) {
+func (h *Handler) writeAccountRateLimitHeaders(w http.ResponseWriter, accountID string, plan api.Plan) rateLimitBucket {
 	if h == nil || h.accountLimiter == nil || accountID == "" {
-		return
+		return rateLimitBucket{}
 	}
 	limit, remaining, reset, ok := h.accountLimiter.PeekAccount(accountID, plan)
 	if !ok {
-		return
+		return rateLimitBucket{}
 	}
 	w.Header().Set("X-AccountRateLimit-Limit", intToString(limit))
 	w.Header().Set("X-AccountRateLimit-Remaining", intToString(remaining))
 	w.Header().Set("X-AccountRateLimit-Reset", intToString(reset))
+	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
 // writeRouteRateLimitHeaders writes the X-RouteRateLimit-* header
@@ -8028,13 +8041,13 @@ func (h *Handler) writeRouteRateLimitHeaders(w http.ResponseWriter, bucketKey st
 	h.writeRouteRateLimitHeadersFromLimiter(w, h.routeLimiter, bucketKey, rps, burst, policy)
 }
 
-func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, limiter *Limiter, bucketKey string, rps float64, burst int, policy string) {
+func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, limiter *Limiter, bucketKey string, rps float64, burst int, policy string) rateLimitBucket {
 	if limiter == nil || bucketKey == "" {
-		return
+		return rateLimitBucket{}
 	}
 	limit, remaining, reset, ok := limiter.PeekWithParams(bucketKey, rps, float64(burst))
 	if !ok {
-		return
+		return rateLimitBucket{}
 	}
 	w.Header().Set("X-RouteRateLimit-Limit", intToString(limit))
 	w.Header().Set("X-RouteRateLimit-Remaining", intToString(remaining))
@@ -8048,6 +8061,7 @@ func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, l
 		policy = rateLimitScopeRoute
 	}
 	w.Header().Set("X-RouteRateLimit-Policy", policy)
+	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
 // intToString is a tiny strconv.Itoa shim so handler.go doesn't grow
@@ -8888,11 +8902,42 @@ func writeWakeError(w http.ResponseWriter, err error) {
 				w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
 				w.Header().Set("Cache-Control", "no-store")
 			}
+			if prob.Code == api.CodeCapacity {
+				writeFleetCapacityRefusal(w)
+				return
+			}
 			api.WriteProblem(w, prob)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("wake failed"))
 	}
+}
+
+// fleetCapacityRetryAfterSeconds matches the gateway's own wake-queue
+// refusals: capacity frees as instances park or finish waking.
+const fleetCapacityRetryAfterSeconds = 5
+
+// writeFleetCapacityRefusal answers a wake that schedd refused for fleet
+// capacity (placement, per-node RAM, vCPU or host CPU). schedd's detail names
+// compute nodes, their budgets and compute_nodes columns for operators, so a
+// public caller gets the stable code, a generic detail and a Retry-After
+// instead (production-us hunt #5, H5-30). logFleetCapacityRefusal keeps the
+// operator detail.
+func writeFleetCapacityRefusal(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(fleetCapacityRetryAfterSeconds))
+	w.Header().Set("Cache-Control", "no-store")
+	api.WriteProblem(w, api.ErrCapacity("the platform has no free capacity for this app right now; retry shortly"))
+}
+
+// logFleetCapacityRefusal records the detail writeFleetCapacityRefusal drops.
+// Nothing else logs a placement refusal: schedd returns it to the caller and
+// gateway_wake_admission_total counts it as a reasonless error.
+func (h *Handler) logFleetCapacityRefusal(appID string, err error) {
+	var prob *api.Problem
+	if h.log == nil || !errors.As(err, &prob) || prob.Code != api.CodeCapacity {
+		return
+	}
+	h.log.Warn("gateway: wake refused for fleet capacity", "app_id", appID, "detail", logsanitize.Field(prob.Detail))
 }
 
 func writeWakeInProgress(w http.ResponseWriter, requestID string) {

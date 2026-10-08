@@ -2751,7 +2751,7 @@ CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_
    (s.managed_postgres_binding_id IS NULL OR EXISTS (
     SELECT 1 FROM managed_postgres_bindings b WHERE b.id=s.managed_postgres_binding_id
      AND b.account_id=s.account_id AND b.app_id=s.app_id AND b.scope=s.scope
-     AND b.environment_key=s.key AND b.access IN ('read_write','read_only')))
+     AND b.environment_key=s.key AND b.access IN ('read_write','read_only','data_api')))
  ),
  baseline AS (SELECT coalesce(jsonb_object_agg(s.key,'secret:'||s.key),'{}'::jsonb) AS refs,
   coalesce(jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version),'{}'::jsonb) AS versions FROM eligible s)
@@ -12346,7 +12346,9 @@ CREATE TABLE public.customer_operation_workflow_guest_claims (
     capability_digest text NOT NULL,
     deadline_at timestamp with time zone NOT NULL,
     bound_at timestamp with time zone DEFAULT now() NOT NULL,
+    dispatch_started_at timestamp with time zone,
     CONSTRAINT customer_operation_workflow_guest_cla_coordinator_attempt_check CHECK ((coordinator_attempt > 0)),
+    CONSTRAINT customer_operation_workflow_guest_cla_dispatch_started_at_check CHECK (((dispatch_started_at IS NULL) OR isfinite(dispatch_started_at))),
     CONSTRAINT customer_operation_workflow_guest_claim_capability_digest_check CHECK ((capability_digest ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_workflow_guest_claims_bound_at_check CHECK (isfinite(bound_at)),
     CONSTRAINT customer_operation_workflow_guest_claims_deadline_at_check CHECK (isfinite(deadline_at)),
@@ -13761,12 +13763,14 @@ CREATE TABLE public.event_fanout_recipients (
     capacity_deferrals integer DEFAULT 0 NOT NULL,
     generation_capacity_deferrals integer DEFAULT 0 NOT NULL,
     backfill_job_id uuid,
+    receipt_position bigint,
     CONSTRAINT event_fanout_recipients_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT event_fanout_recipients_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
     CONSTRAINT event_fanout_recipients_check CHECK ((total_attempts >= attempts)),
     CONSTRAINT event_fanout_recipients_check1 CHECK ((((state = 'processing'::text) AND (claim_token IS NOT NULL) AND (lease_until IS NOT NULL)) OR ((state <> 'processing'::text) AND (claim_token IS NULL) AND (lease_until IS NULL)))),
     CONSTRAINT event_fanout_recipients_generation_capacity_deferrals_check CHECK ((generation_capacity_deferrals >= 0)),
     CONSTRAINT event_fanout_recipients_generation_check CHECK ((generation > 0)),
+    CONSTRAINT event_fanout_recipients_receipt_position_check CHECK ((receipt_position > 0)),
     CONSTRAINT event_fanout_recipients_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
     CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
 );
@@ -14790,7 +14794,9 @@ CREATE TABLE public.idempotency_keys (
     account_id uuid NOT NULL,
     response_status integer NOT NULL,
     response_body bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_digest bytea,
+    CONSTRAINT idempotency_keys_request_digest_chk CHECK (((request_digest IS NULL) OR (octet_length(request_digest) = 32)))
 );
 
 
@@ -15832,7 +15838,7 @@ CREATE TABLE public.managed_postgres_bindings (
     rotation_wake_id uuid,
     rotation_cleanup_ready boolean DEFAULT false NOT NULL,
     cutover_id uuid,
-    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text]))),
+    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_check1 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
@@ -15897,7 +15903,7 @@ CREATE TABLE public.managed_postgres_cutover_credentials (
     value_hash text,
     verified_at timestamp with time zone,
     CONSTRAINT managed_postgres_cutover_cre_source_credential_generation_check CHECK ((source_credential_generation > 0)),
-    CONSTRAINT managed_postgres_cutover_credentials_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text]))),
+    CONSTRAINT managed_postgres_cutover_credentials_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text]))),
     CONSTRAINT managed_postgres_cutover_credentials_check CHECK ((((state = 'sealed'::text) AND (num_nonnulls(provider_identity_id, credential_ref, ciphertext, kid, value_hash) = 5) AND (length(provider_identity_id) > 0) AND (length(credential_ref) > 0) AND (length(ciphertext) > 0) AND (length(kid) > 0) AND (length(value_hash) > 0)) OR ((state = ANY (ARRAY['pending'::text, 'revoked'::text])) AND (provider_identity_id IS NULL) AND (credential_ref IS NULL) AND (ciphertext IS NULL) AND (kid IS NULL) AND (value_hash IS NULL)))),
     CONSTRAINT managed_postgres_cutover_credentials_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
     CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text]))),
@@ -28943,6 +28949,9 @@ CREATE INDEX event_replay_job_items_page_idx ON public.event_replay_job_items US
 -- Name: event_fanout_recipients_backfill_idx; Type: INDEX; Schema: public; Owner: -
 CREATE INDEX event_fanout_recipients_backfill_idx ON public.event_fanout_recipients USING btree (backfill_job_id, outbox_id) WHERE (backfill_job_id IS NOT NULL);
 
+-- Name: event_fanout_recipients_receipt_position_idx; Type: INDEX; Schema: public; Owner: -
+CREATE UNIQUE INDEX event_fanout_recipients_receipt_position_idx ON public.event_fanout_recipients USING btree (outbox_id, receipt_position) WHERE (receipt_position IS NOT NULL);
+
 
 --
 -- Name: event_outbox_unattributed_age; Type: INDEX; Schema: public; Owner: -
@@ -29404,6 +29413,13 @@ CREATE INDEX github_webhook_deliveries_dead_idx ON public.github_webhook_deliver
 --
 
 CREATE INDEX github_webhook_deliveries_due_idx ON public.github_webhook_deliveries USING btree (next_attempt_at, received_at) WHERE (status = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
+-- Name: idempotency_keys_publish_receipts_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idempotency_keys_publish_receipts_created_at_idx ON public.idempotency_keys USING btree (created_at) WHERE (request_digest IS NOT NULL);
 
 
 --
@@ -42072,6 +42088,18 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
+-- ADR-685: immutable release dependencies and durable readiness deadlines.
+CREATE TABLE public.deployment_dependency_gates (
+    deployment_id uuid PRIMARY KEY REFERENCES public.deployments(id) ON DELETE CASCADE,
+    pins jsonb NOT NULL CHECK (jsonb_typeof(pins) = 'array' AND jsonb_array_length(pins) BETWEEN 1 AND 100),
+    started_at timestamptz,
+    deadline_at timestamptz,
+    status text NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'ready', 'failed')),
+    blocker text NOT NULL DEFAULT '' CHECK (length(blocker) <= 1024),
+    CHECK ((started_at IS NULL AND deadline_at IS NULL) OR
+           (started_at IS NOT NULL AND deadline_at IS NOT NULL AND deadline_at > started_at))
+);
+
 
 --
 --
@@ -43198,3 +43226,34 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+CREATE FUNCTION check_project_dependency_release() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE gate deployment_dependency_gates; pin jsonb; target_status text; target_traffic integer; parked text;
+BEGIN
+    IF NEW.status <> 'live' OR OLD.status = 'live' OR OLD.serving_ended_at IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT * INTO gate FROM deployment_dependency_gates WHERE deployment_id = NEW.id;
+    IF NOT FOUND THEN RETURN NEW; END IF;
+    IF gate.status = 'failed' OR (gate.status <> 'ready' AND gate.deadline_at <= clock_timestamp()) THEN
+        RAISE EXCEPTION 'dependency release gate failed' USING ERRCODE = '23514', CONSTRAINT = 'deployment_dependency_not_ready';
+    END IF;
+    FOR pin IN SELECT value FROM jsonb_array_elements(gate.pins) ORDER BY value->>'deployment_id' LOOP
+        SELECT d.status, d.traffic_percent, coalesce(d.parked_reason, '')
+        INTO target_status, target_traffic, parked
+        FROM deployments d JOIN apps a ON a.id = d.app_id JOIN apps owner ON owner.id = NEW.app_id
+        WHERE d.id = (pin->>'deployment_id')::uuid AND d.app_id = (pin->>'app_id')::uuid
+          AND a.account_id = owner.account_id AND a.project_id = owner.project_id AND a.status <> 'deleted'
+          AND a.workload_class <> 'job' AND coalesce(a.manifest->>'execution_mode', '') <> 'job'
+          AND coalesce(a.preview_pr_number, 0) = coalesce(owner.preview_pr_number, 0)
+          AND (coalesce(a.preview_of_slug, '') = '') = (coalesce(owner.preview_of_slug, '') = '')
+          AND d.scope = NEW.scope AND d.environment_workload_runtime IS NULL
+        FOR SHARE OF d;
+        IF NOT FOUND OR target_status <> 'live' OR target_traffic <= 0 OR parked <> '' THEN
+            RAISE EXCEPTION 'dependency deployment is not ready' USING ERRCODE = '23514', CONSTRAINT = 'deployment_dependency_not_ready';
+        END IF;
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER deployment_dependency_release_check BEFORE UPDATE OF status ON deployments
+FOR EACH ROW EXECUTE FUNCTION check_project_dependency_release();

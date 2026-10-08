@@ -1781,6 +1781,7 @@
       "capability_digest",
       "coordinator_attempt",
       "deadline_at",
+      "dispatch_started_at",
       "execution_kind",
       "generation",
       "instance_id",
@@ -1932,6 +1933,18 @@
       "deployment_id",
       "id",
       "kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_dependency_gates",
+    "columns": [
+      "blocker",
+      "deadline_at",
+      "deployment_id",
+      "pins",
+      "started_at",
+      "status"
     ],
     "kind": "operational"
   },
@@ -2688,6 +2701,7 @@
       "generation_capacity_deferrals",
       "lease_until",
       "outbox_id",
+      "receipt_position",
       "recipient",
       "state",
       "subscription_id",
@@ -3338,6 +3352,7 @@
       "account_id",
       "created_at",
       "key",
+      "request_digest",
       "response_body",
       "response_status"
     ],

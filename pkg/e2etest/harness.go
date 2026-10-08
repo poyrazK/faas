@@ -1720,6 +1720,29 @@ func (h *Harness) RestartSchedd() error {
 	return nil
 }
 
+// SetAPIDEnv updates the retained apid launch recipe without exposing private
+// runtime settings to other daemons or guests. RestartAPID applies the change.
+func (h *Harness) SetAPIDEnv(key, value string) error {
+	if h == nil || h.T == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	if key == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') {
+		return fmt.Errorf("e2etest: invalid apid environment entry")
+	}
+	entry := key + "=" + value
+	found := false
+	for i, existing := range h.apidEnv {
+		if strings.HasPrefix(existing, key+"=") {
+			h.apidEnv[i] = entry
+			found = true
+		}
+	}
+	if !found {
+		h.apidEnv = append(h.apidEnv, entry)
+	}
+	return nil
+}
+
 // KillAPID terminates and reaps the apid child while leaving the rest of the
 // harness alive. Reaping here is important because Harness.stop owns the
 // single Wait call for every process it starts.

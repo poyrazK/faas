@@ -409,6 +409,7 @@ from .commit_source_response_contract_version import CommitSourceResponseContrac
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
+from .compose_healthcheck import ComposeHealthcheck
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
@@ -789,6 +790,8 @@ from .domain_doctor_report import DomainDoctorReport
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
+from .durable_entity_invoke_request import DurableEntityInvokeRequest
+from .durable_entity_invoke_response import DurableEntityInvokeResponse
 from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
@@ -916,12 +919,14 @@ from .event_receipt_execution_response import EventReceiptExecutionResponse
 from .event_receipt_execution_response_state import EventReceiptExecutionResponseState
 from .event_receipt_recipient_response import EventReceiptRecipientResponse
 from .event_receipt_recipient_response_execution_unavailable import EventReceiptRecipientResponseExecutionUnavailable
+from .event_receipt_recipient_response_origin import EventReceiptRecipientResponseOrigin
 from .event_receipt_recovery_action import EventReceiptRecoveryAction
 from .event_receipt_recovery_action_kind import EventReceiptRecoveryActionKind
 from .event_receipt_recovery_action_method import EventReceiptRecoveryActionMethod
 from .event_receipt_recovery_response import EventReceiptRecoveryResponse
 from .event_receipt_replay_history_response import EventReceiptReplayHistoryResponse
 from .event_receipt_response import EventReceiptResponse
+from .event_receipt_response_backfill_routing_summary import EventReceiptResponseBackfillRoutingSummary
 from .event_receipt_response_routing_mode import EventReceiptResponseRoutingMode
 from .event_receipt_response_routing_summary import EventReceiptResponseRoutingSummary
 from .event_receipt_routing_response import EventReceiptRoutingResponse
@@ -1686,6 +1691,8 @@ from .plan_response_scan_source import PlanResponseScanSource
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
+from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
+from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
 from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
 from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
@@ -3167,6 +3174,7 @@ __all__ = (
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
+    "ComposeHealthcheck",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerKeyListResponse",
@@ -3531,6 +3539,8 @@ __all__ = (
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
+    "DurableEntityInvokeRequest",
+    "DurableEntityInvokeResponse",
     "EdgeRuleAsyncAction",
     "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
@@ -3656,12 +3666,14 @@ __all__ = (
     "EventReceiptExecutionResponseState",
     "EventReceiptRecipientResponse",
     "EventReceiptRecipientResponseExecutionUnavailable",
+    "EventReceiptRecipientResponseOrigin",
     "EventReceiptRecoveryAction",
     "EventReceiptRecoveryActionKind",
     "EventReceiptRecoveryActionMethod",
     "EventReceiptRecoveryResponse",
     "EventReceiptReplayHistoryResponse",
     "EventReceiptResponse",
+    "EventReceiptResponseBackfillRoutingSummary",
     "EventReceiptResponseRoutingMode",
     "EventReceiptResponseRoutingSummary",
     "EventReceiptRoutingResponse",
@@ -4420,6 +4432,8 @@ __all__ = (
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
+    "PlanWorkloadDependsOnConditions",
+    "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
     "PlatformTenantAccessTokenListResponse",
     "PlatformTenantAccessTokenResponse",

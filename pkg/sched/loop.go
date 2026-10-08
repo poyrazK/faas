@@ -123,6 +123,7 @@ type Loop struct {
 	eventRecipientClaims        bool
 	now                         func() time.Time
 	flowCounts                  FlowCounter
+	flowReaderUnavailable       sync.Once
 	ops                         *wire.OpsMetrics                        // issue #171 shared registry; nil safe
 	audit                       *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
 	watchdog                    *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
@@ -223,8 +224,9 @@ type Loop struct {
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 	l := &Loop{
 		pool: pool, engine: engine, log: log,
-		now:        time.Now,
-		flowCounts: noopFlowCounter{},
+		now:                  time.Now,
+		flowCounts:           noopFlowCounter{},
+		eventRecipientClaims: true,
 	}
 	if engine != nil {
 		engine.SetBrokerLagReader(l)
@@ -809,8 +811,7 @@ func (l *Loop) Run(ctx context.Context) error {
 
 	reaperT := time.NewTicker(10 * time.Second)
 	defer reaperT.Stop()
-	cronT := time.NewTicker(60 * time.Second)
-	defer cronT.Stop()
+	cronTicks := minuteTicks(ctx, time.Now)
 	// Fire-now safety ticker (PR-D / issue #791). 60s cadence
 	// mirrors pkg/sched/fire_now.go::fireNowSafetyTick: when a
 	// NotifyCronRunNow delivery is dropped (Postgres bounce, network
@@ -871,7 +872,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		retentionFirst = delay.C
 	}
 	// ADR-134 PR-B: invocations retention + deadline-breach sweep.
-	// 60s cadence matches the cron sweep (cronT below); both
+	// 60s cadence matches the cron sweep (cronTicks below); both
 	// sweeps are read-only SELECTs over partial indexes and cost
 	// single-digit ms each. nil = no ticker fires the case.
 	var invocationsRetentionT *time.Ticker
@@ -1184,7 +1185,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-reaperT.C:
 			l.dispatchReaper(ctx)
-		case <-cronT.C:
+		case <-cronTicks:
 			l.runCronTick(ctx)
 		case <-watchdogTick(watchdogT):
 			l.runWatchdog(ctx)
@@ -1772,7 +1773,7 @@ func (l *Loop) runScalingPolicyObservation(ctx context.Context) {
 		return
 	}
 	for _, app := range apps {
-		if app.ScalingPolicyRevision <= 0 {
+		if app.ScalingPolicyRevision <= 0 || !l.engine.ownsAppDecision(app) {
 			continue
 		}
 		if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, ownerNodeID, app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
@@ -1799,7 +1800,13 @@ func (l *Loop) observeAppScalingPolicy(ctx context.Context, appID string) {
 	if app.ScalingPolicyRevision <= 0 {
 		return
 	}
-	if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, l.engine.OwnerNodeID(), app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
+	// Every schedd hears app_changed, but only the owner may acknowledge
+	// the revision; the others warned on every change (H5-17).
+	owner := l.engine.OwnerNodeID()
+	if owner != "" && app.NodeID != owner {
+		return
+	}
+	if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, owner, app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
 		l.log.Warn("scaling policy observation: record changed app", "app", app.ID, "revision", app.ScalingPolicyRevision, "err", err)
 	}
 }
@@ -2424,7 +2431,13 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 		if err != nil {
 			l.log.Warn("reaper: list all instances for warm", "err", err)
-		} else if warmErr := warmer.Warm(ctx, all); warmErr != nil {
+		} else if warmErr := warmer.Warm(ctx, all); errors.Is(warmErr, flowcount.ErrUnavailable) {
+			// A host without conntrack (the split-box control plane) can
+			// never count flows; say so once instead of every tick.
+			l.flowReaderUnavailable.Do(func() {
+				l.log.Info("reaper: conntrack unavailable; idle reaping uses compute telemetry and last request", "err", warmErr)
+			})
+		} else if warmErr != nil {
 			l.log.Warn("reaper: warm flow reader", "err", warmErr)
 		}
 	}
@@ -2580,6 +2593,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// instance set. The observation is best-effort and never changes the
 	// lifecycle decision if the audit write is unavailable.
 	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
+	l.engine.publishPressureParkCandidates(SelectPressureParkCandidates(now, snapshot), now)
 	resident := l.engine.Ledger().ResidentRAM()
 	// instanceToApp (PR-C review fix): O(N) instance→app map shared
 	// between the idle and aggressive reaper branches. The pre-PR-C
@@ -4744,10 +4758,15 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 			// Fall through to legacy wake-only shape so this
 			// doesn't silently drop. tests may rely on the
 			// SynthesizeRequest call for back-compat assertions.
-			if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
-				l.log.Warn("cron: synthesize (legacy)", "cron_id", c.ID, "err", err)
-				// status="err" via defer; fireSucceeded stays false.
-				return CronRun{InvocationID: enq.ID}, true
+			// A permanent error means the app answered: nothing was
+			// dropped, and a wake-only retry only asks for another
+			// instance (production-us H5-19: scale-out cooldown 500s).
+			if !errors.Is(ierr, ErrPermanentInvoke) {
+				if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
+					l.log.Warn("cron: synthesize (legacy)", "cron_id", c.ID, "err", err)
+					// status="err" via defer; fireSucceeded stays false.
+					return CronRun{InvocationID: enq.ID}, true
+				}
 			}
 		} else if enq.ID != "" {
 			// Stamp the live instance handle + complete the row

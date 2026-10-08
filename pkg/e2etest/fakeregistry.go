@@ -73,6 +73,12 @@ func HelloImage(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPort(repo, helloBody, false, 8080)
 }
 
+// DurableCounterImageAboveBase runs a pure entity counter in a real guest.
+// Its optimized base prefix matches BaseLayerImage, as in HelloImageAboveBase.
+func DurableCounterImageAboveBase(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "durable-counter", true, 8080, []string{"/hello-server", "-durable-counter"})
+}
+
 // HelloImageOnPort returns the same scratch-style image as HelloImage, but
 // advertises a non-default TCP listener. The image's process has no baked-in
 // port argument; it binds the PORT environment variable that guest-init

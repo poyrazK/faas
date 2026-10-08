@@ -494,6 +494,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/dev/test-runs/{run_id}/chaos":                                      "InjectScenarioTestChaos",
 	"GET /v1/dev/sessions/{project}/history":                                    "GetDevSyncHistory",
 	"POST /v1/apps/{slug}/deployments":                                          "Deploy",
+	"POST /v1/apps/{slug}/image-published":                                      "PublishAppImage",
 	"POST /v1/account/platform-tenants/{id}/reconciliation-plan/apply":          "ApplyPlatformTenantReconciliation",
 	"GET /v1/account/platform-tenants/{id}/reconciliations":                     "ListPlatformTenantReconciliationReceipts",
 	"GET /v1/account/platform-tenants/{id}/reconciliations/{receipt_id}":        "GetPlatformTenantReconciliationReceipt",
@@ -1035,9 +1036,10 @@ var methodRouteMap = map[string]string{
 	// hyphens (e.g. "DeleteDelayed-tasksId") because the spec path uses
 	// the k8s-style hyphen; the explicit map below drops the hyphen and
 	// conforms to the SDK's flat resource naming.
-	"POST /v1/apps/{slug}/invoke":       "InvokeApp",
-	"POST /v1/apps/{slug}/invoke/async": "InvokeAppAsync",
-	"POST /v1/apps/{slug}/inbox":        "SendAppMessage",
+	"POST /v1/apps/{slug}/invoke":          "InvokeApp",
+	"POST /v1/apps/{slug}/invoke/async":    "InvokeAppAsync",
+	"POST /v1/apps/{slug}/entities/invoke": "InvokeDurableEntity",
+	"POST /v1/apps/{slug}/inbox":           "SendAppMessage",
 	// ADR-430: pin the hyphenated Commit routes to their typed client methods.
 	"POST /v1/apps/{slug}/commit-sources":                                    "CreateCommitSource",
 	"GET /v1/commit-sources/{source}":                                        "GetCommitSource",

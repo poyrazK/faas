@@ -321,6 +321,8 @@ func run(args []string) (status int) {
 		// `gregale deployment <id>` — get one. Must come before appSlugFallback
 		// so the singular is never misread as an app slug.
 		return cmdDeployment(args[1:])
+	case "data-api":
+		return cmdDataAPI(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])
 	case "realtime":
@@ -385,6 +387,8 @@ func run(args []string) (status int) {
 		return cmdTraffic(args[1:])
 	case "mirror":
 		return cmdMirror(args[1:])
+	case "log-drains":
+		return cmdLogDrains(args[1:])
 	case "cache":
 		return cmdCache(args[1:])
 	case dispatchUploadCache:
