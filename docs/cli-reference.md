@@ -3766,11 +3766,12 @@ Show durable TLS status for all domains
 
 Sync local changes to a developer environment
 
-`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open]`
+`gregale dev [<subcommand>] [--path <DIR>] [--all] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <DIR>` | source directory |  |
+| `--all` | run one developer loop per deployable workspace app |  |
 | `--name <PROJECT>` | developer-session project name |  |
 | `--env-file <PATH>` | sync KEY=VALUE entries as developer secrets |  |
 | `--service-override-file <PATH>` | sync validated service URLs as developer secrets |  |
@@ -3784,6 +3785,7 @@ Examples:
 ```sh
 gregale dev --once
 gregale dev --path ./api --once
+gregale dev --all
 ```
 
 ### dev status

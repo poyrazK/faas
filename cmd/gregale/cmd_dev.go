@@ -20,6 +20,7 @@ const (
 	devWatchPollInterval   = 250 * time.Millisecond
 	devWatchSettleInterval = 500 * time.Millisecond
 	devSessionFunction     = "function"
+	devUsage               = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]"
 )
 
 type devSourceConfig struct {
@@ -303,12 +304,13 @@ func cmdDev(args []string) int {
 	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
 	withPostgres := fs.Bool("postgres", false, "provision an isolated PostgreSQL database and inject DATABASE_URL")
 	postgresRegion := fs.String("postgres-region", "", "managed PostgreSQL region (default: platform default)")
+	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
+		PrintUsage(osStderr, devUsage, "dev")
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
+		PrintUsage(osStderr, devUsage, "dev")
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
@@ -328,6 +330,11 @@ func cmdDev(args []string) int {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return printErr("Could not read current directory", err)
+	}
+	if *all {
+		return cmdDevAllFromFlags(cwd, *sourcePath, explicitFlags, devAllOptions{
+			once: *once, stop: *stop, noLogs: *noLogs, open: *open, postgres: *withPostgres, postgresRegion: *postgresRegion,
+		})
 	}
 	linkedContext, _, linkedErr := linkedProjectContext(cwd)
 	if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
