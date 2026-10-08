@@ -7,11 +7,13 @@ package openapidiff
 // no gateway — so the test surface is hermetic.
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sort"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -382,45 +384,84 @@ func TestComputeDryRun_Empty(t *testing.T) {
 	}
 }
 
-// TestComputeDryRun_UncoveredPaths pins the dry-run happy
-// path. Every (path, method) in the import that isn't covered
-// by an existing validate rule gets a suggestion.
+// importedDocBodies has JSON request bodies on POST /users, PUT
+// /users/{id}, and POST /orders/{id}/items; every other operation is
+// body-less and must not get a validate suggestion.
+const importedDocBodies = `{
+  "openapi": "3.1.0",
+  "info": {"title": "Test API", "version": "1.0.0"},
+  "paths": {
+    "/users": {
+      "get": {"summary": "list users"},
+      "post": {"requestBody": {"$ref": "#/components/requestBodies/NewUser"}}
+    },
+    "/users/{id}": {
+      "get": {"summary": "get user"},
+      "put": {"requestBody": {"content": {"application/merge-patch+json": {"schema": {"$ref": "#/components/schemas/User"}}}}},
+      "delete": {"summary": "delete user"}
+    },
+    "/orders/{id}/items": {
+      "post": {"requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Node"}}}}}
+    },
+    "/uploads": {
+      "post": {"requestBody": {"content": {"multipart/form-data": {"schema": {"type": "object"}}}}}
+    },
+    "/healthz": {"get": {"summary": "health"}}
+  },
+  "components": {
+    "requestBodies": {
+      "NewUser": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/User"}}}}
+    },
+    "schemas": {
+      "User": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "age": {"type": "integer", "minimum": 0}}},
+      "Node": {"type": "object", "properties": {"children": {"type": "array", "items": {"$ref": "#/components/schemas/Node"}}}}
+    }
+  }
+}`
+
+// TestComputeDryRun_UncoveredPaths pins the dry-run happy path: one
+// suggestion per uncovered operation with a JSON request body, matched
+// by a gateway glob rather than the OpenAPI template.
 func TestComputeDryRun_UncoveredPaths(t *testing.T) {
 	existing := []state.EdgeRule{
-		{ID: "r1", Kind: state.EdgeRuleKindValidate, MatchPath: "/users", MatchMethods: []string{"get"}},
+		{ID: "r1", Kind: state.EdgeRuleKindValidate, MatchPath: "/users", MatchMethods: []string{"post"}},
 	}
-	out, err := ComputeDryRun([]byte(importedDoc3Users), existing)
+	out, err := ComputeDryRun([]byte(importedDocBodies), existing)
 	if err != nil {
 		t.Fatalf("ComputeDryRun: %v", err)
 	}
-	// /users get is covered → no suggestion.
-	// /users post, /users/{id} get/delete, /healthz get → 4 suggestions.
-	if len(out.Suggestions) != 4 {
-		t.Errorf("suggestions: got %d, want 4 (%v)", len(out.Suggestions), suggestionPaths(out.Suggestions))
+	want := []string{"/orders/*/items:post", "/users/*:put"}
+	if got := suggestionPaths(out.Suggestions); !reflect.DeepEqual(got, want) {
+		t.Errorf("suggestions: got %v, want %v", got, want)
 	}
 	if out.OpenAPIVersion != "3.1.0" {
 		t.Errorf("OpenAPIVersion: got %q, want 3.1.0", out.OpenAPIVersion)
 	}
-	if out.EndpointCount != 5 {
-		t.Errorf("EndpointCount: got %d, want 5", out.EndpointCount)
+	if out.EndpointCount != 8 {
+		t.Errorf("EndpointCount: got %d, want 8", out.EndpointCount)
 	}
 }
 
-// TestComputeDryRun_FullyCovered pins the no-suggestions path.
-// When every operation is covered by an existing validate rule,
-// the response has an empty Suggestions array.
+// TestComputeDryRun_FullyCovered pins the no-suggestions path. Cover is
+// keyed on the gateway glob; a rule stored with the literal template path
+// never matched a request, so it does not count.
 func TestComputeDryRun_FullyCovered(t *testing.T) {
 	existing := []state.EdgeRule{
-		{ID: "r1", Kind: state.EdgeRuleKindValidate, MatchPath: "/users", MatchMethods: []string{"get", "post"}},
-		{ID: "r2", Kind: state.EdgeRuleKindValidate, MatchPath: "/users/{id}", MatchMethods: []string{"get", "delete"}},
-		{ID: "r3", Kind: state.EdgeRuleKindValidate, MatchPath: "/healthz", MatchMethods: []string{"get"}},
+		{ID: "r1", Kind: state.EdgeRuleKindValidate, MatchPath: "/users", MatchMethods: []string{"post"}},
+		{ID: "r2", Kind: state.EdgeRuleKindValidate, MatchPath: "/users/*", MatchMethods: []string{"put"}},
+		{ID: "r3", Kind: state.EdgeRuleKindValidate, MatchPath: "/orders/*/items", MatchMethods: []string{"post"}},
 	}
-	out, err := ComputeDryRun([]byte(importedDoc3Users), existing)
+	out, err := ComputeDryRun([]byte(importedDocBodies), existing)
 	if err != nil {
 		t.Fatalf("ComputeDryRun: %v", err)
 	}
 	if len(out.Suggestions) != 0 {
 		t.Errorf("suggestions: got %d, want 0 (fully covered); got %v", len(out.Suggestions), suggestionPaths(out.Suggestions))
+	}
+	existing[1].MatchPath = "/users/{id}"
+	out, err = ComputeDryRun([]byte(importedDocBodies), existing)
+	if err != nil || !reflect.DeepEqual(suggestionPaths(out.Suggestions), []string{"/users/*:put"}) {
+		t.Errorf("literal template rule counted as cover: %v (err=%v)", suggestionPaths(out.Suggestions), err)
 	}
 }
 
@@ -428,26 +469,100 @@ func TestComputeDryRun_FullyCovered(t *testing.T) {
 // ordering. Same input always produces suggestions in
 // (path asc, method asc) order.
 func TestComputeDryRun_SuggestionsSorted(t *testing.T) {
-	out, err := ComputeDryRun([]byte(importedDoc3Users), nil)
+	out, err := ComputeDryRun([]byte(importedDocBodies), nil)
 	if err != nil {
 		t.Fatalf("ComputeDryRun: %v", err)
 	}
-	gotPaths := suggestionPaths(out.Suggestions)
-	// ASCII sort: `/` (0x2F) < `:` (0x3A), so `/users/{id}:delete`
-	// sorts BEFORE `/users:get` — the `/` at position 6 of the
-	// templated path beats the `:` we appended as the method
-	// separator. This is the contract the test pins: deterministic
-	// ordering across runs (the dashboard relies on it for stable
-	// rendering).
-	wantPaths := []string{
-		"/healthz:get",
-		"/users/{id}:delete",
-		"/users/{id}:get",
-		"/users:get",
-		"/users:post",
+	wantPaths := []string{"/orders/*/items:post", "/users/*:put", "/users:post"}
+	if got := suggestionPaths(out.Suggestions); !reflect.DeepEqual(got, wantPaths) {
+		t.Errorf("paths: got %v, want %v", got, wantPaths)
 	}
-	if !reflect.DeepEqual(gotPaths, wantPaths) {
-		t.Errorf("paths: got %v, want %v", gotPaths, wantPaths)
+}
+
+// TestComputeDryRun_SchemasCompileAndValidate proves the suggested schemas
+// are self-contained (refs moved under $defs, including a recursive one) and
+// enforce the operation's real body contract on the gateway validator.
+func TestComputeDryRun_SchemasCompileAndValidate(t *testing.T) {
+	out, err := ComputeDryRun([]byte(importedDocBodies), nil)
+	if err != nil {
+		t.Fatalf("ComputeDryRun: %v", err)
+	}
+	schemas := map[string][]byte{}
+	for _, s := range out.Suggestions {
+		raw, err := json.Marshal(s.Action["validate"].(map[string]any)["schema"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		schemas[s.Path+":"+s.Methods[0]] = raw
+	}
+	for key, cases := range map[string]map[string]bool{
+		"/users:post":          {`{"name":"ada","age":36}`: true, `{"age":36}`: false, `{"name":"ada","age":-1}`: false},
+		"/users/*:put":         {`{"name":"ada"}`: true, `{"name":7}`: false},
+		"/orders/*/items:post": {`{"children":[{"children":[]}]}`: true, `{"children":[{"children":5}]}`: false},
+	} {
+		compiled, err := edgevalidate.Compile(schemas[key], false)
+		if err != nil {
+			t.Fatalf("%s schema does not compile: %v\n%s", key, err, schemas[key])
+		}
+		for body, valid := range cases {
+			fieldErr, err := compiled.Validate([]byte(body))
+			if err != nil || (fieldErr == nil) != valid {
+				t.Errorf("%s %s: valid=%v, fieldErr=%v err=%v", key, body, valid, fieldErr, err)
+			}
+		}
+	}
+}
+
+func TestOpenAPIPathGlob(t *testing.T) {
+	for template, want := range map[string]string{
+		"/users":                 "/users",
+		"/users/{id}":            "/users/*",
+		"/orders/{id}/items/{n}": "/orders/*/items/*",
+		"/files/{name}.json":     "/files/*.json",
+		"/literal/*star?":        `/literal/\*star\?`,
+	} {
+		if got, ok := openAPIPathGlob(template); !ok || got != want {
+			t.Errorf("openAPIPathGlob(%q) = %q, %v; want %q", template, got, ok, want)
+		}
+	}
+	for _, bad := range []string{"/users/{id", "/users/}", "/a/{}", "/a/{b/c}", "users"} {
+		if got, ok := openAPIPathGlob(bad); ok {
+			t.Errorf("openAPIPathGlob(%q) = %q, accepted", bad, got)
+		}
+	}
+}
+
+func TestRequestBodyValidateSchema_OpenAPI30Keywords(t *testing.T) {
+	spec, err := LoadBytes([]byte(`{
+  "openapi": "3.0.3",
+  "info": {"title": "t", "version": "1"},
+  "paths": {"/p": {"post": {"requestBody": {"content": {"application/json": {"schema": {
+    "type": "object",
+    "properties": {
+      "note": {"type": "string", "nullable": true},
+      "price": {"type": "number", "minimum": 0, "exclusiveMinimum": true},
+      "nullable": {"type": "boolean"}
+    }
+  }}}}}}}
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, ok := requestBodyValidateSchema(spec, spec.Paths["/p"].Methods["post"])
+	if !ok {
+		t.Fatal("no schema")
+	}
+	raw, _ := json.Marshal(schema)
+	compiled, err := edgevalidate.Compile(raw, false)
+	if err != nil {
+		t.Fatalf("compile: %v\n%s", err, raw)
+	}
+	for body, valid := range map[string]bool{
+		`{"note":null}`: true, `{"price":0}`: false, `{"price":0.5}`: true, `{"nullable":true}`: true, `{"nullable":"x"}`: false,
+	} {
+		if fieldErr, err := compiled.Validate([]byte(body)); err != nil || (fieldErr == nil) != valid {
+			t.Errorf("%s: want valid=%v, fieldErr=%v err=%v", body, valid, fieldErr, err)
+		}
 	}
 }
 
