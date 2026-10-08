@@ -81,3 +81,9 @@ test('renewal is skipped for non-auth errors and cancellation prevents a renewed
   assert.equal(canceled.status, 0)
   assert.equal(renewals, 1)
 })
+
+test('empty write batches are rejected before requesting', () => {
+  const client = notesClient({ url: 'https://notes.example', subject: 'user', accessToken: 'token', fetch: () => { throw new Error('unexpected request') } })
+  assert.throws(() => client.createMany([]), RangeError)
+  assert.throws(() => client.saveDetails([]), RangeError)
+})

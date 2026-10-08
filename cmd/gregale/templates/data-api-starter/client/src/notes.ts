@@ -1,6 +1,9 @@
 import { createDataClient } from '@gregale/data'
 import type { Database } from './database.types.js'
 
+type NoteBatchItem = Pick<Database['api']['Tables']['notes']['Insert'], 'body' | 'priority'>
+type DetailBatchItem = Pick<Database['api']['Tables']['note_details']['Insert'], 'note_id' | 'summary'>
+
 export type NoteCursor = Pick<Database['api']['Tables']['notes']['Row'], 'created_at' | 'id'>
 
 // Keep fractional seconds intact: Date.toISOString() would lose PG microseconds.
@@ -51,6 +54,14 @@ export function notesClient(options: {
     listTaggedNotes: () => db.from('tags').select('id,name,notes!note_tags(id,body)').order('id').range(0, 19),
     listComments: () => db.from('comments').select('id,body,notes(id,body)').order('id').range(0, 19),
     reply: (note_id: number, body: string) => db.from('comments').insert({ subject: options.subject, note_id, body }).select().single(),
+    createMany: (rows: NoteBatchItem[]) => {
+      if (!rows.length) throw new RangeError('Batch insert requires at least one row')
+      return db.from('notes').insert(rows.map(row => ({ ...row, subject: options.subject })), { defaultToNull: false }).select().retry(false)
+    },
+    saveDetails: (rows: DetailBatchItem[]) => {
+      if (!rows.length) throw new RangeError('Batch upsert requires at least one row')
+      return db.from('note_details').upsert(rows.map(row => ({ ...row, subject: options.subject })), { onConflict: 'subject,note_id' }).select().retry(false)
+    },
     create: (body: string, priority = 0) => db.from('notes').insert({ subject: options.subject, body, priority }).select().single(),
     update: (id: number, patch: { body?: string; priority?: number }) => db.from('notes').update(patch).eq('id', id).select().single(),
     remove: (id: number) => db.from('notes').delete().eq('id', id),

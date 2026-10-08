@@ -332,3 +332,40 @@ Client cancellation closes the proxy's upstream connection but does not
 promise database rollback or immediate SQL cancellation. Log status and stable
 codes rather than full error objects, SQL details, request headers or tokens;
 database errors can contain application row values.
+
+The starter supports typed bulk writes:
+
+```ts
+const inserted = await notes.createMany([
+  { body: 'first' },
+  { body: 'second', priority: 3 },
+])
+if (inserted.error) throw new Error('Batch insert failed')
+const saved = await notes.saveDetails(inserted.data.map(note => ({
+  note_id: note.id, summary: 'initial summary',
+})))
+```
+
+`createMany()` binds every row to the configured subject and uses
+`defaultToNull: false` so omitted fields use database defaults, even when another
+row supplies that field. Returned rows include generated ids and timestamps.
+`saveDetails()` upserts using the `(subject, note_id)` primary key and returns
+inserted or updated rows. Both helpers derive input types from the generated contract, reject empty
+batches locally, and disable automatic retries for writes.
+Conflict targets must match a primary key or unique constraint: strings passed
+to `onConflict` are validated by PostgreSQL, not TypeScript. Duplicate inserts
+return `23505`; an invalid target returns `42P10`; repeated keys in one updating
+upsert return `21000`. `ignoreDuplicates: true` skips conflicts and returns only
+rows actually inserted when combined with `.select()`.
+
+A batch mutation is one database transaction. RLS or constraint failure in any
+row rolls back the whole request, including earlier updates in that upsert.
+Separate API requests are separate transactions: a failed later request does
+not undo a successful earlier insert. The example above is therefore two
+transactions. The preview does not expose RPC-based multi-request transactions.
+Use an application-owned transaction on a trusted backend when multiple writes
+must commit together. Avoid automatic retries after ambiguous network failures.
+The existing request-body and response-row caps apply to bulk writes; the number
+of returned rows does not prove the number committed for oversized batches.
+Keep batches small enough to verify every returned id before relying on the
+result for follow-up writes or cleanup.

@@ -217,6 +217,61 @@ async function verifyCursors(first, second, userA, userB, owned) {
   }
 }
 
+async function verifyBulk(owner, other, subject, otherSubject, owned) {
+  const marker = `bulk-${randomUUID()}`
+  const created = await owner.createMany([{ body: marker }, { body: marker, priority: 3 }])
+  assert.equal(created.error, null, 'bulk_insert_failed')
+  for (const row of created.data) owned.push([owner, row.id])
+  assert.equal(created.data.length, 2)
+  assert.deepEqual(created.data.map(row => row.priority).sort(), [0, 3], 'bulk_defaults_mismatch')
+  assert.ok(created.data.every(row => row.subject === subject && Number.isInteger(row.id) && row.created_at))
+  const ids = created.data.map(row => row.id)
+  const details = ids.map(note_id => ({ note_id, summary: 'initial' }))
+  const inserted = await owner.saveDetails(details)
+  assert.equal(inserted.error, null, 'bulk_upsert_insert_failed')
+  const updated = await owner.saveDetails(details.map(row => ({ ...row, summary: 'updated' })))
+  assert.equal(updated.error, null, 'bulk_upsert_update_failed')
+  assert.equal(updated.data.length, 2)
+  assert.ok(updated.data.every(row => row.summary === 'updated'))
+  const foreign = await other.saveDetails([{ note_id: ids[0], summary: 'forbidden' }])
+  assert.equal(foreign.error?.code, '23503', 'cross_owner_upsert_attachment_allowed')
+  const duplicate = await owner.db.from('note_details').insert([
+    { subject, note_id: ids[0], summary: 'duplicate' },
+    { subject, note_id: ids[1], summary: 'duplicate' },
+  ]).retry(false)
+  assert.equal(duplicate.error?.code, '23505', 'bulk_duplicate_not_rejected')
+  const cardinality = await owner.saveDetails([
+    { note_id: ids[0], summary: 'same key first' }, { note_id: ids[0], summary: 'same key second' },
+  ])
+  assert.equal(cardinality.error?.code, '21000', 'duplicate_upsert_target_not_rejected')
+  const invalidTarget = await owner.db.from('note_details').upsert({ subject, note_id: ids[0], summary: 'invalid' }, { onConflict: 'note_id' }).retry(false)
+  assert.equal(invalidTarget.error?.code, '42P10', 'invalid_conflict_target_not_rejected')
+  const mixedInsert = await owner.db.from('notes').insert([
+    { subject, body: marker + '-mixed' }, { subject: otherSubject, body: marker + '-mixed' },
+  ]).retry(false)
+  assert.equal(mixedInsert.error?.code, '42501', 'mixed_owner_batch_allowed')
+  for (const client of [owner, other]) {
+    const absent = await client.db.from('notes').select('id').eq('body', marker + '-mixed')
+    assert.equal(absent.error, null)
+    assert.deepEqual(absent.data, [], 'mixed_insert_partially_committed')
+  }
+  const mixedUpsert = await owner.db.from('note_details').upsert([
+    { subject, note_id: ids[0], summary: 'must roll back' },
+    { subject: otherSubject, note_id: ids[1], summary: 'forbidden' },
+  ], { onConflict: 'subject,note_id' }).retry(false)
+  assert.equal(mixedUpsert.error?.code, '42501', 'mixed_owner_upsert_allowed')
+  const unchanged = await owner.db.from('note_details').select('summary').in('note_id', ids)
+  assert.equal(unchanged.error, null)
+  assert.deepEqual(unchanged.data, [{ summary: 'updated' }, { summary: 'updated' }], 'failed_batch_partially_updated')
+  const ignored = await owner.db.from('note_details').upsert({ subject, note_id: ids[0], summary: 'ignored' }, { onConflict: 'subject,note_id', ignoreDuplicates: true }).select().retry(false)
+  assert.equal(ignored.error, null)
+  assert.deepEqual(ignored.data, [])
+  // An earlier successful request stays committed when a later request fails.
+  const retained = await owner.db.from('notes').select('id').in('id', ids)
+  assert.equal(retained.error, null)
+  assert.equal(retained.data.length, 2, 'separate_requests_treated_as_one_transaction')
+}
+
 export async function verifyAuthorization({ url, userA, userB }) {
   assert.ok(url && userA.subject && userB.subject && userA.token && userB.token, 'two_user_configuration_required')
   assert.notEqual(userA.subject, userB.subject, 'subjects_must_differ')
@@ -232,6 +287,7 @@ export async function verifyAuthorization({ url, userA, userB }) {
     for (const [owner, other, subject, otherSubject] of [
       [first, second, userA.subject, userB.subject], [second, first, userB.subject, userA.subject],
     ]) {
+      await verifyBulk(owner, other, subject, otherSubject, owned)
       const created = await owner.create(`authorization-${randomUUID()}`)
       assert.equal(created.error, null, 'own_insert_failed')
       assert.equal(created.data.subject, subject, 'own_subject_mismatch')

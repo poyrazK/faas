@@ -128,3 +128,24 @@ async function sessionContract(client: ReturnType<typeof notesClient>) {
   }
 }
 void sessionContract
+
+async function bulkContract(client: ReturnType<typeof notesClient>) {
+  const created = await client.createMany([{ body: 'first' }, { body: 'second', priority: 1 }])
+  if (created.data) {
+    const id: number = created.data[0].id
+    const priority: number = created.data[0].priority
+    void [id, priority]
+  }
+  const saved = await client.saveDetails([{ note_id: 1, summary: 'summary' }])
+  if (saved.data) {
+    const summary: string = saved.data[0].summary
+    void summary
+  }
+  // @ts-expect-error each batch item needs its required body
+  client.createMany([{ priority: 1 }])
+  // @ts-expect-error generated ids cannot be supplied
+  client.createMany([{ id: 1, body: 'first' }])
+  // @ts-expect-error foreign key columns retain their integer type
+  client.saveDetails([{ note_id: '1', summary: 'summary' }])
+}
+void bulkContract
