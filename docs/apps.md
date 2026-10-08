@@ -46,7 +46,7 @@ Use **App costs** in the dashboard to rank apps by a selected month and compare
 compute and egress totals across the account.
 Separately attributed jobs and account-level charges are excluded. The known
 usage amount is not an invoice total, and app-level forecasts are unavailable.
-The CLI accepts the same `--month YYYY-MM` selection.
+The CLI accepts the same `--month YYYY-MM` selection. In `--json` output, `meters[].coverage` shows completeness, freshness, and reasons, while `missing_bill_components` lists unavailable bill inputs. Check these fields before interpreting `known_usage_millicents`; it is a retained usage subtotal, not an invoice total.
 
 ## Current health and recovery
 
