@@ -533,6 +533,12 @@ var (
 	// secrets:write.
 	ScopesSecretsWriteSurface = []string{ScopeAdmin, ScopeSecretsWrite}
 
+	// ScopesAppForkSecretsSurface: POST /v1/apps/{slug}/forks (ADR-732).
+	// A fork copies production memory, secrets included, so the route
+	// requires this surface in addition to ScopesDeployWriteSurface.
+	// Granted by admin or secrets:read.
+	ScopesAppForkSecretsSurface = []string{ScopeAdmin, ScopeSecretsRead}
+
 	// ScopesEnvWriteSurface: PUT/DELETE on /v1/apps/{slug}/env/{key}
 	// (issue #395 / ADR-045). Granted by admin or env:write.
 	// NOT MFA-gated because env vars are explicitly non-sensitive
