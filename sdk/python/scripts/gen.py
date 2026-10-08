@@ -157,6 +157,7 @@ WRAPPER_MODULES = (
     "job_operations_runtime.py",
     "operations.py",
     "_operation_contract.py",
+    "customer_operation_schema.sql",
     "operation_schema.sql",
 )
 PROJECT_FILES = ("pyproject.toml", "README.md")

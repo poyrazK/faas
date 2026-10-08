@@ -1972,7 +1972,7 @@ jobs:
         working-directory: sdk/python
         run: |
           python scripts/gen.py
-          git diff --exit-code -- sdk/python/faas_sdk/ || {
+          git diff --exit-code -- faas_sdk/ || {
             echo "::error::sdk/python/faas_sdk is out of sync with api/openapi.yaml."
             echo "::error::Run 'make sdk-gen-python-check' locally and commit the result."
             exit 1
@@ -1989,7 +1989,7 @@ jobs:
       - name: regen determinism (twice)
         working-directory: sdk/python
         run: |
-          python scripts/gen.py && python scripts/gen.py && git diff --exit-code -- sdk/python/faas_sdk/
+          python scripts/gen.py && python scripts/gen.py && git diff --exit-code -- faas_sdk/
       - name: smoke + unit
         working-directory: sdk/python
         run: python -m pytest tests/ --ignore=tests/debug_chain.py -v
