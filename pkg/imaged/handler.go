@@ -3856,7 +3856,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
 				return err
 			}
-		} else if err := h.buildLocalOCIAppLayer(ctx, app, dep, acct); err != nil {
+		} else if err := h.buildLocalOCIAppLayer(ctx, app, &dep, acct); err != nil {
 			return err
 		}
 	default:

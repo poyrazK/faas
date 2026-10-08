@@ -21,7 +21,7 @@ var (
 // introduced by an earlier app layer; the marker then hides the same name from
 // the shared base drive after guest-init mounts the upper filesystem.
 func applyOverlayWhiteout(parent, victimName, marker string) error {
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	if err := mkdirImageDirectories(parent, 0o755); err != nil {
 		return fmt.Errorf("create parent: %w", err)
 	}
 	victim := filepath.Join(parent, victimName)
@@ -45,7 +45,7 @@ func applyOverlayWhiteout(parent, victimName, marker string) error {
 // form; user.overlay.opaque is a fallback for hosts that expose only user xattrs
 // while constructing the ext4 source tree.
 func applyOverlayOpaque(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := mkdirImageDirectories(dir, 0o755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 	if err := clearDir(dir); err != nil {

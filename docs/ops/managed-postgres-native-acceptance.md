@@ -5,6 +5,11 @@ deployment with a real SQL application and real Firecracker guests. It complemen
 the backend-specific v8 durable qualification; it does not replace that gate or
 enable provisioning.
 
+The runner selects `metal,managed_postgres_native`. The additional tag keeps
+this isolated TLS/SCRAM and proxy acceptance outside the ordinary metal suite,
+which uses different database prerequisites. Compiling this test and invoking
+it without the strict runner's opt-in fails; it never silently skips.
+
 The disposable fixture runs PostgreSQL with TLS and SCRAM, in a separate empty
 customer database. Provider management is simulated in-process. It uses the real
 managed database and binding services, catalog, age/HMAC credential delivery,

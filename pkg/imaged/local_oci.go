@@ -518,14 +518,26 @@ func localOCIBlobName(digest string) (string, error) {
 // bootable drive1. Source-built apps do not have a registry reference or a
 // platform-runtime prefix to feed through the registry two-drive path, so all
 // layers from this trusted local artifact are applied here.
-func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep *state.Deployment, acct state.Account) error {
+	digest, err := localOCIManifestDigest(dep.RootfsPath)
+	if err != nil {
+		return fmt.Errorf("imaged: verify source build digest: %w", err)
+	}
+	pins, ok := h.store.(state.DeploymentBuildDigestStore)
+	if !ok {
+		return fmt.Errorf("imaged: source build digest store is unavailable")
+	}
+	if err := pins.PinDeploymentBuildDigest(ctx, dep.ID, dep.RootfsPath, digest); err != nil {
+		return fmt.Errorf("imaged: pin source build digest: %w", err)
+	}
+	dep.ImageDigest = digest
 	config, layers, cleanup, err := loadLocalOCIArchive(dep.RootfsPath)
 	if err != nil {
 		return fmt.Errorf("imaged: load built OCI image: %w", err)
 	}
 	defer cleanup()
 
-	manifest, err := manifestFromLocalOCIConfig(config, dep)
+	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
 	}
@@ -536,7 +548,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
-	manifest, err = applyOverrides(manifest, dep)
+	manifest, err = applyOverrides(manifest, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}

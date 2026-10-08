@@ -1,4 +1,4 @@
-//go:build metal
+//go:build managed_postgres_native && metal
 
 package e2e_test
 
@@ -31,7 +31,7 @@ import (
 // simulated: the catalog, sealed credentials, daemons and SQL authority are real.
 func TestManagedPostgresNativeMetal(t *testing.T) {
 	if os.Getenv("GREGALE_POSTGRES_NATIVE_ACCEPTANCE") != "1" {
-		t.Skip("use make test-managed-postgres-native for isolated SQL guest acceptance")
+		t.Fatal("use make test-managed-postgres-native for isolated SQL guest acceptance")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || os.Geteuid() != 0 {
 		t.Fatal("SQL guest acceptance requires root on x86_64 Linux")
@@ -118,6 +118,9 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		return value
 	}
 	cleanup := func() {
+		if t.Failed() {
+			h.DumpLogs(t)
+		}
 		h.Stop()
 		fixture.Enabled = false
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
