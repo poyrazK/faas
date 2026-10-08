@@ -15354,3 +15354,97 @@ WHERE account_id = sqlc.arg(account_id)::uuid
   AND id = sqlc.arg(fork_id)::uuid
   AND status IN ('queued', 'restoring', 'running')
 RETURNING *;
+
+-- ADR-732 scheduler side. schedd holds a lease on every restoring or running
+-- fork; terminal transitions clear it (app_forks_lease_status_chk).
+
+-- name: ClaimNextAppFork :one
+UPDATE app_forks
+SET status = 'restoring',
+    lease_token = gen_random_uuid(),
+    lease_owner = sqlc.arg(owner)::text,
+    lease_expires_at = sqlc.arg(lease_expires_at)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = (
+    SELECT candidate.id FROM app_forks candidate
+    WHERE candidate.status = 'queued'
+      AND candidate.cancel_requested_at IS NULL
+      AND candidate.expires_at > sqlc.arg(now)::timestamptz
+    ORDER BY candidate.created_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;
+
+-- name: RenewAppForkLease :one
+UPDATE app_forks
+SET lease_expires_at = sqlc.arg(lease_expires_at)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(fork_id)::uuid
+  AND lease_token = sqlc.arg(lease_token)::uuid
+  AND status IN ('restoring', 'running')
+RETURNING *;
+
+-- name: MarkAppForkRunning :one
+UPDATE app_forks
+SET status = 'running',
+    snapshot_id = sqlc.arg(snapshot_id)::uuid,
+    instance_id = sqlc.arg(instance_id)::uuid,
+    started_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(fork_id)::uuid
+  AND lease_token = sqlc.arg(lease_token)::uuid
+  AND status = 'restoring'
+RETURNING *;
+
+-- name: FinishAppFork :one
+UPDATE app_forks
+SET status = sqlc.arg(status)::text,
+    failure_code = sqlc.narg(failure_code)::text,
+    failure_message = sqlc.narg(failure_message)::text,
+    finished_at = sqlc.arg(now)::timestamptz,
+    lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(fork_id)::uuid
+  AND lease_token = sqlc.arg(lease_token)::uuid
+  AND status IN ('restoring', 'running')
+  AND sqlc.arg(status)::text IN ('expired', 'cancelled', 'failed')
+RETURNING *;
+
+-- name: ExpireUnclaimedAppForks :many
+-- Queued forks that reached expires_at, or were cancelled, before any
+-- scheduler claimed them. They never held an instance.
+UPDATE app_forks
+SET status = CASE WHEN cancel_requested_at IS NULL THEN 'expired' ELSE 'cancelled' END,
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE status = 'queued'
+  AND (expires_at <= sqlc.arg(now)::timestamptz OR cancel_requested_at IS NOT NULL)
+RETURNING *;
+
+-- name: ListAppForksDueForTeardown :many
+-- Forks this scheduler holds that reached their TTL or were cancelled.
+SELECT * FROM app_forks
+WHERE lease_owner = sqlc.arg(owner)::text
+  AND status IN ('restoring', 'running')
+  AND (expires_at <= sqlc.arg(now)::timestamptz OR cancel_requested_at IS NOT NULL)
+ORDER BY expires_at, id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: TakeOverAbandonedAppFork :one
+-- A fork whose lease expired lost its scheduler. The caller takes the lease,
+-- destroys any instance the fork recorded, and finishes it.
+UPDATE app_forks
+SET lease_token = gen_random_uuid(),
+    lease_owner = sqlc.arg(owner)::text,
+    lease_expires_at = sqlc.arg(lease_expires_at)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = (
+    SELECT candidate.id FROM app_forks candidate
+    WHERE candidate.status IN ('restoring', 'running')
+      AND candidate.lease_expires_at < sqlc.arg(now)::timestamptz
+    ORDER BY candidate.lease_expires_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;

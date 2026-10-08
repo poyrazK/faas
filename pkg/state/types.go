@@ -4713,7 +4713,19 @@ const (
 	// (ADR-137) the run-to-completion RestartPolicy default 'no'
 	// applies; billed at standard rate while RUNNING.
 	InstanceModeJob InstanceMode = "job"
+	// InstanceModeFork tags a production fork (ADR-732): a quarantined
+	// restore of an app capture that never serves traffic. It bills like
+	// a live instance, counts toward the RAM ceiling but not
+	// max_concurrency, is never routed, never idle-reaped, parked,
+	// snapshotted or drained, and is destroyed only by the fork
+	// coordinator at its TTL.
+	InstanceModeFork InstanceMode = "fork"
 )
+
+// IsFork reports whether mode is the ADR-732 production-fork mode. Every
+// path that routes to, counts, parks or snapshots instances must skip
+// these rows.
+func IsFork(mode string) bool { return mode == string(InstanceModeFork) }
 
 // MirrorRule (issue #72 / ADR-125) is the customer-intent row
 // that links a live source_deployment to a live mirror_deployment.

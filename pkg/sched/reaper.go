@@ -388,7 +388,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		// customer's work and emits a false idle_timeout
 		// lifecycle_failure_reason.
 		switch state.InstanceMode(in.Mode) {
-		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob:
+		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob, state.InstanceModeFork:
 			continue
 		}
 		if in.State == state.StateRunning {
@@ -610,7 +610,7 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		// job-mode runs are bounded by JobMaxRuntimeS, not the
 		// reaper; scale-in mid-job loses the customer's work.
 		switch state.InstanceMode(in.Mode) {
-		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob:
+		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob, state.InstanceModeFork:
 			continue
 		}
 		g, ok := byApp[groupKey]

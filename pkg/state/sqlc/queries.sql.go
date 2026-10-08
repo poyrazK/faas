@@ -3455,6 +3455,62 @@ func (q *Queries) ClaimManagedPostgresResize(ctx context.Context, db DBTX, arg C
 	return i, err
 }
 
+const claimNextAppFork = `-- name: ClaimNextAppFork :one
+
+UPDATE app_forks
+SET status = 'restoring',
+    lease_token = gen_random_uuid(),
+    lease_owner = $1::text,
+    lease_expires_at = $2::timestamptz,
+    updated_at = greatest(updated_at, $3::timestamptz)
+WHERE id = (
+    SELECT candidate.id FROM app_forks candidate
+    WHERE candidate.status = 'queued'
+      AND candidate.cancel_requested_at IS NULL
+      AND candidate.expires_at > $3::timestamptz
+    ORDER BY candidate.created_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+`
+
+type ClaimNextAppForkParams struct {
+	Owner          string
+	LeaseExpiresAt pgtype.Timestamptz
+	Now            pgtype.Timestamptz
+}
+
+// ADR-732 scheduler side. schedd holds a lease on every restoring or running
+// fork; terminal transitions clear it (app_forks_lease_status_chk).
+func (q *Queries) ClaimNextAppFork(ctx context.Context, db DBTX, arg ClaimNextAppForkParams) (AppFork, error) {
+	row := db.QueryRow(ctx, claimNextAppFork, arg.Owner, arg.LeaseExpiresAt, arg.Now)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const claimNextUnfencedAppTask = `-- name: ClaimNextUnfencedAppTask :one
 WITH candidate AS (
  SELECT task.id FROM app_tasks task JOIN apps app ON app.id=task.app_id
@@ -12585,6 +12641,59 @@ func (q *Queries) ExpireRetainedDeploymentRevisionPins(ctx context.Context, db D
 	return result.RowsAffected(), nil
 }
 
+const expireUnclaimedAppForks = `-- name: ExpireUnclaimedAppForks :many
+UPDATE app_forks
+SET status = CASE WHEN cancel_requested_at IS NULL THEN 'expired' ELSE 'cancelled' END,
+    finished_at = $1::timestamptz,
+    updated_at = greatest(updated_at, $1::timestamptz)
+WHERE status = 'queued'
+  AND (expires_at <= $1::timestamptz OR cancel_requested_at IS NOT NULL)
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+`
+
+// Queued forks that reached expires_at, or were cancelled, before any
+// scheduler claimed them. They never held an instance.
+func (q *Queries) ExpireUnclaimedAppForks(ctx context.Context, db DBTX, now pgtype.Timestamptz) ([]AppFork, error) {
+	rows, err := db.Query(ctx, expireUnclaimedAppForks, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppFork{}
+	for rows.Next() {
+		var i AppFork
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.RequestedBy,
+			&i.Status,
+			&i.TtlSeconds,
+			&i.ExpiresAt,
+			&i.SnapshotID,
+			&i.InstanceID,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expireUploadSession = `-- name: ExpireUploadSession :exec
 UPDATE upload_sessions
    SET status = 'expired'
@@ -13010,6 +13119,65 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 		&i.DataResourceID,
 		&i.CloneResourceRole,
 		&i.AccountingRequired,
+	)
+	return i, err
+}
+
+const finishAppFork = `-- name: FinishAppFork :one
+UPDATE app_forks
+SET status = $1::text,
+    failure_code = $2::text,
+    failure_message = $3::text,
+    finished_at = $4::timestamptz,
+    lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+    updated_at = greatest(updated_at, $4::timestamptz)
+WHERE id = $5::uuid
+  AND lease_token = $6::uuid
+  AND status IN ('restoring', 'running')
+  AND $1::text IN ('expired', 'cancelled', 'failed')
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+`
+
+type FinishAppForkParams struct {
+	Status         string
+	FailureCode    pgtype.Text
+	FailureMessage pgtype.Text
+	Now            pgtype.Timestamptz
+	ForkID         pgtype.UUID
+	LeaseToken     pgtype.UUID
+}
+
+func (q *Queries) FinishAppFork(ctx context.Context, db DBTX, arg FinishAppForkParams) (AppFork, error) {
+	row := db.QueryRow(ctx, finishAppFork,
+		arg.Status,
+		arg.FailureCode,
+		arg.FailureMessage,
+		arg.Now,
+		arg.ForkID,
+		arg.LeaseToken,
+	)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -24035,6 +24203,63 @@ func (q *Queries) ListAppForks(ctx context.Context, db DBTX, arg ListAppForksPar
 	return items, nil
 }
 
+const listAppForksDueForTeardown = `-- name: ListAppForksDueForTeardown :many
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at FROM app_forks
+WHERE lease_owner = $1::text
+  AND status IN ('restoring', 'running')
+  AND (expires_at <= $2::timestamptz OR cancel_requested_at IS NOT NULL)
+ORDER BY expires_at, id
+LIMIT $3::integer
+`
+
+type ListAppForksDueForTeardownParams struct {
+	Owner    string
+	Now      pgtype.Timestamptz
+	RowLimit int32
+}
+
+// Forks this scheduler holds that reached their TTL or were cancelled.
+func (q *Queries) ListAppForksDueForTeardown(ctx context.Context, db DBTX, arg ListAppForksDueForTeardownParams) ([]AppFork, error) {
+	rows, err := db.Query(ctx, listAppForksDueForTeardown, arg.Owner, arg.Now, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppFork{}
+	for rows.Next() {
+		var i AppFork
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.RequestedBy,
+			&i.Status,
+			&i.TtlSeconds,
+			&i.ExpiresAt,
+			&i.SnapshotID,
+			&i.InstanceID,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppSecretRevocationTargets = `-- name: ListAppSecretRevocationTargets :many
 SELECT instance_id::text, workload_name, runtime_state, reload_support,
        status, coalesce(ack_revision, ''), ack_at, coalesce(error_code, '')
@@ -34618,6 +34843,61 @@ func (q *Queries) ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, ap
 	row := db.QueryRow(ctx, managedWorkflowEffectAppScope, appID)
 	var i ManagedWorkflowEffectAppScopeRow
 	err := row.Scan(&i.AccountID, &i.AccountStatus)
+	return i, err
+}
+
+const markAppForkRunning = `-- name: MarkAppForkRunning :one
+UPDATE app_forks
+SET status = 'running',
+    snapshot_id = $1::uuid,
+    instance_id = $2::uuid,
+    started_at = $3::timestamptz,
+    updated_at = greatest(updated_at, $3::timestamptz)
+WHERE id = $4::uuid
+  AND lease_token = $5::uuid
+  AND status = 'restoring'
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+`
+
+type MarkAppForkRunningParams struct {
+	SnapshotID pgtype.UUID
+	InstanceID pgtype.UUID
+	Now        pgtype.Timestamptz
+	ForkID     pgtype.UUID
+	LeaseToken pgtype.UUID
+}
+
+func (q *Queries) MarkAppForkRunning(ctx context.Context, db DBTX, arg MarkAppForkRunningParams) (AppFork, error) {
+	row := db.QueryRow(ctx, markAppForkRunning,
+		arg.SnapshotID,
+		arg.InstanceID,
+		arg.Now,
+		arg.ForkID,
+		arg.LeaseToken,
+	)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -53953,6 +54233,56 @@ func (q *Queries) ReleaseUnownedNotification(ctx context.Context, db DBTX, arg R
 	return result.RowsAffected(), nil
 }
 
+const renewAppForkLease = `-- name: RenewAppForkLease :one
+UPDATE app_forks
+SET lease_expires_at = $1::timestamptz,
+    updated_at = greatest(updated_at, $2::timestamptz)
+WHERE id = $3::uuid
+  AND lease_token = $4::uuid
+  AND status IN ('restoring', 'running')
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+`
+
+type RenewAppForkLeaseParams struct {
+	LeaseExpiresAt pgtype.Timestamptz
+	Now            pgtype.Timestamptz
+	ForkID         pgtype.UUID
+	LeaseToken     pgtype.UUID
+}
+
+func (q *Queries) RenewAppForkLease(ctx context.Context, db DBTX, arg RenewAppForkLeaseParams) (AppFork, error) {
+	row := db.QueryRow(ctx, renewAppForkLease,
+		arg.LeaseExpiresAt,
+		arg.Now,
+		arg.ForkID,
+		arg.LeaseToken,
+	)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const renewCustomerOperationExecution = `-- name: RenewCustomerOperationExecution :execrows
 UPDATE invocations
 SET lease_expires_at = least(now() + $1::integer * interval '1 second', deadline_at)
@@ -59694,6 +60024,59 @@ WHERE scaling.app_id=a.id AND a.id=$1::uuid AND scaling.scope='production'
 func (q *Queries) SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, syncProductionScalingStates, appID)
 	return err
+}
+
+const takeOverAbandonedAppFork = `-- name: TakeOverAbandonedAppFork :one
+UPDATE app_forks
+SET lease_token = gen_random_uuid(),
+    lease_owner = $1::text,
+    lease_expires_at = $2::timestamptz,
+    updated_at = greatest(updated_at, $3::timestamptz)
+WHERE id = (
+    SELECT candidate.id FROM app_forks candidate
+    WHERE candidate.status IN ('restoring', 'running')
+      AND candidate.lease_expires_at < $3::timestamptz
+    ORDER BY candidate.lease_expires_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+`
+
+type TakeOverAbandonedAppForkParams struct {
+	Owner          string
+	LeaseExpiresAt pgtype.Timestamptz
+	Now            pgtype.Timestamptz
+}
+
+// A fork whose lease expired lost its scheduler. The caller takes the lease,
+// destroys any instance the fork recorded, and finishes it.
+func (q *Queries) TakeOverAbandonedAppFork(ctx context.Context, db DBTX, arg TakeOverAbandonedAppForkParams) (AppFork, error) {
+	row := db.QueryRow(ctx, takeOverAbandonedAppFork, arg.Owner, arg.LeaseExpiresAt, arg.Now)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const touchCustomerOperationWorkflowStep = `-- name: TouchCustomerOperationWorkflowStep :exec

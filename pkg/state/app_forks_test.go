@@ -21,6 +21,9 @@ import (
 type appForkFixture struct {
 	store                     state.Store
 	accountID, appID, liveDep string
+	// nodeID is a compute node valid for instance rows: the default-local
+	// node on Postgres, empty on MemStore.
+	nodeID string
 }
 
 // appForkStores returns the MemStore fixture and, when DATABASE_URL is set,
@@ -31,8 +34,10 @@ func appForkStores(t *testing.T) map[string]appForkFixture {
 	if testing.Short() || os.Getenv("DATABASE_URL") == "" || os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		return out
 	}
-	s, _ := pgStore(t)
-	out["pg"] = seedAppForkFixture(t, s)
+	s, ctx := pgStore(t)
+	pg := seedAppForkFixture(t, s)
+	pg.nodeID = resolveDefaultLocal(t, ctx, s)
+	out["pg"] = pg
 	return out
 }
 

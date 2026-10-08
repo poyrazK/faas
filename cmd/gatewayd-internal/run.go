@@ -1490,7 +1490,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			targets := make([]gateway.Target, 0, len(instances))
 			readinessInstanceIDs := make([]string, 0, len(instances))
 			for _, instance := range instances {
-				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
+				if !gatewayRoutable(instance) {
 					continue
 				}
 				port, ok := live[instance.DeploymentID]
@@ -1568,8 +1568,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return gateway.Target{}, false, err
 			}
 			for _, instance := range instances {
-				if instance.DeploymentID != deploymentID || instance.State != string(state.StateRunning) ||
-					instance.ID == "" || instance.NodeID == "" {
+				if instance.DeploymentID != deploymentID || !gatewayRoutable(instance) {
 					continue
 				}
 				return gateway.Target{

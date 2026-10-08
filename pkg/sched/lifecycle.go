@@ -1440,8 +1440,10 @@ func (e *Engine) isMirrorDeployment(ctx context.Context, appID, deploymentID str
 func (e *Engine) drainIncompatibleServiceReplicas(ctx context.Context, instances []state.Instance) int {
 	removed := 0
 	for _, ins := range instances {
+		// ADR-732: a fork is not a replica of any mode; the fork
+		// coordinator owns its lifetime.
 		if normalizedInstanceMode(ins.Mode) == string(state.InstanceModeService) ||
-			ins.Mode == string(state.InstanceModeMirror) {
+			ins.Mode == string(state.InstanceModeMirror) || state.IsFork(ins.Mode) {
 			continue
 		}
 		fresh, err := e.store.InstanceByID(ctx, ins.ID)

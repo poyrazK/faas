@@ -17426,7 +17426,7 @@ func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Inst
 		           coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
 		 from instances i
 		 join deployments d on d.id = i.deployment_id and d.status = 'live' and d.traffic_percent > 0
-		 where i.app_id = $1 and i.state = 'running'
+		 where i.app_id = $1 and i.state = 'running' and i.mode <> 'fork'
 		 order by i.started_at desc nulls last limit 1`, appID)
 	return scanInstance(row)
 }

@@ -14965,7 +14965,7 @@ func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Insta
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != appID || ins.State != "running" {
+		if ins.AppID != appID || ins.State != "running" || IsFork(ins.Mode) {
 			continue
 		}
 		dep, ok := m.deployments[ins.DeploymentID]

@@ -3550,6 +3550,7 @@ type Store interface {
 	// Production fork intent (ADR-732): quarantined, non-serving restores of
 	// an app's newest capture. apid admits; schedd owns the lifecycle.
 	AppForkStore
+	AppForkLifecycleStore
 
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and
