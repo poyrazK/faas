@@ -10,6 +10,8 @@ T = TypeVar("T", bound="OperationWorkflowStateValidationResponse")
 
 @_attrs_define
 class OperationWorkflowStateValidationResponse:
+    """Validation outcome for an app-reported workflow-state batch."""
+
     valid: bool
 
     def to_dict(self) -> dict[str, Any]:

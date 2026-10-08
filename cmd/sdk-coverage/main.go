@@ -991,6 +991,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/access-grants/{key}":                               "DeleteObjectBucketAccessGrant",
 	"GET /v1/apps/{slug}/buckets/{bucket}/objects":                                              "ListBucketObjects",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/objects":                                           "DeleteBucketObject",
+	"GET /v1/apps/{slug}/buckets/{bucket}/objects/versions":                                     "ListObjectBucketVersions",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/objects/versions":                                  "DeleteObjectBucketVersion",
 	"GET /v1/apps/{slug}/buckets/{bucket}/objects/tags":                                         "GetObjectBucketTags",
 	"PUT /v1/apps/{slug}/buckets/{bucket}/objects/tags":                                         "PutObjectBucketTags",

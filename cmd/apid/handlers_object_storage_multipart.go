@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"time"
@@ -199,29 +200,17 @@ func (s *server) listObjectMultipartParts(w http.ResponseWriter, r *http.Request
 		bucketProblem(w, state.ErrConflict)
 		return
 	}
-	marker := int64(0)
-	limit := int64(1000)
-	var err error
-	if raw := r.URL.Query().Get("part_number_marker"); raw != "" {
-		marker, err = strconv.ParseInt(raw, 10, 32)
-		if err != nil {
-			bucketProblem(w, objectstorage.ErrInvalid)
-			return
-		}
+	marker, limit, err := objectMultipartPartListQuery(w, r)
+	if err != nil {
+		bucketProblem(w, err)
+		return
 	}
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		limit, err = strconv.ParseInt(raw, 10, 32)
-		if err != nil {
-			bucketProblem(w, objectstorage.ErrInvalid)
-			return
-		}
-	}
-	if marker < 0 || marker > 10000 || limit < 1 || limit > 1000 {
-		bucketProblem(w, objectstorage.ErrInvalid)
+	if err := s.customerObjectRequestRecorder(bucket)(r.Context()); err != nil {
+		bucketProblem(w, err)
 		return
 	}
 	page, err := provider.ListMultipartParts(r.Context(), bucket.PhysicalName, objectstorage.MultipartListPartsRequest{
-		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumberMarker: int32(marker), Limit: int32(limit),
+		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumberMarker: marker, Limit: limit,
 	})
 	if err != nil {
 		bucketProblem(w, err)
@@ -232,6 +221,41 @@ func (s *server) listObjectMultipartParts(w http.ResponseWriter, r *http.Request
 		out.Items = append(out.Items, api.ObjectMultipartPart{PartNumber: part.PartNumber, ETag: part.ETag, SizeBytes: part.SizeBytes, LastModified: part.LastModified})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func objectMultipartPartListQuery(w http.ResponseWriter, r *http.Request) (int32, int32, error) {
+	if _, err := readObjectLockControlBody(w, r, 0); err != nil {
+		return 0, 0, err
+	}
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return 0, 0, objectstorage.ErrInvalid
+	}
+	marker, limit := int32(0), int32(api.MaxObjectS3ListItems)
+	for name, values := range q {
+		if len(values) != 1 || values[0] == "" {
+			return 0, 0, objectstorage.ErrInvalid
+		}
+		n, err := strconv.ParseInt(values[0], 10, 32)
+		if err != nil {
+			return 0, 0, objectstorage.ErrInvalid
+		}
+		switch name {
+		case "part_number_marker":
+			if n < 0 || n > api.MaxMultipartParts {
+				return 0, 0, objectstorage.ErrInvalid
+			}
+			marker = int32(n)
+		case "limit":
+			if n < 1 || n > api.MaxObjectS3ListItems {
+				return 0, 0, objectstorage.ErrInvalid
+			}
+			limit = int32(n)
+		default:
+			return 0, 0, objectstorage.ErrInvalid
+		}
+	}
+	return marker, limit, nil
 }
 
 func (s *server) signObjectMultipartPart(w http.ResponseWriter, r *http.Request, acct state.Account) {

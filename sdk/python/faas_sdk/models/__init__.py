@@ -1533,11 +1533,13 @@ from .object_tagging_result import ObjectTaggingResult
 from .object_tagging_result_tags import ObjectTaggingResultTags
 from .object_upload_route import ObjectUploadRoute
 from .object_upload_route_list import ObjectUploadRouteList
+from .object_version import ObjectVersion
 from .object_version_delete_result import ObjectVersionDeleteResult
 from .object_version_legal_hold import ObjectVersionLegalHold
 from .object_version_legal_hold_request import ObjectVersionLegalHoldRequest
 from .object_version_legal_hold_result import ObjectVersionLegalHoldResult
 from .object_version_legal_hold_status import ObjectVersionLegalHoldStatus
+from .object_version_list import ObjectVersionList
 from .object_version_protection import ObjectVersionProtection
 from .object_version_protection_kind import ObjectVersionProtectionKind
 from .object_version_protection_last_error_code import ObjectVersionProtectionLastErrorCode
@@ -2060,6 +2062,7 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
@@ -4285,11 +4288,13 @@ __all__ = (
     "ObjectTaggingResultTags",
     "ObjectUploadRoute",
     "ObjectUploadRouteList",
+    "ObjectVersion",
     "ObjectVersionDeleteResult",
     "ObjectVersionLegalHold",
     "ObjectVersionLegalHoldRequest",
     "ObjectVersionLegalHoldResult",
     "ObjectVersionLegalHoldStatus",
+    "ObjectVersionList",
     "ObjectVersionProtection",
     "ObjectVersionProtectionKind",
     "ObjectVersionProtectionLastErrorCode",
@@ -4766,6 +4771,7 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",

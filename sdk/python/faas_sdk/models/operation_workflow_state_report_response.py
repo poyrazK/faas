@@ -13,6 +13,8 @@ T = TypeVar("T", bound="OperationWorkflowStateReportResponse")
 
 @_attrs_define
 class OperationWorkflowStateReportResponse:
+    """Acknowledgement returned after the platform records an app-reported workflow-state update."""
+
     id: UUID
     operation_id: UUID
     workflow: str
