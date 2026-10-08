@@ -41,14 +41,24 @@
     instance, never later.
   - **Quarantined network.** The fork keeps its NIC (Firecracker restores the
     snapshot's device set), inside its own netns as usual (invariant 5,
-    ADR-009). `netns.Config` gets `Quarantine`: the per-instance forward
-    chain drops everything entering from `tap0` right after the
-    `established,related` accept, before the service-proxy, DNS, operator,
-    private-network and allowlist accepts, in both the IPv4 and IPv6
-    chains. The operator bundle merge and static egress IP registration are
-    skipped. Every path that re-renders `NftCommands` carries the field.
+    ADR-009). `netns.Config` gets `Quarantine`, rendered as separate base
+    chains (`quarantine_forward`, `quarantine_input`) at priority −10 in
+    both the `ip` and `ip6` tables:
+    - forward: accept `established,related`; drop everything else from
+      `tap0`; drop any new flow to `tap0` that did not arrive on the
+      platform veth (so a private-network side-link cannot reach the fork).
+    - input: drop everything from `tap0`.
+    - Separate base chains, not rules in the regular forward chain: a drop
+      in any base chain is final, and several patch paths (private network,
+      `insertNftRule`) insert accepts at the top of the regular chain, which
+      would otherwise bypass a drop placed there.
+    - `fcvm` also clears the allowlist, private network, static egress IP
+      and operator bundle from a quarantined wake, so no route, SNAT
+      registration or side-link exists for the chains to have to stop.
+      The flag lives on `Instance.Net`, so in-place updates re-render it.
     Inbound DNAT from the veth peer keeps working, so the platform can still
-    reach the guest port.
+    reach the guest port. `AppSpec.quarantine` (field 31) carries the flag
+    on both the restore and the cold-boot wire.
   - **Secrets.** Secrets are in the guest's memory and in the captured
     drive1 (`upper/etc/faas/secrets.env`, ADR-210), so a fork cannot be
     redacted in memory. Gregale therefore treats creating a fork as reading

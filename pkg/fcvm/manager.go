@@ -3524,6 +3524,11 @@ type WakeRequest struct {
 	// on the workload's private side-link.
 	PrivateNetworkID      string
 	PrivateNetworkAddress string
+	// Quarantine (ADR-732) wakes a production fork: the netns renders the
+	// quarantine base chains, and wake drops every connectivity input
+	// (allowlist, private network, static egress IP, operator bundle) so
+	// no other path can add reachability.
+	Quarantine bool
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
 	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
 	// rewrites tenant source traffic to. Empty string = no
@@ -3729,6 +3734,9 @@ type ColdBootRequest struct {
 	PrivateNetworkAddress       string
 	PrivateNetworkAllowedCIDRs  []string
 	PrivateNetworkFirewallRules []api.PrivateNetworkFirewallRule
+	// Quarantine (ADR-732) — same as WakeRequest. A fork whose capture is
+	// unusable cold-boots; it must stay quarantined.
+	Quarantine bool
 	// Port (issue #460 / ADR-053, PR-C) — the per-deployment override
 	// port forwarded verbatim to WakeRequest.Port. Production wiring
 	// uses WakeRequest directly via the vmmdgrpc adapters
@@ -3803,6 +3811,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		PrivateNetworkCIDRs:         req.PrivateNetworkCIDRs,
 		PrivateNetworkAllowedCIDRs:  req.PrivateNetworkAllowedCIDRs,
 		PrivateNetworkFirewallRules: req.PrivateNetworkFirewallRules,
+		Quarantine:                  req.Quarantine,
 		PrivateNetworkID:            req.PrivateNetworkID,
 		PrivateNetworkAddress:       req.PrivateNetworkAddress,
 		Plan:                        req.Plan,
@@ -4135,6 +4144,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		qualificationOnly = true
 	}
+	req = quarantineWakeRequest(req)
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
 	}
@@ -4268,6 +4278,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
 	nc.GuestAppPort = req.Port
+	// ADR-732: set before anything compares or renders nc, so a prepared
+	// non-quarantined namespace is never reused for a fork.
+	nc.Quarantine = req.Quarantine && !req.ExecutionOnly
 	if req.PrivateNetworkID != "" && req.PrivateNetworkAddress != "" && !req.ExecutionOnly {
 		if req.AccountID == "" {
 			return nil, fmt.Errorf("wake %s: private network: account_id is required for Gregale fabric attachment", req.Instance)
@@ -4498,7 +4511,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// merge dedups across per-app + operator (an entry that's
 	// already in the per-app set doesn't get a duplicate row
 	// in the rendered anonymous daddr-set).
-	if !qualificationOnly {
+	// ADR-732: a fork gets no operator exceptions either. The quarantine
+	// chains would drop them anyway; rendering none keeps the ruleset
+	// honest about what the fork can reach.
+	if !qualificationOnly && !req.Quarantine {
 		nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
 	}
 

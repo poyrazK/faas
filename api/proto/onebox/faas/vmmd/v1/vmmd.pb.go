@@ -288,8 +288,13 @@ type AppSpec struct {
 	// app-task and qualification instances, and when quiet pause is
 	// disabled in vmmd.toml.
 	QuietPauseAfterMs int64 `protobuf:"varint,32,opt,name=quiet_pause_after_ms,json=quietPauseAfterMs,proto3" json:"quiet_pause_after_ms,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// quarantine (ADR-732) wakes a production fork: vmmd renders the netns
+	// quarantine chains (no guest-originated flow, inbound only from the
+	// platform veth) and ignores the allowlist, private network, static
+	// egress IP and operator bundle. Only schedd's fork coordinator sets it.
+	Quarantine    bool `protobuf:"varint,33,opt,name=quarantine,proto3" json:"quarantine,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -544,6 +549,13 @@ func (x *AppSpec) GetQuietPauseAfterMs() int64 {
 		return x.QuietPauseAfterMs
 	}
 	return 0
+}
+
+func (x *AppSpec) GetQuarantine() bool {
+	if x != nil {
+		return x.Quarantine
+	}
+	return false
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -10857,7 +10869,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xfa\v\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x9a\f\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
 	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
@@ -10895,7 +10907,10 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0fmain_depends_on\x18\x1c \x03(\v2'.onebox.faas.vmmd.v1.WorkloadDependencyR\rmainDependsOn\x12!\n" +
 	"\fegress_ports\x18\x1d \x03(\rR\vegressPorts\x12.\n" +
 	"\x13liveness_probe_json\x18\x1f \x01(\tR\x11livenessProbeJson\x12/\n" +
-	"\x14quiet_pause_after_ms\x18  \x01(\x03R\x11quietPauseAfterMs\"\x92\b\n" +
+	"\x14quiet_pause_after_ms\x18  \x01(\x03R\x11quietPauseAfterMs\x12\x1e\n" +
+	"\n" +
+	"quarantine\x18! \x01(\bR\n" +
+	"quarantine\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

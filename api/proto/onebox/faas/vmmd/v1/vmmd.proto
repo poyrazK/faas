@@ -721,6 +721,11 @@ message AppSpec {
   // app-task and qualification instances, and when quiet pause is
   // disabled in vmmd.toml.
   int64 quiet_pause_after_ms = 32;
+  // quarantine (ADR-732) wakes a production fork: vmmd renders the netns
+  // quarantine chains (no guest-originated flow, inbound only from the
+  // platform veth) and ignores the allowlist, private network, static
+  // egress IP and operator bundle. Only schedd's fork coordinator sets it.
+  bool quarantine = 33;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
