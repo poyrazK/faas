@@ -1973,9 +1973,10 @@ var cliCommands = []cliCommand{
 		Name:     "dev",
 		DocSlug:  "dev",
 		Short:    "Sync local changes to a developer environment",
-		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once"},
+		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once", "gregale dev --all"},
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
+			{Name: "all", Short: "run one developer loop per deployable workspace app"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 			{Name: "env-file", Short: "sync KEY=VALUE entries as developer secrets", Value: "PATH"},
 			{Name: "service-override-file", Short: "sync validated service URLs as developer secrets", Value: "PATH"},

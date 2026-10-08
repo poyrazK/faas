@@ -273,7 +273,7 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 }
 
-const devUsage = "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION]"
+const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION]"
 
 // cmdDev provides the preview-like inner loop for local source: reserve one
 // stable remote environment, upload the dirty working tree, then redeploy when
@@ -316,6 +316,7 @@ func cmdDev(args []string) int {
 	ttl := fs.String("ttl", "", "keep the environment this long after the latest sync, e.g. 72h (default 24h; plan maximum applies)")
 	postgresSeed := fs.String("postgres-seed", "", "shell command run once in the developer app after its database is ready")
 	reseed := fs.Bool("reseed", false, "run the --postgres-seed command again even if this database was already seeded")
+	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, devUsage, "dev")
 		return 1
@@ -347,6 +348,12 @@ func cmdDev(args []string) int {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return printErr("Could not read current directory", err)
+	}
+	if *all {
+		return cmdDevAllFromFlags(cwd, *sourcePath, explicitFlags, devAllOptions{
+			once: *once, stop: *stop, noLogs: *noLogs, open: *open, postgres: *withPostgres, postgresRegion: *postgresRegion,
+			ttl: *ttl,
+		})
 	}
 	linkedContext, _, linkedErr := linkedProjectContext(cwd)
 	if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {

@@ -37,6 +37,7 @@ live.
 ```sh
 gregale dev --once             # sync once, do not watch
 gregale dev --path apps/api    # select one workspace application
+gregale dev --all              # run every deployable workspace application
 gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
 gregale dev status             # show developer-environment quota usage
@@ -228,6 +229,47 @@ Because every sync renews the lease with the requested value, the most recent
 start wins: running without `--ttl` returns the environment to 24 hours.
 Stopping the watcher with Ctrl-C leaves the environment available—use `--stop`
 from the same source directory when it should be removed immediately.
+
+## Run every app in a workspace
+
+`gregale dev --all` starts one developer loop per deployable workspace or
+convention member below `--path` (default: the current directory), using the
+same detection as `gregale start` and `gregale scan`. Each app gets its own
+developer environment, stable URL, and lease, named after its workload
+(`apps/api` becomes `api`). When the root has deployable members it is treated
+as the workspace container and not started; a root with no members is the
+single app.
+
+```sh
+gregale dev --all              # watch every app
+gregale dev --all --once       # sync every app once
+gregale dev --all --stop       # tear down every app's environment
+gregale dev --all --once --json
+```
+
+Each app runs as its own `gregale dev --path DIR --name PROJECT` loop. Its
+output is prefixed with the project name (`[api] build | …`), one app's failed
+build or crash never stops the others, and Ctrl-C stops every loop. With
+`--json`, every receipt and diagnostic is emitted as one NDJSON line carrying
+`dev_project` and `dev_path`. The command exits 0 only when every loop exits 0.
+
+`--once`, `--stop`, `--no-logs`, `--open`, `--postgres`, `--postgres-region`,
+and `--ttl` apply to every app. `--name`, `--env-file`,
+`--service-override-file`, `--postgres-seed`, and `--reseed` are rejected with
+`--all`; put per-app values in each app's own `gregale.yaml` `dev:` block, which
+its loop reads from its source root. Before creating anything, the CLI checks the account's developer
+environment budget: an app whose environment already exists reuses its slot,
+and the command fails with the shortfall when the new environments would not
+fit.
+
+Developer environments are not wired to each other. A call to
+`<service>.svc.gregale` from a developer environment targets the account's
+deployed app of that name (subject to its preview service-call policy), not the
+sibling developer environment, because developer sessions are not part of a
+project preview scope. Point an app at a
+sibling with that sibling's printed developer URL through your app's own
+configuration, or use [Dev Bridge](dev-bridge.md) against a named development
+environment.
 
 Developer environments have a separate per-plan quota from production apps and
 pull-request previews. They are still backed by the same preview lifecycle and
