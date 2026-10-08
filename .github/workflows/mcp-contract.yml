@@ -141,8 +141,9 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      # Restore-only: read main's non-race `checks` Go cache instead of letting
-      # setup-go save a ~0.8 GB entry per pull-request ref, which evicted main's
+      # Restore-only: read main's `unit tests (pg shard 1)` Go cache, which
+      # race-builds cmd/apid with the same GOFLAGS as below, instead of letting
+      # setup-go save a ~0.8 GB entry per pull-request ref that evicted main's
       # CI cache families from the 10 GB repository budget.
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
@@ -152,13 +153,21 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-checks-${{ runner.os }}-
+            go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pg-1-${{ runner.os }}-
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: false  # restored from main above
       - name: Portable API server MCP contracts
+        # A cold cmd/apid race build exhausts hosted-runner memory and the
+        # runner is shut down (exit 143). Mirror ci.yml unit-tests-pg-1: omit
+        # test DWARF, serialize the apid backend and bound the Go heap.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: go test -race -v -p=1 ./cmd/apid -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
