@@ -107,7 +107,12 @@ func (s *server) restoreCheckpointPostgresSource(ctx context.Context, lease stat
 	if err != nil {
 		return false, err
 	}
-	if receipt.State == "adopted" || receipt.State == "deleting" || receipt.State == "deleted" {
+	if receipt.State == "adopted" {
+		// The lease reader authenticates the original unready catalogue owner.
+		// SQL closure is independently rechecked by the isolation coordinator.
+		return true, nil
+	}
+	if receipt.State == "deleting" || receipt.State == "deleted" {
 		return false, state.ErrConflict
 	}
 	if err := s.cloneWorkerAdmission(ctx); err != nil {

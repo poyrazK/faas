@@ -2555,6 +2555,41 @@ func (q *Queries) ClaimCloneCheckpointObjectTarget(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const claimCloneCheckpointPostgresIsolation = `-- name: ClaimCloneCheckpointPostgresIsolation :one
+UPDATE project_environment_clone_checkpoint_postgres_isolation i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.plan, i.state, i.requested_at, i.observation_sha256, i.adopted_database_id, i.adopted_at
+`
+
+type ClaimCloneCheckpointPostgresIsolationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPostgresIsolation,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresIsolation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.AdoptedDatabaseID,
+		&i.AdoptedAt,
+	)
+	return i, err
+}
+
 const claimCloneCheckpointRelease = `-- name: ClaimCloneCheckpointRelease :one
 UPDATE project_environment_clone_checkpoint_releases r SET state='requested',requested_at=clock_timestamp()
 WHERE r.operation_id=$1::uuid AND r.state='planned'
@@ -12929,6 +12964,39 @@ func (q *Queries) FinishCloneCheckpointObjectTargetBucket(ctx context.Context, d
 	return result.RowsAffected(), nil
 }
 
+const finishCloneCheckpointPostgresIsolation = `-- name: FinishCloneCheckpointPostgresIsolation :execrows
+UPDATE project_environment_clone_checkpoint_postgres_isolation i SET state='adopted',observation_sha256=$1::text,
+adopted_database_id=$2::uuid,adopted_at=clock_timestamp()
+WHERE i.operation_id=$3::uuid AND i.source_database_id=$4::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_postgres_snapshot_restores r ON r.operation_id=o.id
+WHERE o.id=i.operation_id AND r.source_database_id=i.source_database_id AND r.state='adopted' AND r.adopted_database_id=$2::uuid
+AND o.status='capturing' AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPostgresIsolationParams struct {
+	ObservationSha256 string
+	AdoptedDatabaseID pgtype.UUID
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresIsolationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresIsolation,
+		arg.ObservationSha256,
+		arg.AdoptedDatabaseID,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishCloneCheckpointRelease = `-- name: FinishCloneCheckpointRelease :execrows
 UPDATE project_environment_clone_operations o SET resources=$1::jsonb,revision=o.revision+1,updated_at=clock_timestamp()
 WHERE o.id=$2::uuid AND o.account_id=$3::uuid AND o.project_id=$4::uuid
@@ -16423,6 +16491,43 @@ func (q *Queries) InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPostgresIsolation = `-- name: InsertCloneCheckpointPostgresIsolation :one
+INSERT INTO project_environment_clone_checkpoint_postgres_isolation(operation_id,source_database_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, plan, state, requested_at, observation_sha256, adopted_database_id, adopted_at
+`
+
+type InsertCloneCheckpointPostgresIsolationParams struct {
+	SourceDatabaseID pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPostgresIsolation,
+		arg.SourceDatabaseID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresIsolation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.AdoptedDatabaseID,
+		&i.AdoptedAt,
 	)
 	return i, err
 }
@@ -46218,6 +46323,31 @@ func (q *Queries) ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, 
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPostgresIsolation = `-- name: ReadCloneCheckpointPostgresIsolation :one
+SELECT operation_id, source_database_id, plan, state, requested_at, observation_sha256, adopted_database_id, adopted_at FROM project_environment_clone_checkpoint_postgres_isolation WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPostgresIsolationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPostgresIsolation, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentCloneCheckpointPostgresIsolation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.AdoptedDatabaseID,
+		&i.AdoptedAt,
 	)
 	return i, err
 }

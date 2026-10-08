@@ -7918,3 +7918,45 @@ quota, adoption, cleanup, substitution and lease-lock-wait regressions pass.
 SQLC parity and encoding, shell quoting and ADR numbering checks pass. These
 are private-driver tests against real PostgreSQL; native qualification was not run.
 Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Original fork SQL isolation and private catalogue adoption
+
+A separate private isolation journal binds the released checkpoint, original
+retained PostgreSQL snapshot, restored native fork owner, physical resource,
+pinned backend and immutable capture/creation times. The stable native request
+is `isolate-<operation ID>-<owner ID>`. Only a known committing dispatch claim
+may apply SQL isolation; lost claim/native/commit replies and handoff authorize
+observation of the original journal, never another isolation request.
+
+Qualified drivers must isolate only the original fork's own authentication and
+writer scope, without changing source/shared authentication or customer data.
+Independent evidence proves complete writer closure, disabled inherited logins
+and scheduled/background jobs, private scope, exact ownership and the original
+closed roster. Observation checks current closure through the renewed worker
+lease without regranting or repairing SQL. Original capture retention is checked
+before dispatch and after native IO. Changed rosters, reopened writers, missing
+native evidence and expired retention fail closed.
+
+One transaction authenticates these proofs, transfers the existing native owner
+into a private `checkpoint` catalogue row, and records the isolation digest.
+The row remains provisioning, excluded from customer reads and general database
+provisioning. No new fork, quota owner, target credentials or ready state is
+created. Failure of the final isolation write rolls back catalogue insertion,
+fork adoption and proof together. Replay reads the same unready owner without
+mutating the operation inventory or original checkpoint proof. Native restore
+replay recognizes an already adopted owner; SQL closure is rechecked separately.
+
+Downgrade refuses any owned isolation journal. The qualified-driver seam has no
+built-in native implementation. Data copy verification, usable stage database
+preparation, credentials, publication and terminal retirement remain required.
+Live R2/OVH qualification stays deferred.
+
+Validation: real-PostgreSQL tests pass for lost isolation replies, worker
+handoff, foreign or incomplete proof, changed rosters, reopened writers,
+retention loss, private visibility and atomic catalogue/adoption rollback.
+Migration round trips and refusal to downgrade owned journals pass. Existing
+checkpoint restore, native adoption, quota, cleanup and schema registry tests
+pass, as do SQLC parity, encoding, shell quoting and ADR numbering checks.
+These tests exercise private test drivers; native provider qualification was
+not run.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.

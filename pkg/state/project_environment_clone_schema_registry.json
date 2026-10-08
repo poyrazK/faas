@@ -5765,6 +5765,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_postgres_isolation",
+    "columns": [
+      "adopted_at",
+      "adopted_database_id",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_database_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_checkpoint_releases",
     "columns": [
       "adoption_sha256",
