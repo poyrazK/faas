@@ -2926,6 +2926,24 @@ WHERE app_id = sqlc.arg(app_id)
 ORDER BY (id::text = sqlc.arg(identifier)::text) DESC, received_at DESC
 LIMIT 1;
 
+-- name: ListRequestTelemetryByAccountTrace :many
+-- Account-wide `gregale trace` lookup: the newest retained row per app for
+-- one public trace id, in a single read through request_telemetry_trace_idx.
+-- The caller validates the id as 32 lowercase hex characters, so the row-UUID
+-- alias GetRequestTelemetryByAppAndIdentifier also accepts can never match.
+SELECT DISTINCT ON (app_id)
+       app_id, id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
+FROM request_telemetry
+WHERE account_id = sqlc.arg(account_id)
+  AND trace_id = sqlc.arg(trace_id)::text
+  AND received_at >= sqlc.arg(received_from)
+  AND received_at <  sqlc.arg(received_until)
+ORDER BY app_id, received_at DESC;
+
 -- name: RequestTelemetryByDeployment :many
 -- Per-deployment drilldown. Used by gregale debug compare and the
 -- regression detector (PR-B). Includes the publisher's `count`
@@ -13478,8 +13496,11 @@ WHERE d.id=sqlc.arg(deployment_id)::uuid RETURNING status::text;
 -- 20261004234807528); rows superseded before it fall back to created_at.
 -- A live 0% deployment that served before (a release demoted by `traffic
 -- promote` or `traffic set`) is a rollback target; one that never served
--- (a dark deploy) needs a retention pin.
+-- (a dark deploy) needs a retention pin. A canary candidate aborted before it
+-- ever completed served only its canary steps and failed them, so it is never
+-- an implicit target (H5-62).
 SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid
+AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND (sqlc.narg(scope)::text IS NULL OR d.scope=sqlc.narg(scope)::text)
 AND (sqlc.narg(current_deployment_id)::uuid IS NULL OR d.id<>sqlc.narg(current_deployment_id)::uuid)
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
@@ -13491,6 +13512,7 @@ ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id D
 
 -- name: LockRetainedRollbackDeployment :one
 SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND d.id<>sqlc.arg(current_deployment_id)::uuid
 AND d.environment_workload_runtime IS NULL
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
@@ -14510,6 +14532,36 @@ SELECT receipt FROM deployment_rollback_operations WHERE target_deployment_id=sq
 
 -- name: ListPendingCheckedRollbacks :many
 SELECT receipt FROM deployment_rollback_operations WHERE status NOT IN ('complete','failed') ORDER BY updated_at,id LIMIT sqlc.arg(batch_size);
+
+-- name: ListAppPendingRollbacks :many
+SELECT r.receipt FROM deployment_rollback_operations r JOIN apps a ON a.id=r.app_id
+ WHERE r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
+ AND r.status NOT IN ('complete','failed') ORDER BY r.updated_at DESC,r.id DESC LIMIT sqlc.arg(row_limit);
+
+-- name: AppOpenMonitorIncident :one
+SELECT i.id,i.deployment_id,i.opened_at FROM route_monitor_incidents i JOIN apps a ON a.id=i.app_id
+ WHERE i.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted' AND i.status='open';
+
+-- name: ListAppPendingRestarts :many
+WITH latest AS (
+ SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
+  (o.payload::jsonb->>'wake_id')::text AS wake_id,o.state,o.attempts,o.last_error,o.created_at,o.delivered_at,o.id
+ FROM notification_outbox o JOIN apps a ON a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
+ WHERE o.channel='runtime_config_restart' AND o.payload::jsonb->>'app_id'=a.id::text
+  AND COALESCE(o.payload::jsonb->>'wake_id','')<>''
+ ORDER BY o.payload::jsonb->>'wake_id',o.id DESC
+)
+SELECT wake_id,
+ CASE state WHEN 'pending' THEN CASE WHEN attempts>0 THEN 'retrying' ELSE 'queued' END
+  WHEN 'processing' THEN 'running' WHEN 'dead_letter' THEN 'failed' ELSE 'unknown' END::text AS status,
+ attempts,
+ CASE WHEN COALESCE(last_error,'')='' THEN ''
+  WHEN position('reason=telemetry_missing' in last_error)>0 THEN 'telemetry_missing'
+  WHEN position('reason=requests_active' in last_error)>0 THEN 'requests_active'
+  WHEN position('reason=quiet_period_not_elapsed' in last_error)>0 THEN 'quiet_period_not_elapsed'
+  ELSE 'restart_attempt_failed' END::text AS failure_reason,
+ created_at AS requested_at,delivered_at AS completed_at
+FROM latest WHERE state<>'delivered' ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(row_limit);
 
 -- name: SaveCheckedRollback :exec
 UPDATE deployment_rollback_operations SET status=sqlc.arg(status),receipt=sqlc.arg(receipt),updated_at=clock_timestamp()

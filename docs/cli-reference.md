@@ -2059,12 +2059,16 @@ gregale app my-api --consumer-auth-mode required --json
 
 ### app scale
 
-Set max_concurrency / resource profile / RAM / CPU
+Preview, save, apply or update app resource and runtime settings
 
-`gregale app <slug> scale [--environment <SLUG>] [--profile <PROFILE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <POLICY>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <MS>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <SECONDS>] [--idle <SECONDS>] [--request-timeout <SECONDS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy <POLICY>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <PROTOCOL>]`
+`gregale app <slug> scale [--plan] [--out <PATH>] [--apply <PATH>] [--confirm] [--environment <SLUG>] [--profile <PROFILE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <POLICY>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <MS>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <SECONDS>] [--idle <SECONDS>] [--request-timeout <SECONDS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy <POLICY>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <PROTOCOL>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--plan` | show changes and supported plan effects without applying them |  |
+| `--out <PATH>` | write a reusable plan JSON to a new file (requires --plan) |  |
+| `--apply <PATH>` | apply a saved scale plan JSON file |  |
+| `--confirm` | confirm applying the saved plan (requires --apply) |  |
 | `--environment <SLUG>` | edit desired workload settings in a project environment |  |
 | `--profile <PROFILE>` | named RAM/CPU profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--ram <MB>` | RAM in MB |  |
@@ -2095,6 +2099,31 @@ Set max_concurrency / resource profile / RAM / CPU
 | `--no-health-path-wakes` | answer health probes without waking |  |
 | `--app-protocol <PROTOCOL>` | wire-protocol selector | one of `http1` · `http2` · `grpc` |
 
+Examples:
+
+```sh
+gregale app my-api scale --plan --ram 512 --out scale-change.json
+gregale app my-api scale --apply scale-change.json --confirm
+```
+
+### app costs
+
+Show this app&#39;s attributed usage costs and source coverage
+
+`gregale app <slug> costs [--month <YYYY-MM>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | UTC usage month (defaults to current) |  |
+| `--json` | Print the machine-readable app cost report |  |
+
+Examples:
+
+```sh
+gregale app my-api costs
+gregale app my-api costs --month 2026-10 --json
+```
+
 ### app rename
 
 Rename an app
@@ -2103,9 +2132,31 @@ Rename an app
 
 ### app restart
 
-Park and wake from a fresh snapshot
+Request a snapshot restart, or track a fresh runtime-configuration restart
 
-`gregale app <slug> restart`
+`gregale app <slug> restart <status> [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--fresh` | cold-boot replacements with current runtime configuration |  |
+| `--wait` | wait for processing; requires --fresh |  |
+| `--timeout <DURATION>` | client deadline (default 10m) |  |
+| `--poll-interval <DURATION>` | status polling interval (default 2s) |  |
+| `--json` | print the accepted ID or last observed restart receipt |  |
+
+#### app restart status
+
+Follow an accepted fresh restart without submitting another request
+
+`gregale app <slug> restart status --wake-id <UUID> [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wake-id <UUID>` | accepted fresh restart UUID | required |
+| `--wait` | wait for processing completion, separately from application health |  |
+| `--timeout <DURATION>` | client deadline (default 10m) |  |
+| `--poll-interval <DURATION>` | status polling interval (default 2s) |  |
+| `--json` | print the last observed restart receipt |  |
 
 ### app exec
 
@@ -5814,18 +5865,24 @@ gregale init --template hello-node --path ./my-api
 
 Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context)
 
-`gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors]`
+`gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors] [--watch] [--interval <DURATION>] [--timeout <DURATION>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--upstreams` | List data upstreams captured for this app |  |
 | `--scope <scope>` | filter by scope (defaults to linked project environment; used with --upstreams) |  |
 | `--errors` | show the latest failed deployment&#39;s persisted error explanation |  |
+| `--watch` | watch summary changes using read-only requests; incompatible with --upstreams and --errors |  |
+| `--interval <DURATION>` | time between watch reads (default 5s; 1s..1h); requires --watch |  |
+| `--timeout <DURATION>` | watch duration (default 0: until Ctrl-C); requires --watch |  |
+| `--json` | print summary JSON, or JSON Lines events with --watch |  |
 
 Examples:
 
 ```sh
 gregale inspect my-api
+gregale inspect my-api --watch
+gregale inspect my-api --watch --interval 5s --timeout 10m --json
 gregale inspect my-api --upstreams
 ```
 

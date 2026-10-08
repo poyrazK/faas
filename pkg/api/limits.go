@@ -55,6 +55,25 @@ const (
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
 )
 
+// Operational summaries bound each recovery kind independently and never
+// perform active probes or lifecycle work while loading a customer page.
+const AppOperationalRecoveryLimit = 10
+const AppOperationalReadTimeout = 5 * time.Second
+
+const (
+	AppRestartWaitTimeoutDefault  = 10 * time.Minute
+	AppRestartPollIntervalDefault = 2 * time.Second
+	AppRestartDashboardRefresh    = 5 * time.Second
+)
+
+// Inspect watches serialize bounded reads and remain quiet between state changes.
+const (
+	InspectWatchIntervalDefault = 5 * time.Second
+	InspectWatchIntervalMin     = time.Second
+	InspectWatchIntervalMax     = time.Hour
+	InspectWatchReadTimeout     = 30 * time.Second
+)
+
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
 const (
 	EventBacklogPageDefault      = 100
@@ -7935,6 +7954,16 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 	return total
 }
 
+// MeterCatchUpWindow bounds how far back meterd's sampler re-rolls closed
+// minutes that were never recorded compute-complete, after a restart, a
+// failed tick or an outage (H5-55, ADR-790). Re-rolling a complete minute is
+// a no-op because usage_minutes keeps the first positive mb_seconds per
+// (instance, minute). MeterCatchUpMinutesPerTick bounds the extra work one
+// sample tick takes on, so a long backlog drains over several ticks instead
+// of starving the control plane.
+const MeterCatchUpWindow = 24 * time.Hour
+const MeterCatchUpMinutesPerTick = 15
+
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure
 // their idle timeout to for this plan (spec §4.3).
 func (l Limits) IdleTimeoutBounds() (floor, ceiling int) {
@@ -8939,6 +8968,11 @@ const (
 	DurableEntityAlarmReadTimeout        = 2 * time.Second
 	DurableEntityAlarmScanTimeout        = 20 * time.Second
 	DurableEntityAlarmPollInterval       = 5 * time.Second
+	MaxDurableEntityAlarmIndexBytes      = 4 << 10
+	DurableEntityAlarmIndexTimeout       = 2 * time.Second
+	MaxDurableEntityAlarmAttempts        = 5
+	DurableEntityAlarmRetryBase          = 30 * time.Second
+	DurableEntityAlarmRetryMax           = 5 * time.Minute
 )
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.

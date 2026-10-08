@@ -6470,6 +6470,11 @@ type Store interface {
 	// tenant-scoped and within the caller's plan retention window.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error)
 
+	// ListRequestTelemetryByAccountTrace backs GET /v1/account/traces/{id}:
+	// the newest retained row per app for one trace id, in one indexed read
+	// instead of one lookup per app.
+	ListRequestTelemetryByAccountTrace(ctx context.Context, arg sqlc.ListRequestTelemetryByAccountTraceParams) ([]sqlc.ListRequestTelemetryByAccountTraceRow, error)
+
 	// RequestTelemetryByDeployment backs the per-deployment
 	// drilldown and the regression detector (PR-B cron). Uses
 	// request_telemetry_app_dep_received_idx and returns each row's
