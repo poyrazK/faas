@@ -1,8 +1,8 @@
 # Collecting and importing native runtime qualification evidence
 
 This private operator workflow implements
-[ADR-791](../adr/791-guarded-native-runtime-qualification-collector.md) and
-[ADR-793](../adr/793-trusted-runtime-qualification-import.md)
+[ADR-815](../adr/815-guarded-native-runtime-qualification-collector.md) and
+[ADR-817](../adr/817-trusted-runtime-qualification-import.md)
 and records the [ADR-739](../adr/739-native-runtime-release-qualification.md)
 receipt consumed by explicit upgrade preparation. Publishing a runtime,
 scanning it, passing generic metal smoke tests or hashing synthetic logs does

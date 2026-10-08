@@ -1,4 +1,4 @@
-# ADR-793: Trusted import of exact runtime native qualification evidence
+# ADR-817: Trusted import of exact runtime native qualification evidence
 
 Status: accepted · 2026-10-06
 

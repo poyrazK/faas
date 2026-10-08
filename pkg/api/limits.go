@@ -9135,7 +9135,7 @@ const (
 	RuntimeUpgradeExternalFenceDeliveryConnections = 4
 )
 
-// Private runtime qualification collector budgets (ADR-791).
+// Private runtime qualification collector budgets (ADR-815).
 const (
 	RuntimeQualificationAssetMaxBytes         = int64(2 << 30)
 	RuntimeQualificationSourceArchiveMaxBytes = int64(512 << 20)

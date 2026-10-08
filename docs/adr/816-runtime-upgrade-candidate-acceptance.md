@@ -1,4 +1,4 @@
-# ADR-792: Fresh cold-boot readiness receipts for runtime upgrade candidates
+# ADR-816: Fresh cold-boot readiness receipts for runtime upgrade candidates
 
 Status: accepted · 2026-10-06
 
