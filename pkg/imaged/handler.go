@@ -2278,6 +2278,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
+	manifest = imageEntrypointForCmdOverride(manifest, imageCfg, dep)
 	// PR-B (issue #460 / ADR-053): layer the deployment's six persisted
 	// override columns onto the OCI-derived manifest before validation. The
 	// helper is a pure function; an error here means a jsonb column failed
