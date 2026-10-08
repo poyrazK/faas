@@ -768,6 +768,102 @@ func TestResolveThrottleDimension_CountryAndJWTClaim(t *testing.T) {
 	}
 }
 
+func TestResolveThrottleDimension_IP(t *testing.T) {
+	h := &Handler{}
+	rule := &EdgeRuleThrottleResolved{KeyBy: api.ThrottleKeyByIP}
+	cases := []struct {
+		name, xff, want string
+		ok              bool
+		unavailable     string
+	}{
+		{name: "ipv4", xff: "203.0.113.10", want: "203.0.113.10", ok: true},
+		{name: "ipv4-mapped ipv6 keys as ipv4", xff: "::ffff:203.0.113.10", want: "203.0.113.10", ok: true},
+		{name: "ipv6 buckets by /64", xff: "2001:db8:1:2:aaaa:bbbb:cccc:dddd", want: "2001:db8:1:2::/64", ok: true},
+		{name: "missing xff fails closed", xff: "", unavailable: "caller_ip_untrusted"},
+		{name: "garbage xff fails closed", xff: "not-an-ip", unavailable: "caller_ip_untrusted"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+			if tc.xff != "" {
+				req.Header.Set("X-Forwarded-For", tc.xff)
+			}
+			value, ok, unavailable := h.resolveThrottleDimension(req, rule)
+			if value != tc.want || ok != tc.ok || unavailable != tc.unavailable {
+				t.Fatalf("ip dimension = (%q, %v, %q), want (%q, %v, %q)", value, ok, unavailable, tc.want, tc.ok, tc.unavailable)
+			}
+		})
+	}
+
+	// Two forwarded hops are a forged chain, never the first or last entry.
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	req.Header.Add("X-Forwarded-For", "198.51.100.7")
+	req.Header.Add("X-Forwarded-For", "203.0.113.10")
+	if _, _, unavailable := h.resolveThrottleDimension(req, rule); unavailable != "caller_ip_untrusted" {
+		t.Fatalf("multi-hop xff unavailable = %q, want caller_ip_untrusted", unavailable)
+	}
+}
+
+func TestEdgeRuleThrottle_IPKeyIsolatesSourcesAndSharesIPv6Prefix(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.edgeRules = stubEdgeRuleMatcher{throttle: &EdgeRuleThrottleResolved{
+		ID: "rule-ip", AccountID: "acct-1", AppID: "app-1",
+		RequestsPerSecond: 0.01, Burst: 1,
+		KeyBy: api.ThrottleKeyByIP, MaxKeysPerRule: 100,
+	}}
+	app := App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}
+	do := func(ip string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "http://api.example.com/login", nil)
+		req.Header.Set("X-Forwarded-For", ip)
+		rec := httptest.NewRecorder()
+		h.applyEdgeRuleThrottle(rec, req, app)
+		return rec.Code
+	}
+
+	if code := do("203.0.113.10"); code == http.StatusTooManyRequests {
+		t.Fatal("first request from source A unexpectedly throttled")
+	}
+	if code := do("203.0.113.10"); code != http.StatusTooManyRequests {
+		t.Fatalf("second request from source A = %d, want 429", code)
+	}
+	if code := do("203.0.113.11"); code == http.StatusTooManyRequests {
+		t.Fatal("source B was throttled by source A's exhausted bucket")
+	}
+	if code := do("2001:db8:1:2::1"); code == http.StatusTooManyRequests {
+		t.Fatal("first IPv6 request unexpectedly throttled")
+	}
+	// A rotated interface ID inside the same /64 must not mint a fresh bucket.
+	if code := do("2001:db8:1:2::ffff"); code != http.StatusTooManyRequests {
+		t.Fatalf("rotated IPv6 interface ID = %d, want 429 (same /64 bucket)", code)
+	}
+}
+
+func TestEdgeRuleThrottle_IPKeyForgedXFFFailsClosedWithoutConsuming(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.edgeRules = stubEdgeRuleMatcher{throttle: &EdgeRuleThrottleResolved{
+		ID: "rule-ip", AccountID: "acct-1", AppID: "app-1",
+		RequestsPerSecond: 10, Burst: 20,
+		KeyBy: api.ThrottleKeyByIP, MaxKeysPerRule: 100,
+	}}
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	req.Header.Add("X-Forwarded-For", "198.51.100.7")
+	req.Header.Add("X-Forwarded-For", "203.0.113.10")
+	rec := httptest.NewRecorder()
+	if handled := h.applyEdgeRuleThrottle(rec, req, App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}); !handled {
+		t.Fatal("forged forwarding chain did not short-circuit")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ip-keyed throttle") {
+		t.Errorf("problem detail should name the ip-keyed throttle; body=%s", rec.Body.String())
+	}
+	if got := h.routeLimiter.BucketCount(); got != 0 {
+		t.Errorf("route bucket count = %d, want 0 (rejected requests must not consume tokens)", got)
+	}
+}
+
 func TestEdgeRuleThrottle_MissingIdentityRejectsBeforeTokenConsume(t *testing.T) {
 	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	h.edgeRules = stubEdgeRuleMatcher{throttle: &EdgeRuleThrottleResolved{

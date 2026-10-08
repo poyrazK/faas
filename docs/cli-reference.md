@@ -4621,7 +4621,7 @@ Add an edge rule
 | `--enabled` | whether the rule is enabled (default true) |  |
 | `--throttle-requests-per-second <RPS>` | kind=throttle: refill rate in requests per second |  |
 | `--throttle-burst <N>` | kind=throttle: token-bucket burst |  |
-| `--throttle-key-by <KEY>` | kind=throttle: bucket key (none\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|country) |  |
+| `--throttle-key-by <KEY>` | kind=throttle: bucket key (none\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|country\|ip) |  |
 | `--redirect-status <CODE>` | kind=redirect: 301\|302\|307\|308 |  |
 | `--redirect-to <URL>` | kind=redirect: Location URL |  |
 | `--rewrite-from <PATH>` | kind=rewrite: from path |  |

@@ -691,6 +691,10 @@ func TestEdgeRuleThrottleAction_Validate_PinBackCompat(t *testing.T) {
 			a:    EdgeRuleThrottleAction{RequestsPerSecond: 10, Burst: 20, KeyBy: ThrottleKeyByCountry},
 		},
 		{
+			name: "key_by=ip with a key cap",
+			a:    EdgeRuleThrottleAction{RequestsPerSecond: 10, Burst: 20, KeyBy: ThrottleKeyByIP, MaxKeysPerRule: 500},
+		},
+		{
 			name: "strict missing JWT claim",
 			a: EdgeRuleThrottleAction{
 				RequestsPerSecond: 10, Burst: 20,
