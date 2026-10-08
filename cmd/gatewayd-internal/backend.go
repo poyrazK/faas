@@ -1419,14 +1419,14 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// correct.
 		payload, parseErr := db.ParseEdgeRuleChangedPayload(n.Payload)
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "prepare" {
-			if converger, ok := inv.(interface{ BeginEdgeRuleConvergence([]string, int64) }); ok {
-				converger.BeginEdgeRuleConvergence(payload.MatchHosts, payload.Generation)
+			if converger, ok := inv.(interface{ BeginEdgeRuleConvergence(string, []string, int64) }); ok {
+				converger.BeginEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
 			}
 			return
 		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "abort" {
-			if converger, ok := inv.(interface{ EndEdgeRuleConvergence([]string, int64) }); ok {
-				converger.EndEdgeRuleConvergence(payload.MatchHosts, payload.Generation)
+			if converger, ok := inv.(interface{ EndEdgeRuleConvergence(string, []string, int64) }); ok {
+				converger.EndEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
 			}
 			return
 		}
@@ -1445,11 +1445,11 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "apply" {
 			if converger, ok := inv.(interface {
-				EndEdgeRuleConvergence([]string, int64)
+				EndEdgeRuleConvergence(string, []string, int64)
 				SetEdgeRuleLoadedGeneration(int64)
 			}); ok {
 				converger.SetEdgeRuleLoadedGeneration(payload.Generation)
-				converger.EndEdgeRuleConvergence(payload.MatchHosts, payload.Generation)
+				converger.EndEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
 			}
 		}
 	case db.NotifyTenantSurfaceChanged:

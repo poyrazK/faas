@@ -5765,18 +5765,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A two-phase edge-rule mutation fences this hostname before apid commits
-	// the new policy. Fail closed for the bounded convergence window so a
-	// request cannot slip through a gateway that still has the old generation.
-	if h.edgeRules != nil && h.edgeRules.Converging(host) {
-		w.Header().Set("Retry-After", "1")
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
-			api.CodeCapacity, "Edge policy update in progress",
-			"The serving fleet is converging on a new edge-rule generation; retry shortly."))
-		h.observe(r, rec.status, "", "", false, Target{})
-		return
-	}
-
 	// ADR-590: resolve source-host readiness before route substitution. Once
 	// ready, the ADR-089 route matcher may select another app whose auth,
 	// admission and proxy settings apply to the rest of the request.
@@ -5787,6 +5775,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 	//nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
 	lookedApp, ok = h.backend.Lookup(r.Context(), appHost)
+
+	// A two-phase edge-rule mutation fences this hostname before apid commits
+	// the new policy. Fail closed for the bounded convergence window so a
+	// request cannot slip through a gateway that still has the old generation.
+	// The fence is scoped to the host's owner (resolved above, before any
+	// route substitution or edge rule runs): another account's mutation,
+	// even on match_host "*", cannot change this host's policy.
+	var fenceOwner string
+	if ok {
+		fenceOwner = lookedApp.AccountID
+	}
+	if h.edgeRules != nil && h.edgeRules.Converging(host, fenceOwner) {
+		w.Header().Set("Retry-After", "1")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+			api.CodeCapacity, "Edge policy update in progress",
+			"The serving fleet is converging on a new edge-rule generation; retry shortly."))
+		h.observe(r, rec.status, "", "", false, Target{})
+		return
+	}
 	// A source host under preparation cannot escape its readiness gate through
 	// a route rewrite to another workload or through an edge answer.
 	if ok && lookedApp.EnvironmentNotReady {

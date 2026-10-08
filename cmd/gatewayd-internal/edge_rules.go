@@ -84,13 +84,20 @@ type gatewaydEdgeRules struct {
 	loadFailedUntil  map[string]time.Time // guarded by loadMu
 	clock            func() time.Time     // nil = time.Now (tests inject)
 	fenceMu          sync.Mutex
-	fences           map[string]edgeRuleFence
+	fences           map[edgeRuleFenceKey]edgeRuleFence
 	store            edgeRuleStore
 	cache            *gateway.EdgeRuleCache
 	log              *slog.Logger
 	validate         validateCompiler
 	metrics          *gateway.Metrics
 	loadedGeneration atomic.Int64
+}
+
+// edgeRuleFenceKey scopes a fence to the account whose mutation raised it;
+// an empty accountID applies to every app on a matching host.
+type edgeRuleFenceKey struct {
+	pattern   string
+	accountID string
 }
 
 type edgeRuleFence struct {
@@ -130,13 +137,14 @@ func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate valida
 		log:      log,
 		validate: validate,
 		metrics:  metrics,
-		fences:   make(map[string]edgeRuleFence),
+		fences:   make(map[edgeRuleFenceKey]edgeRuleFence),
 	}
 }
 
 // BeginConvergence fences the supplied hosts before the policy write. A TTL
 // prevents a crashed apid from leaving a hostname unavailable indefinitely.
-func (g *gatewaydEdgeRules) BeginConvergence(hosts []string, generation int64) {
+// accountID is the mutating rule's owner; "" fences every app on the hosts.
+func (g *gatewaydEdgeRules) BeginConvergence(accountID string, hosts []string, generation int64) {
 	if g == nil || generation <= 0 {
 		return
 	}
@@ -147,9 +155,10 @@ func (g *gatewaydEdgeRules) BeginConvergence(hosts []string, generation int64) {
 		if host == "" {
 			continue
 		}
-		current, ok := g.fences[host]
+		key := edgeRuleFenceKey{pattern: host, accountID: accountID}
+		current, ok := g.fences[key]
 		if !ok || generation >= current.generation {
-			g.fences[host] = edgeRuleFence{generation: generation, expiresAt: now.Add(edgeRuleFenceTTL)}
+			g.fences[key] = edgeRuleFence{generation: generation, expiresAt: now.Add(edgeRuleFenceTTL)}
 		}
 	}
 	count, newest := edgeRuleFenceStats(g.fences)
@@ -159,15 +168,15 @@ func (g *gatewaydEdgeRules) BeginConvergence(hosts []string, generation int64) {
 
 // EndConvergence releases only fences at or below this generation. A delayed
 // apply from an older mutation cannot remove a newer mutation's fence.
-func (g *gatewaydEdgeRules) EndConvergence(hosts []string, generation int64) {
+func (g *gatewaydEdgeRules) EndConvergence(accountID string, hosts []string, generation int64) {
 	if g == nil || generation <= 0 {
 		return
 	}
 	g.fenceMu.Lock()
 	for _, host := range hosts {
-		host = strings.ToLower(strings.TrimSpace(host))
-		if current, ok := g.fences[host]; ok && current.generation <= generation {
-			delete(g.fences, host)
+		key := edgeRuleFenceKey{pattern: strings.ToLower(strings.TrimSpace(host)), accountID: accountID}
+		if current, ok := g.fences[key]; ok && current.generation <= generation {
+			delete(g.fences, key)
 		}
 	}
 	count, newest := edgeRuleFenceStats(g.fences)
@@ -175,8 +184,13 @@ func (g *gatewaydEdgeRules) EndConvergence(hosts []string, generation int64) {
 	g.publishConvergenceMetrics(count, newest)
 }
 
-// Converging is the request-path fail-closed check.
-func (g *gatewaydEdgeRules) Converging(host string) bool {
+// Converging is the request-path fail-closed check. ownerAccountID is the
+// account owning the app the host resolved to ("" when no app claims it).
+// A fence only holds the owner's traffic: request-time matching ignores
+// another account's rules (OwnedEdgeRules), so that account's mutation —
+// even on match_host "*" — cannot change this host's policy and must not
+// 503 it. Unclaimed hosts and unscoped fences keep the fleet-wide hold.
+func (g *gatewaydEdgeRules) Converging(host, ownerAccountID string) bool {
 	if g == nil {
 		return false
 	}
@@ -184,12 +198,15 @@ func (g *gatewaydEdgeRules) Converging(host string) bool {
 	now := time.Now()
 	g.fenceMu.Lock()
 	ok := false
-	for pattern, fence := range g.fences {
+	for key, fence := range g.fences {
 		if !now.Before(fence.expiresAt) {
-			delete(g.fences, pattern)
+			delete(g.fences, key)
 			continue
 		}
-		matched, err := path.Match(pattern, host)
+		if ownerAccountID != "" && key.accountID != "" && key.accountID != ownerAccountID {
+			continue
+		}
+		matched, err := path.Match(key.pattern, host)
 		if err == nil && matched {
 			ok = true
 		}
@@ -200,7 +217,7 @@ func (g *gatewaydEdgeRules) Converging(host string) bool {
 	return ok
 }
 
-func edgeRuleFenceStats(fences map[string]edgeRuleFence) (int, int64) {
+func edgeRuleFenceStats(fences map[edgeRuleFenceKey]edgeRuleFence) (int, int64) {
 	var newest int64
 	for _, fence := range fences {
 		if fence.generation > newest {
