@@ -567,6 +567,9 @@ type RequireAuthnAccount struct {
 // mirrors state.APIKey.ID so the wiring site catches drift.
 type RequireAuthnKey struct {
 	ID string
+	// Scopes are the key's authorization scopes. ADR-079: unlocking an app
+	// with a bearer key requires apps:read (or admin) on its account.
+	Scopes []string
 }
 
 // RequireAuthnAuditor is the narrow slice of cmd/gatewayd-internal/audit.go's
@@ -2109,6 +2112,9 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
+	if h.rejectKeyWithoutAppScope(w, r, rec, app, acct.ID, key, "instances.authn_scope") {
+		return false
+	}
 	// Phase 3 (ADR-104, issue #881): stamp the resolved API key
 	// id on the request context so applyEdgeRuleThrottle can key
 	// a per-consumer bucket when the matched rule opts into
@@ -2120,6 +2126,42 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	authenticated.APIKeyID = key.ID
 	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	return true
+}
+
+// rejectKeyWithoutAppScope enforces ADR-079 §2: a bearer key unlocks an app
+// only when it holds apps:read (or admin) on the owning account.
+// production-us hunt #8 found the scope unchecked - a key minted with only
+// usage:read for billing tooling opened every private app of the account.
+// It writes the 403 and returns true when the key is refused.
+func (h *Handler) rejectKeyWithoutAppScope(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, accountID string, key RequireAuthnKey, auditKind string) bool {
+	if keyHasAnyScope(key.Scopes, api.ScopesReadSurface) {
+		return false
+	}
+	h.emitAuthnAudit(r, app, &accountID, auditKind, map[string]any{
+		"app_id":         app.ID,
+		"slug":           r.Host,
+		"key_id":         key.ID,
+		"key_scopes":     key.Scopes,
+		"required_scope": api.ScopeAppsRead,
+	})
+	rec.status = http.StatusForbidden
+	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+		"Insufficient scope", "this API key lacks the apps:read scope needed to call the app"))
+	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+	return true
+}
+
+// keyHasAnyScope mirrors the apid scope policy: a key passes when it holds
+// any of the allowed scopes (callers list admin explicitly).
+func keyHasAnyScope(have, allowed []string) bool {
+	for _, want := range allowed {
+		for _, scope := range have {
+			if scope == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // emitAuthnAudit is a tiny wrapper around the optional auditor
@@ -4863,6 +4905,9 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
 			"Insufficient scope", "this API key does not belong to the account that owns the app"))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
+	if h.rejectKeyWithoutAppScope(w, r, rec, app, acct.ID, key, "instances.public_auth_scope") {
 		return false
 	}
 	return true

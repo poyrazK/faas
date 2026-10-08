@@ -46,6 +46,9 @@ type fakeRequireAuthnAuthn struct {
 	// reach here via the test's local var; the handler's
 	// errors.Is comparison is what picks the audit reason.
 	err error
+	// scopes are the key's scopes; nil means an apps:read key, the
+	// scope ADR-079 requires for a bearer unlock.
+	scopes []string
 }
 
 func (f *fakeRequireAuthnAuthn) AuthenticateKey(_ context.Context, _ []byte) (RequireAuthnAccount, RequireAuthnKey, error) {
@@ -53,7 +56,11 @@ func (f *fakeRequireAuthnAuthn) AuthenticateKey(_ context.Context, _ []byte) (Re
 	if f.err != nil {
 		return RequireAuthnAccount{}, RequireAuthnKey{}, f.err
 	}
-	return RequireAuthnAccount{ID: f.accountID}, RequireAuthnKey{ID: f.keyID}, nil
+	scopes := f.scopes
+	if scopes == nil {
+		scopes = []string{api.ScopeAppsRead}
+	}
+	return RequireAuthnAccount{ID: f.accountID}, RequireAuthnKey{ID: f.keyID, Scopes: scopes}, nil
 }
 
 // fakeRequireAuthnAudit counts the three deny-path audit rows
@@ -332,5 +339,33 @@ func TestRequireAuthn_AllowsWakesBeforeAuthz(t *testing.T) {
 	// advertise a cold wake.
 	if got := rec.Header().Get(wire.WakeHeader); got != wire.HotWakeValue {
 		t.Errorf("%s = %q, want %q for a warm request", wire.WakeHeader, got, wire.HotWakeValue)
+	}
+}
+
+// production-us hunt #8 / ADR-079 §2: a bearer key unlocks an app only with
+// apps:read (or admin). A usage:read key minted for billing tooling opened
+// every private app of the account.
+func TestBearerUnlockRequiresAppsReadScope(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		scopes []string
+		want   int
+	}{
+		{"usage:read only", []string{api.ScopeUsageRead}, http.StatusForbidden},
+		{"apps:read", []string{api.ScopeAppsRead}, http.StatusOK},
+		{"admin", []string{api.ScopeAdmin}, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, authn, _, _ := newRequireAuthnTestHandler(t, true, "acct-1")
+			authn.scopes = tc.scopes
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, reqFor(t, "Bearer fp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+			if tc.want == http.StatusForbidden && !strings.Contains(rec.Body.String(), "apps:read") {
+				t.Fatalf("403 body does not name the missing scope: %s", rec.Body.String())
+			}
+		})
 	}
 }
