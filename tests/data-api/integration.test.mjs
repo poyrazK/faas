@@ -25,7 +25,9 @@ async function stagingClient(t, types) {
   t.after(() => rm(directory, { recursive: true, force: true }))
   await writeFile(join(directory, 'package.json'), '{"type":"module"}')
   const receipt = JSON.parse(await command('npm', ['pack', '--json', '--pack-destination', directory], { cwd: join(repoRoot, 'sdk/data'), env: process.env }))
-  await command('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', join(directory, receipt[0].filename)], { cwd: directory, env: process.env })
+  // npm ci caches dependency tarballs, but a fresh client install also needs
+  // registry metadata. Prefer the cache while allowing that first lookup.
+  await command('npm', ['install', '--prefer-offline', '--ignore-scripts', '--no-audit', '--no-fund', join(directory, receipt[0].filename)], { cwd: directory, env: process.env })
   await writeFile(join(directory, 'database.types.ts'), types)
   await cp(new URL('./staging/client.ts', import.meta.url), join(directory, 'client.ts'))
   await command(join(repoRoot, 'sdk/data/node_modules/.bin/tsc'), ['--strict', '--skipLibCheck', '--target', 'ES2022', '--module', 'NodeNext', '--outDir', 'dist', 'client.ts'], { cwd: directory, env: process.env })
