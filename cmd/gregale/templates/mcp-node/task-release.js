@@ -71,7 +71,7 @@ export async function releaseMcpTasks({ pool, namespace, store, handlers, migrat
 
 // Reused by native deployment adapters immediately before promotion and each park.
 export async function checkMcpTaskReplacementReadiness({ pool, namespace, handlers, workerIDs }) {
-  if (!Array.isArray(workerIDs) || !workerIDs.length || workerIDs.length > 4096 || new Set(workerIDs).size !== workerIDs.length || workerIDs.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) throw new Error('Invalid replacement IDs');
+  if (typeof namespace !== 'string' || !namespace.trim() || !Array.isArray(workerIDs) || !workerIDs.length || workerIDs.length > 4096 || new Set(workerIDs).size !== workerIDs.length || workerIDs.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) throw new Error('Invalid replacement IDs');
   const inventory = mcpTaskHandlerInventory(handlers);
   const result = await pool.query(`SELECT worker_id::text, handlers FROM gregale_mcp_task_workers
     WHERE namespace = $1 AND worker_id = ANY($2::uuid[]) AND NOT draining
@@ -105,4 +105,20 @@ export async function restoreMcpTasks({ pool, namespace, handlers, restore }) {
     } finally { lock.release(); }
   }
   return report;
+}
+
+// Share the claim transaction lock: once this commits, updated runtimes cannot
+// acquire another lease. Existing handlers keep their leases until graceful stop.
+export async function quarantineMcpTaskWorkers({ pool, namespace, workerIDs }) {
+  if (typeof namespace !== 'string' || !namespace.trim() || !Array.isArray(workerIDs) || !workerIDs.length || workerIDs.length > 4096 || new Set(workerIDs).size !== workerIDs.length || workerIDs.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) throw new Error('Invalid quarantine IDs');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`gregale_mcp_tasks:execution:${namespace}`]);
+    await client.query(`INSERT INTO gregale_mcp_task_workers (namespace, worker_id, handlers, draining, heartbeat_at, expires_at)
+      SELECT $1, worker_id, '[]'::jsonb, true, clock_timestamp(), clock_timestamp() FROM unnest($2::uuid[]) AS ids(worker_id)
+      ON CONFLICT (namespace, worker_id) DO UPDATE SET draining=true`, [namespace, workerIDs]);
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
 }

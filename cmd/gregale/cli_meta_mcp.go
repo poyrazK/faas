@@ -71,7 +71,7 @@ func mcpCLICommand() cliCommand {
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
-			{Name: "release", Short: "Deploy and resume a gated web and worker release", Positionals: []string{"[run|status|recover|restore]"}, Flags: []cliFlag{
+			{Name: "release", Short: "Deploy and resume a gated web and worker release", Positionals: []string{"[run|status|recover|restore|quarantine|retire]"}, Flags: []cliFlag{
 				{Name: "resume", Short: "resume a healthy failed rollout (recover only)"},
 				{Name: "plan", Short: "native deployment plan JSON", Value: "PATH", Req: true},
 				{Name: "state", Short: "persistent release journal outside source directories", Value: "PATH", Req: true},

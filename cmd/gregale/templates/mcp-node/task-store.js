@@ -485,7 +485,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       if (Buffer.byteLength(registry) > MAX_ARGUMENT_BYTES) throw new Error('MCP worker registry is too large');
       await pool.query(`INSERT INTO ${WORKER_TABLE} (namespace, worker_id, handlers, heartbeat_at, expires_at)
         VALUES ($1, $2::uuid, $3::jsonb, clock_timestamp(), clock_timestamp() + interval '90 seconds')
-        ON CONFLICT (namespace, worker_id) DO UPDATE SET handlers = EXCLUDED.handlers, draining = false,
+        ON CONFLICT (namespace, worker_id) DO UPDATE SET handlers = EXCLUDED.handlers,
           heartbeat_at = EXCLUDED.heartbeat_at, expires_at = EXCLUDED.expires_at`, [namespace, workerID, registry]);
     },
     async workerDraining(workerID) {
@@ -673,7 +673,8 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       `, [namespace, taskID, ownerHash(authInfo, authMode)]);
       return (result.rowCount ?? result.rows?.length ?? 0) > 0;
     },
-    async claim(maxAttempts, leaseMs, supportedHandlers) {
+    async claim(maxAttempts, leaseMs, supportedHandlers, workerID) {
+      if (workerID !== undefined && !UUID_PATTERN.test(workerID)) throw new Error('Invalid MCP worker registration');
       await pool.query(`
         UPDATE ${TABLE}
            SET status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'failed' END,
@@ -688,6 +689,10 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       for (let attempt = 0; attempt < FAIRNESS_CLAIM_RETRIES; attempt++) {
         result = await withTransaction(pool, async client => {
           await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${TABLE}:execution:${namespace}`]);
+          if (workerID !== undefined) {
+            const registered = await client.query(`SELECT worker_id FROM ${WORKER_TABLE} WHERE namespace=$1 AND worker_id=$2::uuid AND NOT draining AND expires_at>clock_timestamp() FOR SHARE`, [namespace, workerID]);
+            if (!registered.rows.length) return { rows: [] };
+          }
           return client.query(`
         WITH chosen_owner AS MATERIALIZED (
           SELECT fairness.namespace, fairness.owner_hash
@@ -862,7 +867,8 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       });
       // Registry pruning needs no admission lock and must not hold worker-table
       // locks while waiting for task schema or admission operations.
-      await pool.query(`DELETE FROM ${WORKER_TABLE} WHERE namespace = $1 AND expires_at <= clock_timestamp()`, [namespace]);
+      // Retain drain fences across expired registration cleanup and later heartbeats.
+      await pool.query(`DELETE FROM ${WORKER_TABLE} WHERE namespace = $1 AND expires_at <= clock_timestamp() AND NOT draining`, [namespace]);
     },
   };
 }

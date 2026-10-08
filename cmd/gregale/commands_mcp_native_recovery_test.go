@@ -21,12 +21,12 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 	original := mcpNativeCheckWorkers
 	defer func() { mcpNativeCheckWorkers = original }()
 	for _, tc := range []struct {
-		name                                                   string
-		changed, parked, incompatible, race, lost, postFailure bool
+		name                                                                                      string
+		changed, parked, incompatible, race, lost, postFailure, retirementChanged, retirementLost bool
 	}{
 		{name: "healthy"}, {name: "traffic changed", changed: true}, {name: "worker parked", parked: true},
 		{name: "worker incompatible", incompatible: true}, {name: "CAS race", race: true},
-		{name: "lost response", lost: true}, {name: "canonical unhealthy", postFailure: true},
+		{name: "lost response", lost: true}, {name: "canonical unhealthy", postFailure: true}, {name: "retire changed generation", retirementChanged: true}, {name: "retire lost park response", retirementLost: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mcpNativeCheckWorkers = func(context.Context, *Client, mcpNativeReleasePlan, *mcpNativeReleaseState) error {
@@ -48,6 +48,9 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				current = "external"
 			}
 			patches := 0
+			parks := 0
+			retired := false
+			retirement := false
 			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "" {
 					t.Error("control credential leaked to MCP endpoint")
@@ -99,6 +102,30 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "old-instance", DeploymentID: "old", State: "running"}})
 				case "/v1/apps/previous/logs":
 					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"old-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
+				case "/v1/apps/candidate-worker":
+					json.NewEncoder(w).Encode(api.AppResponse{ID: "candidate-worker-id", WorkloadClass: "worker", Manifest: api.AppManifest{StopGracePeriod: 45 * time.Second}})
+				case "/v1/apps/candidate-worker/deployments/latest":
+					id := "worker-candidate"
+					if retirement && tc.retirementChanged {
+						id = "another-generation"
+					}
+					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: id})
+				case "/v1/apps/candidate-worker/instances":
+					instances := []api.InstanceResponse{}
+					if !retired {
+						instances = append(instances, api.InstanceResponse{ID: "candidate-instance", DeploymentID: "worker-candidate", State: "running"})
+					}
+					json.NewEncoder(w).Encode(instances)
+				case "/v1/apps/candidate-worker/logs":
+					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"candidate-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"claimFence\\\":true,\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
+				case "/v1/apps/candidate-worker/park":
+					parks++
+					retired = true
+					if tc.retirementLost && parks == 1 {
+						w.WriteHeader(500)
+						return
+					}
+					w.WriteHeader(204)
 				case "/v1/deployments/stable/traffic":
 					if r.Method != "PATCH" {
 						t.Error("unexpected write method")
@@ -126,8 +153,8 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				}
 			}))
 			defer control.Close()
-			p := mcpNativeReleasePlan{WebApp: "web", WebPath: root, WorkerPath: root, PreviousWorkerApps: []string{"previous"}, ObserverApp: "observer", ObserverMetricApp: "metrics"}
-			s := mcpNativeReleaseState{Version: 1, Fingerprint: "source", Stage: "web_promoted", ServingCaptured: true, ServingDeployment: "stable", WebDeployment: "candidate", Promoted: true, PreviousDeployments: map[string]string{"previous": "old"}, Parked: map[string]bool{"previous": tc.parked}}
+			p := mcpNativeReleasePlan{WorkerApp: "candidate-worker", WebApp: "web", WebPath: root, WorkerPath: root, PreviousWorkerApps: []string{"previous"}, ObserverApp: "observer", ObserverMetricApp: "metrics"}
+			s := mcpNativeReleaseState{WorkerDeployment: "worker-candidate", WorkerIDs: []string{"12345678-1234-1234-1234-123456789abc"}, Version: 1, Fingerprint: "source", Stage: "web_promoted", ServingCaptured: true, ServingDeployment: "stable", WebDeployment: "candidate", Promoted: true, PreviousDeployments: map[string]string{"previous": "old"}, Parked: map[string]bool{"previous": tc.parked}}
 			path := filepath.Join(t.TempDir(), "state.json")
 			client := NewClient(control.URL, "operator")
 			err = restoreMCPNativeWeb(context.Background(), client, p, &s, path)
@@ -157,6 +184,27 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				if patches != 1 {
 					t.Fatal("resume repeated traffic write")
 				}
+				retirement = true
+				err := retireMCPNativeWorker(context.Background(), client, p, &s, path)
+				if tc.retirementChanged {
+					if err == nil || parks != 0 {
+						t.Fatal("retired changed generation")
+					}
+					return
+				}
+				if tc.retirementLost {
+					if err == nil || s.Stage != "retirement_pending" {
+						t.Fatal("lost park response lost checkpoint")
+					}
+					err = retireMCPNativeWorker(context.Background(), client, p, &s, path)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !retired || s.Stage != "retirement_pending" {
+					t.Fatalf("retirement lacks pending verification: %+v", s)
+				}
+
 			}
 		})
 	}

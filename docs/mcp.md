@@ -1144,3 +1144,39 @@ and journal for future deployment. Do not restart the old release or reuse its
 remains recorded so restoration can be retried without repeating the traffic
 switch. Recovery requires the updated starter's restore and readiness scripts;
 keep the sources pinned and do not modify a running release's journal or sources.
+
+### Quarantining and retiring recovered candidate workers
+
+After restoring web traffic, run `gregale mcp tasks release quarantine --plan release.json --state release-state.json`
+to stop the journal's candidate worker IDs from acquiring new Task leases. This
+requires the restored web revision, healthy observer, and fresh, compatible
+previous worker generations. It holds the release namespace lock and fences
+claims under the same PostgreSQL transaction lock used for running capacity.
+Heartbeats and expired-registration cleanup preserve the fence until confirmed
+shutdown or retirement removes it. Existing active handlers retain their leases and
+may finish; quarantine does not cancel Tasks or revoke leases during execution.
+
+Use `gregale mcp tasks release retire --plan release.json --state release-state.json`
+to fence those workers, recheck replacement capacity and exact candidate
+generation/worker IDs, and park only the candidate worker app. Its stop grace
+must exceed the configured Task shutdown deadline. Graceful shutdown
+finishes or aborts its handlers using the normal worker drain deadline. Abandoned
+leases become reclaimable through their normal expiry, preserving lease-token
+protection against late writes. Completion waits for candidate registrations to
+stop or expire. `retirement_pending` preserves an uncertain park outcome; rerun
+`retire` to reconcile an already parked app without deploying another generation.
+`worker_retired` is recorded only after the gate completes. Neither quarantine
+nor retirement changes web traffic, observer capacity, admission, or Task data.
+
+These fences require updated worker runtimes that pass their worker ID on claims.
+The CLI requires their per-instance startup logs to attest `claimFence: true`;
+legacy or missing startup records stop quarantine instead of silently allowing
+claims.
+They apply to the captured worker IDs, not to arbitrary future processes. A
+restarted candidate with different worker IDs or a changed app generation stops
+retirement; investigate it rather than substituting IDs in the journal. Coordinate
+other deployments and app-wide operations, since the park API has no generation
+compare-and-swap. Quarantine remains in place if a later check fails. All recovery
+and retirement stages block resuming the original rollout; use a new plan/journal
+for a subsequent release. Runtime database credentials supply the existing
+worker-table UPDATE privilege; observer credentials remain read-only.

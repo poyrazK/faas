@@ -348,7 +348,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         // A busy queue can keep this loop running across many heartbeat periods.
         await refreshWorkerHeartbeat();
         if (closed) break;
-        const task = await store.claim(maxAttempts, LEASE_MS, supportedHandlers);
+        const task = await store.claim(maxAttempts, LEASE_MS, supportedHandlers, workerID);
         // Do not start work from a claim that completed during shutdown.
         if (!task || closed) break;
         let work;

@@ -351,3 +351,23 @@ func TestMCPNativeSubmissionReconciliation(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPNativeQuarantineRequiresFenceAwareWorkers(t *testing.T) {
+	instances := []api.InstanceResponse{{ID: "instance", DeploymentID: "candidate", State: "running"}}
+	event := func(fence bool) string {
+		payload, _ := json.Marshal(map[string]any{"event": "mcp_task_worker_started", "workerID": "12345678-1234-1234-1234-123456789abc", "claimFence": fence})
+		envelope, _ := json.Marshal(map[string]string{"instance": "instance", "line": string(payload)})
+		return "event: log\ndata: " + string(envelope) + "\n\n"
+	}
+	if _, err := mcpNativeWorkerLogs(strings.NewReader(event(false)), instances, "candidate", true); err == nil {
+		t.Fatal("legacy worker accepted quarantine it cannot honor")
+	}
+	other := strings.ReplaceAll(event(true), "123456789abc", "123456789abd")
+	if _, err := mcpNativeWorkerLogs(strings.NewReader(event(true)+other), instances, "candidate", true); err == nil {
+		t.Fatal("restarted worker with ambiguous startup IDs accepted quarantine")
+	}
+	ids, err := mcpNativeWorkerLogs(strings.NewReader(event(true)), instances, "candidate", true)
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("fence-aware worker rejected: %v %v", ids, err)
+	}
+}

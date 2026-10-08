@@ -501,7 +501,7 @@ Configure, release and inspect durable task workers
 
 Deploy and resume a gated web and worker release
 
-`gregale mcp tasks release [--resume] --plan <PATH> --state <PATH> [run|status|recover|restore]`
+`gregale mcp tasks release [--resume] --plan <PATH> --state <PATH> [run|status|recover|restore|quarantine|retire]`
 
 | Flag | Meaning | |
 |---|---|---|

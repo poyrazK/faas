@@ -1439,3 +1439,32 @@ test('restore gate serializes with releases, checks retained and admitted handle
   assert.equal(restored, 1);
   assert.equal((await store.get({ taskID: (await pool.query('SELECT task_id FROM gregale_mcp_tasks WHERE namespace=$1', [namespace])).rows[0].task_id, authInfo: principal('restore-owner'), authMode: 'external-oauth' })).status, 'queued');
 });
+
+test('quarantine fences new claims across heartbeats while preserving active leases and healthy capacity', postgresOnly, async t => {
+  const { quarantineMcpTaskWorkers } = await import('../task-release.js');
+  const { pool, namespace, store } = await harness(t);
+  const missing = randomUUID();
+  await quarantineMcpTaskWorkers({ pool, namespace, workerIDs: [missing] });
+  await store.workerHeartbeat(missing, [{ name: 'build_report', version: '1' }]);
+  assert.equal(await store.claim(3, 30000, [{ name: 'build_report', version: '1' }], missing), null);
+  const bad = randomUUID(), healthy = randomUUID();
+  const inventory = [{ name: 'build_report', version: '1' }];
+  await store.workerHeartbeat(bad, inventory);
+  await store.workerHeartbeat(healthy, inventory);
+  const first = await create(store, 'quarantine-owner');
+  const active = await store.claim(3, 30000, inventory, bad);
+  assert.equal(active.task_id, first.task_id);
+  await create(store, 'quarantine-owner');
+  await quarantineMcpTaskWorkers({ pool, namespace, workerIDs: [bad] });
+  await pool.query("UPDATE gregale_mcp_task_workers SET expires_at=clock_timestamp()-interval '1 second' WHERE namespace=$1 AND worker_id=$2", [namespace, bad]);
+  await store.cleanupExpired();
+  await store.workerHeartbeat(bad, inventory);
+  assert.equal(await store.claim(3, 30000, inventory, bad), null);
+  const row = (await pool.query('SELECT lease_token::text, status FROM gregale_mcp_tasks WHERE namespace=$1 AND task_id=$2', [namespace, first.task_id])).rows[0];
+  assert.equal(row.status, 'running');
+  assert.equal(row.lease_token, active.lease_token);
+  assert.ok(await store.claim(3, 30000, inventory, healthy));
+  assert.equal(await store.claim(3, 30000, inventory, randomUUID()), null);
+  await quarantineMcpTaskWorkers({ pool, namespace, workerIDs: [bad] });
+  assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
+});

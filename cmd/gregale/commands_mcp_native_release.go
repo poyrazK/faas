@@ -217,8 +217,8 @@ func cmdMCPTaskRelease(args []string) int {
 	if err := flags.Parse(args); err != nil {
 		return 1
 	}
-	if flags.NArg() != 0 || *planPath == "" || *statePath == "" || (action != "run" && action != "start" && action != "drain" && action != "restore-hook" && action != "status" && action != "recover" && action != "restore") {
-		return printErr("MCP release", errors.New("use release [run|status|recover|restore] --plan PATH --state PATH"))
+	if flags.NArg() != 0 || *planPath == "" || *statePath == "" || (action != "run" && action != "start" && action != "drain" && action != "restore-hook" && action != "status" && action != "recover" && action != "restore" && action != "quarantine" && action != "retire" && action != "retire-check" && action != "retire-hook") {
+		return printErr("MCP release", errors.New("use release [run|status|recover|restore|quarantine|retire] --plan PATH --state PATH"))
 	}
 	p, err := readMCPNativePlan(*planPath)
 	if err != nil {
@@ -248,6 +248,9 @@ func cmdMCPTaskRelease(args []string) int {
 	if action == "recover" {
 		return recoverMCPNativeRelease(p, s, absoluteState, *planPath, *resume)
 	}
+	if action == "quarantine" || action == "retire" {
+		return runMCPNativeRetirement(p, s, absoluteState, *planPath, action == "retire")
+	}
 	if action == "restore" {
 		return runMCPNativeRestore(p, s, absoluteState, *planPath)
 	}
@@ -268,6 +271,10 @@ func cmdMCPTaskRelease(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.TimeoutSeconds)*time.Second)
 	defer cancel()
 	switch action {
+	case "retire-check":
+		err = checkMCPNativeRetirement(ctx, c, p, &s)
+	case "retire-hook":
+		err = retireMCPNativeWorker(ctx, c, p, &s, absoluteState)
 	case "restore-hook":
 		err = restoreMCPNativeWeb(ctx, c, p, &s, absoluteState)
 	case "start":
@@ -281,8 +288,8 @@ func cmdMCPTaskRelease(args []string) int {
 	return jsonOut(writeJSON(map[string]any{"workerIDs": s.WorkerIDs, "stage": s.Stage}))
 }
 func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state, plan string) int {
-	if s.Stage == "restore_pending" || s.Stage == "web_restored" {
-		return printErr("MCP release", errors.New("restoration started; finish restore instead of resuming this rollout"))
+	if s.Stage == "restore_pending" || s.Stage == "web_restored" || s.Stage == "quarantined" || s.Stage == "retirement_pending" || s.Stage == "worker_retired" {
+		return printErr("MCP release", errors.New("recovery or retirement started; resume that operation or create a new release instead"))
 	}
 	if s.Stage == "complete" {
 		return jsonOut(writeJSON(s))
@@ -537,7 +544,7 @@ func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool,
 
 var mcpWorkerUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-func mcpNativeWorkerLogs(reader io.Reader, instances []api.InstanceResponse, dep string) ([]string, error) {
+func mcpNativeWorkerLogs(reader io.Reader, instances []api.InstanceResponse, dep string, requireFence ...bool) ([]string, error) {
 	wanted := map[string]bool{}
 	for _, ins := range instances {
 		if ins.DeploymentID == dep && ins.State == "running" {
@@ -560,10 +567,14 @@ func mcpNativeWorkerLogs(reader io.Reader, instances []api.InstanceResponse, dep
 			continue
 		}
 		var event struct {
-			Event    string `json:"event"`
-			WorkerID string `json:"workerID"`
+			Event      string `json:"event"`
+			WorkerID   string `json:"workerID"`
+			ClaimFence bool   `json:"claimFence"`
 		}
-		if json.Unmarshal([]byte(envelope.Line), &event) == nil && event.Event == "mcp_task_worker_started" && mcpWorkerUUID.MatchString(event.WorkerID) {
+		if json.Unmarshal([]byte(envelope.Line), &event) == nil && event.Event == "mcp_task_worker_started" && mcpWorkerUUID.MatchString(event.WorkerID) && (len(requireFence) == 0 || !requireFence[0] || event.ClaimFence) {
+			if len(requireFence) > 0 && requireFence[0] && found[envelope.Instance] != "" && found[envelope.Instance] != event.WorkerID {
+				return nil, errors.New("candidate instance has multiple startup worker IDs; refusing quarantine")
+			}
 			found[envelope.Instance] = event.WorkerID
 		}
 	}
@@ -580,7 +591,7 @@ func mcpNativeWorkerLogs(reader io.Reader, instances []api.InstanceResponse, dep
 	sort.Strings(ids)
 	return ids, nil
 }
-func mcpNativeWorkerIDs(ctx context.Context, c *Client, app, dep string) ([]string, error) {
+func mcpNativeWorkerIDs(ctx context.Context, c *Client, app, dep string, requireFence ...bool) ([]string, error) {
 	instances, err := c.ListInstances(ctx, app)
 	if err != nil {
 		return nil, err
@@ -590,7 +601,7 @@ func mcpNativeWorkerIDs(ctx context.Context, c *Client, app, dep string) ([]stri
 		return nil, err
 	}
 	defer func() { _ = body.Close() }()
-	return mcpNativeWorkerLogs(body, instances, dep)
+	return mcpNativeWorkerLogs(body, instances, dep, requireFence...)
 }
 func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleasePlan, s *mcpNativeReleaseState) error {
 	cfg, err := mcphosting.Load(p.WebPath)
