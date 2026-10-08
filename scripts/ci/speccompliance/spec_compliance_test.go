@@ -324,7 +324,7 @@ var dtoExclude = map[string]bool{
 	"WorkflowSchedulePreviewOptions": true, // client-only query options; the wire parameters are declared on the route
 	// Version listing carries these fields as individual query parameters,
 	// documented on the GET route; it has no JSON request body.
-	"ObjectVersionListRequest":      true,
+	"ObjectVersionListRequest": true,
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
