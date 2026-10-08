@@ -9,3 +9,20 @@
     group: root
     mode: "0644"
   notify: restart faas-profiled
+
+- name: profiled_service — create role drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-profiled.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: profiled_service — install host role drop-in
+  ansible.builtin.template:
+    src: 99-faas-role.conf.j2
+    dest: /etc/systemd/system/faas-profiled.service.d/99-faas-role.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-profiled

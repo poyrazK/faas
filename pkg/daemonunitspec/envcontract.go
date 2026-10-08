@@ -430,6 +430,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "opt-in node-to-node VXLAN over the operator-managed encrypted overlay; disabled until every regional peer is configured"},
 	{Name: "FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional underlay interface for Gregale private-network VXLAN; falls back to FAAS_OVERLAY_INTERFACE"},
 	{Name: "FAAS_PRIVATE_NETWORK_TRANSPORT_PEERS", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "comma-separated IPv4 overlay addresses for the other compute nodes in this region"},
+	{Name: "FAAS_PROFILED_ROLE", Owners: []string{"profiled", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_PROFILE_SOCKET", Owners: []string{"vmmd", "profiled"}, Source: EnvSourceUnit},
 	{Name: "FAAS_PROFILING_ENABLED", Owners: []string{"apid", "vmmd", "profiled", "guest", "shared"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-792)"},
 	{Name: "FAAS_PROFILING_ENDPOINT", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "loopback bridge stamped by guest-init for SDKs"},

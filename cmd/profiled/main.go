@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/profiling"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 )
@@ -23,6 +24,9 @@ import (
 func main() { wire.Daemon("profiled", run) }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	if err := role.Require("profiled", role.FromConfig("", "FAAS_PROFILED_ROLE"), role.RoleSingleBox, role.RoleComputeOnly); err != nil {
+		return err
+	}
 	var backend profiling.Backend
 	if os.Getenv("FAAS_PROFILING_ENABLED") == "1" {
 		var err error

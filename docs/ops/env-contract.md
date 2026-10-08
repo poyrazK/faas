@@ -351,6 +351,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED` | vmmd | `default` |  |  | `` | opt-in node-to-node VXLAN over the operator-managed encrypted overlay; disabled until every regional peer is configured |
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE` | vmmd | `default` |  |  | `` | optional underlay interface for Gregale private-network VXLAN; falls back to FAAS_OVERLAY_INTERFACE |
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_PEERS` | vmmd | `default` |  |  | `` | comma-separated IPv4 overlay addresses for the other compute nodes in this region |
+| `FAAS_PROFILED_ROLE` | profiled, shared | `dropin` |  |  | `` |  |
 | `FAAS_PROFILE_SOCKET` | vmmd, profiled | `unit` |  |  | `` |  |
 | `FAAS_PROFILING_ENABLED` | apid, vmmd, profiled, guest, shared | `default` |  | 0 | `` | operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-792) |
 | `FAAS_PROFILING_ENDPOINT` | guest, shared | `guest` |  |  | `` | loopback bridge stamped by guest-init for SDKs |
