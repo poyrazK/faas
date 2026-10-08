@@ -1,5 +1,7 @@
 package api
 
+const OperationWorkflowStateStaleAfterMaxSeconds int64 = 10 * 365 * 24 * 60 * 60
+
 type OperationWorkflowSpec struct {
 	Workflow               string                        `json:"workflow"`
 	Title                  string                        `json:"title"`

@@ -59,6 +59,7 @@ type OperationWorkflowState struct {
 	StaleAfterSeconds int64     `json:"stale_after_seconds,omitempty"`
 	Revision          int64     `json:"revision"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	PlatformTenantID  string    `json:"platform_tenant_id,omitempty"`
 }
 
 type OperationWorkflowStateHistoryEntry struct {
@@ -96,11 +97,12 @@ type OperationMilestonesResponse struct {
 }
 
 type OperationMilestoneListOptions struct {
-	AppID               string
-	Scope               string
-	OperationID         string
-	SubjectType         string
-	SubjectID           string
+	AppID       string
+	Scope       string
+	OperationID string
+	SubjectType string
+	SubjectID   string
+	// Workflow and WorkflowInstanceID are paired filters for a business-reference feed.
 	Workflow            string
 	WorkflowInstanceID  string
 	WorkflowStateCursor string
