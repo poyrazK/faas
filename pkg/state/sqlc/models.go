@@ -2892,6 +2892,7 @@ type IdempotencyKey struct {
 	ResponseStatus int32
 	ResponseBody   []byte
 	CreatedAt      pgtype.Timestamptz
+	RequestDigest  []byte
 }
 
 type InboundWebhookEndpoint struct {

@@ -118,11 +118,11 @@ func (r *realtimeHistoryReceiver) ReportChannelRoute(ctx context.Context, req *a
 	if lock == nil {
 		return nil, status.Error(codes.Unavailable, "realtime channel route lock unavailable")
 	}
-	defer func() {
+	defer func(ctx context.Context) {
 		releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		lock.Release(releaseCtx)
 		cancel()
-	}()
+	}(ctx)
 	route := state.ManagedRealtimeChannelRoute{EndpointID: req.GetEndpointId(), Channel: req.GetChannel(), NodeID: node.ID}
 	if req.GetSubscribed() {
 		err = r.routes.AddManagedRealtimeChannelRoutes(ctx, []state.ManagedRealtimeChannelRoute{route})

@@ -197,7 +197,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	}
 	if err := m.queueResume(ctx, c, resumeServerFrame{Type: "subscribed", Channel: frame.Channel,
 		Sequence: frame.After, OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence}); err != nil {
-		m.removeResumeSubscription(c, frame.Channel, subscription)
+		m.removeResumeSubscription(ctx, c, frame.Channel, subscription)
 		m.closeResumeOnQueueFull(c, err)
 		return
 	}
@@ -207,7 +207,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 
 func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription, page state.ManagedRealtimeChannelHistory) {
 	defer m.resumeCount.Add(-1)
-	defer m.removeResumeSubscription(c, channel, subscription)
+	defer m.removeResumeSubscription(ctx, c, channel, subscription)
 	ticker := time.NewTicker(m.cfg.ResumePollInterval)
 	defer ticker.Stop()
 	for {
@@ -274,7 +274,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 	}
 }
 
-func (m *Manager) removeResumeSubscription(c *connection, channel string, subscription *resumeSubscription) {
+func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription) {
 	var routeRemoved bool
 	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
 	m.mu.Lock()
@@ -299,7 +299,7 @@ func (m *Manager) removeResumeSubscription(c *connection, channel string, subscr
 	m.mu.Unlock()
 	subscription.cancel()
 	if routeRemoved {
-		m.reportChannelRoute(context.Background(), key, false)
+		m.reportChannelRoute(ctx, key, false)
 	}
 }
 
@@ -395,7 +395,7 @@ func (m *Manager) resumeUnsubscribe(ctx context.Context, c *connection, channel 
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: channel, Code: "not_subscribed"})
 		return
 	}
-	m.removeResumeSubscription(c, channel, subscription)
+	m.removeResumeSubscription(ctx, c, channel, subscription)
 	m.queueResumeControl(ctx, c, resumeServerFrame{Type: "unsubscribed", Channel: channel})
 }
 
