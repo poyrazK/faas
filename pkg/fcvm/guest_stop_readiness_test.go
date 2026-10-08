@@ -70,3 +70,13 @@ func TestWorkloadOutputTailDropsGuestKernelLines(t *testing.T) {
 		t.Fatalf("tail exceeded max lines: %q", got)
 	}
 }
+
+// spec: §6.1
+// A restored guest must not report RCU stalls into customer logs (hunt #8).
+func TestGuestBootArgsSuppressRCUStallWarnings(t *testing.T) {
+	for name, args := range map[string]string{"cold boot": coldBootArgs, "execution": executionBootArgs} {
+		if !strings.Contains(args, "rcupdate.rcu_cpu_stall_suppress=1") {
+			t.Errorf("%s boot args lack RCU stall suppression: %q", name, args)
+		}
+	}
+}

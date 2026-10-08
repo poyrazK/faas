@@ -368,7 +368,7 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		}
 		line := append([]byte(nil), w.pending[:newline+1]...)
 		w.pending = w.pending[newline+1:]
-		if firecrackerControlLine(line) {
+		if firecrackerControlLine(line) || guestInitStageLine(line) {
 			continue
 		}
 		if _, err := w.ring.Write("stdout", line); err != nil {
@@ -376,6 +376,14 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		}
 	}
 	return len(p), nil
+}
+
+// guestInitStageLine matches guest-init's internal boot-progress markers
+// ("guest-init: stage pivot"). They are kept in the unfiltered console file for
+// operators; customers saw them at the top of every job task log (hunt #8).
+// guest-init's app restart and crash lines stay customer-visible.
+func guestInitStageLine(line []byte) bool {
+	return bytes.HasPrefix(bytes.TrimSpace(line), []byte("guest-init: stage "))
 }
 
 // stripFirecrackerTimestamp drops the wall-clock token Firecracker's logger
@@ -426,6 +434,7 @@ func firecrackerControlLine(line []byte) bool {
 	}
 	for _, marker := range []string{
 		"running firecracker",
+		"successfully started microvm",
 		"firecracker exiting",
 		"host cpu vendor",
 		"snapshot cpu vendor",
