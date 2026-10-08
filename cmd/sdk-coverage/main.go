@@ -361,7 +361,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/operation-milestones":                                        "ListAccountBusinessMilestones",
 	"GET /v1/apps/{slug}/operations/{id}/milestones":                                  "GetAccountOperationMilestones",
 	"GET /v1/platform-tenant-self/customer-operation-milestones":                      "ListPlatformTenantSelfBusinessMilestones",
-	"GET /v1/platform-tenant-self/customer-operations/{id}/milestones":               "GetPlatformTenantSelfOperationMilestones",
+	"GET /v1/platform-tenant-self/customer-operations/{id}/milestones":                "GetPlatformTenantSelfOperationMilestones",
 	"GET /v1/apps/{slug}/operations":                                                  "ListAccountOperations",
 	"GET /v1/apps/{slug}/operations/{id}/events":                                      "GetAccountOperationEvents",
 	"GET /v1/apps/{slug}/operations/{id}/executions":                                  "GetOperationExecutions",
