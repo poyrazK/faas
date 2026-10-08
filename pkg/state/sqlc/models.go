@@ -5068,6 +5068,17 @@ type ProjectEnvironmentCloneCheckpointObjectTarget struct {
 	ReadyAt           pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointPgCredentialRetirement struct {
+	OperationID       pgtype.UUID
+	SourceBindingID   pgtype.UUID
+	Plan              []byte
+	State             string
+	RequestedAt       pgtype.Timestamptz
+	Observation       []byte
+	ObservationSha256 pgtype.Text
+	RetiredAt         pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneCheckpointPostgresCredential struct {
 	OperationID       pgtype.UUID
 	SourceBindingID   pgtype.UUID

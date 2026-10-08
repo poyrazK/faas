@@ -5765,6 +5765,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_pg_credential_retirements",
+    "columns": [
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "source_binding_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_checkpoint_postgres_credentials",
     "columns": [
       "account_id",

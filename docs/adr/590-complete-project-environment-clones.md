@@ -8129,3 +8129,54 @@ proof rejection, prerequisite loss after IO, key rotation and envelope tampering
 late writes, migration ownership guards, account quota, cleanup blocking and
 plaintext redaction. Native observations use the protocol test driver; these
 checks do not establish live provider qualification.
+
+### Private checkpoint PostgreSQL credential retirement
+
+Compensation now has a separate credential retirement journal, pinned to the
+original credential plan, preparation state, encrypted-material digest, request
+time and terminal preparation digest. It never decrypts, reseals or rewrites the
+original password journal. Planned, sealed, requested and prepared owners all
+require an explicit native retirement receipt; generic identity absence does not
+establish that a delayed preparation request cannot create authority later.
+
+A qualified adapter must permanently fence the exact original preparation
+request, remove only its named fresh identity, close its sessions and prove no
+source authority or change to the original fork SQL roster. Its independent
+observation binds the original preparation and retirement requests, plan, identity,
+owner, dataset and normalized completion time. Providers unable to establish this
+permanent fence cannot qualify. There is still no built-in qualified adapter.
+
+Only a known committed claim dispatches retirement. Lost reserve/claim/native/
+finish replies and worker handoff preserve original intent; requested and retired
+recovery only observe it. An unknown claimed request without a native receipt
+retains ownership and blocks database cleanup. Final writes and read-only replay
+require the exact compensating worker, revision and live lease. Published bindings
+or app-secret references reject this private retirement path. Changed native
+proof or terminal receipt likewise fails closed.
+
+Retirement authenticates captured binding and original runtime provenance without
+requiring current database health or a new retention horizon. It remains replayable
+after the original fork has been deleted. Fork deletion and local catalogue
+retirement require a completed retirement journal for every credential owner of
+the database, including multiple bindings sharing one fork. Retiring one identity
+cannot release another identity's dataset. Original preparation and retirement
+evidence survive compensation; downgrade refuses any retirement journal, including
+completed records, through restrictive foreign keys and explicit ownership guards.
+
+This is a private compensation seam, not full stage activation or publication.
+Retained encrypted ownership continues to count toward the existing bounded account
+ledger; ciphertext erasure and audited quota reclamation require a separate
+retention protocol. Sealed connection values, activation, complete publication and
+live provider qualification remain outstanding. Live R2/OVH qualification remains
+deferred at the user's request.
+
+Validation: the targeted PostgreSQL coordinator suite passes retirement,
+credential preparation, native restoration, SQL isolation, data verification and
+private runtime readiness against PostgreSQL. Retirement cases cover lost
+reserve/claim/native/finish replies, invalid permanent-fence evidence, all four
+preparation states, multiple binding owners, stale workers and handoff, late final
+writes, empty/owned/terminal downgrade guards, immutable terminal receipts and
+replay after fork deletion without credential keys. State/schema tests and SQLC,
+encoding, shell-quoting and ADR-number checks also pass; targeted lint reports
+zero issues. Native effects are supplied
+by a protocol test driver; these results do not establish provider qualification.
