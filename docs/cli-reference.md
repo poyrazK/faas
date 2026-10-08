@@ -4484,7 +4484,7 @@ gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.
 
 Build customer impact rosters and track route migrations
 
-`gregale preview customers --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
+`gregale preview customers <track|progress|migration> --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4549,7 +4549,7 @@ gregale preview customers progress --snapshot migration-week-1.json --snapshot m
 
 Join contract compatibility with customer cutover evidence
 
-`gregale preview customers migration`
+`gregale preview customers migration <review|diff>`
 
 ##### preview customers migration review
 
