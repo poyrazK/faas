@@ -19,7 +19,7 @@ test('typed notes use renewed application tokens and schema projections', async 
   assert.equal(requests[1].init.headers.get('Authorization'), 'Bearer application-token-2')
   assert.equal(requests[0].init.headers.get('Accept-Profile'), 'api')
   assert.equal(new URL(requests[0].url).pathname, '/rest/v1/notes')
-  assert.equal(new URL(requests[0].url).searchParams.get('select'), 'id,body,priority,created_at')
+  assert.equal(new URL(requests[0].url).searchParams.get('select'), 'id,body,priority,created_at,version')
   assert.equal(requests[0].init.redirect, 'error')
   assert.equal(requests[0].init.credentials, 'omit')
 })
@@ -86,4 +86,9 @@ test('empty write batches are rejected before requesting', () => {
   const client = notesClient({ url: 'https://notes.example', subject: 'user', accessToken: 'token', fetch: () => { throw new Error('unexpected request') } })
   assert.throws(() => client.createMany([]), RangeError)
   assert.throws(() => client.saveDetails([]), RangeError)
+})
+
+test('invalid expected versions fail before requesting', async () => {
+  const client = notesClient({ url: 'https://notes.example', subject: 'user', accessToken: 'token', fetch: () => { throw new Error('unexpected request') } })
+  for (const version of [0, -1, 1.5, NaN, Infinity, 2147483648]) await assert.rejects(client.update(1, version, { body: 'edit' }), RangeError)
 })

@@ -68,17 +68,17 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // Exercise exactly the stable-owner migration session and restricted API role.
   await migrate(migrationURL.toString())
   await migrate(migrationURL.toString())
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 6)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 7)
   const firstSQL = join(root, 'migrations/sql/0001_notes.sql')
   const originalSQL = await readFile(firstSQL, 'utf8')
   await writeFile(firstSQL, originalSQL + '\n-- changed after deployment\n')
   try { await assert.rejects(migrate(migrationURL.toString()), /changed or removed/) }
   finally { await writeFile(firstSQL, originalSQL) }
-  const failedSQL = join(root, 'migrations/sql/0007_failure.sql')
+  const failedSQL = join(root, 'migrations/sql/0008_failure.sql')
   await writeFile(failedSQL, 'ALTER TABLE api.notes ADD COLUMN rolled_back text; SELECT 1/0;')
   try { await assert.rejects(migrate(migrationURL.toString())) }
   finally { await rm(failedSQL) }
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 6)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 7)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
   const snapshot = await inspect(loginURL.toString(), ['api'])
   assert.deepEqual(snapshot.tables.find(table => table.name === 'comments').relationships[0].referencedColumns, ['subject', 'id'])

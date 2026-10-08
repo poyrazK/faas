@@ -149,3 +149,16 @@ async function bulkContract(client: ReturnType<typeof notesClient>) {
   client.saveDetails([{ note_id: '1', summary: 'summary' }])
 }
 void bulkContract
+
+async function versionContract(client: ReturnType<typeof notesClient>) {
+  const rows = await client.list()
+  if (rows.data) {
+    const version: number = rows.data[0].version
+    await client.update(rows.data[0].id, version, { body: 'edit' })
+  }
+  // @ts-expect-error updates require the version the client read
+  client.update(1, { body: 'unguarded' })
+  // @ts-expect-error callers cannot choose the next version
+  client.update(1, 1, { version: 2 })
+}
+void versionContract

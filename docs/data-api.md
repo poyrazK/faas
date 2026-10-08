@@ -412,3 +412,27 @@ The existing request-body and response-row caps apply to bulk writes; the number
 of returned rows does not prove the number committed for oversized batches.
 Keep batches small enough to verify every returned id before relying on the
 result for follow-up writes or cleanup.
+
+Notes now expose a database-managed integer `version`, initially 1. Save a note
+with `notes.update(note.id, note.version, { body: 'edited' })`. The helper filters
+by id and expected version in one atomic PATCH and disables automatic retries.
+Exactly one of two concurrent writes using the same version can succeed. A
+successful update returns the incremented version. A stale version, deleted
+note or RLS-hidden note returns a local result with status 409 and
+`error.code === 'update_conflict'`; this is a client conflict result, not an HTTP
+409 returned by PostgREST. Reload before deciding whether to reapply the edit.
+
+The database trigger increments versions on every update, including raw PATCH
+and bulk updates, and rejects attempts to change the version directly. The
+starter helper requires an expected version; raw `db.from('notes').update(...)`
+queries must add their own `.eq('version', expected)` filter. The database does
+not inspect REST filters to enforce that requirement. A raw filtered bulk PATCH
+updates only matching rows; stale rows are skipped rather than causing the
+whole batch to fail. Check returned ids and versions if every row must match.
+Use a trusted backend transaction for all-or-nothing checks across different
+row versions. `saveDetails()` concerns a separate table and does not version
+notes or offer concurrency checks for detail summaries. Versioning protects
+note updates through the helper; it does not turn separate requests into one
+transaction or protect unguarded deletes. Existing notes receive version 1 when
+the migration is applied; regenerate types and update callers for the new
+update signature before adopting this starter revision.

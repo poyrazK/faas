@@ -272,6 +272,55 @@ async function verifyBulk(owner, other, subject, otherSubject, owned) {
   assert.equal(retained.data.length, 2, 'separate_requests_treated_as_one_transaction')
 }
 
+async function verifyVersions(owner, other, owned) {
+  const created = await owner.create(`version-${randomUUID()}`)
+  assert.equal(created.error, null)
+  owned.push([owner, created.data.id])
+  assert.equal(created.data.version, 1)
+  const id = created.data.id
+  const writes = await Promise.all([
+    owner.update(id, 1, { body: 'first concurrent edit' }),
+    owner.update(id, 1, { body: 'second concurrent edit' }),
+  ])
+  assert.equal(writes.filter(result => !result.error).length, 1, 'concurrent_updates_both_won')
+  assert.equal(writes.filter(result => result.error?.code === 'update_conflict').length, 1)
+  const winner = writes.find(result => !result.error)
+  assert.equal(winner.data.version, 2)
+  const stale = await owner.update(id, 1, { body: 'stale edit' })
+  assert.equal(stale.status, 409)
+  assert.equal(stale.error.code, 'update_conflict')
+  const hidden = await other.update(id, 2, { body: 'stolen' })
+  assert.equal(hidden.status, 409)
+  assert.equal(hidden.error.code, stale.error.code, 'conflict_leaks_row_visibility')
+  const forged = await owner.db.from('notes').update({ version: 1 }).eq('id', id).retry(false)
+  assert.equal(forged.error?.code, '42501', 'version_reset_allowed')
+  const nulled = await owner.db.from('notes').update({ version: null }).eq('id', id).retry(false)
+  assert.equal(nulled.error?.code, '42501', 'version_null_reset_allowed')
+  const current = await owner.db.from('notes').select('body,version').eq('id', id).single()
+  assert.equal(current.error, null)
+  assert.deepEqual(current.data, { body: winner.data.body, version: 2 })
+  const saved = await owner.update(id, 2, { priority: 2 })
+  assert.equal(saved.error, null)
+  assert.equal(saved.data.version, 3)
+  // A raw batch PATCH increments every matching row, without checking unmatched rows.
+  const batch = await owner.createMany([{ body: 'version batch' }, { body: 'version batch' }])
+  assert.equal(batch.error, null)
+  assert.ok(batch.data.every(row => row.version === 1))
+  for (const row of batch.data) owned.push([owner, row.id])
+  const changed = await owner.db.from('notes').update({ priority: 1 }).in('id', batch.data.map(row => row.id)).eq('version', 1).select('id,version').retry(false)
+  assert.equal(changed.error, null)
+  assert.equal(changed.data.length, 2)
+  assert.ok(changed.data.every(row => row.version === 2))
+  const skipped = await owner.db.from('notes').update({ priority: 3 }).in('id', batch.data.map(row => row.id)).eq('version', 1).select('id').retry(false)
+  assert.equal(skipped.error, null)
+  assert.deepEqual(skipped.data, [])
+  const first = await owner.update(batch.data[0].id, 2, { priority: 2 })
+  assert.equal(first.error, null)
+  const partial = await owner.db.from('notes').update({ priority: 3 }).in('id', batch.data.map(row => row.id)).eq('version', 2).select('id,version').retry(false)
+  assert.equal(partial.error, null)
+  assert.deepEqual(partial.data, [{ id: batch.data[1].id, version: 3 }], 'bulk_stale_rows_not_skipped')
+}
+
 export async function verifyAuthorization({ url, userA, userB }) {
   assert.ok(url && userA.subject && userB.subject && userA.token && userB.token, 'two_user_configuration_required')
   assert.notEqual(userA.subject, userB.subject, 'subjects_must_differ')
@@ -287,6 +336,7 @@ export async function verifyAuthorization({ url, userA, userB }) {
     for (const [owner, other, subject, otherSubject] of [
       [first, second, userA.subject, userB.subject], [second, first, userB.subject, userA.subject],
     ]) {
+      await verifyVersions(owner, other, owned)
       await verifyBulk(owner, other, subject, otherSubject, owned)
       const created = await owner.create(`authorization-${randomUUID()}`)
       assert.equal(created.error, null, 'own_insert_failed')
@@ -310,7 +360,7 @@ export async function verifyAuthorization({ url, userA, userB }) {
       for (const junction of ['note_tags', 'note_favorite_tags']) {
         await verifyTags(owner, other, subject, otherSubject, id, created.data.body, ownedTags, owned, junction)
       }
-      const updated = await owner.update(id, { body: 'updated', priority: 1 })
+      const updated = await owner.update(id, created.data.version, { body: 'updated', priority: 1 })
       assert.equal(updated.error, null, 'own_update_failed')
       assert.equal(updated.data.body, 'updated', 'own_update_missing')
       assert.equal(updated.data.priority, 1, 'priority_contract_missing')
