@@ -48,8 +48,10 @@ func (h *Handler) maybeRequestCrashCapture(r *http.Request, app App, target Targ
 		return
 	}
 	route := r.URL.Path
+	// Detached from the client: the request is already answered.
+	base := context.WithoutCancel(r.Context())
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), crashCaptureRequestTimeout)
+		ctx, cancel := context.WithTimeout(base, crashCaptureRequestTimeout)
 		defer cancel()
 		requester.RequestCrashCapture(ctx, app.ID, target.InstanceID, status, route)
 	}()
