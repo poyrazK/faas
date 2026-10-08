@@ -13,6 +13,8 @@ on:
       - "sdk/data/**"
       - "tests/data-api/**"
       - "scripts/test-data-api.sh"
+      - "scripts/ci/run-data-api-staging-canary.sh"
+      - ".github/workflows/data-api-staging.yml"
       - ".github/workflows/data-api.yml"
   workflow_dispatch:
 permissions:

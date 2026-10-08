@@ -21,6 +21,10 @@ gregale data-api create notes-data --database notes-db \
 The command reserves an ordinary app, attaches a restricted `DATABASE_URL`
 binding, seals the authentication settings, enables plan-gated PostgreSQL egress
 and uploads the Data API template through the normal builder/deploy path.
+Creation and `--resume` set `require_authn=false` and change owner-key
+`public_auth.mode=bearer` to `open` so application JWTs reach the runtime verifier.
+Other explicitly configured ingress restrictions remain in place on resume.
+The runtime still requires a valid application token for data requests.
 It creates the `api` schema if needed. An empty schema yields an API with no
 table endpoints. `--scope` selects the binding, secret and deployment scope.
 If configuration or deployment fails, the app remains available for inspection.
@@ -147,3 +151,10 @@ See the [preview runbook](managed-postgres-preview-runbook.md).
 `DATA_API_POSTGREST_BIN`. The acceptance test owns a private database and login
 and removes them on completion. Native VM/build deployment and live Neon
 qualification are separate rollout checks; this change does not deploy services.
+
+After qualification, run the opt-in [staging canary](../tests/data-api/staging/README.md)
+with `make data-api-staging-canary`. It deploys disposable issuer, migration and
+Data API apps through the remote builder, exercises a packed typed client,
+checks parking/wake, schema migration/refresh and credential rotation, and
+records cleanup evidence. `make data-api-staging-check` tests its harness locally;
+those portable tests do not constitute live rollout evidence.

@@ -1308,6 +1308,13 @@ data-api-check: ## Runtime and typed application client unit checks
 data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
 	@bash scripts/test-data-api.sh --integration
 
+.PHONY: data-api-staging-check data-api-staging-canary
+data-api-staging-check: ## Staging canary harness contracts without provider calls
+	@node --test tests/data-api/staging/canary.test.mjs
+
+data-api-staging-canary: ## Opt-in isolated Data API deployment through Gregale's remote builder
+	@bash scripts/ci/run-data-api-staging-canary.sh
+
 .PHONY: sdk-gen-python
 sdk-gen-python: ## Regenerate sdk/python/faas_sdk from api/openapi.yaml
 	@cd sdk/python && .venv/bin/python scripts/gen.py

@@ -92,7 +92,8 @@ func cmdDataAPICreate(args []string) int {
 	if *resume {
 		app, err = client.GetApp(ctx, fs.Arg(0))
 	} else {
-		app, err = client.CreateApp(ctx, api.CreateAppRequest{Slug: fs.Arg(0), Type: "app"})
+		requireAuthn := false
+		app, err = client.CreateApp(ctx, api.CreateAppRequest{Slug: fs.Arg(0), Type: "app", RequireAuthn: &requireAuthn})
 	}
 	if err != nil {
 		return printErr("Could not create Data API app", err)
@@ -122,7 +123,11 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 	}
 	// PostgreSQL's extra egress port remains subject to the normal plan gate.
 	ports := []int{5432}
-	if _, err = client.UpdateApp(ctx, app.Slug, api.UpdateAppRequest{EgressPorts: &ports}); err != nil {
+	// Application JWTs are verified by the Data API runtime. Paid-plan edge
+	// defaults require an owner API key, which would reject those JWTs first.
+	requireAuthn := false
+	publicAuth := openPublicAuthAfterTokenRemoval(app)
+	if _, err = client.UpdateApp(ctx, app.Slug, api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: publicAuth, SetPublicAuth: publicAuth != nil}); err != nil {
 		return err
 	}
 	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS"} {

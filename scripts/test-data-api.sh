@@ -17,6 +17,7 @@ npm ci --prefix "$runtime_dir" --ignore-scripts
 npm test --prefix "$runtime_dir"
 npm ci --prefix sdk/data --ignore-scripts
 npm test --prefix sdk/data
+node --test tests/data-api/staging/canary.test.mjs
 if [[ "${1:-}" == "--integration" ]]; then
   DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/integration.test.mjs
 fi
