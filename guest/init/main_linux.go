@@ -476,6 +476,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
+	env = StampDefaultHomeEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)

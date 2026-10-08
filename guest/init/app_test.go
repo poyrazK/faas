@@ -411,3 +411,28 @@ func TestStampTraceparentEnv_EmptyIsNoOp(t *testing.T) {
 		}
 	}
 }
+
+// production-us hunt #8: apps run as uid 1000 with a read-only "/", and an
+// unset HOME sent mise/npm/pip writes to "/.local". A HOME the image or the
+// customer set is kept.
+func TestStampDefaultHomeEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{"unset", []string{"PATH=/usr/bin"}, "/tmp"},
+		{"empty", []string{"HOME="}, "/tmp"},
+		{"image or customer value kept", []string{"HOME=/home/node"}, "/home/node"},
+	} {
+		got := ""
+		for _, kv := range StampDefaultHomeEnv(tc.env) {
+			if k, v, ok := cut(kv); ok && k == "HOME" {
+				got = v // the exec'd env takes the last value
+			}
+		}
+		if got != tc.want {
+			t.Errorf("%s: HOME = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

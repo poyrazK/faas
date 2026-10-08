@@ -192,6 +192,23 @@ func StampOverridePortEnv(env []string, port int) []string {
 	return append(env, "PORT="+strconv.Itoa(port))
 }
 
+// StampDefaultHomeEnv gives the workload a writable HOME when neither the
+// image nor the customer set one. Apps run as uid 1000 with a read-only "/",
+// so tools that write under ~ (mise, npm, pip, git) failed with EACCES; every
+// Railpack Node app logged "mise WARN tracking config: failed create_dir_all:
+// /.local/state/mise/tracked-configs: Permission denied" at startup
+// (production-us hunt #8). /tmp is the guest's world-writable tmpfs.
+func StampDefaultHomeEnv(env []string) []string {
+	for _, kv := range env {
+		if k, v, ok := cut(kv); ok && k == "HOME" && v != "" {
+			return env
+		}
+	}
+	return append(env, "HOME="+defaultWorkloadHome)
+}
+
+const defaultWorkloadHome = "/tmp"
+
 // StampPlatformIdentityEnv copies only Gregale-owned identity keys from the
 // shared app env map onto a workload's environment. Sidecars intentionally do
 // not inherit customer secrets or the main workload's arbitrary env, but they
