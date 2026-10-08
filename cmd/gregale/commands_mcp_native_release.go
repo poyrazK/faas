@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -38,6 +39,7 @@ type mcpNativeReleasePlan struct {
 	TimeoutSeconds     int      `json:"timeout_seconds"`
 }
 type mcpNativeReleaseState struct {
+	ReleaseID           string            `json:"release_id,omitempty"`
 	Version             int               `json:"version"`
 	Fingerprint         string            `json:"fingerprint"`
 	Stage               string            `json:"stage"`
@@ -270,7 +272,16 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 		return jsonOut(writeJSON(s))
 	}
 	if s.PendingSubmission != "" {
-		return printErr("MCP release recovery", errors.New("deployment submission outcome is unknown; reconcile it before resuming"))
+		c, err := authedClient()
+		if err != nil {
+			return printErr("MCP release recovery", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.TimeoutSeconds)*time.Second)
+		err = reconcileMCPNativeSubmission(ctx, c, p, &s, state)
+		cancel()
+		if err != nil {
+			return printErr("MCP release recovery", err)
+		}
 	}
 	if _, err := os.Stat(state); os.IsNotExist(err) {
 		body, _ := json.Marshal(s)
@@ -406,6 +417,61 @@ func mcpNativeWaitDeployment(ctx context.Context, c *Client, app, id string) err
 		}
 	}
 }
+
+// Reconciliation only reads deployment history; it never retries an uncertain POST.
+func reconcileMCPNativeSubmission(ctx context.Context, c *Client, p mcpNativeReleasePlan, s *mcpNativeReleaseState, state string) error {
+	kind := s.PendingSubmission
+	if kind == "" {
+		return nil
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(s.ReleaseID) || (kind != "web" && kind != "worker") {
+		return errors.New("legacy or invalid pending submission requires manual reconciliation")
+	}
+	app := p.WorkerApp
+	if kind == "web" {
+		app = p.WebApp
+	}
+	owner, err := c.GetApp(ctx, app)
+	if err != nil {
+		return err
+	}
+	if owner.ID == "" {
+		return errors.New("target app identity is missing")
+	}
+	deployments, err := c.ListAppDeploymentsAll(ctx, app)
+	if err != nil {
+		return err
+	}
+	id := ""
+	reason := "mcp-release-" + s.ReleaseID + "-" + kind
+	for _, dep := range deployments {
+		if dep.Reason != reason {
+			continue
+		}
+		if dep.AppID != owner.ID || dep.ID == "" || id != "" {
+			return errors.New("release submission history is ambiguous or belongs to another app")
+		}
+		id = dep.ID
+	}
+	if id == "" {
+		return errors.New("release submission is not yet visible in history; retry reconciliation later without resubmitting")
+	}
+	recorded := s.WorkerDeployment
+	if kind == "web" {
+		recorded = s.WebDeployment
+	}
+	if recorded != "" && recorded != id {
+		return errors.New("submission history conflicts with the recorded candidate")
+	}
+	if kind == "web" {
+		s.WebDeployment = id
+	} else {
+		s.WorkerDeployment = id
+	}
+	s.PendingSubmission = ""
+	return saveMCPNativeState(state, *s)
+}
+
 func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool, s *mcpNativeReleaseState, state string) error {
 	id := s.WorkerDeployment
 	kind := "worker"
@@ -419,11 +485,18 @@ func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool,
 	if s.PendingSubmission != "" {
 		return errors.New("deployment submission outcome is unknown; reconcile it before resuming")
 	}
+	if s.ReleaseID == "" {
+		var entropy [16]byte
+		if _, err := rand.Read(entropy[:]); err != nil {
+			return err
+		}
+		s.ReleaseID = hex.EncodeToString(entropy[:])
+	}
 	s.PendingSubmission = kind
 	if err := saveMCPNativeState(state, *s); err != nil {
 		return err
 	}
-	args := []string{"--path", path, "--source=worktree", "--name", app, "--app", "--wait", "--timeout", "600"}
+	args := []string{"--path", path, "--source=worktree", "--name", app, "--app", "--wait", "--timeout", "600", "--reason", "mcp-release-" + s.ReleaseID + "-" + kind, "--idempotency-key", "mcp-release-" + s.ReleaseID + "-" + kind}
 	if web {
 		args = append(args, "--no-traffic")
 	}

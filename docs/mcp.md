@@ -1088,10 +1088,16 @@ They contain deployment/worker IDs and progress, never credentials. Use
 to inspect progress; rerun the same release command with the same source files,
 plan and journal to resume. Known candidate deployment IDs are reused; a
 promotion committed before its response was lost is reconciled against the
-actual serving revision. A submission interrupted before its ID was recorded
-stops with an unknown outcome for manual reconciliation. Independently verify the
-submission in deployment history before recording its ID and clearing the pending
-submission in the stopped journal; never substitute another artifact. Changed source or policy
+actual serving revision. New submissions persist a random release ID before upload and carry a role-specific
+idempotency key and deployment reason annotation. If a response is lost before
+its deployment ID reaches the journal, resume searches all pages of the target
+app's deployment history for that exact annotation and records the unique match.
+Reconciliation only reads the API; it never resubmits an uncertain deployment.
+Missing or ambiguous history stops resume safely; retry after the deployment
+becomes visible, or investigate the history. Legacy pending journals without a
+release ID still require manual reconciliation. Independently verify their
+submission before recording its ID and clearing the pending field in the stopped
+journal; never substitute another artifact. Changed source or policy
 content and namespace/API environment changes block resume. Do not edit or remove
 the journals while a release process is running.
 

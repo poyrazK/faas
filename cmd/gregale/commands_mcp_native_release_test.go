@@ -273,3 +273,81 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPNativeSubmissionReconciliation(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind                                     string
+		duplicate, missing, wrongApp, legacy, conflict bool
+	}{
+		{name: "worker", kind: "worker"}, {name: "web", kind: "web"},
+		{name: "ambiguous", kind: "worker", duplicate: true}, {name: "not visible", kind: "worker", missing: true},
+		{name: "wrong app", kind: "worker", wrongApp: true}, {name: "legacy", kind: "worker", legacy: true}, {name: "conflicting journal", kind: "worker", conflict: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			release := strings.Repeat("a", 32)
+			app := tc.kind
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Method != "GET" {
+					t.Errorf("reconciliation wrote to API: %s", r.Method)
+				}
+				switch r.URL.Path {
+				case "/v1/apps/" + app:
+					json.NewEncoder(w).Encode(api.AppResponse{ID: "owned", Slug: app})
+				case "/v1/apps/" + app + "/deployments":
+					// The matching candidate is deliberately on the second page.
+					if r.URL.Query().Get("before") == "" {
+						json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{ID: "unrelated", AppID: "owned", Reason: "other-release"}}, NextBefore: "next"})
+						return
+					}
+					items := []api.DeploymentResponse{}
+					if !tc.missing {
+						dep := api.DeploymentResponse{ID: "recovered", AppID: "owned", Reason: "mcp-release-" + release + "-" + tc.kind}
+						if tc.wrongApp {
+							dep.AppID = "other"
+						}
+						items = append(items, dep)
+						if tc.duplicate {
+							dep.ID = "duplicate"
+							items = append(items, dep)
+						}
+					}
+					json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: items})
+				default:
+					t.Errorf("unexpected route: %s", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer server.Close()
+			s := mcpNativeReleaseState{Version: 1, Fingerprint: "source", ReleaseID: release, PendingSubmission: tc.kind}
+			if tc.conflict {
+				s.WorkerDeployment = "another-candidate"
+			}
+			if tc.legacy {
+				s.ReleaseID = ""
+			}
+			path := filepath.Join(t.TempDir(), "state.json")
+			err := reconcileMCPNativeSubmission(context.Background(), NewClient(server.URL, "token"), mcpNativeReleasePlan{WorkerApp: "worker", WebApp: "web"}, &s, path)
+			if tc.duplicate || tc.missing || tc.wrongApp || tc.legacy || tc.conflict {
+				if err == nil || s.PendingSubmission != tc.kind {
+					t.Fatalf("unsafe reconciliation: %+v err=%v", s, err)
+				}
+				if tc.legacy && requests != 0 {
+					t.Fatal("legacy pending submission queried API")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved, err := loadMCPNativeState(path, "source")
+			if err != nil || saved.PendingSubmission != "" || saved.ReleaseID != release {
+				t.Fatalf("journal %+v err=%v", saved, err)
+			}
+			if tc.kind == "web" && saved.WebDeployment != "recovered" || tc.kind == "worker" && saved.WorkerDeployment != "recovered" {
+				t.Fatal("candidate ID not recorded")
+			}
+		})
+	}
+}
