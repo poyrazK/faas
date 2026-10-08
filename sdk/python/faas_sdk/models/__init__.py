@@ -253,6 +253,8 @@ from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookRespons
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
+from .apply_managed_realtime_schedule_group_group_action import ApplyManagedRealtimeScheduleGroupGroupAction
+from .apply_managed_realtime_schedule_group_response_200 import ApplyManagedRealtimeScheduleGroupResponse200
 from .apply_platform_tenant_consumer_request import ApplyPlatformTenantConsumerRequest
 from .apply_platform_tenant_consumer_response import ApplyPlatformTenantConsumerResponse
 from .apply_platform_tenant_consumer_response_action import ApplyPlatformTenantConsumerResponseAction
@@ -408,6 +410,11 @@ from .complete_object_multipart_upload_request import CompleteObjectMultipartUpl
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
+from .configure_managed_realtime_push_provider_provider import ConfigureManagedRealtimePushProviderProvider
+from .configure_managed_realtime_push_provider_response_200 import ConfigureManagedRealtimePushProviderResponse200
+from .configure_managed_realtime_push_provider_response_200_provider import (
+    ConfigureManagedRealtimePushProviderResponse200Provider,
+)
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
@@ -1282,6 +1289,8 @@ from .list_job_runs_response import ListJobRunsResponse
 from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
+from .list_managed_realtime_schedules_response_200 import ListManagedRealtimeSchedulesResponse200
+from .list_managed_realtime_schedules_status import ListManagedRealtimeSchedulesStatus
 from .list_object_write_receipts_status import ListObjectWriteReceiptsStatus
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
 from .list_operator_runtime_config_revisions_response_200 import ListOperatorRuntimeConfigRevisionsResponse200
@@ -1365,6 +1374,13 @@ from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperat
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_realtime_channel_snapshot_response import ManagedRealtimeChannelSnapshotResponse
+from .managed_realtime_channel_snapshot_response_entity_expirations import (
+    ManagedRealtimeChannelSnapshotResponseEntityExpirations,
+)
+from .managed_realtime_channel_snapshot_response_entity_versions import (
+    ManagedRealtimeChannelSnapshotResponseEntityVersions,
+)
 from .managed_realtime_close_request import ManagedRealtimeCloseRequest
 from .managed_realtime_connection_list_response import ManagedRealtimeConnectionListResponse
 from .managed_realtime_connection_response import ManagedRealtimeConnectionResponse
@@ -1381,12 +1397,60 @@ from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtim
 from .managed_realtime_endpoint_response_callback_auth_token_masked import (
     ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
 )
+from .managed_realtime_event_schema_response import ManagedRealtimeEventSchemaResponse
+from .managed_realtime_event_schema_response_schema_type_0 import ManagedRealtimeEventSchemaResponseSchemaType0
 from .managed_realtime_history_usage_response import ManagedRealtimeHistoryUsageResponse
 from .managed_realtime_message_request import ManagedRealtimeMessageRequest
+from .managed_realtime_message_request_metadata import ManagedRealtimeMessageRequestMetadata
+from .managed_realtime_notification_control_response import ManagedRealtimeNotificationControlResponse
+from .managed_realtime_notification_timeline_event import ManagedRealtimeNotificationTimelineEvent
 from .managed_realtime_publish_response import ManagedRealtimePublishResponse
+from .managed_realtime_push_delivery import ManagedRealtimePushDelivery
+from .managed_realtime_push_delivery_priority import ManagedRealtimePushDeliveryPriority
+from .managed_realtime_push_delivery_provider import ManagedRealtimePushDeliveryProvider
+from .managed_realtime_push_delivery_status import ManagedRealtimePushDeliveryStatus
+from .managed_realtime_push_device import ManagedRealtimePushDevice
+from .managed_realtime_push_device_provider import ManagedRealtimePushDeviceProvider
+from .managed_realtime_push_provider import ManagedRealtimePushProvider
+from .managed_realtime_push_provider_provider import ManagedRealtimePushProviderProvider
+from .managed_realtime_push_provider_request import ManagedRealtimePushProviderRequest
+from .managed_realtime_push_provider_request_config import ManagedRealtimePushProviderRequestConfig
+from .managed_realtime_push_provider_request_config_provider import ManagedRealtimePushProviderRequestConfigProvider
+from .managed_realtime_push_provider_request_config_service_account_json import (
+    ManagedRealtimePushProviderRequestConfigServiceAccountJson,
+)
+from .managed_realtime_push_registration import ManagedRealtimePushRegistration
+from .managed_realtime_push_registration_provider import ManagedRealtimePushRegistrationProvider
+from .managed_realtime_push_registration_target import ManagedRealtimePushRegistrationTarget
+from .managed_realtime_reducer_response import ManagedRealtimeReducerResponse
+from .managed_realtime_reducer_response_entities import ManagedRealtimeReducerResponseEntities
+from .managed_realtime_reducer_response_entities_additional_property import (
+    ManagedRealtimeReducerResponseEntitiesAdditionalProperty,
+)
+from .managed_realtime_reducer_response_entity_expirations import ManagedRealtimeReducerResponseEntityExpirations
+from .managed_realtime_reducer_response_entity_versions import ManagedRealtimeReducerResponseEntityVersions
 from .managed_realtime_retained_history_response import ManagedRealtimeRetainedHistoryResponse
 from .managed_realtime_retained_message_request import ManagedRealtimeRetainedMessageRequest
+from .managed_realtime_retained_message_request_metadata import ManagedRealtimeRetainedMessageRequestMetadata
 from .managed_realtime_retained_message_response import ManagedRealtimeRetainedMessageResponse
+from .managed_realtime_retained_message_response_metadata import ManagedRealtimeRetainedMessageResponseMetadata
+from .managed_realtime_schedule_group_request import ManagedRealtimeScheduleGroupRequest
+from .managed_realtime_schedule_group_request_expected_versions import (
+    ManagedRealtimeScheduleGroupRequestExpectedVersions,
+)
+from .managed_realtime_schedule_history_event import ManagedRealtimeScheduleHistoryEvent
+from .managed_realtime_schedule_history_event_event import ManagedRealtimeScheduleHistoryEventEvent
+from .managed_realtime_schedule_history_event_status import ManagedRealtimeScheduleHistoryEventStatus
+from .managed_realtime_schedule_history_response import ManagedRealtimeScheduleHistoryResponse
+from .managed_realtime_schedule_request import ManagedRealtimeScheduleRequest
+from .managed_realtime_schedule_request_metadata import ManagedRealtimeScheduleRequestMetadata
+from .managed_realtime_schedule_request_on_condition_failure import ManagedRealtimeScheduleRequestOnConditionFailure
+from .managed_realtime_schedule_response import ManagedRealtimeScheduleResponse
+from .managed_realtime_schedule_response_status import ManagedRealtimeScheduleResponseStatus
+from .managed_realtime_schedule_totals import ManagedRealtimeScheduleTotals
+from .managed_realtime_signal_request import ManagedRealtimeSignalRequest
+from .managed_realtime_signal_response import ManagedRealtimeSignalResponse
+from .managed_realtime_signal_response_member_id import ManagedRealtimeSignalResponseMemberId
 from .mcp_resource_policy import MCPResourcePolicy
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
@@ -1690,6 +1754,7 @@ from .password_reset_request import PasswordResetRequest
 from .password_signup_request import PasswordSignupRequest
 from .patch_org_request import PatchOrgRequest
 from .patch_org_request_plan import PatchOrgRequestPlan
+from .pause_managed_realtime_schedule_body import PauseManagedRealtimeScheduleBody
 from .payment_method_summary import PaymentMethodSummary
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
@@ -2050,6 +2115,14 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_managed_realtime_channel_batch_body import PublishManagedRealtimeChannelBatchBody
+from .publish_managed_realtime_channel_batch_body_messages_item import (
+    PublishManagedRealtimeChannelBatchBodyMessagesItem,
+)
+from .publish_managed_realtime_channel_batch_body_messages_item_metadata import (
+    PublishManagedRealtimeChannelBatchBodyMessagesItemMetadata,
+)
+from .publish_managed_realtime_channel_batch_response_200 import PublishManagedRealtimeChannelBatchResponse200
 from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
@@ -2062,6 +2135,14 @@ from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_managed_realtime_channel_snapshot_body import PutManagedRealtimeChannelSnapshotBody
+from .put_managed_realtime_event_schema_body import PutManagedRealtimeEventSchemaBody
+from .put_managed_realtime_event_schema_body_schema_type_0 import PutManagedRealtimeEventSchemaBodySchemaType0
+from .put_managed_realtime_reducer_body import PutManagedRealtimeReducerBody
+from .put_managed_realtime_reducer_body_entities import PutManagedRealtimeReducerBodyEntities
+from .put_managed_realtime_reducer_body_entities_additional_property import (
+    PutManagedRealtimeReducerBodyEntitiesAdditionalProperty,
+)
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
@@ -2094,6 +2175,18 @@ from .queue_workload_profile_request_workload_class import QueueWorkloadProfileR
 from .queue_workload_profile_response import QueueWorkloadProfileResponse
 from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
+from .realtime_notification_preferences import RealtimeNotificationPreferences
+from .realtime_notification_preferences_categories_type_0 import RealtimeNotificationPreferencesCategoriesType0
+from .realtime_notification_preferences_digest_interval_seconds import (
+    RealtimeNotificationPreferencesDigestIntervalSeconds,
+)
+from .realtime_notification_preferences_quiet_hours_type_0 import RealtimeNotificationPreferencesQuietHoursType0
+from .realtime_notification_preferences_rate_limit_type_0 import RealtimeNotificationPreferencesRateLimitType0
+from .realtime_notification_preferences_rate_limit_type_0_window_seconds import (
+    RealtimeNotificationPreferencesRateLimitType0WindowSeconds,
+)
+from .realtime_schedule_completion_webhook_payload import RealtimeScheduleCompletionWebhookPayload
+from .realtime_schedule_completion_webhook_payload_outcome import RealtimeScheduleCompletionWebhookPayloadOutcome
 from .rebind_environment_git_source_request import RebindEnvironmentGitSourceRequest
 from .rebind_environment_git_source_request_approval_policy import RebindEnvironmentGitSourceRequestApprovalPolicy
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
@@ -2106,6 +2199,7 @@ from .refresh_automatic_route_check_response_202_status import RefreshAutomaticR
 from .refund_account_invoice_body import RefundAccountInvoiceBody
 from .register_event_schema_request import RegisterEventSchemaRequest
 from .register_event_schema_response import RegisterEventSchemaResponse
+from .register_managed_realtime_push_device_response_200 import RegisterManagedRealtimePushDeviceResponse200
 from .register_scenario_test_request import RegisterScenarioTestRequest
 from .rekey_progress import RekeyProgress
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
@@ -2144,17 +2238,21 @@ from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSerie
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
+from .reschedule_managed_realtime_notification_body import RescheduleManagedRealtimeNotificationBody
+from .reschedule_managed_realtime_schedule_body import RescheduleManagedRealtimeScheduleBody
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
+from .resume_managed_realtime_schedule_body import ResumeManagedRealtimeScheduleBody
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
+from .retry_managed_realtime_schedule_body import RetryManagedRealtimeScheduleBody
 from .retry_policy_dto import RetryPolicyDTO
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
@@ -2438,6 +2536,12 @@ from .send_app_message_request_data_content_type import SendAppMessageRequestDat
 from .send_app_message_request_datacontenttype import SendAppMessageRequestDatacontenttype
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
+from .send_managed_realtime_principal_body import SendManagedRealtimePrincipalBody
+from .send_managed_realtime_principal_body_delivery import SendManagedRealtimePrincipalBodyDelivery
+from .send_managed_realtime_principal_body_notification_priority import (
+    SendManagedRealtimePrincipalBodyNotificationPriority,
+)
+from .send_managed_realtime_principal_response_202 import SendManagedRealtimePrincipalResponse202
 from .service_binding_policy import ServiceBindingPolicy
 from .service_binding_transport import ServiceBindingTransport
 from .service_call_scope import ServiceCallScope
@@ -2573,6 +2677,7 @@ from .trigger_work_binding import TriggerWorkBinding
 from .trusted_signer import TrustedSigner
 from .udp_listener_response import UDPListenerResponse
 from .udp_listener_response_protocol import UDPListenerResponseProtocol
+from .unregister_managed_realtime_push_device_response_200 import UnregisterManagedRealtimePushDeviceResponse200
 from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
 from .update_account_release_webhook_request import UpdateAccountReleaseWebhookRequest
 from .update_account_release_webhook_request_delivery_format import UpdateAccountReleaseWebhookRequestDeliveryFormat
@@ -2905,6 +3010,8 @@ __all__ = (
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
     "ApplyAppOpenAPIPolicyRequest",
+    "ApplyManagedRealtimeScheduleGroupGroupAction",
+    "ApplyManagedRealtimeScheduleGroupResponse200",
     "ApplyPlatformTenantConsumerRequest",
     "ApplyPlatformTenantConsumerResponse",
     "ApplyPlatformTenantConsumerResponseAction",
@@ -3173,6 +3280,9 @@ __all__ = (
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
+    "ConfigureManagedRealtimePushProviderProvider",
+    "ConfigureManagedRealtimePushProviderResponse200",
+    "ConfigureManagedRealtimePushProviderResponse200Provider",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerKeyListResponse",
@@ -4027,6 +4137,8 @@ __all__ = (
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
     "ListJobTasksResponse",
+    "ListManagedRealtimeSchedulesResponse200",
+    "ListManagedRealtimeSchedulesStatus",
     "ListObjectWriteReceiptsStatus",
     "ListOperatorRuntimeConfigResponse200",
     "ListOperatorRuntimeConfigRevisionsResponse200",
@@ -4110,6 +4222,9 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedRealtimeChannelSnapshotResponse",
+    "ManagedRealtimeChannelSnapshotResponseEntityExpirations",
+    "ManagedRealtimeChannelSnapshotResponseEntityVersions",
     "ManagedRealtimeCloseRequest",
     "ManagedRealtimeConnectionListResponse",
     "ManagedRealtimeConnectionResponse",
@@ -4124,12 +4239,54 @@ __all__ = (
     "ManagedRealtimeEndpointResponseAuthRequiredClaims",
     "ManagedRealtimeEndpointResponseAuthTokenMasked",
     "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
+    "ManagedRealtimeEventSchemaResponse",
+    "ManagedRealtimeEventSchemaResponseSchemaType0",
     "ManagedRealtimeHistoryUsageResponse",
     "ManagedRealtimeMessageRequest",
+    "ManagedRealtimeMessageRequestMetadata",
+    "ManagedRealtimeNotificationControlResponse",
+    "ManagedRealtimeNotificationTimelineEvent",
     "ManagedRealtimePublishResponse",
+    "ManagedRealtimePushDelivery",
+    "ManagedRealtimePushDeliveryPriority",
+    "ManagedRealtimePushDeliveryProvider",
+    "ManagedRealtimePushDeliveryStatus",
+    "ManagedRealtimePushDevice",
+    "ManagedRealtimePushDeviceProvider",
+    "ManagedRealtimePushProvider",
+    "ManagedRealtimePushProviderProvider",
+    "ManagedRealtimePushProviderRequest",
+    "ManagedRealtimePushProviderRequestConfig",
+    "ManagedRealtimePushProviderRequestConfigProvider",
+    "ManagedRealtimePushProviderRequestConfigServiceAccountJson",
+    "ManagedRealtimePushRegistration",
+    "ManagedRealtimePushRegistrationProvider",
+    "ManagedRealtimePushRegistrationTarget",
+    "ManagedRealtimeReducerResponse",
+    "ManagedRealtimeReducerResponseEntities",
+    "ManagedRealtimeReducerResponseEntitiesAdditionalProperty",
+    "ManagedRealtimeReducerResponseEntityExpirations",
+    "ManagedRealtimeReducerResponseEntityVersions",
     "ManagedRealtimeRetainedHistoryResponse",
     "ManagedRealtimeRetainedMessageRequest",
+    "ManagedRealtimeRetainedMessageRequestMetadata",
     "ManagedRealtimeRetainedMessageResponse",
+    "ManagedRealtimeRetainedMessageResponseMetadata",
+    "ManagedRealtimeScheduleGroupRequest",
+    "ManagedRealtimeScheduleGroupRequestExpectedVersions",
+    "ManagedRealtimeScheduleHistoryEvent",
+    "ManagedRealtimeScheduleHistoryEventEvent",
+    "ManagedRealtimeScheduleHistoryEventStatus",
+    "ManagedRealtimeScheduleHistoryResponse",
+    "ManagedRealtimeScheduleRequest",
+    "ManagedRealtimeScheduleRequestMetadata",
+    "ManagedRealtimeScheduleRequestOnConditionFailure",
+    "ManagedRealtimeScheduleResponse",
+    "ManagedRealtimeScheduleResponseStatus",
+    "ManagedRealtimeScheduleTotals",
+    "ManagedRealtimeSignalRequest",
+    "ManagedRealtimeSignalResponse",
+    "ManagedRealtimeSignalResponseMemberId",
     "MCPResourcePolicy",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
@@ -4431,6 +4588,7 @@ __all__ = (
     "PasswordSignupRequest",
     "PatchOrgRequest",
     "PatchOrgRequestPlan",
+    "PauseManagedRealtimeScheduleBody",
     "PaymentMethodSummary",
     "PlanAffectedApp",
     "PlanAffectedAppAction",
@@ -4747,6 +4905,10 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishManagedRealtimeChannelBatchBody",
+    "PublishManagedRealtimeChannelBatchBodyMessagesItem",
+    "PublishManagedRealtimeChannelBatchBodyMessagesItemMetadata",
+    "PublishManagedRealtimeChannelBatchResponse200",
     "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
@@ -4759,6 +4921,12 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
+    "PutManagedRealtimeChannelSnapshotBody",
+    "PutManagedRealtimeEventSchemaBody",
+    "PutManagedRealtimeEventSchemaBodySchemaType0",
+    "PutManagedRealtimeReducerBody",
+    "PutManagedRealtimeReducerBodyEntities",
+    "PutManagedRealtimeReducerBodyEntitiesAdditionalProperty",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",
     "PutOutboundDailyRequestBudgetRequest",
@@ -4791,6 +4959,14 @@ __all__ = (
     "QueueWorkloadProfileResponse",
     "QuotaBlock",
     "RaiseOverageCapRequest",
+    "RealtimeNotificationPreferences",
+    "RealtimeNotificationPreferencesCategoriesType0",
+    "RealtimeNotificationPreferencesDigestIntervalSeconds",
+    "RealtimeNotificationPreferencesQuietHoursType0",
+    "RealtimeNotificationPreferencesRateLimitType0",
+    "RealtimeNotificationPreferencesRateLimitType0WindowSeconds",
+    "RealtimeScheduleCompletionWebhookPayload",
+    "RealtimeScheduleCompletionWebhookPayloadOutcome",
     "RebindEnvironmentGitSourceRequest",
     "RebindEnvironmentGitSourceRequestApprovalPolicy",
     "ReceiveInboundWebhookBody",
@@ -4803,6 +4979,7 @@ __all__ = (
     "RefundAccountInvoiceBody",
     "RegisterEventSchemaRequest",
     "RegisterEventSchemaResponse",
+    "RegisterManagedRealtimePushDeviceResponse200",
     "RegisterScenarioTestRequest",
     "RekeyProgress",
     "RemoveEnvironmentGitOpsOverrideRequest",
@@ -4841,17 +5018,21 @@ __all__ = (
     "RequestAnalyticsTimeseriesSeriesMethod",
     "RequestAuditListResponse",
     "RequestAuditRecord",
+    "RescheduleManagedRealtimeNotificationBody",
+    "RescheduleManagedRealtimeScheduleBody",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
     "RestoreAutomationRevisionRequest",
     "RestoreManagedPostgresDatabaseRequest",
+    "ResumeManagedRealtimeScheduleBody",
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
+    "RetryManagedRealtimeScheduleBody",
     "RetryPolicyDTO",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
@@ -5129,6 +5310,10 @@ __all__ = (
     "SendAppMessageRequestDataContentType",
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
+    "SendManagedRealtimePrincipalBody",
+    "SendManagedRealtimePrincipalBodyDelivery",
+    "SendManagedRealtimePrincipalBodyNotificationPriority",
+    "SendManagedRealtimePrincipalResponse202",
     "ServiceBindingPolicy",
     "ServiceBindingTransport",
     "ServiceCallerJWK",
@@ -5262,6 +5447,7 @@ __all__ = (
     "TrustedSigner",
     "UDPListenerResponse",
     "UDPListenerResponseProtocol",
+    "UnregisterManagedRealtimePushDeviceResponse200",
     "UpdateAccountBillingInfoRequest",
     "UpdateAccountReleaseWebhookRequest",
     "UpdateAccountReleaseWebhookRequestDeliveryFormat",

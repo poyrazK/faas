@@ -12,10 +12,16 @@ import type { ManagedRealtimeEndpointResponse } from '../models/ManagedRealtimeE
 import type { ManagedRealtimeHistoryUsageResponse } from '../models/ManagedRealtimeHistoryUsageResponse.js';
 import type { ManagedRealtimeMessageRequest } from '../models/ManagedRealtimeMessageRequest.js';
 import type { ManagedRealtimePublishResponse } from '../models/ManagedRealtimePublishResponse.js';
+import type { ManagedRealtimePushDelivery } from '../models/ManagedRealtimePushDelivery.js';
+import type { ManagedRealtimePushDevice } from '../models/ManagedRealtimePushDevice.js';
+import type { ManagedRealtimePushProvider } from '../models/ManagedRealtimePushProvider.js';
+import type { ManagedRealtimePushProviderRequest } from '../models/ManagedRealtimePushProviderRequest.js';
+import type { ManagedRealtimePushRegistration } from '../models/ManagedRealtimePushRegistration.js';
 import type { ManagedRealtimeRetainedHistoryResponse } from '../models/ManagedRealtimeRetainedHistoryResponse.js';
 import type { ManagedRealtimeRetainedMessageRequest } from '../models/ManagedRealtimeRetainedMessageRequest.js';
 import type { ManagedRealtimeRetainedMessageResponse } from '../models/ManagedRealtimeRetainedMessageResponse.js';
 import type { Problem } from '../models/Problem.js';
+import type { RealtimeNotificationPreferences } from '../models/RealtimeNotificationPreferences.js';
 import type { RotateManagedRealtimeAuthRequest } from '../models/RotateManagedRealtimeAuthRequest.js';
 import type { RotateManagedRealtimeAuthResponse } from '../models/RotateManagedRealtimeAuthResponse.js';
 import type { UpdateManagedRealtimeEndpointRequest } from '../models/UpdateManagedRealtimeEndpointRequest.js';
@@ -865,6 +871,507 @@ export class RealtimeService {
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Send to a verified principal, optionally retaining a notification with push fallback.
+   * Retained sends require the retained-history preview gate and a stable message ID. Notification category is part of deduplication and defaults to notifications. Push preferences are evaluated before provider delivery; ACKs cancel queued fallback. Live sends can request receipts instead of retention.
+   * @returns any Accepted; durable reports storage acceptance and queued reports live connection queueing.
+   * @throws ApiError
+   */
+  public static sendManagedRealtimePrincipal({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: {
+      principal: string;
+      /**
+       * Standard base64; at most 4096 decoded bytes.
+       */
+      data_base64: string;
+      binary?: boolean;
+      delivery?: 'live' | 'retained';
+      message_id?: string;
+      request_receipt?: boolean;
+      /**
+       * Requires retained delivery; zero disables fallback.
+       */
+      fallback_after_seconds?: number;
+      /**
+       * Stable conversation, job or project key; requires a fallback.
+       */
+      notification_group_key?: string;
+      /**
+       * Earliest built-in push delivery time; RFC3339 with timezone, at most 48 hours ahead. Requires fallback; explicit TTL must extend past this instant.
+       */
+      notification_not_before?: string;
+      /**
+       * Requires fallback. Newer queued alerts supersede older alerts for the same recipient, device, category, priority and collapse key.
+       */
+      notification_collapse_key?: string;
+      /**
+       * Push lifetime in seconds from publication. Positive values require fallback and must exceed its deadline. Zero or omission keeps default expiration.
+       */
+      notification_ttl_seconds?: number;
+      /**
+       * Defaults to normal when omitted; requires retained fallback. Urgent bypass requires user opt-in.
+       */
+      notification_priority?: 'low' | 'normal' | 'urgent';
+      /**
+       * Display name for summaries; requires a group key.
+       */
+      notification_group_label?: string;
+      /**
+       * Requires a nonzero fallback deadline; omitted values use notifications for push preferences.
+       */
+      notification_category?: string;
+    },
+  }): CancelablePromise<{
+    message_id?: string;
+    sequence?: number;
+    durable?: boolean;
+    fallback_deadline?: string;
+    recipients?: number;
+    queued?: number;
+    unsupported?: number;
+    queue_full?: number;
+    failed?: number;
+    nodes_queried?: number;
+    nodes_unavailable?: number;
+    partial?: boolean;
+    receipt_requested?: boolean;
+    receipt_status?: string;
+    acknowledged?: number;
+    pending?: number;
+    timed_out?: number;
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals:send',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a user notification preference document.
+   * Requires the retained-history preview gate. Defaults enable all categories and devices. Preferences apply to built-in push; inbox retention and ACKs remain independent. Quiet-hour deferrals do not consume attempts. At most 256 preference documents per endpoint.
+   * @returns RealtimeNotificationPreferences Current preference document.
+   * @throws ApiError
+   */
+  public static getManagedRealtimeNotificationPreferences({
+    slug,
+    id,
+    principal,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    principal: string,
+  }): CancelablePromise<RealtimeNotificationPreferences> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/preferences',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'principal': principal,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace notification preferences across user devices.
+   * Requires the retained-history preview gate. Defaults enable all categories and devices. Preferences apply to built-in push; inbox retention and ACKs remain independent. Quiet-hour deferrals do not consume attempts. At most 256 preference documents per endpoint.
+   * @returns RealtimeNotificationPreferences Current preference document.
+   * @throws ApiError
+   */
+  public static putManagedRealtimeNotificationPreferences({
+    slug,
+    id,
+    principal,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    principal: string,
+    requestBody: RealtimeNotificationPreferences,
+  }): CancelablePromise<RealtimeNotificationPreferences> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/preferences',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'principal': principal,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List realtime push providers.
+   * Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery history includes the latest 100 records for the principal; sent means provider acceptance, not user delivery.
+   * @returns ManagedRealtimePushProvider Push metadata.
+   * @throws ApiError
+   */
+  public static listManagedRealtimePushProviders({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<Array<ManagedRealtimePushProvider>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/providers',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List realtime push devices.
+   * Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery history includes the latest 100 records for the principal; sent means provider acceptance, not user delivery.
+   * @returns ManagedRealtimePushDevice Push metadata.
+   * @throws ApiError
+   */
+  public static listManagedRealtimePushDevices({
+    slug,
+    id,
+    principal,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    principal: string,
+  }): CancelablePromise<Array<ManagedRealtimePushDevice>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/devices',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'principal': principal,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List realtime push deliveries.
+   * Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery history includes the latest 100 records for the principal; sent means provider acceptance, not user delivery.
+   * @returns ManagedRealtimePushDelivery Push metadata.
+   * @throws ApiError
+   */
+  public static listManagedRealtimePushDeliveries({
+    slug,
+    id,
+    principal,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    principal: string,
+  }): CancelablePromise<Array<ManagedRealtimePushDelivery>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/deliveries',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'principal': principal,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Configure or disable a push provider.
+   * Provider credentials are sealed at rest. Disabling cancels queued deliveries; re-enabling does not replay them. The retained-history preview gate is required.
+   * @returns any Provider configured; credentials are omitted.
+   * @throws ApiError
+   */
+  public static configureManagedRealtimePushProvider({
+    slug,
+    id,
+    provider,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    provider: 'fcm' | 'apns' | 'webpush',
+    requestBody: ManagedRealtimePushProviderRequest,
+  }): CancelablePromise<{
+    provider: 'fcm' | 'apns' | 'webpush';
+    enabled: boolean;
+  }> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/providers/{provider}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'provider': provider,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Register or rotate a device push token.
+   * Requires the retained-history preview gate. Registration is limited to 16 devices per principal and 1024 per endpoint. A provider must be enabled before registration. Identical registrations preserve pending deliveries; changed tokens cancel old work.
+   * @returns any Registration updated; token is omitted.
+   * @throws ApiError
+   */
+  public static registerManagedRealtimePushDevice({
+    slug,
+    id,
+    principal,
+    device,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    principal: string,
+    device: string,
+    requestBody: ManagedRealtimePushRegistration,
+  }): CancelablePromise<{
+    ok: boolean;
+  }> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'device': device,
+      },
+      query: {
+        'principal': principal,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a push registration and cancel its queued work.
+   * Requires the retained-history preview gate. Registration is limited to 16 devices per principal and 1024 per endpoint. A provider must be enabled before registration. Identical registrations preserve pending deliveries; changed tokens cancel old work.
+   * @returns any Registration updated; token is omitted.
+   * @throws ApiError
+   */
+  public static unregisterManagedRealtimePushDevice({
+    slug,
+    id,
+    principal,
+    device,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    principal: string,
+    device: string,
+  }): CancelablePromise<{
+    ok: boolean;
+  }> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'device': device,
+      },
+      query: {
+        'principal': principal,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

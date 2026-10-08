@@ -71,10 +71,6 @@ func (m *MemStore) ListManagedRealtimeEntityExpirations(ctx context.Context, lim
 			if index >= limit {
 				continue
 			}
-			candidate.ExpiresAt, err = time.Parse(time.RFC3339Nano, deadline)
-			if err != nil {
-				return nil, err
-			}
 			out = append(out, candidate)
 			copy(out[index+1:], out[index:len(out)-1])
 			out[index] = candidate

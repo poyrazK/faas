@@ -29,7 +29,7 @@ class WorkflowRunResponse:
     """Number of accepted resumptions; send this value when requesting continuation."""
     cancelled_at: datetime.datetime | Unset = UNSET
     platform_tenant_id: None | Unset | UUID = UNSET
-    """Platform tenant authorized for this workflow run"""
+    """Platform tenant authorized for this workflow run, when present."""
     current_step: None | str | Unset = UNSET
     input_: Any | Unset = UNSET
     output: Any | Unset = UNSET

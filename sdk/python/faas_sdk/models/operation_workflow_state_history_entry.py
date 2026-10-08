@@ -28,7 +28,7 @@ class OperationWorkflowStateHistoryEntry:
     occurred_at: datetime.datetime
     published_at: datetime.datetime
     from_state: str | Unset = UNSET
-    """App state immediately before this retained revision"""
+    """App state immediately before this retained revision, when the transition was declared."""
     platform_tenant_id: UUID | Unset = UNSET
     """Account-owner tenant identifier attached to this report in operator feeds."""
 

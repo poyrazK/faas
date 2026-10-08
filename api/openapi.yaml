@@ -24720,7 +24720,7 @@ paths:
                   messages:
                     type: array
                     items: { $ref: '#/components/schemas/ManagedRealtimePublishResponse' }
-        '400': { description: Invalid batch count, size or ID }
+        '400': { description: "Invalid batch count, size or ID" }
         '409': { description: 'Sequence conflict includes current_sequence and expected_sequence; also batch ID conflict or channel capacity reached.' }
         '429': { description: Endpoint has 256 retained batch IDs }
 
@@ -24760,7 +24760,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ManagedRealtimeChannelSnapshotResponse' }
-        '400': { description: Invalid sequence, size, or older snapshot overwrite }
+        '400': { description: "Invalid sequence, size, or older snapshot overwrite" }
         '404': { description: Channel has no retained history }
         '410': { description: Sequence no longer replayable }
     delete:
@@ -24787,7 +24787,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/ManagedRealtimeNotificationTimelineEvent' }
-        '400': { description: Invalid principal, message ID or cursor }
+        '400': { description: "Invalid principal, message ID or cursor" }
         '404': { description: Endpoint or preview unavailable }
 
   /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}:
@@ -32296,7 +32296,7 @@ components:
           maxItems: 100
           items: {$ref: '#/components/schemas/OperationWorkflowStateHistoryEntry'}
           description: Retained app-reported changes for the exact workflow run when paired workflow selectors are supplied, ordered by app-assigned revision.
-        next_cursor: {type: string, description: Opaque continuation bound to the same account, customer, app, environment, reference or Operation, and feed role.}
+        next_cursor: {type: string, description: "Opaque continuation bound to the same account, customer, app, environment, reference or Operation, and feed role." }
         next_workflow_state_cursor: {type: string, description: 'Independent continuation for workflow_state_history, bound to the same run and ownership filters.'}
     OperationWorkflowStateReport:
       type: object
@@ -32364,7 +32364,7 @@ components:
         operation_id: {type: string, format: uuid}
         workflow: {type: string}
         instance_id: {type: string}
-        from_state: {type: string, description: App state immediately before this retained revision, when the transition was declared.}
+        from_state: {type: string, description: "App state immediately before this retained revision, when the transition was declared." }
         state: {type: string}
         revision: {type: integer, format: int64, minimum: 1}
         occurred_at: {type: string, format: date-time}
@@ -35762,7 +35762,7 @@ components:
         reason: { type: string, enum: [insufficient_used_requests, http_5xx_rate_exceeded, p95_latency_exceeded, all_stages_complete] }
         flag: { type: string }
         rule_id: { type: string }
-        config_version: { type: integer, format: int64, minimum: 0, description: Current version after promotion, unchanged when held or complete. }
+        config_version: { type: integer, format: int64, minimum: 0, description: "Current version after promotion, unchanged when held or complete." }
         current_stage: { type: integer, minimum: 1, description: "One-based ordinal of the currently configured stage." }
         stage_count: { type: integer, minimum: 2 }
         rollout_basis_points: { type: integer, minimum: 1, maximum: 10000, description: "Active rollout percentage in basis points." }
@@ -37049,7 +37049,7 @@ components:
       required: [source_bucket_id, prefix, created_at, updated_at]
       properties:
         source_bucket_id: { type: string, format: uuid }
-        prefix: { type: string, maxLength: 1024, description: Literal allowed source key prefix, bounded to 1024 UTF-8 bytes. }
+        prefix: { type: string, maxLength: 1024, description: "Literal allowed source key prefix, bounded to 1024 UTF-8 bytes." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     ObjectS3CopySourceList:
@@ -39829,7 +39829,7 @@ components:
         receipt_id: { type: string, format: uuid, description: Durable identifier for this successful apply. }
         plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
         applied_at: { type: string, format: date-time }
-        applied: { type: boolean, description: True when the confirmed plan completed, including an already-converged no-op. }
+        applied: { type: boolean, description: "True when the confirmed plan completed, including an already-converged no-op." }
         changes:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanChange' }
@@ -40366,7 +40366,7 @@ components:
         method: { type: string }
         path: { type: string }
         attempts: { type: integer }
-        result: { description: JSON result returned by the guest, when available. }
+        result: { description: "JSON result returned by the guest, when available." }
         last_error: { type: string }
         outcome: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
@@ -45099,7 +45099,7 @@ components:
       additionalProperties: false
       required: [id, client_event_id, accepted_at, receipt_url]
       properties:
-        id: { type: string, format: uuid, description: Canonical event id scoped by tenant, app, and source. }
+        id: { type: string, format: uuid, description: "Canonical event id scoped by tenant, app, and source." }
         client_event_id: { type: string, description: Caller-chosen event identifier. }
         accepted_at: { type: string, format: date-time }
         receipt_url: { type: string, format: uri-reference, description: Tenant-authenticated relative URL for this event receipt. }
@@ -45198,7 +45198,7 @@ components:
         source: { type: string, minLength: 1, maxLength: 256 }
         type: { type: string, minLength: 1, maxLength: 256 }
         version: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }
-        schema: { description: Draft 2020-12 JSON Schema, at most 64 KiB, without external references. }
+        schema: { description: "Draft 2020-12 JSON Schema, at most 64 KiB, without external references." }
 
     RegisterEventSchemaResponse:
       description: Receipt for an immutable event schema version.
@@ -45534,7 +45534,7 @@ components:
         history:
           type: array
           items: { $ref: '#/components/schemas/EventFanoutAttemptResponse' }
-        next_before: { type: string, description: Opaque cursor bound to the app, event identity, and optional recipient filter. }
+        next_before: { type: string, description: "Opaque cursor bound to the app, event identity, and optional recipient filter." }
         coverage: { type: string, enum: [bounded_recorded_outcomes], description: Recorded observations only; pre-migration transitions and compacted details are unavailable. }
         summaries:
           type: array
@@ -45843,7 +45843,7 @@ components:
         cancelled_at: { type: string, format: date-time }
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        platform_tenant_id: { type: [string, 'null'], format: uuid, description: Platform tenant authorized for this workflow run, when present. }
+        platform_tenant_id: { type: [string, 'null'], format: uuid, description: "Platform tenant authorized for this workflow run, when present." }
         workflow_name: { type: string }
         status:
           type: string
@@ -55676,8 +55676,8 @@ components:
           additionalProperties: { type: string }
           description: Immutable versions declared by the selected profile and verified by its guest before caller code runs.
         id: { type: string, format: uuid }
-        workflow_id: { type: string, maxLength: 96, description: Caller-generated workflow grouping id, when assigned. }
-        step_label: { type: string, maxLength: 128, description: Optional step label, when assigned. }
+        workflow_id: { type: string, maxLength: 96, description: "Caller-generated workflow grouping id, when assigned." }
+        step_label: { type: string, maxLength: 128, description: "Optional step label, when assigned." }
         status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled] }
         runtime: { type: string, enum: [node22, node24, python312, python313] }
         limits: { $ref: '#/components/schemas/ResolvedExecutionLimits' }
@@ -55686,7 +55686,7 @@ components:
           maxItems: 8
           items: { $ref: '#/components/schemas/ExecutionArtifact' }
           description: Selected output files, present only after successful execution and VM teardown.
-        result: { description: Terminal JSON result, omitted when unavailable. }
+        result: { description: "Terminal JSON result, omitted when unavailable." }
         stdout: { type: string }
         stderr: { type: string }
         output_truncated: { type: boolean }
@@ -58545,7 +58545,7 @@ components:
               key: { type: string, minLength: 1, maxLength: 128 }
               field: { type: string, minLength: 1, maxLength: 128 }
               exists: { type: boolean, description: Entity existence; field must be omitted. }
-              equals: { description: Any JSON value, compared structurally; requires field. }
+              equals: { description: "Any JSON value, compared structurally; requires field." }
               lt: { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
               lte: { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
               gt: { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
@@ -58560,9 +58560,9 @@ components:
         on_condition_failure: { type: string, enum: [skip, retry], default: retry, description: Requires conditions; retry follows the configured attempt budget. }
         interval_seconds: { type: integer, minimum: 5, maximum: 2592000, description: Fixed delay after each successful occurrence; omit for one-time publication. }
         max_occurrences: { type: integer, format: int64, minimum: 0, maximum: 1000000, description: Optional completed-slot limit (published or intentionally skipped); zero is unlimited. }
-        end_at: { type: string, format: date-time, description: Last permitted planned occurrence time, within one year of initial delivery. }
+        end_at: { type: string, format: date-time, description: "Last permitted planned occurrence time, within one year of initial delivery." }
         max_attempts: { type: integer, minimum: 1, maximum: 10, default: 1, description: Total attempts per retry cycle; one disables automatic retries. }
-        backoff_seconds: { type: integer, minimum: 5, maximum: 3600, default: 5, description: Initial retry delay, doubled per failure up to one hour. }
+        backoff_seconds: { type: integer, minimum: 5, maximum: 3600, default: 5, description: "Initial retry delay, doubled per failure up to one hour." }
         data_base64: { type: string, maxLength: 5464, description: At most 4096 decoded bytes. }
         binary: { type: boolean, default: false }
         metadata: { type: object, maxProperties: 8, additionalProperties: { type: string } }
@@ -58573,7 +58573,6 @@ components:
         - type: object
           required: [schedule_id, channel, version, status, created_at, updated_at, max_attempts, backoff_seconds, attempts, cycle_attempts, initial_deliver_at, occurrence, completed_occurrences, skipped_occurrences]
           properties:
-        group: { type: string, minLength: 1, maxLength: 128, description: Optional immutable channel-scoped group label; at most 128 UTF-8 bytes. }
             initial_deliver_at: { type: string, format: date-time }
             skipped_occurrences: { type: integer, format: int64, minimum: 0 }
             skip_reason: { type: string }
@@ -60287,7 +60286,7 @@ components:
       required: [gregale_operation_result, result, effects]
       properties:
         gregale_operation_result: { type: integer, enum: [1] }
-        result: { description: Business result persisted atomically with effect enqueue; any JSON value, including null. }
+        result: { description: "Business result persisted atomically with effect enqueue; any JSON value, including null." }
         effects:
           type: array
           maxItems: 32

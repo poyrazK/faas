@@ -19,7 +19,7 @@ export type OperationMilestonesResponse = {
    */
   workflow_state_history?: Array<OperationWorkflowStateHistoryEntry>;
   /**
-   * Opaque continuation bound to the same account
+   * Opaque continuation bound to the same account, customer, app, environment, reference or Operation, and feed role.
    */
   next_cursor?: string;
   /**

@@ -1387,7 +1387,7 @@ export function realtimeScheduledEvent(
       const record = condition as unknown as Record<string, unknown>;
       const operators = ['exists','equals','lt','lte','gt','gte'].filter(operator => Object.prototype.hasOwnProperty.call(record, operator));
       if (operators.length !== 1 || Object.keys(record).some(key => !['key','field','exists','equals','lt','lte','gt','gte'].includes(key))) throw new RealtimeConfigurationError('scheduled condition requires exactly one operator');
-      const operator = operators[0];
+      const operator = operators[0]!;
       if (operator === 'exists') {
         if (typeof record.exists !== 'boolean' || Object.prototype.hasOwnProperty.call(record, 'field')) throw new RealtimeConfigurationError('exists checks entities and cannot include field');
       } else {

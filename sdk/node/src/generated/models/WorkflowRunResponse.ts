@@ -14,7 +14,7 @@ export type WorkflowRunResponse = {
   id: string;
   app_id: string;
   /**
-   * Platform tenant authorized for this workflow run
+   * Platform tenant authorized for this workflow run, when present.
    */
   platform_tenant_id?: string | null;
   workflow_name: string;

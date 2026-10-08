@@ -30,7 +30,8 @@ class OperationMilestonesResponse:
     """Retained app-reported changes for the exact workflow run when paired workflow selectors are supplied,
     ordered by app-assigned revision."""
     next_cursor: str | Unset = UNSET
-    """Opaque continuation bound to the same account"""
+    """Opaque continuation bound to the same account, customer, app, environment, reference or Operation, and feed
+    role."""
     next_workflow_state_cursor: str | Unset = UNSET
     """Independent continuation for workflow_state_history, bound to the same run and ownership filters."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
