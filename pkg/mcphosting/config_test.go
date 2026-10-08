@@ -193,7 +193,8 @@ func TestTaskRunningLimits(t *testing.T) {
 	}{
 		{16, 4, true}, {1, 1, true}, {-1, 1, false}, {16, -1, false}, {1, 2, false}, {1, 0, false},
 	} {
-		config := TasksConfig{DatabaseURLEnv: "DATABASE_URL", OwnerKeyEnv: "OWNER_KEY", NamespaceEnv: "NAMESPACE", MaxRunning: tc.total, MaxRunningPerOwner: tc.owner}
+		enabled := true
+		config := TasksConfig{Enabled: &enabled, DatabaseURLEnv: "DATABASE_URL", OwnerKeyEnv: "OWNER_KEY", NamespaceEnv: "NAMESPACE", MaxRunning: tc.total, MaxRunningPerOwner: tc.owner}
 		if err := config.validate(); (err == nil) != tc.valid {
 			t.Errorf("running limits %d/%d: %v", tc.total, tc.owner, err)
 		}
