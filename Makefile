@@ -55,6 +55,10 @@ test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completi
 test-managed-operation-native: ## Run native Firecracker managed workflow recovery and effect delivery acceptance
 	@GO="$(GO)" sh scripts/test-managed-operation-native.sh
 
+.PHONY: test-managed-postgres-native
+test-managed-postgres-native: ## Run strict deployed PostgreSQL SQL, rotation and snapshot acceptance
+	@GO="$(GO)" sh scripts/test-managed-postgres-native.sh
+
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 

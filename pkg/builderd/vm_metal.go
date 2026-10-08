@@ -660,6 +660,11 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 	// guest has already flushed a successful OCI image and recorded exit 0.
 	// Prefer the durable in-guest result whenever vmmd exported it.
 	if done, ok := readBuildDone(h.ExportDir); ok {
+		if done.BuildID != h.BuildID {
+			res.ExitCode = -1
+			res.FailureClass = "FailureInfra"
+			return res, nil
+		}
 		exitCode = done.ExitCode
 		res.ExitCode = exitCode
 		res.LogTailBytes = int64(len(done.LogTail))
@@ -669,6 +674,10 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.FailurePkg = done.FailurePkg
 		res.BuildkitVer = done.BuildkitVersion
 		res.RailpackVer = done.RailpackVersion
+	} else if exitCode == 0 {
+		// A clean host exit alone does not prove that a customer build ran.
+		exitCode = -1
+		res.ExitCode = exitCode
 	}
 	if exitCode == 0 {
 		if h.DependencyCacheKey != "" {
@@ -695,8 +704,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		return res, nil
 	}
 
-	// Best-effort enrichment from build-done.json. Missing file is OK — the
-	// guest died before guest-init wrote it; fall back to exit-code class.
+	// Missing guest completion evidence must not blame customer source.
 	if res.FailureClass == "" {
 		res.FailureClass, res.FailureCode, res.FailurePkg = classifyBuildFailure(exitCode, h.ExportDir)
 	}
@@ -835,7 +843,7 @@ func debugfsToken(path string) string {
 func readBuildDone(exportDir string) (api.BuildDone, bool) {
 	var done api.BuildDone
 	data, err := os.ReadFile(filepath.Join(exportDir, "build-done.json"))
-	if err != nil || json.Unmarshal(data, &done) != nil {
+	if err != nil || json.Unmarshal(data, &done) != nil || done.SchemaVersion != 1 || done.BuildID == "" {
 		return api.BuildDone{}, false
 	}
 	return done, true

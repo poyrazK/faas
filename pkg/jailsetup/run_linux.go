@@ -54,8 +54,7 @@ func Run(args []string) bool {
 			fmt.Fprintf(os.Stderr, "vmmd: mount device tmpfs: %v\n", err)
 			os.Exit(1)
 		}
-		devNet := filepath.Join(devTarget, "net")
-		if err := os.MkdirAll(devNet, 0o755); err != nil {
+		if err := prepareDeviceNet(devTarget); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: create device net directory: %v\n", err)
 			os.Exit(1)
 		}
@@ -96,12 +95,11 @@ func Run(args []string) bool {
 			fmt.Fprintf(os.Stderr, "vmmd: mount device tmpfs: %v\n", err)
 			os.Exit(1)
 		}
-		devNet := filepath.Join(args[2], "net")
-		if err := os.MkdirAll(devNet, 0o755); err != nil {
+		if err := prepareDeviceNet(args[2]); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: create device net directory: %v\n", err)
 			os.Exit(1)
 		}
-		if err := unix.Mknod(filepath.Join(devNet, "tun"), unix.S_IFCHR|0660, int(unix.Mkdev(10, 200))); err != nil {
+		if err := unix.Mknod(filepath.Join(args[2], "net", "tun"), unix.S_IFCHR|0660, int(unix.Mkdev(10, 200))); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: create TUN target: %v\n", err)
 			os.Exit(1)
 		}

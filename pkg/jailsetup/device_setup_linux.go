@@ -133,10 +133,7 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 		return err
 	}
 	defer func() { result = errors.Join(result, unix.Close(devFD)) }()
-	if err := unix.Mkdirat(devFD, "net", 0o755); err != nil {
-		return err
-	}
-	netFD, err := unix.Openat(devFD, "net", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	netFD, err := createDeviceNet(devFD)
 	if err != nil {
 		return err
 	}
@@ -216,6 +213,35 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(receipt)
+}
+
+// The helper inherits vmmd's umask. Establish traversal on the newly created
+// private directory explicitly before Firecracker drops to its jail UID.
+// Pin the directory so a symlink cannot redirect the permission change.
+func createDeviceNet(devFD int) (int, error) {
+	if err := unix.Mkdirat(devFD, "net", 0o755); err != nil {
+		return -1, err
+	}
+	fd, err := unix.Openat(devFD, "net", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, err
+	}
+	if err := unix.Fchmod(fd, 0o755); err != nil {
+		return -1, errors.Join(err, unix.Close(fd))
+	}
+	return fd, nil
+}
+
+func prepareDeviceNet(devTarget string) error {
+	fd, err := unix.Open(devTarget, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	netFD, setupErr := createDeviceNet(fd)
+	if netFD >= 0 {
+		setupErr = errors.Join(setupErr, unix.Close(netFD))
+	}
+	return errors.Join(setupErr, unix.Close(fd))
 }
 
 func errnoError(errno unix.Errno) error {
