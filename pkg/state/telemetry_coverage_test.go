@@ -31,7 +31,7 @@ func TestRouteRemovalPGTelemetryCoverage(t *testing.T) {
 		{"disabled", "UPDATE request_telemetry_coverage SET enabled=false,healthy_since=NULL", "telemetry_disabled"},
 		{"backlog", "UPDATE request_telemetry_coverage SET pending_count=10,healthy_since=NULL", "telemetry_ingestion_pending"},
 		{"delayed", "UPDATE request_telemetry_coverage SET source_at=clock_timestamp()-interval '5 minutes'", "telemetry_ingestion_pending"},
-		{"gap", "UPDATE request_telemetry_coverage SET healthy_since=clock_timestamp(),received_at=clock_timestamp()", "telemetry_window_incomplete"},
+		{"gap", "UPDATE request_telemetry_coverage SET healthy_since=statement_timestamp(),received_at=statement_timestamp()", "telemetry_window_incomplete"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, pool, ctx, account, app, baseline, candidate, policy := routeRemovalFixture(t)
