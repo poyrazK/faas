@@ -393,3 +393,20 @@ note updates through the helper; it does not turn separate requests into one
 transaction or protect unguarded deletes. Existing notes receive version 1 when
 the migration is applied; regenerate types and update callers for the new
 update signature before adopting this starter revision.
+
+Schema evolution should preserve deployed clients until they retire. Add
+nullable columns or defaults before deploying clients that use them. For
+renames, keep the old column, backfill and synchronize the new one, deploy
+clients that can read and write both, then remove the old column in a later
+migration. Refresh the runtime and regenerate types at each step. Note
+backfills increment versions, so an older edit may need to reload.
+
+The acceptance suite verifies additive reads and writes against an unchanged
+compiled client, required-field defaults, renames, removals and changed column
+types. TypeScript does not validate JSON at runtime: a changed database type can
+silently violate an old client's assumptions. A default-value change can also
+change behavior without changing the type fingerprint. A passing
+`types --check` does not establish backward compatibility. See the schema
+rollout section in Gregale's `docs/data-api.md` for expand-and-contract steps
+and rollback boundaries. The migration runner is append-only; never edit an
+already-applied starter migration to perform a breaking change.

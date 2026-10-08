@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { readFile, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { verifySchemaEvolution } from './schema-evolution.mjs'
 import { verifyQueryPlans } from './query-plans.mjs'
 import { command } from './staging/canary.mjs'
 
@@ -239,4 +240,17 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // is required, while the committed fixture remains untouched.
   await owner.query('ALTER TABLE api.notes ADD COLUMN description text')
   assert.notEqual(generate(await inspect(loginURL.toString(), ['api'])), types)
+  const refresh = async () => {
+    child.kill()
+    await once(child, 'exit')
+    child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
+    child.stdout.on('data', value => { logs += value }); child.stderr.on('data', value => { logs += value })
+    let healthy = false
+    for (let i = 0; i < 100; i++) {
+      if ((await fetch(url + '/healthz')).status === 200) { healthy = true; break }
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    assert.equal(healthy, true, 'schema_refresh_not_ready')
+  }
+  await verifySchemaEvolution({ owner, client, refresh, inspect, generate, loginURL: loginURL.toString(), root, command })
 })

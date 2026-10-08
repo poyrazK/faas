@@ -436,3 +436,43 @@ note updates through the helper; it does not turn separate requests into one
 transaction or protect unguarded deletes. Existing notes receive version 1 when
 the migration is applied; regenerate types and update callers for the new
 update signature before adopting this starter revision.
+
+Schema changes need a compatibility rollout as well as regenerated types.
+The local acceptance suite keeps an old compiled starter client alive while
+migrating its disposable database and restarting PostgREST after each revision.
+It verifies that nullable additions and required columns with defaults preserve
+old reads and writes, while removing a required field's default breaks old
+inserts. Renaming or dropping projected columns breaks old reads and writes.
+Changing an integer column to text can return valid JSON with strings where an
+old TypeScript client expects numbers; generated types provide no runtime
+validation. Regenerating the contract makes those incompatible client sources
+fail compilation.
+
+The fingerprint describes the exported type contract, not every database
+behavior. Changing a default from 0 to 5 leaves the fingerprint unchanged because
+both columns still have defaults and the same type, yet new inserts behave
+differently. A successful `types --check` is not proof of migration compatibility.
+Review defaults and other database behavior alongside the generated contract.
+
+For a rename such as `body` to `title`, use an expand-and-contract rollout:
+
+1. Append a migration adding nullable `title` while retaining `body`. Preserve
+   RLS, ownership-bound foreign keys and the old grants. Backfill existing values
+   and keep old writes synchronized into `title`, using a reviewed compatibility
+   trigger or trusted backend. With note versioning, backfills that update notes
+   advance their versions; clients may need to reload.
+2. Refresh and wait for readiness, then generate types and test both old and new
+   clients. Deploy new clients that read `title` with a fallback to `body` and
+   write both fields while the old `body` requirement remains. Resolve conflicting
+   dual writes explicitly. Keep the compatibility path for older clients and
+   rollback deployments.
+3. Verify old clients and deployments have retired before appending a migration
+   that removes `body` or tightens the new requirement. Refresh, regenerate and
+   test again. The old client can no longer be used for application rollback
+   after contraction; prepare a schema-compatible rollback plan first.
+
+Do not rename a column in place while old clients still need it. Database
+migration, runtime refresh and client deployment are separate operations with
+separate failure boundaries; `data-api sync` does not make them one atomic
+release. These compatibility tests use local migrations and real engine
+restarts; live staging rollout qualification is still required.
