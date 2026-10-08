@@ -17,6 +17,7 @@ from faas_sdk import (
     awith_operation_transaction,
     customer_operation_request_digest,
     customer_operation_request_from_headers,
+    customer_operation_receipt_schema,
     operation_receipt_schema,
     operation_request_digest,
     operation_request_from_headers,
@@ -103,6 +104,8 @@ class OperationPostgresTest(unittest.TestCase):
         self.conn = self.connect()
         self.conn.execute(operation_receipt_schema)
         self.conn.execute(operation_receipt_schema)
+        self.conn.execute(customer_operation_receipt_schema)
+        self.conn.execute(customer_operation_receipt_schema)
         self.conn.execute(
             "CREATE SCHEMA business; CREATE TABLE business.counter(id integer PRIMARY KEY,total integer NOT NULL); INSERT INTO business.counter VALUES(1,0); CREATE TABLE business.gregale_operation_inbox(LIKE public.gregale_operation_inbox INCLUDING ALL)"
         )
@@ -121,6 +124,11 @@ class OperationPostgresTest(unittest.TestCase):
     def counts(self):
         return self.conn.execute(
             "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_operation_inbox)"
+        ).fetchone()
+
+    def customer_counts(self):
+        return self.conn.execute(
+            "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_customer_operation_inbox)"
         ).fetchone()
 
     def outcome(self):
@@ -256,7 +264,7 @@ class OperationPostgresTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "abort"):
             with_customer_operation_transaction(self.conn, CUSTOMER_REQUEST, abort)
-        self.assertEqual(self.counts(), (0, 0))
+        self.assertEqual(self.customer_counts(), (0, 0))
 
         def attempt(_):
             with self.connect() as connection:
@@ -296,8 +304,10 @@ class OperationPostgresTest(unittest.TestCase):
             CUSTOMER_FIXTURE["path"],
             CUSTOMER_REQUEST._request.body,
         )
-        with self.assertRaises(OperationConflictError):
-            with_operation_transaction(self.conn, managed, lambda _: {})
+        managed_result = with_operation_transaction(self.conn, managed, lambda _: {"result": {"scope": "managed"}})
+        self.assertFalse(managed_result.replayed)
+        self.assertIn("gregale_operation_result", json.loads(managed_result.body))
+        self.assertEqual(self.customer_counts(), (1, 1))
         self.assertEqual(self.counts(), (1, 1))
 
     def test_customer_async_rollback_and_replay(self):
@@ -316,7 +326,7 @@ class OperationPostgresTest(unittest.TestCase):
 
                 with self.assertRaisesRegex(RuntimeError, "abort"):
                     await awith_customer_operation_transaction(connection, CUSTOMER_REQUEST, abort)
-                self.assertEqual(self.counts(), (0, 0))
+                self.assertEqual(self.customer_counts(), (0, 0))
                 saved = await awith_customer_operation_transaction(connection, CUSTOMER_REQUEST, callback)
                 headers = {
                     **CUSTOMER_FIXTURE["headers"],
@@ -338,7 +348,7 @@ class OperationPostgresTest(unittest.TestCase):
                 self.assertEqual(json.loads(recovered.body), {"file": "ready.csv"})
 
         asyncio.run(run())
-        self.assertEqual(self.counts(), (1, 1))
+        self.assertEqual(self.customer_counts(), (1, 1))
 
 
 if __name__ == "__main__":

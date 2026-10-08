@@ -219,7 +219,7 @@ export function customerOperationRequestDigest(input: CustomerOperationRequest):
 
 /** Commit only supplied-transaction database writes and a plain JSON result.
  * On approved recovery, a committed receipt skips handler. External effects are
- * unsupported. Install operationReceiptSchema explicitly and retain receipts.
+ * unsupported. Install customerOperationReceiptSchema and retain receipts.
  * Send the returned body unchanged as application/json after success. */
 export async function withCustomerOperationTransaction(
   pool: OperationPool, input: CustomerOperationRequest,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the customer schema and existing platform limits in all three SDKs."""
+"""Package both operation receipt schemas and platform limits in all three SDKs."""
 import argparse
 import json
 import re
@@ -45,7 +45,9 @@ def outputs():
         "sdk/go/testdata/customer-operation-request.json": (ROOT / "sdk/operation-tests/customer-request-fixture.json").read_text(),
         "sdk/go/testdata/operation-request.json": (ROOT / "sdk/operation-tests/request-fixture.json").read_text(),
         "sdk/go/operation_schema.sql": schema,
+        "sdk/go/customer_operation_schema.sql": customer_schema,
         "sdk/python/faas_sdk/operation_schema.sql": schema,
+        "sdk/python/faas_sdk/customer_operation_schema.sql": customer_schema,
         "sdk/node/src/operation-contract.ts": f"// {header}\nexport const operationReceiptSchema = {json.dumps(schema)};\n"
         + f"export const customerOperationReceiptSchema = {json.dumps(customer_schema)};\n"
         + "".join(f"export const OPERATION_{key} = {value};\n" for key, value in values.items()),

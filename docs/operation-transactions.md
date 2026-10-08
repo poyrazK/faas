@@ -16,6 +16,13 @@ It creates `public.gregale_operation_inbox`. The application role needs SELECT
 and INSERT on that table. The SDK performs no DDL or automatic cleanup. Retain
 receipts while the original operation can still replay.
 
+Customer Operations use a separate application-owned receipt table. Install
+`customerOperationReceiptSchema` in Node, `faas.CustomerOperationReceiptSchema`
+in Go, or `customer_operation_receipt_schema` in Python. Its canonical DDL is
+[pkg/operationinbox/customer_schema.sql](../pkg/operationinbox/customer_schema.sql).
+The application role needs SELECT and INSERT on the customer inbox table. Retain
+those receipts while the original Customer Operation can still replay.
+
 ## Node
 
 Capture raw bytes before Express parses the body. Use the header factory behind
@@ -125,8 +132,8 @@ operations:
     transaction_receipt: postgres_v1
 ```
 
-Install the same receipt schema explicitly. On the trusted Gregale guest listener,
-use the Customer Operations factory and helper. In Node:
+Install the Customer Operations receipt schema explicitly. On the trusted
+Gregale guest listener, use the Customer Operations factory and helper. In Node:
 
 ```ts
 import {

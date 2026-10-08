@@ -131,7 +131,7 @@ Customer Operations HTTP definitions explicitly enable
 `with_customer_operation_transaction` / `awith_customer_operation_transaction`;
 the callback returns the ordinary JSON result, without managed effects.
 Approved recovery checks a scoped receipt before business code. Install and
-retain the existing `operation_receipt_schema` as the database owner.
+retain `customer_operation_receipt_schema` as the application database owner.
 See [Customer Operations transaction adapter](../../docs/operation-transactions.md#customer-operations-http-adapter).
 
 For managed HTTP operations, build the context with

@@ -10,11 +10,12 @@ from uuid import uuid4
 
 import psycopg
 from faas_sdk import (
+    customer_operation_request_from_headers,
+    customer_operation_receipt_schema,
     operation_receipt_schema,
     operation_request_from_headers,
-    with_operation_transaction,
-    customer_operation_request_from_headers,
     with_customer_operation_transaction,
+    with_operation_transaction,
 )
 from psycopg import sql
 
@@ -33,6 +34,7 @@ def main():
             cross_dsn = f"{parts.scheme}://{parts.netloc}/{database}" + ("?" + parts.query if parts.query else "")
             with psycopg.connect(cross_dsn, autocommit=True) as conn, tempfile.TemporaryDirectory(prefix="gregale-operation-cross-") as temp:
                 conn.execute(operation_receipt_schema)
+                conn.execute(customer_operation_receipt_schema)
                 conn.execute("CREATE SCHEMA business; CREATE TABLE business.counter(id integer PRIMARY KEY,total integer NOT NULL); INSERT INTO business.counter VALUES(1,0)")
                 binary = str(Path(temp) / "operation-interop")
                 subprocess.run([os.environ.get("GO", "go"), "build", "-p", "1", "-ldflags=-s -w -linkmode=internal", "-o", binary, "./cmd/operation-interop"], cwd=ROOT / "sdk/commit-tests/go", check=True)
@@ -91,9 +93,9 @@ def main():
                             raise AssertionError(f"Customer Operations {writer} -> {reader} changed result")
                         if "gregale_operation_result" in json.loads(recovered["body"]):
                             raise AssertionError("Customer Operations leaked managed envelope")
-                    counts = conn.execute("SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_operation_inbox)").fetchone()
-                    if counts != (index, index):
-                        raise AssertionError(f"duplicate customer mutation: {counts}")
+                    counts = conn.execute("SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_customer_operation_inbox),(SELECT count(*) FROM public.gregale_operation_inbox)").fetchone()
+                    if counts != (index, index - 6, 6):
+                        raise AssertionError(f"duplicate customer mutation or receipt scope leak: {counts}")
                 print("All 27 cross-SDK receipt replays passed for managed customer/account scope and Customer Operations, including precise numbers and Unicode.")
         finally:
             admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))

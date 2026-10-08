@@ -151,7 +151,7 @@ Customer Operations HTTP definitions explicitly enable
 `CustomerOperationRequestFromHTTP` and `WithCustomerOperationTransaction`;
 the callback returns ordinary `json.RawMessage`, without managed effects.
 Approved recovery checks a scoped receipt before business code. The existing
-`OperationReceiptSchema` is installed and retained by the database owner.
+`CustomerOperationReceiptSchema` is installed and retained by the application owner.
 See [Customer Operations transaction adapter](../../docs/operation-transactions.md#customer-operations-http-adapter).
 
 For managed HTTP operations, use `OperationRequestFromHTTP(r, originalBody)` and

@@ -60,8 +60,8 @@ func CustomerOperationRequestDigest(input CustomerOperationRequest) ([]byte, err
 // WithCustomerOperationTransaction commits database writes and the ordinary
 // JSON result together. An approved recovery replays the result before calling
 // handler. Use only the supplied transaction; external effects are unsupported.
-// Return Body unchanged as application/json. The customer-owned receipt schema
-// is OperationReceiptSchema; installation and retention belong to the app owner.
+// Return Body unchanged as application/json. Install and retain
+// CustomerOperationReceiptSchema as the application database owner.
 func WithCustomerOperationTransaction(ctx context.Context, db *sql.DB, input CustomerOperationRequest, handler func(OperationSQLTransaction) (json.RawMessage, error)) (OperationTransactionResult, error) {
 	if input.request.receiptBinding == "" || handler == nil {
 		return OperationTransactionResult{}, ErrInvalidOperationRequest

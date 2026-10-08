@@ -88,6 +88,9 @@ func operationDatabase(t *testing.T) (*sql.DB, context.Context) {
 		if _, err := db.ExecContext(ctx, faas.OperationReceiptSchema); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := db.ExecContext(ctx, faas.CustomerOperationReceiptSchema); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := db.ExecContext(ctx, "CREATE SCHEMA business; CREATE TABLE business.counter(id integer PRIMARY KEY,total integer NOT NULL); INSERT INTO business.counter VALUES(1,0); CREATE TABLE business.gregale_operation_inbox(LIKE public.gregale_operation_inbox INCLUDING ALL)"); err != nil {
 		t.Fatal(err)
@@ -275,14 +278,17 @@ func TestCustomerOperationSQLTransactionBoundary(t *testing.T) {
 	if _, err := faas.WithCustomerOperationTransaction(ctx, db, changed, callback); !errors.Is(err, faas.ErrOperationReceiptConflict) {
 		t.Fatalf("changed binding accepted: %v", err)
 	}
-	if _, err := faas.WithOperationTransaction(ctx, db, managed, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
-		t.Fatal("customer receipt became managed receipt")
-		return faas.OperationOutcome{}, nil
-	}); !errors.Is(err, faas.ErrOperationReceiptConflict) {
-		t.Fatalf("receipt domain collision: %v", err)
+	var customerReceipts, managedReceipts int
+	if err := db.QueryRowContext(ctx, "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_customer_operation_inbox),(SELECT count(*) FROM public.gregale_operation_inbox)").Scan(&total, &customerReceipts, &managedReceipts); err != nil || total != 1 || customerReceipts != 1 || managedReceipts != 0 {
+		t.Fatalf("total=%d customer receipts=%d managed receipts=%d: %v", total, customerReceipts, managedReceipts, err)
 	}
-	var receipts int
-	if err := db.QueryRowContext(ctx, "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_operation_inbox)").Scan(&total, &receipts); err != nil || total != 1 || receipts != 1 {
-		t.Fatalf("total=%d receipts=%d: %v", total, receipts, err)
+	managedResult, err := faas.WithOperationTransaction(ctx, db, managed, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+		return faas.OperationOutcome{Result: json.RawMessage(`{"scope":"managed"}`)}, nil
+	})
+	if err != nil || managedResult.Replayed {
+		t.Fatalf("managed receipt was not isolated from the Customer Operation receipt: result=%+v err=%v", managedResult, err)
+	}
+	if err := db.QueryRowContext(ctx, "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_customer_operation_inbox),(SELECT count(*) FROM public.gregale_operation_inbox)").Scan(&total, &customerReceipts, &managedReceipts); err != nil || total != 1 || customerReceipts != 1 || managedReceipts != 1 {
+		t.Fatalf("total=%d customer receipts=%d managed receipts=%d: %v", total, customerReceipts, managedReceipts, err)
 	}
 }

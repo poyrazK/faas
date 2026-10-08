@@ -20,6 +20,7 @@ from ._operation_contract import (
     OPERATION_TYPE_BYTES,
 )
 
+customer_operation_receipt_schema = files(__package__).joinpath("customer_operation_schema.sql").read_text(encoding="utf-8")
 operation_receipt_schema = files(__package__).joinpath("operation_schema.sql").read_text(encoding="utf-8")
 _SUPPORTED = object()
 
@@ -231,9 +232,21 @@ def _encode(outcome: OperationOutcome) -> bytes:
     return body
 
 
-_LOCK = "SELECT pg_advisory_xact_lock(hashtextextended('gregale.operation-inbox.v1:' || %s::uuid::text, 0))"
-_READ = "SELECT account_id::text,app_id::text,coalesce(platform_tenant_id::text,''),request_digest,response_body FROM public.gregale_operation_inbox WHERE operation_id=%s::uuid"
-_INSERT = "INSERT INTO public.gregale_operation_inbox(operation_id,account_id,app_id,platform_tenant_id,request_digest,response_body) VALUES (%s::uuid,%s::uuid,%s::uuid,nullif(%s,'')::uuid,%s,%s)"
+_LOCK = "SELECT pg_advisory_xact_lock(hashtextextended(%s || %s::uuid::text, 0))"
+
+
+def _receipt_queries(request: OperationRequest) -> tuple[str, str, str]:
+    if request._receipt_binding:
+        return (
+            "gregale.customer-operation-inbox.v1:",
+            "SELECT account_id::text,app_id::text,platform_tenant_id::text,request_digest,response_body FROM public.gregale_customer_operation_inbox WHERE operation_id=%s::uuid",
+            "INSERT INTO public.gregale_customer_operation_inbox(operation_id,account_id,app_id,platform_tenant_id,request_digest,response_body) VALUES (%s::uuid,%s::uuid,%s::uuid,%s::uuid,%s,%s)",
+        )
+    return (
+        "gregale.operation-inbox.v1:",
+        "SELECT account_id::text,app_id::text,coalesce(platform_tenant_id::text,''),request_digest,response_body FROM public.gregale_operation_inbox WHERE operation_id=%s::uuid",
+        "INSERT INTO public.gregale_operation_inbox(operation_id,account_id,app_id,platform_tenant_id,request_digest,response_body) VALUES (%s::uuid,%s::uuid,%s::uuid,nullif(%s,'')::uuid,%s,%s)",
+    )
 
 
 def _ready(connection: Any) -> None:
@@ -285,13 +298,14 @@ def _with_operation_transaction(
     request = _normalize(input)
     digest = operation_request_digest(request)
     _ready(connection)
+    namespace, read_query, insert_query = _receipt_queries(request)
     completed = False
     try:
         with connection.transaction():
             with connection.cursor(row_factory=_tuple_row) as cursor:
                 cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-                cursor.execute(_LOCK, (request.operation_id,))
-                cursor.execute(_READ, (request.operation_id,))
+                cursor.execute(_LOCK, (namespace, request.operation_id))
+                cursor.execute(read_query, (request.operation_id,))
                 row = cursor.fetchone()
                 if row is not None:
                     body = _replay(row, request, digest)
@@ -299,7 +313,7 @@ def _with_operation_transaction(
                     with connection.cursor() as business_cursor:
                         body = _encode(handler(business_cursor))
                 if row is None:
-                    cursor.execute(_INSERT, _params(request, digest, body))
+                    cursor.execute(insert_query, _params(request, digest, body))
                 completed = True
     except Exception as error:
         if completed:
@@ -323,13 +337,14 @@ async def _awith_operation_transaction(
     request = _normalize(input)
     digest = operation_request_digest(request)
     _ready(connection)
+    namespace, read_query, insert_query = _receipt_queries(request)
     completed = False
     try:
         async with connection.transaction():
             async with connection.cursor(row_factory=_tuple_row) as cursor:
                 await cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-                await cursor.execute(_LOCK, (request.operation_id,))
-                await cursor.execute(_READ, (request.operation_id,))
+                await cursor.execute(_LOCK, (namespace, request.operation_id))
+                await cursor.execute(read_query, (request.operation_id,))
                 row = await cursor.fetchone()
                 if row is not None:
                     body = _replay(row, request, digest)
@@ -337,7 +352,7 @@ async def _awith_operation_transaction(
                     async with connection.cursor() as business_cursor:
                         body = _encode(await handler(business_cursor))
                 if row is None:
-                    await cursor.execute(_INSERT, _params(request, digest, body))
+                    await cursor.execute(insert_query, _params(request, digest, body))
                 completed = True
     except Exception as error:
         if completed:
@@ -412,7 +427,7 @@ def with_customer_operation_transaction(
     """Commit supplied-transaction writes and plain JSON result together.
 
     Approved recovery skips handler if a committed receipt exists. Install and
-    retain operation_receipt_schema explicitly. No external effects or lifecycle
+    retain customer_operation_receipt_schema explicitly. No external effects or lifecycle
     control in handler. Send returned body unchanged as application/json.
     """
     customer_operation_request_digest(input)

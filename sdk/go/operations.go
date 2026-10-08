@@ -22,6 +22,12 @@ import (
 //go:embed operation_schema.sql
 var OperationReceiptSchema string
 
+// CustomerOperationReceiptSchema is the application-owned Customer Operations
+// schema. Install and retain it explicitly as the database owner.
+//
+//go:embed customer_operation_schema.sql
+var CustomerOperationReceiptSchema string
+
 var (
 	ErrInvalidOperationRequest  = errors.New("invalid managed operation request")
 	ErrOperationReceiptConflict = errors.New("operation receipt scope or input differs")
@@ -214,12 +220,19 @@ func withOperationTransaction(ctx context.Context, db *sql.DB, input OperationRe
 		return OperationTransactionResult{}, fmt.Errorf("operation transaction begin: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit or errors is best effort
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('gregale.operation-inbox.v1:' || $1::uuid::text, 0))", request.OperationID); err != nil {
+	receiptTable := "public.gregale_operation_inbox"
+	lockNamespace := "gregale.operation-inbox.v1:"
+	if request.receiptBinding != "" {
+		receiptTable = "public.gregale_customer_operation_inbox"
+		lockNamespace = "gregale.customer-operation-inbox.v1:"
+	}
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1 || $2::uuid::text, 0))", lockNamespace, request.OperationID); err != nil {
 		return OperationTransactionResult{}, fmt.Errorf("operation transaction lock: %w", err)
 	}
 	var account, app, tenant, body string
 	var storedDigest []byte
-	err = tx.QueryRowContext(ctx, "SELECT account_id::text,app_id::text,coalesce(platform_tenant_id::text,'') AS platform_tenant_id,request_digest,response_body FROM public.gregale_operation_inbox WHERE operation_id=$1::uuid", request.OperationID).Scan(&account, &app, &tenant, &storedDigest, &body)
+	readReceipt := "SELECT account_id::text,app_id::text,coalesce(platform_tenant_id::text,'') AS platform_tenant_id,request_digest,response_body FROM " + receiptTable + " WHERE operation_id=$1::uuid"
+	err = tx.QueryRowContext(ctx, readReceipt, request.OperationID).Scan(&account, &app, &tenant, &storedDigest, &body)
 	replayed := err == nil
 	if replayed {
 		if account != request.AccountID || app != request.AppID || tenant != request.PlatformTenantID || !bytes.Equal(digest, storedDigest) {
@@ -243,7 +256,8 @@ func withOperationTransaction(ctx context.Context, db *sql.DB, input OperationRe
 			return OperationTransactionResult{}, err
 		}
 		body = string(encoded)
-		if _, err := tx.ExecContext(ctx, "INSERT INTO public.gregale_operation_inbox(operation_id,account_id,app_id,platform_tenant_id,request_digest,response_body) VALUES ($1::uuid,$2::uuid,$3::uuid,nullif($4,'')::uuid,$5,$6)", request.OperationID, request.AccountID, request.AppID, request.PlatformTenantID, digest, body); err != nil {
+		insertReceipt := "INSERT INTO " + receiptTable + "(operation_id,account_id,app_id,platform_tenant_id,request_digest,response_body) VALUES ($1::uuid,$2::uuid,$3::uuid,nullif($4,'')::uuid,$5,$6)"
+		if _, err := tx.ExecContext(ctx, insertReceipt, request.OperationID, request.AccountID, request.AppID, request.PlatformTenantID, digest, body); err != nil {
 			return OperationTransactionResult{}, fmt.Errorf("operation receipt insert: %w", err)
 		}
 	} else {
