@@ -51,7 +51,9 @@
 
 ## Follow-ups
 
-1. `gregale services map [--range] [--json]` CLI.
+1. CLI as `gregale metrics --services [--range] [--json]` — a flag on the
+   existing Observe command rather than a new top-level noun (API-hosting
+   roadmap guardrail).
 2. Dashboard panel and `docs/service-map.md`; promote to `preview`.
 3. Per-edge wake counts once the service proxy records whether a call woke a
    parked target.

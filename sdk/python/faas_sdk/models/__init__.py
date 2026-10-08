@@ -1112,6 +1112,7 @@ from .get_route_health_investigation_method import GetRouteHealthInvestigationMe
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
 from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
+from .get_service_map_range import GetServiceMapRange
 from .git_hub_activity_retry_response import GitHubActivityRetryResponse
 from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
@@ -2448,6 +2449,9 @@ from .service_caller_jwk_kty import ServiceCallerJWKKty
 from .service_caller_jwk_set import ServiceCallerJWKSet
 from .service_caller_jwk_use import ServiceCallerJWKUse
 from .service_caller_scopes import ServiceCallerScopes
+from .service_map_edge import ServiceMapEdge
+from .service_map_node import ServiceMapNode
+from .service_map_response import ServiceMapResponse
 from .service_reliability_policies import ServiceReliabilityPolicies
 from .service_reliability_policy import ServiceReliabilityPolicy
 from .service_replicas import ServiceReplicas
@@ -3857,6 +3861,7 @@ __all__ = (
     "GetRouteHealthInvestigationSignal",
     "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
+    "GetServiceMapRange",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
     "GitHubCheckActivityStatus",
@@ -5139,6 +5144,9 @@ __all__ = (
     "ServiceCallerJWKUse",
     "ServiceCallerScopes",
     "ServiceCallScope",
+    "ServiceMapEdge",
+    "ServiceMapNode",
+    "ServiceMapResponse",
     "ServiceReliabilityPolicies",
     "ServiceReliabilityPolicy",
     "ServiceReplicas",

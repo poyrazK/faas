@@ -6,6 +6,7 @@ import type { AppLogDrainAnalyticsResponse } from '../models/AppLogDrainAnalytic
 import type { AppLogDrainHealthResponse } from '../models/AppLogDrainHealthResponse.js';
 import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
 import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
+import type { ServiceMapResponse } from '../models/ServiceMapResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { Trace } from '../models/Trace.js';
 import type { UpdateAppLogDrainRequest } from '../models/UpdateAppLogDrainRequest.js';
@@ -288,6 +289,50 @@ export class ObservabilityService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Account service map of caller → target app edges.
+   * ADR-732 internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
+   * otherwise 503 `service_map_unavailable`.
+   *
+   * Built from the unsampled service-proxy edge series. Both the
+   * caller and the target are constrained to the account's apps.
+   * Edges are ranked by call volume and capped at 500
+   * (`truncated: true`). Latency percentiles cover successful calls
+   * only. Prometheus failure returns 200 with null `nodes`/`edges`
+   * and `source: "degraded: <reason>"`, as `/v1/apps/metrics` does.
+   *
+   * @returns ServiceMapResponse The service map.
+   * @throws ApiError
+   */
+  public static getServiceMap({
+    range = '1h',
+  }: {
+    /**
+     * Observation window. Default `1h`.
+     */
+    range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
+  }): CancelablePromise<ServiceMapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/service-map',
+      query: {
+        'range': range,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

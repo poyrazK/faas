@@ -2872,10 +2872,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "metrics",
 		DocSlug: "metrics",
-		Short:   "Per-app or account-wide metrics (slug defaults to linked context)",
+		Short:   "Per-app or account-wide metrics, or the service map (slug defaults to linked context)",
 		Flags: []cliFlag{
 			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d"}},
 			{Name: "account", Short: "account-wide roll-up"},
+			{Name: "services", Short: "service map of app-to-app calls (default range 1h)"},
 		},
 		Positionals: []string{"[<slug>]"},
 	},

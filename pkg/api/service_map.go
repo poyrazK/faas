@@ -1,5 +1,23 @@
 package api
 
+import (
+	"context"
+	"net/url"
+)
+
+// GetServiceMap returns the account service map (ADR-732). An empty rng
+// selects the server default (ServiceMapDefaultRange).
+func (c *Client) GetServiceMap(ctx context.Context, rng string) (ServiceMapResponse, error) {
+	var out ServiceMapResponse
+	path := "/v1/service-map"
+	if rng != "" {
+		q := url.Values{}
+		q.Set("range", rng)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // ServiceMapResponse is GET /v1/service-map (ADR-732): the account's
 // caller → target app edges observed by the internal service proxy over
 // Range. Source and AsOf follow the /v1/apps/metrics contract; a degraded

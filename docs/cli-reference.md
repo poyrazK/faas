@@ -71,7 +71,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Query runtime logs and HTTP request events |
-| [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
+| [`metrics`](#metrics) | Per-app or account-wide metrics, or the service map (slug defaults to linked context) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]; slug defaults to linked context) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
 | [`open`](#open) | Open the app&#39;s URL (slug defaults to linked context) |
@@ -6979,14 +6979,15 @@ gregale logs my-api --since 1h --level error
 
 ## metrics
 
-Per-app or account-wide metrics (slug defaults to linked context)
+Per-app or account-wide metrics, or the service map (slug defaults to linked context)
 
-`gregale metrics [<slug>] [--range <WINDOW>] [--account]`
+`gregale metrics [<slug>] [--range <WINDOW>] [--account] [--services]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--range <WINDOW>` | window (5m\|15m\|1h\|6h\|24h\|7d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` |
 | `--account` | account-wide roll-up |  |
+| `--services` | service map of app-to-app calls (default range 1h) |  |
 
 
 ## analytics

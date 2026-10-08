@@ -38,7 +38,7 @@ import (
 // metricsCmdUsage is the top-of-failure-line shown for `gregale metrics`
 // errors. Mirrors PrintUsage's docs URL convention (output.go:144) so
 // the line carries the stable docs site pointer.
-const metricsCmdUsage = "usage: gregale metrics <slug> [--range 5m] | --account [--range 5m]"
+const metricsCmdUsage = "usage: gregale metrics <slug> [--range 5m] | --account [--range 5m] | --services [--range 1h]"
 
 // metricsCmdDocsTopic is the docs topic slug passed to PrintUsage
 // when PrintUsage emits the trailing "Docs:" row. Keeps the CLI's
@@ -55,8 +55,9 @@ func cmdMetrics(args []string) int {
 	fs := newFlagSet("metrics", flag.ContinueOnError)
 	rng := fs.String("range", "5m", "time window (5m, 15m, 1h, 6h, 24h)")
 	account := fs.Bool("account", false, "account-wide rollup (GET /v1/apps/metrics) — mutually exclusive with <slug>")
+	services := fs.Bool("services", false, "account service map of app-to-app calls (GET /v1/service-map)")
 	app := fs.String("app", "", appSlugFlagUsage)
-	flags, pos := splitArgsForFlags(args, "account")
+	flags, pos := splitArgsForFlags(args, "account", "services")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -64,6 +65,21 @@ func cmdMetrics(args []string) int {
 	if err != nil {
 		PrintUsage(os.Stderr, metricsCmdUsage+"\nerror: "+err.Error(), metricsCmdDocsTopic)
 		return 1
+	}
+	if *services {
+		if *account || len(pos) != 0 {
+			PrintUsage(os.Stderr, metricsCmdUsage, metricsCmdDocsTopic)
+			return 1
+		}
+		// An omitted --range defers to the service map's own default (1h)
+		// rather than the 5m per-app default declared above.
+		serviceRange := ""
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "range" {
+				serviceRange = *rng
+			}
+		})
+		return cmdMetricsServices(serviceRange)
 	}
 	if *account && len(pos) != 0 {
 		PrintUsage(os.Stderr, metricsCmdUsage, metricsCmdDocsTopic)
@@ -180,6 +196,52 @@ func renderAppsMetrics(w io.Writer, m api.AppsMetricsResponse) {
 		_, _ = fmt.Fprintf(w, "  Latency:    p50=%.1fms p95=%.1fms p99=%.1fms\n", row.LatencyP50MS, row.LatencyP95MS, row.LatencyP99MS)
 		_, _ = fmt.Fprintf(w, "  Error rate: %.2f%%\n", row.ErrorRatePct)
 		_, _ = fmt.Fprintf(w, "  Cold boot:  %.2f%%\n", row.ColdStartPct)
+	}
+}
+
+// cmdMetricsServices implements `gregale metrics --services` (ADR-732).
+func cmdMetricsServices(rng string) int {
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	m, err := client.GetServiceMap(context.Background(), rng)
+	if err != nil {
+		return printErr("Could not fetch service map", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(m))
+	}
+	renderServiceMap(osStdout, m)
+	return 0
+}
+
+// renderServiceMap writes one line per caller → target edge in the
+// server's order (busiest first), under the same range/as_of/source
+// header as renderAppsMetrics.
+func renderServiceMap(w io.Writer, m api.ServiceMapResponse) {
+	if m.Source != "" && m.Source != appmetrics.SourcePrometheus {
+		_, _ = fmt.Fprintf(w, "Note: source=%s (no edges shown — Prometheus is unavailable)\n", m.Source)
+	}
+	_, _ = fmt.Fprintf(w, "Range:      %s\n", m.Range)
+	if m.AsOf != "" {
+		_, _ = fmt.Fprintf(w, "As of:      %s\n", m.AsOf)
+	}
+	if m.Source != "" {
+		_, _ = fmt.Fprintf(w, "Source:     %s\n", m.Source)
+	}
+	if len(m.Edges) == 0 {
+		_, _ = fmt.Fprintln(w, "(no service-to-service calls in window)")
+		return
+	}
+	_, _ = fmt.Fprintln(w)
+	for _, e := range m.Edges {
+		_, _ = fmt.Fprintf(w, "%s → %s\n", e.CallerAppSlug, e.TargetAppSlug)
+		_, _ = fmt.Fprintf(w, "  Calls:      %d (errors %d, %.2f%%)\n", e.Calls, e.Errors, e.ErrorRatePct)
+		_, _ = fmt.Fprintf(w, "  Latency:    p50=%.1fms p95=%.1fms\n", e.LatencyP50MS, e.LatencyP95MS)
+	}
+	if m.Truncated {
+		_, _ = fmt.Fprintf(w, "\n(showing the %d busiest edges; quieter edges were omitted)\n", len(m.Edges))
 	}
 }
 
