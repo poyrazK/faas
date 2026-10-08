@@ -700,18 +700,20 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
-// Mirrors cmdApp (commands2.go:53-126) but with no --plan — plan
-// changes live on `gregale plan`. Uses the same fs.Visit pattern so 0 is
-// distinguishable from "unset".
+// Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
 func cmdAppScale(slug string, args []string) int {
 	if hasHelpFlag(args) {
 		PrintUsage(osStdout, appScaleUsage, "apps")
 		return 0
 	}
 	fs := newFlagSet("app scale", flag.ContinueOnError)
+	planOnly := fs.Bool("plan", false, "show the proposed change, plan limits and resident-usage estimate without applying it")
+	planOutput := fs.String("out", "", "write a reusable reviewed plan to a new JSON file (requires --plan)")
+	applyPlan := fs.String("apply", "", "apply a saved scale plan JSON file")
+	confirmPlan := fs.Bool("confirm", false, "confirm applying the saved plan (requires --apply)")
 	environment := fs.String("environment", "", "edit this project environment's workload settings")
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
@@ -774,6 +776,18 @@ func cmdAppScale(slug string, args []string) int {
 	}
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["apply"] {
+		if *applyPlan == "" || !*confirmPlan || explicit["plan"] || explicit["out"] || explicit["environment"] || appScaleHasSettingFlags(explicit) {
+			return printErr("Invalid scale plan flags", fmt.Errorf("--apply requires a plan file and --confirm; do not combine it with --plan, --out, --environment or setting flags"))
+		}
+		return cmdAppScaleApplyPlan(slug, *applyPlan)
+	}
+	if explicit["confirm"] {
+		return printErr("Invalid scale plan flags", fmt.Errorf("--confirm requires --apply PLAN.json"))
+	}
+	if explicit["out"] && (*planOutput == "" || !*planOnly) {
+		return printErr("Invalid scale plan flags", fmt.Errorf("--out PATH requires --plan"))
+	}
 	queueWaitMS, setQueueWait, err := cliQueueWaitMilliseconds(*maxQueueWaitMS, *maxQueueWait, explicit["max-queue-wait-ms"], explicit["max-queue-wait"])
 	if err != nil {
 		return printErr("Invalid concurrency policy", err)
@@ -924,7 +938,16 @@ func cmdAppScale(slug string, args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(context.Background(), slug, req)
+	appClient := environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}
+	if *planOnly {
+		var expectedWorkloadRevision *int64
+		if *environment != "" && workloadRevision >= 0 {
+			revision := workloadRevision
+			expectedWorkloadRevision = &revision
+		}
+		return cmdAppScalePlan(client, appClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
+	}
+	updated, err := appClient.UpdateApp(context.Background(), slug, req)
 	if err != nil {
 		return printErr("Scale failed", err)
 	}
@@ -984,33 +1007,13 @@ func cmdAppRename(slug, newSlug string) int {
 // cmdAppRestart requests a fresh snapshot restart for an app. The server
 // performs the park and replacement wake asynchronously and returns a wake id
 // for correlation with the wake timeline.
-func cmdAppRestart(slug string, args []string) int {
-	if len(args) != 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> restart", "apps")
-		return 1
-	}
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	out, err := client.RestartApp(context.Background(), slug)
-	if err != nil {
-		return printErr("Restart failed", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeJSON(out))
-	}
-	PrintOK(osStdout, "Restart requested (wake_id=%s)", out.WakeID)
-	return 0
-}
-
 // cmdAppDispatch routes `gregale app <slug> ...` to either the new
 // subcommand form (scale / rename / exec / security / routes / tcp) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -1018,6 +1021,8 @@ func cmdAppDispatch(args []string) int {
 		switch args[1] {
 		case subScale:
 			return cmdAppScale(slug, args[2:])
+		case "costs":
+			return cmdAppCosts(slug, args[2:])
 		case subRename:
 			if len(args) != 3 {
 				PrintUsage(os.Stderr, "usage: gregale app <slug> rename <new-slug>", "apps")
