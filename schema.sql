@@ -13639,7 +13639,9 @@ CREATE TABLE public.build_provenance (
     finished_at timestamp with time zone NOT NULL,
     sbom_storage_key text,
     framework_version text,
-    runtime_base_ref text DEFAULT ''::text NOT NULL
+    runtime_base_ref text DEFAULT ''::text NOT NULL,
+    dev_patch jsonb,
+    CONSTRAINT build_provenance_dev_patch_check CHECK (((dev_patch IS NULL) OR ((jsonb_typeof(dev_patch) = 'object'::text) AND (octet_length((dev_patch)::text) <= 65536))))
 );
 
 

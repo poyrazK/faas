@@ -1955,6 +1955,9 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
 	}
+	if runErr == nil {
+		done.DevPatch = buildDevPatchSourceMap(m, readBuildPlan)
+	}
 	if data, mErr := json.Marshal(done); mErr == nil {
 		if f, openErr := os.OpenFile(api.BuildDonePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); openErr != nil {
 			fmt.Fprintf(os.Stderr, "guest-init: open build-done: %v\n", openErr)

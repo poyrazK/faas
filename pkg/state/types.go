@@ -2897,6 +2897,9 @@ type BuildProvenance struct {
 	// DEPLOY-PROV-5 / ADR-087). Empty when no version file is found
 	// or any parser fails — best-effort, never an error.
 	FrameworkVer string
+	// DevPatch is the builder's ADR-740 source map. Nil for builds whose
+	// guest did not report one.
+	DevPatch *api.DevPatchSourceMap
 }
 
 // CustomDomainCertStatus is the durable TLS lifecycle for a legacy custom

@@ -1173,6 +1173,7 @@ type BuildProvenance struct {
 	SbomStorageKey   pgtype.Text
 	FrameworkVersion pgtype.Text
 	RuntimeBaseRef   string
+	DevPatch         []byte
 }
 
 // Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-048. Informational only — not billed.
