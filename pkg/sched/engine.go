@@ -7189,6 +7189,14 @@ func (e *Engine) SeedLedger(ctx context.Context) (result error) {
 	if recoveryErr != nil {
 		return errors.Join(ErrRegionalRuntimeRecoveryUnresolved, recoveryErr)
 	}
+	if err := e.bindOriginalRegionalStartupRows(ctx); err != nil {
+		// No accounting changed: uncertain observations retain both original
+		// holds and row shadows. Existing regional admission stays frozen.
+		e.log.Warn("sched: original startup row binding unavailable; charges retained", "err", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(ErrRegionalRuntimeRecoveryUnresolved, err)
+	}
 	return nil
 }
 

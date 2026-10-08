@@ -55,6 +55,10 @@ func (e *Engine) ObserveRegionalRuntimeInventoryPage(ctx context.Context, after 
 }
 
 func (e *Engine) observeRegionalRuntimeRows(ctx context.Context, after state.RegionalRuntimeRetirementCursor, rows []state.RegionalRuntimeInventoryEntry) (state.RegionalRuntimeRetirementCursor, RegionalRuntimeInventoryReport, error) {
+	return e.observeRegionalRuntimeRowsWithMatch(ctx, after, rows, nil)
+}
+
+func (e *Engine) observeRegionalRuntimeRowsWithMatch(ctx context.Context, after state.RegionalRuntimeRetirementCursor, rows []state.RegionalRuntimeInventoryEntry, matched func(state.RegionalRuntimeInventoryEntry, fcvm.NativeRuntimeInventorySample) error) (state.RegionalRuntimeRetirementCursor, RegionalRuntimeInventoryReport, error) {
 	var report RegionalRuntimeInventoryReport
 	reader, available := e.vmm.(nativeRuntimeInventoryReader)
 	samples := map[string]fcvm.NativeRuntimeInventorySample{}
@@ -96,6 +100,9 @@ func (e *Engine) observeRegionalRuntimeRows(ctx context.Context, after state.Reg
 			report.Issues = append(report.Issues, RegionalRuntimeInventoryIssue{Permit: row.Receipt.Permit, Reason: reason})
 		} else {
 			report.Matches = append(report.Matches, *row.Source)
+			if matched != nil {
+				result = errors.Join(result, matched(row, sample))
+			}
 		}
 	}
 	return after, report, result

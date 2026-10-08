@@ -2,6 +2,7 @@ package sched
 
 // adr: 649
 // adr: 659
+// adr: 660
 import (
 	"context"
 	"errors"
@@ -197,9 +198,12 @@ func TestNativeRegionalInventoryPageRetainsHoldsAndAdvancesOnUncertainty(t *test
 			if err := e.SeedLedger(t.Context()); err != nil {
 				t.Fatal(err)
 			}
+			// Startup may read native ownership; this explicit observation must
+			// perform one new read rather than reuse its earlier sample.
+			startupCalls := v.calls
 			before, _ := s.RegionalRuntimeCapacity(t.Context(), app.ID, source.Permit.ID)
 			after, report, err := e.ObserveRegionalRuntimeInventoryPage(t.Context(), state.RegionalRuntimeRetirementCursor{})
-			if (err != nil) != lost || after.PermitID != source.Permit.ID || v.calls != 1 || len(report.Matches) != map[bool]int{false: 1, true: 0}[lost] || len(report.Issues) != map[bool]int{false: 0, true: 1}[lost] {
+			if (err != nil) != lost || after.PermitID != source.Permit.ID || v.calls-startupCalls != 1 || len(report.Matches) != map[bool]int{false: 1, true: 0}[lost] || len(report.Issues) != map[bool]int{false: 0, true: 1}[lost] {
 				t.Fatal(after, report, err)
 			}
 			next, empty, err := e.ObserveRegionalRuntimeInventoryPage(t.Context(), after)
