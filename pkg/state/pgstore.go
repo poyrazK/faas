@@ -1595,6 +1595,12 @@ func (s *PgStore) ListAPIKeys(ctx context.Context, accountID string) ([]APIKey, 
 //
 // Issue #190 / IAM-6, PR 6.
 func (s *PgStore) GetAPIKey(ctx context.Context, accountID, keyID string) (APIKey, error) {
+	if !validUUID(keyID) {
+		// A key id is a UUID. Passing a label or prefix (`gregale keys
+		// rotate my-key`) must read as an unknown key, not as a database
+		// failure the API reports as "briefly at capacity" (hunt #7, H5-70).
+		return APIKey{}, ErrNotFound
+	}
 	return scanAPIKey(s.pool.QueryRow(ctx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		        last_used_at,
@@ -1636,6 +1642,12 @@ func (s *PgStore) CountAPIKeys(ctx context.Context, accountID string) (int, erro
 // belongs to a different account. Audit emission is the caller's
 // responsibility.
 func (s *PgStore) MarkAPIKeyRevoked(ctx context.Context, accountID, keyID string) (APIKey, error) {
+	if !validUUID(keyID) {
+		// A key id is a UUID. Passing a label or prefix (`gregale keys
+		// rotate my-key`) must read as an unknown key, not as a database
+		// failure the API reports as "briefly at capacity" (hunt #7, H5-70).
+		return APIKey{}, ErrNotFound
+	}
 	row := s.pool.QueryRow(ctx,
 		`update api_keys
 		    set status = 'revoked',
@@ -1930,6 +1942,12 @@ func (s *PgStore) ListOrgAPIKeys(ctx context.Context, orgID string) ([]APIKey, e
 // layer — the IDOR-safe collapse (matches DeleteAPIKeyReturning's
 // (accountID, keyID) predicate).
 func (s *PgStore) GetOrgAPIKey(ctx context.Context, orgID, keyID string) (APIKey, error) {
+	if !validUUID(keyID) {
+		// A key id is a UUID. Passing a label or prefix (`gregale keys
+		// rotate my-key`) must read as an unknown key, not as a database
+		// failure the API reports as "briefly at capacity" (hunt #7, H5-70).
+		return APIKey{}, ErrNotFound
+	}
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		        last_used_at,
@@ -1947,6 +1965,12 @@ func (s *PgStore) GetOrgAPIKey(ctx context.Context, orgID, keyID string) (APIKey
 // Returns the post-update row so the handler can stamp the
 // audit `api_key.revoked` event with the dismissed scopes.
 func (s *PgStore) RevokeOrgAPIKey(ctx context.Context, orgID, keyID string) (APIKey, error) {
+	if !validUUID(keyID) {
+		// A key id is a UUID. Passing a label or prefix (`gregale keys
+		// rotate my-key`) must read as an unknown key, not as a database
+		// failure the API reports as "briefly at capacity" (hunt #7, H5-70).
+		return APIKey{}, ErrNotFound
+	}
 	row := s.pool.QueryRow(ctx,
 		`update api_keys
 		    set status = 'revoked',
