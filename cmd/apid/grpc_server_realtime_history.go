@@ -119,7 +119,7 @@ func (r *realtimeHistoryReceiver) ReportChannelRoute(ctx context.Context, req *a
 		return nil, status.Error(codes.Unavailable, "realtime channel route lock unavailable")
 	}
 	defer func(ctx context.Context) {
-		releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		lock.Release(releaseCtx)
 		cancel()
 	}(ctx)
