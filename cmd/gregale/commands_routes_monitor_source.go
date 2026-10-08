@@ -195,7 +195,7 @@ func localRouteMonitorSourcePath(ctx context.Context, startDirectory, sourceRoot
 	}
 	root := strings.TrimSuffix(string(output), "\n")
 	if root == "" || strings.ContainsAny(root, "\r\n") {
-		return "", fmt.Errorf("Git returned an invalid repository root")
+		return "", fmt.Errorf("git returned an invalid repository root")
 	}
 	if sourceRoot == "" || sourceRoot == "." {
 		return root, nil

@@ -626,11 +626,9 @@ func evaluatePreviewCustomerMigrationProgressRoute(
 		}
 		if len(candidates) > 0 && window.from.After(candidates[len(candidates)-1].until) {
 			candidates = nil
-			latestReason = "observation_window_gap"
 		}
 		if len(candidates) > 0 && window.until.Before(candidates[len(candidates)-1].until) {
 			candidates = nil
-			latestReason = "observation_windows_out_of_order"
 		}
 		candidates = append(candidates, window)
 		latestReason = "grace_period_not_elapsed"

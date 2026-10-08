@@ -314,11 +314,6 @@ func validateRouteMonitorPage(p api.RouteMonitorIncidentPage, o routeMonitorCLIO
 	return nil
 }
 
-// Reuse the existing owner-only, create-new evidence export path.
-func writeRouteMonitorIncidentFile(path string, i api.RouteMonitorIncident) error {
-	return writeRouteMonitorIncidentFileWithSource(path, i, nil)
-}
-
 func writeRouteMonitorIncidentFileWithSource(path string, i api.RouteMonitorIncident, source *routeMonitorSourceCorrelation) error {
 	var value any = i
 	if source != nil {

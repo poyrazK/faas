@@ -175,7 +175,7 @@ func TestPreviewCustomersMigrationDiffCLIEmitsReportAndFailsOnRegression(t *test
 		t.Fatalf("saved diff = %+v, decode error=%v", saved, err)
 	}
 
-	before, after = previewCutoverDiffFixtures()
+	_, after = previewCutoverDiffFixtures()
 	after.Routes[0].Customers[0].ObservedOldRouteReuse = nil
 	after.Routes[0].Customers[0].NextStep = "verify_successor_usage_with_customer_or_owner"
 	after.Routes[0].Customers[1].LatestSuccessors[0].ContractStatus = "no_supported_breaks"

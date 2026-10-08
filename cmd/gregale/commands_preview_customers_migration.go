@@ -246,13 +246,14 @@ func cmdPreviewCustomersMigrationReview(args []string) int {
 		}
 	} else {
 		var rendered bytes.Buffer
-		if *format == "csv" {
+		switch *format {
+		case "csv":
 			if err := renderPreviewCustomerCutoverReviewCSV(&rendered, report); err != nil {
 				return printErr("Could not encode cutover action queue", err)
 			}
-		} else if *format == "markdown" {
+		case "markdown":
 			renderPreviewCustomerCutoverReviewMarkdown(&rendered, report)
-		} else {
+		default:
 			renderPreviewCustomerCutoverReviewText(&rendered, report)
 		}
 		if _, err := osStdout.Write(rendered.Bytes()); err != nil {
