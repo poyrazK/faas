@@ -106,14 +106,24 @@ func TestWakePlatformBenchMetal(t *testing.T) {
 		t.Fatalf("warm-up wake: status=%d body=%s", status, body)
 	}
 
+	// FAAS_WAKE_PLATFORM_BENCH_PARK=api parks through POST /park, which marks
+	// the app evicted_cold and so exercises ensureWake's lifecycle
+	// transition. The default lets the idle reaper park the instance, the
+	// path an ordinary scale-to-zero app takes (~20 s per cycle).
+	apiPark := os.Getenv("FAAS_WAKE_PLATFORM_BENCH_PARK") == "api"
+	if !apiPark {
+		setAppIdleTimeout(t, h, key, "hello", api.IdleTimeoutFloorSeconds)
+	}
 	wakeIDs := make([]string, 0, cycles)
 	clientMs := make(map[string]int64, cycles)
 	for i := 0; i < cycles; i++ {
-		if raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/hello/park", nil); status/100 != 2 {
-			t.Fatalf("cycle %d: park: status=%d body=%s", i, status, raw)
+		if apiPark {
+			if raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/hello/park", nil); status/100 != 2 {
+				t.Fatalf("cycle %d: park: status=%d body=%s", i, status, raw)
+			}
 		}
-		pctx, pcancel := context.WithTimeout(context.Background(), 30*time.Second)
-		_, err := e2etest.WaitForAppParked(pctx, t, pool, appID, 25*time.Second)
+		pctx, pcancel := context.WithTimeout(context.Background(), 45*time.Second)
+		_, err := e2etest.WaitForAppParked(pctx, t, pool, appID, 40*time.Second)
 		pcancel()
 		if err != nil {
 			t.Fatalf("cycle %d: not parked: %v", i, err)
