@@ -212,9 +212,10 @@ gregale data-api sync notes-data --config data-api.json --timeout 20m
 ```
 
 Sync validates the complete configuration and resolves the Data API's HTTPS
-health URL, then runs four steps in order: the migration command, a fresh restart
+health URL, then runs the migration command, an optional permission command, a fresh restart
 with completion and readiness checks, private type generation with an atomic
-file write, and the client check. A failed step exits nonzero and prevents later
+file write, and the client check. A failed permission command prevents refresh,
+type export and the client check. A failed step exits nonzero and prevents later
 steps. Invalid or truncated type output leaves the existing file intact. A
 failed client check retains the new types so you can fix the application.
 
@@ -720,3 +721,38 @@ The shared catalog files are included automatically in Gregale's scaffold and
 template archive under `migrations/rpc-runtime/`. Source-checkout acceptance
 copies the same canonical files into its temporary starter; do not maintain a
 separate eligibility implementation.
+
+### RPC permissions in the sync workflow
+
+New starters run `node migrations/release.mjs` as their release command (both
+manifest and Procfile). It commits migrations, then applies supported opted-in
+RPC grants and checks readiness. The starter's existing `deploy --wait` migration
+command waits for this entire release task, so `data-api sync` refreshes only
+after permission setup succeeds. Migration credentials remain in the remote
+release task; no local database URL is required. During rotation overlap, use an
+explicit `--role` argument in the owner-controlled release command, or wait for
+the old login to retire. Permission failure does not undo committed migrations.
+
+Existing starter projects must update their release command and include the
+new release and permission tooling; regenerating a config alone does not change
+a deployed release task. `npm run migrate` remains a migration-only command.
+
+Custom workflows can add an optional `permissions` command to `data-api.json`:
+
+```json
+"permissions": {
+  "directory": ".",
+  "command": ["npm", "run", "rpc:permissions", "--", "--apply"]
+}
+```
+
+This property belongs alongside `migrate` and `check` in the workflow object.
+Sync validates its executable and directory before any work, and runs it after
+migration and before refresh under the same deadline and cancellation handling.
+Commands run locally with the existing environment; this example requires an
+owner-controlled local migration connection configured outside the JSON. For
+managed bindings, use a command that waits for a remote owner task instead, or
+include permission setup in the migration release as the starter does. Omit the
+property when the release task already handles it. Existing configs without
+`permissions` retain their previous behavior. A permission preview exits nonzero
+when grants are missing; use `--apply` to complete grant setup.

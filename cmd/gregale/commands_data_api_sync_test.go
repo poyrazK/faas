@@ -40,9 +40,10 @@ func dataAPISyncTestConfig(t *testing.T) (string, dataAPISyncConfig) {
 	}
 	args := []string{executable, "-test.run=^TestDataAPISyncCommandHelper$", "--"}
 	config := dataAPISyncConfig{
-		Output:  "web/database.types.ts",
-		Migrate: dataAPISyncCommand{Command: append(append([]string{}, args...), "migrate", `literal spaces $();"`), Directory: "schema"},
-		Check:   dataAPISyncCommand{Command: append(append([]string{}, args...), "check"), Directory: "web"},
+		Output:      "web/database.types.ts",
+		Migrate:     dataAPISyncCommand{Command: append(append([]string{}, args...), "migrate", `literal spaces $();"`), Directory: "schema"},
+		Permissions: &dataAPISyncCommand{Command: append(append([]string{}, args...), "permissions"), Directory: "schema"},
+		Check:       dataAPISyncCommand{Command: append(append([]string{}, args...), "check"), Directory: "web"},
 	}
 	path := filepath.Join(root, "data-api.json")
 	writeDataAPISyncTestConfig(t, path, config)
@@ -87,6 +88,16 @@ func TestDataAPISyncCommandHelper(t *testing.T) {
 			os.Exit(4)
 		}
 		if os.Getenv("GREGALE_DATA_API_SYNC_MIGRATION_FAIL") == "1" {
+			os.Exit(2)
+		}
+	case "permissions":
+		if _, err := os.Stat("migration.json"); err != nil {
+			os.Exit(10)
+		}
+		if os.WriteFile("permissions-ran", nil, 0600) != nil {
+			os.Exit(11)
+		}
+		if os.Getenv("GREGALE_DATA_API_SYNC_PERMISSIONS_FAIL") == "1" {
 			os.Exit(2)
 		}
 	case "check":
@@ -155,6 +166,9 @@ func newDataAPISyncTestServer(t *testing.T, root, failure string) *dataAPISyncTe
 			if _, err := os.Stat(filepath.Join(root, "schema/migration.json")); err != nil || r.URL.RawQuery != "fresh=true" {
 				t.Error("refresh must follow migration and use a fresh restart")
 			}
+			if _, err := os.Stat(filepath.Join(root, "schema/permissions-ran")); err != nil && failure != "legacy" {
+				t.Error("refresh must follow permission setup")
+			}
 			fixture.restarts.Add(1)
 			writeJSONTest(w, api.AppRestartResponse{WakeID: "wake-1"})
 		case "GET /v1/apps/notes/runtime-config-restarts/wake-1":
@@ -193,6 +207,22 @@ func newDataAPISyncTestServer(t *testing.T, root, failure string) *dataAPISyncTe
 	t.Setenv("FAAS_API", management.URL)
 	t.Setenv("FAAS_TOKEN", "owner-test-token")
 	return fixture
+}
+
+func TestDataAPISyncWithoutPermissionsRemainsCompatible(t *testing.T) {
+	resetJSONOut(t)
+	path, config := dataAPISyncTestConfig(t)
+	config.Permissions = nil
+	writeDataAPISyncTestConfig(t, path, config)
+	fixture := newDataAPISyncTestServer(t, filepath.Dir(path), "legacy")
+	_, stderr, restore := swapIO(t)
+	defer restore()
+	if code := run([]string{"data-api", "sync", "notes", "--config", path}); code != 0 || fixture.restarts.Load() != 1 || fixture.tasks.Load() != 1 {
+		t.Fatalf("legacy sync failed: exit=%d %s", code, stderr())
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "schema/permissions-ran")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("omitted permission command ran")
+	}
 }
 
 func TestDataAPISyncJourney(t *testing.T) {
@@ -240,15 +270,19 @@ func TestDataAPISyncJourney(t *testing.T) {
 }
 
 func TestDataAPISyncStopsAtFailedStep(t *testing.T) {
-	for _, failure := range []string{"migration", "restart", "health", "types", "truncated", "check", "type-timeout"} {
+	for _, failure := range []string{"migration", "permissions", "restart", "health", "types", "truncated", "check", "type-timeout"} {
 		t.Run(failure, func(t *testing.T) {
 			resetJSONOut(t)
 			path, _ := dataAPISyncTestConfig(t)
 			root := filepath.Dir(path)
 			t.Setenv("GREGALE_DATA_API_SYNC_MIGRATION_FAIL", "0")
+			t.Setenv("GREGALE_DATA_API_SYNC_PERMISSIONS_FAIL", "0")
 			t.Setenv("GREGALE_DATA_API_SYNC_CHECK_FAIL", "0")
 			if failure == "migration" {
 				t.Setenv("GREGALE_DATA_API_SYNC_MIGRATION_FAIL", "1")
+			}
+			if failure == "permissions" {
+				t.Setenv("GREGALE_DATA_API_SYNC_PERMISSIONS_FAIL", "1")
 			}
 			if failure == "check" {
 				t.Setenv("GREGALE_DATA_API_SYNC_CHECK_FAIL", "1")
@@ -264,10 +298,10 @@ func TestDataAPISyncStopsAtFailedStep(t *testing.T) {
 				t.Fatalf("failed workflow reported success: exit=%d output=%s", code, out.String())
 			}
 			wantRestarts, wantTasks := int32(1), int32(1)
-			if failure == "migration" {
+			if failure == "migration" || failure == "permissions" {
 				wantRestarts = 0
 			}
-			if failure == "migration" || failure == "restart" || failure == "health" {
+			if failure == "migration" || failure == "permissions" || failure == "restart" || failure == "health" {
 				wantTasks = 0
 			}
 			if fixture.restarts.Load() != wantRestarts || fixture.tasks.Load() != wantTasks {
@@ -293,11 +327,13 @@ func TestDataAPISyncStopsAtFailedStep(t *testing.T) {
 }
 
 func TestDataAPISyncRejectsInvalidConfigurationBeforeWork(t *testing.T) {
-	for _, invalid := range []string{"missing-output", "missing-migrate", "missing-check", "missing-executable", "missing-directory", "missing-output-parent", "unknown-field", "multiple-objects", "oversized", "nul-argument"} {
+	for _, invalid := range []string{"empty-permissions", "missing-output", "missing-migrate", "missing-check", "missing-executable", "missing-directory", "missing-output-parent", "unknown-field", "multiple-objects", "oversized", "nul-argument"} {
 		t.Run(invalid, func(t *testing.T) {
 			resetJSONOut(t)
 			path, config := dataAPISyncTestConfig(t)
 			switch invalid {
+			case "empty-permissions":
+				config.Permissions.Command = nil
 			case "missing-output":
 				config.Output = ""
 			case "missing-migrate":

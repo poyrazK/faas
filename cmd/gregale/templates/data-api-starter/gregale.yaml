@@ -3,4 +3,4 @@ hosting:
   port: 8080
   health: /healthz
 release:
-  command: node migrations/migrate.mjs
+  command: node migrations/release.mjs

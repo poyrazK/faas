@@ -26,9 +26,10 @@ type dataAPISyncCommand struct {
 }
 
 type dataAPISyncConfig struct {
-	Output  string             `json:"output"`
-	Migrate dataAPISyncCommand `json:"migrate"`
-	Check   dataAPISyncCommand `json:"check"`
+	Output      string              `json:"output"`
+	Migrate     dataAPISyncCommand  `json:"migrate"`
+	Check       dataAPISyncCommand  `json:"check"`
+	Permissions *dataAPISyncCommand `json:"permissions,omitempty"`
 }
 
 type dataAPISyncReceipt struct {
@@ -43,7 +44,7 @@ type dataAPISyncReceipt struct {
 
 func cmdDataAPISync(args []string) int {
 	fs := newFlagSet("data-api sync", flag.ContinueOnError)
-	configPath := fs.String("config", "", "JSON workflow file with output, migrate and check commands")
+	configPath := fs.String("config", "", "JSON workflow file with output, migrate, optional permissions and check commands")
 	timeout := fs.Duration("timeout", 20*time.Minute, "deadline for the entire workflow (maximum 1h)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -123,6 +124,11 @@ func loadDataAPISyncConfig(path string) (dataAPISyncConfig, error) {
 			return config, fmt.Errorf("%s: %w", step.name, err)
 		}
 	}
+	if config.Permissions != nil {
+		if err := prepareDataAPISyncCommand(base, config.Permissions); err != nil {
+			return config, fmt.Errorf("permissions: %w", err)
+		}
+	}
 	return config, nil
 }
 
@@ -173,6 +179,12 @@ func runDataAPISync(ctx context.Context, client *api.Client, slug string, config
 	dataAPISyncProgress("Running migration command")
 	if err = runDataAPISyncCommand(ctx, config.Migrate); err != nil {
 		return receipt, fmt.Errorf("migration command: %w", err)
+	}
+	if config.Permissions != nil {
+		dataAPISyncProgress("Running RPC permission setup")
+		if err = runDataAPISyncCommand(ctx, *config.Permissions); err != nil {
+			return receipt, fmt.Errorf("RPC permission setup: %w", err)
+		}
 	}
 	dataAPISyncProgress("Refreshing the Data API and waiting for readiness")
 	restart, err := client.RestartAppFresh(ctx, slug)

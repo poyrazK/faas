@@ -18,3 +18,13 @@ test('permission setup CLI redacts migration connection failures', () => {
   assert.match(result.stderr, /RPC permission setup failed/)
   assert.doesNotMatch(result.stdout + result.stderr, /permission-secret-sentinel|postgres:\/\//)
 })
+
+test('release CLI redacts connection failures and reports retained migrations', () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../migrations/release.mjs', import.meta.url))], {
+    env: { ...process.env, MIGRATION_DATABASE_URL: 'postgres://owner:release-secret-sentinel@127.0.0.1:1/unavailable' }, encoding: 'utf8', timeout: 5000
+  })
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Migration release failed/)
+  assert.match(result.stderr, /Committed migrations are retained/)
+  assert.doesNotMatch(result.stdout + result.stderr, /release-secret-sentinel|postgres:\/\//)
+})

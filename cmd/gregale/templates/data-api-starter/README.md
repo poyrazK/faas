@@ -654,3 +654,25 @@ The shared catalog files are included automatically in Gregale's scaffold and
 template archive under `migrations/rpc-runtime/`. Source-checkout acceptance
 copies the same canonical files into its temporary starter; do not maintain a
 separate eligibility implementation.
+
+### Permission setup during sync
+
+The manifest and Procfile now use `node migrations/release.mjs`. This release
+commits migrations, applies eligible opted-in RPC grants, and validates role,
+schema and RLS readiness. The existing `data-api sync` migration command runs
+`deploy --wait`, so a permission failure stops sync before runtime refresh,
+type export or client checks. Credentials stay in the remote migration binding.
+Committed migrations remain if permission setup fails; fix the reported blocker
+and rerun. `npm run migrate` continues to run migrations only.
+
+During overlapping credential rotation, configure the owner-controlled release
+command as `node migrations/release.mjs --role your_data_api_login`, or wait for
+the old login to retire. Existing projects must include this tooling and update
+their release command to adopt the integration.
+
+Custom sync configs may include an optional `permissions` command, executed after
+`migrate` and before refresh. It shares the workflow deadline, directory/argv
+validation and cancellation handling. Omit it for this starter because its
+remote release already handles permissions. See the
+[workflow documentation](https://gregale.dev/docs/data-api#rpc-permissions-in-the-sync-workflow)
+for an example; keep credentials outside config files and command arguments.

@@ -36,7 +36,7 @@ func TestDataAPIStarterScaffoldIncludesApplicationWorkflows(t *testing.T) {
 		}
 	}
 	manifest, err := loadDevManifest(dest)
-	if err != nil || manifest == nil || manifest.Hosting == nil || manifest.Hosting.Health != "/healthz" || manifest.Release == nil || manifest.Release.Command != "node migrations/migrate.mjs" {
+	if err != nil || manifest == nil || manifest.Hosting == nil || manifest.Hosting.Health != "/healthz" || manifest.Release == nil || manifest.Release.Command != "node migrations/release.mjs" {
 		t.Fatalf("starter must declare its readiness endpoint and release migration: %+v, %v", manifest, err)
 	}
 	configFile, _ := os.ReadFile(filepath.Join(dest, "data-api.json"))
@@ -67,7 +67,7 @@ func TestDataAPIStarterUploadKeepsMigrationAndExcludesClientTools(t *testing.T) 
 		t.Fatal(err)
 	}
 	entries := tarEntries(t, archive)
-	for _, file := range []string{"Dockerfile", "Procfile", "gregale.yaml", "package.json", "package-lock.json", "server.mjs", "migrations/migrate.mjs", "migrations/sql/0001_notes.sql", "migrations/sql/0002_priority.sql", "migrations/sql/0003_relationships.sql", "migrations/sql/0004_tags.sql", "migrations/sql/0005_favorite_tags.sql", "migrations/sql/0006_query_indexes.sql", "migrations/sql/0007_note_versions.sql"} {
+	for _, file := range []string{"Dockerfile", "Procfile", "gregale.yaml", "package.json", "package-lock.json", "server.mjs", "migrations/migrate.mjs", "migrations/release.mjs", "migrations/rpc-permissions.mjs", "migrations/rpc-runtime/types.mjs", "migrations/rpc-runtime/config.mjs", "migrations/sql/0001_notes.sql", "migrations/sql/0002_priority.sql", "migrations/sql/0003_relationships.sql", "migrations/sql/0004_tags.sql", "migrations/sql/0005_favorite_tags.sql", "migrations/sql/0006_query_indexes.sql", "migrations/sql/0007_note_versions.sql"} {
 		if !entries["notes/"+file] {
 			t.Errorf("migration upload missing %s", file)
 		}
