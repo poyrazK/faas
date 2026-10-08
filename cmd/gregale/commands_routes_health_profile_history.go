@@ -12,7 +12,7 @@ import (
 )
 
 func cmdRoutesHealthProfileHistory(args []string) int {
-	flags, positional := splitArgsForFlags(args, "deployment", "limit", "before")
+	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("routes health profile-history", flag.ContinueOnError)
 	var deployment, before string
 	limit := api.ProfileCanaryHistoryPageSize

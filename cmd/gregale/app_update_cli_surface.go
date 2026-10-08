@@ -28,6 +28,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"execution_mode":                  {Path: "gregale.yaml lifecycle.execution_mode"},
 	"restart_policy":                  {Path: "gregale.yaml lifecycle.restart_policy"},
 	"after_restore":                   {Path: "gregale.yaml lifecycle.after_restore"},
+	"profiling":                       {Path: "gregale.yaml profiling / lifecycle.profiling"},
 	"startup_deadline_s":              {Path: "gregale.yaml lifecycle.startup_deadline_s"},
 	"max_retries":                     {Path: "gregale.yaml lifecycle.max_retries"},
 	"stop_grace_period_s":             {Path: "gregale.yaml lifecycle.stop_grace_period_s"},
