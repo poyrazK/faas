@@ -124,7 +124,12 @@
         into a restorable capture.
      b. The `ForkCoordinator` (claim, restore, renew, TTL teardown,
         abandoned-lease takeover) and its schedd wiring behind
-        `FAAS_APP_FORKS`.
+        `FAAS_APP_FORKS`. `Engine.RestoreFork` does not use the wake path:
+        it places, reserves `KindFork`, creates the `fork` row, restores
+        the newest compatible capture of the pinned deployment with
+        `Quarantine` and no sealed secrets, and publishes RUNNING. A fork
+        whose scheduler stops is adopted by another if it is running, and
+        failed with `scheduler_lost` if it was mid-restore.
   4. The drive1 secrets scrub on fork restores.
   5. Access (separate ADR), then promotion to `preview`.
 - **Verification:**

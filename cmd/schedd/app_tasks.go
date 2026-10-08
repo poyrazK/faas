@@ -16,6 +16,13 @@ func appTaskDispatchEnabled(value string) bool {
 	return strings.TrimSpace(value) == "1"
 }
 
+// appForksEnabled is the exact opt-in for the ADR-732 fork coordinator: it
+// restores quarantined copies of production memory, so it never starts by
+// accident. apid's FAAS_APP_FORKS gate admits the intent separately.
+func appForksEnabled(value string) bool {
+	return strings.TrimSpace(value) == "1"
+}
+
 func appTaskDispatchConcurrencyFromEnv(value string) (int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
