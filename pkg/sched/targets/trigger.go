@@ -719,7 +719,9 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		return fmt.Errorf("targets: list apps: %w", err)
 	}
 	for _, app := range apps {
-		if !t.manages(app) {
+		// A parked or suspended app is not scaled: the reaper parks whatever
+		// a target admits for it (H5-54).
+		if !t.manages(app) || (app.Status != "" && app.Status != state.AppActive) {
 			continue
 		}
 		policy := app.ScalingPolicy

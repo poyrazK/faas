@@ -352,6 +352,16 @@ func (t *Trigger) manages(app state.App) bool {
 	return t.ownsApp == nil || t.ownsApp(app)
 }
 
+// floorRunsFor keeps the floor off apps that are not active. An explicitly
+// parked app (evicted_cold) stays parked until a real wake reactivates it:
+// the floor's admissions do not reactivate it, so the reaper parked every
+// floor instance a tick later and the floor re-admitted them, a snapshot
+// cycle every ~10 s for as long as the app stayed parked (production-us
+// hunt #5, H5-54).
+func floorRunsFor(app state.App) bool {
+	return app.Status == "" || app.Status == state.AppActive
+}
+
 // observe is a nil-receiver-safe metric emitter. Mirrors
 // ObserveScaleUp at pkg/wire/metrics.go.
 func (t *Trigger) observe(app string, outcome Outcome) {
@@ -496,7 +506,7 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 			t.observe(d.AppID, OutcomeError)
 			continue
 		}
-		if !t.manages(app) {
+		if !t.manages(app) || !floorRunsFor(app) {
 			continue
 		}
 		effective := app.EffectiveMinInstances()
@@ -626,7 +636,7 @@ func (t *Trigger) tickPerApp(ctx context.Context) error {
 		headroom = t.ledger.HeadroomMB()
 	}
 	for _, app := range apps {
-		if !t.manages(app) {
+		if !t.manages(app) || !floorRunsFor(app) {
 			continue
 		}
 		floor := app.EffectiveMinInstancesAt(now)
