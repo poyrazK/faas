@@ -60,12 +60,15 @@
       "id": "crash-snapshots",
       "name": "Crash snapshots",
       "category": "observability",
-      "description": "Capture a running instance's memory after it answers a 5xx, keep it for 7 days, and open it as a quarantined production fork.",
-      "maturity": "internal",
-      "plans": [],
-      "docs_url": "/docs/adr/733-crash-snapshots",
+      "description": "Capture a running instance's memory after it answers a 5xx, keep it encrypted for 7 days, and open it as a quarantined production fork.",
+      "maturity": "preview",
+      "plans": [
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/crash-snapshots",
       "operator_flag": "FAAS_CRASH_SNAPSHOTS",
-      "acceptance_test": "cmd/apid/handlers_crash_snapshots_test.go::TestCrashSnapshots_ManualCaptureAndFork"
+      "acceptance_test": "cmd/e2e/crash_snapshot_metal_test.go::TestCrashSnapshotMetal"
     },
     {
       "id": "custom-domains",
@@ -357,11 +360,14 @@
       "name": "Production forks",
       "category": "runtime",
       "description": "Restore a copy of an app's live deployment into a quarantined, non-serving debug instance that is destroyed at its TTL.",
-      "maturity": "internal",
-      "plans": [],
-      "docs_url": "/docs/adr/732-production-forks",
+      "maturity": "preview",
+      "plans": [
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/forks",
       "operator_flag": "FAAS_APP_FORKS",
-      "acceptance_test": "cmd/apid/handlers_app_forks_test.go::TestAppForks_CreateGetListAndLimit"
+      "acceptance_test": "cmd/e2e/fork_metal_test.go::TestForkMetal"
     },
     {
       "id": "progressive-rollouts",
