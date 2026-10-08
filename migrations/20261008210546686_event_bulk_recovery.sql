@@ -1,11 +1,10 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION event_recovery_failure_identity(progress jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE STRICT AS $$
+CREATE OR REPLACE FUNCTION event_recovery_failure_identity(progress jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE STRICT AS $$
 SELECT jsonb_build_object('state',progress->'state','attempts',progress->'attempts',
  'updated_at',progress->'updated_at','failure_code',progress->'failure_code','retryable',progress->'retryable');
 $$;
--- +goose StatementEnd
-CREATE TABLE event_recovery_jobs (
+CREATE TABLE IF NOT EXISTS event_recovery_jobs (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -22,9 +21,9 @@ CREATE TABLE event_recovery_jobs (
  CHECK ((state='running') = (completed_at IS NULL)),
  CHECK (expires_at > created_at)
 );
-CREATE INDEX event_recovery_jobs_due_idx ON event_recovery_jobs(next_attempt_at,id) WHERE state='running';
-CREATE INDEX event_recovery_jobs_account_idx ON event_recovery_jobs(account_id,state);
-CREATE TABLE event_recovery_items (
+CREATE INDEX IF NOT EXISTS event_recovery_jobs_due_idx ON event_recovery_jobs(next_attempt_at,id) WHERE state='running';
+CREATE INDEX IF NOT EXISTS event_recovery_jobs_account_idx ON event_recovery_jobs(account_id,state);
+CREATE TABLE IF NOT EXISTS event_recovery_items (
  job_id uuid NOT NULL REFERENCES event_recovery_jobs(id) ON DELETE CASCADE,
  position bigint NOT NULL CHECK (position > 0),
  outbox_id bigint NOT NULL,
@@ -41,7 +40,8 @@ CREATE TABLE event_recovery_items (
  PRIMARY KEY (job_id,position),
  UNIQUE (job_id,outbox_id,subscription_id)
 );
-CREATE INDEX event_recovery_items_pending_idx ON event_recovery_items(job_id,position) WHERE state='pending';
+CREATE INDEX IF NOT EXISTS event_recovery_items_pending_idx ON event_recovery_items(job_id,position) WHERE state='pending';
+-- +goose StatementEnd
 
 -- +goose Down
 DROP FUNCTION event_recovery_failure_identity(jsonb);

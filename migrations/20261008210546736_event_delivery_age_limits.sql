@@ -11,7 +11,7 @@ CREATE OR REPLACE FUNCTION valid_event_routing_retry_policy(p jsonb) RETURNS boo
  AND (p->>'initial_backoff_ms')::numeric BETWEEN 1 AND 3600000 AND (p->>'initial_backoff_ms')::numeric % 1=0
  AND (p->>'max_backoff_ms')::numeric BETWEEN (p->>'initial_backoff_ms')::numeric AND 3600000 AND (p->>'max_backoff_ms')::numeric % 1=0 END;
 $$;
-CREATE FUNCTION event_recipient_delivery_deadline(recipient jsonb, accepted_at timestamptz, progress jsonb)
+CREATE OR REPLACE FUNCTION event_recipient_delivery_deadline(recipient jsonb, accepted_at timestamptz, progress jsonb)
 RETURNS timestamptz LANGUAGE sql STABLE AS $$
  SELECT CASE WHEN recipient ? 'workflow' OR recipient ? 'object_notification'
  OR coalesce((recipient->'work'->>'ordered')::boolean,false)
@@ -20,11 +20,18 @@ RETURNS timestamptz LANGUAGE sql STABLE AS $$
  OR coalesce((recipient->'routing_retry_policy'->>'max_delivery_age_ms')::bigint,0)=0 THEN NULL
  ELSE accepted_at + ((recipient->'routing_retry_policy'->>'max_delivery_age_ms')::bigint * interval '1 millisecond') END;
 $$;
-ALTER TABLE event_fanout_recipients ADD COLUMN delivery_deadline_at timestamptz CHECK(delivery_deadline_at IS NULL OR isfinite(delivery_deadline_at));
-CREATE INDEX event_recipient_delivery_deadline_idx ON event_fanout_recipients(delivery_deadline_at,outbox_id) WHERE state IN ('pending','processing') AND delivery_deadline_at IS NOT NULL;
-ALTER TABLE event_fanout_attempt_history DROP CONSTRAINT event_fanout_attempt_history_retry_stop_reason_check;
-ALTER TABLE event_fanout_attempt_history ADD CONSTRAINT event_fanout_attempt_history_retry_stop_reason_check CHECK(retry_stop_reason IN ('','non_retryable','max_attempts','max_duration','delivery_expired'));
-CREATE FUNCTION enforce_event_delivery_age_ordering() RETURNS trigger LANGUAGE plpgsql AS $$
+ALTER TABLE event_fanout_recipients
+    ADD COLUMN IF NOT EXISTS delivery_deadline_at timestamptz CHECK(delivery_deadline_at IS NULL OR isfinite(delivery_deadline_at));
+CREATE INDEX IF NOT EXISTS event_recipient_delivery_deadline_idx ON event_fanout_recipients(delivery_deadline_at,outbox_id) WHERE state IN ('pending','processing') AND delivery_deadline_at IS NOT NULL;
+ALTER TABLE event_fanout_attempt_history
+    DROP CONSTRAINT IF EXISTS event_fanout_attempt_history_retry_stop_reason_check;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='event_fanout_attempt_history'::regclass AND conname='event_fanout_attempt_history_retry_stop_reason_check') THEN
+        ALTER TABLE event_fanout_attempt_history ADD CONSTRAINT event_fanout_attempt_history_retry_stop_reason_check CHECK(retry_stop_reason IN ('','non_retryable','max_attempts','max_duration','delivery_expired'));
+    END IF;
+END $$;
+CREATE OR REPLACE FUNCTION enforce_event_delivery_age_ordering() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p jsonb;
 BEGIN
  IF TG_TABLE_NAME='event_subscriptions' THEN
@@ -41,8 +48,8 @@ BEGIN
  RETURN NEW;
 END;
 $$;
-CREATE TRIGGER event_delivery_age_subscription_ordering BEFORE UPDATE OF routing_retry_policy ON event_subscriptions FOR EACH ROW EXECUTE FUNCTION enforce_event_delivery_age_ordering();
-CREATE TRIGGER event_delivery_age_binding_ordering BEFORE INSERT OR UPDATE ON event_subscription_work_bindings FOR EACH ROW EXECUTE FUNCTION enforce_event_delivery_age_ordering();
+CREATE OR REPLACE TRIGGER event_delivery_age_subscription_ordering BEFORE UPDATE OF routing_retry_policy ON event_subscriptions FOR EACH ROW EXECUTE FUNCTION enforce_event_delivery_age_ordering();
+CREATE OR REPLACE TRIGGER event_delivery_age_binding_ordering BEFORE INSERT OR UPDATE ON event_subscription_work_bindings FOR EACH ROW EXECUTE FUNCTION enforce_event_delivery_age_ordering();
 -- +goose StatementEnd
 
 -- +goose Down

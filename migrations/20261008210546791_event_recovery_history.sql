@@ -1,5 +1,6 @@
 -- +goose Up
-CREATE TABLE event_recovery_history (
+-- +goose StatementBegin
+CREATE TABLE IF NOT EXISTS event_recovery_history (
  id bigserial PRIMARY KEY,
  job_id uuid NOT NULL REFERENCES event_recovery_jobs(id) ON DELETE CASCADE,
  occurred_at timestamptz NOT NULL,
@@ -12,7 +13,8 @@ CREATE TABLE event_recovery_history (
  previous_rate integer NOT NULL CHECK (previous_rate BETWEEN 0 AND 100),
  rate integer NOT NULL CHECK (rate BETWEEN 1 AND 100)
 );
-CREATE INDEX event_recovery_history_job_idx ON event_recovery_history(job_id,id);
+CREATE INDEX IF NOT EXISTS event_recovery_history_job_idx ON event_recovery_history(job_id,id);
+-- +goose StatementEnd
 
 -- +goose Down
 DROP TABLE event_recovery_history;

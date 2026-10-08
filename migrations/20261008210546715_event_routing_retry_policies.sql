@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION valid_event_routing_retry_policy(p jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+CREATE OR REPLACE FUNCTION valid_event_routing_retry_policy(p jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
  SELECT CASE WHEN p IS NULL THEN true
  WHEN jsonb_typeof(p)<>'object' OR NOT (p ?& ARRAY['max_attempts','max_retry_duration_ms','initial_backoff_ms','max_backoff_ms','jitter']) THEN false
  WHEN jsonb_typeof(p->'max_attempts')<>'number' OR jsonb_typeof(p->'max_retry_duration_ms')<>'number' OR jsonb_typeof(p->'initial_backoff_ms')<>'number' OR jsonb_typeof(p->'max_backoff_ms')<>'number' OR jsonb_typeof(p->'jitter')<>'boolean' THEN false
@@ -9,10 +9,14 @@ CREATE FUNCTION valid_event_routing_retry_policy(p jsonb) RETURNS boolean LANGUA
  AND (p->>'initial_backoff_ms')::numeric BETWEEN 1 AND 3600000 AND (p->>'initial_backoff_ms')::numeric % 1=0
  AND (p->>'max_backoff_ms')::numeric BETWEEN (p->>'initial_backoff_ms')::numeric AND 3600000 AND (p->>'max_backoff_ms')::numeric % 1=0 END;
 $$;
-ALTER TABLE event_subscriptions ADD COLUMN routing_retry_policy jsonb CHECK (valid_event_routing_retry_policy(routing_retry_policy));
-ALTER TABLE event_fanout_attempt_history ADD COLUMN retry_stop_reason text NOT NULL DEFAULT '' CHECK (retry_stop_reason IN ('','non_retryable','max_attempts','max_duration'));
-ALTER TABLE event_fanout_attempt_history DROP COLUMN history_bytes;
-ALTER TABLE event_fanout_attempt_history ADD COLUMN history_bytes bigint GENERATED ALWAYS AS (((((((((128)::bigint + octet_length(subscription_id)) + octet_length(action)) + octet_length(state)) + octet_length(failure_code)) + octet_length(last_error)) + octet_length(capacity_scope))) + octet_length(retry_stop_reason)) STORED NOT NULL CHECK (history_bytes >= 0);
+ALTER TABLE event_subscriptions
+    ADD COLUMN IF NOT EXISTS routing_retry_policy jsonb CHECK (valid_event_routing_retry_policy(routing_retry_policy));
+ALTER TABLE event_fanout_attempt_history
+    ADD COLUMN IF NOT EXISTS retry_stop_reason text NOT NULL DEFAULT '' CHECK (retry_stop_reason IN ('','non_retryable','max_attempts','max_duration'));
+ALTER TABLE event_fanout_attempt_history
+    DROP COLUMN IF EXISTS history_bytes;
+ALTER TABLE event_fanout_attempt_history
+    ADD COLUMN IF NOT EXISTS history_bytes bigint GENERATED ALWAYS AS (((((((((128)::bigint + octet_length(subscription_id)) + octet_length(action)) + octet_length(state)) + octet_length(failure_code)) + octet_length(last_error)) + octet_length(capacity_scope))) + octet_length(retry_stop_reason)) STORED NOT NULL CHECK (history_bytes >= 0);
 CREATE OR REPLACE FUNCTION public.enqueue_event_fanout() RETURNS trigger
     LANGUAGE plpgsql
     AS $$

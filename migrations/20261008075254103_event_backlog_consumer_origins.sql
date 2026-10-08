@@ -3,13 +3,13 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE event_routing_backlog
-    ADD COLUMN consumer_kind text NOT NULL DEFAULT 'application'
+    ADD COLUMN IF NOT EXISTS consumer_kind text NOT NULL DEFAULT 'application'
         CHECK (consumer_kind IN ('application','workflow')),
-    ADD COLUMN origin text NOT NULL DEFAULT 'acceptance'
+    ADD COLUMN IF NOT EXISTS origin text NOT NULL DEFAULT 'acceptance'
         CHECK (origin IN ('acceptance','backfill')),
-    ADD COLUMN workflow_name text NOT NULL DEFAULT '';
+    ADD COLUMN IF NOT EXISTS workflow_name text NOT NULL DEFAULT '';
 
-CREATE INDEX event_routing_backlog_kind_origin_age
+CREATE INDEX IF NOT EXISTS event_routing_backlog_kind_origin_age
     ON event_routing_backlog(account_id,consumer_kind,origin,accepted_at,outbox_id,subscription_id);
 
 CREATE OR REPLACE VIEW event_routing_backlog_source AS

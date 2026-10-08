@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION valid_event_circuit_policy(p jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+CREATE OR REPLACE FUNCTION valid_event_circuit_policy(p jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
  SELECT CASE WHEN p IS NULL OR jsonb_typeof(p)<>'object' OR NOT(p ?& ARRAY['failure_threshold_pct','min_samples','window_seconds','cooldown_seconds','probe_successes','recovery_max_rate_per_second','recovery_seconds']) THEN false
  WHEN EXISTS(SELECT 1 FROM jsonb_each(p) e WHERE e.key IN ('failure_threshold_pct','min_samples','window_seconds','cooldown_seconds','probe_successes','recovery_max_rate_per_second','recovery_seconds') AND jsonb_typeof(e.value)<>'number') THEN false
  ELSE (p->>'failure_threshold_pct')::numeric>0 AND (p->>'failure_threshold_pct')::numeric<=100
@@ -11,7 +11,7 @@ CREATE FUNCTION valid_event_circuit_policy(p jsonb) RETURNS boolean LANGUAGE sql
  AND (p->>'recovery_max_rate_per_second')::numeric BETWEEN 1 AND 100 AND (p->>'recovery_max_rate_per_second')::numeric%1=0
  AND (p->>'recovery_seconds')::numeric BETWEEN 1 AND 3600 AND (p->>'recovery_seconds')::numeric%1=0 END;
 $$;
-CREATE TABLE event_subscription_circuit_breakers (
+CREATE TABLE IF NOT EXISTS event_subscription_circuit_breakers (
  subscription_id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -19,7 +19,7 @@ CREATE TABLE event_subscription_circuit_breakers (
  state_data jsonb NOT NULL CHECK(jsonb_typeof(state_data)='object' AND state_data ? 'state' AND state_data->>'state' IS NOT NULL AND state_data->>'state' IN ('closed','open','half_open','draining')),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE INDEX event_subscription_circuit_breakers_app_idx ON event_subscription_circuit_breakers(app_id);
+CREATE INDEX IF NOT EXISTS event_subscription_circuit_breakers_app_idx ON event_subscription_circuit_breakers(app_id);
 
 CREATE OR REPLACE FUNCTION event_subscription_delivery_waiting_reason(account uuid, app uuid, subscription text, observed_at timestamptz)
 RETURNS text LANGUAGE sql STABLE AS $$

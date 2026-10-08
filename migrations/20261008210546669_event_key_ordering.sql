@@ -1,13 +1,13 @@
 -- +goose Up
+-- +goose StatementBegin
 ALTER TABLE event_subscription_work_bindings
-    ADD COLUMN ordered boolean NOT NULL DEFAULT false;
-CREATE INDEX event_subscription_work_bindings_ordered_lane_idx
+    ADD COLUMN IF NOT EXISTS ordered boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS event_subscription_work_bindings_ordered_lane_idx
     ON event_subscription_work_bindings(app_id, policy_name)
     WHERE ordered;
 
 -- Capture the opt-in bit in the same statement snapshot as the other binding
 -- fields; the follow-up projector must not reread mutable subscription state.
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION enqueue_event_fanout() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     existing_type text;
@@ -91,24 +91,23 @@ BEGIN
     RETURN NEW;
 END;
 $$;
--- +goose StatementEnd
 
 -- Transactions publishing the same app/policy/key lane serialize on an
 -- advisory lock. This global sequence records that lock order in immutable
 -- snapshots without retaining a row for every key ever observed.
-CREATE SEQUENCE event_fanout_acceptance_order_seq;
+CREATE SEQUENCE IF NOT EXISTS event_fanout_acceptance_order_seq;
 SELECT setval('event_fanout_acceptance_order_seq', greatest(
+    (SELECT last_value FROM event_fanout_acceptance_order_seq),
     coalesce((SELECT last_value FROM event_fanout_outbox_id_seq), 1),
     coalesce(max(id), 0), 1), true)
 FROM event_fanout_outbox;
 
-CREATE INDEX event_fanout_order_unsettled_idx
+CREATE INDEX IF NOT EXISTS event_fanout_order_unsettled_idx
     ON event_fanout_outbox(account_id, id)
     WHERE state <> 'delivered';
 
 -- Keep the SQL lane hash aligned with workpolicy's type-prefixed scalar keys.
 -- Numeric scale is removed so 1, 1.0, and 1e0 acquire the same lock.
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION event_order_lane_lock_id(
     lane_app_id text,
     lane_policy_name text,
@@ -131,12 +130,10 @@ SELECT CASE WHEN key IS NULL OR key = 's:' THEN NULL
     END
 FROM canonical;
 $$;
--- +goose StatementEnd
 
 -- Only pay the acceptance-order lock cost for a policy lane with ordering
 -- enabled. Other bindings on that same lane participate so their invocation
 -- or cancellation cannot jump across an ordered subscription.
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION event_order_lane_active(
     lane_app_id text,
     lane_policy_name text,
@@ -149,12 +146,10 @@ SELECT coalesce(configured_ordered, false) OR EXISTS (
       AND b.ordered
 );
 $$;
--- +goose StatementEnd
 
 -- Stamp ordering metadata before the publishing transaction becomes visible.
 -- Locks are acquired in a stable order to avoid deadlocks when one event
 -- contains recipients from several keyed lanes.
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION capture_event_recipient_ordering_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     snapshot jsonb;
@@ -201,16 +196,14 @@ BEGIN
     RETURN NEW;
 END;
 $$;
--- +goose StatementEnd
 
-CREATE TRIGGER event_fanout_ordering_snapshot
+CREATE OR REPLACE TRIGGER event_fanout_ordering_snapshot
 AFTER INSERT ON event_fanout_outbox
 FOR EACH ROW EXECUTE FUNCTION capture_event_recipient_ordering_snapshot();
 
 -- A recipient waits until earlier same-lane routing is terminal. The
 -- invocation work lane then serializes dispatch and automatic execution
 -- retries for that key.
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION event_recipient_order_blocked(
     target_outbox_id bigint,
     target_subscription_id text,

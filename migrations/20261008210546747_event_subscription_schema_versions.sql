@@ -1,9 +1,10 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION valid_event_subscription_schema_versions(versions text[]) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+CREATE OR REPLACE FUNCTION valid_event_subscription_schema_versions(versions text[]) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
  SELECT cardinality(versions)<=16 AND NOT EXISTS (SELECT 1 FROM unnest(versions) v WHERE v IS NULL OR v !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') AND cardinality(versions)=(SELECT count(DISTINCT v) FROM unnest(versions) v);
 $$;
-ALTER TABLE event_subscriptions ADD COLUMN schema_versions text[] NOT NULL DEFAULT '{}' CHECK (valid_event_subscription_schema_versions(schema_versions));
+ALTER TABLE event_subscriptions
+    ADD COLUMN IF NOT EXISTS schema_versions text[] NOT NULL DEFAULT '{}' CHECK (valid_event_subscription_schema_versions(schema_versions));
 
 CREATE OR REPLACE FUNCTION public.enqueue_event_fanout() RETURNS trigger
     LANGUAGE plpgsql
@@ -91,12 +92,15 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-CREATE FUNCTION event_recipient_schema_version_mismatch(recipient jsonb, payload jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+CREATE OR REPLACE FUNCTION event_recipient_schema_version_mismatch(recipient jsonb, payload jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
  SELECT NOT recipient ? 'workflow' AND NOT recipient ? 'object_notification' AND jsonb_array_length(coalesce(recipient->'schema_versions','[]'::jsonb))>0 AND NOT (recipient->'schema_versions' ? coalesce(payload->>'schemaversion',''));
 $$;
-ALTER TABLE event_fanout_attempt_history ADD COLUMN filter_reason text NOT NULL DEFAULT '' CHECK (filter_reason IN ('','schema_version_mismatch'));
-ALTER TABLE event_fanout_attempt_history DROP COLUMN history_bytes;
-ALTER TABLE event_fanout_attempt_history ADD COLUMN history_bytes bigint GENERATED ALWAYS AS (128::bigint+octet_length(subscription_id)+octet_length(action)+octet_length(state)+octet_length(failure_code)+octet_length(last_error)+octet_length(capacity_scope)+octet_length(retry_stop_reason)+octet_length(filter_reason)) STORED NOT NULL CHECK (history_bytes>=0);
+ALTER TABLE event_fanout_attempt_history
+    ADD COLUMN IF NOT EXISTS filter_reason text NOT NULL DEFAULT '' CHECK (filter_reason IN ('','schema_version_mismatch'));
+ALTER TABLE event_fanout_attempt_history
+    DROP COLUMN IF EXISTS history_bytes;
+ALTER TABLE event_fanout_attempt_history
+    ADD COLUMN IF NOT EXISTS history_bytes bigint GENERATED ALWAYS AS (128::bigint+octet_length(subscription_id)+octet_length(action)+octet_length(state)+octet_length(failure_code)+octet_length(last_error)+octet_length(capacity_scope)+octet_length(retry_stop_reason)+octet_length(filter_reason)) STORED NOT NULL CHECK (history_bytes>=0);
 -- +goose StatementEnd
 
 -- +goose Down
