@@ -54,6 +54,8 @@ gregale dev --env-file .env.dev # opt in to syncing local config as secrets
 gregale dev --service-override-file .env.services.local # opt in to service URL overrides
 gregale dev --postgres         # provision an isolated database and inject DATABASE_URL
 gregale dev --postgres --postgres-region eu-central-1 # choose database placement
+gregale dev --postgres --postgres-seed "npm run seed" # seed a new database once
+gregale dev --postgres --postgres-seed "npm run seed" --reseed # run the seed again
 gregale dev --once --json      # emit one machine-readable edit-to-live receipt
 gregale dev --ttl 72h          # keep the environment 72h after the latest sync
 ```
@@ -68,6 +70,7 @@ dev:
   postgres: true
   postgres_region: eu-central-1
   ttl: 72h
+  postgres_seed: npm run seed
 ```
 
 These paths are relative to the selected source root. The files must still be
@@ -156,6 +159,27 @@ the binding is refreshed asynchronously if the provider is still provisioning.
 The safe database and binding states appear in human output and `--json`
 receipts; credentials and connection URLs never do. `--stop` and the developer
 lease clean up the binding and database together.
+
+`--postgres-seed` (or `dev.postgres_seed`) loads development data into that
+database. The CLI never receives database credentials, so the command runs
+inside the developer app instead, as a one-off
+[app task](adr/230-deployment-attached-app-tasks.md) against the live
+deployment with the app's secrets and `DATABASE_URL` binding. After the first
+live sync, the CLI waits for the binding to become ready, runs the command
+through the app shell, and prints its bounded output prefixed with `seed |`.
+
+The seed runs once per provisioned database. Completion is recorded in the
+Gregale config directory, keyed by the database ID, so a database recreated
+after `--stop` or lease expiry is seeded again while later `gregale dev` runs
+against the same database skip it. `--reseed` runs it again unconditionally.
+The marker is local to this machine, so write seeds that are safe to repeat.
+
+A failed seed does not fail the live sync: the diagnostic
+(`developer_seed_failed`, phase `seed`) explains what happened, and the seed is
+retried after the next successful sync. With `--once`, a failed seed makes the
+command exit non-zero. With `--json`, the result is emitted as a
+`{"event":"developer_seed",...}` object containing the database, task ID,
+status and exit code — never the command output or credentials.
 
 Watch mode attaches one app-level runtime log stream after the first live sync.
 It follows the stable developer URL across later redeploys, prefixes lines with

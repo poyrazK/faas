@@ -1481,6 +1481,9 @@ type DevConfig struct {
 	// TTL is the environment lease as a Go duration (for example "72h").
 	// The plan ceiling is enforced by the API, not here.
 	TTL string `yaml:"ttl,omitempty"`
+	// PostgresSeed is a shell command run once inside the developer app,
+	// through the app task path, after its developer database is ready.
+	PostgresSeed string `yaml:"postgres_seed,omitempty"`
 }
 
 // ParseDevTTL parses a `gregale dev` lease from `--ttl` or `dev.ttl`. It
@@ -1519,6 +1522,17 @@ func (c *DevConfig) Validate() error {
 	if c.TTL != "" {
 		if _, err := ParseDevTTL(c.TTL); err != nil {
 			return fmt.Errorf("dev.%w", err)
+		}
+	}
+	if c.PostgresSeed != "" {
+		if c.Postgres == nil || !*c.Postgres {
+			return fmt.Errorf("dev: postgres_seed requires postgres: true")
+		}
+		if _, problem := (api.CreateAppTaskRequest{
+			Command:      []string{c.PostgresSeed},
+			CommandShell: true,
+		}).Resolve(); problem != nil {
+			return fmt.Errorf("dev: postgres_seed: %s", problem.Detail)
 		}
 	}
 	return nil

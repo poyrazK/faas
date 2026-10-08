@@ -4832,7 +4832,7 @@ Show durable TLS status for all domains
 
 Sync local changes to a developer environment
 
-`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--ttl <DURATION>]`
+`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4844,6 +4844,10 @@ Sync local changes to a developer environment
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
 | `--open` | open the developer environment URL after the first live sync |  |
+| `--postgres` | provision an isolated PostgreSQL database and inject DATABASE_URL |  |
+| `--postgres-region <REGION>` | choose managed database placement |  |
+| `--postgres-seed <CMD>` | shell command run once in the developer app after its database is ready |  |
+| `--reseed` | run the seed again even if this database was already seeded |  |
 | `--ttl <DURATION>` | environment lease after the latest sync (default 24h; plan maximum applies) |  |
 
 Examples:
@@ -4931,7 +4935,7 @@ show the developer environment URL, app slug, lease, and database without renewi
 
 invoke the developer app, fire a declared cron route, or schedule a delayed task
 
-`gregale dev trigger [--path <DIR>] [--name <PROJECT>]`
+`gregale dev trigger <invoke|cron|delayed-task> [--path <DIR>] [--name <PROJECT>]`
 
 | Flag | Meaning | |
 |---|---|---|

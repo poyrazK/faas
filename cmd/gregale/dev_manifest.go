@@ -75,6 +75,16 @@ func formatDevLease(lease time.Duration) string {
 	return lease.String()
 }
 
+// applyDevSeedManifestDefault applies dev.postgres_seed unless the command was
+// given explicitly. It is separate from applyDevManifestDefaults because only
+// the watch loop runs a seed; `gregale dev setup` hands off to it unchanged.
+func applyDevSeedManifestDefault(manifest *gregalemanifest.Manifest, explicit map[string]bool, postgresSeed *string) {
+	if manifest == nil || manifest.Dev == nil || explicit["postgres-seed"] {
+		return
+	}
+	*postgresSeed = manifest.Dev.PostgresSeed
+}
+
 func resolveDevSourceConfigWithManifest(sourceDir string) (devSourceConfig, error) {
 	if _, err := loadDevManifest(sourceDir); err != nil {
 		return devSourceConfig{}, err

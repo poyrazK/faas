@@ -273,7 +273,7 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 }
 
-const devUsage = "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]] [--ttl DURATION]"
+const devUsage = "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION]"
 
 // cmdDev provides the preview-like inner loop for local source: reserve one
 // stable remote environment, upload the dirty working tree, then redeploy when
@@ -314,6 +314,8 @@ func cmdDev(args []string) int {
 	withPostgres := fs.Bool("postgres", false, "provision an isolated PostgreSQL database and inject DATABASE_URL")
 	postgresRegion := fs.String("postgres-region", "", "managed PostgreSQL region (default: platform default)")
 	ttl := fs.String("ttl", "", "keep the environment this long after the latest sync, e.g. 72h (default 24h; plan maximum applies)")
+	postgresSeed := fs.String("postgres-seed", "", "shell command run once in the developer app after its database is ready")
+	reseed := fs.Bool("reseed", false, "run the --postgres-seed command again even if this database was already seeded")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, devUsage, "dev")
 		return 1
@@ -338,6 +340,9 @@ func cmdDev(args []string) int {
 	if *stop && *ttl != "" {
 		return printErr("Invalid flags", fmt.Errorf("--ttl cannot be combined with --stop"))
 	}
+	if *stop && (*postgresSeed != "" || *reseed) {
+		return printErr("Invalid flags", fmt.Errorf("--postgres-seed and --reseed cannot be combined with --stop"))
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -359,6 +364,7 @@ func cmdDev(args []string) int {
 	// would be synced on start must not turn it into a flag conflict.
 	if !*stop {
 		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
+		applyDevSeedManifestDefault(manifest, explicitFlags, postgresSeed)
 	}
 	if !*withPostgres && *postgresRegion != "" {
 		return printErr("Invalid flags", fmt.Errorf("--postgres-region requires --postgres"))
@@ -369,6 +375,17 @@ func cmdDev(args []string) int {
 		// when it will actually be sent.
 		if lease, err = resolveDevTTL(*ttl); err != nil {
 			return printErr("Invalid --ttl", err)
+		}
+	}
+	if *postgresSeed != "" && !*withPostgres {
+		return printErr("Invalid flags", fmt.Errorf("--postgres-seed requires --postgres"))
+	}
+	if *reseed && *postgresSeed == "" {
+		return printErr("Invalid flags", fmt.Errorf("--reseed requires --postgres-seed or dev.postgres_seed"))
+	}
+	if *postgresSeed != "" {
+		if err := validateDevSeedCommand(*postgresSeed); err != nil {
+			return printErr("Invalid --postgres-seed", err)
 		}
 	}
 	if *stop && *envFile != "" {
@@ -459,6 +476,8 @@ func cmdDev(args []string) int {
 	devBrowserOpened := false
 	var diagnosticReported atomic.Bool
 	var syncHistoryWarned atomic.Bool
+	seedPending := *postgresSeed != ""
+	forceReseed := *reseed
 	reportDevDiagnostic := func(d devDiagnostic) {
 		d.SourceDir = sourceDir
 		if jsonOutput {
@@ -586,6 +605,16 @@ func cmdDev(args []string) int {
 				} else {
 					PrintOK(osStdout, "Developer sync live in %s.", time.Since(started).Round(100*time.Millisecond))
 					devTelemetry.render(osStdout)
+				}
+			}
+			if code == 0 && seedPending {
+				switch runDevSeedAfterLiveSync(deployCtx, client, session, *postgresSeed, forceReseed, reportDevDiagnostic) {
+				case devSeedOutcomeDone:
+					seedPending, forceReseed = false, false
+				case devSeedOutcomeFailed:
+					if *once {
+						code = 1
+					}
 				}
 			}
 			if code == 0 {
