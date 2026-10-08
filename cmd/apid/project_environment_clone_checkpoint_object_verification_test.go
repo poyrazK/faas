@@ -84,6 +84,11 @@ func checkpointObjectVerificationFixture(t *testing.T) (*cloneCoordinatorFixture
 	store := &checkpointObjectVerificationTestStore{checkpointTargetLostReplyStore: base}
 	f.srv.store = store
 	driver := &checkpointObjectVerificationTestDriver{checkpointTargetTestDriver: target, proofs: map[string]state.ProjectEnvironmentCloneCheckpointObjectVerificationObservation{}}
+	copyDriver := &checkpointObjectCopyTestDriver{checkpointTargetTestDriver: target, proofs: map[string]state.ProjectEnvironmentCloneCheckpointObjectCopyObservation{}}
+	f.lease, err = f.srv.copyCheckpointObjects(t.Context(), f.lease, copyDriver)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return f, store, driver
 }
 func TestPGCloneCheckpointObjectVerificationRecovery(t *testing.T) {

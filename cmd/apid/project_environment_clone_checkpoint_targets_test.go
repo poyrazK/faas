@@ -331,7 +331,7 @@ func TestPGCloneCheckpointTargetCreationMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
-	if _, err = tx.Exec(t.Context(), "DROP TABLE project_environment_clone_checkpoint_object_verification"); err != nil {
+	if _, err = tx.Exec(t.Context(), "DROP TABLE project_environment_clone_checkpoint_object_verification,project_environment_clone_checkpoint_object_copies"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(t.Context(), parts[1]); err != nil {

@@ -8513,3 +8513,41 @@ writer closure and timestamps, and cover an empty inventory. The private
 coordinator has no qualified built-in provider or public worker wiring. Native
 copying, object credential/binding publication and complete stage publication
 remain outstanding; live R2/OVH qualification remains deferred.
+
+### Once-only retained-object copy authority
+
+Private object targets now have a durable `planned -> requested -> copied`
+journal. Its immutable plan contains the original inventory and creation receipt,
+pinned source versions, physical source and target placement, bounded byte count,
+and the original worker's UTC write deadline. Reservation refuses an existing
+verification journal. Only a committed claim can dispatch a native copy, and a
+changed lease cannot claim a planned request with a different write deadline. Requested
+and copied recovery observes the original request without redispatching it.
+
+A qualified provider must atomically require the originally created empty,
+private target without other writers, bind every write (including delayed
+requests) to the exact request and deadline, copy only the pinned bodies and
+supported metadata, and permanently close all writers before issuing its
+terminal receipt. A client timeout alone does not qualify as a native write
+fence. Copy observations must prove complete original key/byte coverage, no
+unsupported objects, privacy, absent credentials, permanent writer closure and
+unchanged contents through the current lease. Completion timestamps must lie
+inside the original request's write window. Terminal receipts are immutable
+across handoff; only fresh closure horizons can advance.
+
+Verification now requires an authenticated completed copy and binds its receipt
+digest into the original comparison request. Existing copyless verification
+requests fail closed; they cannot authorize copying or be silently relabeled.
+Every copy claim/finish revalidates the frozen manifest and target, capturing
+worker, source retention and absence of grants. The existing 16 MiB request and
+5 TiB logical byte bounds also constrain copy inventory; these grant no storage
+or IO entitlement. Downgrade refuses any owned copy journal row.
+
+Protocol tests cover lost claim, native and finish acknowledgements, observe-only
+handoff, unchanged receipts, source retention and worker replacement, transaction
+rollback, deadline-extension rejection, gated verification, copy/verification
+integration and guarded migration round trips. This is private coordination for
+a qualified native driver, not provider qualification: no built-in R2/OVH driver
+or public worker wiring is enabled. Credential/binding publication, retirement
+and complete stage publication remain outstanding. Live provider tests remain
+deferred at the user's request.

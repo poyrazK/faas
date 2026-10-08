@@ -7869,5 +7869,18 @@
       "verified_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_copies",
+    "columns": [
+      "copied_at",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_bucket_id",
+      "state"
+    ],
+    "kind": "operational"
   }
 ]

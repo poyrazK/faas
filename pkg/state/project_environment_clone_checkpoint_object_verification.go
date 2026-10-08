@@ -13,6 +13,7 @@ type ProjectEnvironmentCloneCheckpointObjectVerificationPlan struct {
 	CreationSHA256, SourceResourceID string
 	Objects                          []ProjectEnvironmentCloneObjectVersion
 	TotalBytes                       int64
+	CopySHA256                       string `json:",omitempty"`
 }
 type ProjectEnvironmentCloneCheckpointObjectVerification struct {
 	Plan                     ProjectEnvironmentCloneCheckpointObjectVerificationPlan

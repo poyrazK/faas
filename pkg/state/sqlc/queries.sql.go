@@ -2547,6 +2547,40 @@ func (q *Queries) ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg Cla
 	return claim, err
 }
 
+const claimCloneCheckpointObjectCopy = `-- name: ClaimCloneCheckpointObjectCopy :one
+UPDATE project_environment_clone_checkpoint_object_copies i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_bucket_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_bucket_id, i.plan, i.state, i.requested_at, i.observation_sha256, i.copied_at
+`
+
+type ClaimCloneCheckpointObjectCopyParams struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointObjectCopy,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectCopy
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.CopiedAt,
+	)
+	return i, err
+}
+
 const claimCloneCheckpointObjectTarget = `-- name: ClaimCloneCheckpointObjectTarget :one
 UPDATE project_environment_clone_checkpoint_object_targets t SET state='requested',requested_at=clock_timestamp()
 WHERE t.operation_id=$1::uuid AND t.source_bucket_id=$2::uuid AND t.state='planned'
@@ -13227,6 +13261,35 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 	return i, err
 }
 
+const finishCloneCheckpointObjectCopy = `-- name: FinishCloneCheckpointObjectCopy :execrows
+UPDATE project_environment_clone_checkpoint_object_copies i SET state='copied',observation_sha256=$1::text,copied_at=clock_timestamp()
+WHERE i.operation_id=$2::uuid AND i.source_bucket_id=$3::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointObjectCopyParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectCopyParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointObjectCopy,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishCloneCheckpointObjectTargetBucket = `-- name: FinishCloneCheckpointObjectTargetBucket :execrows
 UPDATE object_buckets b SET state='ready',updated_at=clock_timestamp()
 WHERE b.id=$1::uuid AND b.environment_clone_operation_id=$2::uuid
@@ -16959,6 +17022,42 @@ func (q *Queries) InsertCheckedRollback(ctx context.Context, db DBTX, arg Insert
 		arg.Receipt,
 	)
 	return err
+}
+
+const insertCloneCheckpointObjectCopy = `-- name: InsertCloneCheckpointObjectCopy :one
+INSERT INTO project_environment_clone_checkpoint_object_copies(operation_id,source_bucket_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_bucket_id, plan, state, requested_at, observation_sha256, copied_at
+`
+
+type InsertCloneCheckpointObjectCopyParams struct {
+	SourceBucketID   pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectCopy,
+		arg.SourceBucketID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectCopy
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.CopiedAt,
+	)
+	return i, err
 }
 
 const insertCloneCheckpointObjectTarget = `-- name: InsertCloneCheckpointObjectTarget :one
@@ -47138,6 +47237,30 @@ func (q *Queries) ReadCheckedRollback(ctx context.Context, db DBTX, arg ReadChec
 	var receipt []byte
 	err := row.Scan(&receipt)
 	return receipt, err
+}
+
+const readCloneCheckpointObjectCopy = `-- name: ReadCloneCheckpointObjectCopy :one
+SELECT operation_id, source_bucket_id, plan, state, requested_at, observation_sha256, copied_at FROM project_environment_clone_checkpoint_object_copies WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointObjectCopyParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectCopy, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneCheckpointObjectCopy
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.CopiedAt,
+	)
+	return i, err
 }
 
 const readCloneCheckpointObjectTarget = `-- name: ReadCloneCheckpointObjectTarget :one

@@ -27,7 +27,7 @@ func readCheckpointObjectVerificationTx(ctx context.Context, tx pgx.Tx, op Proje
 	}
 	return checkpointObjectVerificationFromSQL(r)
 }
-func checkpointObjectVerificationPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, l ProjectEnvironmentCloneLease, id string, retention *ProjectEnvironmentCloneCheckpointReleaseObservation) (ProjectEnvironmentCloneCheckpointObjectVerificationPlan, error) {
+func checkpointObjectInventoryPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, l ProjectEnvironmentCloneLease, id string, retention *ProjectEnvironmentCloneCheckpointReleaseObservation) (ProjectEnvironmentCloneCheckpointObjectVerificationPlan, error) {
 	var p ProjectEnvironmentCloneCheckpointObjectVerificationPlan
 	creation, err := readCheckpointObjectTargetTx(ctx, tx, op, id)
 	if err != nil {
@@ -86,6 +86,24 @@ func checkpointObjectVerificationPlanTx(ctx context.Context, tx pgx.Tx, op Proje
 	if len(encoded) > api.ObjectCheckpointVerificationPlanMaxBytes {
 		return p, ErrQuotaExceeded
 	}
+	return p, nil
+}
+func checkpointObjectVerificationPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, l ProjectEnvironmentCloneLease, id string, retention *ProjectEnvironmentCloneCheckpointReleaseObservation) (ProjectEnvironmentCloneCheckpointObjectVerificationPlan, error) {
+	p, err := checkpointObjectInventoryPlanTx(ctx, tx, op, l, id, retention)
+	if err != nil {
+		return p, err
+	}
+	copy, err := readCheckpointObjectCopyTx(ctx, tx, op, id)
+	if err != nil {
+		return p, err
+	}
+	if copy.State != "copied" || !validCloneObjectSHA256(copy.ObservationSHA256) {
+		return p, ErrConflict
+	}
+	if err = validateCheckpointObjectCopyTx(ctx, tx, op, l, copy, retention); err != nil {
+		return p, err
+	}
+	p.CopySHA256 = copy.ObservationSHA256
 	return p, nil
 }
 func validateCheckpointObjectVerificationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, l ProjectEnvironmentCloneLease, in ProjectEnvironmentCloneCheckpointObjectVerification, retention *ProjectEnvironmentCloneCheckpointReleaseObservation) error {
