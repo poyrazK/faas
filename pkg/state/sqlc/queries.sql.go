@@ -16818,6 +16818,43 @@ func (q *Queries) InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX
 	return i, err
 }
 
+const insertCloneCheckpointPgConnectionValue = `-- name: InsertCloneCheckpointPgConnectionValue :one
+INSERT INTO project_environment_clone_checkpoint_pg_connection_values(operation_id,source_binding_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, sealed_at
+`
+
+type InsertCloneCheckpointPgConnectionValueParams struct {
+	SourceBindingID  pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPgConnectionValue,
+		arg.SourceBindingID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgConnectionValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.SealedAt,
+	)
+	return i, err
+}
+
 const insertCloneCheckpointPostgresCredential = `-- name: InsertCloneCheckpointPostgresCredential :one
 INSERT INTO project_environment_clone_checkpoint_postgres_credentials(operation_id,source_binding_id,source_database_id,account_id,target_binding_id,plan)
 SELECT o.id,$1::uuid,$2::uuid,o.account_id,$3::uuid,$4::jsonb FROM project_environment_clone_operations o
@@ -46807,6 +46844,31 @@ func (q *Queries) ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const readCloneCheckpointPgConnectionValue = `-- name: ReadCloneCheckpointPgConnectionValue :one
+SELECT operation_id, source_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, sealed_at FROM project_environment_clone_checkpoint_pg_connection_values WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPgConnectionValueParams struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPgConnectionValue, arg.OperationID, arg.SourceBindingID)
+	var i ProjectEnvironmentCloneCheckpointPgConnectionValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.SealedAt,
+	)
+	return i, err
+}
+
 const readCloneCheckpointPostgresCredential = `-- name: ReadCloneCheckpointPostgresCredential :one
 SELECT operation_id, source_binding_id, source_database_id, account_id, target_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, requested_at, observation_sha256, prepared_at FROM project_environment_clone_checkpoint_postgres_credentials WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE
 `
@@ -58273,6 +58335,47 @@ func (q *Queries) ScheduleWorkflowRunFenced(ctx context.Context, db DBTX, arg Sc
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const sealCloneCheckpointPgConnectionValue = `-- name: SealCloneCheckpointPgConnectionValue :one
+UPDATE project_environment_clone_checkpoint_pg_connection_values i SET state='sealed',ciphertext=$1::bytea,key_id=$2::text,ciphertext_sha256=$3::text,sealed_at=clock_timestamp()
+WHERE i.operation_id=$4::uuid AND i.source_binding_id=$5::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_binding_id, i.plan, i.state, i.ciphertext, i.key_id, i.ciphertext_sha256, i.sealed_at
+`
+
+type SealCloneCheckpointPgConnectionValueParams struct {
+	Ciphertext       []byte
+	KeyID            string
+	CiphertextSha256 string
+	OperationID      pgtype.UUID
+	SourceBindingID  pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) SealCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg SealCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error) {
+	row := db.QueryRow(ctx, sealCloneCheckpointPgConnectionValue,
+		arg.Ciphertext,
+		arg.KeyID,
+		arg.CiphertextSha256,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgConnectionValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.SealedAt,
+	)
+	return i, err
 }
 
 const sealCloneCheckpointPostgresCredential = `-- name: SealCloneCheckpointPostgresCredential :one

@@ -5765,6 +5765,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_pg_connection_values",
+    "columns": [
+      "ciphertext",
+      "ciphertext_sha256",
+      "key_id",
+      "operation_id",
+      "plan",
+      "sealed_at",
+      "source_binding_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_checkpoint_pg_credential_retirements",
     "columns": [
       "observation",

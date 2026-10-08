@@ -8084,7 +8084,7 @@ The namespace, plan digest, original key ID and ciphertext digest are checked
 before dispatch. New centralized limits bound each encrypted envelope to 4 KiB
 and each account to 4,096 owned journals, including planned owners. Account
 locking serializes reservations; occupied ownership remains charged until an
-explicit future retirement protocol. This caps retained ciphertext at 16 MiB
+explicit future retirement protocol. This caps retained credential-password ciphertext at 16 MiB
 per account without relying on a provider retry to recover secret material.
 
 Only a known committing claim can prepare the named fresh inactive native
@@ -8180,3 +8180,67 @@ replay after fork deletion without credential keys. State/schema tests and SQLC,
 encoding, shell-quoting and ADR-number checks also pass; targeted lint reports
 zero issues. Native effects are supplied
 by a protocol test driver; these results do not establish provider qualification.
+
+### Private sealed checkpoint PostgreSQL connection values
+
+Prepared inactive credentials can now own a private connection-value journal.
+Its immutable plan binds the original credential plan, preparation receipt and
+password-envelope digest to an independently attested target endpoint. The
+qualified adapter must identify the exact endpoint, target owner, native resource,
+dataset and fresh credential identity, with private scope, verified TLS server
+identity, disabled logins, no source authority and unchanged SQL scope. Observation
+is read-only; provider-supplied URLs, passwords and connection options are never
+accepted. There is no built-in qualified endpoint adapter.
+
+Hostnames are canonical lowercase ASCII DNS names or canonical IP literals without
+IPv6 zones, capped at 253 bytes with 63-byte DNS labels. Database names are bounded
+ASCII identifiers (letters, digits, underscore or hyphen), capped at 63 bytes, and
+ports must be nonzero. Canonical IPv6 hosts are bracketed correctly in the generated
+URI. Endpoint birth time and identity remain immutable while the independently
+current attestation horizon covers the worker lease. Changed endpoint identity,
+host, database, port, TLS proof, ownership or native scope fails closed.
+
+The coordinator constructs a PostgreSQL URI with the original generation-one
+identity/password and exact target host, port and database, requiring
+`sslmode=verify-full`. It seals a plan-bound connection envelope with the current
+age recipient, after opening the original password envelope only during key overlap.
+It clears owned plaintext byte buffers and never sends plaintext to SQL, logs or
+native endpoint observation. Password and connection URI strings exist transiently
+while constructing the URI; Go strings cannot be explicitly zeroed. Missing original
+keys retain planned ownership without authorizing password replacement or resealing.
+
+Runtime health, original data verification, SQL closure, capture retention,
+credential-disabled state and endpoint scope are authenticated at reservation and
+again before the final seal commit. All writes and read-only recovery require the
+exact capturing revision and live worker lease. A committed seal is immutable;
+lost replies and handoff retain the original plan, recipient and ciphertext, and
+sealed observation recovery needs no credential keys. Endpoint horizons are fresh
+proof rather than part of the immutable plan. The original checkpoint inventory,
+managed bindings and app secrets remain unchanged.
+
+Each existing bounded credential owner can own at most one connection-value row,
+with ciphertext capped at 4 KiB. Combined password and connection ciphertext is
+bounded at 32 MiB per account by the existing 4096-owner ledger. Retained rows
+continue to count until a future audited erasure/quota-reclamation protocol.
+Downgrade refuses both planned and sealed connection ownership through an explicit
+guard and restrictive credential foreign key. Credential retirement can still
+release a fork because its permanent preparation fence makes retained private
+connection ciphertext unusable; compensation cannot prepare new connection values.
+
+This completes private value preparation, not stage activation or app-secret
+publication. Activation, atomic binding/secret publication, retained-secret erasure
+and live native provider qualification remain separate requirements. Live R2/OVH
+qualification remains deferred at the user's request.
+
+Validation: the targeted PostgreSQL coordinator suite passes connection-value
+preparation, credential retirement/preparation, native restoration, SQL isolation,
+data verification and private runtime readiness. New cases cover original-password
+URI contents and TLS options, IPv6, hostile or foreign endpoint proofs, current
+proof changes before the final write, lost reserve/seal replies and worker handoff,
+key rotation/missing keys, immutable ciphertext and bounds, late-write recovery,
+empty/owned downgrade guards, and retirement compatibility. State/schema tests,
+canonical endpoint component tests, SQLC parity, encoding, shell-quoting and ADR
+number checks also pass. Targeted lint is clean after applying equivalent boolean
+character checks and rerunning their endpoint tests. Native effects use the
+protocol test driver; these results
+do not establish live provider qualification.
