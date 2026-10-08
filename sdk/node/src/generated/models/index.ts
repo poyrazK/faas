@@ -274,6 +274,11 @@ export type { ControlWorkflowRecoveryPolicyRequest } from './ControlWorkflowReco
 export type { CookieSession } from './CookieSession.js';
 export type { CorsPresetListResponse } from './CorsPresetListResponse.js';
 export type { CorsPresetResponse } from './CorsPresetResponse.js';
+export type { CrashCaptureID } from './CrashCaptureID.js';
+export type { CrashCaptureListResponse } from './CrashCaptureListResponse.js';
+export type { CrashCaptureResponse } from './CrashCaptureResponse.js';
+export type { CrashSnapshotSettingsRequest } from './CrashSnapshotSettingsRequest.js';
+export type { CrashSnapshotSettingsResponse } from './CrashSnapshotSettingsResponse.js';
 export type { CreateAPIConsumerPlanRequest } from './CreateAPIConsumerPlanRequest.js';
 export type { CreateAPIConsumerRateCardRequest } from './CreateAPIConsumerRateCardRequest.js';
 export type { CreateAPIConsumerRequest } from './CreateAPIConsumerRequest.js';

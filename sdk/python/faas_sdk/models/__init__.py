@@ -526,6 +526,13 @@ from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPol
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
 from .cors_preset_list_response import CorsPresetListResponse
 from .cors_preset_response import CorsPresetResponse
+from .crash_capture_list_response import CrashCaptureListResponse
+from .crash_capture_response import CrashCaptureResponse
+from .crash_capture_response_failure import CrashCaptureResponseFailure
+from .crash_capture_response_status import CrashCaptureResponseStatus
+from .crash_capture_response_trigger import CrashCaptureResponseTrigger
+from .crash_snapshot_settings_request import CrashSnapshotSettingsRequest
+from .crash_snapshot_settings_response import CrashSnapshotSettingsResponse
 from .create_account_release_webhook_request import CreateAccountReleaseWebhookRequest
 from .create_account_release_webhook_request_delivery_format import CreateAccountReleaseWebhookRequestDeliveryFormat
 from .create_account_release_webhook_request_event_filter_item import CreateAccountReleaseWebhookRequestEventFilterItem
@@ -4600,6 +4607,13 @@ __all__ = (
     "ControlWorkflowRecoveryPolicyRequestOperation",
     "CorsPresetListResponse",
     "CorsPresetResponse",
+    "CrashCaptureListResponse",
+    "CrashCaptureResponse",
+    "CrashCaptureResponseFailure",
+    "CrashCaptureResponseStatus",
+    "CrashCaptureResponseTrigger",
+    "CrashSnapshotSettingsRequest",
+    "CrashSnapshotSettingsResponse",
     "CreateAccountReleaseWebhookRequest",
     "CreateAccountReleaseWebhookRequestDeliveryFormat",
     "CreateAccountReleaseWebhookRequestEventFilterItem",
