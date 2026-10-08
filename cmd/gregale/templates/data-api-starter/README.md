@@ -551,3 +551,49 @@ do not purge receipts while retries are still possible. Breaking changes to
 note row types can make historical snapshots incompatible, so plan receipt
 migration or retirement together with schema changes. A fresh key always means
 a new operation; the original `createWithTags` remains non-idempotent.
+
+### Receipt retention and owner cleanup
+
+Apply `0010_receipt_retention.sql` to add the cleanup scan index. Choose a
+retention window longer than every supported client retry/offline window, then
+calculate an absolute UTC cutoff. There is no automatic expiry or default
+retention duration: a receipt older than the cutoff becomes eligible, but
+retries still replay it until a cleanup transaction commits its deletion.
+
+Run the tool in an owner-controlled migration session with
+`MIGRATION_DATABASE_URL` configured through the migration binding. The session
+must assume the stable receipt-table owner role; the serving Data API login is
+refused. Do not send migration credentials to a browser or paste them into a
+command. The tool is not exposed through the application API and refuses a
+receipt table configured with FORCE ROW LEVEL SECURITY.
+
+```sh
+# Preview only; no receipts are deleted.
+npm run receipts:cleanup -- --before 2026-10-01T00:00:00.000Z
+# Explicitly delete at most 200 receipts in two batches of 100.
+npm run receipts:cleanup -- --before 2026-10-01T00:00:00.000Z --apply --batch-size 100 --max-batches 2
+```
+
+The cutoff must be an exact UTC timestamp with milliseconds and must not be in
+the future. Selection uses `created_at < cutoff`, so the exact boundary is
+retained. Batch size defaults to 100, maximum batches to one. The JSON summary
+contains counts and options, never keys, subjects, payloads or credentials.
+Dry-run counts describe one read-only snapshot; they do not reserve rows for a
+later apply. Each deletion batch commits independently. If a later batch or
+summary fails, earlier committed deletions remain applied; inspect and rerun
+rather than assume rollback of the whole command.
+
+Cleanup uses nonblocking row and transaction-advisory locks. Receipts used by
+an active RPC or another cleanup transaction are skipped. Remaining eligible
+receipts may therefore persist even when a run deletes zero rows; rerun after
+contention clears. A successful purge removes only receipts. It does not delete
+notes, tags or attachments. Reusing a purged key starts a new operation and can
+create another note, even with the original payload. New receipts receive a new
+creation time and are retained by the old cutoff.
+
+Deleting a note through CRUD does not erase its receipt: retries can still
+return the original content snapshot without recreating the note. Include
+receipts in owner-managed deletion/privacy workflows. Purging a snapshot removes
+that replay response and ends duplicate protection for its key. Retention
+cleanup across all users is separate from deleting one user's business data;
+coordinate those policies and communicate the retry window to clients.

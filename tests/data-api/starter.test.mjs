@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { verifyRPC, verifyRPCPolicy } from './rpc.mjs'
 import { browserOrigins, verifyBrowserCORS } from './browser-cors.mjs'
+import { verifyRetention } from './retention.mjs'
 import { verifyIdempotency } from './idempotency.mjs'
 import { verifySchemaEvolution } from './schema-evolution.mjs'
 import { verifyQueryPlans } from './query-plans.mjs'
@@ -73,17 +74,17 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // Exercise exactly the stable-owner migration session and restricted API role.
   await migrate(migrationURL.toString())
   await migrate(migrationURL.toString())
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 9)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 10)
   const firstSQL = join(root, 'migrations/sql/0001_notes.sql')
   const originalSQL = await readFile(firstSQL, 'utf8')
   await writeFile(firstSQL, originalSQL + '\n-- changed after deployment\n')
   try { await assert.rejects(migrate(migrationURL.toString()), /changed or removed/) }
   finally { await writeFile(firstSQL, originalSQL) }
-  const failedSQL = join(root, 'migrations/sql/0010_failure.sql')
+  const failedSQL = join(root, 'migrations/sql/0011_failure.sql')
   await writeFile(failedSQL, 'ALTER TABLE api.notes ADD COLUMN rolled_back text; SELECT 1/0;')
   try { await assert.rejects(migrate(migrationURL.toString())) }
   finally { await rm(failedSQL) }
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 9)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 10)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
   await owner.query(`GRANT EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) TO "${role}"`)
   await owner.query(`GRANT EXECUTE ON FUNCTION api.create_note_with_tags_once(uuid, text, text[]) TO "${role}"`)
@@ -186,6 +187,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     await admin.query(`ALTER ROLE "${role}" RESET default_transaction_isolation`)
     await refresh()
   }
+  await verifyRetention({ owner, client, root, migrationURL: migrationURL.toString(), loginURL: loginURL.toString(), pg, userA })
   const expired = await new SignJWT({ sub: userA.subject }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience('notes').setExpirationTime('0s').sign(privateKey)
   if (origins) {
     const fixtures = await owner.query('INSERT INTO api.notes(subject, body) VALUES ($1, $3), ($2, $3) RETURNING id, subject', [userA.subject, userB.subject, 'browser-cors-fixture'])
