@@ -21,7 +21,8 @@ func cmdWorkflows(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|schedule-history|run|status|diagnose|steps|attempts|retry|resume|resumes|cancel|cancel-queued-preview|cancel-queued|events>", "workflows")
 		return 1
 	}
-	switch args[0] {
+	subcommand := args[0]
+	switch subcommand {
 	case "list", "ls", "runs":
 		return cmdWorkflowsList(args[1:])
 	case "schedules":
@@ -53,9 +54,9 @@ func cmdWorkflows(args []string) int {
 	case "events":
 		return cmdWorkflowsEvents(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", args[0]), "workflows")
+		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", subcommand), "workflows")
 		if parent, ok := lookupCliCommand("workflows"); ok {
-			sug, _ := suggestSubcommand(args[0], parent)
+			sug, _ := suggestSubcommand(subcommand, parent)
 			maybeSuggestSub(sug)
 		}
 		return 1
