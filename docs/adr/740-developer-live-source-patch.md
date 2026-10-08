@@ -130,5 +130,33 @@ Anything else falls back to today's build path with no behavior change.
    `requirements.txt`; Node with `npm run build` and uv projects (which run
    `uv sync` over the full source) are not.
 2. vmmd/guest-init delivery behind an operator flag, with the schedd
-   snapshot guard and metal tests.
+   snapshot guard and metal tests. *Implemented behind
+   `FAAS_DEV_PATCH_DELIVERY=1`, which must be set on both apid and vmmd;
+   metal tests and `leakcheck` remain to be run on the native hosts.* The
+   implementation refines the decision above in four places:
+   - **Patches are cumulative.** A developer delta is relative to the
+     previous sync, not to the live build: a sync whose build was cancelled
+     would otherwise leave a gap. apid records every developer deployment's
+     full source manifest (`dev_source_manifests`) and each patch is the
+     difference between the live deployment's manifest and the newest
+     reconstructed source. A live build without a manifest reports
+     `no_base_manifest`.
+   - **Short poll instead of a long-poll.** guest-init asks once a second
+     with the last generation it applied. vmmd answers `dev_patch_disabled`
+     when the flag is off or the app is not a developer app, which ends the
+     loop after one request for every other workload.
+   - **Instances are marked when a patch is served,** not when the guest
+     acks, so a crash mid-apply cannot leave a partially patched instance
+     unmarked. `PauseAndSnapshot` destroys a marked instance and returns
+     `dev_source_diverged`; schedd records the park as STOPPED with that
+     reason, outcome `source_diverged`. `WarmSnapshot` refuses before
+     pausing and the scheduler's warm-failure path destroys the VM.
+   - **Restart and scope.** guest-init applies a patch with `os.Root`
+     confinement under `/app` (no `..`, no symlink traversal, regular files
+     only, modes masked, staged renames), then restarts the main workload
+     outside its restart policy and crash budget. Sidecars are never
+     patched. A patch that fails to apply is skipped; the next sync
+     publishes a newer generation. An instance restored from the
+     deployment's snapshot runs the unpatched source for up to one poll
+     interval before re-applying the newest patch.
 3. CLI `patch` phase in the timing summary and `dev history`; docs.

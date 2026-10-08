@@ -407,6 +407,10 @@ func boot() error {
 	if rotatingSecrets != nil {
 		startRuntimeSecretReloader(bootCtx, manifest, rotatingSecrets, supRef, slog.Default())
 	}
+	// ADR-740: developer environments receive live source patches. vmmd
+	// answers dev_patch_disabled for every other app, which ends the loop
+	// after a single request.
+	startDevPatchLoop(bootCtx, supRef, slog.Default())
 	// M-2 / ADR-139 §Decision 1: HEALTHCHECK poll goroutine.
 	// Soft-fail on bind (e.g. guest kernel without AF_VSOCK) —
 	// the engine's existing :8080 TCP-accept probe continues to
